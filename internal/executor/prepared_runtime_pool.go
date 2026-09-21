@@ -509,6 +509,11 @@ func (p *PreparedRuntimePool) warmRuntimeTarget(
 	if target.Source.WorkspaceTarget == nil {
 		return errors.New("prepared runtime warm command workspace target is required")
 	}
+	if target.PreparationExpiresAt.IsZero() {
+		return errors.New("runtime preparation deadline is required")
+	}
+	ctx, cancelPrepare := context.WithDeadline(ctx, target.PreparationExpiresAt)
+	defer cancelPrepare()
 	if p.AdmitRuntimeStart != nil {
 		if err := p.AdmitRuntimeStart(ctx); err != nil {
 			return err
@@ -855,7 +860,10 @@ func (p *PreparedRuntimePool) prepareAndStore(
 	readyRequest.RuntimeSubstrateID = runtimeSubstrateIDValue
 	readyRequest.VMVCPUCount = target.Source.VMVCPUCount
 	readyRequest.CPUConfigDigest = target.Source.CPUConfigDigest
-	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, readyRequest); err != nil {
+	readyCtx, cancelReady := preparedRuntimeControlContext(ctx)
+	_, readyErr := p.RuntimeInstances.MarkRuntimeInstanceReady(readyCtx, readyRequest)
+	cancelReady()
+	if err := readyErr; err != nil {
 		entry.ready.finish(err)
 		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 		if failErr := p.removeReadyEntryAndFail(key, entry, err, true); failErr != nil {

@@ -71,7 +71,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		items = append(items, workerapi.RuntimeReconcileTarget{
 			ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
 			DesiredVersion: row.DesiredVersion, ObservedVersion: row.ObservedVersion,
-			Action: action, Source: source,
+			Action: action, Source: source, PreparationExpiresAt: row.PreparationExpiresAt.Time,
 		})
 	}
 	writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{Items: items})
@@ -235,7 +235,8 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
-			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			ReservationSeconds: int64(runauthority.ReservationTTL / time.Second),
+			DesiredVersion:     request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:             worker.WorkerEpoch,
 			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: pgvalue.UUID(runtimeSubstrateID),
 			VMVCPUCount: request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,

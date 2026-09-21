@@ -129,30 +129,6 @@ func (d *Authority) PlaceWorkspaceExec(
 	if err != nil {
 		return WorkspaceExecPlacement{}, err
 	}
-	if runtime.reservedProcessID == authority.processID && !runtime.reservationActive {
-		closed, err := db.New(tx).CloseExpiredWorkspaceExecReservation(
-			ctx,
-			db.CloseExpiredWorkspaceExecReservationParams{
-				RuntimeInstanceID: runtime.id,
-				WorkspaceID:       authority.workspaceID,
-				ProcessID:         authority.processID,
-			},
-		)
-		if err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("close expired workspace exec reservation: %w", err)
-		}
-		if closed != 1 {
-			return WorkspaceExecPlacement{}, ErrCapacityUnavailable
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return WorkspaceExecPlacement{}, fmt.Errorf("commit expired workspace exec reservation close: %w", err)
-		}
-		return WorkspaceExecPlacement{
-			WorkerInstanceID:  runtime.workerID,
-			WorkerEpoch:       runtime.workerEpoch,
-			RuntimeInstanceID: runtime.id,
-		}, nil
-	}
 	if err := validateWorkspaceExecRuntime(authority, runtime); err != nil {
 		return WorkspaceExecPlacement{}, ErrCapacityUnavailable
 	}
@@ -169,7 +145,7 @@ func (d *Authority) PlaceWorkspaceExec(
 			db.ReserveReadyRuntimeForWorkspaceExecParams{
 				ProcessID:              candidate.ProcessID,
 				BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
-				ReservationExpiresAt:   pgvalue.Timestamptz(time.Now().Add(run.ReservationTTL)),
+				ReservationSeconds:     int64(run.ReservationTTL / time.Second),
 				ID:                     runtime.id,
 				WorkspaceID:            authority.workspaceID,
 				DeploymentDefinitionID: authority.workspaceDefinitionID,
@@ -435,7 +411,7 @@ func (d *Authority) createWorkspaceExecRuntime(
 			WorkspaceID:                     authority.workspaceID,
 			ProcessID:                       authority.processID,
 			BaseWorkspaceVersionID:          authority.baseWorkspaceVersionID,
-			ReservationExpiresAt:            pgvalue.Timestamptz(time.Now().Add(run.ReservationTTL)),
+			PreparationSeconds:              int64(run.PreparationTTL / time.Second),
 		},
 	)
 	if err != nil {

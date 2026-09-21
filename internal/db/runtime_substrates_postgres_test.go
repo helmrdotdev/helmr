@@ -329,14 +329,14 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	runtimeID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id, worker_epoch,
 			vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes,
 			reserved_execution_slots, workspace_id, desired_reason
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
+			$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9, 1,
 			1, $11,
 			1000, 1073741824, 2147483648,
 			1, $10, 'authority-test'

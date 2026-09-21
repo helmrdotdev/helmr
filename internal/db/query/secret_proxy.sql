@@ -72,7 +72,8 @@ ORDER BY b.placeholder;
 -- TLS preparation is reservation-or-live, distinct from credential use.
 -- The root is persisted at Workspace creation; preparation only captures existing material.
 WITH authority AS (
- SELECT r.workspace_id, r.environment_id, r.reservation_expires_at, r.reserved_run_id, r.reserved_process_id,
+ SELECT r.workspace_id, r.environment_id, CASE WHEN r.observed_state = 'allocated' THEN r.preparation_expires_at
+      ELSE r.reservation_expires_at END AS reservation_expires_at, r.reserved_run_id, r.reserved_process_id,
  w.secret_ca_certificate AS certificate, w.secret_ca_not_after AS not_after,
  w.secret_ca_private_key_nonce AS private_key_nonce, w.secret_ca_private_key_ciphertext AS private_key_ciphertext, statement_timestamp()::timestamptz AS authorized_at,
  EXISTS (

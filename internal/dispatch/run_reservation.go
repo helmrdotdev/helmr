@@ -125,10 +125,6 @@ func (d *Authority) prepareRunWorkspace(
 		return runWorkspaceMount{}, err
 	}
 	runtimeID := pgvalue.UUID(uuid.NewV7())
-	var reservedAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&reservedAt); err != nil {
-		return runWorkspaceMount{}, fmt.Errorf("sample run reservation time: %w", err)
-	}
 	row, err := db.New(tx).CreateRunRuntimeReservation(
 		ctx,
 		db.CreateRunRuntimeReservationParams{
@@ -159,10 +155,7 @@ func (d *Authority) prepareRunWorkspace(
 				Valid: true,
 			},
 			BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
-			ReservationExpiresAt: pgtype.Timestamptz{
-				Time:  reservedAt.Add(run.ReservationTTL),
-				Valid: true,
-			},
+			PreparationSeconds:     int64(run.PreparationTTL / time.Second),
 		},
 	)
 	if err != nil {
@@ -300,7 +293,9 @@ SELECT runtime_instances.id,
        runtime_instances.reserved_workspace_version_id,
        runtime_instances.reservation_expires_at,
        coalesce(
-           runtime_instances.reservation_expires_at > transaction_timestamp(),
+           CASE WHEN runtime_instances.observed_state = 'allocated'
+                THEN runtime_instances.preparation_expires_at
+                ELSE runtime_instances.reservation_expires_at END > transaction_timestamp(),
            false
        ),
        runtime_instances.desired_state,
@@ -334,7 +329,9 @@ SELECT runtime_instances.id,
        runtime_instances.reserved_workspace_version_id,
        runtime_instances.reservation_expires_at,
        coalesce(
-           runtime_instances.reservation_expires_at > transaction_timestamp(),
+           CASE WHEN runtime_instances.observed_state = 'allocated'
+                THEN runtime_instances.preparation_expires_at
+                ELSE runtime_instances.reservation_expires_at END > transaction_timestamp(),
            false
        ),
        runtime_instances.desired_state,
@@ -423,7 +420,6 @@ func validateRunRuntime(
 			!runtime.reservedAttempt.Valid ||
 			runtime.reservedAttempt.Int32 != authority.attemptNumber ||
 			runtime.reservedVersionID != authority.baseWorkspaceVersionID ||
-			!runtime.reservationExpiresAt.Valid ||
 			!runtime.reservationActive {
 			return errors.New("workspace runtime reservation does not match run")
 		}

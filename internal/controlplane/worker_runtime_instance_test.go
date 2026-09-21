@@ -400,7 +400,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.RunID)
 	return fixture, work, runtimeID
 }
@@ -453,7 +453,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.RunID)
 			test.stale(t, fixture, work)
 
@@ -548,7 +548,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.RunID)
 	server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool}
 	start := make(chan struct{})

@@ -2778,6 +2778,7 @@ CREATE TABLE runtime_instances (
     reserved_attempt_number INTEGER CHECK (reserved_attempt_number IS NULL OR reserved_attempt_number > 0),
     reserved_process_id UUID,
     reserved_workspace_version_id UUID,
+    preparation_expires_at TIMESTAMPTZ NOT NULL,
     reservation_expires_at TIMESTAMPTZ,
     desired_state TEXT NOT NULL DEFAULT 'ready'
         CHECK (desired_state IN ('ready', 'closed')),
@@ -2847,14 +2848,16 @@ CREATE TABLE runtime_instances (
          AND reserved_attempt_number IS NOT NULL
          AND reserved_process_id IS NULL
          AND reserved_workspace_version_id IS NOT NULL
-         AND reservation_expires_at IS NOT NULL
+         AND ((observed_state = 'allocated' AND reservation_expires_at IS NULL)
+              OR (observed_state = 'ready' AND reservation_expires_at IS NOT NULL))
          AND program_deployment_id IS NOT NULL)
         OR
         (reserved_run_id IS NULL
          AND reserved_attempt_number IS NULL
          AND reserved_process_id IS NOT NULL
          AND reserved_workspace_version_id IS NOT NULL
-         AND reservation_expires_at IS NOT NULL)
+         AND ((observed_state = 'allocated' AND reservation_expires_at IS NULL)
+              OR (observed_state = 'ready' AND reservation_expires_at IS NOT NULL)))
     ),
     CONSTRAINT runtime_instances_reservation_observation_check CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'ready')),
     CONSTRAINT runtime_instances_close_version_check CHECK (desired_state <> 'closed' OR desired_version > 1),

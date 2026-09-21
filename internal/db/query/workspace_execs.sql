@@ -142,40 +142,6 @@ UPDATE workspace_processes
    AND revision = sqlc.arg(expected_revision)
 RETURNING *;
 
--- name: CloseExpiredWorkspaceExecReservation :execrows
-WITH target AS (
-    SELECT runtime_instances.id
-      FROM runtime_instances
-     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id)
-       AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
-       AND runtime_instances.reserved_process_id = sqlc.arg(process_id)
-       AND runtime_instances.reservation_expires_at <= transaction_timestamp()
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'ready')
-     FOR UPDATE
-), stopped_mount AS (
-    UPDATE workspace_mounts
-       SET status = 'unmounting',
-           finalization_kind = 'discard',
-           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
-           updated_at = transaction_timestamp()
-      FROM target
-     WHERE workspace_mounts.runtime_instance_id = target.id
-       AND workspace_mounts.status IN ('mounting', 'mounted')
-    RETURNING workspace_mounts.id
-)
-UPDATE runtime_instances
-   SET desired_state = 'closed',
-       desired_version = CASE
-           WHEN desired_state = 'closed' THEN desired_version
-           ELSE desired_version + 1
-       END,
-       desired_at = transaction_timestamp(),
-       desired_reason = 'workspace_exec_reservation_expired',
-       updated_at = transaction_timestamp()
-  FROM target
- WHERE runtime_instances.id = target.id;
-
 -- name: CreateWorkspaceExecRuntimeReservation :one
 WITH selected_shape AS MATERIALIZED (
     SELECT worker_pool_cpu_shapes.vcpu_count,
@@ -217,7 +183,7 @@ WITH selected_shape AS MATERIALIZED (
         workspace_id,
         reserved_process_id,
         reserved_workspace_version_id,
-        reservation_expires_at,
+        preparation_expires_at,
         desired_reason
     ) SELECT
         sqlc.arg(id),
@@ -239,7 +205,7 @@ WITH selected_shape AS MATERIALIZED (
         sqlc.arg(workspace_id),
         sqlc.arg(process_id),
         sqlc.arg(base_workspace_version_id),
-        sqlc.arg(reservation_expires_at),
+        transaction_timestamp() + sqlc.arg(preparation_seconds)::bigint * interval '1 second',
         'workspace_exec_reservation'
       FROM selected_shape
     RETURNING *
@@ -251,7 +217,7 @@ SELECT created_runtime.*
 UPDATE runtime_instances
    SET reserved_process_id = sqlc.arg(process_id),
        reserved_workspace_version_id = sqlc.arg(base_workspace_version_id),
-       reservation_expires_at = sqlc.arg(reservation_expires_at),
+       reservation_expires_at = transaction_timestamp() + sqlc.arg(reservation_seconds)::bigint * interval '1 second',
        desired_reason = 'workspace_exec_reservation',
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)

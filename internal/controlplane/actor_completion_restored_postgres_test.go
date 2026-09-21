@@ -196,7 +196,7 @@ UPDATE workspace_leases SET writer_generation = 3 WHERE id = $1`, workspaceLease
 UPDATE run_leases SET lease_sequence = 2 WHERE id = $1`, work.LeaseID)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
@@ -207,7 +207,7 @@ INSERT INTO runtime_instances (
     reclaimed_at, reclaim_evidence, terminal_at,
     terminal_reason_code
 )
-SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
+SELECT $2, transaction_timestamp() + interval '5 minutes', org_id, worker_group_id, project_id, environment_id, region_id,
        worker_instance_id, runtime_identity_id, deployment_definition_id,
        runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
        reserved_cpu_millis, reserved_memory_bytes,

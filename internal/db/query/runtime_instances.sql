@@ -404,6 +404,8 @@ UPDATE runtime_instances
        observed_state = 'ready', observed_version = observed_version + 1,
        observed_desired_version = sqlc.arg(desired_version), observed_at = now(),
        ready_at = COALESCE(ready_at, now()),
+       reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
+           THEN transaction_timestamp() + sqlc.arg(reservation_seconds)::bigint * interval '1 second' END,
        updated_at = now()
   FROM runtime_authority
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -411,6 +413,7 @@ UPDATE runtime_instances
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state = 'allocated'
+   AND runtime_instances.preparation_expires_at > transaction_timestamp()
    AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
    AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL
@@ -537,3 +540,37 @@ UPDATE runtime_instances
           AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
 RETURNING runtime_instances.*;
+
+-- name: ListExpiredRuntimeReservations :many
+SELECT * FROM runtime_instances
+ WHERE desired_state = 'ready' AND reclaimed_at IS NULL
+   AND ((observed_state = 'allocated' AND preparation_expires_at <= transaction_timestamp())
+     OR (observed_state = 'ready' AND reservation_expires_at <= transaction_timestamp()))
+ ORDER BY CASE WHEN observed_state = 'allocated' THEN preparation_expires_at ELSE reservation_expires_at END, id
+ LIMIT sqlc.arg(row_limit);
+
+-- name: CloseExpiredRuntimeReservation :one
+WITH closing AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = transaction_timestamp(),
+           desired_reason = CASE WHEN observed_state = 'allocated' THEN 'runtime_preparation_expired'
+                                 ELSE 'runtime_reservation_expired' END,
+           updated_at = transaction_timestamp()
+     WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.desired_version = sqlc.arg(desired_version)
+       AND desired_state = 'ready' AND reclaimed_at IS NULL
+       AND ((observed_state = 'allocated' AND preparation_expires_at <= transaction_timestamp())
+         OR (observed_state = 'ready' AND reservation_expires_at <= transaction_timestamp()))
+    RETURNING *
+), stopped_mounts AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounting', finalization_kind = 'discard',
+           finalization_reason_code = closing.desired_reason, finalization_error = NULL,
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+      FROM closing
+     WHERE workspace_mounts.runtime_instance_id = closing.id
+       AND workspace_mounts.status IN ('mounting', 'mounted')
+    RETURNING workspace_mounts.id
+)
+SELECT closing.* FROM closing;

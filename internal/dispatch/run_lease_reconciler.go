@@ -17,6 +17,7 @@ const (
 )
 
 type RunLeaseRecoverer interface {
+	RecoverExpiredRuntimeReservations(context.Context, int32) (int, error)
 	RecoverRunExecutionLeases(context.Context, int32) (int, error)
 	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
 }
@@ -90,18 +91,22 @@ func (r *RunLeaseReconciler) reconcile(ctx context.Context) error {
 			r.log.Warn("release Run lease recovery lock failed", "error", err)
 		}
 	}()
-	// Reserve work for both independently bounded lanes. A sustained backlog in
-	// either lane must not prevent the other authority repair from running.
-	executionLimit := (r.limit + 1) / 2
-	resumeLimit := r.limit - executionLimit
-	errorsByLane := make(chan error, 2)
+	// Bound each independent recovery lane so backlog cannot starve another.
+	executionLimit := (r.limit + 2) / 3
+	resumeLimit := (r.limit + 1) / 3
+	runtimeLimit := r.limit / 3
+	errorsByLane := make(chan error, 3)
 	go func() {
-		_, executionErr := r.recoverer.RecoverRunExecutionLeases(ctx, executionLimit)
-		errorsByLane <- executionErr
+		_, err := r.recoverer.RecoverRunExecutionLeases(ctx, executionLimit)
+		errorsByLane <- err
 	}()
 	go func() {
-		_, resumeErr := r.recoverer.RecoverExpiredRunResumes(ctx, resumeLimit)
-		errorsByLane <- resumeErr
+		_, err := r.recoverer.RecoverExpiredRunResumes(ctx, resumeLimit)
+		errorsByLane <- err
 	}()
-	return errors.Join(<-errorsByLane, <-errorsByLane)
+	go func() {
+		_, err := r.recoverer.RecoverExpiredRuntimeReservations(ctx, runtimeLimit)
+		errorsByLane <- err
+	}()
+	return errors.Join(<-errorsByLane, <-errorsByLane, <-errorsByLane)
 }

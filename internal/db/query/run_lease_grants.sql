@@ -49,7 +49,7 @@ WITH selected_shape AS MATERIALIZED (
         reserved_run_id,
         reserved_attempt_number,
         reserved_workspace_version_id,
-        reservation_expires_at,
+        preparation_expires_at,
         desired_reason
     ) SELECT
         sqlc.arg(id),
@@ -74,7 +74,7 @@ WITH selected_shape AS MATERIALIZED (
         sqlc.arg(run_id),
         sqlc.arg(attempt_number),
         sqlc.arg(base_workspace_version_id),
-        sqlc.arg(reservation_expires_at),
+        transaction_timestamp() + sqlc.arg(preparation_seconds)::bigint * interval '1 second',
         'run_reservation'
       FROM selected_shape
     RETURNING *

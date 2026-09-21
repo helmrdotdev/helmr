@@ -696,6 +696,7 @@ type RuntimeInstance struct {
 	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
 	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
 	DesiredState                    string             `json:"desired_state"`
 	DesiredVersion                  int64              `json:"desired_version"`

@@ -234,14 +234,14 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	runtimeID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
 			worker_epoch, vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
 			workspace_id, desired_reason
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9,
+			$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9,
 			1, 1, $10, 1000, 1073741824, 34359738368, 1,
 			$11, 'workspace-exec-capacity-test'
 		)
@@ -252,7 +252,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		UPDATE runtime_instances
 		   SET reserved_process_id = $2,
 		       reserved_workspace_version_id = $3,
-		       reservation_expires_at = now() + interval '5 minutes'
+		       reservation_expires_at = NULL
 		 WHERE id = $1
 	`, runtimeID, processID, versionID)
 	requireAccounted(queries, "same-process live Runtime", uuid.MustParse(dbtest.DefaultWorkerPoolID))
@@ -337,7 +337,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		interleavedRuntimeID := uuid.NewV7()
 		dbtest.MustExec(t, ctx, pool, `
 			INSERT INTO runtime_instances (
-				id, org_id, worker_group_id, project_id, environment_id, region_id,
+				id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 				worker_instance_id, runtime_identity_id, deployment_definition_id,
 				worker_epoch, vm_vcpu_count, cpu_config_digest,
 				reserved_cpu_millis, reserved_memory_bytes,
@@ -345,9 +345,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 				workspace_id, reserved_process_id, reserved_workspace_version_id,
 				reservation_expires_at, desired_reason
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9,
+				$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9,
 				1, 1, $10, 1000, 1073741824, 34359738368, 1,
-				$11, $12, $13, now() + interval '5 minutes',
+				$11, $12, $13, NULL,
 				'workspace-exec-capacity-interleaving-test'
 			)
 		`, interleavedRuntimeID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID,
@@ -398,7 +398,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			afterExec: func() {
 				dbtest.MustExec(t, ctx, pool, `
 					INSERT INTO runtime_instances (
-						id, org_id, worker_group_id, project_id, environment_id, region_id,
+						id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 						worker_instance_id, runtime_identity_id, deployment_definition_id,
 						worker_epoch, vm_vcpu_count, cpu_config_digest,
 						reserved_cpu_millis, reserved_memory_bytes,
@@ -406,9 +406,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 						workspace_id, reserved_process_id, reserved_workspace_version_id,
 						reservation_expires_at, desired_reason
 					) VALUES (
-						$1, $2, $3, $4, $5, $6, $7, $8, $9,
+						$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9,
 						1, 1, $10, 1000, 1073741824, 34359738368, 1,
-						$11, $12, $13, now() + interval '5 minutes',
+						$11, $12, $13, NULL,
 						'workspace-exec-capacity-reverse-interleaving-test'
 					)
 				`, interleavedRuntimeID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID,

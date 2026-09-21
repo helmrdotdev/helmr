@@ -244,7 +244,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.runID)
 
 	for failure := int32(1); failure <= 8; failure++ {

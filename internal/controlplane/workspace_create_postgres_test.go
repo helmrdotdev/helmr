@@ -503,7 +503,7 @@ INSERT INTO worker_instances (
 	}
 	if _, err := product.pool.Exec(t.Context(), `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
@@ -512,7 +512,7 @@ INSERT INTO runtime_instances (
     observed_state, observed_version, observed_desired_version,
     ready_at
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
+    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
     1, 1, $10, 1000, 1073741824, 4294967296, 1,
     $11, 'placed', 'ready', 1, 1, now()
 )`, runtimeID, product.orgID, poolFixture.group.ID, product.projectID,

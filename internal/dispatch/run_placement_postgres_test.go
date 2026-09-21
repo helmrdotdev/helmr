@@ -177,7 +177,7 @@ SELECT vm_vcpu_count, cpu_config_digest
 
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
-   SET observed_state = 'ready',
+   SET observed_state = 'ready', reservation_expires_at = transaction_timestamp() + interval '5 minutes',
        observed_version = 1,
        observed_desired_version = desired_version,
        ready_at = transaction_timestamp(),
@@ -477,13 +477,13 @@ SELECT ('20000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
  WHERE source.id = $1`, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,
     reserved_execution_slots, workspace_id, desired_reason
 )
-SELECT ('10000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
+SELECT ('10000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid, transaction_timestamp() + interval '5 minutes',
        source.org_id, source.worker_group_id, source.project_id, source.environment_id, source.region_id,
        ('00000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
        source.runtime_identity_id, source.deployment_definition_id,
@@ -661,7 +661,7 @@ UPDATE runs SET queue_concurrency_limit = 4 WHERE id = $1`, fixture.runID)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE runtime_instances
-   SET observed_state = 'ready', observed_version = 1,
+   SET observed_state = 'ready', reservation_expires_at = transaction_timestamp() + interval '5 minutes', observed_version = 1,
        observed_desired_version = desired_version,
        ready_at = transaction_timestamp(),
        observed_at = transaction_timestamp()
@@ -2376,7 +2376,7 @@ SELECT runtime_instances.desired_version,
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.New(fixture.pool).MarkRuntimeInstanceReady(fixture.ctx, db.MarkRuntimeInstanceReadyParams{
+	_, err = db.New(fixture.pool).MarkRuntimeInstanceReady(fixture.ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
 		RuntimeSubstrateID: runtimeSubstrateID,
 		DesiredVersion:     desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
 		WorkerEpoch: workerEpoch, ExpectedObservedVersion: observedVersion,

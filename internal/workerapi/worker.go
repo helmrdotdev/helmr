@@ -231,12 +231,13 @@ type RuntimeReconcileResponse struct {
 }
 
 type RuntimeReconcileTarget struct {
-	ID              string        `json:"id"`
-	WorkerEpoch     int64         `json:"worker_epoch"`
-	DesiredVersion  int64         `json:"desired_version"`
-	ObservedVersion int64         `json:"observed_version"`
-	Action          string        `json:"action"`
-	Source          RuntimeSource `json:"source"`
+	ID                   string        `json:"id"`
+	WorkerEpoch          int64         `json:"worker_epoch"`
+	DesiredVersion       int64         `json:"desired_version"`
+	ObservedVersion      int64         `json:"observed_version"`
+	Action               string        `json:"action"`
+	PreparationExpiresAt time.Time     `json:"preparation_expires_at"`
+	Source               RuntimeSource `json:"source"`
 }
 
 const (

@@ -10,12 +10,21 @@ import (
 )
 
 type recordingRunLeaseRecoverer struct {
-	mu          sync.Mutex
-	freshLimit  int32
-	resumeLimit int32
-	freshCount  int
-	freshErr    error
-	resumeErr   error
+	mu           sync.Mutex
+	freshLimit   int32
+	resumeLimit  int32
+	runtimeLimit int32
+	runtimeErr   error
+	freshCount   int
+	freshErr     error
+	resumeErr    error
+}
+
+func (r *recordingRunLeaseRecoverer) RecoverExpiredRuntimeReservations(_ context.Context, limit int32) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runtimeLimit = limit
+	return 0, r.runtimeErr
 }
 
 func (r *recordingRunLeaseRecoverer) RecoverRunExecutionLeases(_ context.Context, limit int32) (int, error) {
@@ -35,8 +44,9 @@ func (r *recordingRunLeaseRecoverer) RecoverExpiredRunResumes(_ context.Context,
 func TestRunLeaseReconcilerDoesNotLetOneLaneStarveTheOther(t *testing.T) {
 	freshErr := errors.New("fresh recovery failed")
 	resumeErr := errors.New("resume recovery failed")
+	runtimeErr := errors.New("runtime recovery failed")
 	recoverer := &recordingRunLeaseRecoverer{
-		freshCount: 1, freshErr: freshErr, resumeErr: resumeErr,
+		freshCount: 1, freshErr: freshErr, resumeErr: resumeErr, runtimeErr: runtimeErr,
 	}
 	reconciler, err := NewRunLeaseReconciler(
 		recoverer,
@@ -47,11 +57,11 @@ func TestRunLeaseReconcilerDoesNotLetOneLaneStarveTheOther(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = reconciler.reconcile(context.Background())
-	if !errors.Is(err, freshErr) || !errors.Is(err, resumeErr) {
-		t.Fatalf("reconcile error = %v, want both lane errors", err)
+	if !errors.Is(err, freshErr) || !errors.Is(err, resumeErr) || !errors.Is(err, runtimeErr) {
+		t.Fatalf("reconcile error = %v, want all three lane errors", err)
 	}
-	if recoverer.freshLimit != 50 || recoverer.resumeLimit != 50 {
-		t.Fatalf("recovery limits fresh=%d resume=%d, want 50/50", recoverer.freshLimit, recoverer.resumeLimit)
+	if recoverer.freshLimit != 34 || recoverer.resumeLimit != 33 || recoverer.runtimeLimit != 33 {
+		t.Fatalf("recovery limits fresh=%d resume=%d runtime=%d, want 34/33/33", recoverer.freshLimit, recoverer.resumeLimit, recoverer.runtimeLimit)
 	}
 }
 
@@ -69,8 +79,8 @@ func TestRunLeaseReconcilerReservesCapacityForResumeBacklog(t *testing.T) {
 	if err := reconciler.reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if recoverer.freshLimit != 50 || recoverer.resumeLimit != 50 {
-		t.Fatalf("recovery limits fresh=%d resume=%d, want 50/50", recoverer.freshLimit, recoverer.resumeLimit)
+	if recoverer.freshLimit != 34 || recoverer.resumeLimit != 33 || recoverer.runtimeLimit != 33 {
+		t.Fatalf("recovery limits fresh=%d resume=%d runtime=%d, want 34/33/33", recoverer.freshLimit, recoverer.resumeLimit, recoverer.runtimeLimit)
 	}
 }
 
@@ -85,6 +95,10 @@ func (r concurrentLaneRecoverer) RecoverRunExecutionLeases(ctx context.Context, 
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	}
+}
+
+func (r concurrentLaneRecoverer) RecoverExpiredRuntimeReservations(context.Context, int32) (int, error) {
+	return 0, nil
 }
 
 func (r concurrentLaneRecoverer) RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error) {
@@ -135,11 +149,11 @@ func TestRunLeaseReconcilerRecoversFreshAndResumeLanesUnderOneLock(t *testing.T)
 	if err := reconciler.reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if recoverer.freshLimit != defaultRunLeaseRecoveryLimit/2 {
-		t.Fatalf("fresh recovery limit = %d, want %d", recoverer.freshLimit, defaultRunLeaseRecoveryLimit/2)
+	if recoverer.freshLimit != (defaultRunLeaseRecoveryLimit+2)/3 {
+		t.Fatalf("fresh recovery limit = %d, want %d", recoverer.freshLimit, (defaultRunLeaseRecoveryLimit+2)/3)
 	}
-	if recoverer.resumeLimit != defaultRunLeaseRecoveryLimit/2 {
-		t.Fatalf("resume recovery limit = %d, want %d", recoverer.resumeLimit, defaultRunLeaseRecoveryLimit/2)
+	if recoverer.resumeLimit != defaultRunLeaseRecoveryLimit/3 {
+		t.Fatalf("resume recovery limit = %d, want %d", recoverer.resumeLimit, defaultRunLeaseRecoveryLimit/3)
 	}
 	if !guard.unlocked {
 		t.Fatal("Run lease recovery lock was not released")

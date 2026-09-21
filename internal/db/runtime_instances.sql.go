@@ -11,6 +11,133 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeExpiredRuntimeReservation = `-- name: CloseExpiredRuntimeReservation :one
+WITH closing AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = transaction_timestamp(),
+           desired_reason = CASE WHEN observed_state = 'allocated' THEN 'runtime_preparation_expired'
+                                 ELSE 'runtime_reservation_expired' END,
+           updated_at = transaction_timestamp()
+     WHERE runtime_instances.id = $1 AND runtime_instances.desired_version = $2
+       AND desired_state = 'ready' AND reclaimed_at IS NULL
+       AND ((observed_state = 'allocated' AND preparation_expires_at <= transaction_timestamp())
+         OR (observed_state = 'ready' AND reservation_expires_at <= transaction_timestamp()))
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+), stopped_mounts AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounting', finalization_kind = 'discard',
+           finalization_reason_code = closing.desired_reason, finalization_error = NULL,
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+      FROM closing
+     WHERE workspace_mounts.runtime_instance_id = closing.id
+       AND workspace_mounts.status IN ('mounting', 'mounted')
+    RETURNING workspace_mounts.id
+)
+SELECT closing.id, closing.org_id, closing.worker_group_id, closing.project_id, closing.environment_id, closing.region_id, closing.worker_instance_id, closing.runtime_identity_id, closing.deployment_definition_id, closing.runtime_substrate_id, closing.worker_epoch, closing.vm_vcpu_count, closing.cpu_config_digest, closing.reserved_cpu_millis, closing.reserved_memory_bytes, closing.reserved_guest_ephemeral_disk_bytes, closing.reserved_execution_slots, closing.workspace_id, closing.program_deployment_id, closing.restore_checkpoint_id, closing.reserved_run_id, closing.reserved_attempt_number, closing.reserved_process_id, closing.reserved_workspace_version_id, closing.preparation_expires_at, closing.reservation_expires_at, closing.desired_state, closing.desired_version, closing.desired_at, closing.desired_reason, closing.observed_state, closing.observed_version, closing.observed_desired_version, closing.observed_at, closing.allocated_at, closing.ready_at, closing.terminal_at, closing.reclaimed_at, closing.reclaim_evidence, closing.terminal_reason_code, closing.terminal_error, closing.updated_at FROM closing
+`
+
+type CloseExpiredRuntimeReservationParams struct {
+	ID             pgtype.UUID `json:"id"`
+	DesiredVersion int64       `json:"desired_version"`
+}
+
+type CloseExpiredRuntimeReservationRow struct {
+	ID                              pgtype.UUID        `json:"id"`
+	OrgID                           pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                       pgtype.UUID        `json:"project_id"`
+	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
+	RegionID                        string             `json:"region_id"`
+	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
+	RuntimeIdentityID               string             `json:"runtime_identity_id"`
+	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
+	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
+	WorkerEpoch                     int64              `json:"worker_epoch"`
+	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
+	CPUConfigDigest                 string             `json:"cpu_config_digest"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
+	WorkspaceID                     pgtype.UUID        `json:"workspace_id"`
+	ProgramDeploymentID             pgtype.UUID        `json:"program_deployment_id"`
+	RestoreCheckpointID             pgtype.UUID        `json:"restore_checkpoint_id"`
+	ReservedRunID                   pgtype.UUID        `json:"reserved_run_id"`
+	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
+	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
+	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
+	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
+	DesiredState                    string             `json:"desired_state"`
+	DesiredVersion                  int64              `json:"desired_version"`
+	DesiredAt                       pgtype.Timestamptz `json:"desired_at"`
+	DesiredReason                   string             `json:"desired_reason"`
+	ObservedState                   string             `json:"observed_state"`
+	ObservedVersion                 int64              `json:"observed_version"`
+	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
+	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
+	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
+	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
+	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
+	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
+	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                   []byte             `json:"terminal_error"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CloseExpiredRuntimeReservation(ctx context.Context, arg CloseExpiredRuntimeReservationParams) (CloseExpiredRuntimeReservationRow, error) {
+	row := q.db.QueryRow(ctx, closeExpiredRuntimeReservation, arg.ID, arg.DesiredVersion)
+	var i CloseExpiredRuntimeReservationRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.RuntimeIdentityID,
+		&i.DeploymentDefinitionID,
+		&i.RuntimeSubstrateID,
+		&i.WorkerEpoch,
+		&i.VMVCPUCount,
+		&i.CPUConfigDigest,
+		&i.ReservedCPUMillis,
+		&i.ReservedMemoryBytes,
+		&i.ReservedGuestEphemeralDiskBytes,
+		&i.ReservedExecutionSlots,
+		&i.WorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.RestoreCheckpointID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
+		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
+		&i.ReservationExpiresAt,
+		&i.DesiredState,
+		&i.DesiredVersion,
+		&i.DesiredAt,
+		&i.DesiredReason,
+		&i.ObservedState,
+		&i.ObservedVersion,
+		&i.ObservedDesiredVersion,
+		&i.ObservedAt,
+		&i.AllocatedAt,
+		&i.ReadyAt,
+		&i.TerminalAt,
+		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getRuntimePreparationFailureAuthority = `-- name: GetRuntimePreparationFailureAuthority :one
 SELECT runtime_instances.reserved_run_id,
        runtime_instances.reserved_attempt_number,
@@ -83,6 +210,78 @@ func (q *Queries) GetRuntimePreparationFailureAuthority(ctx context.Context, arg
 	return i, err
 }
 
+const listExpiredRuntimeReservations = `-- name: ListExpiredRuntimeReservations :many
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at FROM runtime_instances
+ WHERE desired_state = 'ready' AND reclaimed_at IS NULL
+   AND ((observed_state = 'allocated' AND preparation_expires_at <= transaction_timestamp())
+     OR (observed_state = 'ready' AND reservation_expires_at <= transaction_timestamp()))
+ ORDER BY CASE WHEN observed_state = 'allocated' THEN preparation_expires_at ELSE reservation_expires_at END, id
+ LIMIT $1
+`
+
+func (q *Queries) ListExpiredRuntimeReservations(ctx context.Context, rowLimit int32) ([]RuntimeInstance, error) {
+	rows, err := q.db.Query(ctx, listExpiredRuntimeReservations, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RuntimeInstance
+	for rows.Next() {
+		var i RuntimeInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.WorkerGroupID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.RegionID,
+			&i.WorkerInstanceID,
+			&i.RuntimeIdentityID,
+			&i.DeploymentDefinitionID,
+			&i.RuntimeSubstrateID,
+			&i.WorkerEpoch,
+			&i.VMVCPUCount,
+			&i.CPUConfigDigest,
+			&i.ReservedCPUMillis,
+			&i.ReservedMemoryBytes,
+			&i.ReservedGuestEphemeralDiskBytes,
+			&i.ReservedExecutionSlots,
+			&i.WorkspaceID,
+			&i.ProgramDeploymentID,
+			&i.RestoreCheckpointID,
+			&i.ReservedRunID,
+			&i.ReservedAttemptNumber,
+			&i.ReservedProcessID,
+			&i.ReservedWorkspaceVersionID,
+			&i.PreparationExpiresAt,
+			&i.ReservationExpiresAt,
+			&i.DesiredState,
+			&i.DesiredVersion,
+			&i.DesiredAt,
+			&i.DesiredReason,
+			&i.ObservedState,
+			&i.ObservedVersion,
+			&i.ObservedDesiredVersion,
+			&i.ObservedAt,
+			&i.AllocatedAt,
+			&i.ReadyAt,
+			&i.TerminalAt,
+			&i.ReclaimedAt,
+			&i.ReclaimEvidence,
+			&i.TerminalReasonCode,
+			&i.TerminalError,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuntimeReconcileTargets = `-- name: ListRuntimeReconcileTargets :many
 WITH worker AS (
     SELECT worker_instances.id,
@@ -98,7 +297,7 @@ WITH worker AS (
        AND worker_instances.current_epoch = $5::bigint
        AND worker_instances.status IN ('active', 'draining')
 )
-SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at,
+SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
@@ -207,6 +406,7 @@ type ListRuntimeReconcileTargetsRow struct {
 	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
 	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
 	DesiredState                    string             `json:"desired_state"`
 	DesiredVersion                  int64              `json:"desired_version"`
@@ -286,6 +486,7 @@ func (q *Queries) ListRuntimeReconcileTargets(ctx context.Context, arg ListRunti
 			&i.ReservedAttemptNumber,
 			&i.ReservedProcessID,
 			&i.ReservedWorkspaceVersionID,
+			&i.PreparationExpiresAt,
 			&i.ReservationExpiresAt,
 			&i.DesiredState,
 			&i.DesiredVersion,
@@ -422,7 +623,7 @@ UPDATE runtime_instances
    AND runtime_instances.desired_state = 'closed' AND runtime_instances.desired_version = $6
    AND observed_version = $7
    AND observed_state IN ('allocated','ready')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 `
 
 type MarkRuntimeInstanceClosedParams struct {
@@ -471,6 +672,7 @@ func (q *Queries) MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntime
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,
@@ -506,7 +708,7 @@ UPDATE runtime_instances
    AND runtime_instances.desired_version = $6
    AND observed_version = $7
    AND observed_state IN ('allocated','ready')
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 `
 
 type MarkRuntimeInstanceFailedParams struct {
@@ -555,6 +757,7 @@ func (q *Queries) MarkRuntimeInstanceFailed(ctx context.Context, arg MarkRuntime
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,
@@ -595,9 +798,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND secret_resolutions.placement_target = workspace_secrets.placement_target
        AND secret_resolutions.secret_id = workspace_secrets.secret_id
        AND secret_resolutions.revocation_generation = secrets.revocation_generation
-     WHERE runtime_instances.id = $3
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
+     WHERE runtime_instances.id = $4
+       AND runtime_instances.worker_instance_id = $5
+       AND runtime_instances.worker_epoch = $6
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
      ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
      FOR UPDATE OF secrets
@@ -616,9 +819,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND sessions.workspace_id = runtime_instances.workspace_id
        AND sessions.current_run_id = runs.id
        AND sessions.status IN ('open', 'closing')
-     WHERE runtime_instances.id = $3
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
+     WHERE runtime_instances.id = $4
+       AND runtime_instances.worker_instance_id = $5
+       AND runtime_instances.worker_epoch = $6
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
        AND (SELECT count(*) FROM restore_secret_authority) >= 0
      FOR UPDATE OF sessions
@@ -629,9 +832,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
            NULL::bigint AS next_input_sequence
       FROM runtime_instances
       JOIN runs ON runs.id = runtime_instances.reserved_run_id
-     WHERE runtime_instances.id = $3
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
+     WHERE runtime_instances.id = $4
+       AND runtime_instances.worker_instance_id = $5
+       AND runtime_instances.worker_epoch = $6
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
        AND runs.entrypoint_kind = 'task'
        AND runs.session_id IS NULL
@@ -805,9 +1008,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
        AND runtime_substrates.substrate_format = worker_instances.substrate_format
        AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
-     WHERE runtime_instances.id = $3
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
+     WHERE runtime_instances.id = $4
+       AND runtime_instances.worker_instance_id = $5
+       AND runtime_instances.worker_epoch = $6
        AND (SELECT count(*) FROM restore_secret_authority) >= 0
        AND (runtime_instances.restore_checkpoint_id IS NULL
             OR EXISTS (
@@ -822,10 +1025,10 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
       FROM substrate_authority
       JOIN runtime_instances
         ON runtime_instances.id = substrate_authority.runtime_instance_id
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.worker_instance_id = $5
+       AND runtime_instances.worker_epoch = $6
        AND runtime_instances.desired_version = $2
-       AND runtime_instances.observed_version = $6
+       AND runtime_instances.observed_version = $7
        AND runtime_instances.observed_state = 'allocated'
        AND (runtime_instances.runtime_substrate_id IS NULL
             OR runtime_instances.runtime_substrate_id = $1)
@@ -878,9 +1081,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
         ON workspace_versions.workspace_id = runtime_instances.workspace_id
        AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
        AND workspace_versions.status = 'private'
-     WHERE runtime_instances.id = $3
-       AND runtime_instances.worker_instance_id = $4
-       AND runtime_instances.worker_epoch = $5
+     WHERE runtime_instances.id = $4
+       AND runtime_instances.worker_instance_id = $5
+       AND runtime_instances.worker_epoch = $6
        AND (SELECT count(*) FROM workspace_secrets
              WHERE workspace_secrets.workspace_id = runtime_instances.workspace_id)
            = (SELECT count(*) FROM restore_secret_authority
@@ -892,15 +1095,18 @@ UPDATE runtime_instances
        observed_state = 'ready', observed_version = observed_version + 1,
        observed_desired_version = $2, observed_at = now(),
        ready_at = COALESCE(ready_at, now()),
+       reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
+           THEN transaction_timestamp() + $3::bigint * interval '1 second' END,
        updated_at = now()
   FROM runtime_authority
- WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
+ WHERE runtime_instances.id = $4 AND runtime_instances.worker_instance_id = $5
    AND runtime_authority.runtime_instance_id = runtime_instances.id
-   AND runtime_instances.worker_epoch = $5 AND runtime_instances.desired_version = $2
-   AND runtime_instances.observed_version = $6
+   AND runtime_instances.worker_epoch = $6 AND runtime_instances.desired_version = $2
+   AND runtime_instances.observed_version = $7
    AND runtime_instances.observed_state = 'allocated'
-   AND runtime_instances.vm_vcpu_count = $7
-   AND runtime_instances.cpu_config_digest = $8
+   AND runtime_instances.preparation_expires_at > transaction_timestamp()
+   AND runtime_instances.vm_vcpu_count = $8
+   AND runtime_instances.cpu_config_digest = $9
    AND (runtime_instances.runtime_substrate_id IS NULL
         OR runtime_instances.runtime_substrate_id = $1)
    AND (runtime_instances.restore_checkpoint_id IS NULL
@@ -908,12 +1114,13 @@ UPDATE runtime_instances
             SELECT 1 FROM restore_authority
              WHERE restore_authority.runtime_instance_id = runtime_instances.id
         ))
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 `
 
 type MarkRuntimeInstanceReadyParams struct {
 	RuntimeSubstrateID      pgtype.UUID `json:"runtime_substrate_id"`
 	DesiredVersion          int64       `json:"desired_version"`
+	ReservationSeconds      int64       `json:"reservation_seconds"`
 	ID                      pgtype.UUID `json:"id"`
 	WorkerInstanceID        pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch             int64       `json:"worker_epoch"`
@@ -926,6 +1133,7 @@ func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeI
 	row := q.db.QueryRow(ctx, markRuntimeInstanceReady,
 		arg.RuntimeSubstrateID,
 		arg.DesiredVersion,
+		arg.ReservationSeconds,
 		arg.ID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
@@ -959,6 +1167,7 @@ func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeI
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,
@@ -1000,7 +1209,7 @@ UPDATE runtime_instances
         WHERE run_leases.runtime_instance_id = runtime_instances.id
           AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
-RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 `
 
 type ReclaimFailedRuntimeInstanceParams struct {
@@ -1047,6 +1256,7 @@ func (q *Queries) ReclaimFailedRuntimeInstance(ctx context.Context, arg ReclaimF
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,

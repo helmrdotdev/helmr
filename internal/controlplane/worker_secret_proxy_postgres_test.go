@@ -83,6 +83,19 @@ func TestSecretPreparationRequiresActivatedWorker(t *testing.T) {
 			t.Fatalf("%s worker empty-origin preparation = %+v, %v", state, prepared, err)
 		}
 	}
+	// Preparation has its own authority even before an execution reservation exists.
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET observed_state='allocated',ready_at=NULL,observed_desired_version=0,reservation_expires_at=NULL WHERE id=$1`, runtimeID)
+	if _, err := client.PrepareSecretProxy(t.Context(), request); err != nil {
+		t.Fatalf("allocated preparation: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET preparation_expires_at=now()-interval '1 second' WHERE id=$1`, runtimeID)
+	if _, err := client.PrepareSecretProxy(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {
+		t.Fatalf("expired preparation: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET preparation_expires_at=now()+interval '5 minutes',desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, runtimeID)
+	if _, err := client.PrepareSecretProxy(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {
+		t.Fatalf("closed preparation: %v", err)
+	}
 	// Even an authorized worker cannot prepare a synthetic, unreserved probe ID.
 	if _, err := client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{RuntimeInstanceID: uuid.NewV7().String()}); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("unreserved runtime preparation = %v, want conflict", err)

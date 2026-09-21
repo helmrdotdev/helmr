@@ -24,7 +24,7 @@ func TestRuntimeInstanceAllocatedReadyClosedPath(t *testing.T) {
 	resetRuntimeAllocated(t, fixture, runtime.id)
 	substrateID := seedRuntimeSubstrate(t, fixture, runtime.definitionID)
 
-	ready, err := queries.MarkRuntimeInstanceReady(ctx, MarkRuntimeInstanceReadyParams{
+	ready, err := queries.MarkRuntimeInstanceReady(ctx, MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
 		RuntimeSubstrateID:      pgvalue.UUID(substrateID),
 		DesiredVersion:          1,
 		ID:                      pgvalue.UUID(runtime.id),
@@ -135,7 +135,7 @@ func TestRuntimeInstanceStaleFencesAreRejected(t *testing.T) {
 	detachRuntimeLease(t, fixture, work, runtime.id)
 	resetRuntimeAllocated(t, fixture, runtime.id)
 	substrateID := seedRuntimeSubstrate(t, fixture, runtime.definitionID)
-	params := MarkRuntimeInstanceReadyParams{
+	params := MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
 		RuntimeSubstrateID:      pgvalue.UUID(substrateID),
 		DesiredVersion:          1,
 		ID:                      pgvalue.UUID(runtime.id),

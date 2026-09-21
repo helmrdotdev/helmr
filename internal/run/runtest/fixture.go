@@ -253,7 +253,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 	`, runID, workspaceID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
 			worker_epoch, vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
@@ -261,7 +261,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 			workspace_id, program_deployment_id, desired_reason, observed_state,
 			observed_version, observed_desired_version, ready_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 1, $12,
+			$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9, 1, 1, $12,
 			1000, 1073741824, 2147483648, 1,
 			$10, $11, 'test', 'ready', 1, 1, now()
 		)

@@ -292,55 +292,6 @@ func (q *Queries) BindWorkspaceExecRuntime(ctx context.Context, arg BindWorkspac
 	return i, err
 }
 
-const closeExpiredWorkspaceExecReservation = `-- name: CloseExpiredWorkspaceExecReservation :execrows
-WITH target AS (
-    SELECT runtime_instances.id
-      FROM runtime_instances
-     WHERE runtime_instances.id = $1
-       AND runtime_instances.workspace_id = $2
-       AND runtime_instances.reserved_process_id = $3
-       AND runtime_instances.reservation_expires_at <= transaction_timestamp()
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'ready')
-     FOR UPDATE
-), stopped_mount AS (
-    UPDATE workspace_mounts
-       SET status = 'unmounting',
-           finalization_kind = 'discard',
-           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
-           updated_at = transaction_timestamp()
-      FROM target
-     WHERE workspace_mounts.runtime_instance_id = target.id
-       AND workspace_mounts.status IN ('mounting', 'mounted')
-    RETURNING workspace_mounts.id
-)
-UPDATE runtime_instances
-   SET desired_state = 'closed',
-       desired_version = CASE
-           WHEN desired_state = 'closed' THEN desired_version
-           ELSE desired_version + 1
-       END,
-       desired_at = transaction_timestamp(),
-       desired_reason = 'workspace_exec_reservation_expired',
-       updated_at = transaction_timestamp()
-  FROM target
- WHERE runtime_instances.id = target.id
-`
-
-type CloseExpiredWorkspaceExecReservationParams struct {
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	ProcessID         pgtype.UUID `json:"process_id"`
-}
-
-func (q *Queries) CloseExpiredWorkspaceExecReservation(ctx context.Context, arg CloseExpiredWorkspaceExecReservationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, closeExpiredWorkspaceExecReservation, arg.RuntimeInstanceID, arg.WorkspaceID, arg.ProcessID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const closeWorkspaceExecRuntime = `-- name: CloseWorkspaceExecRuntime :execrows
 UPDATE runtime_instances
    SET desired_state = 'closed',
@@ -581,7 +532,7 @@ WITH selected_shape AS MATERIALIZED (
         workspace_id,
         reserved_process_id,
         reserved_workspace_version_id,
-        reservation_expires_at,
+        preparation_expires_at,
         desired_reason
     ) SELECT
         $5,
@@ -603,34 +554,34 @@ WITH selected_shape AS MATERIALIZED (
         $15,
         $16,
         $17,
-        $18,
+        transaction_timestamp() + $18::bigint * interval '1 second',
         'workspace_exec_reservation'
       FROM selected_shape
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
 )
-SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.ready_at, created_runtime.terminal_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.updated_at
+SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.preparation_expires_at, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.ready_at, created_runtime.terminal_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.updated_at
   FROM created_runtime
 `
 
 type CreateWorkspaceExecRuntimeReservationParams struct {
-	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
-	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
-	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
-	WorkerEpoch                     pgtype.Int8        `json:"worker_epoch"`
-	ID                              pgtype.UUID        `json:"id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	RegionID                        string             `json:"region_id"`
-	RuntimeIdentityID               string             `json:"runtime_identity_id"`
-	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
-	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
-	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
-	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
-	WorkspaceID                     pgtype.UUID        `json:"workspace_id"`
-	ProcessID                       pgtype.UUID        `json:"process_id"`
-	BaseWorkspaceVersionID          pgtype.UUID        `json:"base_workspace_version_id"`
-	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
+	ReservedCPUMillis               int64       `json:"reserved_cpu_millis"`
+	WorkerInstanceID                pgtype.UUID `json:"worker_instance_id"`
+	WorkerGroupID                   pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch                     pgtype.Int8 `json:"worker_epoch"`
+	ID                              pgtype.UUID `json:"id"`
+	OrgID                           pgtype.UUID `json:"org_id"`
+	ProjectID                       pgtype.UUID `json:"project_id"`
+	EnvironmentID                   pgtype.UUID `json:"environment_id"`
+	RegionID                        string      `json:"region_id"`
+	RuntimeIdentityID               string      `json:"runtime_identity_id"`
+	DeploymentDefinitionID          pgtype.UUID `json:"deployment_definition_id"`
+	ReservedMemoryBytes             int64       `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes int64       `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots          int32       `json:"reserved_execution_slots"`
+	WorkspaceID                     pgtype.UUID `json:"workspace_id"`
+	ProcessID                       pgtype.UUID `json:"process_id"`
+	BaseWorkspaceVersionID          pgtype.UUID `json:"base_workspace_version_id"`
+	PreparationSeconds              int64       `json:"preparation_seconds"`
 }
 
 type CreateWorkspaceExecRuntimeReservationRow struct {
@@ -658,6 +609,7 @@ type CreateWorkspaceExecRuntimeReservationRow struct {
 	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
 	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
 	DesiredState                    string             `json:"desired_state"`
 	DesiredVersion                  int64              `json:"desired_version"`
@@ -696,7 +648,7 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		arg.WorkspaceID,
 		arg.ProcessID,
 		arg.BaseWorkspaceVersionID,
-		arg.ReservationExpiresAt,
+		arg.PreparationSeconds,
 	)
 	var i CreateWorkspaceExecRuntimeReservationRow
 	err := row.Scan(
@@ -724,6 +676,7 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,
@@ -2722,7 +2675,7 @@ const reserveReadyRuntimeForWorkspaceExec = `-- name: ReserveReadyRuntimeForWork
 UPDATE runtime_instances
    SET reserved_process_id = $1,
        reserved_workspace_version_id = $2,
-       reservation_expires_at = $3,
+       reservation_expires_at = transaction_timestamp() + $3::bigint * interval '1 second',
        desired_reason = 'workspace_exec_reservation',
        updated_at = transaction_timestamp()
  WHERE id = $4
@@ -2735,23 +2688,23 @@ UPDATE runtime_instances
    AND reserved_process_id IS NULL
    AND reserved_workspace_version_id IS NULL
    AND reservation_expires_at IS NULL
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
 `
 
 type ReserveReadyRuntimeForWorkspaceExecParams struct {
-	ProcessID              pgtype.UUID        `json:"process_id"`
-	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
-	ReservationExpiresAt   pgtype.Timestamptz `json:"reservation_expires_at"`
-	ID                     pgtype.UUID        `json:"id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	ProcessID              pgtype.UUID `json:"process_id"`
+	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
+	ReservationSeconds     int64       `json:"reservation_seconds"`
+	ID                     pgtype.UUID `json:"id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
 }
 
 func (q *Queries) ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error) {
 	row := q.db.QueryRow(ctx, reserveReadyRuntimeForWorkspaceExec,
 		arg.ProcessID,
 		arg.BaseWorkspaceVersionID,
-		arg.ReservationExpiresAt,
+		arg.ReservationSeconds,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.DeploymentDefinitionID,
@@ -2782,6 +2735,7 @@ func (q *Queries) ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg R
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,
