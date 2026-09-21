@@ -41,6 +41,7 @@ const (
 	snapshotCreateType         = "Full"
 	snapshotMemoryBackend      = "File"
 	machineHugePages           = "None"
+	blockIOEngine              = "Sync"
 
 	GuestNetworkCIDRV0   = "192.168.127.2/30"
 	GuestGatewayIPv4V0   = "192.168.127.1"
@@ -89,6 +90,7 @@ type VMRuntimeBootProfile struct {
 }
 
 type VMRuntimeDeviceDescriptor struct {
+	BlockIOEngine string                     `json:"block_io_engine"`
 	Drives        []VMRuntimeDriveDescriptor `json:"drives"`
 	NetworkID     string                     `json:"network_id"`
 	NetworkIDRule string                     `json:"network_id_rule"`
@@ -178,7 +180,8 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			DynamicFlags: []string{runtimeSubstrateKernelFlag, runtimeProgramKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
 		},
 		Devices: VMRuntimeDeviceDescriptor{
-			Drives: drives, NetworkID: guestNetworkInterfaceID,
+			BlockIOEngine: blockIOEngine,
+			Drives:        drives, NetworkID: guestNetworkInterfaceID,
 			NetworkIDRule: "one_based_sdk_slice_order",
 			Vsock: VMRuntimeVsockDescriptor{
 				ID: guestVsockID, HostPath: "<jail_root>/" + vsockSocketName,

@@ -31,7 +31,16 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				api.snapshotErr = errors.New("snapshot failed")
 			}
 			root := t.TempDir()
+			for _, name := range []string{"computer.ext4", "scratch.ext4"} {
+				if err := os.WriteFile(filepath.Join(root, name), make([]byte, 4096), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			serveSnapshotAPI(t, root, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/vm/config" {
+					_, _ = w.Write([]byte(`{"drives":[{"drive_id":"computer","io_engine":"Sync","is_read_only":false,"path_on_host":"/computer.ext4"},{"drive_id":"scratch","io_engine":"Sync","is_read_only":false,"path_on_host":"/scratch.ext4"}]}`))
+					return
+				}
 				api.snapshots++
 				if api.snapshotErr != nil {
 					w.WriteHeader(500)
@@ -69,7 +78,12 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := &guestSession{machine: machine, jailRoot: root}
+			files, err := openRuntimeDiskFiles(filepath.Join(root, "scratch.ext4"), filepath.Join(root, "computer.ext4"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = closeRuntimeDiskFiles(files) })
+			session := &guestSession{diskFiles: files, machine: machine, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4")}
 			if stage == "invalid manifest" || stage == "missing backing file" {
 				session.runtimeIdentity = testRuntimeIdentity(t, testDigest([]byte("kernel")), testDigest([]byte("initramfs")), testDigest([]byte("rootfs")))
 			}
@@ -77,10 +91,12 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				session.cfg = testRestoreConfig(t)
 				session.cpuConfigDigest = testCPUConfigDigest(session.cfg.VCPUCount)
 				session.kernelArgs = runtimeKernelArgs(vm.RuntimeTopology{}, nil, session.cfg.NetworkResolverIPv4)
-				session.scratchDisk = filepath.Join(root, "missing-scratch.ext4")
+				if err := os.Remove(session.scratchDisk); err != nil {
+					t.Fatal(err)
+				}
 			}
 
-			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096}
+			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4")}
 			session.cfg.MemoryMiB = 4
 			session.cfg.ScratchDiskMiB = 4
 			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()
@@ -88,8 +104,8 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected capture failure")
 			}
-			if stage == "missing backing file" && !strings.Contains(err.Error(), "pack checkpoint") {
-				t.Fatalf("did not reach file packing: %v", err)
+			if stage == "missing backing file" && !strings.Contains(err.Error(), "sync paused scratch") {
+				t.Fatalf("did not reject the missing source before serialization: %v", err)
 			}
 			if stage == "invalid manifest" && !strings.Contains(err.Error(), "manifest") {
 				t.Fatalf("did not reach manifest validation: %v", err)

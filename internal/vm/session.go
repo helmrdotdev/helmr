@@ -49,7 +49,6 @@ type CheckpointableSession interface {
 	Session
 	SnapshotLimits() (SnapshotLimits, error)
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
-	Resume(context.Context) error
 }
 
 type ConnectRequest struct {

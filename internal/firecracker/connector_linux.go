@@ -1114,6 +1114,15 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	}
 	opts = append(opts, c.withTapOwner())
 	opts = append(opts, c.withNetworkBinding(mode, owner, binding, &networkBinding))
+	diskFiles, err := openRuntimeDiskFiles(scratchDiskPath, computerDiskPath)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, closeRuntimeDiskFiles(diskFiles))
+		}
+	}()
 	// firecracker-go-sdk binds this context to the jailer/firecracker process.
 	// Keep it separate from the startup request so prepared sessions can outlive
 	// a background warm command after boot succeeds.
@@ -1180,6 +1189,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		instanceDir:     instanceDir,
 		jailRoot:        jailRoot,
 		scratchDisk:     scratchDiskPath,
+		diskFiles:       diskFiles,
 		topology:        topology,
 		readOnlyDrives:  append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
 		owner:           owner,
@@ -1377,6 +1387,9 @@ func runtimeDrivesWithReadOnlyPaths(
 				IsReadOnly:   firecracker.Bool(true),
 			})
 		}
+	}
+	for i := range drives {
+		drives[i].IoEngine = firecracker.String(blockIOEngine)
 	}
 	return drives
 }
@@ -1905,12 +1918,12 @@ type guestSession struct {
 	instanceDir     string
 	jailRoot        string
 	scratchDisk     string
+	diskFiles       map[string]*os.File
 	topology        vm.RuntimeTopology
 	readOnlyDrives  []vm.ReadOnlyDrive
 	owner           vm.Owner
 	cleaner         vm.Cleaner
 	networkBinding  *installedNetworkBinding
-	paused          atomic.Bool
 	once            sync.Once
 	machineStopOnce sync.Once
 	machineStopErr  error
@@ -2024,6 +2037,7 @@ func (s *guestSession) Close(ctx context.Context) error {
 			deactivateErr = s.networkBinding.Deactivate()
 		}
 		stopErr := s.stopMachine(ctx)
+		diskFilesErr := closeRuntimeDiskFiles(s.diskFiles)
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
@@ -2048,6 +2062,7 @@ func (s *guestSession) Close(ctx context.Context) error {
 		}
 		s.err = errors.Join(
 			streamErr,
+			diskFilesErr,
 			deactivateErr,
 			stopErr,
 			cleanupErr,
@@ -2100,7 +2115,11 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return vm.SnapshotArtifact{}, fmt.Errorf("pause Firecracker vm: %w", err)
 	}
 	recordPhase("firecracker_pause_vm", started)
-	s.paused.Store(true)
+	started = time.Now()
+	if err := s.syncPausedDisks(ctx); err != nil {
+		return vm.SnapshotArtifact{}, err
+	}
+	recordPhase("sync_paused_disks", started)
 	started = time.Now()
 	if err := captureSnapshotState(ctx, s.machine.Cfg.SocketPath, s.jailRoot, memName, stateName, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
 		return vm.SnapshotArtifact{}, fmt.Errorf("create Firecracker snapshot: %w", err)
@@ -2218,17 +2237,6 @@ func (s *guestSession) packSnapshotRuntimeFile(ctx context.Context, sourcePath s
 		MediaType:  mediaType,
 		Filepack:   &measured,
 	}, nil
-}
-
-func (s *guestSession) Resume(ctx context.Context) error {
-	if !s.paused.Load() {
-		return nil
-	}
-	if err := s.machine.ResumeVM(ctx); err != nil {
-		return fmt.Errorf("resume Firecracker vm: %w", err)
-	}
-	s.paused.Store(false)
-	return nil
 }
 
 func recordRuntimePhase(record func(vm.RuntimePhase), phase vm.RuntimePhase) {

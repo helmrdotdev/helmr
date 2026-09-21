@@ -300,14 +300,6 @@ func (s *managedWorkspaceMountSession) CreateSnapshot(ctx context.Context, reque
 	return checkpointable.CreateSnapshot(ctx, request)
 }
 
-func (s *managedWorkspaceMountSession) Resume(ctx context.Context) error {
-	checkpointable, ok := s.session.(vm.CheckpointableSession)
-	if !ok {
-		return errors.New("workspace mount session does not support checkpoint resume")
-	}
-	return checkpointable.Resume(ctx)
-}
-
 func (s *managedWorkspaceMountSession) ReleaseCheckpointSource(ctx context.Context) error {
 	s.mu.Lock()
 	if s.releaseForCheckpointStarted {
@@ -411,14 +403,6 @@ func (s *borrowedRunSession) CreateSnapshot(ctx context.Context, request vm.Snap
 		return vm.SnapshotArtifact{}, err
 	}
 	return artifact, nil
-}
-
-func (s *borrowedRunSession) Resume(ctx context.Context) error {
-	checkpointable, ok := s.parent.(vm.CheckpointableSession)
-	if !ok {
-		return errors.New("workspace mount session does not support checkpoint resume")
-	}
-	return checkpointable.Resume(ctx)
 }
 
 func (s *managedWorkspaceMountSession) SnapshotLimits() (vm.SnapshotLimits, error) {
