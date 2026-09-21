@@ -17,7 +17,7 @@ func projectCheckpointWorkspaceBase(
 		return workerapi.CheckpointWorkspaceBase{}, err
 	}
 	tree := workspace.TreeIdentity{
-		Digest: authority.ContentDigest, SizeBytes: authority.LogicalSizeBytes,
+		Digest: authority.ContentDigest.String, SizeBytes: authority.LogicalSizeBytes,
 		EntryCount: int(authority.EntryCount),
 	}
 	emptyShape := !authority.ParentVersionID.Valid && !authority.ArtifactID.Valid &&

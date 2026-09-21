@@ -171,7 +171,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			},
 		)
 		if err == nil {
-			if existing.ContentDigest != verified.tree.Digest ||
+			if existing.ContentDigest.String != verified.tree.Digest ||
 				existing.SizeBytes != verified.tree.SizeBytes ||
 				existing.EntryCount != int32(verified.tree.EntryCount) {
 				return conflict(errors.New("workspace capture replay differs"))
@@ -208,7 +208,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 				WorkerEpoch:        params.epoch,
 				WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
 				ArtifactID:         artifact.ID,
-				ContentDigest:      verified.tree.Digest,
+				ContentDigest:      pgvalue.Text(verified.tree.Digest),
 				SizeBytes:          verified.tree.SizeBytes,
 				EntryCount:         int32(verified.tree.EntryCount),
 			},
@@ -736,7 +736,7 @@ func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.Works
 	target := workerapi.WorkspaceResetTarget{
 		BaseWorkspaceVersionID: pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
 		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: row.WorkspaceContentDigest, SizeBytes: row.WorkspaceLogicalSizeBytes,
+			Digest: row.WorkspaceContentDigest.String, SizeBytes: row.WorkspaceLogicalSizeBytes,
 			EntryCount: row.WorkspaceEntryCount,
 		},
 	}

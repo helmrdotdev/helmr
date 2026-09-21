@@ -556,14 +556,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 			) VALUES ($1, $2, 'us-east-1', 'workspace.v1', $3, $4, $5)
 		`, workspaceID, fixture.environmentID, workspaceDefinitionID, versionID,
 			fixture.workspaceKeys[index])
-		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO workspace_versions (
-			    id, environment_id, workspace_id, status, content_digest, size_bytes, entry_count,
-			    ownership_generation, writer_generation, published_at
-			) VALUES ($1, $2, $3, 'committed',
-			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			          0, 0, 0, 0, now())
-		`, versionID, fixture.environmentID, workspaceID)
+		dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.environmentID, workspaceID)
 		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspace_secrets (mode,
 			    workspace_id, environment_id, placement_kind, placement_target, secret_id

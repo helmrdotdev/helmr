@@ -1758,11 +1758,11 @@ CREATE TABLE workspace_versions (
     workspace_id UUID NOT NULL,
     parent_version_id UUID,
     artifact_id UUID,
-    content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
+    content_digest TEXT CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
     size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
     entry_count INTEGER NOT NULL DEFAULT 0 CHECK (entry_count >= 0),
     status TEXT NOT NULL DEFAULT 'private'
-        CHECK (status IN ('private', 'committed', 'discarded')),
+        CHECK (status IN ('initializing', 'private', 'committed', 'discarded')),
     source_workspace_lease_id UUID,
     ownership_generation BIGINT NOT NULL CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL CHECK (writer_generation >= 0),
@@ -1796,25 +1796,28 @@ CREATE TABLE workspace_versions (
     CONSTRAINT workspace_versions_source_shape_check CHECK (
         (
             parent_version_id IS NULL
-            AND artifact_id IS NULL
-            AND content_digest = 'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96'
-            AND size_bytes = 0
-            AND entry_count = 0
-            AND status = 'committed'
             AND source_workspace_lease_id IS NULL
             AND ownership_generation = 0
             AND writer_generation = 0
-            AND published_at IS NOT NULL
-            AND discarded_at IS NULL
+            AND entry_count = 0
+            AND (
+                (status = 'initializing' AND artifact_id IS NULL
+                 AND content_digest IS NULL AND size_bytes = 0)
+                OR (status = 'committed' AND artifact_id IS NOT NULL
+                    AND content_digest IS NOT NULL AND size_bytes > 0
+                    AND size_bytes % 4096 = 0)
+            )
         )
         OR (
             parent_version_id IS NOT NULL
             AND artifact_id IS NOT NULL
+            AND content_digest IS NOT NULL
             AND source_workspace_lease_id IS NOT NULL
+            AND status <> 'initializing'
         )
     ),
     CONSTRAINT workspace_versions_publication_lifecycle_check CHECK (
-        (status = 'private' AND published_at IS NULL AND discarded_at IS NULL)
+        (status IN ('initializing', 'private') AND published_at IS NULL AND discarded_at IS NULL)
         OR (status = 'committed' AND published_at IS NOT NULL AND discarded_at IS NULL)
         OR (status = 'discarded' AND published_at IS NULL AND discarded_at IS NOT NULL)
     )

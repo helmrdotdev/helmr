@@ -17,7 +17,7 @@ func TestProjectCheckpointWorkspaceBaseKeepsOriginalArtifactSeparate(t *testing.
 		VersionID:       versionID,
 		ParentVersionID: pgvalue.UUID(uuid.NewV7()),
 		ArtifactID:      pgvalue.UUID(uuid.NewV7()),
-		ContentDigest:   digestWith("1"), LogicalSizeBytes: 5, EntryCount: 2,
+		ContentDigest:   pgvalue.Text(digestWith("1")), LogicalSizeBytes: 5, EntryCount: 2,
 		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.NewV7()),
 		OwnershipGeneration:    2, WriterGeneration: 3,
 		ArtifactRowKind:   db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
@@ -48,7 +48,7 @@ func TestProjectCheckpointWorkspaceBaseKeepsOriginalArtifactSeparate(t *testing.
 func TestProjectCheckpointWorkspaceBaseSupportsCanonicalEmptyBase(t *testing.T) {
 	versionID := pgvalue.UUID(uuid.NewV7())
 	projected, err := projectCheckpointWorkspaceBase(db.GetCheckpointWorkspaceBaseAuthorityRow{
-		VersionID: versionID, ContentDigest: workspace.CanonicalEmptyTreeDigest,
+		VersionID: versionID, ContentDigest: pgvalue.Text(workspace.CanonicalEmptyTreeDigest),
 	})
 	if err != nil {
 		t.Fatal(err)

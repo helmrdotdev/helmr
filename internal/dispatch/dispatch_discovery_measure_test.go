@@ -54,6 +54,13 @@ UPDATE runs
 		t.Fatal(err)
 	}
 
+	var rootArtifact uuid.UUID
+	var rootDigest string
+	var rootBytes int64
+	if err := tx.QueryRow(fixture.ctx, `SELECT v.artifact_id,v.content_digest,v.size_bytes FROM workspace_versions v
+JOIN workspaces w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).Scan(&rootArtifact, &rootDigest, &rootBytes); err != nil {
+		t.Fatal(err)
+	}
 	workspaces := make([][]any, 0, rows-1)
 	versions := make([][]any, 0, rows-1)
 	runs := make([][]any, 0, rows-1)
@@ -79,7 +86,7 @@ UPDATE runs
 		})
 		versions = append(versions, []any{
 			versionID, fixture.environmentID, workspaceID,
-			"sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96",
+			rootDigest, rootArtifact, rootBytes,
 			"committed", int64(0), int64(0), base,
 		})
 		runs = append(runs, []any{
@@ -96,7 +103,7 @@ UPDATE runs
 		"owner_run_id", "ownership_generation", "writer_generation", "head_version_id",
 	}, workspaces)
 	copyRows(t, fixture.ctx, tx, "workspace_versions", []string{
-		"id", "environment_id", "workspace_id", "content_digest", "status",
+		"id", "environment_id", "workspace_id", "content_digest", "artifact_id", "size_bytes", "status",
 		"ownership_generation", "writer_generation", "published_at",
 	}, versions)
 	copyRows(t, fixture.ctx, tx, "runs", []string{

@@ -92,7 +92,7 @@ SELECT workspace_processes.id AS process_id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspaces.id
    AND workspace_versions.id = workspace_processes.base_workspace_version_id
-   AND workspace_versions.status = 'committed'
+   AND workspace_versions.status IN ('initializing', 'committed')
  WHERE workspace_processes.status = 'pending'
    AND workspaces.region_id = sqlc.arg(region_id)
    AND workspaces.status = 'active'
@@ -247,6 +247,13 @@ UPDATE workspaces
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(workspace_id)
    AND workspaces.head_version_id = sqlc.arg(base_workspace_version_id)
+   AND EXISTS (
+       SELECT 1 FROM workspace_versions AS base
+        WHERE base.workspace_id = workspaces.id
+          AND base.id = workspaces.head_version_id
+          AND base.status = 'committed'
+          AND base.artifact_id IS NOT NULL
+   )
    AND workspaces.ownership_generation = sqlc.arg(expected_ownership_generation)
    AND workspaces.writer_generation = sqlc.arg(expected_writer_generation)
    AND workspaces.status = 'active'

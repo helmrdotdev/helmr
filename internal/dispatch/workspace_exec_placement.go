@@ -309,7 +309,7 @@ SELECT workspace_processes.id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspaces.id
    AND workspace_versions.id = workspace_processes.base_workspace_version_id
-   AND workspace_versions.status = 'committed'
+   AND workspace_versions.status IN ('initializing', 'committed')
  WHERE workspace_processes.org_id = $1
    AND workspace_processes.id = $2
    AND workspace_processes.revision = $3

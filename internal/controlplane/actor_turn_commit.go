@@ -182,7 +182,7 @@ func (s *Server) commitActorTurn(
 				return staleActorTurnCommit(err)
 			}
 		}
-		changed := commit.tree.Digest != base.ContentDigest ||
+		changed := commit.tree.Digest != base.ContentDigest.String ||
 			commit.tree.SizeBytes != base.LogicalSizeBytes || commit.tree.EntryCount != int(base.EntryCount)
 		if changed != (commit.artifact != nil) {
 			return errStaleActorTurnCommit
@@ -329,7 +329,7 @@ func replayActorTurnCommit(
 	if err != nil {
 		return workerapi.CommitActorTurnResponse{}, false, staleActorTurnCommit(err)
 	}
-	if version.ContentDigest != commit.tree.Digest || version.LogicalSizeBytes != commit.tree.SizeBytes ||
+	if version.ContentDigest.String != commit.tree.Digest || version.LogicalSizeBytes != commit.tree.SizeBytes ||
 		version.EntryCount != int32(commit.tree.EntryCount) {
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}

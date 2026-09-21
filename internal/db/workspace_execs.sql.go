@@ -115,6 +115,13 @@ UPDATE workspaces
    AND workspaces.environment_id = $5
    AND workspaces.id = $6
    AND workspaces.head_version_id = $7
+   AND EXISTS (
+       SELECT 1 FROM workspace_versions AS base
+        WHERE base.workspace_id = workspaces.id
+          AND base.id = workspaces.head_version_id
+          AND base.status = 'committed'
+          AND base.artifact_id IS NOT NULL
+   )
    AND workspaces.ownership_generation = $8
    AND workspaces.writer_generation = $9
    AND workspaces.status = 'active'
@@ -1518,7 +1525,7 @@ SELECT workspace_processes.id AS process_id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = workspaces.id
    AND workspace_versions.id = workspace_processes.base_workspace_version_id
-   AND workspace_versions.status = 'committed'
+   AND workspace_versions.status IN ('initializing', 'committed')
  WHERE workspace_processes.status = 'pending'
    AND workspaces.region_id = $1
    AND workspaces.status = 'active'
@@ -2895,7 +2902,7 @@ type StageWorkspaceExecCaptureParams struct {
 	WorkerEpoch        int64       `json:"worker_epoch"`
 	WorkspaceVersionID pgtype.UUID `json:"workspace_version_id"`
 	ArtifactID         pgtype.UUID `json:"artifact_id"`
-	ContentDigest      string      `json:"content_digest"`
+	ContentDigest      pgtype.Text `json:"content_digest"`
 	SizeBytes          int64       `json:"size_bytes"`
 	EntryCount         int32       `json:"entry_count"`
 }
@@ -2906,7 +2913,7 @@ type StageWorkspaceExecCaptureRow struct {
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
 	ArtifactID             pgtype.UUID        `json:"artifact_id"`
-	ContentDigest          string             `json:"content_digest"`
+	ContentDigest          pgtype.Text        `json:"content_digest"`
 	SizeBytes              int64              `json:"size_bytes"`
 	EntryCount             int32              `json:"entry_count"`
 	Status                 string             `json:"status"`

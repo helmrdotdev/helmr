@@ -60,7 +60,7 @@ func (d *Authority) prepareRunWorkspace(
 	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
-	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
+	authority, err := lockRunPlacementAuthority(ctx, tx, candidate, true)
 	if err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}

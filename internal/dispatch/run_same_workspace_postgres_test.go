@@ -578,7 +578,7 @@ SELECT runs.status, run_leases.status, workspace_leases.status, run_waits.suspen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, debugErr := lockRunPlacementAuthority(fixture.ctx, debugTx, nestedCandidate); debugErr != nil {
+	if _, debugErr := lockRunPlacementAuthority(fixture.ctx, debugTx, nestedCandidate, false); debugErr != nil {
 		_ = debugTx.Rollback(fixture.ctx)
 		t.Fatalf("lock recovered nested placement authority: %v", debugErr)
 	}

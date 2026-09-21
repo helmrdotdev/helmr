@@ -1325,7 +1325,7 @@ func recordCheckpointWorkspaceVersion(
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		ArtifactID: artifactRow.ID, ContentDigest: capture.tree.Digest,
+		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(capture.tree.Digest),
 		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,

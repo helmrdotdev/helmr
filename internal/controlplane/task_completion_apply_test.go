@@ -234,7 +234,7 @@ func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
 		workspace: db.LockRunLeaseClaimWorkspaceRow{ID: workspaceID},
 	}
 	store := &taskWorkspaceRollbackFixture{version: db.WorkspaceVersion{
-		ID: baseID, WorkspaceID: workspaceID, ContentDigest: workspace.CanonicalEmptyTreeDigest, Status: db.WorkspaceVersionStatusCommitted,
+		ID: baseID, WorkspaceID: workspaceID, ContentDigest: pgvalue.Text(workspace.CanonicalEmptyTreeDigest), Status: db.WorkspaceVersionStatusCommitted,
 	}}
 	rollback := parsedTaskWorkspaceRollback{
 		baseID: pgvalue.MustUUIDValue(baseID),
@@ -270,7 +270,7 @@ func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
 	store := &taskWorkspaceRollbackFixture{
 		version: db.WorkspaceVersion{
 			ID: baseID, WorkspaceID: workspaceID, ParentVersionID: parentID, ArtifactID: artifactID,
-			ContentDigest: tree.Digest, SizeBytes: tree.SizeBytes,
+			ContentDigest: pgvalue.Text(tree.Digest), SizeBytes: tree.SizeBytes,
 			EntryCount: int32(tree.EntryCount), Status: db.WorkspaceVersionStatusCommitted,
 			SourceWorkspaceLeaseID: sourceLeaseID,
 		},
@@ -331,7 +331,7 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != versionID || store.publish.ContentDigest != capture.tree.Digest ||
+	if got != versionID || store.publish.ContentDigest.String != capture.tree.Digest ||
 		store.publish.SizeBytes != capture.tree.SizeBytes || store.publish.EntryCount != int32(capture.tree.EntryCount) ||
 		store.artifact.Digest != capture.artifact.Digest || store.artifact.SizeBytes != capture.artifact.SizeBytes {
 		t.Fatalf("published version = %+v, Artifact = %+v", store.publish, store.artifact)

@@ -99,6 +99,7 @@ func lockRunPlacementAuthority(
 	ctx context.Context,
 	tx pgx.Tx,
 	candidate ReadyRunCandidate,
+	allowInitialization bool,
 ) (runPlacementAuthority, error) {
 	var authority runPlacementAuthority
 	var entrypointDefinitionID pgtype.UUID
@@ -618,7 +619,10 @@ SELECT run_attempts.base_workspace_version_id,
     ON workspace_versions.workspace_id = run_attempts.workspace_id
    AND workspace_versions.id = run_attempts.base_workspace_version_id
    AND (($5::boolean AND workspace_versions.status = 'private')
-        OR (NOT $5::boolean AND workspace_versions.status = 'committed'))
+        OR (NOT $5::boolean AND workspace_versions.status = 'committed')
+        OR ($6::boolean AND NOT $5::boolean
+            AND workspace_versions.status = 'initializing'
+            AND workspace_versions.parent_version_id IS NULL))
  WHERE run_attempts.run_id = $1
    AND run_attempts.number = $2
    AND run_attempts.entrypoint_kind = $4
@@ -629,6 +633,7 @@ SELECT run_attempts.base_workspace_version_id,
 		authority.workspaceID,
 		authority.entrypointKind,
 		authority.sameWorkspaceChildWaitID.Valid,
+		allowInitialization && !authority.restoreCheckpointID.Valid,
 	).Scan(&attemptBaseWorkspaceVersionID, &attemptSessionInputStartSequence)
 	if err != nil {
 		return runPlacementAuthority{}, fmt.Errorf("lock Run placement Attempt authority: %w", err)

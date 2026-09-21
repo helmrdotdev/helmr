@@ -48,7 +48,7 @@ func TestManagedCheckpointRequiresFullSourceProof(t *testing.T) {
 					defer tx.Rollback(f.ctx)
 					candidate := f.candidate()
 					candidate.ExpectedRunRevision = 3
-					_, err = lockRunPlacementAuthority(f.ctx, tx, candidate)
+					_, err = lockRunPlacementAuthority(f.ctx, tx, candidate, false)
 					if mode == "valid timer" || mode == "failed reclaimed" || mode == "lost reclaimed" {
 						if err != nil {
 							t.Fatalf("valid managed checkpoint rejected: %v", err)

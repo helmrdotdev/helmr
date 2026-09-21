@@ -17,9 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// These tests exercise candidate ownership only. The fixture's existing version
-// is not a disk-publication proof; preparation admission and the atomic root
-// publication transaction are separate integration boundaries.
+// These tests exercise candidate ownership and atomic root publication. They do
+// not prove remote upload verification or live preparation authority.
 func initializationParams(t *testing.T, f runtest.Fixture) db.RegisterComputerInitializationParams {
 	t.Helper()
 	work := f.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
@@ -36,6 +35,9 @@ SELECT r.id, r.desired_version, w.id, w.head_version_id, w.ownership_generation,
 	); err != nil {
 		t.Fatal(err)
 	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions
+    SET status='initializing', artifact_id=NULL, content_digest=NULL, size_bytes=0, published_at=NULL
+    WHERE id=$1`, p.VersionID)
 	return p
 }
 
@@ -57,8 +59,8 @@ func initializationGet(p db.RegisterComputerInitializationParams) db.GetComputer
 func initializationAbandon(p db.RegisterComputerInitializationParams) db.AbandonComputerInitializationParams {
 	return db.AbandonComputerInitializationParams{ID: p.ID, EnvironmentID: p.EnvironmentID, ComputerID: p.ComputerID}
 }
-func initializationConsume(p db.RegisterComputerInitializationParams, artifact pgtype.UUID) db.ConsumeComputerInitializationParams {
-	return db.ConsumeComputerInitializationParams{ID: p.ID, EnvironmentID: p.EnvironmentID, ComputerID: p.ComputerID, ArtifactID: artifact}
+func initializationConsume(p db.RegisterComputerInitializationParams, artifact pgtype.UUID) db.PublishComputerInitializationParams {
+	return db.PublishComputerInitializationParams{ID: p.ID, EnvironmentID: p.EnvironmentID, ComputerID: p.ComputerID, ArtifactID: artifact}
 }
 
 func TestComputerInitializationRegistrationRetainsExactIdentity(t *testing.T) {
@@ -140,7 +142,7 @@ func TestComputerInitializationConsumptionIsTransactional(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := initializationArtifact(t, f, tx, p)
-	consumed, err := db.New(tx).ConsumeComputerInitialization(t.Context(), initializationConsume(p, artifact))
+	consumed, err := db.New(tx).PublishComputerInitialization(t.Context(), initializationConsume(p, artifact))
 	if err != nil || consumed.Status != "consumed" {
 		t.Fatalf("consume: %+v, %v", consumed, err)
 	}
@@ -151,12 +153,17 @@ func TestComputerInitializationConsumptionIsTransactional(t *testing.T) {
 	if err != nil || retained.Status != "registered" || retained.ArtifactID.Valid {
 		t.Fatalf("rollback lost candidate: %+v, %v", retained, err)
 	}
+	assertInitializationRoot(t, f, p, "initializing", pgtype.UUID{})
 	artifact = initializationArtifact(t, f, f.Pool, p)
-	consumed, err = q.ConsumeComputerInitialization(t.Context(), initializationConsume(p, artifact))
+	consumed, err = q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact))
 	if err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := q.ConsumeComputerInitialization(t.Context(), initializationConsume(p, artifact))
+	assertInitializationRoot(t, f, p, "committed", artifact)
+	if _, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("consumed candidate published again: %v", err)
+	}
+	replayed, err := q.GetComputerInitialization(t.Context(), initializationGet(p))
 	if err != nil || consumed.ConsumedAt != replayed.ConsumedAt {
 		t.Fatalf("consume replay changed receipt: %+v, %v", replayed, err)
 	}
@@ -185,7 +192,7 @@ func TestComputerInitializationConsumeAndAbandonSerialize(t *testing.T) {
 		results := make(chan error, 2)
 		go func() {
 			<-start
-			_, err := q.ConsumeComputerInitialization(t.Context(), initializationConsume(p, artifact))
+			_, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact))
 			results <- err
 		}()
 		go func() {
@@ -254,7 +261,7 @@ func TestComputerInitializationRejectsInvalidOwnershipAndLifecycle(t *testing.T)
 	// consume this candidate even when it belongs to the same Computer owner.
 	other.Digest = dbtest.Digest("other-object")
 	wrongArtifact := initializationArtifact(t, f, f.Pool, other)
-	if _, err := q.ConsumeComputerInitialization(t.Context(), initializationConsume(p, wrongArtifact)); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, wrongArtifact)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("different artifact consumed: %v", err)
 	}
 }
@@ -297,12 +304,12 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := q.ConsumeComputerInitialization(t.Context(), initializationConsume(first, firstArtifact))
+		_, err := q.PublishComputerInitialization(t.Context(), initializationConsume(first, firstArtifact))
 		results <- err
 	}()
 	go func() {
 		<-start
-		_, err := q.ConsumeComputerInitialization(t.Context(), initializationConsume(second, secondArtifact))
+		_, err := q.PublishComputerInitialization(t.Context(), initializationConsume(second, secondArtifact))
 		results <- err
 	}()
 	close(start)
@@ -310,8 +317,7 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
 	if a == nil {
 		a, b = b, a
 	}
-	var uniqueError *pgconn.PgError
-	if b != nil || !errors.As(a, &uniqueError) || uniqueError.Code != "23505" || uniqueError.ConstraintName != "computer_initializations_consumed_computer_uidx" {
+	if b != nil || !errors.Is(a, pgx.ErrNoRows) {
 		t.Fatalf("two initializations consumed: %v / %v", a, b)
 	}
 }
@@ -378,5 +384,77 @@ func TestComputerInitializationRevocationBatchSkipsLockedRuntime(t *testing.T) {
 	}
 	if n, err := q.AbandonRevokedComputerInitializations(ctx, 10); err != nil || n != 0 {
 		t.Fatalf("replay: %d, %v", n, err)
+	}
+}
+
+func assertInitializationRoot(t *testing.T, f runtest.Fixture, p db.RegisterComputerInitializationParams, status string, artifact pgtype.UUID) {
+	t.Helper()
+	var gotStatus string
+	var gotArtifact pgtype.UUID
+	var digest pgtype.Text
+	var size int64
+	var published pgtype.Timestamptz
+	var head, base pgtype.UUID
+	if err := f.Pool.QueryRow(t.Context(), `
+SELECT v.status,v.artifact_id,v.content_digest,v.size_bytes,v.published_at,w.head_version_id,a.base_workspace_version_id
+FROM workspace_versions v JOIN workspaces w ON w.id=v.workspace_id
+JOIN run_attempts a ON a.workspace_id=w.id
+WHERE v.id=$1`, p.VersionID).Scan(&gotStatus, &gotArtifact, &digest, &size, &published, &head, &base); err != nil {
+		t.Fatal(err)
+	}
+	if gotStatus != status || gotArtifact != artifact || head != p.VersionID || base != p.VersionID {
+		t.Fatalf("root identity/state changed: %s %v %v %v", gotStatus, gotArtifact, head, base)
+	}
+	if status == "initializing" {
+		if digest.Valid || size != 0 || published.Valid {
+			t.Fatal("unpublished root has fabricated persistent state")
+		}
+	} else if !digest.Valid || digest.String != p.Digest || size != p.LogicalBytes || !published.Valid {
+		t.Fatal("published root does not match exact candidate")
+	}
+}
+
+func TestComputerCreationHasUnpublishedStableRoot(t *testing.T) {
+	f := runtest.New(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE environments SET current_deployment_id=$2 WHERE id=$1`, f.EnvironmentID, f.DeploymentID)
+	work := f.AddRunLease(t, "assigned", time.Now())
+	q := db.New(f.Pool)
+	scheduleID := pgvalue.UUID(uuid.NewV7())
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO schedules (id,environment_id,task_declared_id,deployment_definition_id,deployment_id,cron_pattern,timezone,status,effective_from,next_fire_at)
+VALUES ($1,$2,'test-task',$3,$4,'* * * * *','UTC','active',now(),now()+interval '1 minute')`, scheduleID, f.EnvironmentID, f.TaskDefinitionID, f.DeploymentID)
+	for _, kind := range []string{"current deployment", "Run deployment", "schedule"} {
+		t.Run(kind, func(t *testing.T) {
+			computerID, rootID := pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7())
+			var err error
+			if kind == "current deployment" {
+				_, err = q.CreateWorkspaceFromCurrentDeployment(t.Context(), db.CreateWorkspaceFromCurrentDeploymentParams{
+					OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
+					DeploymentDefinitionID: pgvalue.UUID(f.WorkspaceDefinitionID), SandboxDeclaredID: "test-workspace", ID: computerID, InitialVersionID: rootID,
+				})
+			} else if kind == "Run deployment" {
+				_, err = q.CreateWorkspaceFromRunDeployment(t.Context(), db.CreateWorkspaceFromRunDeploymentParams{
+					EnvironmentID: pgvalue.UUID(f.EnvironmentID), RunID: pgvalue.UUID(work.RunID), SandboxDeclaredID: "test-workspace", ID: computerID, InitialVersionID: rootID,
+				})
+			} else {
+				_, err = q.CreateWorkspaceForScheduleFire(t.Context(), db.CreateWorkspaceForScheduleFireParams{
+					EnvironmentID: pgvalue.UUID(f.EnvironmentID), ScheduleID: scheduleID, ExpectedGeneration: 1,
+					SandboxDeclaredID: "test-workspace", ID: computerID, InitialVersionID: rootID,
+				})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var valid bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT v.id=$2 AND v.status='initializing' AND v.parent_version_id IS NULL
+AND v.artifact_id IS NULL AND v.content_digest IS NULL AND v.size_bytes=0 AND v.published_at IS NULL
+FROM workspaces w JOIN workspace_versions v ON v.id=w.head_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
+				t.Fatalf("new root fabricated persistence: %v %v", valid, err)
+			}
+			_, err = f.Pool.Exec(t.Context(), `UPDATE workspace_versions SET status='committed',published_at=now() WHERE id=$1`, rootID)
+			var check *pgconn.PgError
+			if !errors.As(err, &check) || check.Code != "23514" {
+				t.Fatalf("root without disk committed: %v", err)
+			}
+		})
 	}
 }

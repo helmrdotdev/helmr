@@ -89,39 +89,21 @@ func (q *Queries) AbandonRevokedComputerInitializations(ctx context.Context, row
 	return result.RowsAffected(), nil
 }
 
-const consumeComputerInitialization = `-- name: ConsumeComputerInitialization :one
-UPDATE computer_initializations AS initialization
-   SET status = 'consumed', artifact_id = artifacts.id,
-       consumed_at = COALESCE(initialization.consumed_at, clock_timestamp())
-  FROM artifacts
- WHERE initialization.id = $1
-   AND initialization.environment_id = $2
-   AND initialization.computer_id = $3
-   AND artifacts.environment_id = initialization.environment_id
-   AND artifacts.id = $4
-   AND artifacts.kind = 'workspace_version'
-   AND artifacts.digest = initialization.digest
-   AND artifacts.size_bytes = initialization.size_bytes
-   AND artifacts.media_type = initialization.media_type
-   AND (initialization.status = 'registered'
-        OR (initialization.status = 'consumed' AND initialization.artifact_id = artifacts.id))
-RETURNING initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at
+const getComputerInitialization = `-- name: GetComputerInitialization :one
+SELECT id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at FROM computer_initializations
+ WHERE environment_id = $1
+   AND computer_id = $2
+   AND runtime_instance_id = $3
 `
 
-type ConsumeComputerInitializationParams struct {
-	ID            pgtype.UUID `json:"id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ComputerID    pgtype.UUID `json:"computer_id"`
-	ArtifactID    pgtype.UUID `json:"artifact_id"`
+type GetComputerInitializationParams struct {
+	EnvironmentID     pgtype.UUID `json:"environment_id"`
+	ComputerID        pgtype.UUID `json:"computer_id"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
 }
 
-func (q *Queries) ConsumeComputerInitialization(ctx context.Context, arg ConsumeComputerInitializationParams) (ComputerInitialization, error) {
-	row := q.db.QueryRow(ctx, consumeComputerInitialization,
-		arg.ID,
-		arg.EnvironmentID,
-		arg.ComputerID,
-		arg.ArtifactID,
-	)
+func (q *Queries) GetComputerInitialization(ctx context.Context, arg GetComputerInitializationParams) (ComputerInitialization, error) {
+	row := q.db.QueryRow(ctx, getComputerInitialization, arg.EnvironmentID, arg.ComputerID, arg.RuntimeInstanceID)
 	var i ComputerInitialization
 	err := row.Scan(
 		&i.ID,
@@ -146,21 +128,67 @@ func (q *Queries) ConsumeComputerInitialization(ctx context.Context, arg Consume
 	return i, err
 }
 
-const getComputerInitialization = `-- name: GetComputerInitialization :one
-SELECT id, environment_id, computer_id, version_id, runtime_instance_id, runtime_desired_version, ownership_generation, writer_generation, digest, size_bytes, logical_bytes, media_type, initial_config, status, artifact_id, created_at, consumed_at, abandoned_at FROM computer_initializations
- WHERE environment_id = $1
-   AND computer_id = $2
-   AND runtime_instance_id = $3
+const publishComputerInitialization = `-- name: PublishComputerInitialization :one
+WITH candidate AS MATERIALIZED (
+    SELECT initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at, artifacts.id AS verified_artifact_id
+      FROM computer_initializations AS initialization
+      JOIN artifacts
+        ON artifacts.environment_id = initialization.environment_id
+       AND artifacts.id = $2
+       AND artifacts.kind = 'workspace_version'
+       AND artifacts.digest = initialization.digest
+       AND artifacts.size_bytes = initialization.size_bytes
+       AND artifacts.media_type = initialization.media_type
+     WHERE initialization.id = $1
+       AND initialization.environment_id = $3
+       AND initialization.computer_id = $4
+       AND initialization.status = 'registered'
+     FOR UPDATE OF initialization
+), published AS (
+    UPDATE workspace_versions AS version
+       SET artifact_id = candidate.verified_artifact_id,
+           content_digest = candidate.digest,
+           size_bytes = candidate.logical_bytes,
+           status = 'committed', published_at = clock_timestamp()
+      FROM candidate, workspaces
+     WHERE version.environment_id = candidate.environment_id
+       AND version.workspace_id = candidate.computer_id
+       AND version.id = candidate.version_id
+       AND version.status = 'initializing'
+       AND version.parent_version_id IS NULL
+       AND workspaces.environment_id = version.environment_id
+       AND workspaces.id = version.workspace_id
+       AND workspaces.head_version_id = version.id
+    RETURNING version.id, version.artifact_id, version.published_at
+)
+UPDATE computer_initializations AS initialization
+   SET status = 'consumed', artifact_id = published.artifact_id,
+       consumed_at = published.published_at
+  FROM published
+ WHERE initialization.id = $1
+   AND initialization.version_id = published.id
+   AND initialization.status = 'registered'
+RETURNING initialization.id, initialization.environment_id, initialization.computer_id, initialization.version_id, initialization.runtime_instance_id, initialization.runtime_desired_version, initialization.ownership_generation, initialization.writer_generation, initialization.digest, initialization.size_bytes, initialization.logical_bytes, initialization.media_type, initialization.initial_config, initialization.status, initialization.artifact_id, initialization.created_at, initialization.consumed_at, initialization.abandoned_at
 `
 
-type GetComputerInitializationParams struct {
-	EnvironmentID     pgtype.UUID `json:"environment_id"`
-	ComputerID        pgtype.UUID `json:"computer_id"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+type PublishComputerInitializationParams struct {
+	ID            pgtype.UUID `json:"id"`
+	ArtifactID    pgtype.UUID `json:"artifact_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
 }
 
-func (q *Queries) GetComputerInitialization(ctx context.Context, arg GetComputerInitializationParams) (ComputerInitialization, error) {
-	row := q.db.QueryRow(ctx, getComputerInitialization, arg.EnvironmentID, arg.ComputerID, arg.RuntimeInstanceID)
+// The caller owns current preparation authority and has verified the object.
+// Root publication and candidate consumption are one statement: neither can be
+// committed alone. Historical receipt retrieval uses GetComputerInitialization;
+// this mutation never reopens a consumed candidate or grants further execution.
+func (q *Queries) PublishComputerInitialization(ctx context.Context, arg PublishComputerInitializationParams) (ComputerInitialization, error) {
+	row := q.db.QueryRow(ctx, publishComputerInitialization,
+		arg.ID,
+		arg.ArtifactID,
+		arg.EnvironmentID,
+		arg.ComputerID,
+	)
 	var i ComputerInitialization
 	err := row.Scan(
 		&i.ID,
@@ -231,15 +259,15 @@ type RegisterComputerInitializationParams struct {
 }
 
 // These are transaction primitives. The publication owner must lock and validate
-// current preparation authority before registration, and publish the version in
-// the same transaction as consumption. A registration/replay is not an execution
+// current preparation authority before registration and publication. Publication
+// commits the root and consumes its candidate atomically. A receipt is not an execution
 // or upload grant. No remote deletion is authorized by these queries.
 // A registration conflict (no row) is resolved with GetComputerInitialization:
 // mismatched, consumed and abandoned candidates must not be registered anew.
 // A digest already owned by another runtime raises a unique violation; replacement
 // runtimes produce their own candidate rather than transfer cleanup ownership.
-// Consumption can also raise a unique violation if another initialization won
-// for this Computer. The owner must roll back before resolving that receipt.
+// A publisher that loses the root transition receives no row. Resolve the
+// winning receipt separately; never rewrite the committed root or its references.
 func (q *Queries) RegisterComputerInitialization(ctx context.Context, arg RegisterComputerInitializationParams) (ComputerInitialization, error) {
 	row := q.db.QueryRow(ctx, registerComputerInitialization,
 		arg.ID,

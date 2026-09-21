@@ -421,6 +421,14 @@ UPDATE runtime_instances
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state = 'allocated'
    AND runtime_instances.preparation_expires_at > ready_decision.decided_at
+   AND EXISTS (
+       SELECT 1 FROM workspace_versions AS persistent_version
+        WHERE persistent_version.environment_id = runtime_instances.environment_id
+          AND persistent_version.workspace_id = runtime_instances.workspace_id
+          AND persistent_version.id = runtime_instances.reserved_workspace_version_id
+          AND persistent_version.status IN ('committed', 'private')
+          AND persistent_version.artifact_id IS NOT NULL
+   )
    AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
    AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL

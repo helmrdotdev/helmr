@@ -642,7 +642,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		ID:            pgvalue.UUID(privateVersionID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		ParentVersionID: pgvalue.UUID(authority.physicalVersionID), ArtifactID: pgvalue.UUID(workspaceArtifactID),
-		ContentDigest: workspaceTreeDigest, SizeBytes: 10, EntryCount: 1,
+		ContentDigest: pgvalue.Text(workspaceTreeDigest), SizeBytes: 10, EntryCount: 1,
 		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), OwnershipGeneration: 1, WriterGeneration: 1,
 	}); err != nil {
 		t.Fatal(err)

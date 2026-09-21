@@ -53,13 +53,13 @@ WITH selected_definition AS (
     SELECT sqlc.arg(initial_version_id),
            created_workspace.environment_id,
            created_workspace.id,
-           'committed',
-           'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
+           'initializing',
+           NULL,
            0,
            0,
            0,
            0,
-           now()
+           NULL
       FROM created_workspace
     RETURNING workspace_id
 )

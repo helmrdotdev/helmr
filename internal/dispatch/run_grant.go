@@ -33,7 +33,7 @@ func (d *Authority) grantFreshRun(
 	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
-	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
+	authority, err := lockRunPlacementAuthority(ctx, tx, candidate, false)
 	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}

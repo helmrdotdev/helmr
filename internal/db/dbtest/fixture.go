@@ -84,3 +84,28 @@ func InsertCheckpointArtifacts(t *testing.T, ctx context.Context, executor inter
 	}
 	return ids
 }
+
+// InsertCommittedComputerRoot supplies persisted state to tests that start after
+// initialization. It does not simulate upload verification or publisher authority.
+func InsertCommittedComputerRoot(t *testing.T, ctx context.Context, executor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, versionID, environmentID, computerID any) {
+	t.Helper()
+	artifactID := uuid.NewV7()
+	digest := Digest(artifactID.String())
+	MustExec(t, ctx, executor, `
+INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+SELECT org_id, $2, 1024, 'application/vnd.helmr.computer.disk.v0+filepack+aesgcm'
+  FROM environments WHERE id = $1`, environmentID, digest)
+	MustExec(t, ctx, executor, `
+INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+SELECT $1, org_id, project_id, id, $3, 'workspace_version', 1024,
+       'application/vnd.helmr.computer.disk.v0+filepack+aesgcm'
+  FROM environments WHERE id = $2`, artifactID, environmentID, digest)
+	MustExec(t, ctx, executor, `
+INSERT INTO workspace_versions (
+    id, environment_id, workspace_id, artifact_id, content_digest, size_bytes,
+    status, ownership_generation, writer_generation, published_at
+) VALUES ($1, $2, $3, $4, $5, 4096, 'committed', 0, 0, now())`,
+		versionID, environmentID, computerID, artifactID, digest)
+}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -149,10 +148,10 @@ INSERT INTO workspace_versions (
     id, environment_id, workspace_id, content_digest, status,
     ownership_generation, writer_generation, published_at, size_bytes, entry_count
 ) VALUES
-    ($1::uuid, $3::uuid, $4::uuid, $5, 'committed', 0, 0, now() - interval '2 hours', 0, 0),
-    ($2::uuid, $3::uuid, $6::uuid, $5, 'committed', 0, 0, now() - interval '90 minutes', 0, 0)
+    ($1::uuid, $3::uuid, $4::uuid, NULL, 'initializing', 0, 0, NULL, 0, 0),
+    ($2::uuid, $3::uuid, $5::uuid, NULL, 'initializing', 0, 0, NULL, 0, 0)
 `, demoSeedWorkspaceActorVersionID, demoSeedWorkspaceTaskVersionID, demoSeedEnvironmentID,
-		demoSeedWorkspaceActorID, workspace.CanonicalEmptyTreeDigest, demoSeedWorkspaceTaskID); err != nil {
+		demoSeedWorkspaceActorID, demoSeedWorkspaceTaskID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

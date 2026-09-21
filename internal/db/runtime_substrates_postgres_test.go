@@ -287,17 +287,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	`, workspaceID, environmentID, dbtest.DefaultRegionID, definitionID, rootVersionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, content_digest, status, ownership_generation, writer_generation, published_at
-		) VALUES (
-			$1, $2, $3,
-			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			'committed', 0, 0, now()
-		)
-	`, rootVersionID, environmentID, workspaceID); err != nil {
-		t.Fatal(err)
-	}
+	dbtest.InsertCommittedComputerRoot(t, ctx, tx, rootVersionID, environmentID, workspaceID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}

@@ -201,7 +201,7 @@ UPDATE workspace_mounts
 		}
 		_, err = db.New(tx).StageWorkspaceExecCapture(t.Context(), db.StageWorkspaceExecCaptureParams{
 			WorkspaceMountID: pgvalue.UUID(mountID), WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
-			WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), ArtifactID: badArtifact, ContentDigest: first.Tree.Digest, SizeBytes: first.Tree.SizeBytes, EntryCount: first.Tree.EntryCount,
+			WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), ArtifactID: badArtifact, ContentDigest: pgvalue.Text(first.Tree.Digest), SizeBytes: first.Tree.SizeBytes, EntryCount: first.Tree.EntryCount,
 		})
 		if !errors.Is(err, pgx.ErrNoRows) {
 			_ = tx.Rollback(t.Context())

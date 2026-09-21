@@ -356,11 +356,11 @@ SELECT $1, environment_id, region_id, sandbox_declared_id,
  WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest,
+    id, environment_id, workspace_id, content_digest, artifact_id,
     size_bytes, entry_count, status,
     ownership_generation, writer_generation, published_at
 )
-SELECT $1, environment_id, $2, content_digest,
+SELECT $1, environment_id, $2, content_digest, artifact_id,
        size_bytes, entry_count, status, 0, 0, transaction_timestamp()
   FROM workspace_versions
  WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
@@ -2648,18 +2648,7 @@ INSERT INTO workspaces (
 		fixture.runID,
 		versionID,
 	)
-	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest, status, ownership_generation, writer_generation, published_at
-) VALUES (
-    $1, $2, $3,
-    'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-    'committed', 0, 0, now()
-)`,
-		versionID,
-		fixture.environmentID,
-		fixture.workspaceID,
-	)
+	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.environmentID, fixture.workspaceID)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,

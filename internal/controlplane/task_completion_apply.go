@@ -414,7 +414,7 @@ func validateTaskWorkspaceRollback(
 	}
 	if version.ID != authority.run.BaseWorkspaceVersionID ||
 		rollback.target.BaseWorkspaceVersionID != pgvalue.UUIDString(version.ID) ||
-		rollback.target.Tree.Digest != version.ContentDigest ||
+		rollback.target.Tree.Digest != version.ContentDigest.String ||
 		rollback.target.Tree.SizeBytes != version.SizeBytes ||
 		rollback.target.Tree.EntryCount != int(version.EntryCount) {
 		return errStaleTaskCompletion
@@ -423,7 +423,7 @@ func validateTaskWorkspaceRollback(
 	case workspace.ResetTargetEmpty:
 		if version.ParentVersionID.Valid || version.ArtifactID.Valid || version.SourceWorkspaceLeaseID.Valid ||
 			version.OwnershipGeneration != 0 || version.WriterGeneration != 0 ||
-			version.ContentDigest != workspace.CanonicalEmptyTreeDigest || version.SizeBytes != 0 || version.EntryCount != 0 {
+			version.ContentDigest.String != workspace.CanonicalEmptyTreeDigest || version.SizeBytes != 0 || version.EntryCount != 0 {
 			return errStaleTaskCompletion
 		}
 	case workspace.ResetTargetArtifact:
@@ -519,7 +519,7 @@ func recordTaskWorkspaceVersion(
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID, ArtifactID: artifactRow.ID,
-		ContentDigest: capture.tree.Digest, SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
+		ContentDigest: pgvalue.Text(capture.tree.Digest), SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration, PublishedAt: completedAt,

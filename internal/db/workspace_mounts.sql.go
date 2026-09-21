@@ -141,7 +141,7 @@ type ClaimWorkspaceMountRow struct {
 	WorkspaceArtifactDigest         string             `json:"workspace_artifact_digest"`
 	WorkspaceArtifactSizeBytes      int64              `json:"workspace_artifact_size_bytes"`
 	WorkspaceArtifactMediaType      string             `json:"workspace_artifact_media_type"`
-	WorkspaceContentDigest          string             `json:"workspace_content_digest"`
+	WorkspaceContentDigest          pgtype.Text        `json:"workspace_content_digest"`
 	WorkspaceLogicalSizeBytes       int64              `json:"workspace_logical_size_bytes"`
 	WorkspaceEntryCount             int32              `json:"workspace_entry_count"`
 }

@@ -1079,7 +1079,7 @@ type PublishTaskWorkspaceVersionParams struct {
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
 	ArtifactID             pgtype.UUID        `json:"artifact_id"`
-	ContentDigest          string             `json:"content_digest"`
+	ContentDigest          pgtype.Text        `json:"content_digest"`
 	SizeBytes              int64              `json:"size_bytes"`
 	EntryCount             int32              `json:"entry_count"`
 	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`

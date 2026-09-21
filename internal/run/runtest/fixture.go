@@ -220,16 +220,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		)
 	`, workspaceID, fixture.EnvironmentID, Region,
 		fixture.WorkspaceDefinitionID, runID, versionID)
-	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id,
-			content_digest, status, ownership_generation, writer_generation, published_at
-		) VALUES (
-			$1, $2, $3,
-			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			'committed', 0, 0, now()
-		)
-	`, versionID, fixture.EnvironmentID, workspaceID)
+	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.EnvironmentID, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,

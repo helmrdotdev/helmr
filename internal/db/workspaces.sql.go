@@ -67,13 +67,13 @@ WITH selected_definition AS (
     SELECT $7,
            created_workspace.environment_id,
            created_workspace.id,
-           'committed',
-           'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
+           'initializing',
+           NULL,
            0,
            0,
            0,
            0,
-           now()
+           NULL
       FROM created_workspace
     RETURNING workspace_id
 )
@@ -739,7 +739,7 @@ SELECT workspaces.id,
   JOIN workspace_versions AS head
     ON head.workspace_id = workspaces.id
    AND head.id = workspaces.head_version_id
-   AND head.status = 'committed'
+   AND head.status IN ('initializing', 'committed')
  WHERE workspaces.environment_id = $1
    AND workspaces.id = $2
  FOR UPDATE OF workspaces

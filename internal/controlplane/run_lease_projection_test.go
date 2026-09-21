@@ -245,7 +245,7 @@ func validWorkspaceResetTargetAuthority(
 ) db.GetWorkspaceResetTargetAuthorityRow {
 	return db.GetWorkspaceResetTargetAuthorityRow{
 		VersionID:     authority.workspaceLease.BaseWorkspaceVersionID,
-		ContentDigest: workspace.CanonicalEmptyTreeDigest,
+		ContentDigest: pgvalue.Text(workspace.CanonicalEmptyTreeDigest),
 	}
 }
 
@@ -254,7 +254,7 @@ func TestProjectWorkspaceAttachmentProjectsArtifactResetTarget(t *testing.T) {
 	resetAuthority := db.GetWorkspaceResetTargetAuthorityRow{
 		VersionID:       authority.workspaceLease.BaseWorkspaceVersionID,
 		ParentVersionID: pgvalue.UUID(uuid.New()), ArtifactID: pgvalue.UUID(uuid.New()),
-		ContentDigest:    validDigest('c'),
+		ContentDigest:    pgvalue.Text(validDigest('c')),
 		LogicalSizeBytes: 3, EntryCount: 1,
 		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.New()), OwnershipGeneration: 5, WriterGeneration: 6,
 		ArtifactRowKind:   db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},

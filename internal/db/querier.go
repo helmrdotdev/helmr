@@ -101,7 +101,6 @@ type Querier interface {
 	CompleteWorkerDrain(ctx context.Context, arg CompleteWorkerDrainParams) (CompleteWorkerDrainRow, error)
 	CompleteWorkerStartupRecovery(ctx context.Context, arg CompleteWorkerStartupRecoveryParams) (WorkerInstance, error)
 	ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID pgtype.UUID) (ConfirmWorkerInstanceProviderAbsentRow, error)
-	ConsumeComputerInitialization(ctx context.Context, arg ConsumeComputerInitializationParams) (ComputerInitialization, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
 	// Caller holds the Runtime row lock; recheck time at consumption because other
@@ -485,6 +484,11 @@ type Querier interface {
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
+	// The caller owns current preparation authority and has verified the object.
+	// Root publication and candidate consumption are one statement: neither can be
+	// committed alone. Historical receipt retrieval uses GetComputerInitialization;
+	// this mutation never reopens a consumed candidate or grants further execution.
+	PublishComputerInitialization(ctx context.Context, arg PublishComputerInitializationParams) (ComputerInitialization, error)
 	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
 	ReadWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
@@ -504,15 +508,15 @@ type Querier interface {
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RegisterActorInputRunWait(ctx context.Context, arg RegisterActorInputRunWaitParams) (RunWait, error)
 	// These are transaction primitives. The publication owner must lock and validate
-	// current preparation authority before registration, and publish the version in
-	// the same transaction as consumption. A registration/replay is not an execution
+	// current preparation authority before registration and publication. Publication
+	// commits the root and consumes its candidate atomically. A receipt is not an execution
 	// or upload grant. No remote deletion is authorized by these queries.
 	// A registration conflict (no row) is resolved with GetComputerInitialization:
 	// mismatched, consumed and abandoned candidates must not be registered anew.
 	// A digest already owned by another runtime raises a unique violation; replacement
 	// runtimes produce their own candidate rather than transfer cleanup ownership.
-	// Consumption can also raise a unique violation if another initialization won
-	// for this Computer. The owner must roll back before resolving that receipt.
+	// A publisher that loses the root transition receives no row. Resolve the
+	// winning receipt separately; never rewrite the committed root or its references.
 	RegisterComputerInitialization(ctx context.Context, arg RegisterComputerInitializationParams) (ComputerInitialization, error)
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)

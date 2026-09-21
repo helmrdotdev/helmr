@@ -14,9 +14,11 @@ import (
 )
 
 // These tests exercise revocation and retained upload ownership. The fixture's
-// tree version is not evidence of initial disk publication or writable VM boot.
+// persisted version is not evidence of remote verification or writable VM boot.
 func registerPreparationCandidate(t *testing.T, f runPlacementFixture) db.ComputerInitialization {
 	t.Helper()
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE workspace_versions SET status='initializing', artifact_id=NULL,
+    content_digest=NULL, size_bytes=0, published_at=NULL WHERE workspace_id=$1 AND parent_version_id IS NULL`, f.workspaceID)
 	placement, err := f.authority.PlaceReadyRun(f.ctx, ReadyRunCandidate{
 		OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1,
 	})
@@ -144,7 +146,7 @@ func TestComputerInitializationRecoveryRespectsRuntimeLockAndConsumption(t *test
 				dbtest.MustExec(t, f.ctx, tx, `INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`, f.orgID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
 				dbtest.MustExec(t, f.ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type)
                     SELECT $1,r.org_id,r.project_id,r.environment_id,$2,'workspace_version',$3,$4 FROM runtime_instances r WHERE r.id=$5`, artifactID, candidate.Digest, candidate.SizeBytes, candidate.MediaType, candidate.RuntimeInstanceID)
-				if _, err := db.New(tx).ConsumeComputerInitialization(f.ctx, db.ConsumeComputerInitializationParams{
+				if _, err := db.New(tx).PublishComputerInitialization(f.ctx, db.PublishComputerInitializationParams{
 					ID: candidate.ID, EnvironmentID: candidate.EnvironmentID, ComputerID: candidate.ComputerID, ArtifactID: artifactID,
 				}); err != nil {
 					t.Fatal(err)
