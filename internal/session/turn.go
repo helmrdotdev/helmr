@@ -261,10 +261,10 @@ func AppendTurnOutput(ctx context.Context, q db.Querier, scope TurnScope, key st
 	return receipt, err
 }
 
-// SettleTurn must share the transaction that validated and advanced the physical
-// Workspace proof. It never accepts an arbitrary public Workspace version claim.
-func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status string, data json.RawMessage, workspaceVersion pgtype.UUID, fingerprint string) (db.SessionEvent, error) {
-	if (status != "completed" && status != "failed") || !workspaceVersion.Valid || (len(data) != 0 && !json.Valid(data)) || (status == "failed" && len(data) == 0) {
+// SettleTurn commits the logical result and input cursor under execution authority.
+// Computer persistence has a separate lifecycle.
+func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status string, data json.RawMessage, fingerprint string) (db.SessionEvent, error) {
+	if (status != "completed" && status != "failed") || (len(data) != 0 && !json.Valid(data)) || (status == "failed" && len(data) == 0) {
 		return db.SessionEvent{}, ErrTurnScope
 	}
 	input, err := ValidateTurn(ctx, q, scope)
@@ -282,10 +282,9 @@ func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status strin
 		return db.SessionEvent{}, &OperationError{Code: "turn_unsettled"}
 	}
 	body := struct {
-		WorkspaceVersionID string          `json:"workspace_version_id"`
-		Result             json.RawMessage `json:"result,omitempty"`
-		Error              json.RawMessage `json:"error,omitempty"`
-	}{WorkspaceVersionID: pgvalue.UUIDString(workspaceVersion)}
+		Result json.RawMessage `json:"result,omitempty"`
+		Error  json.RawMessage `json:"error,omitempty"`
+	}{}
 	if status == "completed" {
 		body.Result = data
 	} else {
@@ -295,7 +294,7 @@ func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status strin
 	if err != nil {
 		return db.SessionEvent{}, err
 	}
-	event, err := appendEvent(ctx, q, scope, "turn."+status, encoded, workspaceVersion)
+	event, err := appendEvent(ctx, q, scope, "turn."+status, encoded, pgtype.UUID{})
 	if err != nil {
 		return event, err
 	}

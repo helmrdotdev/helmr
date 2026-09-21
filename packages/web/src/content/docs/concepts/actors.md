@@ -35,6 +35,14 @@ Input, output and lifecycle events share a retained sequence. An output stream
 ending does not complete a Turn: finish post-processing and explicitly call
 `turn.complete` or `turn.fail`. A failed Turn and a failed Session are distinct.
 
+Turn settlement persists the result and advances the Session's input cursor. It
+does not pause the Computer, upload its disk, or replace the running process.
+Following Turns can use the same files, processes, and in-memory SDK state.
+Computer checkpointing is a separate operation: a completed Turn does not promise
+that all local file changes have been saved outside the Worker. If the Worker is
+lost, completed results remain, while unpublished Computer changes may be lost
+and execution requires recovery.
+
 Sessions are `open`, `closing`, `closed`, or `failed`. Closing drains accepted
 work. Interruption retains later Turns behind a hold until explicit resume; it
 does not replay the interrupted Turn. Uncertain execution requires reconciliation.

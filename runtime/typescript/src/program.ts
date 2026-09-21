@@ -2431,8 +2431,6 @@ class ActorRuntime {
           throw new RuntimeProtocolError(
             "Null-Turn stop was not confirmed by settlement",
           )
-        if (response.kind === "failed")
-          throw runtimeOperationFailure("Turn settlement", response.dataJson)
         if (
           response.correlationId !== correlationId ||
           response.kind !== "committed"

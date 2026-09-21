@@ -195,12 +195,11 @@ func testWorkspaceBasicExecRegistry(entry *workspaceMountEntry) *workspaceOperat
 	return registry
 }
 
-// Existing finalization/turn-commit fixtures simulate an independently admitted process.
+// Finalization fixtures simulate an independently admitted process.
 func (entry *workspaceMountEntry) beginWorkspaceExecAdmission() (func(), error) {
 	entry.processesMu.Lock()
 	if entry.authorityState == workspaceAuthorityFinalizing ||
-		entry.recoveryRequired ||
-		entry.turnCommitBlocked {
+		entry.recoveryRequired {
 		entry.processesMu.Unlock()
 		return func() {}, errors.New("workspace is unavailable for exec admission")
 	}

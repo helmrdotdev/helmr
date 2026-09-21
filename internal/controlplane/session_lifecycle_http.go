@@ -474,8 +474,12 @@ func projectSessionTurn(view session.TurnView) (api.SessionTurn, error) {
 		response.Source = api.SessionTurnSource{Type: "run", RunID: pgvalue.UUIDString(row.SourceRunID)}
 	}
 	if event := view.TerminalEvent; event != nil {
-		id, version := pgvalue.UUIDString(event.ID), pgvalue.UUIDString(event.WorkspaceVersionID)
-		response.TerminalEventID, response.WorkspaceVersionID = &id, &version
+		id := pgvalue.UUIDString(event.ID)
+		response.TerminalEventID = &id
+		if event.WorkspaceVersionID.Valid {
+			version := pgvalue.UUIDString(event.WorkspaceVersionID)
+			response.WorkspaceVersionID = &version
+		}
 		var data struct {
 			Result json.RawMessage `json:"result"`
 			Error  json.RawMessage `json:"error"`

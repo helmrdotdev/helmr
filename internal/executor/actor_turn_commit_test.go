@@ -1,21 +1,18 @@
 package executor
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"io"
 	"net"
-	"strings"
-	"sync"
+	"net/http"
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -24,583 +21,206 @@ import (
 
 type actorTurnCommitControlPlane struct {
 	*testRunLeaseControlPlane
-	request            workerapi.CommitActorTurnRequest
-	workspaceVersionID string
+	request   workerapi.CommitActorTurnRequest
+	mismatch  bool
+	commitErr error
+	started   chan struct{}
+	release   chan struct{}
 }
 
-type blockingTurnSettleControlPlane struct {
-	*testRunLeaseControlPlane
-	started       chan struct{}
-	release       chan struct{}
-	mu            sync.Mutex
-	renewed       int
-	projectedBase string
+func (c *actorTurnCommitControlPlane) CommitActorTurn(ctx context.Context, request workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error) {
+	c.request = request
+	if c.commitErr != nil {
+		return workerapi.CommitActorTurnResponse{}, c.commitErr
+	}
+	if c.started != nil {
+		close(c.started)
+		select {
+		case <-c.release:
+		case <-ctx.Done():
+			return workerapi.CommitActorTurnResponse{}, ctx.Err()
+		}
+	}
+	response := workerapi.CommitActorTurnResponse{EventID: "settlement-event", Lease: request.Lease, CorrelationID: request.CorrelationID, CommittedInputSequence: request.TargetInputSequence}
+	if c.mismatch {
+		response.CommittedInputSequence++
+	}
+	return response, nil
 }
 
-func (controlPlane *blockingTurnSettleControlPlane) CommitActorTurn(
-	ctx context.Context,
-	request workerapi.CommitActorTurnRequest,
-) (workerapi.CommitActorTurnResponse, error) {
+func TestTurnSettlementNeedsNoCaptureOrFrontierChange(t *testing.T) {
+	for _, disposition := range []string{"completed", "failed"} {
+		t.Run(disposition, func(t *testing.T) {
+			claim := testFreshProgramClaim(t)
+			target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
+			if err != nil {
+				t.Fatal(err)
+			}
+			host, guest := net.Pipe()
+			defer host.Close()
+			defer guest.Close()
+			_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
+			cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease, resetTarget: target}
+			requested := &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: disposition}
+			if disposition == "completed" {
+				requested.ResultJson = new(`{"answer":42}`)
+			} else {
+				requested.ErrorJson = new(`{"code":"user_error"}`)
+			}
+			done := make(chan error, 1)
+			go func() { done <- task.handleTurnSettle(t.Context(), requested) }()
+			header, size, err := wire.ReadStreamFrameHeader(guest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The first and only reply is the committed decision, not a freeze/capture request.
+			decision, err := wire.ReadResumeDecision(header, guest, size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = <-done; err != nil {
+				t.Fatal(err)
+			}
+			if decision.Kind != "committed" || decision.CorrelationId != requested.CorrelationId {
+				t.Fatalf("decision=%+v", decision)
+			}
+			var payload map[string]any
+			if err = json.Unmarshal([]byte(decision.DataJson), &payload); err != nil {
+				t.Fatal(err)
+			}
+			if len(payload) != 0 {
+				t.Fatalf("payload=%v", payload)
+			}
+			if task.resetTarget != target || task.lease != claim.Lease || cp.request.Disposition != disposition {
+				t.Fatal("settlement changed physical authority")
+			}
+		})
+	}
+}
+
+type turnReleaseSession struct {
+	fakeGuestSession
+	releases   int
+	releaseErr error
+}
+
+func (s *turnReleaseSession) ReleaseCheckpointSource(context.Context) error {
+	s.releases++
+	_ = s.stream.Close()
+	return s.releaseErr
+}
+
+func TestTurnSettlementFailureStopsComputer(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "commit error", true: "mismatched receipt"}[mismatch], func(t *testing.T) {
+			claim := testFreshProgramClaim(t)
+			host, guest := net.Pipe()
+			defer host.Close()
+			defer guest.Close()
+			commitErr, releaseErr := &httpclient.Error{StatusCode: http.StatusConflict}, errors.New("physical stop failed")
+			cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}, mismatch: mismatch}
+			if !mismatch {
+				cp.commitErr = commitErr
+			}
+			session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: host}, releaseErr: releaseErr}
+			task := &guestRunLeaseTask{program: freshProgram{session: session, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease}
+			err := task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
+			var stopErr *checkpointSourceReleaseError
+			if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || session.releases != 1 {
+				t.Fatalf("err=%v releases=%d", err, session.releases)
+			}
+			if !mismatch && !errors.Is(err, commitErr) {
+				t.Fatalf("lost commit cause: %v", err)
+			}
+		})
+	}
+}
+
+type turnBlockedWrite struct {
+	io.ReadWriteCloser
+	started chan struct{}
+}
+
+func (s *turnBlockedWrite) Write(p []byte) (int, error) {
+	close(s.started)
+	return s.ReadWriteCloser.Write(p)
+}
+
+func TestTurnSettlementCancellationUnblocksDecisionAndStopsComputer(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	stream := &turnBlockedWrite{ReadWriteCloser: host, started: make(chan struct{})}
+	session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: stream}}
+	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}}
+	task := &guestRunLeaseTask{program: freshProgram{session: session, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- task.handleTurnSettle(ctx, &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
+	}()
 	select {
-	case <-controlPlane.started:
-	default:
-		close(controlPlane.started)
+	case <-stream.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("decision write never started")
 	}
+	cancel()
 	select {
-	case <-controlPlane.release:
-	case <-ctx.Done():
-		return workerapi.CommitActorTurnResponse{}, ctx.Err()
+	case err := <-done:
+		if err == nil || session.releases != 1 {
+			t.Fatalf("err=%v releases=%d", err, session.releases)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelled decision remained blocked")
 	}
-	return workerapi.CommitActorTurnResponse{EventID: "settlement-event",
-		Lease: request.Lease, CorrelationID: request.CorrelationID,
-		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: "version-2",
-		Tree: request.Tree,
-	}, nil
 }
 
-func (controlPlane *blockingTurnSettleControlPlane) RenewRunLease(
-	_ context.Context,
-	previous workerapi.RunLeaseAssignment,
-) (workerapi.RunLeaseRenewResponse, error) {
-	controlPlane.mu.Lock()
-	controlPlane.renewed++
-	projectedBase := controlPlane.projectedBase
-	controlPlane.mu.Unlock()
-	if projectedBase == "" {
-		projectedBase = previous.BaseWorkspaceVersionID
-	}
-	return workerapi.RunLeaseRenewResponse{
-		Lease: previous.Fence(), ExpiresAt: time.Now().Add(240 * time.Millisecond),
-		BaseWorkspaceVersionID: projectedBase,
-	}, nil
-}
+type turnRenewalMounts struct{ WorkspaceMountSessionRegistry }
 
-type actorTurnRenewalMounts struct {
-	WorkspaceMountSessionRegistry
-}
-
-func (actorTurnRenewalMounts) RenewWorkspaceAuthority(
-	_ context.Context,
-	request *workspacev0.RenewWorkspaceAuthorityRequest,
-) (*workspacev0.WorkspaceAuthorityFence, error) {
+func (turnRenewalMounts) RenewWorkspaceAuthority(_ context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
 	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
 	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
 	return fence, nil
 }
-
-func (controlPlane *actorTurnCommitControlPlane) CommitActorTurn(
-	_ context.Context,
-	request workerapi.CommitActorTurnRequest,
-) (workerapi.CommitActorTurnResponse, error) {
-	controlPlane.request = request
-	workspaceVersionID := controlPlane.workspaceVersionID
-	if workspaceVersionID == "" {
-		workspaceVersionID = "version-2"
-	}
-	return workerapi.CommitActorTurnResponse{EventID: "settlement-event",
-		Lease: request.Lease, CorrelationID: request.CorrelationID,
-		CommittedInputSequence: request.TargetInputSequence, WorkspaceVersionID: workspaceVersionID,
-		Tree: request.Tree,
-	}, nil
-}
-
-func TestRuntimeCompletedSettlementFrameAdvancesAllLocalWorkspaceFrontiers(t *testing.T) {
+func TestTurnSettlementAllowsConcurrentLeaseRenewal(t *testing.T) {
 	claim := testFreshProgramClaim(t)
-	claim.Lease.WorkerGroupID = "workers"
-	claim.Lease.RequestedCPUMillis = 1
-	claim.Lease.RequestedMemoryBytes = 1
-	claim.Lease.RequestedGuestEphemeralDiskBytes = 1
-	claim.Lease.RequestedExecutionSlots = 1
-	claim.Lease.MaxActiveDurationMs = 1
-	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	renewedLease := claim.Lease
-	renewedLease.ExpiresAt = claim.Lease.ExpiresAt.Add(time.Minute)
-	controlPlane := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{
-		trace: &runLeaseTrace{}, renewed: testRunLeaseRenewResponse(renewedLease),
-	}}
+	next := claim.Lease
+	next.ExpiresAt = next.ExpiresAt.Add(time.Minute)
+	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}, renewed: testRunLeaseRenewResponse(next)}, started: make(chan struct{}), release: make(chan struct{})}
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
-	authority := freshWorkspaceAuthority(&claim, "channel-1")
-	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session},
-		store:   store, controlPlane: controlPlane, resetTarget: target, lease: claim.Lease,
-		authority: authority, waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
-		checkpointer: &runtimeCheckpointer{}, mounts: actorTurnRenewalMounts{},
-	}
-
-	artifactBody := []byte("canonical workspace archive")
-	artifactDigest := sha256sum.DigestBytes(artifactBody)
-	tree := workspace.TreeIdentity{Digest: sha256sum.DigestBytes([]byte("logical tree")), SizeBytes: 12, EntryCount: 1}
-	captureStarted := make(chan struct{})
-	task.program.protocol = newProgramProtocol(host)
-	defer task.program.protocol.Close()
-	runtimeRequest := &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed", ResultJson: new("null"), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1}
-	captureGate := make(chan struct{})
-	decisionSeen := make(chan struct{})
-	applyGate := make(chan struct{})
-	guestResult := make(chan error, 1)
-	go func() {
-		defer guest.Close()
-		if err := frameio.WriteProtoFrame(guest, &programv0.RunEvent{Event: &programv0.RunEvent_TurnSettleRequested{TurnSettleRequested: runtimeRequest}}); err != nil {
-			guestResult <- err
-			return
-		}
-		reader := bufio.NewReader(guest)
-		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		pause, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		if pause.GetExpectedBaseWorkspaceVersionId() != "version-1" {
-			guestResult <- errors.New("pause request carried the wrong workspace frontier")
-			return
-		}
-		close(captureStarted)
-		<-captureGate
-		entryCount := 1
-		if err := wire.WriteStreamFrameHeader(guest, wire.StreamHeader{
-			Type: wire.StreamTypeWorkspaceArtifact, RunID: claim.Lease.RunID,
-			BodyDigest: &artifactDigest, EntryCount: &entryCount,
-		}, uint64(len(artifactBody))); err != nil {
-			guestResult <- err
-			return
-		}
-		if _, err := guest.Write(artifactBody); err != nil {
-			guestResult <- err
-			return
-		}
-		if err := wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
-			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-			TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
-			TreeEntryCount: uint32(tree.EntryCount), WorkspaceChanged: true,
-		}); err != nil {
-			guestResult <- err
-			return
-		}
-		// The paused guest reads a protobuf message, not a host-control stream frame.
-		var decision programv0.ResumeDecision
-		if err := frameio.ReadProtoFrame(reader, &decision); err != nil {
-			guestResult <- err
-			return
-		}
-		var payload struct {
-			WorkspaceVersionID string `json:"workspace_version_id"`
-		}
-		if err := json.Unmarshal([]byte(decision.GetDataJson()), &payload); err != nil {
-			guestResult <- err
-			return
-		}
-		if decision.GetCorrelationId() != pause.GetCorrelationId() ||
-			decision.GetKind() != "committed" || payload.WorkspaceVersionID != "version-2" {
-			guestResult <- errors.New("commit decision did not carry the new workspace frontier")
-			return
-		}
-		close(decisionSeen)
-		<-applyGate
-		if err := wire.WriteTurnSettleApplied(guest, &programv0.TurnSettleApplied{Execution: pause.Execution,
-			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-			PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
-			AppliedBaseWorkspaceVersionId:  payload.WorkspaceVersionID,
-		}); err != nil {
-			guestResult <- err
-			return
-		}
-		guestResult <- nil
-	}()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
+	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel"), mounts: turnRenewalMounts{}}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	hostResult := make(chan error, 1)
+	done := make(chan error, 1)
 	go func() {
-		var event programv0.RunEvent
-		if err := task.program.readEvent(ctx, &event); err != nil {
-			hostResult <- err
-			return
-		}
-		hostResult <- task.handleTurnSettle(ctx, event.GetTurnSettleRequested())
+		done <- task.handleTurnSettle(ctx, &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
 	}()
-	<-captureStarted
-	if _, err := task.RenewRunLease(ctx); err != nil {
-		t.Fatalf("renew during Actor turn capture: %v", err)
-	}
-	close(captureGate)
 	select {
-	case <-decisionSeen:
-	case err := <-guestResult:
-		t.Fatalf("guest could not read the actor turn commit decision: %v", err)
+	case <-cp.started:
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	task.mu.Lock()
-	baseBeforeProof := task.lease.BaseWorkspaceVersionID
-	task.mu.Unlock()
-	if baseBeforeProof != "version-1" {
-		t.Fatalf("host installed Actor frontier before guest proof: %q", baseBeforeProof)
-	}
-	close(applyGate)
-	if err := <-hostResult; err != nil {
+	if _, err := task.RenewRunLease(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-guestResult; err != nil {
-		t.Fatal(err)
-	}
-	if controlPlane.request.Disposition != "completed" || string(controlPlane.request.Result) != "null" || len(controlPlane.request.Error) != 0 {
-		t.Fatalf("runtime settlement changed at CP boundary: %+v", controlPlane.request)
-	}
-	if task.lease.BaseWorkspaceVersionID != "version-2" || task.resetTarget.BaseWorkspaceVersionID != "version-2" ||
-		task.waitWorkspace.BaseWorkspaceVersionID != "version-2" || task.authority.GetFence().GetBaseWorkspaceVersionId() != "version-2" {
-		t.Fatalf("local Actor turn frontiers were not advanced: lease=%q reset=%q wait=%q authority=%q",
-			task.lease.BaseWorkspaceVersionID, task.resetTarget.BaseWorkspaceVersionID,
-			task.waitWorkspace.BaseWorkspaceVersionID, task.authority.GetFence().GetBaseWorkspaceVersionId())
-	}
-	checkpointBase := task.checkpointer.(*runtimeCheckpointer).workspace
-	if task.waitWorkspace.Artifact == nil || task.waitWorkspace.Artifact.Digest != artifactDigest ||
-		checkpointBase.ArtifactDigest != artifactDigest ||
-		checkpointBase.ArtifactSizeBytes != int64(len(artifactBody)) ||
-		checkpointBase.ArtifactMediaType != workspace.ArtifactMediaType ||
-		checkpointBase.ArtifactEncoding != workspace.ArtifactEncoding ||
-		checkpointBase.MountPath != "/workspace" {
-		t.Fatal("Actor turn commit did not advance Wait and checkpoint Workspace artifacts")
-	}
-	if controlPlane.request.Artifact == nil || controlPlane.request.Artifact.Digest != artifactDigest ||
-		controlPlane.request.BaseWorkspaceVersionID != "version-1" || controlPlane.request.Tree.Digest != tree.Digest {
-		t.Fatalf("Actor turn Control Plane request = %+v", controlPlane.request)
-	}
-}
-
-func TestHandleTurnSettleRejectsMismatchedAppliedProofWithoutInstallingFrontier(t *testing.T) {
-	claim := testFreshProgramClaim(t)
-	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
+	close(cp.release)
+	header, size, err := wire.ReadStreamFrameHeader(guest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
+	if _, err = wire.ReadResumeDecision(header, guest, size); err != nil {
 		t.Fatal(err)
 	}
-	host, guest := net.Pipe()
-	defer host.Close()
-	defer guest.Close()
-	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, store: store,
-		controlPlane: &actorTurnCommitControlPlane{
-			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
-		},
-		resetTarget: target, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel-1"),
-		waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
-	}
-	guestResult := make(chan error, 1)
-	go func() {
-		defer guest.Close()
-		reader := bufio.NewReader(guest)
-		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		pause, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		if err := wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
-			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-			TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
-			TreeEntryCount: uint32(target.Tree.EntryCount), WorkspaceChanged: false,
-		}); err != nil {
-			guestResult <- err
-			return
-		}
-		var decision programv0.ResumeDecision
-		if err := frameio.ReadProtoFrame(reader, &decision); err != nil {
-			guestResult <- err
-			return
-		}
-		if err := wire.WriteTurnSettleApplied(guest, &programv0.TurnSettleApplied{Execution: pause.Execution,
-			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-			PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
-			AppliedBaseWorkspaceVersionId:  decision.GetDataJson(),
-		}); err != nil {
-			guestResult <- err
-			return
-		}
-		guestResult <- nil
-	}()
-	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed",
-		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000100", TargetInputSequence: 1,
-	})
-	if err == nil || !strings.Contains(err.Error(), "applied proof") {
-		t.Fatalf("mismatched applied proof error = %v", err)
-	}
-	if guestErr := <-guestResult; guestErr != nil {
-		t.Fatal(guestErr)
-	}
-	if task.lease.BaseWorkspaceVersionID != "version-1" || task.authority.GetFence().GetBaseWorkspaceVersionId() != "version-1" {
-		t.Fatal("mismatched guest proof installed the Actor Workspace frontier")
-	}
-}
-
-func TestHandleTurnSettleStopsMissingAppliedProofAtLeaseExpiry(t *testing.T) {
-	claim := testFreshProgramClaim(t)
-	claim.Lease.ExpiresAt = time.Now().Add(180 * time.Millisecond)
-	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
-	if err != nil {
+	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, guest := net.Pipe()
-	defer guest.Close()
-	source := &checkpointSession{stream: discardReadWriteCloser{}}
-	task := &guestRunLeaseTask{
-		program: freshProgram{session: newBorrowedRunSession(source, testVMStream(host)), execution: testTurnExecution(claim.Lease).Session}, store: store,
-		controlPlane: &actorTurnCommitControlPlane{
-			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
-		},
-		resetTarget: target, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel-1"),
-		waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
-	}
-	guestResult := make(chan error, 1)
-	go func() {
-		defer guest.Close()
-		reader := bufio.NewReader(guest)
-		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		pause, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
-		if err != nil {
-			guestResult <- err
-			return
-		}
-		if err := wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
-			CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-			RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-			TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
-			TreeEntryCount: uint32(target.Tree.EntryCount), WorkspaceChanged: false,
-		}); err != nil {
-			guestResult <- err
-			return
-		}
-		var decision programv0.ResumeDecision
-		if err := frameio.ReadProtoFrame(reader, &decision); err != nil {
-			guestResult <- err
-			return
-		}
-		buffer := make([]byte, 1)
-		_, err = guest.Read(buffer)
-		guestResult <- err
-	}()
-	started := time.Now()
-	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed",
-		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000103", TargetInputSequence: 1,
-	})
-	if err == nil || !strings.Contains(err.Error(), "applied header") {
-		t.Fatalf("missing applied proof error = %v", err)
-	}
-	if time.Since(started) > time.Second {
-		t.Fatalf("missing applied proof outlived lease expiry: %s", time.Since(started))
-	}
-	if guestErr := <-guestResult; guestErr == nil {
-		t.Fatal("guest stream remained open after applied-proof deadline")
-	}
-	if source.closeCount != 1 {
-		t.Fatalf("settlement failure did not stop assigned VM: %d", source.closeCount)
-	}
-}
-
-func TestHandleTurnSettleStopsBlockedDecisionWriteAtLeaseExpiry(t *testing.T) {
-	claim := testFreshProgramClaim(t)
-	claim.Lease.ExpiresAt = time.Now().Add(180 * time.Millisecond)
-	target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, guest := net.Pipe()
-	defer guest.Close()
-	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, store: store,
-		controlPlane: &actorTurnCommitControlPlane{
-			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
-		},
-		resetTarget: target, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel-1"),
-		waitWorkspace: workerapi.Workspace{BaseWorkspaceVersionID: "version-1"},
-	}
-	stopGuest := make(chan struct{})
-	guestResult := make(chan error, 1)
-	go func() {
-		reader := bufio.NewReader(guest)
-		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-		if err == nil {
-			var pause *programv0.TurnSettlePauseRequest
-			pause, err = wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
-			if err == nil {
-				err = wire.WriteTurnSettlePauseReady(guest, &programv0.TurnSettlePauseReady{Execution: pause.Execution,
-					CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-					RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-					TreeDigest: target.Tree.Digest, TreeSizeBytes: target.Tree.SizeBytes,
-					TreeEntryCount: uint32(target.Tree.EntryCount), WorkspaceChanged: false,
-				})
-			}
-		}
-		if err == nil {
-			<-stopGuest
-		}
-		guestResult <- err
-	}()
-	started := time.Now()
-	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), Disposition: "completed",
-		CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000104", TargetInputSequence: 1,
-	})
-	close(stopGuest)
-	if err == nil || !strings.Contains(err.Error(), "write actor turn commit decision") {
-		t.Fatalf("blocked decision error = %v", err)
-	}
-	if time.Since(started) > time.Second {
-		t.Fatalf("blocked decision outlived lease expiry: %s", time.Since(started))
-	}
-	if guestErr := <-guestResult; guestErr != nil {
-		t.Fatal(guestErr)
-	}
-}
-
-func TestCommitActorTurnKeepsRenewingWhileControlPlaneCommitIsPending(t *testing.T) {
-	claim := testFreshProgramClaim(t)
-	claim.Lease.ExpiresAt = time.Now().Add(120 * time.Millisecond)
-	controlPlane := &blockingTurnSettleControlPlane{
-		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
-		started:                  make(chan struct{}),
-		release:                  make(chan struct{}),
-	}
-	task := &guestRunLeaseTask{
-		controlPlane: controlPlane,
-		mounts:       actorTurnRenewalMounts{},
-		lease:        claim.Lease,
-		authority:    freshWorkspaceAuthority(&claim, "channel-1"),
-	}
-	request := workerapi.CommitActorTurnRequest{
-		CorrelationID:       "019c10d5-a6f7-7af1-8f5f-000000000101",
-		TargetInputSequence: 1, BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID,
-		Tree: workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-	}
-	var response workerapi.CommitActorTurnResponse
-	result := make(chan error, 1)
-	go func() {
-		_, err := task.commitActorTurnWithRenewal(
-			t.Context(), claim.Lease.BaseWorkspaceVersionID, &request, &response,
-		)
-		result <- err
-	}()
-	<-controlPlane.started
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		controlPlane.mu.Lock()
-		renewed := controlPlane.renewed
-		controlPlane.mu.Unlock()
-		if renewed >= 2 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("renewals while commit was pending = %d", renewed)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	close(controlPlane.release)
-	if err := <-result; err != nil {
-		t.Fatal(err)
-	}
-	if response.WorkspaceVersionID != "version-2" || !task.lease.ExpiresAt.After(claim.Lease.ExpiresAt) {
-		t.Fatalf("pending commit response=%+v lease expiry=%v", response, task.lease.ExpiresAt)
-	}
-}
-
-func TestCommitActorTurnAcceptsOnlyTheReplayedPendingFrontier(t *testing.T) {
-	claim := testFreshProgramClaim(t)
-	claim.Lease.ExpiresAt = time.Now().Add(120 * time.Millisecond)
-	controlPlane := &blockingTurnSettleControlPlane{
-		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
-		started:                  make(chan struct{}),
-		release:                  make(chan struct{}),
-		projectedBase:            "version-2",
-	}
-	task := &guestRunLeaseTask{
-		controlPlane: controlPlane, mounts: actorTurnRenewalMounts{}, lease: claim.Lease,
-		authority: freshWorkspaceAuthority(&claim, "channel-1"),
-	}
-	request := workerapi.CommitActorTurnRequest{
-		CorrelationID: "019c10d5-a6f7-7af1-8f5f-000000000102", TargetInputSequence: 1,
-		BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID,
-		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-	}
-	var response workerapi.CommitActorTurnResponse
-	type commitResult struct {
-		pending string
-		err     error
-	}
-	result := make(chan commitResult, 1)
-	go func() {
-		pending, err := task.commitActorTurnWithRenewal(
-			t.Context(), claim.Lease.BaseWorkspaceVersionID, &request, &response,
-		)
-		result <- commitResult{pending: pending, err: err}
-	}()
-	<-controlPlane.started
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		controlPlane.mu.Lock()
-		renewed := controlPlane.renewed
-		controlPlane.mu.Unlock()
-		if renewed > 0 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("pending Actor frontier was not observed through renewal")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	close(controlPlane.release)
-	got := <-result
-	if got.err != nil {
-		t.Fatal(got.err)
-	}
-	if got.pending != response.WorkspaceVersionID || task.lease.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID ||
-		task.authority.GetFence().GetBaseWorkspaceVersionId() != claim.Lease.BaseWorkspaceVersionID {
-		t.Fatalf("pending=%q response=%q local lease=%q guest=%q", got.pending, response.WorkspaceVersionID,
-			task.lease.BaseWorkspaceVersionID, task.authority.GetFence().GetBaseWorkspaceVersionId())
-	}
-}
-
-func TestTurnSettlePreservesPhysicalStopFailure(t *testing.T) {
-	stopErr := errors.New("VM stop unproved")
-	source := &checkpointSession{stream: discardReadWriteCloser{}, closeErr: stopErr}
-	task := &guestRunLeaseTask{program: freshProgram{session: newBorrowedRunSession(source, testVMStream(discardReadWriteCloser{}))}}
-	err := task.handleTurnSettle(t.Context(), nil)
-	var release *checkpointSourceReleaseError
-	if !errors.Is(err, stopErr) || !errors.As(err, &release) || !strings.Contains(err.Error(), "actor turn commit request is invalid") || source.closeCount != 1 {
-		t.Fatalf("settlement and stop errors=%v stop count=%d", err, source.closeCount)
+	if task.lease.ExpiresAt != next.ExpiresAt || task.lease.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID {
+		t.Fatal("renewal changed settlement base or failed to advance expiry")
 	}
 }

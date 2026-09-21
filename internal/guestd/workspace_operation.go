@@ -73,17 +73,16 @@ type workspaceMountEntry struct {
 	authorityMu            sync.Mutex
 	authority              *workspacev0.WorkspaceRunAuthority
 	previousExpiry         int64
-	// stopping is terminal for new admissions, protected by turn/finalization locks.
+	// stopping is terminal for new admissions, protected by lifecycle/finalization locks.
 	stopping          bool
 	finalizationMu    sync.Mutex
-	turnCommitMu      sync.Mutex
+	lifecycleMu       sync.Mutex
 	finalizationRoot  string
 	authorityState    workspaceAuthorityState
 	finalizationID    string
 	finalizationKind  string
 	recoveryRequired  bool
 	processAdmissions int
-	turnCommitBlocked bool
 }
 
 type preparedWorkspaceRuntime struct {
@@ -147,13 +146,13 @@ func (r *workspaceOperationRegistry) register(workspaceMountID string, entry *wo
 		}
 		r.mu.Unlock()
 
-		previous.turnCommitMu.Lock()
+		previous.lifecycleMu.Lock()
 		previous.finalizationMu.Lock()
 		r.mu.Lock()
 		if r.entries[workspaceMountID] != previous {
 			r.mu.Unlock()
 			previous.finalizationMu.Unlock()
-			previous.turnCommitMu.Unlock()
+			previous.lifecycleMu.Unlock()
 			continue
 		}
 		entry.workspaceMountID = workspaceMountID
@@ -166,7 +165,7 @@ func (r *workspaceOperationRegistry) register(workspaceMountID string, entry *wo
 		}
 		r.mu.Unlock()
 		previous.finalizationMu.Unlock()
-		previous.turnCommitMu.Unlock()
+		previous.lifecycleMu.Unlock()
 		if cleanup != nil {
 			cleanup()
 		}
@@ -202,19 +201,19 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 		}
 		r.mu.Unlock()
 
-		entry.turnCommitMu.Lock()
+		entry.lifecycleMu.Lock()
 		entry.finalizationMu.Lock()
 		r.mu.Lock()
 		if r.entries[workspaceMountID] != entry || !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) {
 			r.mu.Unlock()
 			entry.finalizationMu.Unlock()
-			entry.turnCommitMu.Unlock()
+			entry.lifecycleMu.Unlock()
 			continue
 		}
 		if fencingGeneration < entry.currentFencingGeneration() {
 			r.mu.Unlock()
 			entry.finalizationMu.Unlock()
-			entry.turnCommitMu.Unlock()
+			entry.lifecycleMu.Unlock()
 			return nil, func() {}, false
 		}
 		entry.processesMu.Lock()
@@ -223,14 +222,14 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 		if finalizing || entry.basicExec != nil || r.hasProgramClaimLocked(entry) {
 			r.mu.Unlock()
 			entry.finalizationMu.Unlock()
-			entry.turnCommitMu.Unlock()
+			entry.lifecycleMu.Unlock()
 			return nil, func() {}, false
 		}
 		entry.setFencingGeneration(fencingGeneration)
 		entry.active++
 		r.mu.Unlock()
 		entry.finalizationMu.Unlock()
-		entry.turnCommitMu.Unlock()
+		entry.lifecycleMu.Unlock()
 		return entry, func() { r.release(entry) }, true
 	}
 }
@@ -329,14 +328,14 @@ func (r *workspaceOperationRegistry) release(entry *workspaceMountEntry) {
 }
 
 func (r *workspaceOperationRegistry) retire(workspaceMountID string, entry *workspaceMountEntry) {
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	r.retireLocked(workspaceMountID, entry)
 }
 
-// Caller holds the entry turn/finalization locks.
+// Caller holds the entry lifecycle/finalization locks.
 func (r *workspaceOperationRegistry) retireLocked(workspaceMountID string, entry *workspaceMountEntry) {
 	r.mu.Lock()
 	current := r.entries[workspaceMountID]
@@ -358,8 +357,8 @@ func (r *workspaceOperationRegistry) retireLocked(workspaceMountID string, entry
 }
 
 func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, authority *workspacev0.WorkspaceRunAuthority, now time.Time) (func(), error) {
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	entry.processesMu.Lock()
@@ -388,8 +387,8 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 }
 
 func (r *workspaceOperationRegistry) admitMountedProgram(entry *workspaceMountEntry) (func(), error) {
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	entry.processesMu.Lock()
@@ -637,8 +636,8 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	if entry == nil {
 		return nil, errors.New("restored workspace has no active frozen program")
 	}
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	r.mu.Lock()
@@ -1262,8 +1261,8 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 		return errors.New("workspace stop channel token or fencing generation is invalid")
 	}
 	defer release()
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	if !registry.currentExactLocked(entry, envelope.WorkspaceMountId, envelope.WorkspaceId, envelope.ChannelToken, envelope.FencingGeneration) {

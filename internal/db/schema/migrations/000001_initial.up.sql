@@ -1419,7 +1419,7 @@ CREATE TABLE session_events (
     CHECK ((producer_run_id IS NULL) = (run_generation IS NULL)),
     CHECK ((kind LIKE 'turn.%' OR kind LIKE 'message.%') IS NOT TRUE OR turn_id IS NOT NULL),
     CHECK ((kind LIKE 'message.%') = (message_id IS NOT NULL)),
-    CHECK (kind NOT IN ('turn.completed','turn.failed','turn.interrupted','session.recovered') OR workspace_version_id IS NOT NULL),
+    CHECK (kind NOT IN ('turn.interrupted','session.recovered') OR workspace_version_id IS NOT NULL),
     FOREIGN KEY (session_id, workspace_id) REFERENCES sessions(id, workspace_id),
     FOREIGN KEY (environment_id, session_id) REFERENCES sessions(environment_id, id),
     FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id),

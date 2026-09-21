@@ -87,8 +87,8 @@ func handleProgramResumeGrantConnection(
 	if clock == nil {
 		clock = time.Now
 	}
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	if err := mounts.installResumedProgramAuthorityLocked(entry, authority, clock()); err != nil {
@@ -209,8 +209,8 @@ func handleProgramRestoreVerifyConnection(
 }
 
 func (entry *workspaceMountEntry) installWorkspaceRunAuthority(authority *workspacev0.WorkspaceRunAuthority, now time.Time) error {
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	return entry.installWorkspaceRunAuthorityLocked(authority, now)
@@ -378,8 +378,8 @@ func (r *workspaceOperationRegistry) beginCurrentWorkspaceFinalization(
 	}
 	previous := request.GetPrevious()
 	fence := previous.GetFence()
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	if !r.currentExactLocked(

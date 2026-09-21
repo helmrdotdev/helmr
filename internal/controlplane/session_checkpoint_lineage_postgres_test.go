@@ -48,7 +48,7 @@ func checkpointTokenAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "committed and private contents")
-	first := f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +60,10 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM run_checkpoints WHERE id=$1`, uuid.MustParse(c2.CheckpointID)).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
-	if base.String() != c1.WorkspaceVersionID || base.String() == first.WorkspaceVersionID {
-		t.Fatalf("second checkpoint base=%s first=%s head=%s", base, c1.WorkspaceVersionID, first.WorkspaceVersionID)
+	if base.String() != c1.WorkspaceVersionID || base.String() == f.rootID.String() {
+		t.Fatalf("second checkpoint base=%s first=%s head=%s", base, c1.WorkspaceVersionID, f.rootID.String())
 	}
-	params := db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(c2.CheckpointID)), CommittedHeadVersionID: pgvalue.UUID(uuid.MustParse(first.WorkspaceVersionID)), OwnershipGeneration: f.claim.workspace.OwnershipGeneration}
+	params := db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(c2.CheckpointID)), CommittedHeadVersionID: pgvalue.UUID(uuid.MustParse(f.rootID.String())), OwnershipGeneration: f.claim.workspace.OwnershipGeneration}
 	for _, test := range []struct {
 		name, query string
 		arg         uuid.UUID
@@ -92,22 +92,19 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	if valid, err := f.server.db.ActorCheckpointLineageIsValid(t.Context(), wrongRun); err != nil || valid {
 		t.Fatalf("wrong execution accepted=%v err=%v", valid, err)
 	}
-	settled := f.turn(t, 2, capture, false)
-	if settled.WorkspaceVersionID != c2.WorkspaceVersionID {
-		t.Fatalf("unchanged settlement=%s want %s", settled.WorkspaceVersionID, c2.WorkspaceVersionID)
-	}
+	f.turn(t, 2)
 }
 
 func TestSessionOutsideTurnCheckpointThenTurnSettlementPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "between turns")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	checkpointTokenAndResume(t, f, session.TurnScope{}, 1, capture)
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.receiveTurn(t, 2)
-	f.turn(t, 2, capture, false)
+	f.turn(t, 2)
 }
 
 func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture testWorkspaceCapture, outcome string) testWorkspaceCapture {
@@ -325,7 +322,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			capture := f.capture(t, "parent frontier")
-			f.turn(t, 1, capture, true)
+			f.turn(t, 1)
 			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 				t.Fatal(err)
 			}
@@ -367,7 +364,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			f.turn(t, 2, child, false)
+			f.turn(t, 2)
 		})
 	}
 }

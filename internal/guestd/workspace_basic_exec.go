@@ -76,11 +76,11 @@ func (r *workspaceOperationRegistry) runWorkspaceBasicExec(ctx context.Context, 
 	}
 }
 
-// The turn/finalization locks serialize transfer, reservation, Program admission
+// The lifecycle/finalization locks serialize transfer, reservation, Program admission
 // and stop. The registry mutex is never held over journal IO or process execution.
 func (r *workspaceOperationRegistry) startWorkspaceBasicExec(ctx context.Context, entry *workspaceMountEntry, request *workspacev0.WorkspaceBasicExecRequest) (*workspaceBasicExec, string, error) {
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	envelope := request.GetEnvelope()
@@ -91,7 +91,7 @@ func (r *workspaceOperationRegistry) startWorkspaceBasicExec(ctx context.Context
 		return nil, "workspace_exec_fenced", errors.New("workspace exec mount is not current")
 	}
 	entry.processesMu.Lock()
-	unavailable := entry.recoveryRequired || entry.turnCommitBlocked
+	unavailable := entry.recoveryRequired
 	entry.processesMu.Unlock()
 	if unavailable {
 		return nil, "workspace_exec_unavailable", errors.New("workspace requires recovery or has a blocked commit")

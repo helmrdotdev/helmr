@@ -109,25 +109,11 @@ func TestSessionNativeLocalPostgres(t *testing.T) {
 				r.Post("/worker/handled", f.server.workerCompleteTurnMessage)
 				r.Post("/worker/output", f.server.workerWriteTurnOutput)
 				r.Post("/worker/settling", f.server.workerBeginTurnSettlement)
-				// The existing capture fixture publishes marker bytes. Native conversation
-				// files persist on the local filesystem, not through this Workspace capture.
-				capture := f.capture(t, "local qualification capture fixture")
 				r.Post("/worker/settle", func(w http.ResponseWriter, r *http.Request) {
 					var req workerapi.CommitActorTurnRequest
 					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 						http.Error(w, err.Error(), 400)
 						return
-					}
-					var base uuid.UUID
-					var baseDigest string
-					if err := f.Pool.QueryRow(r.Context(), `SELECT l.base_workspace_version_id,v.content_digest FROM workspace_leases l JOIN workspace_versions v ON v.id=l.base_workspace_version_id WHERE l.owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base, &baseDigest); err != nil {
-						http.Error(w, err.Error(), 500)
-						return
-					}
-					req.BaseWorkspaceVersionID = base.String()
-					req.Tree = capture.Tree
-					if baseDigest != capture.Tree.Digest {
-						req.Artifact = &capture.Artifact
 					}
 					parsed, err := parseActorTurnCommitRequest(req)
 					if err != nil {

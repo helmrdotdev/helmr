@@ -235,7 +235,7 @@ func validateActorCompletionAuthority(
 		return errStaleActorCompletion
 	}
 	if authority.workspaceLease.BaseWorkspaceVersionID != authority.workspace.HeadVersionID {
-		base, err := getActorTurnVersion(ctx, store, authority, authority.workspaceLease.BaseWorkspaceVersionID)
+		base, err := getActorWorkspaceVersion(ctx, store, authority, authority.workspaceLease.BaseWorkspaceVersionID)
 		if err != nil {
 			return staleActorCompletion(err)
 		}
@@ -320,16 +320,17 @@ func validateRestoredActorBase(
 		return db.RunCheckpoint{}, errStaleActorCompletion
 	}
 
-	checkpointBase, err := getActorTurnVersion(ctx, store, authority, checkpoint.PrivateWorkspaceVersionID)
+	checkpointBase, err := getActorWorkspaceVersion(ctx, store, authority, checkpoint.PrivateWorkspaceVersionID)
 	if err != nil {
 		return db.RunCheckpoint{}, staleActorCompletion(err)
 	}
 
 	// The released wait describes the execution that produced the checkpoint.
-	// A later receive may have activated a Turn after an outside-Turn wait.
+	// Later Turns can commit results without publishing this private disk base.
+	// The upper bounds restate restore admission; both Session counters are monotonic.
 	cursor := wait.ActorSpeculativeInputSequence
 	if !cursor.Valid ||
-		cursor.Int64 < authority.actor.CommittedInputSequence || cursor.Int64 > authority.actor.CommittedInputSequence+1 ||
+		cursor.Int64 > authority.actor.CommittedInputSequence+1 ||
 		cursor.Int64 >= authority.actor.NextInputSequence || !authority.attempt.SessionInputStartSequence.Valid ||
 		cursor.Int64 < authority.attempt.SessionInputStartSequence.Int64 ||
 		(wait.TurnID.Valid && (wait.TurnSessionID != authority.actor.ID || !wait.TurnRunGeneration.Valid || wait.TurnRunGeneration.Int64 != authority.actor.RunGeneration)) {
@@ -649,4 +650,16 @@ func staleActorCompletion(err error) error {
 		return errStaleActorCompletion
 	}
 	return err
+}
+
+func getActorWorkspaceVersion(
+	ctx context.Context,
+	store db.Querier,
+	authority runLeaseClaimAuthority,
+	versionID pgtype.UUID,
+) (db.GetWorkspaceResetTargetAuthorityRow, error) {
+	return store.GetWorkspaceResetTargetAuthority(ctx, db.GetWorkspaceResetTargetAuthorityParams{
+		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID, VersionID: versionID,
+	})
 }

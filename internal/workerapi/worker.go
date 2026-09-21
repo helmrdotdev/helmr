@@ -361,26 +361,21 @@ type CompleteActorRequest struct {
 }
 
 type CommitActorTurnRequest struct {
-	TurnID                 string                `json:"turn_id"`
-	RunGeneration          int64                 `json:"run_generation"`
-	Disposition            string                `json:"disposition"`
-	Result                 json.RawMessage       `json:"result,omitempty"`
-	Error                  json.RawMessage       `json:"error,omitempty"`
-	Lease                  RunLeaseFence         `json:"lease"`
-	CorrelationID          string                `json:"correlation_id"`
-	TargetInputSequence    int64                 `json:"target_input_sequence"`
-	BaseWorkspaceVersionID string                `json:"base_workspace_version_id"`
-	Tree                   WorkspaceTreeIdentity `json:"tree"`
-	Artifact               *WorkspaceArtifact    `json:"artifact,omitempty"`
+	TurnID              string          `json:"turn_id"`
+	RunGeneration       int64           `json:"run_generation"`
+	Disposition         string          `json:"disposition"`
+	Result              json.RawMessage `json:"result,omitempty"`
+	Error               json.RawMessage `json:"error,omitempty"`
+	Lease               RunLeaseFence   `json:"lease"`
+	CorrelationID       string          `json:"correlation_id"`
+	TargetInputSequence int64           `json:"target_input_sequence"`
 }
 
 type CommitActorTurnResponse struct {
-	EventID                string                `json:"event_id"`
-	Lease                  RunLeaseFence         `json:"lease"`
-	CorrelationID          string                `json:"correlation_id"`
-	CommittedInputSequence int64                 `json:"committed_input_sequence"`
-	WorkspaceVersionID     string                `json:"workspace_version_id"`
-	Tree                   WorkspaceTreeIdentity `json:"tree"`
+	EventID                string        `json:"event_id"`
+	Lease                  RunLeaseFence `json:"lease"`
+	CorrelationID          string        `json:"correlation_id"`
+	CommittedInputSequence int64         `json:"committed_input_sequence"`
 }
 
 type SubmitSessionDataRequest struct {

@@ -104,7 +104,7 @@ func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperat
 	if !ok {
 		return nil, func() {}, errors.New("workspace finalization does not match the mounted runtime")
 	}
-	entry.turnCommitMu.Lock()
+	entry.lifecycleMu.Lock()
 	entry.finalizationMu.Lock()
 	if !registry.currentExactLocked(
 		entry,
@@ -114,13 +114,13 @@ func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperat
 		uint64(fence.GetMountFencingGeneration()),
 	) {
 		entry.finalizationMu.Unlock()
-		entry.turnCommitMu.Unlock()
+		entry.lifecycleMu.Unlock()
 		releaseEntry()
 		return nil, func() {}, errors.New("workspace finalization authority is not current for the workspace mount")
 	}
 	release := func() {
 		entry.finalizationMu.Unlock()
-		entry.turnCommitMu.Unlock()
+		entry.lifecycleMu.Unlock()
 		releaseEntry()
 	}
 	if err := registry.waitForProgramRelease(ctx, entry, authority); err != nil {

@@ -312,6 +312,7 @@ export interface Turn {
   onMessage(
     handler: (message: Message) => MaybePromise<void>,
   ): Promise<void>
+  /** Commit the Turn result without checkpointing the Computer. */
   complete(result?: JsonValue): Promise<void>
   fail(error: unknown): Promise<void>
 }

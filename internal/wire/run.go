@@ -40,65 +40,6 @@ func WriteCheckpointPauseReady(w io.Writer, runWaitID string, checkpointID strin
 	}, 0)
 }
 
-func WriteTurnSettlePauseRequest(w io.Writer, request *programv0.TurnSettlePauseRequest) error {
-	if request == nil {
-		return fmt.Errorf("actor turn commit pause request is required")
-	}
-	body, err := proto.Marshal(request)
-	if err != nil {
-		return fmt.Errorf("marshal actor turn commit pause request: %w", err)
-	}
-	var frame bytes.Buffer
-	if err := WriteStreamFrameHeader(&frame, StreamHeader{
-		Type:  StreamTypeTurnSettlePause,
-		RunID: request.RunId,
-	}, uint64(len(body))); err != nil {
-		return err
-	}
-	_, _ = frame.Write(body)
-	_, err = w.Write(frame.Bytes())
-	return err
-}
-
-func WriteTurnSettlePauseReady(w io.Writer, ready *programv0.TurnSettlePauseReady) error {
-	if ready == nil {
-		return fmt.Errorf("actor turn commit pause ready is required")
-	}
-	body, err := proto.Marshal(ready)
-	if err != nil {
-		return fmt.Errorf("marshal actor turn commit pause ready: %w", err)
-	}
-	var frame bytes.Buffer
-	if err := WriteStreamFrameHeader(&frame, StreamHeader{
-		Type:  StreamTypeTurnSettleReady,
-		RunID: ready.RunId,
-	}, uint64(len(body))); err != nil {
-		return err
-	}
-	_, _ = frame.Write(body)
-	_, err = w.Write(frame.Bytes())
-	return err
-}
-
-func WriteTurnSettleApplied(w io.Writer, applied *programv0.TurnSettleApplied) error {
-	if applied == nil {
-		return fmt.Errorf("actor turn commit applied proof is required")
-	}
-	body, err := proto.Marshal(applied)
-	if err != nil {
-		return fmt.Errorf("marshal actor turn commit applied proof: %w", err)
-	}
-	var frame bytes.Buffer
-	if err := WriteStreamFrameHeader(&frame, StreamHeader{
-		Type: StreamTypeTurnSettleApplied, RunID: applied.RunId,
-	}, uint64(len(body))); err != nil {
-		return err
-	}
-	_, _ = frame.Write(body)
-	_, err = w.Write(frame.Bytes())
-	return err
-}
-
 func WriteResumeDecision(w io.Writer, decision *programv0.ResumeDecision) error {
 	if decision == nil {
 		return fmt.Errorf("resume decision is required")
@@ -132,48 +73,6 @@ func ReadCheckpointPauseRequest(header StreamHeader, reader io.Reader, bodyLen u
 		return nil, fmt.Errorf("checkpoint pause request header mismatch: run_wait_id=%q/%q checkpoint_id=%q/%q", header.RunWaitID, request.RunWaitId, header.CheckpointID, request.CheckpointId)
 	}
 	return &request, nil
-}
-
-func ReadTurnSettlePauseRequest(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.TurnSettlePauseRequest, error) {
-	if header.Type != StreamTypeTurnSettlePause {
-		return nil, fmt.Errorf("expected actor turn commit pause request frame, got %q", header.Type)
-	}
-	var request programv0.TurnSettlePauseRequest
-	if err := readProtoStreamBody(reader, bodyLen, &request); err != nil {
-		return nil, fmt.Errorf("read actor turn commit pause request: %w", err)
-	}
-	if strings.TrimSpace(header.RunID) != strings.TrimSpace(request.RunId) {
-		return nil, fmt.Errorf("actor turn commit pause request header mismatch: run_id=%q/%q", header.RunID, request.RunId)
-	}
-	return &request, nil
-}
-
-func ReadTurnSettlePauseReady(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.TurnSettlePauseReady, error) {
-	if header.Type != StreamTypeTurnSettleReady {
-		return nil, fmt.Errorf("expected actor turn commit pause ready frame, got %q", header.Type)
-	}
-	var ready programv0.TurnSettlePauseReady
-	if err := readProtoStreamBody(reader, bodyLen, &ready); err != nil {
-		return nil, fmt.Errorf("read actor turn commit pause ready: %w", err)
-	}
-	if strings.TrimSpace(header.RunID) != strings.TrimSpace(ready.RunId) {
-		return nil, fmt.Errorf("actor turn commit pause ready header mismatch: run_id=%q/%q", header.RunID, ready.RunId)
-	}
-	return &ready, nil
-}
-
-func ReadTurnSettleApplied(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.TurnSettleApplied, error) {
-	if header.Type != StreamTypeTurnSettleApplied {
-		return nil, fmt.Errorf("expected actor turn commit applied frame, got %q", header.Type)
-	}
-	var applied programv0.TurnSettleApplied
-	if err := readProtoStreamBody(reader, bodyLen, &applied); err != nil {
-		return nil, fmt.Errorf("read actor turn commit applied proof: %w", err)
-	}
-	if strings.TrimSpace(header.RunID) != strings.TrimSpace(applied.RunId) {
-		return nil, fmt.Errorf("actor turn commit applied header mismatch: run_id=%q/%q", header.RunID, applied.RunId)
-	}
-	return &applied, nil
 }
 
 func ReadResumeDecision(header StreamHeader, reader io.Reader, bodyLen uint64) (*programv0.ResumeDecision, error) {

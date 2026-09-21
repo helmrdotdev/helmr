@@ -25,7 +25,6 @@ type Querier interface {
 	// Historical expiry is irrelevant after an acknowledged restore; callers retain
 	// the latest candidate's expiry and live execution checks under owner locks.
 	ActorCheckpointLineageIsValid(ctx context.Context, arg ActorCheckpointLineageIsValidParams) (bool, error)
-	AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, arg AdvanceActorTurnWorkspaceLeaseFrontierParams) (WorkspaceLease, error)
 	AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActorWorkspaceHeadParams) (AdvanceActorWorkspaceHeadRow, error)
 	AdvanceCancelledSessionInputs(ctx context.Context, arg AdvanceCancelledSessionInputsParams) (Session, error)
 	AdvanceRunWorkspaceMountFence(ctx context.Context, arg AdvanceRunWorkspaceMountFenceParams) (WorkspaceMount, error)
@@ -329,7 +328,6 @@ type Querier interface {
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	InsertWorkspaceExecLease(ctx context.Context, arg InsertWorkspaceExecLeaseParams) (WorkspaceLease, error)
 	InvalidateFailedRunCheckpoint(ctx context.Context, arg InvalidateFailedRunCheckpointParams) (RunCheckpoint, error)
-	InvalidateRestoredActorCheckpoint(ctx context.Context, arg InvalidateRestoredActorCheckpointParams) (RunCheckpoint, error)
 	InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
@@ -502,7 +500,6 @@ type Querier interface {
 	// committed alone. Historical receipt retrieval uses GetComputerInitialization;
 	// this mutation never reopens a consumed candidate or grants further execution.
 	PublishComputerInitialization(ctx context.Context, arg PublishComputerInitializationParams) (ComputerInitialization, error)
-	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
 	ReadWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
 	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)

@@ -18,7 +18,7 @@ import (
 func TestPublishedCheckpointSurvivesSourceStopFailurePostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "first turn")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	seq := int64(1)
 	waitID := uuid.NewV7()
 	params, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.sessionID.String(), AfterInputSequence: seq})
@@ -79,7 +79,7 @@ func TestPublishedCheckpointSurvivesSourceStopFailurePostgres(t *testing.T) {
 	// This receipt simulates successful exact host cleanup, not a real VM stop.
 	f.workerCall(t, f.server.workerMarkRuntimeInstanceFailed, workerapi.RuntimeInstanceStateRequest{ID: pgvalue.UUIDString(sourceID), WorkerEpoch: 1, DesiredVersion: desired, ExpectedObservedVersion: observed, CleanupProof: &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now()}}, nil)
 	f.placeAndStart(t)
-	f.turn(t, 2, capture, false)
+	f.turn(t, 2)
 	var state string
 	var reclaimed bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT observed_state,reclaimed_at IS NOT NULL FROM runtime_instances WHERE id=$1`, sourceID).Scan(&state, &reclaimed); err != nil {

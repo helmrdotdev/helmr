@@ -19,7 +19,7 @@ import (
 func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T) {
 	ctx := t.Context()
 	f := newActorCheckpointFixture(t)
-	f.turn(t, 1, f.capture(t, "input1"), true)
+	f.turn(t, 1)
 	waitID := uuid.NewV7()
 	seq := int64(1)
 	params, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.sessionID.String(), AfterInputSequence: seq})

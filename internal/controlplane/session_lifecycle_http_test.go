@@ -127,12 +127,12 @@ func TestSessionTurnProjectionPreservesAbsentResultAndJSONNull(t *testing.T) {
 		data    string
 		present bool
 	}{
-		{`{"workspace_version_id":"version"}`, false},
-		{`{"workspace_version_id":"version","result":null}`, true},
+		{`{}`, false},
+		{`{"result":null}`, true},
 	} {
 		view := session.TurnView{
 			Turn:          db.SessionTurn{ID: pgvalue.UUID(uuid.NewV7()), SessionID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`null`), Status: "completed"},
-			TerminalEvent: &db.SessionEvent{ID: pgvalue.UUID(uuid.NewV7()), WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), Data: []byte(test.data)},
+			TerminalEvent: &db.SessionEvent{ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(test.data)},
 		}
 		result, err := projectSessionTurn(view)
 		if err != nil {
@@ -147,7 +147,7 @@ func TestSessionTurnProjectionPreservesAbsentResultAndJSONNull(t *testing.T) {
 			t.Fatal(err)
 		}
 		value, present := envelope["result"]
-		if present != test.present || present && string(value) != "null" || result.TerminalEventID == nil || result.WorkspaceVersionID == nil {
+		if present != test.present || present && string(value) != "null" || result.TerminalEventID == nil || result.WorkspaceVersionID != nil || envelope["workspace_version_id"] != nil {
 			t.Fatalf("terminal view lost presence: %s", raw)
 		}
 	}

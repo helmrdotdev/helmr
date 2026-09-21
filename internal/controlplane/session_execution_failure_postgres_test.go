@@ -19,8 +19,7 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
-			first := f.capture(t, "committed before failure")
-			committed := f.turn(t, 1, first, true)
+			f.turn(t, 1)
 			next, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)})
 			if err != nil {
 				t.Fatal(err)
@@ -55,7 +54,7 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 			req := workerapi.CheckpointFailedRequest{Lease: f.fence(), RunWaitID: registration.WaitID.String(), CheckpointID: pgvalue.UUIDString(wait.SuspendCheckpointID), RequestVersion: wait.CheckpointRequestVersion, Error: "snapshot failed after side effect"}
 			f.workerCall(t, f.server.workerMarkCheckpointFailed, req, nil)
 			f.workerCall(t, f.server.workerMarkCheckpointFailed, req, nil)
-			assertSessionExecutionHeld(t, f, committed.WorkspaceVersionID, scope.TurnID, next.TurnID, "system_failed")
+			assertSessionExecutionHeld(t, f, f.rootID.String(), scope.TurnID, next.TurnID, "system_failed")
 			f.reportRuntimeClosed(t)
 			assertSessionRecoveryCanResume(t, f)
 		})
@@ -174,7 +173,7 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			if !pending {
-				f.turn(t, 1, f.capture(t, "committed"), true)
+				f.turn(t, 1)
 			}
 			var head uuid.UUID
 			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {

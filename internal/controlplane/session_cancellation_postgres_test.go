@@ -119,7 +119,7 @@ func TestSessionCancellationWaitsForPhysicalStopPostgres(t *testing.T) {
 func TestSessionCancellationParkedRecoveryPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "retained head")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"active"`)}); err != nil {
 		t.Fatal(err)

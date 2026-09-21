@@ -87,11 +87,10 @@ type programConnection interface {
 }
 
 type programHostControl struct {
-	stop       *programv0.SessionStop
-	pause      *programv0.CheckpointPauseRequest
-	turnCommit *programv0.TurnSettlePauseRequest
-	decision   *programv0.ResumeDecision
-	err        error
+	stop     *programv0.SessionStop
+	pause    *programv0.CheckpointPauseRequest
+	decision *programv0.ResumeDecision
+	err      error
 }
 
 type programOutputPause struct {
@@ -1072,6 +1071,9 @@ func relayProgram(
 				if pendingWait != nil || pendingTurnCommit != nil {
 					return errors.New("program emitted a concurrent actor turn commit")
 				}
+				if programCorrelationPending(nil, pendingRuntimeOperations, turnCommit.GetCorrelationId()) {
+					return errors.New("program emitted a duplicate Turn settlement correlation")
+				}
 				if strings.TrimSpace(turnCommit.GetCorrelationId()) == "" || turnCommit.GetTargetInputSequence() <= 0 || turnCommit.GetExecution() == nil || !proto.Equal(turnCommit.GetExecution().GetSession(), process.execution) || turnCommit.GetExecution().GetTurnId() == "" {
 					return errors.New("actor turn commit identity is incomplete")
 				}
@@ -1325,10 +1327,11 @@ func relayProgram(
 				return errors.New("program host sent non-runtime control while checkpoint pause was deferred")
 			}
 			if pendingTurnCommit != nil {
-				if control.turnCommit == nil {
-					return errors.New("program host sent non-commit control during actor turn commit")
+				decision := control.decision
+				if decision == nil || decision.GetCorrelationId() != pendingTurnCommit.GetCorrelationId() || decision.GetKind() != "committed" {
+					return errors.New("Turn settlement decision does not match the pending request")
 				}
-				if err := pauseTurnSettle(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, mounts, workspaceEntry); err != nil {
+				if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
 					return err
 				}
 				pendingTurnCommit = nil
@@ -1626,9 +1629,6 @@ func readProgramHostControl(conn programConnection) <-chan programHostControl {
 		case wire.StreamTypeResumeDecision:
 			decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
 			result <- programHostControl{decision: decision, err: err}
-		case wire.StreamTypeTurnSettlePause:
-			request, err := wire.ReadTurnSettlePauseRequest(header, reader, bodyLen)
-			result <- programHostControl{turnCommit: request, err: err}
 		default:
 			result <- programHostControl{err: fmt.Errorf("unsupported program host control %q", header.Type)}
 		}
@@ -1792,147 +1792,6 @@ func promoteProgramResumeLease(
 		return errors.New("program resume-consumed proof did not match exact restore authority")
 	}
 	run.RunLeaseId = attach.GetRunLeaseId()
-	return nil
-}
-
-func pauseTurnSettle(
-	ctx context.Context,
-	conn programConnection,
-	run *programv0.ProgramRunRequest,
-	requested *programv0.TurnSettleRequested,
-	pause *programv0.TurnSettlePauseRequest,
-	process *programProcess,
-	stream *programEventStream,
-	outputs *programOutputCoordinator,
-	mounts *workspaceOperationRegistry,
-	entry *workspaceMountEntry,
-) error {
-	if requested == nil || pause == nil ||
-		!proto.Equal(pause.GetExecution(), requested.GetExecution()) ||
-		pause.GetCorrelationId() != requested.GetCorrelationId() ||
-		pause.GetTargetInputSequence() != requested.GetTargetInputSequence() {
-		return errors.New("actor turn commit pause does not match the program request")
-	}
-	expectedTree := workspace.TreeIdentity{
-		Digest: pause.GetExpectedTreeDigest(), SizeBytes: pause.GetExpectedTreeSizeBytes(),
-		EntryCount: int(pause.GetExpectedTreeEntryCount()),
-	}
-	if err := workspace.ValidateTreeIdentity(expectedTree); err != nil {
-		return fmt.Errorf("validate actor turn commit expected tree: %w", err)
-	}
-	if strings.TrimSpace(pause.GetExpectedBaseWorkspaceVersionId()) == "" {
-		return errors.New("actor turn commit expected workspace version is required")
-	}
-	releaseBarrier, _, err := entry.acquireTurnSettle(run, pause)
-	if err != nil {
-		return err
-	}
-	defer releaseBarrier()
-	turnCtx, cancelTurn := actorTurnAuthorityContext(ctx, entry)
-	defer cancelTurn()
-	// Only an applied commit may release customer execution. On error the caller
-	// terminates the program; keep other admissions closed until cleanup as well.
-	settled := false
-	defer func() {
-		if !settled {
-			entry.processesMu.Lock()
-			entry.recoveryRequired = true
-			entry.processesMu.Unlock()
-		}
-	}()
-	if err := process.cgroup.freeze(turnCtx); err != nil {
-		return fmt.Errorf("freeze actor program cgroup: %w", err)
-	}
-	resumeOutputs, err := outputs.pause(turnCtx)
-	if err != nil {
-		return fmt.Errorf("pause actor program output streams: %w", err)
-	}
-	outputsPaused := true
-	defer func() {
-		if outputsPaused {
-			resumeOutputs()
-		}
-	}()
-	tempRoot, err := guestdTempRoot()
-	if err != nil {
-		return fmt.Errorf("prepare actor turn workspace capture staging: %w", err)
-	}
-	artifact, tree, cleanup, err := workspace.CaptureWorkspaceArtifactContext(
-		turnCtx,
-		process.workspaceRoot,
-		tempRoot,
-		process.workspaceRoot,
-		workspaceSecretExcludes(process.workspaceRoot, process.secretPaths),
-	)
-	if err != nil {
-		return fmt.Errorf("capture actor turn workspace: %w", err)
-	}
-	defer cleanup()
-	changed := tree != expectedTree
-	if changed {
-		if err := stream.writeWorkspaceArtifactFile(run.GetRunId(), artifact); err != nil {
-			return fmt.Errorf("write actor turn workspace capture: %w", err)
-		}
-	}
-	ready := &programv0.TurnSettlePauseReady{
-		Execution:     pause.GetExecution(),
-		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-		TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
-		TreeEntryCount: uint32(tree.EntryCount), WorkspaceChanged: changed,
-	}
-	if err := stream.writeTurnSettlePauseReady(ready); err != nil {
-		return fmt.Errorf("write actor turn commit pause proof: %w", err)
-	}
-	decision, err := readResumeDecision(turnCtx, conn)
-	if err != nil {
-		return fmt.Errorf("read actor turn commit decision: %w", err)
-	}
-	if (decision.GetCorrelationId() != pause.GetCorrelationId() && decision.GetRunWaitId() != pause.GetCorrelationId()) ||
-		decision.GetKind() != "committed" {
-		return errors.New("actor turn commit decision did not match the paused program")
-	}
-	var committed struct {
-		WorkspaceVersionID string `json:"workspace_version_id"`
-		EventID            string `json:"event_id"`
-	}
-	decoder := json.NewDecoder(strings.NewReader(decision.GetDataJson()))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&committed); err != nil {
-		return fmt.Errorf("decode actor turn commit decision: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return errors.New("actor turn commit decision has trailing JSON")
-	}
-	if strings.TrimSpace(committed.WorkspaceVersionID) == "" || strings.TrimSpace(committed.EventID) == "" {
-		return errors.New("actor turn commit decision workspace version is required")
-	}
-	if err := mounts.advanceActorTurnWorkspaceFrontier(
-		entry,
-		pause,
-		pause.GetExpectedBaseWorkspaceVersionId(), committed.WorkspaceVersionID,
-	); err != nil {
-		return err
-	}
-	applied := &programv0.TurnSettleApplied{
-		Execution:     pause.GetExecution(),
-		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
-		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
-		PreviousBaseWorkspaceVersionId: pause.GetExpectedBaseWorkspaceVersionId(),
-		AppliedBaseWorkspaceVersionId:  committed.WorkspaceVersionID,
-	}
-	if err := stream.writeTurnSettleApplied(applied); err != nil {
-		return fmt.Errorf("write actor turn commit applied proof: %w", err)
-	}
-	if err := process.cgroup.thaw(turnCtx); err != nil {
-		return fmt.Errorf("thaw actor program cgroup: %w", err)
-	}
-	resumeOutputs()
-	outputsPaused = false
-	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
-		return fmt.Errorf("write actor turn commit decision: %w", err)
-	}
-	settled = true
 	return nil
 }
 
@@ -2547,22 +2406,6 @@ func (stream *programEventStream) writeCheckpointPauseReady(runWaitID string, ch
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
 		return wire.WriteCheckpointPauseReady(conn, runWaitID, checkpointID)
-	})
-}
-
-func (stream *programEventStream) writeTurnSettlePauseReady(ready *programv0.TurnSettlePauseReady) error {
-	stream.mu.Lock()
-	defer stream.mu.Unlock()
-	return stream.writeLocked(func(conn programConnection) error {
-		return wire.WriteTurnSettlePauseReady(conn, ready)
-	})
-}
-
-func (stream *programEventStream) writeTurnSettleApplied(applied *programv0.TurnSettleApplied) error {
-	stream.mu.Lock()
-	defer stream.mu.Unlock()
-	return stream.writeLocked(func(conn programConnection) error {
-		return wire.WriteTurnSettleApplied(conn, applied)
 	})
 }
 

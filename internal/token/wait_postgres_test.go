@@ -865,39 +865,7 @@ SELECT runs.status, runs.current_run_lease_id, run_leases.status, workspace_leas
 			mountVersion, mountStatus, mountTerminalReason, runtimeDesiredState, runtimeObservedState,
 			runtimeTerminalReason.String, reservedRunID, reclaimEvidence)
 	}
-	if actor {
-		committedAt := pgvalue.Timestamptz(time.Now().UTC())
-		if _, err := fixture.queries.InvalidateRestoredActorCheckpoint(ctx, db.InvalidateRestoredActorCheckpointParams{
-			CommittedAt: committedAt, RestoreCheckpointID: pgvalue.UUID(checkpointID),
-			RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
-			WorkspaceID: pgvalue.UUID(authority.workspaceID), PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID),
-			TargetInputSequence: 2,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := fixture.queries.PublishRestoredActorCheckpointWorkspaceVersion(
-			ctx, db.PublishRestoredActorCheckpointWorkspaceVersionParams{
-				CommittedAt: committedAt, VersionID: pgvalue.UUID(privateVersionID),
-				WorkspaceID: pgvalue.UUID(authority.workspaceID), ExpectedParentVersionID: pgvalue.UUID(authority.physicalVersionID),
-				OwnershipGeneration: 1, WriterGeneration: 1, RestoreCheckpointID: pgvalue.UUID(checkpointID),
-				RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
-			},
-		); err != nil {
-			t.Fatal(err)
-		}
-		var consumedStatus db.RunCheckpointStatus
-		var versionStatus db.WorkspaceVersionStatus
-		if err := fixture.pool.QueryRow(ctx, `
-SELECT run_checkpoints.status, workspace_versions.status
-  FROM run_checkpoints
-  JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
- WHERE run_checkpoints.id = $1`, checkpointID).Scan(&consumedStatus, &versionStatus); err != nil {
-			t.Fatal(err)
-		}
-		if consumedStatus != db.RunCheckpointStatusInvalid || versionStatus != db.WorkspaceVersionStatusCommitted {
-			t.Fatalf("consumed restored checkpoint = checkpoint %s version %s", consumedStatus, versionStatus)
-		}
-	}
+
 }
 
 func TestTokenWaitRegistrationConcurrentReplayConverges(t *testing.T) {

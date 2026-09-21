@@ -90,7 +90,7 @@ func TestWorkspaceBasicExecConsumesCommittedPredecessor(t *testing.T) {
 }
 
 func TestWorkspaceBasicExecRejectsUncommittedOrInvalidPredecessor(t *testing.T) {
-	for _, fault := range []string{"missing", "begun", "prepared", "exchanged", "operation", "fence", "version", "invalid-json", "ownership", "writer", "mount", "base-missing", "expired", "recovery", "commit-blocked", "active-exec", "prune"} {
+	for _, fault := range []string{"missing", "begun", "prepared", "exchanged", "operation", "fence", "version", "invalid-json", "ownership", "writer", "mount", "base-missing", "expired", "recovery", "active-exec", "prune"} {
 		t.Run(fault, func(t *testing.T) {
 			entry, registry, authority := testWorkspaceFinalizationMount(t)
 			runWorkspaceCapture(t, registry, testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111"))
@@ -140,8 +140,6 @@ func TestWorkspaceBasicExecRejectsUncommittedOrInvalidPredecessor(t *testing.T) 
 				req.Envelope.OperationExpiresAtUnixNano = time.Now().Add(-time.Second).UnixNano()
 			case "recovery":
 				entry.recoveryRequired = true
-			case "commit-blocked":
-				entry.turnCommitBlocked = true
 			case "active-exec":
 				entry.processAdmissions = 1
 			case "prune":
@@ -181,7 +179,7 @@ func TestWorkspaceBasicExecChecksClaimAfterWaiting(t *testing.T) {
 			req := successorExec(authority)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			entry.turnCommitMu.Lock()
+			entry.lifecycleMu.Lock()
 			if !cancelClaim {
 				req.Envelope.OperationExpiresAtUnixNano = time.Now().Add(25 * time.Millisecond).UnixNano()
 			}
@@ -194,7 +192,7 @@ func TestWorkspaceBasicExecChecksClaimAfterWaiting(t *testing.T) {
 			} else {
 				time.Sleep(time.Until(time.Unix(0, req.GetEnvelope().GetOperationExpiresAtUnixNano())))
 			}
-			entry.turnCommitMu.Unlock()
+			entry.lifecycleMu.Unlock()
 			if res := <-result; res.GetOutcome() == "exited" {
 				t.Fatal(res)
 			}

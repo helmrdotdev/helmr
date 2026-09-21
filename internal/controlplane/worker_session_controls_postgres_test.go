@@ -240,7 +240,7 @@ func TestWorkerSessionControlResumeSettledTargetPostgres(t *testing.T) {
 			b := secondWorkerControlActor(t, a)
 			addWorkerControlSecret(t, b)
 			capture := b.capture(t, "settled target")
-			b.turn(t, 1, capture, true)
+			b.turn(t, 1)
 			b.suspend(t, capture)
 			canceler, err := run.NewCanceler(b.Pool)
 			if err != nil {

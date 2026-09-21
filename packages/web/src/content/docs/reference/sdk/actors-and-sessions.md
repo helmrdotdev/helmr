@@ -87,6 +87,11 @@ reject `send`; `enqueue` can still add work to an open held Session.
 consumer, and deduplicate remote effects using event IDs. A finite page is not a
 completion signal: inspect terminal Turn events or `turn.retrieve()`.
 
+`turn.complete(result?)` and `turn.fail(error)` commit the logical outcome without
+capturing the Computer. Their terminal records and Turn views do not attach a
+disk version. Disk preservation and restoration follow the Computer lifecycle;
+local files can be newer than the last saved disk even after a Turn completes.
+
 `turn.interrupt()` returns a stop receipt and hold identity. Acceptance may precede
 physical convergence. Queued work stays retained. `session.resume({ holdId })`
 releases that exact converged hold; it never replays the interrupted Turn.

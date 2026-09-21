@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Only the environment, Worker and committed Computer root are seeded. Actor, turn,
@@ -247,37 +248,46 @@ func (f *actorCheckpointFixture) capture(t *testing.T, value string) testWorkspa
 	return testWorkspaceCapture{Tree: workerapi.WorkspaceTreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount)}, Artifact: workerapi.WorkspaceArtifact{Digest: obj.Digest, SizeBytes: obj.SizeBytes, MediaType: a.MediaType, Encoding: a.Encoding, EntryCount: int32(a.EntryCount)}}
 }
 
-func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64, capture testWorkspaceCapture, changed bool) workerapi.CommitActorTurnResponse {
+func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64) workerapi.CommitActorTurnResponse {
 	t.Helper()
-	var base uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
+	var headBefore, baseBefore uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID).Scan(&headBefore, &baseBefore); err != nil {
 		t.Fatal(err)
 	}
 	scope := f.receiveTurn(t, sequence)
 	f.beginSettlement(t, scope)
-	req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: sequence, BaseWorkspaceVersionID: base.String(), Tree: capture.Tree}
-	if changed {
-		req.Artifact = &capture.Artifact
-	}
+	req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: sequence}
 	parsed, err := parseActorTurnCommitRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed)
 	if err != nil {
-		t.Fatalf("commit turn %d: %v", sequence, err)
+		t.Fatalf("commit Turn %d: %v", sequence, err)
 	}
 	replayed, err := f.server.commitActorTurn(t.Context(), f.worker, req, parsed)
 	if err != nil || replayed != out {
-		t.Fatalf("turn replay: %+v %v", replayed, err)
+		t.Fatalf("Turn replay: %+v %v", replayed, err)
 	}
-	var head, leaseBase uuid.UUID
-	var committed int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id,s.committed_input_sequence FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id JOIN sessions s ON s.id=$3 WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID, f.sessionID).Scan(&head, &leaseBase, &committed); err != nil {
+	conflicting := req
+	conflicting.Result = json.RawMessage(`{"different":true}`)
+	conflictingParsed, err := parseActorTurnCommitRequest(conflicting)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if head.String() != out.WorkspaceVersionID || leaseBase != head || committed != sequence {
-		t.Fatalf("turn frontier did not converge: head=%s lease=%s cursor=%d", head, leaseBase, committed)
+	if _, err := f.server.commitActorTurn(t.Context(), f.worker, conflicting, conflictingParsed); !errors.Is(err, errStaleActorTurnCommit) {
+		t.Fatalf("conflicting replay: %v", err)
+	}
+
+	var head, base uuid.UUID
+	var cursor int64
+	var version pgtype.UUID
+	var data []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id,s.committed_input_sequence,e.workspace_version_id,e.data FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id JOIN sessions s ON s.id=$3 JOIN session_events e ON e.id=$4 WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID, f.sessionID, uuid.MustParse(out.EventID)).Scan(&head, &base, &cursor, &version, &data); err != nil {
+		t.Fatal(err)
+	}
+	if head != headBefore || base != baseBefore || cursor != sequence || version.Valid || strings.Contains(string(data), "workspace_version_id") {
+		t.Fatalf("Turn changed persistence or failed to advance cursor: head=%s base=%s cursor=%d version=%v data=%s", head, base, cursor, version, data)
 	}
 	return out
 }
@@ -416,7 +426,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			first := f.capture(t, "input1")
-			turn := f.turn(t, 1, first, true)
+			f.turn(t, 1)
 			checkpoint := f.suspend(t, first)
 			sourceLeaseID := f.claim.workspaceLease.ID
 			var root, head, parent uuid.UUID
@@ -424,10 +434,10 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT a.base_workspace_version_id,w.head_version_id,v.parent_version_id,v.writer_generation FROM run_attempts a JOIN workspaces w ON w.id=a.workspace_id JOIN workspace_versions v ON v.id=$2 WHERE a.run_id=$1 AND a.number=1`, f.runID, uuid.MustParse(checkpoint.WorkspaceVersionID)).Scan(&root, &head, &parent, &generation); err != nil {
 				t.Fatal(err)
 			}
-			if root != f.rootID || head.String() != turn.WorkspaceVersionID || parent != head || root == head || generation != 1 {
+			if root != f.rootID || head.String() != f.rootID.String() || parent != head || root != head || generation != 1 {
 				t.Fatalf("invalid produced suspend frontier: %s %s %s %d", root, head, parent, generation)
 			}
-			t.Logf("owning turn/checkpoint produced root != head, private parent=head, source generation=%d", generation)
+			t.Logf("logical Turn retains root == head, private parent=head, source generation=%d", generation)
 			if mode == "close" {
 				f.close(t)
 			} else {
@@ -443,7 +453,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 				if err != nil || receipt.Status != "accepted" {
 					t.Fatalf("interrupt: %+v %v", receipt, err)
 				}
-				req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: 2, BaseWorkspaceVersionID: checkpoint.WorkspaceVersionID, Tree: first.Tree}
+				req := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: 2}
 				parsed, err := parseActorTurnCommitRequest(req)
 				if err != nil {
 					t.Fatal(err)
@@ -470,11 +480,8 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 				if mode == "changed" {
 					last = f.capture(t, "input2")
 				}
-				second := f.turn(t, 2, last, mode == "changed")
+				f.turn(t, 2)
 				terminal = 2
-				if mode == "unchanged" && second.WorkspaceVersionID != checkpoint.WorkspaceVersionID {
-					t.Fatal("unchanged turn did not publish private version")
-				}
 				f.close(t)
 			}
 			f.complete(t, terminal, last)
@@ -494,7 +501,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	first := f.capture(t, "input1")
-	f.turn(t, 1, first, true)
+	f.turn(t, 1)
 	checkpoint := f.suspend(t, first)
 	_, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)})
 	if err != nil {
@@ -511,9 +518,9 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 	}{
 		{name: "wrong Run", mutate: func(a *runLeaseClaimAuthority) { a.run.ID = pgvalue.NewUUIDv7() }},
 		{name: "wrong attempt", mutate: func(a *runLeaseClaimAuthority) { a.attempt.Number++ }},
-		{name: "wrong head", mutate: func(a *runLeaseClaimAuthority) { a.workspace.HeadVersionID = pgvalue.UUID(f.rootID) }},
+		{name: "wrong head", mutate: func(a *runLeaseClaimAuthority) { a.workspace.HeadVersionID = pgvalue.UUID(uuid.NewV7()) }},
 		{name: "wrong current generation", mutate: func(a *runLeaseClaimAuthority) { a.workspace.WriterGeneration++ }},
-		{name: "wrong private parent", sql: `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.rootID}},
+		{name: "wrong private parent", sql: `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "private generation rewritten", constraint: "workspace_versions_source_writer_fence_fkey", sql: `UPDATE workspace_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "wrong source lease", constraint: "run_checkpoints_source_workspace_lease_fkey", sql: `UPDATE run_checkpoints SET source_workspace_lease_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID), f.claim.workspaceLease.ID}},
 		{name: "wrong private artifact", sql: `UPDATE workspace_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
@@ -545,7 +552,7 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 				test.mutate(&a)
 			}
 			q := db.New(tx)
-			base, err := getActorTurnVersion(t.Context(), q, a, a.workspaceLease.BaseWorkspaceVersionID)
+			base, err := getActorWorkspaceVersion(t.Context(), q, a, a.workspaceLease.BaseWorkspaceVersionID)
 			if err == nil {
 				_, err = validateRestoredActorBase(t.Context(), q, a, base)
 			}
@@ -559,7 +566,7 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 func TestActorCheckpointFrontierExpiredBeforePlacementPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	first := f.capture(t, "input1")
-	f.turn(t, 1, first, true)
+	f.turn(t, 1)
 	cp := f.suspend(t, first)
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
@@ -613,7 +620,7 @@ func TestActorCheckpointFrontierRecoveredRestorePostgres(t *testing.T) {
 		t.Run(fmt.Sprintf("changed=%t", changed), func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			first := f.capture(t, "input1")
-			turn := f.turn(t, 1, first, true)
+			f.turn(t, 1)
 			cp := f.suspend(t, first)
 			sourceLease := f.claim.workspaceLease.ID
 			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
@@ -635,10 +642,7 @@ func TestActorCheckpointFrontierRecoveredRestorePostgres(t *testing.T) {
 			if changed {
 				last = f.capture(t, "input2")
 			}
-			second := f.turn(t, 2, last, changed)
-			if !changed && second.WorkspaceVersionID != cp.WorkspaceVersionID {
-				t.Fatal("unchanged recovered turn did not publish private version")
-			}
+			f.turn(t, 2)
 			f.close(t)
 			f.complete(t, 2, last)
 			var parent, source uuid.UUID
@@ -646,7 +650,7 @@ func TestActorCheckpointFrontierRecoveredRestorePostgres(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT parent_version_id,source_workspace_lease_id,writer_generation FROM workspace_versions WHERE id=$1`, uuid.MustParse(cp.WorkspaceVersionID)).Scan(&parent, &source, &generation); err != nil {
 				t.Fatal(err)
 			}
-			if parent.String() != turn.WorkspaceVersionID || pgvalue.UUID(source) != sourceLease || generation != 1 {
+			if parent.String() != f.rootID.String() || pgvalue.UUID(source) != sourceLease || generation != 1 {
 				t.Fatal("recovery rewrote immutable checkpoint provenance")
 			}
 			t.Log("replacement writer4 completed with source writer1 unchanged; turn/completion replay and cursor/head convergence passed")
@@ -659,7 +663,7 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			first := f.capture(t, "input1")
-			f.turn(t, 1, first, true)
+			f.turn(t, 1)
 			f.suspend(t, first)
 			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 				t.Fatal(err)
@@ -682,7 +686,7 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 			case "ownership":
 				sql, args = `UPDATE workspaces SET ownership_generation=ownership_generation+1 WHERE id=$1`, []any{f.workspaceID}
 			case "head":
-				sql, args = `UPDATE workspaces SET head_version_id=$2 WHERE id=$1`, []any{f.workspaceID, f.rootID}
+				sql, args = `UPDATE workspaces SET head_version_id=$2 WHERE id=$1`, []any{f.workspaceID, f.claim.workspaceLease.BaseWorkspaceVersionID}
 			case "owner":
 				sql, args = `UPDATE workspaces SET owner_session_id=NULL WHERE id=$1`, []any{f.workspaceID}
 			case "terminal reason":
@@ -734,4 +738,79 @@ func (f *actorCheckpointFixture) receiveTurn(t *testing.T, sequence int64) sessi
 		t.Fatalf("input was not activated: %+v", input)
 	}
 	return session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.runID, AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
+}
+
+func TestActorLogicalTurnsAfterRestoreThenCompletionPostgres(t *testing.T) {
+	f := newActorCheckpointFixture(t)
+	capture := f.capture(t, "resident changes")
+	f.turn(t, 1)
+	f.suspend(t, capture)
+	for sequence := int64(2); sequence <= 4; sequence++ {
+		if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"prompt":"continue"}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if sequence == 2 {
+			f.placeAndStart(t)
+		}
+		f.turn(t, sequence)
+	}
+	f.close(t)
+	f.complete(t, 4, capture)
+}
+
+func TestSettledTurnCannotResumeHistoricalCheckpointAfterHostLossPostgres(t *testing.T) {
+	for _, inside := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inside_turn=%t", inside), func(t *testing.T) {
+			f := newActorCheckpointFixture(t)
+			capture := f.capture(t, "resident changes")
+			f.turn(t, 1)
+			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"prompt":"continue"}`)}); err != nil {
+				t.Fatal(err)
+			}
+			var scope session.TurnScope
+			cursor := int64(1)
+			if inside {
+				scope = f.receiveTurn(t, 2)
+				cursor = 2
+			}
+			checkpointTokenAndResume(t, f, scope, cursor, capture)
+			f.turn(t, 2)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET observed_state='failed',observed_version=observed_version+1,terminal_at=now(),terminal_reason_code='test_host_failure' WHERE id=$1`, f.claim.runtime.ID)
+			if n, err := f.placement.RecoverRunExecutionLeases(t.Context(), 10); err != nil || n != 1 {
+				t.Fatalf("loss=%d %v", n, err)
+			}
+			if rows, err := f.placement.RecoverExpiredRunResumes(t.Context(), 10); err != nil || len(rows) != 0 {
+				t.Fatalf("old restore retried: %+v %v", rows, err)
+			}
+			var status, runStatus string
+			cursor = 0
+			var ready, results int
+			var head uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,r.status,s.committed_input_sequence,w.head_version_id,
+    (SELECT count(*) FROM run_checkpoints WHERE run_id=r.id AND status='ready'),
+    (SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.completed')
+    FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &runStatus, &cursor, &head, &ready, &results); err != nil {
+				t.Fatal(err)
+			}
+			if status != "recovery_required" || runStatus != "system_failed" || cursor != 2 || head != f.rootID || ready != 0 || results != 2 {
+				t.Fatalf("state=%s/%s cursor=%d head=%s ready=%d results=%d", status, runStatus, cursor, head, ready, results)
+			}
+		})
+	}
+}
+
+func TestLogicalTurnsPreserveThreeCheckpointLineagePostgres(t *testing.T) {
+	f := newActorCheckpointFixture(t)
+	capture := f.capture(t, "persistent computer")
+	f.turn(t, 1)
+	for seq := int64(2); seq <= 4; seq++ {
+		if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"prompt":"continue"}`)}); err != nil {
+			t.Fatal(err)
+		}
+		scope := f.receiveTurn(t, seq)
+		checkpointTokenAndResume(t, f, scope, seq, capture)
+		f.turn(t, seq)
+	}
+	f.close(t)
+	f.complete(t, 4, capture)
 }
