@@ -1830,15 +1830,19 @@ func pauseTurnSettle(
 	defer releaseBarrier()
 	turnCtx, cancelTurn := actorTurnAuthorityContext(ctx, entry)
 	defer cancelTurn()
+	// Only an applied commit may release customer execution. On error the caller
+	// terminates the program; keep other admissions closed until cleanup as well.
+	settled := false
+	defer func() {
+		if !settled {
+			entry.processesMu.Lock()
+			entry.recoveryRequired = true
+			entry.processesMu.Unlock()
+		}
+	}()
 	if err := process.cgroup.freeze(turnCtx); err != nil {
 		return fmt.Errorf("freeze actor program cgroup: %w", err)
 	}
-	frozen := true
-	defer func() {
-		if frozen {
-			_ = process.cgroup.thaw(context.Background())
-		}
-	}()
 	resumeOutputs, err := outputs.pause(turnCtx)
 	if err != nil {
 		return fmt.Errorf("pause actor program output streams: %w", err)
@@ -1923,12 +1927,12 @@ func pauseTurnSettle(
 	if err := process.cgroup.thaw(turnCtx); err != nil {
 		return fmt.Errorf("thaw actor program cgroup: %w", err)
 	}
-	frozen = false
 	resumeOutputs()
 	outputsPaused = false
 	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
 		return fmt.Errorf("write actor turn commit decision: %w", err)
 	}
+	settled = true
 	return nil
 }
 

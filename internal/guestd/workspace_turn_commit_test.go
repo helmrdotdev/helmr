@@ -2,6 +2,7 @@ package guestd
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -250,5 +251,27 @@ func TestTurnSettleBlocksMountRetirementUntilReleased(t *testing.T) {
 	registry.mu.Unlock()
 	if current {
 		t.Fatal("mount retirement did not remove released Actor entry")
+	}
+}
+
+func TestTurnSettleCaptureFailureDoesNotResumeCustomerExecution(t *testing.T) {
+	entry := testWorkspaceAuthorityEntry()
+	entry.authority = testWorkspaceRunAuthority(time.Now().Add(time.Minute))
+	registry := newWorkspaceOperationRegistry()
+	registry.register("mount-1", entry)
+	run := &programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1"}
+	requested := &programv0.TurnSettleRequested{CorrelationId: "settlement", TargetInputSequence: 1}
+	pause := &programv0.TurnSettlePauseRequest{RunId: run.RunId, AttemptNumber: run.AttemptNumber, RunLeaseId: run.RunLeaseId, CorrelationId: requested.CorrelationId, TargetInputSequence: 1, ExpectedBaseWorkspaceVersionId: "version-1", ExpectedTreeDigest: workspace.CanonicalEmptyTreeDigest}
+	cgroup := &testProgramCgroup{}
+	process := &programProcess{cgroup: cgroup, workspaceRoot: filepath.Join(t.TempDir(), "missing-root")}
+	err := pauseTurnSettle(t.Context(), nil, run, requested, pause, process, nil, &programOutputCoordinator{}, registry, entry)
+	if err == nil || !strings.Contains(err.Error(), "capture actor turn workspace") {
+		t.Fatalf("capture error=%v", err)
+	}
+	if _, err := entry.beginWorkspaceExecAdmission(); err == nil {
+		t.Fatal("failed settlement reopened exec admission")
+	}
+	if cgroup.freezeCount() != 1 || cgroup.thawCount() != 0 {
+		t.Fatalf("failed capture resumed customer execution: freeze=%d thaw=%d", cgroup.freezeCount(), cgroup.thawCount())
 	}
 }

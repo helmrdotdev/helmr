@@ -22,7 +22,23 @@ import (
 func (task *guestRunLeaseTask) handleTurnSettle(
 	ctx context.Context,
 	requested *programv0.TurnSettleRequested,
-) error {
+) (retErr error) {
+	defer func() {
+		if retErr == nil || task.program.session == nil {
+			return
+		}
+		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		var err error
+		if source, ok := task.program.session.(CheckpointSourceReleaser); ok {
+			err = source.ReleaseCheckpointSource(stopCtx)
+		} else {
+			err = task.program.session.Close(stopCtx)
+		}
+		if err != nil {
+			retErr = errors.Join(retErr, &checkpointSourceReleaseError{err: err})
+		}
+	}()
 	if requested == nil || strings.TrimSpace(requested.GetCorrelationId()) == "" || requested.GetTargetInputSequence() <= 0 {
 		return errors.New("actor turn commit request is invalid")
 	}

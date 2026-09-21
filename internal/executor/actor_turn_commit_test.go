@@ -370,8 +370,9 @@ func TestHandleTurnSettleStopsMissingAppliedProofAtLeaseExpiry(t *testing.T) {
 	}
 	host, guest := net.Pipe()
 	defer guest.Close()
+	source := &checkpointSession{stream: discardReadWriteCloser{}}
 	task := &guestRunLeaseTask{
-		program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, store: store,
+		program: freshProgram{session: newBorrowedRunSession(source, testVMStream(host)), execution: testTurnExecution(claim.Lease).Session}, store: store,
 		controlPlane: &actorTurnCommitControlPlane{
 			testRunLeaseControlPlane: &testRunLeaseControlPlane{}, workspaceVersionID: "version-1",
 		},
@@ -422,6 +423,9 @@ func TestHandleTurnSettleStopsMissingAppliedProofAtLeaseExpiry(t *testing.T) {
 	}
 	if guestErr := <-guestResult; guestErr == nil {
 		t.Fatal("guest stream remained open after applied-proof deadline")
+	}
+	if source.closeCount != 1 {
+		t.Fatalf("settlement failure did not stop assigned VM: %d", source.closeCount)
 	}
 }
 
@@ -587,5 +591,16 @@ func TestCommitActorTurnAcceptsOnlyTheReplayedPendingFrontier(t *testing.T) {
 		task.authority.GetFence().GetBaseWorkspaceVersionId() != claim.Lease.BaseWorkspaceVersionID {
 		t.Fatalf("pending=%q response=%q local lease=%q guest=%q", got.pending, response.WorkspaceVersionID,
 			task.lease.BaseWorkspaceVersionID, task.authority.GetFence().GetBaseWorkspaceVersionId())
+	}
+}
+
+func TestTurnSettlePreservesPhysicalStopFailure(t *testing.T) {
+	stopErr := errors.New("VM stop unproved")
+	source := &checkpointSession{stream: discardReadWriteCloser{}, closeErr: stopErr}
+	task := &guestRunLeaseTask{program: freshProgram{session: newBorrowedRunSession(source, testVMStream(discardReadWriteCloser{}))}}
+	err := task.handleTurnSettle(t.Context(), nil)
+	var release *checkpointSourceReleaseError
+	if !errors.Is(err, stopErr) || !errors.As(err, &release) || !strings.Contains(err.Error(), "actor turn commit request is invalid") || source.closeCount != 1 {
+		t.Fatalf("settlement and stop errors=%v stop count=%d", err, source.closeCount)
 	}
 }
