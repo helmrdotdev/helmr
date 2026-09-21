@@ -704,7 +704,8 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		return nil
 	}
 	topology := vm.RuntimeTopology{Computer: &vm.RuntimeComputer{
-		VersionID: target.Source.Computer.VersionID, SizeBytes: target.Source.Computer.LogicalBytes,
+		ComputerID: target.Source.WorkspaceID,
+		VersionID:  target.Source.Computer.VersionID, SizeBytes: target.Source.Computer.LogicalBytes,
 	}}
 	if err := p.reserveRuntimeCapacity(target, topology); err != nil {
 		if errors.Is(err, errPreparedRuntimeCapacityBusy) {

@@ -253,6 +253,7 @@ func run(log *slog.Logger) error {
 		log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
 	}
 	runLeaseTasks := executor.ProgramRunner{
+		CheckpointObjects: store, Capacity: hostCapacity,
 		CAS:                 store,
 		CheckpointEncryptor: checkpointEncryptor,
 		WorkspaceMounts:     workspaceMountSessions,

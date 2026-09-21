@@ -987,15 +987,14 @@ const (
 )
 
 type RunWaitPollResponse struct {
-	RunID            string            `json:"run_id"`
-	RunWaitID        string            `json:"run_wait_id"`
-	Status           RunWaitPollStatus `json:"status"`
-	RequestVersion   int64             `json:"request_version,omitempty"`
-	CheckpointID     string            `json:"checkpoint_id,omitempty"`
-	CaptureWorkspace bool              `json:"capture_workspace,omitempty"`
-	ResumeKind       string            `json:"resume_kind,omitempty"`
-	ResumePayload    json.RawMessage   `json:"resume_payload,omitempty"`
-	RequireAck       bool              `json:"require_ack,omitempty"`
+	RunID          string            `json:"run_id"`
+	RunWaitID      string            `json:"run_wait_id"`
+	Status         RunWaitPollStatus `json:"status"`
+	RequestVersion int64             `json:"request_version,omitempty"`
+	CheckpointID   string            `json:"checkpoint_id,omitempty"`
+	ResumeKind     string            `json:"resume_kind,omitempty"`
+	ResumePayload  json.RawMessage   `json:"resume_payload,omitempty"`
+	RequireAck     bool              `json:"require_ack,omitempty"`
 }
 
 type RunWaitResumeAckRequest struct {

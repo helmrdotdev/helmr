@@ -47,6 +47,7 @@ type RunNetworkSession interface {
 
 type CheckpointableSession interface {
 	Session
+	SnapshotLimits() (SnapshotLimits, error)
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
 	Resume(context.Context) error
 }
@@ -86,10 +87,11 @@ type RuntimeTopology struct {
 // File is valid through Materialize; the connector retains its own inode link.
 // VersionID identifies the published source, not subsequent guest writes.
 type RuntimeComputer struct {
-	Path      string
-	File      *os.File
-	VersionID string
-	SizeBytes int64
+	ComputerID string
+	Path       string
+	File       *os.File
+	VersionID  string
+	SizeBytes  int64
 }
 
 type RuntimeSubstrateSource interface {
@@ -116,6 +118,7 @@ type SnapshotRequest struct {
 }
 
 type SnapshotArtifact struct {
+	Computer            *RuntimeComputer
 	RuntimeBackend      string
 	RuntimeArch         string
 	VMRuntimeContract   string
@@ -337,4 +340,14 @@ func RuntimeErrorClass(err error) string {
 	default:
 		return "unknown"
 	}
+}
+
+// SnapshotLimits describes stable source sizes and bounded raw metadata. The
+// caller reserves encoded staging in addition to the runtime-owned source disks.
+type SnapshotLimits struct {
+	ComputerBytes int64
+	MemoryBytes   int64
+	ScratchBytes  int64
+	StateBytes    int64
+	ConfigBytes   int64
 }

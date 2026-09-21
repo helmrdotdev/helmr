@@ -10,7 +10,6 @@ import (
 
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 var ErrDetached = errors.New("runtime detached after checkpoint")
@@ -65,6 +64,7 @@ type Checkpointer interface {
 }
 
 type CheckpointRequest struct {
+	Register                 func(context.Context, workerapi.CheckpointManifest) error
 	Execution                *programv0.SessionExecution
 	TurnID                   *string
 	RunID                    string
@@ -75,15 +75,8 @@ type CheckpointRequest struct {
 	CheckpointID             string
 	ResumeAttachID           string
 	CheckpointRequestVersion int64
-	CaptureWorkspace         bool
 }
 
 type CheckpointResult struct {
-	Manifest         workerapi.CheckpointManifest
-	WorkspaceCapture *CheckpointWorkspaceCapture
-}
-
-type CheckpointWorkspaceCapture struct {
-	Tree     workspace.TreeIdentity
-	Artifact workspace.WorkspaceArtifact
+	Manifest workerapi.CheckpointManifest
 }

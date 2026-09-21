@@ -603,3 +603,7 @@ func (c *restoredProgramControlPlane) AcknowledgeRunResumeRelease(ctx context.Co
 		CheckpointID: request.CheckpointID, ResumeAttachID: request.ResumeAttachID,
 		ResumeRequestVersion: request.ResumeRequestVersion}, nil
 }
+
+func (c *restoredProgramControlPlane) RegisterCheckpoint(context.Context, workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error) {
+	return workerapi.CheckpointResponse{}, nil
+}

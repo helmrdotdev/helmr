@@ -298,7 +298,6 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.Status = workerapi.RunWaitPollStatusCheckpointRequested
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
-		response.CaptureWorkspace = true
 	case db.RunWaitStatusCheckpointing:
 		if !wait.SuspendCheckpointID.Valid || wait.CheckpointRequestVersion <= 0 {
 			writeError(w, errors.New("checkpointing run wait has incomplete authority"))
@@ -307,7 +306,6 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.Status = workerapi.RunWaitPollStatusCheckpointRequested
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
-		response.CaptureWorkspace = true
 	default:
 		response.Status = workerapi.RunWaitPollStatusTerminal
 	}

@@ -1681,11 +1681,6 @@ func pauseAndResumeProgram(
 		}
 	}()
 	syscall.Sync()
-	if pause.GetCaptureWorkspace() {
-		if err := stream.writeWorkspaceArtifact(run.GetRunId(), process.workspaceRoot, process.secretPaths); err != nil {
-			return nil, fmt.Errorf("capture checkpoint workspace: %w", err)
-		}
-	}
 	if err := stream.writeCheckpointPauseReady(pause.GetRunWaitId(), pause.GetCheckpointId()); err != nil {
 		return nil, fmt.Errorf("write program checkpoint pause proof: %w", err)
 	}

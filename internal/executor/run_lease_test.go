@@ -382,7 +382,7 @@ func TestGuestRunLeaseTaskSerializesRenewalWithCheckpointFreeze(t *testing.T) {
 	frozen := make(chan struct{})
 	checkpointDone := make(chan error, 1)
 	go func() {
-		_, err := runtimeCheckpointer{
+		err := runtimeCheckpointer{
 			stream: stream, freezeGate: &task.renewalGate,
 			onFrozen: func() {
 				task.markCheckpointFrozen()

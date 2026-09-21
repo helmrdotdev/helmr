@@ -10,19 +10,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
-
-const diskRole = "computer-disk"
-
-type DiskStore struct {
-	CAS    cas.Reader
-	Cipher *checkpoint.Encryptor
-}
 
 func (s DiskStore) validate(computerID string) error {
 	if s.Cipher == nil {

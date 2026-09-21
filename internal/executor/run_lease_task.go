@@ -193,8 +193,8 @@ func (r ProgramRunner) StartRunLeaseTask(
 	}
 	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
 		task.checkpointer = &runtimeCheckpointer{
+			objects: r.CheckpointObjects, capacity: r.Capacity,
 			session:    checkpointable,
-			cas:        r.CAS,
 			encryptor:  r.CheckpointEncryptor,
 			tempDir:    r.tempDir(),
 			stream:     task.programStream(),

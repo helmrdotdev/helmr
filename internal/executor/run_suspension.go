@@ -11,6 +11,7 @@ import (
 )
 
 type RunWaitClient interface {
+	RegisterCheckpoint(context.Context, workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error)
 	CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error)
 	PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error)
 	AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error)
@@ -200,17 +201,29 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	}
 	checkpointRequest := CheckpointRequest{
 		Execution: request.Execution, TurnID: request.TurnID,
-		RunID:            lease.RunID,
-		RunWaitID:        intent.RunWaitID,
-		CorrelationID:    request.CorrelationID,
-		CheckpointID:     intent.CheckpointID,
-		CaptureWorkspace: intent.CaptureWorkspace,
+		RunID:         lease.RunID,
+		RunWaitID:     intent.RunWaitID,
+		CorrelationID: request.CorrelationID,
+		CheckpointID:  intent.CheckpointID,
 	}
-	if request.ResumeAttachID != "" {
-		checkpointRequest.AttemptNumber = lease.AttemptNumber
-		checkpointRequest.RunLeaseID = lease.ID
-		checkpointRequest.ResumeAttachID = request.ResumeAttachID
-		checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
+	checkpointRequest.AttemptNumber = lease.AttemptNumber
+	checkpointRequest.RunLeaseID = lease.ID
+	checkpointRequest.ResumeAttachID = request.ResumeAttachID
+	checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
+	checkpointRequest.Register = func(ctx context.Context, manifest workerapi.CheckpointManifest) error {
+		registration := workerapi.RegisterCheckpointRequest{Lease: lease.Fence(), RequestVersion: intent.RequestVersion, RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Manifest: manifest}
+		for {
+			_, err := w.Client.RegisterCheckpoint(ctx, registration)
+			if err == nil {
+				return nil
+			}
+			if !checkpointReadyRetryable(err) {
+				return err
+			}
+			if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
+				return err
+			}
+		}
 	}
 	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, checkpointRequest)
 	if err != nil {

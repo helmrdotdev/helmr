@@ -80,6 +80,9 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				session.scratchDisk = filepath.Join(root, "missing-scratch.ext4")
 			}
 
+			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096}
+			session.cfg.MemoryMiB = 4
+			session.cfg.ScratchDiskMiB = 4
 			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()
 			_, err = session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
 			if err == nil {

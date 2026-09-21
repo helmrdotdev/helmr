@@ -410,3 +410,7 @@ func (s *countingReadWriteCloser) Close() error {
 	s.closeCount++
 	return nil
 }
+
+func (s *borrowedParentSession) SnapshotLimits() (vm.SnapshotLimits, error) {
+	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
+}

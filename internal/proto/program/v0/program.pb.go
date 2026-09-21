@@ -5245,7 +5245,6 @@ type CheckpointPauseRequest struct {
 	state                    protoimpl.MessageState `protogen:"open.v1"`
 	RunWaitId                string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
 	CheckpointId             string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	CaptureWorkspace         bool                   `protobuf:"varint,3,opt,name=capture_workspace,json=captureWorkspace,proto3" json:"capture_workspace,omitempty"`
 	RunId                    string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	AttemptNumber            uint32                 `protobuf:"varint,5,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
 	RunLeaseId               string                 `protobuf:"bytes,6,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
@@ -5300,13 +5299,6 @@ func (x *CheckpointPauseRequest) GetCheckpointId() string {
 		return x.CheckpointId
 	}
 	return ""
-}
-
-func (x *CheckpointPauseRequest) GetCaptureWorkspace() bool {
-	if x != nil {
-		return x.CaptureWorkspace
-	}
-	return false
 }
 
 func (x *CheckpointPauseRequest) GetRunId() string {
@@ -6380,11 +6372,10 @@ const file_program_proto_rawDesc = "" +
 	"\x10_idempotency_keyB#\n" +
 	"!_actor_speculative_input_sequenceB\n" +
 	"\n" +
-	"\b_turn_id\"\xe5\x03\n" +
+	"\b_turn_id\"\xb8\x03\n" +
 	"\x16CheckpointPauseRequest\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
-	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12+\n" +
-	"\x11capture_workspace\x18\x03 \x01(\bR\x10captureWorkspace\x12\x15\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12\x15\n" +
 	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x05 \x01(\rR\rattemptNumber\x12 \n" +
 	"\frun_lease_id\x18\x06 \x01(\tR\n" +

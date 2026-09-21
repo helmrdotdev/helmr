@@ -433,3 +433,19 @@ func (s *borrowedRunSession) Resume(ctx context.Context) error {
 	}
 	return checkpointable.Resume(ctx)
 }
+
+func (s *managedWorkspaceMountSession) SnapshotLimits() (vm.SnapshotLimits, error) {
+	c, ok := s.session.(vm.CheckpointableSession)
+	if !ok {
+		return vm.SnapshotLimits{}, errors.New("session does not support checkpoints")
+	}
+	return c.SnapshotLimits()
+}
+
+func (s *borrowedRunSession) SnapshotLimits() (vm.SnapshotLimits, error) {
+	c, ok := s.parent.(vm.CheckpointableSession)
+	if !ok {
+		return vm.SnapshotLimits{}, errors.New("session does not support checkpoints")
+	}
+	return c.SnapshotLimits()
+}

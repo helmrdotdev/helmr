@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestCheckpointReadyRetryableStopsOnPermanentAdmissionFailure(t *testing.T) {
@@ -35,7 +35,6 @@ func TestControlPlaneRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 		}},
 	}
 	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()}
-	checkpointer.workspaceCapture = testCheckpointWorkspaceCapture()
 	client.onReady = func() {
 		if checkpointer.releaseCount != 0 {
 			t.Fatalf("checkpoint source released before ready")
@@ -82,7 +81,7 @@ func TestControlPlaneRunWaitsReleasesCheckpointSourceOnPermanentReadyFailure(t *
 		readyErrors: []error{&httpclient.Error{StatusCode: http.StatusUnprocessableEntity}},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(),
+		manifest: testRunCheckpointWaitManifest(),
 	}
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.Checkpointer = checkpointer
@@ -113,7 +112,7 @@ func TestControlPlaneRunWaitsPreservesReadyAndFailureAdmissionErrors(t *testing.
 	}
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.Checkpointer = &fakeCheckpointer{
-		manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(),
+		manifest: testRunCheckpointWaitManifest(),
 	}
 
 	err := ControlPlaneRunWaits{Client: client}.Wait(context.Background(), request)
@@ -132,7 +131,7 @@ func TestControlPlaneRunWaitsStaysDetachedWhenCheckpointSourceReleaseFails(t *te
 	}
 	request := testWaitRequest(workerapi.RunWaitKindToken)
 	request.Checkpointer = &fakeCheckpointer{
-		manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(),
+		manifest:   testRunCheckpointWaitManifest(),
 		releaseErr: errors.New("close failed"),
 	}
 
@@ -181,12 +180,11 @@ func TestControlPlaneRunWaitsPublishesPairedComputerManifest(t *testing.T) {
 		created: liveRunWaitResponse(),
 		polls: []workerapi.RunWaitPollResponse{{
 			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested",
-			RequestVersion: 2, CheckpointID: "checkpoint-1", CaptureWorkspace: true,
+			RequestVersion: 2, CheckpointID: "checkpoint-1",
 		}},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest:         testRunCheckpointWaitManifest(),
-		workspaceCapture: testCheckpointWorkspaceCapture(),
+		manifest: testRunCheckpointWaitManifest(),
 	}
 
 	request := testWaitRequest(workerapi.RunWaitKindTimer)
@@ -345,7 +343,7 @@ func TestControlPlaneRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.
 		}},
 	}
 	leases := &mutableRunLeaseProvider{assignment: testWaitRunLeaseAssignment()}
-	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(), onCreate: func() {
+	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest(), onCreate: func() {
 		leases.assignment.ID = "lease-2"
 	}}
 	request := testWaitRequest(workerapi.RunWaitKindTimer)
@@ -378,6 +376,8 @@ func TestControlPlaneRunWaitsReleasesOnlyExactGuestResumeProof(t *testing.T) {
 }
 
 type fakeRunWaitClient struct {
+	registrations             []workerapi.RegisterCheckpointRequest
+	registrationErrors        []error
 	created                   workerapi.CreateRunWaitResponse
 	polls                     []workerapi.RunWaitPollResponse
 	createdRequest            workerapi.CreateRunWaitRequest
@@ -455,7 +455,6 @@ func (c *fakeRunWaitClient) MarkCheckpointFailed(_ context.Context, request work
 
 type fakeCheckpointer struct {
 	manifest          workerapi.CheckpointManifest
-	workspaceCapture  *CheckpointWorkspaceCapture
 	request           CheckpointRequest
 	err               error
 	onCreate          func()
@@ -472,7 +471,7 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	if c.err != nil {
 		return CheckpointResult{}, c.err
 	}
-	return CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}, nil
+	return CheckpointResult{Manifest: c.manifest}, nil
 }
 
 func (c *fakeCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
@@ -514,16 +513,6 @@ func testWaitRunLeaseAssignment() workerapi.RunLeaseAssignment {
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "01900000-0000-7000-8000-000000000902",
 		WorkerInstanceID: "worker-1", WorkerEpoch: 42, LeaseSequence: 1,
 		RuntimeInstanceID: "runtime-instance-1",
-	}
-}
-
-func testCheckpointWorkspaceCapture() *CheckpointWorkspaceCapture {
-	return &CheckpointWorkspaceCapture{
-		Tree: workspace.TreeIdentity{Digest: "sha256:workspace-tree", SizeBytes: 21, EntryCount: 2},
-		Artifact: workspace.WorkspaceArtifact{
-			Digest: "sha256:workspace-capture", MediaType: workspace.ArtifactMediaType,
-			Encoding: workspace.ArtifactEncoding, SizeBytes: 42, EntryCount: 2,
-		},
 	}
 }
 
@@ -573,5 +562,48 @@ func TestControlPlaneRunWaitsRejectsUnpairedCheckpoint(t *testing.T) {
 	}
 	if checkpointer.releaseCount == 0 {
 		t.Fatal("failed checkpoint did not release source")
+	}
+}
+
+func (c *fakeRunWaitClient) RegisterCheckpoint(_ context.Context, request workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error) {
+	c.registrations = append(c.registrations, request)
+	if len(c.registrationErrors) > 0 {
+		err := c.registrationErrors[0]
+		c.registrationErrors = c.registrationErrors[1:]
+		if err != nil {
+			return workerapi.CheckpointResponse{}, err
+		}
+	}
+	return workerapi.CheckpointResponse{}, nil
+}
+
+type registeringCheckpointer struct{ fakeCheckpointer }
+
+func (c *registeringCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (CheckpointResult, error) {
+	result, err := c.fakeCheckpointer.CreateCheckpoint(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	return result, request.Register(ctx, result.Manifest)
+}
+func TestControlPlaneRunWaitsRetriesExactCheckpointRegistration(t *testing.T) {
+	client := &fakeRunWaitClient{
+		created:            liveRunWaitResponse(),
+		polls:              []workerapi.RunWaitPollResponse{{RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested", RequestVersion: 3, CheckpointID: "checkpoint-1"}},
+		registrationErrors: []error{&httpclient.Error{StatusCode: 500}},
+	}
+	checkpointer := &registeringCheckpointer{fakeCheckpointer: fakeCheckpointer{manifest: testRunCheckpointWaitManifest()}}
+	request := testWaitRequest(workerapi.RunWaitKindToken)
+	request.Checkpointer = checkpointer
+	err := ControlPlaneRunWaits{Client: client}.Wait(t.Context(), request)
+	if !errors.Is(err, ErrDetached) {
+		t.Fatal(err)
+	}
+	if len(client.registrations) != 2 || !reflect.DeepEqual(client.registrations[0], client.registrations[1]) {
+		t.Fatalf("registration changed across retry: %+v", client.registrations)
+	}
+	registration := client.registrations[0]
+	if client.ready == nil || registration.Lease != client.ready.Lease || registration.RequestVersion != client.ready.RequestVersion || registration.CheckpointID != client.ready.CheckpointID || !reflect.DeepEqual(registration.Manifest, client.ready.Manifest) {
+		t.Fatal("ready did not publish exact registered candidate")
 	}
 }

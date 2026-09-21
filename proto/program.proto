@@ -494,7 +494,6 @@ message TaskChildInvokeRequested {
 message CheckpointPauseRequest {
   string run_wait_id = 1;
   string checkpoint_id = 2;
-  bool capture_workspace = 3;
   string run_id = 4;
   uint32 attempt_number = 5;
   string run_lease_id = 6;

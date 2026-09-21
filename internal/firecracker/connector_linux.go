@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -2073,8 +2074,9 @@ func closeGuestStream(ctx context.Context, stream io.Closer) error {
 }
 
 func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
-	if s.topology.Computer != nil {
-		return vm.SnapshotArtifact{}, errors.New("computer capture requires paired writable-disk checkpoint support")
+	limits, err := s.SnapshotLimits()
+	if err != nil {
+		return vm.SnapshotArtifact{}, err
 	}
 	checkpointID := safeSnapshotID(request.ID)
 	memName := checkpointID + snapshotMemorySuffix
@@ -2134,6 +2136,9 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
+	if int64(len(manifest)) > limits.ConfigBytes {
+		return vm.SnapshotArtifact{}, errors.New("snapshot runtime config exceeds staging limit")
+	}
 	recordPhase("runtime_config_digest", started)
 	var scratchFile vm.SnapshotFile
 	var memoryFile vm.SnapshotFile
@@ -2163,9 +2168,12 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return vm.SnapshotArtifact{}, err
 	}
 	phases = append(phases, scratchPhase, memoryPhase)
-	_ = os.Remove(memPath)
+	if err := os.Remove(memPath); err != nil {
+		return vm.SnapshotArtifact{}, fmt.Errorf("remove raw checkpoint memory: %w", err)
+	}
 	cleanupRawSnapshot = false
 	return vm.SnapshotArtifact{
+		Computer:            cloneRuntimeComputer(s.topology.Computer),
 		RuntimeBackend:      "firecracker",
 		RuntimeArch:         workerArchitecture,
 		VMRuntimeContract:   runtimeIdentity.Contract,
@@ -3008,4 +3016,23 @@ func chownJailFile(path string, uid int, gid int) error {
 		return err
 	}
 	return os.Chmod(path, 0o600)
+}
+
+func (s *guestSession) SnapshotLimits() (vm.SnapshotLimits, error) {
+	if s.topology.Computer == nil || s.topology.Computer.ComputerID == "" || s.topology.Computer.SizeBytes <= 0 || s.cfg.MemoryMiB <= 0 || s.cfg.ScratchDiskMiB <= 0 {
+		return vm.SnapshotLimits{}, errors.New("checkpoint requires a complete Computer runtime shape")
+	}
+	if s.cfg.MemoryMiB > math.MaxInt64/(1<<20) || s.cfg.ScratchDiskMiB > math.MaxInt64/(1<<20) {
+		return vm.SnapshotLimits{}, errors.New("checkpoint runtime size overflow")
+	}
+	return vm.SnapshotLimits{ComputerBytes: s.topology.Computer.SizeBytes, MemoryBytes: s.cfg.MemoryMiB * (1 << 20), ScratchBytes: s.cfg.ScratchDiskMiB * (1 << 20), StateBytes: snapshotStateLimit, ConfigBytes: 65536}, nil
+}
+
+func cloneRuntimeComputer(source *vm.RuntimeComputer) *vm.RuntimeComputer {
+	if source == nil {
+		return nil
+	}
+	result := *source
+	result.File = nil
+	return &result
 }

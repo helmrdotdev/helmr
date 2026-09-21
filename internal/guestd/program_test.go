@@ -1420,7 +1420,6 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
 		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
 		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
-		CaptureWorkspace: true,
 	}
 	registry := newWaitingRunRegistry()
 	ctx := t.Context()
@@ -1440,16 +1439,6 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	}()
 	reader := bufio.NewReader(host)
 	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if header.Type != wire.StreamTypeWorkspaceArtifact || bodyLen == 0 {
-		t.Fatalf("workspace checkpoint frame = %+v body=%d", header, bodyLen)
-	}
-	if _, err := io.CopyN(io.Discard, reader, int64(bodyLen)); err != nil {
-		t.Fatal(err)
-	}
-	header, bodyLen, err = wire.ReadStreamFrameHeader(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
