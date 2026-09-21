@@ -15,8 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-const seedRole = "computer-seed"
-
 // SeedStore reads admitted deployment disks. It grants no execution authority
 // and never mounts, repairs, resizes or executes the submitted filesystem.
 type SeedStore struct{ CAS cas.Reader }

@@ -389,6 +389,7 @@ func ociTarFromLayers(t *testing.T, layers ...[]byte) []byte {
 	index := mustJSON(t, oci.Index{Manifests: []oci.Descriptor{{
 		MediaType: "application/vnd.oci.image.manifest.v1+json",
 		Digest:    "sha256:" + manifestDigest,
+		Platform:  &oci.Platform{OS: "linux", Architecture: "amd64"},
 	}}})
 	var buf bytes.Buffer
 	writer := tar.NewWriter(&buf)
