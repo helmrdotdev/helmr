@@ -29,7 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Only the environment, Worker and empty Workspace are seeded. Actor, turn,
+// Only the environment, Worker and committed Computer root are seeded. Actor, turn,
 // checkpoint and resumed lease authority are produced by their owning operations.
 // Physical Worker observations and VM snapshot bytes are test inputs, not KVM execution.
 type actorCheckpointFixture struct {
@@ -78,7 +78,7 @@ func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *ac
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,$3,'test-workspace',$4,$5)`, f.workspaceID, b.EnvironmentID, runtest.Region, b.WorkspaceDefinitionID, f.rootID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,status,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, f.rootID, b.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
+	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, b.EnvironmentID, f.workspaceID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

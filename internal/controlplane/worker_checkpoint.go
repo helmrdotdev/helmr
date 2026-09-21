@@ -850,83 +850,14 @@ func (s *Server) commitCheckpointReady(
 ) (workerapi.CheckpointResponse, error) {
 	var response workerapi.CheckpointResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(ready.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
-			return fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
-		}
-		workspaceBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
-		if err != nil {
-			return fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
-		}
-		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+		source, err := lockCheckpointSource(ctx, work, worker, ready.lease, request.Lease.LeaseSequence,
+			ready.waitID, ready.checkpointID, request.RequestVersion, request.Manifest)
 		if err != nil {
 			return err
 		}
-		authority, err := lockRenewableRunLeaseAuthority(
-			ctx, work.q, worker, pgvalue.UUID(ready.lease.leaseID), request.Lease.LeaseSequence, locators,
-		)
-		if err != nil {
-			return err
-		}
-		sourcePoolID := authority.worker.WorkerPoolID
-		sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-			WorkerPoolID:  sourcePoolID,
-		})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if sourcePool.Status != "active" && sourcePool.Status != "draining" {
+		authority, wait, checkpointedAt := source.authority, source.wait, source.checkpointedAt
+		if source.hasCandidate {
 			return errStaleRunLeaseClaim
-		}
-		authority.actor = owner.actor
-		authority.parentRun = owner.parent
-		if err := validateRunFinalizationOwner(authority, locators); err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if authority.run.Status != db.RunStatusWaiting ||
-			authority.runLease.Status != db.RunLeaseStatusCheckpointing {
-			return errStaleRunLeaseClaim
-		}
-		wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
-			ID: pgvalue.UUID(ready.waitID), EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
-			AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
-			CurrentRunLeaseID: authority.runLease.ID,
-		})
-		if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
-			wait.Kind != db.WaitKindChild) ||
-			wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
-			wait.CheckpointRequestVersion != request.RequestVersion || wait.SuspendCheckpointID != pgvalue.UUID(ready.checkpointID) {
-			return staleRunLeaseClaim(err)
-		}
-		if err := validateRunWaitActorCursor(authority, wait); err != nil {
-			return err
-		}
-		checkpoint, err := work.q.LockCreatingRunCheckpoint(ctx, db.LockCreatingRunCheckpointParams{
-			ID: pgvalue.UUID(ready.checkpointID), RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
-			RunWaitID: wait.ID, SourceRunLeaseID: authority.runLease.ID,
-			SourceWorkspaceLeaseID: authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
-		})
-		if err != nil || checkpoint.BaseWorkspaceVersionID != authority.workspaceLease.BaseWorkspaceVersionID ||
-			checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence {
-			return staleRunLeaseClaim(err)
-		}
-		identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
-		if err != nil || identity.ID != request.Manifest.RecoveryPoint.Runtime.ID ||
-			identity.RuntimeArch != request.Manifest.RecoveryPoint.Runtime.Arch || identity.VMRuntimeContract != request.Manifest.RecoveryPoint.Runtime.Contract ||
-			identity.KernelDigest != request.Manifest.RecoveryPoint.Runtime.KernelDigest ||
-			identity.InitramfsDigest != request.Manifest.RecoveryPoint.Runtime.InitramfsDigest ||
-			identity.RootfsDigest != request.Manifest.RecoveryPoint.Runtime.RootfsDigest {
-			return staleRunLeaseClaim(err)
-		}
-		if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, request.Manifest); err != nil {
-			return err
 		}
 		baseAuthority, err := work.q.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
 			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
@@ -942,27 +873,6 @@ func (s *Server) commitCheckpointReady(
 		}
 		if err := validateCheckpointWorkspaceBaseAuthority(request.Manifest, sourceBase); err != nil {
 			return err
-		}
-		if err := validateCheckpointSubstrateAuthority(
-			ctx,
-			work.q,
-			authority,
-			request.Manifest,
-		); err != nil {
-			return err
-		}
-		if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
-			SourceRunLeaseID:   authority.runLease.ID,
-			WorkerGroupID:      pgvalue.UUID(worker.WorkerGroupID),
-			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:        worker.WorkerEpoch,
-			SourceWorkerPoolID: sourcePoolID,
-		}); err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
-		if err != nil || !checkpointedAt.Valid || !checkpointedAt.Time.Before(authority.runLease.ExpiresAt.Time) {
-			return staleRunLeaseClaim(err)
 		}
 		workspaceVersionID, err := recordCheckpointWorkspaceVersion(ctx, work.q, worker, authority, ready.capture)
 		if err != nil {
@@ -1033,7 +943,7 @@ func (s *Server) commitCheckpointReady(
 				ready.capture.tree.Digest,
 				checkpointedAt,
 				request.RequestVersion,
-				workspaceBindings,
+				source.workspaceBindings,
 			); err != nil {
 				return err
 			}
@@ -1391,4 +1301,124 @@ func recordCheckpointRuntimeArtifact(
 		return pgtype.UUID{}, fmt.Errorf("record checkpoint artifact %s: %w", proof.role, err)
 	}
 	return artifact.ID, nil
+}
+
+type checkpointSource struct {
+	hasCandidate      bool
+	expiresAt         pgtype.Timestamptz
+	authority         runLeaseClaimAuthority
+	wait              db.RunWait
+	workspaceBindings []db.LockWorkspaceSecretsForAdmissionRow
+	checkpointedAt    pgtype.Timestamptz
+}
+
+func lockCheckpointSource(ctx context.Context, work *txWork, worker workerActor,
+	lease parsedRunLeaseFence, leaseSequence int64, waitID, checkpointID uuid.UUID,
+	requestVersion int64, manifest workerapi.CheckpointManifest,
+) (checkpointSource, error) {
+	locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
+		ID: pgvalue.UUID(lease.leaseID), LeaseSequence: leaseSequence,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch: worker.WorkerEpoch})
+	if err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
+		return checkpointSource{}, fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
+	}
+	workspaceBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
+	if err != nil {
+		return checkpointSource{}, fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
+	}
+	owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+	if err != nil {
+		return checkpointSource{}, err
+	}
+	authority, err := lockRenewableRunLeaseAuthority(
+		ctx, work.q, worker, pgvalue.UUID(lease.leaseID), leaseSequence, locators,
+	)
+	if err != nil {
+		return checkpointSource{}, err
+	}
+	sourcePoolID := authority.worker.WorkerPoolID
+	sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		WorkerPoolID:  sourcePoolID,
+	})
+	if err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if sourcePool.Status != "active" && sourcePool.Status != "draining" {
+		return checkpointSource{}, errStaleRunLeaseClaim
+	}
+	authority.actor = owner.actor
+	authority.parentRun = owner.parent
+	if err := validateRunFinalizationOwner(authority, locators); err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if authority.run.Status != db.RunStatusWaiting ||
+		authority.runLease.Status != db.RunLeaseStatusCheckpointing {
+		return checkpointSource{}, errStaleRunLeaseClaim
+	}
+	wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
+		ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
+		AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
+		CurrentRunLeaseID: authority.runLease.ID,
+	})
+	if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
+		wait.Kind != db.WaitKindChild) ||
+		wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
+		wait.CheckpointRequestVersion != requestVersion || wait.SuspendCheckpointID != pgvalue.UUID(checkpointID) {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if err := validateRunWaitActorCursor(authority, wait); err != nil {
+		return checkpointSource{}, err
+	}
+	checkpoint, err := work.q.LockCreatingRunCheckpoint(ctx, db.LockCreatingRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
+		RunWaitID: wait.ID, SourceRunLeaseID: authority.runLease.ID,
+		SourceWorkspaceLeaseID: authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
+	})
+	if err != nil || checkpoint.BaseWorkspaceVersionID != authority.workspaceLease.BaseWorkspaceVersionID ||
+		checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
+	if err != nil || identity.ID != manifest.RecoveryPoint.Runtime.ID ||
+		identity.RuntimeArch != manifest.RecoveryPoint.Runtime.Arch || identity.VMRuntimeContract != manifest.RecoveryPoint.Runtime.Contract ||
+		identity.KernelDigest != manifest.RecoveryPoint.Runtime.KernelDigest ||
+		identity.InitramfsDigest != manifest.RecoveryPoint.Runtime.InitramfsDigest ||
+		identity.RootfsDigest != manifest.RecoveryPoint.Runtime.RootfsDigest {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, manifest); err != nil {
+		return checkpointSource{}, err
+	}
+	if err := validateCheckpointSubstrateAuthority(
+		ctx,
+		work.q,
+		authority,
+		manifest,
+	); err != nil {
+		return checkpointSource{}, err
+	}
+	if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
+		SourceRunLeaseID:   authority.runLease.ID,
+		WorkerGroupID:      pgvalue.UUID(worker.WorkerGroupID),
+		WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:        worker.WorkerEpoch,
+		SourceWorkerPoolID: sourcePoolID,
+	}); err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
+	if err != nil || !checkpointedAt.Valid || !checkpointedAt.Time.Before(authority.runLease.ExpiresAt.Time) || (checkpoint.ExpiresAt.Valid && !checkpointedAt.Time.Before(checkpoint.ExpiresAt.Time)) {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+
+	if _, _, err := validateCheckpointManifest(manifest, checkpointID.String(),
+		pgvalue.UUIDString(authority.run.ID), authority.attempt.Number, waitID.String(), authority.runtime.RuntimeIdentityID); err != nil {
+		return checkpointSource{}, errStaleRunLeaseClaim
+	}
+	return checkpointSource{authority: authority, wait: wait, checkpointedAt: checkpointedAt, workspaceBindings: workspaceBindings, hasCandidate: len(checkpoint.CandidateManifest) != 0, expiresAt: checkpoint.ExpiresAt}, nil
 }

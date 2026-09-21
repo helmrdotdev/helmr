@@ -1119,6 +1119,16 @@ type CASObject struct {
 	MediaType string `json:"media_type"`
 }
 
+// RegisterCheckpointRequest pins the exact encrypted snapshot before any upload.
+// It does not claim that the objects exist or that the checkpoint is restorable.
+type RegisterCheckpointRequest struct {
+	Lease          RunLeaseFence      `json:"lease"`
+	RequestVersion int64              `json:"request_version"`
+	RunWaitID      string             `json:"run_wait_id"`
+	CheckpointID   string             `json:"checkpoint_id"`
+	Manifest       CheckpointManifest `json:"manifest"`
+}
+
 type CheckpointReadyRequest struct {
 	Lease            RunLeaseFence              `json:"lease"`
 	RequestVersion   int64                      `json:"request_version"`

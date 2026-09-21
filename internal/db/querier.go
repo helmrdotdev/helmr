@@ -341,6 +341,7 @@ type Querier interface {
 	ListCancellationLineage(ctx context.Context, arg ListCancellationLineageParams) ([]ListCancellationLineageRow, error)
 	ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
+	ListCheckpointObjects(ctx context.Context, checkpointID pgtype.UUID) ([]RunCheckpointObject, error)
 	ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error)
 	ListDeploymentDefinitionsForDeployment(ctx context.Context, arg ListDeploymentDefinitionsForDeploymentParams) ([]DeploymentDefinition, error)
 	ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([]RunWait, error)
@@ -522,6 +523,11 @@ type Querier interface {
 	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RegisterActorInputRunWait(ctx context.Context, arg RegisterActorInputRunWaitParams) (RunWait, error)
+	RegisterCheckpointManifest(ctx context.Context, arg RegisterCheckpointManifestParams) (int64, error)
+	// Caller locks the current checkpoint source and owns the enclosing transaction.
+	// Registration never observes remote existence or grants guest execution. The
+	// entire five-object set must succeed or roll back; exact replays preserve candidate identity.
+	RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error)
 	// These are transaction primitives. The publication owner must lock and validate
 	// current preparation authority before registration and publication. Publication
 	// commits the root and consumes its candidate atomically. A receipt is not an execution

@@ -559,6 +559,14 @@ func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request workerapi
 	return response, nil
 }
 
+func (c *Client) RegisterCheckpoint(ctx context.Context, request workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error) {
+	var response workerapi.CheckpointResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/register", request, &response); err != nil {
+		return workerapi.CheckpointResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) MarkCheckpointReady(ctx context.Context, request workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error) {
 	var response workerapi.CheckpointResponse
 	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/ready", request, &response); err != nil {

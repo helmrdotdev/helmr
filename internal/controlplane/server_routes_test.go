@@ -209,6 +209,7 @@ POST /worker/v1/instance/token
 POST /worker/v1/run/actors/start
 POST /worker/v1/run/checkpoints/failed
 POST /worker/v1/run/checkpoints/ready
+POST /worker/v1/run/checkpoints/register
 POST /worker/v1/run/finalization/begin
 POST /worker/v1/run/leases/claim
 POST /worker/v1/run/leases/discover
@@ -220,6 +221,8 @@ POST /worker/v1/run/logs/append
 POST /worker/v1/run/metadata/update
 POST /worker/v1/run/runtime-instances/closed
 POST /worker/v1/run/runtime-instances/failed
+POST /worker/v1/run/runtime-instances/initialization/publish
+POST /worker/v1/run/runtime-instances/initialization/register
 POST /worker/v1/run/runtime-instances/ready
 POST /worker/v1/run/runtime-instances/reconcile
 POST /worker/v1/run/runtime-substrates/register

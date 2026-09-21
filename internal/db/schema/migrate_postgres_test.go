@@ -379,7 +379,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_initializations.availability_required:s,telemetry_outbox.ingest_size_bytes:s" {
+	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_initializations.availability_required:s,run_checkpoint_objects.availability_required:s,telemetry_outbox.ingest_size_bytes:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 

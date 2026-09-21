@@ -2344,6 +2344,7 @@ CREATE TABLE run_checkpoints (
     status TEXT NOT NULL DEFAULT 'creating'
         CHECK (status IN ('creating', 'ready', 'invalid', 'deleted')),
     restore_manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
+    candidate_manifest JSONB CHECK (candidate_manifest IS NULL OR jsonb_typeof(candidate_manifest) = 'object'),
     ready_request_fingerprint TEXT,
     failed_request_fingerprint TEXT,
     expires_at TIMESTAMPTZ,
@@ -2353,6 +2354,7 @@ CREATE TABLE run_checkpoints (
     invalidation_reason_code TEXT,
     UNIQUE (run_id, attempt_number, workspace_id, id),
     UNIQUE (id, workspace_id),
+    UNIQUE (id, status),
     CONSTRAINT run_checkpoints_source_execution_fkey FOREIGN KEY (run_id, attempt_number, workspace_id, source_run_lease_id)
         REFERENCES run_leases(run_id, attempt_number, workspace_id, id)
         ON DELETE RESTRICT,
@@ -2432,6 +2434,24 @@ CREATE TABLE run_checkpoints (
         status <> 'ready'
         OR runtime_config_artifact_id IS NOT NULL
     )
+);
+
+-- Candidate descriptors have no independent lifecycle. The parent's status is
+-- mirrored solely for FK pinning and cascades on every terminal transition.
+CREATE TABLE run_checkpoint_objects (
+    checkpoint_id UUID NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('computer', 'runtime_config', 'vm_state', 'memory', 'scratch_disk')),
+    digest TEXT NOT NULL UNIQUE REFERENCES cas_object_lifetimes(digest),
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    media_type TEXT NOT NULL,
+    checkpoint_status TEXT NOT NULL,
+    availability_required BOOLEAN GENERATED ALWAYS AS (
+        CASE WHEN checkpoint_status = 'creating' THEN true END
+    ) STORED,
+    PRIMARY KEY (checkpoint_id, role),
+    FOREIGN KEY (checkpoint_id, checkpoint_status) REFERENCES run_checkpoints(id, status)
+        ON UPDATE CASCADE ON DELETE RESTRICT,
+    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available)
 );
 
 CREATE INDEX run_checkpoints_history_idx

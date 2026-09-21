@@ -582,6 +582,7 @@ type RunCheckpoint struct {
 	ActorSpeculativeInputSequence pgtype.Int8        `json:"actor_speculative_input_sequence"`
 	Status                        string             `json:"status"`
 	RestoreManifest               []byte             `json:"restore_manifest"`
+	CandidateManifest             []byte             `json:"candidate_manifest"`
 	ReadyRequestFingerprint       pgtype.Text        `json:"ready_request_fingerprint"`
 	FailedRequestFingerprint      pgtype.Text        `json:"failed_request_fingerprint"`
 	ExpiresAt                     pgtype.Timestamptz `json:"expires_at"`
@@ -589,6 +590,16 @@ type RunCheckpoint struct {
 	ReadyAt                       pgtype.Timestamptz `json:"ready_at"`
 	InvalidatedAt                 pgtype.Timestamptz `json:"invalidated_at"`
 	InvalidationReasonCode        pgtype.Text        `json:"invalidation_reason_code"`
+}
+
+type RunCheckpointObject struct {
+	CheckpointID         pgtype.UUID `json:"checkpoint_id"`
+	Role                 string      `json:"role"`
+	Digest               string      `json:"digest"`
+	SizeBytes            int64       `json:"size_bytes"`
+	MediaType            string      `json:"media_type"`
+	CheckpointStatus     string      `json:"checkpoint_status"`
+	AvailabilityRequired pgtype.Bool `json:"availability_required"`
 }
 
 type RunLease struct {
