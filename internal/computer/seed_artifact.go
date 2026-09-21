@@ -6,6 +6,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
+const SeedProfile = "linux-amd64-ext4-v1"
+const SeedCapacity = int64(32 << 30)
+
 const SeedMediaType = "application/vnd.helmr.computer.seed.v0+filepack"
 
 // SeedArtifact is a client-built deployment disk, never a committed Computer

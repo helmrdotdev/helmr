@@ -78,6 +78,7 @@ let
     buildGoModule = buildGo127Module;
   };
   bundleBuilderImage = pkgs.callPackage ./bundle-builder-image.nix {
+ inherit substrateGenerator;
     inherit
       bundleBuilder
       compiler

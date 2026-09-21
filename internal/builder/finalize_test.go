@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -110,6 +111,7 @@ func TestReferencedBundleObjectsDeduplicatesSharedWorkspaceImage(t *testing.T) {
 	image := deployment.BundleWorkspaceImage{
 		DeclaredID: "first",
 		Artifact: deployment.BundleWorkspaceImageArtifact{
+			Profile:      computer.SeedProfile,
 			Architecture: deployment.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
 			MediaType: deployment.WorkspaceImageArtifactMediaType,
@@ -317,6 +319,7 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 func writeVerifiedProgramFixture(
 	t *testing.T,
 	root string,
+	images ...deployment.BundleWorkspaceImage,
 ) (string, []byte, deployment.ProgramIndex) {
 	t.Helper()
 	encoder := os.Getenv("HELMR_SQUASHFS_ENCODER")
@@ -347,6 +350,10 @@ func writeVerifiedProgramFixture(
 		Queues:          []deployment.QueueInput{{Name: "tasks"}},
 		RuntimeContract: deployment.RuntimeContract, RuntimeDigest: runtimeDigest,
 	}
+	for _, image := range images {
+		index.Declarations = append(index.Declarations, deployment.ProgramIndexDeclaration{Kind: deployment.DefinitionKindSandbox, DeclaredID: image.DeclaredID, Sandbox: &deployment.SandboxManifest{Image: deployment.SandboxImageManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}}})
+	}
+	sort.Slice(index.Declarations, func(i, j int) bool { return index.Declarations[i].Kind < index.Declarations[j].Kind })
 	indexRaw, err := deployment.CanonicalProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)

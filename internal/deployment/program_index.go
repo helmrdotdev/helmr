@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
@@ -171,6 +173,9 @@ func validateProgramIndexDeclaration(
 		) {
 			return errors.New("workspace image artifactDigest is not a lowercase SHA-256 digest")
 		}
+		if declaration.Sandbox.Image.Profile != computer.SeedProfile {
+			return fmt.Errorf("sandbox disk profile %q is unsupported", declaration.Sandbox.Image.Profile)
+		}
 		if declaration.Sandbox.Image.MediaType != WorkspaceImageArtifactMediaType {
 			return fmt.Errorf(
 				"sandbox image mediaType = %q, want %q",
@@ -256,6 +261,9 @@ func cloneProgramIndexDeclaration(
 	}
 	if declaration.Sandbox != nil {
 		value := *declaration.Sandbox
+		value.Image.Config.Env = slices.Clone(value.Image.Config.Env)
+		value.Image.Config.Entrypoint = slices.Clone(value.Image.Config.Entrypoint)
+		value.Image.Config.Cmd = slices.Clone(value.Image.Config.Cmd)
 		declaration.Sandbox = &value
 	}
 	if declaration.Locator != nil {
@@ -347,6 +355,7 @@ func buildProgramIndex(
 			}
 			declaration.Sandbox = &SandboxManifest{
 				Image: SandboxImageManifest{
+					Profile: image.Profile, Config: image.Config,
 					ArtifactDigest: image.Digest,
 					MediaType:      image.MediaType,
 				},

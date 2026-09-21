@@ -39,6 +39,8 @@ func run(ctx context.Context, arguments []string) error {
 	node := flags.String("node", "", "pinned Node executable")
 	configPath := flags.String("config", "", "discovery config resolved on the invoking host")
 	programCompiler := flags.String("program-compiler", "", "pinned Program Compiler")
+	mkfs := flags.String("mkfs", "", "pinned filesystem generator")
+	filesystemConfig := flags.String("filesystem-config", "", "pinned filesystem configuration")
 	encoder := flags.String("encoder", "", "pinned mksquashfs executable")
 	if err := flags.Parse(arguments); err != nil {
 		return err
@@ -105,7 +107,12 @@ func run(ctx context.Context, arguments []string) error {
 		_, err := builder.PrepareProgram(ctx, compilerInput, cleanAbsolute(*prepareOutput))
 		return err
 	}
-	images, objects, err := builder.ReadWorkspaceImageInputs(ctx, cleanAbsolute(*workspaceImageInput))
+	imageWork, err := os.MkdirTemp(cleanAbsolute(*work), "images-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(imageWork)
+	images, objects, err := builder.ReadWorkspaceImageInputs(ctx, cleanAbsolute(*workspaceImageInput), imageWork, cleanAbsolute(*mkfs), cleanAbsolute(*filesystemConfig))
 	if err != nil {
 		return err
 	}

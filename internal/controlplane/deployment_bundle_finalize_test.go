@@ -1,11 +1,10 @@
 package controlplane
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -19,10 +18,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
@@ -216,7 +215,7 @@ func TestDeploymentFinalizationStreamContainsFinalizerPanic(t *testing.T) {
 }
 
 func TestFinishFinalizedDeploymentBundleStopsBeforeTransactionAfterDisconnect(t *testing.T) {
-	image := deploymentFinalizeOCIFixture(t)
+	image := deploymentFinalizeDiskFixture(t)
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
 	descriptor := cas.Descriptor{
 		Digest: digest, SizeBytes: int64(len(image)), MediaType: deployment.WorkspaceImageArtifactMediaType,
@@ -275,66 +274,16 @@ func (s *deploymentFinalizeObjectStore) PromoteQuarantine(
 	return s.Stat(context.Background(), s.descriptor.Digest)
 }
 
-func deploymentFinalizeOCIFixture(t *testing.T) []byte {
-	t.Helper()
-	layer := deploymentFinalizeTarFixture(t, "hello.txt", []byte("hello"))
-	config := []byte(`{"Config":{"WorkingDir":"/workspace"}}`)
-	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(config))
-	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layer))
-	manifest, err := json.Marshal(oci.Manifest{
-		Config: oci.Descriptor{
-			MediaType: "application/vnd.oci.image.config.v1+json", Digest: configDigest, Size: int64(len(config)),
-		},
-		Layers: []oci.Descriptor{{
-			MediaType: "application/vnd.oci.image.layer.v1.tar", Digest: layerDigest, Size: int64(len(layer)),
-		}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifestDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(manifest))
-	index, err := json.Marshal(oci.Index{Manifests: []oci.Descriptor{{
-		MediaType: "application/vnd.oci.image.manifest.v1+json", Digest: manifestDigest,
-		Size: int64(len(manifest)), Platform: &oci.Platform{Architecture: "amd64", OS: "linux"},
-	}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var output bytes.Buffer
-	writer := tar.NewWriter(&output)
-	for name, body := range map[string][]byte{
-		"oci-layout":                         []byte(`{"imageLayoutVersion":"1.0.0"}`),
-		"index.json":                         index,
-		"blobs/sha256/" + configDigest[7:]:   config,
-		"blobs/sha256/" + layerDigest[7:]:    layer,
-		"blobs/sha256/" + manifestDigest[7:]: manifest,
-	} {
-		if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := writer.Write(body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return output.Bytes()
-}
-
-func deploymentFinalizeTarFixture(t *testing.T, name string, body []byte) []byte {
+func deploymentFinalizeDiskFixture(t *testing.T) []byte {
 	t.Helper()
 	var output bytes.Buffer
-	writer := tar.NewWriter(&output)
-	if err := writer.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
+	output.WriteString("helmr-firecracker-filepack-v0\n")
+	header := []byte(fmt.Sprintf(`{"version":0,"role":"computer-seed","logical_size":%d,"chunk_size":4194304,"codec":"zstd"}`, computer.SeedCapacity))
+	if err := binary.Write(&output, binary.BigEndian, uint32(len(header))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writer.Write(body); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
+	output.Write(header)
+	output.WriteByte(255)
 	return output.Bytes()
 }
 
@@ -369,3 +318,72 @@ func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 		})
 	}
 }
+
+func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
+	body := deploymentFinalizeDiskFixture(t)
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.WorkspaceImageArtifactMediaType}
+	server := &Server{deploymentVerifierSlots: make(chan struct{}, 1)}
+	for _, kind := range []string{"valid", "digest", "size", "truncated", "trailing"} {
+		t.Run(kind, func(t *testing.T) {
+			data := bytes.Clone(body)
+			object := descriptor
+			switch kind {
+			case "digest":
+				object.Digest = "sha256:" + strings.Repeat("a", 64)
+			case "size":
+				object.SizeBytes++
+			case "truncated":
+				data = data[:len(data)-1]
+			case "trailing":
+				data = append(data, 0)
+			}
+			store := &deploymentFinalizeObjectStore{descriptor: object, body: data}
+			err := server.verifyFinalizedDeploymentObject(t.Context(), store, deployment.DeploymentBundle{}, object)
+			if kind == "valid" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil {
+				t.Fatal("invalid disk accepted")
+			}
+		})
+	}
+}
+
+func TestVerifyFinalizedDeploymentDiskCancellationIsNotInvalid(t *testing.T) {
+	body := deploymentFinalizeDiskFixture(t)
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.WorkspaceImageArtifactMediaType}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	store := cancellingDeploymentStore{body: body, cancel: cancel}
+	err := (&Server{}).verifyFinalizedDeploymentObject(ctx, store, deployment.DeploymentBundle{}, descriptor)
+	if got := publicDeploymentFinalizeError(err).Code; got != "deployment_finalization_unavailable" {
+		t.Fatalf("public error code = %s", got)
+	}
+	var invalid invalidDeploymentObjectError
+	if !errors.Is(err, context.Canceled) || errors.As(err, &invalid) {
+		t.Fatalf("cancellation misclassified: %v", err)
+	}
+}
+
+type cancellingDeploymentStore struct {
+	cas.Reader
+	body   []byte
+	cancel context.CancelFunc
+}
+
+func (s cancellingDeploymentStore) Get(context.Context, string) (io.ReadCloser, error) {
+	return cancellingDeploymentReader{Reader: bytes.NewReader(s.body), cancel: s.cancel}, nil
+}
+
+type cancellingDeploymentReader struct {
+	io.Reader
+	cancel context.CancelFunc
+}
+
+func (r cancellingDeploymentReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.cancel()
+	return n, err
+}
+func (r cancellingDeploymentReader) Close() error { return nil }

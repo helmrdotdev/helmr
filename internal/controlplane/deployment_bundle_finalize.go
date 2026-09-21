@@ -18,10 +18,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -529,6 +529,8 @@ func (s *Server) verifyFinalizedDeploymentObject(
 	bundle deployment.DeploymentBundle,
 	object cas.Descriptor,
 ) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
 	if s.deploymentVerifierSlots != nil {
 		select {
 		case s.deploymentVerifierSlots <- struct{}{}:
@@ -546,16 +548,15 @@ func (s *Server) verifyFinalizedDeploymentObject(
 	case deployment.ProgramArtifactMediaType:
 		err = verifyStoredProgram(ctx, recorded, bundle.Program)
 	case deployment.WorkspaceImageArtifactMediaType:
-		var metadata oci.Metadata
-		metadata, err = oci.Inspect(io.LimitReader(recorded, object.SizeBytes+1))
-		if err == nil && (metadata.ManifestCount != 1 || metadata.Platform == nil ||
-			metadata.Platform.OS != deployment.DeploymentBundleTargetOS || metadata.Platform.Architecture != "amd64") {
-			err = errors.New("workspace image platform does not match linux/amd64")
-		}
+		err = computer.VerifySeed(ctx, recorded, computer.SeedArtifact{Object: object, LogicalBytes: computer.SeedCapacity}, computer.SeedCapacity)
+
 	default:
 		err = errors.New("deployment object media type is unsupported")
 	}
 	closeErr := reader.Close()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if recorded.err != nil || closeErr != nil {
 		return fmt.Errorf("read deployment object %s: %w", object.Digest, errors.Join(recorded.err, closeErr))
 	}
