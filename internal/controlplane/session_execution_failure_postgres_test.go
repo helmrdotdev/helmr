@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"encoding/json"
+	"errors"
 	"testing"
 	"uuid"
 
@@ -54,9 +55,32 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 			req := workerapi.CheckpointFailedRequest{Lease: f.fence(), RunWaitID: registration.WaitID.String(), CheckpointID: pgvalue.UUIDString(wait.SuspendCheckpointID), RequestVersion: wait.CheckpointRequestVersion, Error: "snapshot failed after side effect"}
 			f.workerCall(t, f.server.workerMarkCheckpointFailed, req, nil)
 			f.workerCall(t, f.server.workerMarkCheckpointFailed, req, nil)
-			assertSessionExecutionHeld(t, f, f.rootID.String(), scope.TurnID, next.TurnID, "system_failed")
+			assertSessionExecutionHeld(t, f, f.rootID.String(), scope.TurnID, next.TurnID, "system_failed", "fenced")
 			f.reportRuntimeClosed(t)
-			assertSessionRecoveryCanResume(t, f)
+			var computer, dirty string
+			var hold uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,s.dispatch_hold_id FROM workspaces w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &hold); err != nil {
+				t.Fatal(err)
+			}
+			if computer != "recovery_required" || dirty != "dirty_state_lost" {
+				t.Fatalf("Computer=%s/%s", computer, dirty)
+			}
+			var turnID *uuid.UUID
+			disposition := ""
+			if active {
+				turnID = &scope.TurnID
+				disposition = "failed"
+			}
+			// Process cleanup cannot make unpublished disk state durable. The
+			// Computer must be reconciled before the Session can resume.
+			if _, err := f.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, HoldID: hold}, TurnID: turnID, WorkspaceVersionID: f.rootID, ReconciliationRef: "runtime closed", Disposition: disposition}); err == nil {
+				t.Fatal("runtime cleanup alone authorized stale disk recovery")
+			} else {
+				var operation *session.OperationError
+				if !errors.As(err, &operation) || operation.Code != "not_settled" {
+					t.Fatalf("recovery error=%v", err)
+				}
+			}
 		})
 	}
 }
@@ -97,14 +121,14 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 				t.Fatal(err)
 			}
 			retainedHead := assertRetainedActorCapture(t, f, capture, f.rootID)
-			assertSessionExecutionHeld(t, f, retainedHead.String(), active, queued, "failed")
+			assertSessionExecutionHeld(t, f, retainedHead.String(), active, queued, "failed", "released")
 			f.reportRuntimeClosed(t)
 			assertSessionRecoveryCanResume(t, f)
 		})
 	}
 }
 
-func assertSessionExecutionHeld(t *testing.T, f *actorCheckpointFixture, head string, active, queued uuid.UUID, wantRun string) {
+func assertSessionExecutionHeld(t *testing.T, f *actorCheckpointFixture, head string, active, queued uuid.UUID, wantRun, wantWorkspaceLease string) {
 	t.Helper()
 	var state, reason, runState, leaseState, attemptState, workspaceLeaseState, runtimeDesired, turnState string
 	var current, owner, actualHead uuid.UUID
@@ -113,7 +137,7 @@ func assertSessionExecutionHeld(t *testing.T, f *actorCheckpointFixture, head st
 	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,s.dispatch_hold_reason,s.current_run_id,s.active_turn_id,w.owner_session_id,w.head_version_id,r.status,r.current_attempt_number,l.status,a.terminal_outcome,wl.status,rt.desired_state,(SELECT count(*) FROM run_attempts WHERE run_id=r.id),(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.held') FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN workspaces w ON w.id=s.workspace_id JOIN run_leases l ON l.id=$2 JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances rt ON rt.id=l.runtime_instance_id WHERE s.id=$1`, f.sessionID, f.claim.runLease.ID).Scan(&state, &reason, &current, &actualActive, &owner, &actualHead, &runState, &attempt, &leaseState, &attemptState, &workspaceLeaseState, &runtimeDesired, &count, &events); err != nil {
 		t.Fatal(err)
 	}
-	if state != "open" || reason != "recovery_required" || current != f.runID || owner != f.sessionID || actualHead.String() != head || runState != wantRun || attempt != 1 || count != 1 || events != 1 || leaseState != "failed" || attemptState != "failed" || workspaceLeaseState != "released" || runtimeDesired != "closed" {
+	if state != "open" || reason != "recovery_required" || current != f.runID || owner != f.sessionID || actualHead.String() != head || runState != wantRun || attempt != 1 || count != 1 || events != 1 || leaseState != "failed" || attemptState != "failed" || workspaceLeaseState != wantWorkspaceLease || runtimeDesired != "closed" {
 		t.Fatalf("failure convergence: %s %s run=%s/%s owner=%s head=%s attempt=%d/%d held=%d lease=%s/%s runtime=%s", state, reason, current, runState, owner, actualHead, attempt, count, events, leaseState, workspaceLeaseState, runtimeDesired)
 	}
 	if active == uuid.Nil() {
@@ -207,7 +231,7 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 					t.Fatal(err)
 				}
 				retainedHead := assertRetainedActorCapture(t, f, capture, head)
-				assertSessionExecutionHeld(t, f, retainedHead.String(), uuid.Nil(), queued, "failed")
+				assertSessionExecutionHeld(t, f, retainedHead.String(), uuid.Nil(), queued, "failed", "released")
 				var reason string
 				if err := f.Pool.QueryRow(t.Context(), `SELECT terminal_reason_code FROM run_attempts WHERE run_id=$1 AND number=1`, f.runID).Scan(&reason); err != nil {
 					t.Fatal(err)

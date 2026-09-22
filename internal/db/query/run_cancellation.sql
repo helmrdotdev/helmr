@@ -568,7 +568,8 @@ WITH candidate_runtimes AS (
      WHERE runtime_instances.id IN (
            SELECT runtime_instance_id FROM candidate_runtimes
        )
-       AND runtime_instances.observed_state IN ('allocated', 'ready')
+       AND runtime_instances.observed_state IN ('allocated', 'ready', 'failed')
+       AND runtime_instances.reclaimed_at IS NULL
     RETURNING runtime_instances.id
 )
 UPDATE workspace_mounts

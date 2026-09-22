@@ -362,7 +362,7 @@ RETURNING run_waits.*;
 -- name: InvalidateFailedRunCheckpoint :one
 UPDATE run_checkpoints
    SET status = 'invalid',
-       invalidated_at = sqlc.arg(failed_at),
+       invalidated_at = transaction_timestamp(),
        invalidation_reason_code = 'checkpoint_failed',
        failed_request_fingerprint = sqlc.arg(failed_request_fingerprint)
  WHERE id = sqlc.arg(checkpoint_id)
@@ -373,97 +373,6 @@ UPDATE run_checkpoints
    AND workspace_id = sqlc.arg(workspace_id)
    AND status = 'creating'
 RETURNING *;
-
--- name: FailCheckpointRunLease :one
-UPDATE run_leases
-   SET status = 'failed',
-       terminal_at = sqlc.arg(failed_at),
-       terminal_reason_code = 'checkpoint_failed',
-       terminal_error = sqlc.arg(error)::jsonb,
-       terminal_request_fingerprint = sqlc.arg(failed_request_fingerprint),
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(run_lease_id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND lease_sequence = sqlc.arg(lease_sequence)
-   AND status = 'checkpointing'
-   AND terminal_request_fingerprint IS NULL
-   AND expires_at > sqlc.arg(failed_at)
-RETURNING *;
-
--- name: FailCheckpointRunWait :one
-UPDATE run_waits
-   SET condition_status = CASE
-           WHEN condition_status = 'pending' THEN 'cancelled'
-           ELSE condition_status
-       END,
-       condition_terminal_at = CASE
-           WHEN condition_status = 'pending' THEN sqlc.arg(failed_at)
-           ELSE condition_terminal_at
-       END,
-       condition_reason_code = CASE
-           WHEN condition_status = 'pending' THEN 'run_checkpoint_failed'
-           ELSE condition_reason_code
-       END,
-       suspension_status = 'failed',
-       checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
-       prior_run_lease_id = current_run_lease_id,
-       current_run_lease_id = NULL,
-       suspension_terminal_at = sqlc.arg(failed_at),
-       suspension_reason_code = 'checkpoint_failed',
-       suspension_error = sqlc.arg(error)::jsonb,
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(run_wait_id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND suspend_checkpoint_id = sqlc.arg(checkpoint_id)
-   AND suspension_status = 'checkpointing'
-   AND checkpoint_request_version = sqlc.arg(checkpoint_request_version)
-RETURNING *;
-
--- name: RequestCheckpointFailureRuntimeClose :one
-WITH target AS (
-    SELECT workspace_mounts.*
-      FROM workspace_mounts
-      JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
-       AND runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
-       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
-       AND runtime_instances.observed_state IN ('ready', 'failed')
-       AND runtime_instances.reclaimed_at IS NULL
-     WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
-       AND workspace_mounts.org_id = sqlc.arg(org_id)
-       AND workspace_mounts.project_id = sqlc.arg(project_id)
-       AND workspace_mounts.environment_id = sqlc.arg(environment_id)
-       AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
-       AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-       AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-       AND workspace_mounts.status IN ('mounted', 'unmounting', 'failed')
-     FOR UPDATE OF runtime_instances, workspace_mounts
-), close_runtime AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed', desired_version = desired_version + 1,
-           desired_at = sqlc.arg(failed_at), desired_reason = 'checkpoint_failed',
-           updated_at = sqlc.arg(failed_at)
-      FROM target
-     WHERE runtime_instances.id = target.runtime_instance_id
-       AND runtime_instances.desired_state = 'ready'
-    RETURNING runtime_instances.id
-), detach_mount AS (
-    UPDATE workspace_mounts
-       SET status = 'unmounting', updated_at = sqlc.arg(failed_at)
-      FROM target
-     WHERE workspace_mounts.id = target.id AND target.status = 'mounted'
-    RETURNING workspace_mounts.*
-)
-SELECT * FROM detach_mount
-UNION ALL
-SELECT * FROM target WHERE status <> 'mounted';
 
 -- name: GetReadyRunCheckpoint :one
 SELECT sqlc.embed(run_checkpoints),

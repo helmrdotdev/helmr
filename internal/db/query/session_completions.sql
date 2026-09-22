@@ -69,29 +69,6 @@ UPDATE workspaces
    AND workspaces.dirty_state = 'clean'
 RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
 
--- name: FinishCheckpointFailedActorRun :one
-UPDATE runs
-   SET status = sqlc.arg(status),
-       output = CASE
-           WHEN sqlc.arg(status)::text = 'succeeded' THEN 'null'::jsonb
-           ELSE NULL
-       END,
-       failure = sqlc.narg(failure),
-       revision = revision + 1,
-       current_run_lease_id = NULL,
-       retry_at = NULL,
-       terminal_at = sqlc.arg(failed_at),
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND entrypoint_kind = 'actor'
-   AND session_id = sqlc.arg(session_id)
-   AND status = 'waiting'
-   AND current_attempt_number = sqlc.arg(attempt_number)
-   AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND active_started_at IS NULL
-RETURNING *;
-
 -- name: FinishActorRun :one
 UPDATE runs
    SET status = sqlc.arg(status),

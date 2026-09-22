@@ -756,6 +756,14 @@ func TestLostComputerRecoveryRollsBackWithRunFailure(t *testing.T) {
 		t.Fatalf("retry recovery count=%d error=%v", count, err)
 	}
 	assertLostComputerRequiresRecovery(t, fixture)
+	var desired, observed string
+	var unreclaimed bool
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT desired_state,observed_state,reclaimed_at IS NULL FROM runtime_instances WHERE id=$1`, runtimeID).Scan(&desired, &observed, &unreclaimed); err != nil {
+		t.Fatal(err)
+	}
+	if desired != "closed" || observed != "failed" || !unreclaimed {
+		t.Fatalf("runtime cleanup=%s/%s unreclaimed=%t", desired, observed, unreclaimed)
+	}
 	if count, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || count != 0 {
 		t.Fatalf("recovery replay count=%d error=%v", count, err)
 	}

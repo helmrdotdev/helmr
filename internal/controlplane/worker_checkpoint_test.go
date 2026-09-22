@@ -85,8 +85,7 @@ func TestParseCheckpointFailedRequestBindsNormalizedFailure(t *testing.T) {
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
 		parsed.requestVersion != request.RequestVersion ||
-		parsed.fingerprint == "" || normalized.Error != "snapshot failed" ||
-		!strings.Contains(string(parsed.errorPayload), `"message":"snapshot failed"`) {
+		parsed.fingerprint == "" || normalized.Error != "snapshot failed" {
 		t.Fatalf("parsed checkpoint failure = %+v, normalized=%+v", parsed, normalized)
 	}
 	changed := request

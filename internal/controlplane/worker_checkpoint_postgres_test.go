@@ -126,24 +126,48 @@ func callCheckpointFailure(t *testing.T, fixture runtest.Fixture, receipt worker
 	return response
 }
 
-func TestWorkerCheckpointFailedRejectsInvalidPinnedRetryPolicyPermanently(t *testing.T) {
-	fixture, work, receipt, worker := checkpointFailureFixture(t)
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runs SET retry_policy='{"enabled":true}' WHERE id=$1`, work.RunID)
-	response := callCheckpointFailure(t, fixture, receipt, worker)
+func TestWorkerCheckpointFailureRequiresComputerRecoveryRegardlessOfRetryPolicy(t *testing.T) {
+	for _, policy := range []string{`{"enabled":false}`, `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`, `{"enabled":true}`} {
+		t.Run(policy, func(t *testing.T) {
+			fixture, work, receipt, worker := checkpointFailureFixture(t)
+			dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runs SET retry_policy=$2 WHERE id=$1`, work.RunID, policy)
+			var originalHead string
+			if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.head_version_id::text FROM workspaces w JOIN runs r ON r.workspace_id=w.id WHERE r.id=$1`, work.RunID).Scan(&originalHead); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				response := callCheckpointFailure(t, fixture, receipt, worker)
+				if response.Code != http.StatusOK {
+					t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+				}
+			}
+			var status, computer, dirty, reason, message, head string
+			var attempts int
+			var noRetry, noOwner bool
+			err := fixture.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,w.dirty_state,r.failure->>'code',r.failure->>'message',w.head_version_id::text,
+ (SELECT count(*) FROM run_attempts a WHERE a.run_id=r.id),r.retry_at IS NULL,w.owner_run_id IS NULL
+ FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &dirty, &reason, &message, &head, &attempts, &noRetry, &noOwner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status != "system_failed" || computer != "recovery_required" || dirty != "dirty_state_lost" || reason != "checkpoint_failed" || message != receipt.Error || head != originalHead || attempts != 1 || !noRetry || !noOwner {
+				t.Fatalf("state=%s/%s/%s reason=%s message=%s head=%s attempts=%d noRetry=%t noOwner=%t", status, computer, dirty, reason, message, head, attempts, noRetry, noOwner)
+			}
+			var condition, suspension, writer string
+			var cleared bool
+			if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.condition_status,w.suspension_status,l.status,r.current_run_lease_id IS NULL AND r.active_started_at IS NULL
+            FROM runs r JOIN run_waits w ON w.run_id=r.id JOIN workspace_leases l ON l.owner_run_lease_id=$2 WHERE r.id=$1`, work.RunID, work.LeaseID).Scan(&condition, &suspension, &writer, &cleared); err != nil {
+				t.Fatal(err)
+			}
+			if condition != "failed" || suspension != "failed" || writer != "fenced" || !cleared {
+				t.Fatalf("wait=%s/%s writer=%s cleared=%t", condition, suspension, writer, cleared)
+			}
 
-	if response.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
-	}
-	var envelope struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Error.Code != "unprocessable_entity" {
-		t.Fatalf("error code = %q", envelope.Error.Code)
+			receipt.Error = "different failure"
+			if response := callCheckpointFailure(t, fixture, receipt, worker); response.Code != http.StatusConflict {
+				t.Fatalf("conflicting replay=%d", response.Code)
+			}
+		})
 	}
 }
 
@@ -232,5 +256,89 @@ func TestCheckpointFailureRejectsExpiredSourceAuthorityPostgres(t *testing.T) {
 	}
 	if state != "creating" {
 		t.Fatalf("stale failure mutated checkpoint: %s", state)
+	}
+}
+
+func TestSharedComputerCheckpointFailureStopsOwnerAndChildPostgres(t *testing.T) {
+	f := newSameWorkspaceCompletionPostgresFixture(t, true)
+	ctx := t.Context()
+	f.server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	childLease := uuid.MustParse(f.request.Lease.ID)
+	checkpointID, waitID := uuid.NewV7(), uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE run_leases SET status='checkpointing',finalization_operation_id=NULL,finalization_kind=NULL,finalization_started_at=NULL,finalization_request_fingerprint=NULL WHERE id=$1`, childLease)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE runs SET status='waiting',active_started_at=transaction_timestamp() WHERE id=$1`, f.childRunID)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO run_waits (id,environment_id,run_id,workspace_id,kind,due_at,expected_run_revision,attempt_number,current_run_lease_id,checkpoint_request_version,resume_attach_id,suspension_status)
+ SELECT $1,environment_id,id,workspace_id,'timer',transaction_timestamp()+interval '1 hour',revision,1,$2,1,$3,'checkpointing' FROM runs WHERE id=$4`, waitID, childLease, uuid.NewV7(), f.childRunID)
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO run_checkpoints (id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,status)
+ SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id,'creating' FROM workspace_leases WHERE id=$5`, checkpointID, f.childRunID, waitID, childLease, f.workspaceLeaseID)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE run_waits SET suspend_checkpoint_id=$2 WHERE id=$1`, waitID, checkpointID)
+	receipt := workerapi.CheckpointFailedRequest{Lease: f.request.Lease, RunWaitID: waitID.String(), CheckpointID: checkpointID.String(), RequestVersion: 1, Error: "disk capture failed"}
+	for range 2 {
+		body, err := json.Marshal(receipt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/worker/v1/run/checkpoints/failed", bytes.NewReader(body))
+		req = req.WithContext(context.WithValue(ctx, workerContextKey{}, f.worker))
+		response := httptest.NewRecorder()
+		f.server.workerMarkCheckpointFailed(response, req)
+		if response.Code != http.StatusOK {
+			t.Fatalf("status=%d %s", response.Code, response.Body.String())
+		}
+	}
+	for _, id := range []uuid.UUID{f.parentRunID, f.childRunID} {
+		var status, reason, computer, dirty string
+		var attempts, ready int
+		var ownerGone bool
+		if err := f.pool.QueryRow(ctx, `SELECT r.status,r.failure->>'code',w.status,w.dirty_state,w.owner_run_id IS NULL,
+ (SELECT count(*) FROM run_attempts a WHERE a.run_id=r.id),
+ (SELECT count(*) FROM run_checkpoints c WHERE c.run_id=r.id AND c.status='ready')
+ FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, id).Scan(&status, &reason, &computer, &dirty, &ownerGone, &attempts, &ready); err != nil {
+			t.Fatal(err)
+		}
+		want := "computer_recovery_required"
+		if id == f.childRunID {
+			want = "checkpoint_failed"
+		}
+		if status != "system_failed" || reason != want || computer != "recovery_required" || dirty != "dirty_state_lost" || !ownerGone || attempts != 1 || ready != 0 {
+			t.Fatalf("run=%s state=%s/%s/%s/%s ownerGone=%t attempts=%d ready=%d", id, status, reason, computer, dirty, ownerGone, attempts, ready)
+		}
+	}
+}
+
+func TestCheckpointFailureRollsBackReceiptAndComputerPostgres(t *testing.T) {
+	f, work, receipt, worker := checkpointFailureFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_failed_run() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.status='system_failed' THEN RAISE EXCEPTION 'injected terminal failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_failed_run BEFORE UPDATE ON runs FOR EACH ROW EXECUTE FUNCTION reject_failed_run()`)
+	r := callCheckpointFailure(t, f, receipt, worker)
+	if r.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d %s", r.Code, r.Body.String())
+	}
+	var status, computer, checkpoint string
+	var noReceipt bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,c.status,c.failed_request_fingerprint IS NULL FROM runs r JOIN workspaces w ON w.id=r.workspace_id JOIN run_checkpoints c ON c.run_id=r.id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &checkpoint, &noReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if status != "waiting" || computer != "active" || checkpoint != "creating" || !noReceipt {
+		t.Fatalf("partial commit=%s/%s/%s receipt absent=%t", status, computer, checkpoint, noReceipt)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `DROP TRIGGER reject_failed_run ON runs`)
+	if r := callCheckpointFailure(t, f, receipt, worker); r.Code != http.StatusOK {
+		t.Fatalf("retry=%d %s", r.Code, r.Body.String())
+	}
+}
+
+func TestCheckpointFailurePreservesExceededActiveBudgetPostgres(t *testing.T) {
+	f, work, receipt, worker := checkpointFailureFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET max_active_duration_ms=5000 WHERE id=$1`, work.RunID)
+	r := callCheckpointFailure(t, f, receipt, worker)
+	if r.Code != http.StatusOK {
+		t.Fatalf("status=%d %s", r.Code, r.Body.String())
+	}
+	var status, code, message, attemptReason string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,r.failure->>'code',r.failure->>'message',a.terminal_reason_code FROM runs r JOIN run_attempts a ON a.run_id=r.id AND a.number=1 WHERE r.id=$1`, work.RunID).Scan(&status, &code, &message, &attemptReason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "expired" || code != "max_active_duration_exceeded" || attemptReason != code || message != receipt.Error {
+		t.Fatalf("state=%s/%s/%s/%s", status, code, message, attemptReason)
 	}
 }

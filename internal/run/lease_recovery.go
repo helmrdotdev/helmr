@@ -176,6 +176,39 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	return true, nil
 }
 
+// FailCheckpointExecution abandons an entered Computer whose suspension could
+// not be saved. The caller validates the Worker receipt and records its replay
+// identity in the same transaction after LockExecutionLeaseRecovery.
+func (g OwnedFinalization) FailCheckpointExecution(ctx context.Context, request ExecutionLeaseRecoveryRequest, message string) error {
+	target, found := g.locked[request.RunID]
+	if g.tx == nil || !found || target.workspaceID != request.WorkspaceID ||
+		target.currentAttemptNumber != request.AttemptNumber || target.currentRunLeaseID != pgvalue.UUID(request.RunLeaseID) {
+		return cancellationAuthority("checkpoint failure target is not locked", nil)
+	}
+	q := db.New(g.tx)
+	a, err := q.GetRunExecutionLeaseLossAuthority(ctx, db.GetRunExecutionLeaseLossAuthorityParams{
+		RunID: pgvalue.UUID(request.RunID), WorkspaceID: pgvalue.UUID(request.WorkspaceID),
+		AttemptNumber: request.AttemptNumber, RunLeaseID: pgvalue.UUID(request.RunLeaseID),
+	})
+	if err != nil {
+		return err
+	}
+	if !a.ObservedAt.Valid || !a.ActiveStartedAt.Valid {
+		return cancellationAuthority("checkpoint failure active timestamps are missing", nil)
+	}
+	affected, err := q.RequireLostRunComputerRecovery(ctx, db.RequireLostRunComputerRecoveryParams{WorkspaceID: a.WorkspaceID, RunLeaseID: a.RunLeaseID})
+	if err != nil || affected != 1 {
+		return cancellationAuthority("require unsaved Computer recovery", err)
+	}
+	loss := executionLeaseLoss{at: a.ObservedAt.Time, reason: "checkpoint_failed", state: db.RunLeaseStatusFailed}
+	status := db.RunStatusSystemFailed
+	if !a.ActiveStartedAt.Time.Add(time.Duration(a.MaxActiveDurationMs-a.ActiveElapsedMs) * time.Millisecond).After(a.ObservedAt.Time) {
+		loss.reason = "max_active_duration_exceeded"
+		status = db.RunStatusExpired
+	}
+	return g.failCurrentForLeaseLoss(ctx, request.RunID, loss, message, status)
+}
+
 func decideExecutionLeaseLoss(
 	authority db.GetRunExecutionLeaseLossAuthorityRow,
 ) (executionLeaseLoss, bool, error) {
