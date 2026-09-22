@@ -129,7 +129,9 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 }
 
 // Recover accepts reconciliation only after the database's existing physical
-// cleanup observations exclude the old writer. A customer boolean is no proof.
+// cleanup observations exclude the old writer. The requested committed head is
+// the explicit recovery point; unpublished files and old memory are not restored.
+// A customer boolean is no proof of physical cleanup.
 func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph run.OwnedFinalization) (ControlReceipt, error) {
 	if request.WorkspaceVersionID == uuid.Nil() || request.HoldID == uuid.Nil() || strings.TrimSpace(request.ReconciliationRef) == "" || len(request.ReconciliationRef) > 4096 || (request.TurnID == nil && request.Disposition != "") || (request.TurnID != nil && request.Disposition != "failed" && request.Disposition != "interrupted") {
 		return ControlReceipt{}, &OperationError{Code: "invalid_request"}
@@ -179,7 +181,11 @@ func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph ru
 	if err != nil {
 		return receipt, err
 	}
-	if !committed || workspace.HeadVersionID != pgvalue.UUID(request.WorkspaceVersionID) || workspace.DirtyState != db.WorkspaceDirtyStateClean {
+	recoverLostComputer := workspace.Status == db.WorkspaceStatusRecoveryRequired &&
+		workspace.DirtyState == db.WorkspaceDirtyStateDirtyStateLost
+	cleanComputer := workspace.Status == db.WorkspaceStatusActive &&
+		workspace.DirtyState == db.WorkspaceDirtyStateClean
+	if !committed || workspace.HeadVersionID != pgvalue.UUID(request.WorkspaceVersionID) || (!recoverLostComputer && !cleanComputer) {
 		receipt.Code = "not_settled"
 		return receipt, finishOperation(ctx, q, claim, receipt)
 	}
@@ -221,6 +227,18 @@ func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph ru
 		receipt.Code = "not_settled"
 		return receipt, finishOperation(ctx, q, claim, receipt)
 	}
+	if recoverLostComputer {
+		affected, err := q.ReconcileSessionComputer(ctx, db.ReconcileSessionComputerParams{
+			EnvironmentID: actor.EnvironmentID, WorkspaceID: actor.WorkspaceID,
+			SessionID: actor.ID, HeadVersionID: workspace.HeadVersionID,
+		})
+		if err != nil {
+			return receipt, err
+		}
+		if affected != 1 {
+			return receipt, ErrAuthority
+		}
+	}
 	var sequence pgtype.Int8
 	if turnID.Valid {
 		want := request.Disposition
@@ -246,7 +264,7 @@ func Recover(ctx context.Context, q db.Querier, request RecoverRequest, graph ru
 	if err != nil {
 		return receipt, err
 	}
-	body, _ := json.Marshal(map[string]any{"hold_id": newHold, "previous_hold_id": request.HoldID, "workspace_version_id": request.WorkspaceVersionID, "reconciliation_ref": request.ReconciliationRef})
+	body, _ := json.Marshal(map[string]any{"hold_id": newHold, "previous_hold_id": request.HoldID, "workspace_version_id": request.WorkspaceVersionID, "reconciliation_ref": request.ReconciliationRef, "computer_reconciled": recoverLostComputer})
 	if _, err = appendLifecycleEvent(ctx, q, actor, pgtype.UUID{}, pgtype.UUID{}, "session.recovered", body, workspace.HeadVersionID); err != nil {
 		return receipt, err
 	}

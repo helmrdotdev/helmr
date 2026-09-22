@@ -56,7 +56,6 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 			f.workerCall(t, f.server.workerMarkCheckpointFailed, req, nil)
 			f.workerCall(t, f.server.workerMarkCheckpointFailed, req, nil)
 			assertSessionExecutionHeld(t, f, f.rootID.String(), scope.TurnID, next.TurnID, "system_failed", "fenced")
-			f.reportRuntimeClosed(t)
 			var computer, dirty string
 			var hold uuid.UUID
 			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,s.dispatch_hold_id FROM workspaces w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &hold); err != nil {
@@ -71,16 +70,31 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 				turnID = &scope.TurnID
 				disposition = "failed"
 			}
-			// Process cleanup cannot make unpublished disk state durable. The
-			// Computer must be reconciled before the Session can resume.
+			// The customer's choice of saved disk is not proof that the old
+			// writer has stopped.
 			if _, err := f.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, HoldID: hold}, TurnID: turnID, WorkspaceVersionID: f.rootID, ReconciliationRef: "runtime closed", Disposition: disposition}); err == nil {
-				t.Fatal("runtime cleanup alone authorized stale disk recovery")
+				t.Fatal("recovery accepted before physical cleanup")
 			} else {
 				var operation *session.OperationError
 				if !errors.As(err, &operation) || operation.Code != "not_settled" {
 					t.Fatalf("recovery error=%v", err)
 				}
 			}
+			f.reportRuntimeClosed(t)
+			assertSessionRecoveryCanResume(t, f)
+			var cursor int64
+			var savedHead uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,w.head_version_id,s.committed_input_sequence FROM workspaces w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &savedHead, &cursor); err != nil {
+				t.Fatal(err)
+			}
+			expectedCursor := int64(1)
+			if active {
+				expectedCursor = 2
+			}
+			if computer != "active" || dirty != "clean" || savedHead != f.rootID || cursor != expectedCursor {
+				t.Fatalf("recovered Computer=%s/%s head=%s cursor=%d", computer, dirty, savedHead, cursor)
+			}
+
 		})
 	}
 }
@@ -123,7 +137,33 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 			retainedHead := assertRetainedActorCapture(t, f, capture, f.rootID)
 			assertSessionExecutionHeld(t, f, retainedHead.String(), active, queued, "failed", "released")
 			f.reportRuntimeClosed(t)
+			var hold uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&hold); err != nil {
+				t.Fatal(err)
+			}
+			var turnID *uuid.UUID
+			disposition := ""
+			if active != uuid.Nil() {
+				turnID = &active
+				disposition = "failed"
+			}
+			if retainedHead == f.rootID {
+				t.Fatal("fixture has no newer committed head")
+			}
+			_, err = f.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, HoldID: hold}, TurnID: turnID, WorkspaceVersionID: f.rootID, ReconciliationRef: "older committed disk", Disposition: disposition})
+			var op *session.OperationError
+			if !errors.As(err, &op) || op.Code != "not_settled" {
+				t.Fatalf("old committed disk accepted: %v", err)
+			}
+			var actualHead uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&actualHead); err != nil || actualHead != retainedHead {
+				t.Fatalf("head changed=%s %v", actualHead, err)
+			}
 			assertSessionRecoveryCanResume(t, f)
+			var reconciled bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT (data->>'computer_reconciled')::boolean FROM session_events WHERE session_id=$1 AND kind='session.recovered'`, f.sessionID).Scan(&reconciled); err != nil || reconciled {
+				t.Fatalf("clean recovery audit=%t %v", reconciled, err)
+			}
 		})
 	}
 }
@@ -170,20 +210,35 @@ func assertSessionRecoveryCanResume(t *testing.T, f *actorCheckpointFixture) {
 	if active != nil {
 		disposition = "failed"
 	}
-	if _, err := f.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, HoldID: hold}, TurnID: active, WorkspaceVersionID: head, ReconciliationRef: "test physical close", Disposition: disposition}); err != nil {
+	request := session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, IdempotencyKey: "recovery-confirmed"}, HoldID: hold}, TurnID: active, WorkspaceVersionID: head, ReconciliationRef: "accept last committed disk after physical cleanup", Disposition: disposition}
+	receipt, err := f.server.applySessionRecovery(t.Context(), request)
+	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
+	replay, err := f.server.applySessionRecovery(t.Context(), request)
+	if err != nil || replay.ID != receipt.ID || replay.HoldID == nil || receipt.HoldID == nil || *replay.HoldID != *receipt.HoldID {
+		t.Fatalf("recovery replay=%+v err=%v", replay, err)
+	}
+	var current *uuid.UUID
+	var reason string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT current_run_id,dispatch_hold_reason FROM sessions WHERE id=$1`, f.sessionID).Scan(&current, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if current != nil || reason != "recovered" {
+		t.Fatalf("recovery started work: current=%v reason=%s", current, reason)
+	}
+
 	if err := f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&hold); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.server.applySessionResume(t.Context(), session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, HoldID: hold}); err != nil {
 		t.Fatalf("resume: %v", err)
 	}
-	var current uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT current_run_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&current); err != nil {
+	var nextRun uuid.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT current_run_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&nextRun); err != nil {
 		t.Fatal(err)
 	}
-	if current == f.runID {
+	if nextRun == f.runID {
 		t.Fatal("resume revived failed Run")
 	}
 }

@@ -141,6 +141,19 @@ func lockSessionControlGraph(ctx context.Context, work *txWork, target session.T
 		return graph, err
 	}
 	locked, err := work.q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	if err == nil && !locked.CurrentRunID.Valid {
+		// A concurrent control retired the Run while this graph was locking.
+		// Lock the Session before returning an empty graph so Resume cannot
+		// admit a new Run between this check and the control operation.
+		locked, err = work.q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		if err != nil {
+			return graph, err
+		}
+		if locked.CurrentRunID.Valid {
+			return graph, session.ErrAuthority
+		}
+		return run.OwnedFinalization{}, nil
+	}
 	if err == nil && (locked.CurrentRunID != actor.CurrentRunID || locked.RunGeneration != actor.RunGeneration) {
 		err = session.ErrAuthority
 	}

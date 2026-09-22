@@ -505,6 +505,7 @@ type Querier interface {
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error)
 	ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error)
 	ReconcileSchedules(ctx context.Context, arg ReconcileSchedulesParams) ([]ReconcileSchedulesRow, error)
+	ReconcileSessionComputer(ctx context.Context, arg ReconcileSessionComputerParams) (int64, error)
 	RecordCasReclamation(ctx context.Context, arg RecordCasReclamationParams) error
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)

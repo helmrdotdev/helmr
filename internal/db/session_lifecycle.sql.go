@@ -1002,6 +1002,41 @@ func (q *Queries) ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSe
 	return i, err
 }
 
+const reconcileSessionComputer = `-- name: ReconcileSessionComputer :execrows
+UPDATE workspaces
+   SET status = 'active',
+       desired_state = 'active',
+       dirty_state = 'clean',
+       revision = revision + 1,
+       updated_at = transaction_timestamp()
+ WHERE environment_id = $1
+   AND id = $2
+   AND owner_session_id = $3
+   AND head_version_id = $4
+   AND status = 'recovery_required'
+   AND dirty_state = 'dirty_state_lost'
+`
+
+type ReconcileSessionComputerParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
+	HeadVersionID pgtype.UUID `json:"head_version_id"`
+}
+
+func (q *Queries) ReconcileSessionComputer(ctx context.Context, arg ReconcileSessionComputerParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reconcileSessionComputer,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.SessionID,
+		arg.HeadVersionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const runWaitSessionStopped = `-- name: RunWaitSessionStopped :one
 SELECT EXISTS (
  SELECT 1 FROM run_waits w JOIN runs r ON r.id=w.run_id

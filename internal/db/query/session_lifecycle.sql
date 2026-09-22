@@ -111,6 +111,20 @@ SELECT NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_leases.workspac
  AND NOT EXISTS(SELECT 1 FROM run_waits w JOIN runs c ON c.id=w.child_run_id WHERE w.workspace_id=sqlc.arg(workspace_id)
   AND c.parent_owns_lifecycle AND c.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS excluded;
 
+-- name: ReconcileSessionComputer :execrows
+UPDATE workspaces
+   SET status = 'active',
+       desired_state = 'active',
+       dirty_state = 'clean',
+       revision = revision + 1,
+       updated_at = transaction_timestamp()
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(workspace_id)
+   AND owner_session_id = sqlc.arg(session_id)
+   AND head_version_id = sqlc.arg(head_version_id)
+   AND status = 'recovery_required'
+   AND dirty_state = 'dirty_state_lost';
+
 -- name: CompleteSessionRecovery :one
 UPDATE sessions SET active_turn_id=NULL,current_run_id=NULL,dispatch_hold_id=sqlc.arg(new_hold_id),
  dispatch_hold_reason='recovered',revision=revision+1,updated_at=now(),

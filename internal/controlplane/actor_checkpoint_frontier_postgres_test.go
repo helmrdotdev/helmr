@@ -795,6 +795,23 @@ func TestSettledTurnCannotResumeHistoricalCheckpointAfterHostLossPostgres(t *tes
 			if status != "recovery_required" || runStatus != "system_failed" || cursor != 2 || head != f.rootID || ready != 0 || results != 2 {
 				t.Fatalf("state=%s/%s cursor=%d head=%s ready=%d results=%d", status, runStatus, cursor, head, ready, results)
 			}
+			var desired, observed int64
+			if err := f.Pool.QueryRow(t.Context(), `SELECT desired_version,observed_version FROM runtime_instances WHERE id=$1`, f.claim.runtime.ID).Scan(&desired, &observed); err != nil {
+				t.Fatal(err)
+			}
+			f.workerCall(t, f.server.workerMarkRuntimeInstanceFailed, workerapi.RuntimeInstanceStateRequest{ID: pgvalue.UUIDString(f.claim.runtime.ID), WorkerEpoch: 1, DesiredVersion: desired, ExpectedObservedVersion: observed, CleanupProof: &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now()}}, nil)
+			assertSessionRecoveryCanResume(t, f)
+			var newBase uuid.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT r.base_workspace_version_id FROM sessions s JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&newBase); err != nil {
+				t.Fatal(err)
+			}
+			if newBase != f.rootID {
+				t.Fatalf("new Run uses unpublished checkpoint disk %s", newBase)
+			}
+			if rows, err := f.placement.RecoverExpiredRunResumes(t.Context(), 10); err != nil || len(rows) != 0 {
+				t.Fatalf("recovery revived old continuation: %+v %v", rows, err)
+			}
+
 		})
 	}
 }

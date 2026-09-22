@@ -125,8 +125,16 @@ does not by itself fail its Session.
 Only authenticated client references expose `recover`: owner/admin plus the
 recovery grant must supply an exact hold, Turn or explicit null, reconciled
 Workspace version and reconciliation reference. Recovery cannot declare uncertain
-work successful; it leaves a recovered hold for explicit resume. Runtime references
-have ordinary controls but no recovery privilege.
+work successful; it leaves a recovered hold for explicit resume.
+
+When the Computer requires recovery after execution loss, selecting its current
+committed version explicitly accepts that unpublished files may have been lost.
+Helmr verifies that the old writer and its runtime have been cleaned up before
+making that saved disk available again. Completed Turn results remain; old memory
+and unfinished code are not replayed. Recovery and the new hold are committed
+together. The `session.recovered` event records `computer_reconciled: true` when
+recovery cleared a lost Computer state. Runtime references have ordinary controls
+but no recovery privilege.
 
 Message acceptance does not wait for handler registration. During a managed Token
 or child wait, messages remain pending until the original wait resumes; they do
