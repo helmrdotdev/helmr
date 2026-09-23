@@ -1,5 +1,5 @@
 // Package generation is a development-only immutable disk format experiment.
-// It has no local durability, publication authority or production integration.
+// Local persistence experiments do not provide publication authority or production integration.
 package generation
 
 import (

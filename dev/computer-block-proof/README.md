@@ -559,3 +559,39 @@ objects, wrong directory offsets, geometry splicing, obsolete-page dependencies,
 and an unselected corrupt record whose containing ciphertext digest is correct.
 The next persistence boundary must establish synced object/root ordering and
 reopen behavior separately; this in-memory inspection does not prove it.
+
+## Local commit and reopen experiment
+
+`OpenLocal` uses an existing caller-owned directory with a durably established
+parent. One owner controls that directory outside customer processes. `Commit`
+certifies the selected closure, writes and syncs immutable objects, syncs their
+directory, then writes/syncs a temporary root, atomically replaces `root`, and
+syncs the root directory before returning success. Existing immutable objects
+are checked and synced again, including objects surviving an interrupted commit.
+No WAL or compatibility path is introduced.
+
+`Reopen` follows only the committed root's physical closure with explicit object
+and byte limits, then certifies it. It ignores unrelated/staging files and never
+scans for a newer generation or silently selects an older one. Missing or corrupt
+committed state returns an error with no usable root/stores. This prototype loads
+the complete closure into memory and repeats verification; it is not the intended
+production cache/admission implementation or a startup-latency claim.
+
+Before root replacement a failed commit leaves the prior root selected. After
+replacement an error has an uncertain commit outcome: reopen may select the new
+valid root. No success is reported until directory sync completes. Old objects
+are retained; crash-left staging files are ignored, not automatically collected.
+The caller must preserve the single-owner boundary throughout commit and reopen.
+
+```sh
+nix develop .#default -c go test -run TestLocal -v ./dev/computer-block-proof/internal/generation
+```
+
+Tests exercise six protocol boundaries with returned errors and separate child
+process exits without deferred cleanup, followed by reopening from disk. They
+also check retry, unrelated files, corrupt/missing committed objects and malformed
+root files. Process exit does not simulate kernel crash, power loss, device-cache
+loss, disk-full or actual sync failures. Local Darwin checks do not establish
+Linux filesystem behavior; neither environment alone certifies hardware durability.
+Remote publication, host-loss recovery, retention/GC, VM FLUSH integration and
+concurrent ownership remain outside this experiment.
