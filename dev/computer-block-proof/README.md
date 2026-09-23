@@ -295,3 +295,69 @@ compatibility. All branches and snapshots remain disposable local fixture data.
 Guest filesystem and VM acceptance still require separate evidence;
 local FLUSH success does not establish application/database quiescence or remote
 publication. This development format has no compatibility or migration promise.
+
+### Owned Linux NBD lifecycle qualifier
+
+`internal/nbd` is used only by `cmd/nbd-qualify`; the production connector does
+not select it. This qualifies a private device claim and one exact direct child,
+not production Computer storage, VMM cleanup, or the proof store's suitability
+for production. The consumer cannot fork descendants or delegate descriptors.
+The helper performs blocking ioctls on an isolated process and holds claim/setup
+and `DO_IT` on the same locked OS thread. The controller receives a duplicate
+exclusive descriptor before exposing the device, so helper death does not permit
+another claim while the controller remains alive.
+
+The qualifier checks private jail-node access as UID/GID 65534, 4 KiB write,
+FLUSH and O_DIRECT readback, same-device claim refusal, backend death, and normal
+cleanup. A separate child case kills the exact helper using a verified pidfd,
+checks claim refusal while its consumer remains alive, requires cleanup to remain
+unproven, then proves that consumer exited before the controller exits. The
+outer qualifier checks both device PID attributes are absent afterward.
+
+Build with the pinned shell (use the Docker host's architecture):
+
+```sh
+nix develop .#default -c go test -race ./internal/nbd
+nix develop .#default -c env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/helmr-nbd-qualify ./dev/computer-block-proof/cmd/nbd-qualify
+nix develop .#default -c env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/helmr-block-proof ./dev/computer-block-proof/cmd/block-proof
+nix develop .#default -c env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go test -c -o /tmp/helmr-nbd-tests ./internal/nbd
+```
+
+Use only an explicitly disposable Linux host with unused `/dev/nbd14` and
+`/dev/nbd15`. Check `/sys/block/nbd14/pid` and `/sys/block/nbd15/pid` are absent
+beforehand. Their absence alone does not authorize reuse after an interrupted
+owner: reconcile prior owned processes first. The atomic exclusive open remains
+the claim authority. Never clear devices by name. Host PID namespace is required
+here because kernel sysfs exposes host task IDs. The two queue directories must
+be writable so request bounds can be applied after activation and read back.
+Use a native Linux arena: macOS shared directories cannot create the jail node.
+
+```sh
+docker run --pull=never --name helmr-nbd-owner-proof --pid host --network none \
+  --cap-add SYS_ADMIN --device /dev/nbd14 --device /dev/nbd15 \
+  --memory 384m --cpus 1 --stop-timeout 15 \
+  -e HELMR_DISPOSABLE_NBD_PROOF=1 \
+  -v /sys/block/nbd14/queue:/sys/block/nbd14/queue:rw \
+  -v /sys/block/nbd15/queue:/sys/block/nbd15/queue:rw \
+  -v /tmp/helmr-nbd-qualify:/nbd-qualify:ro \
+  -v /tmp/helmr-block-proof:/block-proof:ro \
+  -v /tmp/helmr-nbd-tests:/nbd-tests:ro \
+  node@sha256:5a593d74b632d1c6f816457477b6819760e13624455d587eef0fa418c8d0777b \
+  timeout --signal=TERM --kill-after=15 110 sh -c \
+  '/nbd-tests -test.v && /nbd-qualify /block-proof /tmp/owned-arena'
+```
+
+Retain the container on failure. Collect `docker logs helmr-nbd-owner-proof` and
+use `docker cp` to preserve each arena's `config.json` and `claim.json`; arenas are
+printed before allocation. After verifying the exact owned processes exited and
+both device PID attributes are absent, remove only this container with
+`docker rm helmr-nbd-owner-proof`. A deadline cannot guarantee termination of a
+kernel task in uninterruptible sleep; uncertainty retains ownership and evidence.
+No automatic orphan recovery is implemented. Death of both controller and helper
+requires external reconciliation before any new admission; this qualifier is not
+that production admission gate. A failed cleanup is never reported as released.
+
+Local qualification on Linux `7.0.12-linuxkit` arm64 passed the seven Linux tests
+and both real-device cases, including independent inactive-device postflight.
+This is kernel/device evidence only: no VMM, VM snapshot, S3, restart recovery,
+power-loss guarantee, or production selection is established by this qualifier.
