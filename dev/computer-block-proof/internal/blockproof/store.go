@@ -70,6 +70,9 @@ func (s *Store) put(b []byte) (string, error) {
 	if !bytes.Equal(existing, b) {
 		return "", errors.New("existing object corrupt")
 	}
+	if err := syncDir(s.dir); err != nil {
+		return "", err
+	}
 	return id, nil
 }
 func (s *Store) read(id string, off int64, n int) ([]byte, error) {
@@ -356,3 +359,5 @@ func (h *Head) Publish(s *Store, epoch uint64, expected, id string) error {
 	h.id = id
 	return nil
 }
+
+func (d *Disk) Size() int64 { return d.size }

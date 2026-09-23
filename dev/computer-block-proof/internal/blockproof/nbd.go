@@ -9,10 +9,19 @@ import (
 const MaxRequest = 1 << 20
 
 // ServeTransmission implements only NBD's simple transmission request/reply
-// framing on an already connected private stream. No negotiation, kernel attach,
-// FUA, flush durability, structured replies or multi-connection claims exist.
+// framing on an already connected private stream. Persistent supports local
+// FLUSH; volatile Disk rejects it. No kernel attach, FUA, structured replies
+// or multi-connection claims exist.
 // The caller owns the stream, its deadline, cancellation and Close.
-func ServeTransmission(rw io.ReadWriter, d *Disk) error {
+type device interface {
+	ReadAt([]byte, int64) (int, error)
+	WriteAt([]byte, int64) (int, error)
+	Trim(int64, int) error
+	Size() int64
+}
+type flusher interface{ Flush() error }
+
+func ServeTransmission(rw io.ReadWriter, d device) error {
 	for {
 		var hdr [28]byte
 		if _, err := io.ReadFull(rw, hdr[:]); err != nil {
@@ -43,7 +52,7 @@ func ServeTransmission(rw io.ReadWriter, d *Disk) error {
 			errno = 95
 		case cmd == 2:
 			return nil
-		case off > uint64(d.size) || uint64(n) > uint64(d.size)-off:
+		case off > uint64(d.Size()) || uint64(n) > uint64(d.Size())-off:
 			errno = 22
 		default:
 			switch cmd {
@@ -61,7 +70,15 @@ func ServeTransmission(rw io.ReadWriter, d *Disk) error {
 					}
 				}
 			case 3:
-				errno = 95 // Never acknowledge a no-op durability barrier.
+				if n != 0 || off != 0 {
+					errno = 22
+				} else if f, ok := d.(flusher); ok {
+					if err := f.Flush(); err != nil {
+						errno = 5
+					}
+				} else {
+					errno = 95
+				}
 			case 4:
 				if err := d.Trim(int64(off), int(n)); err != nil {
 					errno = 22
