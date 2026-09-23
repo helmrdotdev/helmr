@@ -595,3 +595,31 @@ loss, disk-full or actual sync failures. Local Darwin checks do not establish
 Linux filesystem behavior; neither environment alone certifies hardware durability.
 Remote publication, host-loss recovery, retention/GC, VM FLUSH integration and
 concurrent ownership remain outside this experiment.
+
+### Local Linux qualification
+
+The same local-commit tests passed on Linux `7.0.12-linuxkit` arm64 with files on
+container overlayfs, using an unprivileged, network-disabled container and a
+cross-compiled static test binary. The four parent test groups include six
+returned-error boundaries, six separate-process exits and three corruption cases.
+The helper test skips only in the parent process. Container exit was zero, with
+no OOM; the dedicated container was removed after inspection.
+
+```sh
+nix develop .#default -c env CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+  go test -c -o /tmp/helmr-local-commit-linux-arm64.test ./dev/computer-block-proof/internal/generation
+docker run --pull=never --name helmr-local-commit-proof --network none \
+  --user 65534:65534 --cap-drop ALL --security-opt no-new-privileges \
+  --pids-limit 128 --memory 512m --cpus 2 \
+  --mount type=bind,source=/tmp/helmr-local-commit-linux-arm64.test,target=/proof,readonly \
+  node:24.21.0-bookworm-slim \
+  sh -c 'uname -sm && stat -f -c %T /tmp && exec /proof -test.v -test.run=TestLocal'
+docker inspect helmr-local-commit-proof --format '{{.State.ExitCode}} {{.State.OOMKilled}}'
+docker rm helmr-local-commit-proof
+```
+
+Use an available arm64 image; the fixture does not use its Node runtime. A named
+container is retained until its result is inspected. Linux overlayfs process exit
+is not proof of host ext4/XFS/Btrfs behavior, kernel crash, power loss or VM FLUSH.
+This cross-compiled binary has no race instrumentation; native race evidence is
+separate. No production runtime is activated by running this command.
