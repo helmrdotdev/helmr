@@ -434,8 +434,8 @@ Each pack also includes a complete directory for offline inspection. Physical
 references descend in rank, avoiding self-referential pack digests and cycles.
 `PackChildren` verifies the complete pack hash and each page before extracting
 immediate physical dependencies. It is **not** complete root certification: a
-future certifier must verify each incoming locator's membership in the target
-directory and dependency availability under transactional retention.
+local `Certify` below checks each incoming locator's directory membership and
+dependency availability; transactional retention remains outside this fixture.
 
 Physical reclamation must conservatively retain dependencies of all pages in a
 live pack, even when some pages are obsolete. Tests compare that physical closure
@@ -465,7 +465,7 @@ size accounting avoids serializing the entire growing payload on every append.
 The full live-state rewrite below compares both policies, including bytes
 rewritten and historical-root retention. Leaf-only grouping is the lower-retention
 baseline between rewrites, not a production selection. The direct writer below
-removes intermediate conversion; complete locator certification remains required. Both comparison policies remain
+removes intermediate conversion; the local certification experiment follows below. Both comparison policies remain
 confined to this development experiment, without runtime flags or compatibility.
 
 ## Full live-state rewrite experiment
@@ -532,5 +532,30 @@ written but before the new root is returned. Failed captures can leave orphan
 objects. Neither returning a locator nor storing it here is durable publication.
 The measurement fixture counts destination writes versus all writes of the
 intermediate conversion pipeline; it does not measure remote latency or peak RSS.
-Complete incoming-locator membership certification, local commit, authority/pinning
-and collector integration remain outside this experiment.
+Incoming-locator certification is provided separately below. Local commit,
+authority/pinning and collector integration remain outside this experiment.
+
+## Local generation certification
+
+`Certify` verifies a root's complete physical dependency closure. Every incoming
+locator must exactly match a page and offset listed in its pack directory, and
+child geometry must match its parent. Reachable packs include all copacked pages,
+including obsolete ones; their dependencies must also exist. Every segment is
+hashed in full and every record authenticated, including unselected records.
+
+Explicit budgets limit unique closure object count and encoded bytes before each
+object is fetched. They do not bound total I/O: this fixture reuses existing
+verifiers and repeats some reads. It reports closure counts separately from Store
+read metrics. No partial report is returned on failure. This is a single-owner
+local inspection, not a persisted certificate, retention pin, publication
+transaction, or proof that objects cannot subsequently be deleted.
+
+```sh
+nix develop .#default -c go test -run TestCertification -v ./dev/computer-block-proof/internal/generation
+```
+
+Tests exercise both packing policies and exact budgets, transitive missing/corrupt
+objects, wrong directory offsets, geometry splicing, obsolete-page dependencies,
+and an unselected corrupt record whose containing ciphertext digest is correct.
+The next persistence boundary must establish synced object/root ordering and
+reopen behavior separately; this in-memory inspection does not prove it.

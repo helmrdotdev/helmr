@@ -1,0 +1,164 @@
+package generation
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
+)
+
+// Certification is a local inspection result, never publication/retention authority.
+// Counts cover the physical closure, including obsolete pages in reachable packs.
+type Certification struct{ Packs, Segments, Bytes int64 }
+
+// Certify authenticates the complete physical closure and every incoming locator.
+// The single-owner immutable stores must remain present throughout inspection.
+// This experiment has no concurrent GC, pin transaction or persisted certificate.
+func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes int64) (Certification, error) {
+	var report Certification
+	fail := Certification{}
+	if maxObjects <= 0 || maxBytes <= 0 {
+		return fail, errors.New("invalid certification budget")
+	}
+	members := map[PackRef]map[Locator]bool{}
+	segments := map[Ref]bool{}
+	charge := func(size int64) error {
+		if size <= 0 || report.Packs+report.Segments >= maxObjects || size > maxBytes-report.Bytes {
+			return errors.New("certification budget exceeded")
+		}
+		report.Bytes += size
+		return nil
+	}
+	segment := func(r Ref) error {
+		if segments[r] {
+			return nil
+		}
+		if r.Kind != segmentKind {
+			return errors.New("segment required")
+		}
+		h, err := c.header(r)
+		if err != nil {
+			return err
+		}
+		if r.Size != int64(len(h))+int64(r.Count)*(BlockSize+20) {
+			return errors.New("segment geometry mismatch")
+		}
+		if err = charge(r.Size); err != nil {
+			return err
+		}
+		report.Segments++
+		raw, err := data.get(r)
+		if err != nil {
+			return err
+		}
+		if sha256.Sum256(raw) != r.Digest {
+			return errors.New("segment digest mismatch")
+		}
+		for i := uint32(0); i < r.Count; i++ {
+			if _, err = c.block(data, r, i); err != nil {
+				return err
+			}
+		}
+		segments[r] = true
+		return nil
+	}
+	var visit func(PackRef) error
+	var child func(Locator, packedRoot, int, uint64) error
+	child = func(l Locator, shape packedRoot, level int, start uint64) error {
+		if l.Pack.Rank != level+1 {
+			return errors.New("child rank mismatch")
+		}
+		if err := visit(l.Pack); err != nil {
+			return err
+		}
+		if !members[l.Pack][l] {
+			return errors.New("locator absent from directory")
+		}
+		_, err := loadPacked(c, packs, l, shape, level, start)
+		return err
+	}
+	visit = func(ref PackRef) error {
+		if _, ok := members[ref]; ok {
+			return nil
+		}
+		if ref.Size < 8 || ref.Size > 4<<20 || ref.Rank < 1 || ref.Rank > 6 {
+			return errors.New("invalid pack descriptor")
+		}
+		if err := charge(ref.Size); err != nil {
+			return err
+		}
+		report.Packs++
+		_, refs, err := PackChildren(c, packs, ref)
+		if err != nil {
+			return err
+		}
+		// PackChildren has verified the full hash, directory bounds and every page.
+		// Re-reading here deliberately reuses that verifier instead of adding a second
+		// parser. Its duplicated I/O is measured, not a production performance claim.
+		raw, err := packs.get(Ref{Digest: ref.Digest, Size: ref.Size})
+		if err != nil {
+			return err
+		}
+		n := int(binary.BigEndian.Uint32(raw[4:8]))
+		var dir directory
+		if err = decode(raw[8:8+n], &dir); err != nil {
+			return err
+		}
+		set := map[Locator]bool{}
+		offset := int64(8 + n)
+		locators := make([]Locator, 0, len(dir.Pages))
+		for _, page := range dir.Pages {
+			l := Locator{ref, page, offset}
+			offset += page.Size
+			set[l] = true
+			locators = append(locators, l)
+		}
+		members[ref] = set
+		for _, r := range refs {
+			if err = segment(r); err != nil {
+				return err
+			}
+		}
+		for _, l := range locators {
+			if l.Page.Kind == rootKind {
+				shape, e := openPacked(c, packs, l)
+				if e != nil {
+					return e
+				}
+				if shape.Index != nil {
+					if e = child(*shape.Index, shape, shape.Level, 0); e != nil {
+						return e
+					}
+				}
+				continue
+			}
+			raw, e := pageBytes(c, packs, l)
+			if e != nil {
+				return e
+			}
+			var node packedNode
+			if e = decode(raw, &node); e != nil {
+				return e
+			}
+			shape := packedRoot{Capacity: node.Capacity, Fanout: node.Fanout}
+			d := &Disk{shape: rootShape(shape)}
+			for _, entry := range node.Entries {
+				if entry.Child != nil {
+					if e = child(*entry.Child, shape, node.Level-1, node.Start+uint64(entry.Slot)*d.stride(node.Level)); e != nil {
+						return e
+					}
+				}
+			}
+		}
+		return nil
+	}
+	if err := visit(root.Pack); err != nil {
+		return fail, err
+	}
+	if !members[root.Pack][root] {
+		return fail, errors.New("root absent from directory")
+	}
+	if _, err := openPacked(c, packs, root); err != nil {
+		return fail, err
+	}
+	return report, nil
+}
