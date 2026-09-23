@@ -418,3 +418,52 @@ power loss and production cryptographic/key-management behavior remain unmeasure
 The JSON metadata encoding and geometry are not a final wire-format selection.
 No local FLUSH/WAL, remote publication, database certification or production VM
 attachment is implemented here.
+
+## Grouped metadata experiment
+
+`packing.go` compares immutable metadata packaging without changing the original
+index or production runtime. `Packer.Convert` converts only newly changed source
+pages, building lower levels first. It groups pages of the same rank up to a
+byte budget; the second comparison policy groups only leaves and stores internal
+pages separately. Neither policy repacks previously stored pages.
+
+A parent embeds the child's physical pack digest/size/rank, byte offset and exact
+encrypted page descriptor. Page digests and AEAD authenticate ranged reads. Cold
+reads start at a root locator and do not consult the converter's bookkeeping map.
+Each pack also includes a complete directory for offline inspection. Physical
+references descend in rank, avoiding self-referential pack digests and cycles.
+`PackChildren` verifies the complete pack hash and each page before extracting
+immediate physical dependencies. It is **not** complete root certification: a
+future certifier must verify each incoming locator's membership in the target
+directory and dependency availability under transactional retention.
+
+Physical reclamation must conservatively retain dependencies of all pages in a
+live pack, even when some pages are obsolete. Tests compare that physical closure
+with the current logical pages, with historical roots pinned separately. This
+exposes retention caused by obsolete internal pages, as well as unused leaf pages
+that continue to retain data segments. The experiment performs no GC or compaction.
+
+```sh
+nix develop .#default -c go test -run 'TestPack' -v ./dev/computer-block-proof/internal/generation
+nix develop .#default -c go test -run '^$' -bench BenchmarkPacking -benchtime=3x -benchmem ./dev/computer-block-proof/internal/generation
+```
+
+The matrix compares 256 KiB, 1 MiB and 4 MiB packing budgets over actual sparse
+8/32 GiB encodings. A 16-cut full replacement and a separate 32-cut hot/cold and
+zeroing workload compare all-level versus leaf-only packing. A 64-cut random
+overwrite sequence also compares the original unpacked index, keeping old data
+segments reachable when they still contain selected records. Cold reads, unchanged
+old generations, exact conversion reuse, missing/corrupt packs, offsets, ranks and
+prefetch resource bounds are exercised. The microbenchmark reports local converter
+time and allocated bytes; it excludes original index construction, source/data
+encoding, remote I/O, SQL, GC and VM work. Allocated bytes are not peak memory.
+
+These costs do not select a production packing budget. The converter retains
+historical source-to-placement bookkeeping; it is a measurement fixture, not the
+production writer design. Pack bounds are checked before fetching. Incremental
+size accounting avoids serializing the entire growing payload on every append.
+The next bounded experiment should measure single-owner repacking against both
+policies, including bytes rewritten and historical-root retention. Leaf-only
+grouping is the lower-retention baseline, not a production selection. Direct
+writing and complete locator certification remain subsequent requirements. Both comparison policies remain
+confined to this development experiment, without runtime flags or compatibility.
