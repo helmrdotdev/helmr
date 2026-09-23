@@ -462,8 +462,44 @@ These costs do not select a production packing budget. The converter retains
 historical source-to-placement bookkeeping; it is a measurement fixture, not the
 production writer design. Pack bounds are checked before fetching. Incremental
 size accounting avoids serializing the entire growing payload on every append.
-The next bounded experiment should measure single-owner repacking against both
-policies, including bytes rewritten and historical-root retention. Leaf-only
-grouping is the lower-retention baseline, not a production selection. Direct
-writing and complete locator certification remain subsequent requirements. Both comparison policies remain
+The full live-state rewrite below compares both policies, including bytes
+rewritten and historical-root retention. Leaf-only grouping is the lower-retention
+baseline between rewrites, not a production selection. Direct writing and complete
+locator certification remain subsequent requirements. Both comparison policies remain
 confined to this development experiment, without runtime flags or compatibility.
+
+## Full live-state rewrite experiment
+
+`Repack` walks the selected packed tree, authenticates its live records and writes
+new data segments and metadata. It skips unmapped disk ranges. A caller-supplied
+live-record bound limits accepted work; captures batch at 1,024 records. The
+in-memory staging store still grows with the rewritten state and intermediate
+index objects. This is neither constant-memory streaming nor a production
+background compactor. It deliberately reuses the existing index encoder before
+packing the final root, rather than introducing a second direct writer.
+
+The operation returns a new immutable root without changing the old root or any
+publication authority. Failure returns no usable root; orphan objects may remain.
+No automatic deletion or head swap occurs. Tests independently retain physical
+closures in fresh stores and verify old/new reads, then release old references
+and verify the rewritten root still stands alone. They also cover empty/sparse
+state, multiple capture batches, work limits, missing input and repeat rewrites.
+
+```sh
+nix develop .#default -c go test -run TestRepack -v ./dev/computer-block-proof/internal/generation
+```
+
+After 64 random overwrite cuts, both packaging policies rewrite approximately
+4 MiB of selected data into about 5.66 MB of encoded state. The comparison reports
+source bytes/read calls, destination bytes, staging writes, latest-root closure,
+and the union with pinned historical roots. Byte counts use decimal units.
+Keeping old roots means keeping their old objects: repacking increases storage
+until those references are released. The fixture copies reachable objects into
+empty stores to model release; it does not implement a concurrent collector.
+
+Read calls count the existing uncached range reader, including repeated segment
+headers. They are not measured remote requests or latency. Source/destination
+stores are in memory; reported staging writes exclude map/allocator overhead and
+are not peak RSS. Production admission, I/O scheduling, failure-resumable rewrite,
+publication/pinning and GC races remain unproved. A full rewrite is a comparison
+baseline, not the chosen production compaction policy or frequency.
