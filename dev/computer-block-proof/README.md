@@ -464,8 +464,8 @@ production writer design. Pack bounds are checked before fetching. Incremental
 size accounting avoids serializing the entire growing payload on every append.
 The full live-state rewrite below compares both policies, including bytes
 rewritten and historical-root retention. Leaf-only grouping is the lower-retention
-baseline between rewrites, not a production selection. Direct writing and complete
-locator certification remain subsequent requirements. Both comparison policies remain
+baseline between rewrites, not a production selection. The direct writer below
+removes intermediate conversion; complete locator certification remains required. Both comparison policies remain
 confined to this development experiment, without runtime flags or compatibility.
 
 ## Full live-state rewrite experiment
@@ -503,3 +503,34 @@ stores are in memory; reported staging writes exclude map/allocator overhead and
 are not peak RSS. Production admission, I/O scheduling, failure-resumable rewrite,
 publication/pinning and GC races remain unproved. A full rewrite is a comparison
 baseline, not the chosen production compaction policy or frequency.
+
+## Direct packed generations
+
+`NewPacked` creates an empty generation; `CapturePacked` applies complete 4 KiB
+block replacements directly to packed metadata. The development API accepts at
+most 16,384 changed blocks per capture, validates all addresses and lengths before
+writing, and seals data in batches of at most 1,024 records. It rebuilds changed
+ancestors bottom-up and preserves untouched child locators. Placement bookkeeping
+exists only for the current capture; no source index or historical conversion map
+is needed. Input bytes, changed-node metadata and destination objects remain in
+memory in this fixture; these bounds are not a production RSS/admission result.
+
+Locators now use a fixed binary descriptor encoded as a JSON byte string, retaining
+both digests, encryption salt/key, sizes, kind/count, offset and rank. Existing
+experimental packed formats are replaced without fallback. The directory and node
+structure remain JSON. Earlier measurements used verbose locator objects; compare
+new direct captures against the converter on the same current encoding.
+
+```sh
+nix develop .#default -c go test -run 'TestDirect|TestCompact' -v ./dev/computer-block-proof/internal/generation
+```
+
+Tests compare multiple immutable generations against the original index oracle,
+including sparse changes, branches, historical roots after physical-closure pruning,
+all-zero deletion, invalid input, and failure after a metadata pack has been
+written but before the new root is returned. Failed captures can leave orphan
+objects. Neither returning a locator nor storing it here is durable publication.
+The measurement fixture counts destination writes versus all writes of the
+intermediate conversion pipeline; it does not measure remote latency or peak RSS.
+Complete incoming-locator membership certification, local commit, authority/pinning
+and collector integration remain outside this experiment.
