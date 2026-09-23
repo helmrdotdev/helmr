@@ -361,3 +361,60 @@ Local qualification on Linux `7.0.12-linuxkit` arm64 passed the seven Linux test
 and both real-device cases, including independent inactive-device postflight.
 This is kernel/device evidence only: no VMM, VM snapshot, S3, restart recovery,
 power-loss guarantee, or production selection is established by this qualifier.
+
+## Immutable generation codec and index (development only)
+
+`internal/generation` is a separate in-memory format experiment, not an alternative
+production backend. It does not import the earlier full-map disk implementation.
+A generation root identifies a bounded-depth radix tree; updates rewrite only
+changed paths, with no predecessor-chain replay. Absent mappings mean zero.
+Captures and same-scope branches retain immutable old roots and exact unchanged
+ciphertext. Raw seed import streams finite batches without a filepack bridge.
+
+Each object has a fresh 256-bit random identity and an HKDF-SHA-256-derived
+AES-256-GCM key. Derivation binds the externally supplied scope, key version,
+format and object kind. Deterministic ordinal nonces are unique under that object
+key; metadata uses ordinal zero and segment records start at one. The segment
+header is authenticated as AAD of each data record, not as a separately sealed
+record. Parent references carry expected salt, ciphertext digest, kind, count,
+size and key identity. Range reads check the expected header and authenticate the
+selected 4 KiB record; they do not claim to hash the whole segment. Normal encoding
+uses cryptographic randomness. Deterministic entropy is confined to measurements
+in tests. Scope labels are not key provisioning or access authorization.
+
+The memory store copies immutable bytes on reads and rejects conflicting object
+identities. Metadata reads verify full hashes and authenticated context before
+parsing. The same node validation serves reads and immediate-child extraction;
+malformed metadata cannot silently become a zero mapping. Read/write requests
+are capped at 8 MiB, dirty data at 16,384 blocks, and the experimental geometry at
+1 TiB. These fixture limits are not product limits. Atomic read staging costs up
+to the request size in additional memory. Objects accumulate in memory: this
+fixture has no GC, bounded total retention, thread-safe mutation or disk durability.
+
+Run with the pinned toolchain:
+
+```sh
+nix develop .#default -c go test -v ./dev/computer-block-proof/internal/generation
+nix develop .#default -c go test -race ./dev/computer-block-proof/internal/generation
+nix develop .#default -c go test -run TestMeasurementMatrix -v ./dev/computer-block-proof/internal/generation
+```
+
+Tests cover byte-array oracles, partial/overlapping writes, immutable generations
+and branches, zero replacement, malformed/missing metadata, segment/header/ordinal
+substitution, wrong scope/key version, old retained keys, truncated/oversized
+objects, exact ciphertext upload retry, request bounds and unchanged caller state
+on failed reads/writes. An 8 MiB dense seed round-trips byte-for-byte; truncated or
+oversized seed input fails without returning a successful root. A failed import
+may leave unreachable objects in the development memory store.
+
+The measurement matrix actually encodes 1,024 written blocks in sparse 8/32 GiB
+logical disks, for fanouts 64 and 256 and clustered/dispersed addresses. It logs
+object bytes/counts, immediate edges, one-block update metadata/edges/bytes,
+pinned-root retention and cold read requests. Cold reads include a root fetch,
+all index pages, and two segment ranges (header and data). The dense fixture is
+8 **MiB**, not 8 GiB. Dense 8/32 GiB storage, fragmented steady-state workloads,
+peak allocations/temporary storage, S3 requests/latency, SQL cost, throughput,
+power loss and production cryptographic/key-management behavior remain unmeasured.
+The JSON metadata encoding and geometry are not a final wire-format selection.
+No local FLUSH/WAL, remote publication, database certification or production VM
+attachment is implemented here.
