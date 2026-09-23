@@ -159,6 +159,119 @@ state stays inside the removed container. This test does not prove host power-lo
 or reboot recovery, filesystem/database consistency, guest/VM behavior, remote
 object-store behavior or production readiness.
 
+## Prepared paired Firecracker fixture (not yet KVM-qualified)
+
+`vm-proof.py` and `cmd/guest-oracle` prepare the next experiment: an actual
+Firecracker 1.17.0 full snapshot containing RAM/device state paired with a pinned
+Computer generation and an independent scratch image. This fixture has local
+syntax/contract-test and static Linux amd64 build evidence only. It has **not** run
+on KVM. A successful build or the earlier kernel NBD proof is not VM evidence.
+
+The fixture reuses `images/guest/out/{vmlinuz,initramfs,rootfs.squashfs}` after
+checking every digest/size against `runtime-artifacts.json` (amd64). Those existing
+assets currently identify kernel `9a3bc8b89f703de9e84eb3c52e06f8e97998e88b9350e20bdb7f781b5e62f06e`,
+initramfs `958be56d0de5a0bcc66cb1ea23f9ae60eb46e1e415a7919641d4f0d54e3f9b55`,
+and rootfs `77ce101d468b9f5d9216c4d64a0ca056ae335c64651f9806431adc83880d526c`.
+`images/boot-artifacts.mk` and `images/guest/Makefile` build these via
+`nix develop .#images -c make -C images/guest all` when regeneration is needed;
+regenerated artifacts need fresh evidence. The pinned Alpine initramfs honors
+`init=/bin/sh`. A bounded serial bootstrap mounts scratch and executes the static
+oracle seeded on it; writable mountpoints live under `/run` tmpfs. No production
+init or guestd modification, network or vsock is needed.
+
+The host formats only newly created 16 MiB regular seed files, then copies the
+Computer seed to a device it atomically claimed through the unchanged
+`kernel-proof.py` attachment helper. Both ext4 seeds contain a readable zero marker
+file. The guest replaces both markers with fresh bytes, fsyncs them, retains a
+random nonce only in live RAM, and announces READY. The host acknowledges Pause,
+checks Sync device engines, fsyncs retained Computer/scratch descriptors, creates
+a Full snapshot with file syncing enabled, checks host flush errors again, and
+copies scratch plus the pinned Computer root. Pause alone is not the full barrier;
+[Firecracker 1.17.0 snapshot creation drains and syncs block backings](https://github.com/firecracker-microvm/firecracker/blob/v1.17.0/docs/snapshotting/snapshot-support.md).
+
+The source VMM is terminated and reaped before the backend is stopped/disconnected.
+Each restore uses pristine RAM snapshot bytes, an independent writable scratch
+copy and backend branch, and a distinct newly claimed NBD device. The original
+RAM nonce and a fresh host challenge must appear in a post-resume response.
+Aligned guest O_DIRECT reads must succeed on **both** files, without buffered
+fallback. Three cases must produce exactly: wrong Computer `(false, true)`, wrong
+scratch `(true, false)`, and paired `(true, true)`. Missing files, IO errors, crashes
+or timeouts do not satisfy a negative case. These are oracle checks of pairing,
+not automatic production restore validation.
+
+Prepare locally:
+
+```sh
+nix develop .#default -c env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o /tmp/helmr-vm-guest-oracle-amd64 ./dev/computer-block-proof/cmd/guest-oracle
+nix develop .#default -c env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -o /tmp/helmr-vm-block-proof-amd64 ./dev/computer-block-proof/cmd/block-proof
+nix develop .#default -c python3 -B dev/computer-block-proof/vm-proof-test.py
+```
+
+Execution remains gated on an explicitly authorized disposable **x86_64 Linux**
+host with usable `/dev/kvm`, four unused accessible `/dev/nbd0`–`/dev/nbd15` devices,
+permission for NBD ioctls, `mkfs.ext4`, Python 3.11+, and the pinned Firecracker
+1.17.0 binary. The repository's `.#smoke-linux` shell supplies the pinned
+Firecracker and image tooling on x86_64 Linux. For that host only:
+
+```sh
+# Paths below must refer to the verified assets/binaries on that disposable host.
+proof_arena=$(mktemp -d /tmp/helmr-vm-proof.XXXXXX)
+# Run GNU timeout inside the pinned shell. Its normal process-group supervision
+# includes this fixture's inherited Firecracker/backend/NBD helper descendants.
+if HELMR_DISPOSABLE_VM_PROOF=1 nix develop .#smoke-linux -c \
+  timeout --signal=TERM --kill-after=15s 260s \
+  python3 -B dev/computer-block-proof/vm-proof.py \
+  --arena "$proof_arena" \
+  --firecracker /absolute/path/to/firecracker \
+  --backend /tmp/helmr-vm-block-proof-amd64 \
+  --oracle /tmp/helmr-vm-guest-oracle-amd64 \
+  --assets "$PWD/images/guest/out"; then
+  proof_status=0
+else
+  proof_status=$?
+fi
+# Mandatory read-only postflight, including after timeout/KILL. Inspect known
+# claims in $proof_arena/owned-devices.json if the arena was retained. An abrupt
+# kill may precede journaling; inspect every exposed candidate as well.
+proof_postflight=0
+for proof_device in /sys/block/nbd*/pid; do
+  if [ -e "$proof_device" ]; then
+    printf 'ACTIVE: %s\n' "$proof_device"
+    cat "$proof_device"
+    proof_postflight=1
+  fi
+done
+printf 'proof exit=%s; failed-run arena=%s\n' "$proof_status" "$proof_arena"
+# Any nonzero status or unexpected active device leaves acceptance incomplete.
+# Do not clear devices by name or delete a retained arena during inspection.
+[ "$proof_status" -ne 0 ] || proof_status=$proof_postflight
+(exit "$proof_status")
+```
+
+The fixture's 240-second signal alarm is a **soft** limit, below the backend's
+five-minute connection deadline. Use the external TERM/KILL supervisor above;
+a blocked kernel ioctl or process in uninterruptible sleep can outlive signals,
+so even that deadline is not a guarantee of cleanup. Inspect the supervisor exit,
+owned-device journal and candidate device PIDs before declaring completion. Never
+automatically disconnect or clear a device by its pathname after a forced kill.
+
+The fixture prints its private arena before resource allocation and records known
+claimed-device identities. It stops VMMs before clearing owned NBD attachments,
+then verifies owned devices are inactive. Only that successful path removes the
+arena. Execution, resource-cleanup and postflight failures retain the arena and
+traceback for inspection. A failure or interruption during final arena removal
+may leave only some files, after owned resources are already gone. A forced kill
+before that removal likewise leaves the arena behind. Retaining snapshots and
+local state on failed execution is intentional. A failure does not authorize broader infrastructure
+changes. No KVM is available in the current local environment;
+there has been no AWS operation. This direct API experiment deliberately bypasses
+the production connector, whose backing validator requires regular files. It
+qualifies neither that connector nor remote publication, host reboot/power loss,
+application/database quiescence, runtime SDK behavior or cross-machine CPU
+compatibility. All branches and snapshots remain disposable local fixture data.
+
 ## Deliberate limits
 
 - The object store is a local-file stand-in; it does not model S3 consistency,
