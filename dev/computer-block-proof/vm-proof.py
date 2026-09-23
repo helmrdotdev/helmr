@@ -154,9 +154,34 @@ def paired_capture(vm, attachment, scratch, scratch_fd, directory):
     fsync_path(directory / 'scratch.capture')
 
 
+def bound_queue(attachment, sys_block=pathlib.Path('/sys/block')):
+    # Buffered 4 KiB pwrite calls can merge into requests larger than the
+    # adapter's 1 MiB bound. Bind the owned kernel queue before any fixture IO.
+    if not attachment.claimed or attachment.fd is None:
+        raise RuntimeError('cannot configure an unowned NBD queue')
+    name = pathlib.Path(attachment.dev).name
+    if not name.startswith('nbd') or not name[3:].isdigit():
+        raise RuntimeError('unexpected owned NBD device name')
+    queue_path = sys_block / name / 'queue'
+    caps = {'max_sectors_kb': 1024, 'discard_max_bytes': 1 << 20}
+    before = {key: int((queue_path / key).read_text()) for key in caps}
+    if before['max_sectors_kb'] <= 0 or before['discard_max_bytes'] < 0:
+        raise RuntimeError('invalid NBD queue limits')
+    print('NBD queue before: ' + json.dumps({'device': attachment.dev, **before}), flush=True)
+    expected = {key: min(before[key], cap) for key, cap in caps.items()}
+    for key, value in expected.items():
+        if value != before[key]: (queue_path / key).write_text(str(value) + '\n')
+    after = {key: int((queue_path / key).read_text()) for key in caps}
+    print('NBD queue after: ' + json.dumps({'device': attachment.dev, **after}), flush=True)
+    if after != expected:
+        raise RuntimeError('NBD queue limits did not retain the bounded settings')
+
+
 def attach(path, root):
     try:
-        return nbd.Attachment(path)
+        attachment = nbd.Attachment(path)
+        bound_queue(attachment)
+        return attachment
     finally:
         # Persist known claims even when attachment setup subsequently fails.
         # SIGKILL during an ioctl can precede this journal: postflight must also
