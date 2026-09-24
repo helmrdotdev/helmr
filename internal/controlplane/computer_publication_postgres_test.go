@@ -75,6 +75,10 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 	if first.err != nil || second.err != nil || first.result != second.result {
 		t.Fatalf("concurrent publication: %+v %+v", first, second)
 	}
+	var retained bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_source_version_id=$2 AND retained_computer_source_version_id=$2 FROM runtime_instances WHERE id=$1`, f.runtime, first.result.VersionID).Scan(&retained); err != nil || !retained {
+		t.Fatalf("published generation is not retained by runtime: %v %v", retained, err)
+	}
 	var config []byte
 	var roots, audits int
 	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config,(SELECT count(*) FROM computer_version_roots WHERE version_id=$1),(SELECT count(*) FROM computer_versions WHERE id=$1 AND publication_request_fingerprint IS NOT NULL) FROM computers WHERE id=$2`, first.result.VersionID, first.result.ComputerID).Scan(&config, &roots, &audits); err != nil {
@@ -84,10 +88,10 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 	if err := json.Unmarshal(config, &got); err != nil || got.User != "root" || roots != 1 || audits != 1 {
 		t.Fatalf("incomplete publication: %s %d %d %v", config, roots, audits, err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_version_roots WHERE version_id=$1`, first.result.VersionID)
 	// The fixture supplies physical exclusion evidence; this test exercises
 	// retention/replay after that boundary, not the Worker's cleanup mechanism.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',reserved_run_id=NULL,reserved_attempt_number=NULL,reserved_workspace_version_id=NULL,terminal_at=clock_timestamp(),terminal_reason_code='fixture',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_version_roots WHERE version_id=$1`, first.result.VersionID)
 	if n, err := f.server.db.ReleaseReclaimedComputerObjects(t.Context(), 10); err != nil || n != 1 {
 		t.Fatalf("release reclaimed pins: %d %v", n, err)
 	}
@@ -117,7 +121,7 @@ func TestInitialGenerationPublicationReplay(t *testing.T) {
 }
 
 func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
-	for _, kind := range []string{"page", "capacity", "claim", "pin", "closed", "atomic failure"} {
+	for _, kind := range []string{"page", "capacity", "claim", "pin", "closed", "atomic failure", "source pin failure"} {
 		t.Run(kind, func(t *testing.T) {
 			f, fence, input := generationPublicationFixture(t)
 			switch kind {
@@ -131,6 +135,8 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM runtime_computer_object_pins WHERE runtime_instance_id=$1`, f.runtime)
 			case "closed":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
+			case "source pin failure":
+				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_source_pin() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.computer_source_version_id IS NOT NULL THEN RAISE EXCEPTION 'injected source pin failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_source_pin BEFORE UPDATE ON runtime_instances FOR EACH ROW EXECUTE FUNCTION reject_source_pin()`)
 			case "atomic failure":
 				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_publication() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected publication failure'; END $$; CREATE TRIGGER reject_publication BEFORE INSERT ON computer_version_roots FOR EACH ROW EXECUTE FUNCTION reject_publication()`)
 			}
@@ -138,7 +144,7 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 				t.Fatal("invalid publication accepted")
 			}
 			var unchanged bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_version_roots r WHERE r.version_id=v.id) FROM runtime_instances runtime JOIN computer_versions v ON v.id=runtime.reserved_workspace_version_id JOIN computers c ON c.id=v.workspace_id WHERE runtime.id=$1`, f.runtime).Scan(&unchanged); err != nil || !unchanged {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT runtime.computer_source_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_version_roots r WHERE r.version_id=v.id) FROM runtime_instances runtime JOIN computer_versions v ON v.id=runtime.reserved_workspace_version_id JOIN computers c ON c.id=v.workspace_id WHERE runtime.id=$1`, f.runtime).Scan(&unchanged); err != nil || !unchanged {
 				t.Fatalf("partial publication survived: %v %v", unchanged, err)
 			}
 		})

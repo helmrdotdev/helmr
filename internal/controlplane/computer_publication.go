@@ -115,6 +115,19 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 	if err != nil {
 		return empty, err
 	}
+	// Publication and the preparing Runtime's source retention are one commit.
+	// Otherwise the next source/key request has no retained root, and the
+	// version could be reclaimed between publication and preparation.
+	pinned, err := q.PinRuntimeComputerSource(ctx, db.PinRuntimeComputerSourceParams{
+		RuntimeInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID,
+		ComputerID: owner.ComputerID, VersionID: version.ID,
+	})
+	if err != nil {
+		return empty, err
+	}
+	if pinned != 1 {
+		return empty, errors.New("initial generation has no matching Runtime source reservation")
+	}
 	if err = owner.CheckDeadlines(ctx, tx); err != nil {
 		return empty, err
 	}

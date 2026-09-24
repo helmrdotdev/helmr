@@ -11,9 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/executor"
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -84,21 +82,6 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	}
 	if _, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{RuntimeInstanceID: runtimeID, DesiredVersion: 2, Root: root}); err == nil {
 		t.Fatal("different preparation published")
-	}
-	computerID, err := ids.Parse(version.ComputerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	versionID, err := ids.Parse(version.VersionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := db.New(f.Pool)
-	n, err := q.PinRuntimeComputerSource(t.Context(), db.PinRuntimeComputerSourceParams{
-		RuntimeInstanceID: f.runtime, EnvironmentID: pgvalue.UUID(f.EnvironmentID), ComputerID: pgvalue.UUID(computerID), VersionID: pgvalue.UUID(versionID),
-	})
-	if err != nil || n != 1 {
-		t.Fatalf("pin source: %d %v", n, err)
 	}
 	fetch := func() workerapi.ComputerSourceMaterial {
 		t.Helper()
