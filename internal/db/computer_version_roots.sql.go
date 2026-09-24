@@ -55,6 +55,30 @@ func (q *Queries) GetComputerVersionRoot(ctx context.Context, arg GetComputerVer
 	return locator, err
 }
 
+const getRuntimeComputerSourceRoot = `-- name: GetRuntimeComputerSourceRoot :one
+SELECT v.version_id, v.locator, v.logical_bytes
+FROM runtime_instances r
+JOIN computer_version_roots v ON v.environment_id=r.environment_id
+ AND v.computer_id=r.workspace_id AND v.version_id=r.retained_computer_source_version_id
+WHERE r.id=$1
+`
+
+type GetRuntimeComputerSourceRootRow struct {
+	VersionID    pgtype.UUID `json:"version_id"`
+	Locator      []byte      `json:"locator"`
+	LogicalBytes int64       `json:"logical_bytes"`
+}
+
+// Resolve the retained source, never the current Computer head or reservation.
+// This is retention evidence, not live authorization; callers hold/recheck their
+// Runtime and Worker fences before granting source or key access.
+func (q *Queries) GetRuntimeComputerSourceRoot(ctx context.Context, runtimeInstanceID pgtype.UUID) (GetRuntimeComputerSourceRootRow, error) {
+	row := q.db.QueryRow(ctx, getRuntimeComputerSourceRoot, runtimeInstanceID)
+	var i GetRuntimeComputerSourceRootRow
+	err := row.Scan(&i.VersionID, &i.Locator, &i.LogicalBytes)
+	return i, err
+}
+
 const listRuntimeComputerSourceKeys = `-- name: ListRuntimeComputerSourceKeys :many
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available FROM runtime_instances r
  JOIN computer_version_roots v ON v.environment_id=r.environment_id AND v.computer_id=r.workspace_id
@@ -63,7 +87,7 @@ SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, 
    AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_digest
  JOIN computer_data_keys k ON k.environment_id=dependency.environment_id
    AND k.computer_id=dependency.computer_id AND k.id=dependency.key_id
- WHERE r.id=$1 AND k.available
+ WHERE r.id=$1
  ORDER BY k.id
 `
 

@@ -265,6 +265,10 @@ type Querier interface {
 	GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error)
 	GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error)
 	GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error)
+	// Resolve the retained source, never the current Computer head or reservation.
+	// This is retention evidence, not live authorization; callers hold/recheck their
+	// Runtime and Worker fences before granting source or key access.
+	GetRuntimeComputerSourceRoot(ctx context.Context, runtimeInstanceID pgtype.UUID) (GetRuntimeComputerSourceRootRow, error)
 	GetRuntimeIdentityForCheckpoint(ctx context.Context, id string) (RuntimeIdentity, error)
 	GetRuntimePreparationFailureAuthority(ctx context.Context, arg GetRuntimePreparationFailureAuthorityParams) (GetRuntimePreparationFailureAuthorityRow, error)
 	GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (RuntimeSubstrate, error)

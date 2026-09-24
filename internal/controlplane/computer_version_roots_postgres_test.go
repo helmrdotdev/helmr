@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -110,6 +111,9 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	if got, err := computer.ParseGenerationRoot(raw, f.request.LogicalBytes); err != nil || got != root {
 		t.Fatalf("stored full locator changed: %v", err)
 	}
+	if _, err := q.GetRuntimeComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatal("unretained version exposed", err)
+	}
 	pin := db.PinRuntimeComputerSourceParams{RuntimeInstanceID: f.runtime, EnvironmentID: env, ComputerID: computerID, VersionID: versionID}
 	// Physical deletion racing first admission must either lose to the FK pin
 	// or cause admission to fail. Force deletion to hold the root row first.
@@ -176,6 +180,19 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	if n, err := q.PinRuntimeComputerSource(t.Context(), wrong); err != nil || n != 0 {
 		t.Fatalf("unreserved source accepted: %d %v", n, err)
 	}
+	assertRetained := func() {
+		t.Helper()
+		tx, err := f.Pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(context.Background())
+		source, parsed, sourceKeys, err := loadRuntimeComputerGeneration(t.Context(), db.New(tx), f.runtime)
+		if err != nil || source.VersionID != versionID || parsed != root || len(sourceKeys) != 1 || pgvalue.UUIDString(sourceKeys[0].ID) != key.ID {
+			t.Fatalf("retained generation mismatch: %v", err)
+		}
+	}
+	assertRetained()
 	keys, err := q.ListRuntimeComputerSourceKeys(t.Context(), f.runtime)
 	if err != nil || len(keys) != 1 || pgvalue.UUIDString(keys[0].ID) != key.ID {
 		t.Fatalf("runtime source keys: count=%d err=%v", len(keys), err)
@@ -188,11 +205,15 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	// Reservation loss is not physical exclusion. The immutable source remains pinned.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',reserved_run_id=NULL,reserved_attempt_number=NULL,reserved_workspace_version_id=NULL WHERE id=$1`, f.runtime)
 	integrity(deleteRoot())
+	assertRetained()
 	keys, err = q.ListRuntimeComputerSourceKeys(t.Context(), f.runtime)
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("source lost at terminal observation: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
+	if _, err := q.GetRuntimeComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatal("reclaimed source exposed", err)
+	}
 	keys, err = q.ListRuntimeComputerSourceKeys(t.Context(), f.runtime)
 	if err != nil || len(keys) != 0 {
 		t.Fatalf("released runtime retained key delivery: %v", err)
