@@ -52,6 +52,43 @@ func (q *Queries) CertifyComputerObject(ctx context.Context, arg CertifyComputer
 	return result.RowsAffected(), nil
 }
 
+const hasRegisteredInitialComputerObject = `-- name: HasRegisteredInitialComputerObject :one
+SELECT EXISTS (
+ SELECT 1 FROM runtime_instances r
+ JOIN runtime_computer_objects p ON p.runtime_instance_id=r.id AND p.runtime_desired_version=r.desired_version
+ JOIN computer_objects o ON o.environment_id=p.environment_id AND o.computer_id=p.computer_id AND o.digest=p.digest
+ WHERE r.id=$1 AND r.worker_instance_id=$2
+   AND r.worker_group_id=$3 AND r.worker_epoch=$4
+   AND r.desired_version=$5 AND r.reclaimed_at IS NULL
+   AND o.digest=$6 AND o.inspection=$7::jsonb
+)
+`
+
+type HasRegisteredInitialComputerObjectParams struct {
+	RuntimeID      pgtype.UUID `json:"runtime_id"`
+	WorkerID       pgtype.UUID `json:"worker_id"`
+	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch    int64       `json:"worker_epoch"`
+	DesiredVersion int64       `json:"desired_version"`
+	Digest         string      `json:"digest"`
+	Inspection     []byte      `json:"inspection"`
+}
+
+func (q *Queries) HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRegisteredInitialComputerObject,
+		arg.RuntimeID,
+		arg.WorkerID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
+		arg.DesiredVersion,
+		arg.Digest,
+		arg.Inspection,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listComputerObjectReadKeys = `-- name: ListComputerObjectReadKeys :many
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available FROM computer_object_read_keys r
  JOIN computer_objects o USING(environment_id,computer_id,digest)
@@ -135,4 +172,26 @@ func (q *Queries) LockComputerObject(ctx context.Context, arg LockComputerObject
 		&i.AvailabilityRequired,
 	)
 	return i, err
+}
+
+const releaseReclaimedComputerObjects = `-- name: ReleaseReclaimedComputerObjects :execrows
+WITH released AS (
+ SELECT p.runtime_instance_id,p.digest FROM runtime_computer_objects p
+ JOIN runtime_instances r ON r.id=p.runtime_instance_id
+ WHERE r.reclaimed_at IS NOT NULL
+ ORDER BY p.runtime_instance_id,p.digest LIMIT $1
+ FOR UPDATE OF p SKIP LOCKED
+)
+DELETE FROM runtime_computer_objects p USING released r
+ WHERE p.runtime_instance_id=r.runtime_instance_id AND p.digest=r.digest
+`
+
+// Physical reclamation is monotonic and already requires exclusion evidence.
+// Bound cleanup independently of remote storage; graph/object FKs remain intact.
+func (q *Queries) ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit int32) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseReclaimedComputerObjects, rowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

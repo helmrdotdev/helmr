@@ -256,3 +256,10 @@ func (p PackInspection) CheckRoot(root Locator, capacity int64) error {
 	}
 	return errors.New("root absent from inspected capacity")
 }
+
+// ObjectInspection is complete trusted-host byte evidence for one physical
+// object. Exactly one member is populated. It grants no publication authority.
+type ObjectInspection struct {
+	Segment *Ref
+	Pack    *PackInspection
+}

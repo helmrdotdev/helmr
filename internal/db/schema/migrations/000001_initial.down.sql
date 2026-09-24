@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS runtime_computer_objects;
 DROP TABLE IF EXISTS run_finalization_objects;
 DROP TABLE IF EXISTS run_checkpoint_objects;
 DROP TABLE IF EXISTS computer_initializations;

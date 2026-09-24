@@ -9,20 +9,13 @@ import (
 	"reflect"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
-
-// computerObjectInspection is supplied only by the trusted host's complete byte
-// inspector. It is not accepted from guest/user JSON. Registration preserves these
-// facts for exact dependency reuse; it does not itself authenticate ciphertext.
-type computerObjectInspection struct {
-	Segment *blockformat.Ref
-	Pack    *blockformat.PackInspection
-}
 
 type inspectedObject struct {
 	digest   string
@@ -37,7 +30,7 @@ type inspectedObject struct {
 
 func objectDigest(d [32]byte) string { return "sha256:" + hex.EncodeToString(d[:]) }
 
-func describeComputerObject(e computerObjectInspection) (inspectedObject, error) {
+func describeComputerObject(e blockformat.ObjectInspection) (inspectedObject, error) {
 	var out inspectedObject
 	if (e.Segment == nil) == (e.Pack == nil) {
 		return out, errors.New("one object inspection is required")
@@ -93,10 +86,13 @@ func describeComputerObject(e computerObjectInspection) (inspectedObject, error)
 // continuation must use its own authority, never this preparation fence.
 // No remote/provider I/O runs under SQL locks. The caller owns staged bytes and
 // may upload only after registration succeeds. No generation head is advanced.
-func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence computerKeyFence, inspection computerObjectInspection, certify bool) error {
+func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence computerKeyFence, inspection blockformat.ObjectInspection, uploaded *cas.Object) error {
 	object, err := describeComputerObject(inspection)
 	if err != nil {
 		return err
+	}
+	if uploaded != nil && (uploaded.Digest != object.digest || uploaded.SizeBytes != object.size || uploaded.MediaType != "application/octet-stream") {
+		return errors.New("uploaded object descriptor mismatch")
 	}
 	tx, err := dbtx.Begin(ctx)
 	if err != nil {
@@ -140,7 +136,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	}
 	// All initial objects use the single pinned writer. Historical/mixed-key
 	// objects need the separate continuation/source authorization path.
-	if !certify {
+	if uploaded == nil {
 		if _, err = tx.Exec(ctx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1) ON CONFLICT DO NOTHING`, object.digest); err != nil {
 			return err
 		}
@@ -152,13 +148,25 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	if err != nil {
 		return err
 	}
-	var stored computerObjectInspection
+	var stored blockformat.ObjectInspection
 	if err = json.Unmarshal(row.Inspection, &stored); err != nil {
 		return err
 	}
 	// JSONB normalizes representation, so compare decoded typed facts.
 	if row.SizeBytes != object.size || row.Rank != int32(object.rank) || row.Kind != object.kind || row.MediaType != "application/octet-stream" || !reflect.DeepEqual(stored, inspection) {
 		return errors.New("object differs from registered inspection")
+	}
+	if uploaded == nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_objects(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, fence.RuntimeID, object.digest, owner.EnvironmentID, owner.ComputerID, fence.DesiredVersion); err != nil {
+			return err
+		}
+	}
+	var retained bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_objects WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3)`, fence.RuntimeID, object.digest, fence.DesiredVersion).Scan(&retained); err != nil {
+		return err
+	}
+	if !retained {
+		return errors.New("computer object candidate is not retained by Runtime")
 	}
 	if !row.Certified.Bool {
 		// Missing dependencies fail before certification; all physical references,
@@ -207,7 +215,11 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 				return err
 			}
 		}
-		if certify {
+		if uploaded != nil {
+
+			if _, err = q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: owner.OrgID, Digest: uploaded.Digest, SizeBytes: uploaded.SizeBytes, MediaType: uploaded.MediaType}); err != nil {
+				return err
+			}
 			n, err := q.CertifyComputerObject(ctx, db.CertifyComputerObjectParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, Digest: object.digest})
 			if err != nil {
 				return err
@@ -223,14 +235,14 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	return tx.Commit(ctx)
 }
 
-func loadInspectedComputerChild(ctx context.Context, tx pgx.Tx, owner dispatch.ComputerPreparation, digest string, size int64, rank int) (computerObjectInspection, error) {
+func loadInspectedComputerChild(ctx context.Context, tx pgx.Tx, owner dispatch.ComputerPreparation, digest string, size int64, rank int) (blockformat.ObjectInspection, error) {
 	var raw []byte
 	// KEY SHARE prevents collection until the edge's restrictive FK takes over.
 	err := tx.QueryRow(ctx, `SELECT inspection FROM computer_objects WHERE environment_id=$1 AND computer_id=$2 AND digest=$3 AND size_bytes=$4 AND rank=$5 AND certified FOR KEY SHARE`, owner.EnvironmentID, owner.ComputerID, digest, size, rank).Scan(&raw)
 	if err != nil {
-		return computerObjectInspection{}, err
+		return blockformat.ObjectInspection{}, err
 	}
-	var evidence computerObjectInspection
+	var evidence blockformat.ObjectInspection
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	err = decoder.Decode(&evidence)

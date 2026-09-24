@@ -52,6 +52,9 @@ func (r *Reclaimer) Run(ctx context.Context) error {
 // Reconcile commits retirement before remote I/O. Database connection loss or
 // storage uncertainty leaves the permanent tombstone discoverable for retry.
 func (r *Reclaimer) Reconcile(ctx context.Context) error {
+	if _, err := r.queries.ReleaseReclaimedComputerObjects(ctx, 1000); err != nil {
+		return err
+	}
 	candidates, err := r.queries.ListAbandonedCasObjects(ctx, 100)
 	if err != nil {
 		return err

@@ -690,3 +690,10 @@ func (c *Client) PublishComputerInitialization(ctx context.Context, request work
 	}
 	return response, nil
 }
+
+func (c *Client) RegisterInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/objects/register", request, &struct{}{})
+}
+func (c *Client) CertifyInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/objects/certify", request, &struct{}{})
+}

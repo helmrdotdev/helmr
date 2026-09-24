@@ -778,6 +778,14 @@ type RunWait struct {
 	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RuntimeComputerObject struct {
+	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	Digest                string      `json:"digest"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	ComputerID            pgtype.UUID `json:"computer_id"`
+	RuntimeDesiredVersion int64       `json:"runtime_desired_version"`
+}
+
 type RuntimeIdentity struct {
 	ID                        string             `json:"id"`
 	RuntimeArch               string             `json:"runtime_arch"`

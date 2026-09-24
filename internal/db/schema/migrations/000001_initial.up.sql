@@ -3092,6 +3092,23 @@ CREATE TABLE runtime_instances (
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
+-- Physical Runtime ownership keeps staged generation objects alive until
+-- quiescence is proved. Releasing a candidate does not delete graph objects.
+CREATE TABLE runtime_computer_objects (
+    runtime_instance_id UUID NOT NULL,
+    digest TEXT NOT NULL,
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    runtime_desired_version BIGINT NOT NULL CHECK (runtime_desired_version > 0),
+    PRIMARY KEY (runtime_instance_id, digest),
+    FOREIGN KEY (environment_id, computer_id, runtime_instance_id)
+        REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, computer_id, digest)
+        REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE RESTRICT
+);
+CREATE INDEX runtime_computer_objects_object_idx
+    ON runtime_computer_objects(environment_id, computer_id, digest);
+
 -- Initial disk uploads retain ownership independently of runtime termination.
 -- Registration is not evidence that the object exists or that a version is committed.
 CREATE TABLE computer_initializations (

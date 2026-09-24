@@ -319,6 +319,7 @@ type Querier interface {
 	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
 	GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspaceSecretCAPublicParams) (GetWorkspaceSecretCAPublicRow, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
+	HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error)
 	HoldSessionExecution(ctx context.Context, arg HoldSessionExecutionParams) (Session, error)
 	InitializeComputerWriteKey(ctx context.Context, arg InitializeComputerWriteKeyParams) (int64, error)
 	// Creation-only: caller owns the insert transaction and uses inserted created_at.
@@ -563,6 +564,9 @@ type Querier interface {
 	ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseActorWorkspaceOwnerParams) (ReleaseActorWorkspaceOwnerRow, error)
 	ReleaseCheckpointWorkspaceLease(ctx context.Context, arg ReleaseCheckpointWorkspaceLeaseParams) (WorkspaceLease, error)
 	ReleaseQueuedRunWorkspace(ctx context.Context, arg ReleaseQueuedRunWorkspaceParams) (int64, error)
+	// Physical reclamation is monotonic and already requires exclusion evidence.
+	// Bound cleanup independently of remote storage; graph/object FKs remain intact.
+	ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit int32) (int64, error)
 	ReleaseRunResumeWait(ctx context.Context, arg ReleaseRunResumeWaitParams) (RunWait, error)
 	ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorkspaceParams) error
 	ReleaseTaskWorkspaceLease(ctx context.Context, arg ReleaseTaskWorkspaceLeaseParams) (WorkspaceLease, error)
