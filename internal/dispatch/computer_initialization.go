@@ -30,6 +30,16 @@ type ComputerPreparation struct {
 // order as placement. Discovery is speculative; all mutable authority is reread
 // after taking its owning lock. Finalization authority is deliberately not reused.
 func LockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence) (ComputerPreparation, error) {
+	return lockComputerPreparation(ctx, tx, fence, true)
+}
+
+// LockComputerSourcePreparation authorizes only preparation from an existing version.
+// It never grants initialization or publication authority.
+func LockComputerSourcePreparation(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence) (ComputerPreparation, error) {
+	return lockComputerPreparation(ctx, tx, fence, false)
+}
+
+func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence, initial bool) (ComputerPreparation, error) {
 	var org, computer, runID, processID pgtype.UUID
 	var runRevision, processRevision pgtype.Int8
 	err := tx.QueryRow(ctx, `SELECT r.org_id,r.workspace_id,r.reserved_run_id,r.reserved_process_id,
@@ -48,11 +58,11 @@ func LockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 		if err = lockRunSecrets(ctx, tx, candidate); err != nil {
 			return ComputerPreparation{}, err
 		}
-		authority, err = lockRunPlacementAuthority(ctx, tx, candidate, true)
+		authority, err = lockRunPlacementAuthority(ctx, tx, candidate, initial)
 		if err != nil {
 			return ComputerPreparation{}, err
 		}
-		if authority.restoreCheckpointID.Valid || authority.sameWorkspaceChildWaitID.Valid {
+		if initial && (authority.restoreCheckpointID.Valid || authority.sameWorkspaceChildWaitID.Valid) {
 			return ComputerPreparation{}, pgx.ErrNoRows
 		}
 	} else if processID.Valid && !runID.Valid && processRevision.Valid {
@@ -90,7 +100,7 @@ func LockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 	if err != nil {
 		return ComputerPreparation{}, err
 	}
-	if runtime.desiredState != db.RuntimeDesiredStateReady || runtime.desiredVersion != fence.DesiredVersion || runtime.observedState != db.RuntimeObservedStateAllocated || runtime.restoreCheckpoint.Valid || !runtime.reservationActive {
+	if runtime.desiredState != db.RuntimeDesiredStateReady || runtime.desiredVersion != fence.DesiredVersion || runtime.observedState != db.RuntimeObservedStateAllocated || runtime.restoreCheckpoint != authority.restoreCheckpointID || !runtime.reservationActive {
 		return ComputerPreparation{}, pgx.ErrNoRows
 	}
 	if runID.Valid {
@@ -106,8 +116,9 @@ func LockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 	}
 	var root pgtype.UUID
 	err = tx.QueryRow(ctx, `SELECT v.id FROM computer_versions v JOIN computers w ON w.id=v.workspace_id
-        WHERE v.environment_id=$1 AND v.workspace_id=$2 AND v.id=$3 AND w.head_version_id=v.id
-        AND v.parent_version_id IS NULL AND v.status='initializing'`, authority.environmentID, computer, authority.baseWorkspaceVersionID).Scan(&root)
+        WHERE v.environment_id=$1 AND v.workspace_id=$2 AND v.id=$3 AND ($4::boolean IS FALSE OR w.head_version_id=v.id)
+        AND (($4::boolean AND v.parent_version_id IS NULL AND v.status='initializing')
+ OR (NOT $4::boolean AND v.status IN ('committed','private')))`, authority.environmentID, computer, authority.baseWorkspaceVersionID, initial).Scan(&root)
 	if err != nil {
 		return ComputerPreparation{}, err
 	}

@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -58,6 +60,13 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,512,'application/octet-stream')`, f.OrgID, digest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,512,'application/octet-stream','root',2,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, key.ID)
+	secondID := uuid.NewV7().String()
+	secondEnvelope, err := b.wrapper.Wrap(t.Context(), key.Scope, secondID, bytes.Repeat([]byte{8}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, secondID, env, computerID, secondEnvelope.WrappingKeyID, secondEnvelope.Ciphertext)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,false)`, env, computerID, digest, secondID)
 	integrity(q.CreateComputerVersionRoot(t.Context(), params))
 	if n, err := q.CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certify root: %d %v", n, err)
@@ -188,13 +197,57 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 		}
 		defer tx.Rollback(context.Background())
 		source, parsed, sourceKeys, err := loadRuntimeComputerGeneration(t.Context(), db.New(tx), f.runtime)
-		if err != nil || source.VersionID != versionID || parsed != root || len(sourceKeys) != 1 || pgvalue.UUIDString(sourceKeys[0].ID) != key.ID {
+		if err != nil || source.VersionID != versionID || parsed != root || len(sourceKeys) != 2 || pgvalue.UUIDString(sourceKeys[0].ID) != key.ID {
 			t.Fatalf("retained generation mismatch: %v", err)
 		}
 	}
 	assertRetained()
+
+	// Read-key delivery is unavailable while this version is still initializing.
+	if _, err := b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
+		t.Fatal("initial source key grant", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET status='committed',published_at=clock_timestamp(),content_digest=$2,size_bytes=$3,publisher_runtime_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.runtime)
+	delivered, err := b.source(t.Context(), fence)
+	if err != nil || delivered.Root != root || len(delivered.Keys) != 2 || !bytes.Equal(delivered.Keys[0].Key, key.Key) {
+		t.Fatalf("source delivery: %v", err)
+	}
+	delivered.clear()
+	failing := &partialSourceWrapper{ComputerKeyWrapper: b.wrapper}
+	b.wrapper = failing
+	if _, err = b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
+		t.Fatal("partial unwrap accepted", err)
+	}
+	if len(failing.returned) != 2 {
+		t.Fatal("partial unwrap not exercised")
+	}
+	for _, plain := range failing.returned {
+		if !bytes.Equal(plain, make([]byte, len(plain))) {
+			t.Fatal("partial plaintext retained")
+		}
+	}
+	b.wrapper = failing.ComputerKeyWrapper
+
+	observer := &observingKeyWrapper{ComputerKeyWrapper: b.wrapper}
+	revoked := false
+	observer.unwrap = func() {
+		if revoked {
+			return
+		}
+		revoked = true
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_instances SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
+	}
+	b.wrapper = observer
+	if _, err = b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
+		t.Fatal("revoked worker received source keys", err)
+	}
+	if !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
+		t.Fatal("revoked plaintext not cleared")
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_instances SET claim_version=claim_version-1 WHERE id=$1`, f.runtimeWorker())
+	b.wrapper = observer.ComputerKeyWrapper
 	keys, err := q.ListRuntimeComputerSourceKeys(t.Context(), f.runtime)
-	if err != nil || len(keys) != 1 || pgvalue.UUIDString(keys[0].ID) != key.ID {
+	if err != nil || len(keys) != 2 || pgvalue.UUIDString(keys[0].ID) != key.ID {
 		t.Fatalf("runtime source keys: count=%d err=%v", len(keys), err)
 	}
 	deleteRoot := func() error {
@@ -207,7 +260,7 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	integrity(deleteRoot())
 	assertRetained()
 	keys, err = q.ListRuntimeComputerSourceKeys(t.Context(), f.runtime)
-	if err != nil || len(keys) != 1 {
+	if err != nil || len(keys) != 2 {
 		t.Fatalf("source lost at terminal observation: %v", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
@@ -225,4 +278,18 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_source_version_id FROM runtime_instances WHERE id=$1`, f.runtime).Scan(&audit); err != nil || audit != versionID {
 		t.Fatal("payload release lost audit identity")
 	}
+}
+
+type partialSourceWrapper struct {
+	ComputerKeyWrapper
+	returned [][]byte
+}
+
+func (w *partialSourceWrapper) Unwrap(ctx context.Context, scope, id string, e computerkey.Envelope) ([]byte, error) {
+	key, err := w.ComputerKeyWrapper.Unwrap(ctx, scope, id, e)
+	w.returned = append(w.returned, key)
+	if len(w.returned) == 2 {
+		return key, errors.New("injected second unwrap failure")
+	}
+	return key, err
 }
