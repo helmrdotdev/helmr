@@ -335,7 +335,7 @@ UPDATE computer_versions
  WHERE id = $1
    AND workspace_id = $2
    AND status = 'private'
-RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type CommitStagedWorkspaceExecVersionParams struct {
@@ -357,6 +357,9 @@ func (q *Queries) CommitStagedWorkspaceExecVersion(ctx context.Context, arg Comm
 		&i.EntryCount,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
+		&i.PublisherRuntimeInstanceID,
+		&i.PublisherDesiredVersion,
+		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
@@ -1127,7 +1130,7 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 }
 
 const getStagedWorkspaceExecCapture = `-- name: GetStagedWorkspaceExecCapture :one
-SELECT computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
+SELECT computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.publisher_runtime_instance_id, computer_versions.publisher_desired_version, computer_versions.publication_request_fingerprint, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
   FROM workspace_mounts
   JOIN computer_versions
     ON computer_versions.workspace_id = workspace_mounts.workspace_id
@@ -1159,6 +1162,9 @@ func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStag
 		&i.EntryCount,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
+		&i.PublisherRuntimeInstanceID,
+		&i.PublisherDesiredVersion,
+		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
@@ -2897,7 +2903,7 @@ WITH authority AS (
       JOIN artifacts ON artifacts.environment_id = authority.environment_id
                     AND artifacts.id = $5
                     AND artifacts.kind = 'workspace_version'
-    RETURNING computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
+    RETURNING computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.publisher_runtime_instance_id, computer_versions.publisher_desired_version, computer_versions.publication_request_fingerprint, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
 ), staged AS (
     UPDATE workspace_mounts
        SET staged_version_id = created.id,
@@ -2906,7 +2912,7 @@ WITH authority AS (
      WHERE workspace_mounts.id = $1
     RETURNING workspace_mounts.id
 )
-SELECT created.id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.content_digest, created.size_bytes, created.entry_count, created.status, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
+SELECT created.id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.content_digest, created.size_bytes, created.entry_count, created.status, created.source_workspace_lease_id, created.publisher_runtime_instance_id, created.publisher_desired_version, created.publication_request_fingerprint, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at
   FROM created
   JOIN staged ON true
 `
@@ -2923,21 +2929,24 @@ type StageWorkspaceExecCaptureParams struct {
 }
 
 type StageWorkspaceExecCaptureRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID        `json:"artifact_id"`
-	ContentDigest          pgtype.Text        `json:"content_digest"`
-	SizeBytes              int64              `json:"size_bytes"`
-	EntryCount             int32              `json:"entry_count"`
-	Status                 string             `json:"status"`
-	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz `json:"discarded_at"`
+	ID                            pgtype.UUID        `json:"id"`
+	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
+	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
+	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
+	ArtifactID                    pgtype.UUID        `json:"artifact_id"`
+	ContentDigest                 pgtype.Text        `json:"content_digest"`
+	SizeBytes                     int64              `json:"size_bytes"`
+	EntryCount                    int32              `json:"entry_count"`
+	Status                        string             `json:"status"`
+	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
+	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
+	PublisherDesiredVersion       pgtype.Int8        `json:"publisher_desired_version"`
+	PublicationRequestFingerprint []byte             `json:"publication_request_fingerprint"`
+	OwnershipGeneration           int64              `json:"ownership_generation"`
+	WriterGeneration              int64              `json:"writer_generation"`
+	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
+	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
+	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 }
 
 func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorkspaceExecCaptureParams) (StageWorkspaceExecCaptureRow, error) {
@@ -2963,6 +2972,9 @@ func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorksp
 		&i.EntryCount,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
+		&i.PublisherRuntimeInstanceID,
+		&i.PublisherDesiredVersion,
+		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,

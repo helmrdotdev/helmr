@@ -1886,11 +1886,22 @@ CREATE TABLE computer_versions (
     status TEXT NOT NULL DEFAULT 'private'
         CHECK (status IN ('initializing', 'private', 'committed', 'discarded')),
     source_workspace_lease_id UUID,
+    publisher_runtime_instance_id UUID UNIQUE,
+    publisher_desired_version BIGINT,
+    publication_request_fingerprint BYTEA,
     ownership_generation BIGINT NOT NULL CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL CHECK (writer_generation >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     published_at TIMESTAMPTZ,
     discarded_at TIMESTAMPTZ,
+    CONSTRAINT computer_versions_publisher_check CHECK (
+        (publisher_runtime_instance_id IS NULL AND publisher_desired_version IS NULL
+         AND publication_request_fingerprint IS NULL)
+        OR (publisher_runtime_instance_id IS NOT NULL AND publisher_desired_version IS NOT NULL
+            AND publisher_desired_version > 0 AND publication_request_fingerprint IS NOT NULL
+            AND octet_length(publication_request_fingerprint) = 32
+            AND parent_version_id IS NULL AND status = 'committed')
+    ),
     UNIQUE (workspace_id, id),
     UNIQUE (environment_id, workspace_id, id),
     FOREIGN KEY (environment_id, workspace_id)
@@ -1925,7 +1936,7 @@ CREATE TABLE computer_versions (
             AND (
                 (status = 'initializing' AND artifact_id IS NULL
                  AND content_digest IS NULL AND size_bytes = 0)
-                OR (status = 'committed' AND artifact_id IS NOT NULL
+                OR (status = 'committed' AND (artifact_id IS NOT NULL OR publisher_runtime_instance_id IS NOT NULL)
                     AND content_digest IS NOT NULL AND size_bytes > 0
                     AND size_bytes % 4096 = 0)
             )
@@ -3097,6 +3108,11 @@ CREATE TABLE runtime_computer_object_pins (
 );
 CREATE INDEX runtime_computer_object_pins_object_idx
     ON runtime_computer_object_pins(environment_id, computer_id, digest);
+
+ALTER TABLE computer_versions
+    ADD CONSTRAINT computer_versions_publisher_fkey
+    FOREIGN KEY (environment_id, workspace_id, publisher_runtime_instance_id)
+    REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT;
 
 -- Initial disk uploads retain ownership independently of runtime termination.
 -- Registration is not evidence that the object exists or that a version is committed.

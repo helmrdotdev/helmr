@@ -305,6 +305,9 @@ type Querier interface {
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
 	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetWorkerGroupStatus(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStatusRow, error)
+	// Authentication supplies the original Worker identity. Historical success is
+	// independent of current head/config, desired state and retained payload lifetime.
+	GetWorkerInitialComputerVersion(ctx context.Context, arg GetWorkerInitialComputerVersionParams) (ComputerVersion, error)
 	GetWorkerInstancePoolID(ctx context.Context, arg GetWorkerInstancePoolIDParams) (pgtype.UUID, error)
 	GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInstanceStatusParams) (GetWorkerInstanceStatusRow, error)
 	GetWorkerInstanceStatusByResource(ctx context.Context, arg GetWorkerInstanceStatusByResourceParams) (GetWorkerInstanceStatusByResourceRow, error)
@@ -518,6 +521,9 @@ type Querier interface {
 	// statement: none can be committed alone. Historical receipt retrieval uses GetComputerInitialization;
 	// this mutation never reopens a consumed candidate or grants further execution.
 	PublishComputerInitialization(ctx context.Context, arg PublishComputerInitializationParams) (ComputerInitialization, error)
+	// The owner validates the exact certified root page and holds the preparation
+	// locks. Publication records success once; pending uploads remain Runtime pins.
+	PublishInitialComputerVersion(ctx context.Context, arg PublishInitialComputerVersionParams) (PublishInitialComputerVersionRow, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (ComputerVersion, error)
 	ReadWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
 	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)

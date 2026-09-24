@@ -404,21 +404,24 @@ type ComputerObjectKey struct {
 }
 
 type ComputerVersion struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID        `json:"artifact_id"`
-	ContentDigest          pgtype.Text        `json:"content_digest"`
-	SizeBytes              int64              `json:"size_bytes"`
-	EntryCount             int32              `json:"entry_count"`
-	Status                 string             `json:"status"`
-	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz `json:"discarded_at"`
+	ID                            pgtype.UUID        `json:"id"`
+	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
+	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
+	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
+	ArtifactID                    pgtype.UUID        `json:"artifact_id"`
+	ContentDigest                 pgtype.Text        `json:"content_digest"`
+	SizeBytes                     int64              `json:"size_bytes"`
+	EntryCount                    int32              `json:"entry_count"`
+	Status                        string             `json:"status"`
+	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
+	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
+	PublisherDesiredVersion       pgtype.Int8        `json:"publisher_desired_version"`
+	PublicationRequestFingerprint []byte             `json:"publication_request_fingerprint"`
+	OwnershipGeneration           int64              `json:"ownership_generation"`
+	WriterGeneration              int64              `json:"writer_generation"`
+	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
+	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
+	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 }
 
 type ComputerVersionRoot struct {

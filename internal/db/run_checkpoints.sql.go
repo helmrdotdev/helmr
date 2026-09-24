@@ -693,7 +693,7 @@ SELECT
  WHERE artifacts.environment_id = $2
    AND artifacts.id = $5
    AND artifacts.kind = 'workspace_version'
-RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
 type CreatePrivateCheckpointWorkspaceVersionParams struct {
@@ -736,6 +736,9 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 		&i.EntryCount,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
+		&i.PublisherRuntimeInstanceID,
+		&i.PublisherDesiredVersion,
+		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
