@@ -1805,6 +1805,86 @@ ALTER TABLE workspaces ADD CONSTRAINT workspaces_write_key_fkey
     FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
     REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
 
+-- Physical Computer storage ownership is independent of version audit lineage.
+-- Admission retains keys/lifetimes before upload; certification additionally pins
+-- the exact CAS descriptor. Only the owning fenced transaction may certify it.
+CREATE TABLE computer_objects (
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    digest TEXT NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
+    media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
+    kind TEXT NOT NULL CHECK (kind IN ('segment', 'index', 'root')),
+    rank INTEGER NOT NULL CHECK ((kind = 'segment' AND rank = 0) OR (kind <> 'segment' AND rank BETWEEN 1 AND 6)),
+    certified_at TIMESTAMPTZ,
+    certified BOOLEAN GENERATED ALWAYS AS (certified_at IS NOT NULL) STORED,
+    certified_org_id UUID GENERATED ALWAYS AS (CASE WHEN certified_at IS NOT NULL THEN org_id END) STORED,
+    availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    PRIMARY KEY (environment_id, computer_id, digest),
+    UNIQUE (environment_id, computer_id, digest, rank),
+    UNIQUE (environment_id, computer_id, digest, rank, certified),
+    UNIQUE (environment_id, computer_id, digest, certified),
+    FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, computer_id) REFERENCES workspaces(environment_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available) ON DELETE RESTRICT,
+    FOREIGN KEY (certified_org_id, digest, size_bytes, media_type)
+        REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT
+);
+
+CREATE INDEX computer_objects_digest_idx ON computer_objects(digest);
+
+CREATE TABLE computer_object_keys (
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    digest TEXT NOT NULL,
+    key_id UUID NOT NULL,
+    availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    PRIMARY KEY (environment_id, computer_id, digest, key_id),
+    FOREIGN KEY (environment_id, computer_id, digest)
+        REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE CASCADE,
+    FOREIGN KEY (environment_id, computer_id, key_id, availability_required)
+        REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT
+);
+
+CREATE INDEX computer_object_keys_key_idx ON computer_object_keys(environment_id, computer_id, key_id);
+
+CREATE TABLE computer_object_edges (
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    parent_digest TEXT NOT NULL,
+    child_digest TEXT NOT NULL,
+    parent_rank INTEGER NOT NULL,
+    child_rank INTEGER NOT NULL,
+    certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    PRIMARY KEY (environment_id, computer_id, parent_digest, child_digest),
+    CHECK (child_rank < parent_rank),
+    FOREIGN KEY (environment_id, computer_id, parent_digest, parent_rank)
+        REFERENCES computer_objects(environment_id, computer_id, digest, rank) ON DELETE CASCADE,
+    FOREIGN KEY (environment_id, computer_id, child_digest, child_rank, certification_required)
+        REFERENCES computer_objects(environment_id, computer_id, digest, rank, certified) ON DELETE RESTRICT
+);
+CREATE INDEX computer_object_edges_child_idx
+    ON computer_object_edges(environment_id, computer_id, child_digest);
+
+-- Derived once at certification, from direct keys and immediate child summaries.
+-- A key-version summary is not an independent grant or mutable publication head.
+CREATE TABLE computer_object_read_keys (
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    digest TEXT NOT NULL,
+    key_id UUID NOT NULL,
+    availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    PRIMARY KEY (environment_id, computer_id, digest, key_id),
+    FOREIGN KEY (environment_id, computer_id, digest)
+        REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE CASCADE,
+    FOREIGN KEY (environment_id, computer_id, key_id, availability_required)
+        REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT
+);
+
+CREATE INDEX computer_object_read_keys_key_idx ON computer_object_read_keys(environment_id, computer_id, key_id);
+
 CREATE TABLE workspace_versions (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,

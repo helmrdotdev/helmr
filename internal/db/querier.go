@@ -61,6 +61,7 @@ type Querier interface {
 	// TLS preparation is reservation-or-live, distinct from credential use.
 	// The root is persisted at Workspace creation; preparation only captures existing material.
 	CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error)
+	CertifyComputerObject(ctx context.Context, arg CertifyComputerObjectParams) (int64, error)
 	ChargeRunRuntimePreparationFailure(ctx context.Context, arg ChargeRunRuntimePreparationFailureParams) (Run, error)
 	CheckpointRunLease(ctx context.Context, arg CheckpointRunLeaseParams) (RunLease, error)
 	ClaimControlOutbox(ctx context.Context, arg ClaimControlOutboxParams) ([]ControlOutbox, error)
@@ -337,6 +338,8 @@ type Querier interface {
 	ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
 	ListCheckpointObjects(ctx context.Context, checkpointID pgtype.UUID) ([]RunCheckpointObject, error)
+	// The root comes from the exact retained owner, never an arbitrary HTTP key list.
+	ListComputerObjectReadKeys(ctx context.Context, arg ListComputerObjectReadKeysParams) ([]ComputerKey, error)
 	ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error)
 	ListDeploymentDefinitionsForDeployment(ctx context.Context, arg ListDeploymentDefinitionsForDeploymentParams) ([]DeploymentDefinition, error)
 	ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([]RunWait, error)
@@ -403,6 +406,11 @@ type Querier interface {
 	LockCancellationWorkspaces(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockChildWorkspacePair(ctx context.Context, arg LockChildWorkspacePairParams) ([]LockChildWorkspacePairRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error)
+	// The caller owns the fenced publication transaction. These storage operations
+	// neither authenticate a Worker nor accept an unverified ciphertext declaration.
+	// Admission/edge/key mutation must lock the parent and reject certified objects;
+	// descriptors and immediate dependencies are immutable after certification.
+	LockComputerObject(ctx context.Context, arg LockComputerObjectParams) (ComputerObject, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
 	LockDeploymentBundle(ctx context.Context, arg LockDeploymentBundleParams) error
 	LockDeploymentPromotionTarget(ctx context.Context, arg LockDeploymentPromotionTargetParams) (Deployment, error)

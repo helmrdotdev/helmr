@@ -338,6 +338,48 @@ type ComputerKey struct {
 	Available     pgtype.Bool        `json:"available"`
 }
 
+type ComputerObject struct {
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	ComputerID           pgtype.UUID        `json:"computer_id"`
+	Digest               string             `json:"digest"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	SizeBytes            int64              `json:"size_bytes"`
+	MediaType            string             `json:"media_type"`
+	Kind                 string             `json:"kind"`
+	Rank                 int32              `json:"rank"`
+	CertifiedAt          pgtype.Timestamptz `json:"certified_at"`
+	Certified            pgtype.Bool        `json:"certified"`
+	CertifiedOrgID       pgtype.UUID        `json:"certified_org_id"`
+	AvailabilityRequired pgtype.Bool        `json:"availability_required"`
+}
+
+type ComputerObjectEdge struct {
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	ComputerID            pgtype.UUID `json:"computer_id"`
+	ParentDigest          string      `json:"parent_digest"`
+	ChildDigest           string      `json:"child_digest"`
+	ParentRank            int32       `json:"parent_rank"`
+	ChildRank             int32       `json:"child_rank"`
+	CertificationRequired pgtype.Bool `json:"certification_required"`
+}
+
+type ComputerObjectKey struct {
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	ComputerID           pgtype.UUID `json:"computer_id"`
+	Digest               string      `json:"digest"`
+	KeyID                pgtype.UUID `json:"key_id"`
+	AvailabilityRequired pgtype.Bool `json:"availability_required"`
+}
+
+type ComputerObjectReadKey struct {
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	ComputerID           pgtype.UUID `json:"computer_id"`
+	Digest               string      `json:"digest"`
+	KeyID                pgtype.UUID `json:"key_id"`
+	AvailabilityRequired pgtype.Bool `json:"availability_required"`
+}
+
 type ControlOutbox struct {
 	ID             pgtype.UUID        `json:"id"`
 	Topic          string             `json:"topic"`
