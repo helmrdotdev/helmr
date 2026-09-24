@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 func fixture(t *testing.T) (*Codec, *Store) {
@@ -25,7 +27,7 @@ func mustDisk(t *testing.T, c *Codec, s *Store, size int64, f int) *Disk {
 	}
 	return d
 }
-func mustCapture(t *testing.T, d *Disk) Ref {
+func mustCapture(t *testing.T, d *Disk) blockformat.Ref {
 	t.Helper()
 	r, e := d.Capture()
 	if e != nil {
@@ -40,7 +42,7 @@ func TestOracleSnapshotsAndBranches(t *testing.T) {
 			d := mustDisk(t, c, s, 2<<20, fanout)
 			oracle := make([]byte, 2<<20)
 			rng := rand.New(rand.NewSource(37))
-			var roots []Ref
+			var roots []blockformat.Ref
 			var states [][]byte
 			for step := 0; step < 90; step++ {
 				n := rng.Intn(9000) + 1
@@ -169,7 +171,7 @@ func TestFailedReadsAndWritesAreAtomic(t *testing.T) {
 	d := mustDisk(t, c, s, 4*BlockSize, 64)
 	d.WriteAt(bytes.Repeat([]byte{1}, 2*BlockSize), 0)
 	r := mustCapture(t, d)
-	var seg Ref
+	var seg blockformat.Ref
 	refs, _ := c.Children(s, r)
 	leaves, _ := c.Children(s, refs[0])
 	seg = leaves[0]
@@ -196,9 +198,9 @@ func TestMetadataValidationAndChildren(t *testing.T) {
 	d := mustDisk(t, c, s, 32<<30, 256)
 	d.WriteAt(bytes.Repeat([]byte{4}, BlockSize), 0)
 	r := mustCapture(t, d)
-	seen := map[Ref]bool{}
-	var visit func(Ref)
-	visit = func(ref Ref) {
+	seen := map[blockformat.Ref]bool{}
+	var visit func(blockformat.Ref)
+	visit = func(ref blockformat.Ref) {
 		if seen[ref] {
 			return
 		}

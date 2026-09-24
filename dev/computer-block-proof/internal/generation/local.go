@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 // Local is a development-only single-owner directory, outside customer control.
@@ -68,7 +70,7 @@ func readBounded(path string, size int64) ([]byte, error) {
 func (l *Local) objectPath(digest [32]byte) string {
 	return filepath.Join(l.dir, "objects", hex.EncodeToString(digest[:]))
 }
-func (l *Local) install(r Ref, raw []byte) error {
+func (l *Local) install(r blockformat.Ref, raw []byte) error {
 	path := l.objectPath(r.Digest)
 	existing, e := readBounded(path, r.Size)
 	if e == nil {
@@ -121,19 +123,19 @@ func (l *Local) install(r Ref, raw []byte) error {
 // atomic root replacement and root directory sync. After root replacement an
 // error has an uncertain outcome: Reopen may select the new valid generation.
 // Old objects are never deleted. No success is returned before the final sync.
-func (l *Local) Commit(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes int64) error {
+func (l *Local) Commit(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects, maxBytes int64) error {
 	if _, e := Certify(c, data, packs, root, maxObjects, maxBytes); e != nil {
 		return e
 	}
-	refs := map[Ref]*Store{}
-	seen := map[PackRef]bool{}
-	var collect func(PackRef) error
-	collect = func(p PackRef) error {
+	refs := map[blockformat.Ref]*Store{}
+	seen := map[blockformat.PackRef]bool{}
+	var collect func(blockformat.PackRef) error
+	collect = func(p blockformat.PackRef) error {
 		if seen[p] {
 			return nil
 		}
 		seen[p] = true
-		refs[Ref{Digest: p.Digest, Size: p.Size}] = packs
+		refs[blockformat.Ref{Digest: p.Digest, Size: p.Size}] = packs
 		children, segs, e := PackChildren(c, packs, p)
 		if e != nil {
 			return e
@@ -151,7 +153,7 @@ func (l *Local) Commit(c *Codec, data, packs *Store, root Locator, maxObjects, m
 	if e := collect(root.Pack); e != nil {
 		return e
 	}
-	ordered := make([]Ref, 0, len(refs))
+	ordered := make([]blockformat.Ref, 0, len(refs))
 	for r := range refs {
 		ordered = append(ordered, r)
 	}
@@ -210,8 +212,8 @@ func (l *Local) Commit(c *Codec, data, packs *Store, root Locator, maxObjects, m
 // Reopen follows only the committed root's physical graph, never a directory scan
 // or highest-generation guess. Missing/corrupt committed objects are errors, not
 // permission to silently fall back to an older generation.
-func (l *Local) Reopen(c *Codec, maxObjects, maxBytes int64) (Locator, *Store, *Store, error) {
-	fail := func(e error) (Locator, *Store, *Store, error) { return Locator{}, nil, nil, e }
+func (l *Local) Reopen(c *Codec, maxObjects, maxBytes int64) (blockformat.Locator, *Store, *Store, error) {
+	fail := func(e error) (blockformat.Locator, *Store, *Store, error) { return blockformat.Locator{}, nil, nil, e }
 	if maxObjects <= 0 || maxBytes <= 0 {
 		return fail(errors.New("invalid reopen budget"))
 	}
@@ -219,15 +221,15 @@ func (l *Local) Reopen(c *Codec, maxObjects, maxBytes int64) (Locator, *Store, *
 	if e != nil {
 		return fail(e)
 	}
-	var root Locator
+	var root blockformat.Locator
 	if e = json.Unmarshal(raw, &root); e != nil {
 		return fail(e)
 	}
 	data, packs := NewStore(), NewStore()
-	seen := map[PackRef]bool{}
-	segments := map[Ref]bool{}
+	seen := map[blockformat.PackRef]bool{}
+	segments := map[blockformat.Ref]bool{}
 	var count, bytes int64
-	read := func(r Ref, s *Store) error {
+	read := func(r blockformat.Ref, s *Store) error {
 		if r.Size <= 0 || count >= maxObjects || r.Size > maxBytes-bytes {
 			return errors.New("reopen budget exceeded")
 		}
@@ -242,15 +244,15 @@ func (l *Local) Reopen(c *Codec, maxObjects, maxBytes int64) (Locator, *Store, *
 		}
 		return nil
 	}
-	var load func(PackRef) error
-	load = func(p PackRef) error {
+	var load func(blockformat.PackRef) error
+	load = func(p blockformat.PackRef) error {
 		if seen[p] {
 			return nil
 		}
 		if p.Size < 8 || p.Size > 4<<20 || p.Rank < 1 || p.Rank > 6 {
 			return errors.New("invalid local pack")
 		}
-		if e := read(Ref{Digest: p.Digest, Size: p.Size}, packs); e != nil {
+		if e := read(blockformat.Ref{Digest: p.Digest, Size: p.Size}, packs); e != nil {
 			return e
 		}
 		seen[p] = true

@@ -7,9 +7,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
-func localFixture(t *testing.T) (*Codec, *Local, Locator, *Store, *Store) {
+func localFixture(t *testing.T) (*Codec, *Local, blockformat.Locator, *Store, *Store) {
 	t.Helper()
 	c, data := fixture(t)
 	packs := NewStore()
@@ -198,7 +200,7 @@ func TestLocalCommittedCorruptionDoesNotFallback(t *testing.T) {
 				t.Fatal(e)
 			}
 			r, d, p, e := l.Reopen(c, 100, 8<<20)
-			if e == nil || r != (Locator{}) || d != nil || p != nil {
+			if e == nil || r != (blockformat.Locator{}) || d != nil || p != nil {
 				t.Fatal("damaged committed state returned as usable")
 			}
 		})

@@ -5,16 +5,18 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 // retainPacked copies the physical closure into empty stores. Reads after this
 // operation cannot accidentally use unreachable objects left in the fixture.
-func retainPacked(t *testing.T, c *Codec, data, packs *Store, roots ...Locator) (*Store, *Store) {
+func retainPacked(t *testing.T, c *Codec, data, packs *Store, roots ...blockformat.Locator) (*Store, *Store) {
 	t.Helper()
 	ds, ps := NewStore(), NewStore()
 	closure := packedClosure(t, c, packs, roots...)
 	for r := range closure.Seen {
-		ref := Ref{Digest: r.Digest, Size: r.Size}
+		ref := blockformat.Ref{Digest: r.Digest, Size: r.Size}
 		b, err := packs.get(ref)
 		if err != nil {
 			t.Fatal(err)
@@ -72,7 +74,7 @@ func TestRepackRetention(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pins := []Locator{first}
+			pins := []blockformat.Locator{first}
 			latest := first
 			for cut := 1; cut <= 64; cut++ {
 				for range 32 {
@@ -111,7 +113,7 @@ func TestRepackRetention(t *testing.T) {
 			// Historical pins and the new root remain independently readable after pruning.
 			ds, ps := retainPacked(t, c, data, packs, first, latest, next)
 			for _, b := range blocks {
-				for _, r := range []Locator{first, latest, next} {
+				for _, r := range []blockformat.Locator{first, latest, next} {
 					expected := want[b]
 					if r == first {
 						expected = 0x61
@@ -169,7 +171,7 @@ func TestRepackBoundsZeroAndFailure(t *testing.T) {
 	}
 	for _, bound := range []uint64{0, 1024, maxBlocks + 1} {
 		out, _, e := Repack(c, data, packs, old, 64<<10, true, bound)
-		if e == nil || out != (Locator{}) {
+		if e == nil || out != (blockformat.Locator{}) {
 			t.Fatal("work bound")
 		}
 	}
@@ -190,7 +192,7 @@ func TestRepackBoundsZeroAndFailure(t *testing.T) {
 	// Missing data cannot yield a successful candidate or alter the old root.
 	missing := NewStore()
 	out, _, e := Repack(c, missing, packs, old, 64<<10, true, 1025)
-	if e == nil || out != (Locator{}) {
+	if e == nil || out != (blockformat.Locator{}) {
 		t.Fatal("missing data accepted")
 	}
 	got, err = ReadPacked(c, data, packs, old, 0)

@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 // Certification is a local inspection result, never publication/retention authority.
@@ -13,14 +15,14 @@ type Certification struct{ Packs, Segments, Bytes int64 }
 // Certify authenticates the complete physical closure and every incoming locator.
 // The single-owner immutable stores must remain present throughout inspection.
 // This experiment has no concurrent GC, pin transaction or persisted certificate.
-func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes int64) (Certification, error) {
+func Certify(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects, maxBytes int64) (Certification, error) {
 	var report Certification
 	fail := Certification{}
 	if maxObjects <= 0 || maxBytes <= 0 {
 		return fail, errors.New("invalid certification budget")
 	}
-	members := map[PackRef]map[Locator]bool{}
-	segments := map[Ref]bool{}
+	members := map[blockformat.PackRef]map[blockformat.Locator]bool{}
+	segments := map[blockformat.Ref]bool{}
 	charge := func(size int64) error {
 		if size <= 0 || report.Packs+report.Segments >= maxObjects || size > maxBytes-report.Bytes {
 			return errors.New("certification budget exceeded")
@@ -28,7 +30,7 @@ func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		report.Bytes += size
 		return nil
 	}
-	segment := func(r Ref) error {
+	segment := func(r blockformat.Ref) error {
 		if segments[r] {
 			return nil
 		}
@@ -61,9 +63,9 @@ func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		segments[r] = true
 		return nil
 	}
-	var visit func(PackRef) error
-	var child func(Locator, packedRoot, int, uint64) error
-	child = func(l Locator, shape packedRoot, level int, start uint64) error {
+	var visit func(blockformat.PackRef) error
+	var child func(blockformat.Locator, packedRoot, int, uint64) error
+	child = func(l blockformat.Locator, shape packedRoot, level int, start uint64) error {
 		if l.Pack.Rank != level+1 {
 			return errors.New("child rank mismatch")
 		}
@@ -76,7 +78,7 @@ func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		_, err := loadPacked(c, packs, l, shape, level, start)
 		return err
 	}
-	visit = func(ref PackRef) error {
+	visit = func(ref blockformat.PackRef) error {
 		if _, ok := members[ref]; ok {
 			return nil
 		}
@@ -94,7 +96,7 @@ func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		// PackChildren has verified the full hash, directory bounds and every page.
 		// Re-reading here deliberately reuses that verifier instead of adding a second
 		// parser. Its duplicated I/O is measured, not a production performance claim.
-		raw, err := packs.get(Ref{Digest: ref.Digest, Size: ref.Size})
+		raw, err := packs.get(blockformat.Ref{Digest: ref.Digest, Size: ref.Size})
 		if err != nil {
 			return err
 		}
@@ -103,11 +105,11 @@ func Certify(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		if err = decode(raw[8:8+n], &dir); err != nil {
 			return err
 		}
-		set := map[Locator]bool{}
+		set := map[blockformat.Locator]bool{}
 		offset := int64(8 + n)
-		locators := make([]Locator, 0, len(dir.Pages))
+		locators := make([]blockformat.Locator, 0, len(dir.Pages))
 		for _, page := range dir.Pages {
-			l := Locator{ref, page, offset}
+			l := blockformat.Locator{Pack: ref, Page: page, Offset: offset}
 			offset += page.Size
 			set[l] = true
 			locators = append(locators, l)

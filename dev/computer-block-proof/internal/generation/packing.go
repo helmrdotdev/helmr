@@ -7,45 +7,35 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
-// Packing is a development experiment. Pages are bundled only with pages of the
-// same rank; no page references its own pack, avoiding digest cycles.
-type PackRef struct {
-	Digest [32]byte
-	Size   int64
-	Rank   int
-}
-type Locator struct {
-	Pack   PackRef
-	Page   Ref
-	Offset int64
-}
 type packedEntry struct {
 	Slot    int
-	Child   *Locator `json:",omitempty"`
-	Segment int      `json:",omitempty"`
-	Record  uint32   `json:",omitempty"`
+	Child   *blockformat.Locator `json:",omitempty"`
+	Segment int                  `json:",omitempty"`
+	Record  uint32               `json:",omitempty"`
 }
 type packedNode struct {
 	Capacity      int64
 	Fanout, Level int
 	Start         uint64
-	Segments      []Ref `json:",omitempty"`
+	Segments      []blockformat.Ref `json:",omitempty"`
 	Entries       []packedEntry
 }
 type packedRoot struct {
 	Capacity      int64
 	Fanout, Level int
-	Index         *Locator
+	Index         *blockformat.Locator
 }
 type directory struct {
 	Rank  int
-	Pages []Ref
+	Pages []blockformat.Ref
 }
 type stagedPage struct {
-	input Ref
-	ref   Ref
+	input blockformat.Ref
+	ref   blockformat.Ref
 	bytes []byte
 }
 
@@ -57,17 +47,17 @@ type Packer struct {
 	source, packs *Store
 	limit         int
 	packInternal  bool
-	converted     map[Ref]Locator
+	converted     map[blockformat.Ref]blockformat.Locator
 }
 
 func NewPacker(c *Codec, source, packs *Store, limit int, packInternal bool) (*Packer, error) {
 	if limit < 64<<10 || limit > 4<<20 {
 		return nil, errors.New("invalid pack budget")
 	}
-	return &Packer{c, source, packs, limit, packInternal, make(map[Ref]Locator)}, nil
+	return &Packer{c, source, packs, limit, packInternal, make(map[blockformat.Ref]blockformat.Locator)}, nil
 }
 func encodePack(rank int, pages []stagedPage) ([]byte, int, error) {
-	dir := directory{Rank: rank, Pages: make([]Ref, 0, len(pages))}
+	dir := directory{Rank: rank, Pages: make([]blockformat.Ref, 0, len(pages))}
 	for _, page := range pages {
 		dir.Pages = append(dir.Pages, page.ref)
 	}
@@ -96,12 +86,12 @@ func (p *Packer) publish(rank int, pages []stagedPage) error {
 	if len(raw) > p.limit {
 		return errors.New("metadata page exceeds pack budget")
 	}
-	ref := PackRef{sha256.Sum256(raw), int64(len(raw)), rank}
-	if err = p.packs.put(Ref{Digest: ref.Digest, Size: ref.Size}, raw); err != nil {
+	ref := blockformat.PackRef{Digest: sha256.Sum256(raw), Size: int64(len(raw)), Rank: rank}
+	if err = p.packs.put(blockformat.Ref{Digest: ref.Digest, Size: ref.Size}, raw); err != nil {
 		return err
 	}
 	for _, page := range pages {
-		p.converted[page.input] = Locator{ref, page.ref, int64(offset)}
+		p.converted[page.input] = blockformat.Locator{Pack: ref, Page: page.ref, Offset: int64(offset)}
 		offset += len(page.bytes)
 	}
 	return nil
@@ -109,21 +99,21 @@ func (p *Packer) publish(rank int, pages []stagedPage) error {
 
 // Convert performs bottom-up packing of only unknown pages. Old locators remain
 // valid; it neither repacks old packs nor advances any authoritative head.
-func (p *Packer) Convert(input Ref) (Locator, error) {
+func (p *Packer) Convert(input blockformat.Ref) (blockformat.Locator, error) {
 	if loc, ok := p.converted[input]; ok {
 		return loc, nil
 	}
 	shape, err := loadRoot(p.codec, p.source, input)
 	if err != nil {
-		return Locator{}, err
+		return blockformat.Locator{}, err
 	}
 	d := &Disk{codec: p.codec, store: p.source, shape: shape}
-	levels := make([]map[Ref]node, shape.Level+1)
+	levels := make([]map[blockformat.Ref]node, shape.Level+1)
 	for i := range levels {
-		levels[i] = map[Ref]node{}
+		levels[i] = map[blockformat.Ref]node{}
 	}
-	var visit func(*Ref, int, uint64) error
-	visit = func(ref *Ref, level int, start uint64) error {
+	var visit func(*blockformat.Ref, int, uint64) error
+	visit = func(ref *blockformat.Ref, level int, start uint64) error {
 		if ref == nil {
 			return nil
 		}
@@ -145,10 +135,10 @@ func (p *Packer) Convert(input Ref) (Locator, error) {
 		return nil
 	}
 	if err = visit(shape.Index, shape.Level, 0); err != nil {
-		return Locator{}, err
+		return blockformat.Locator{}, err
 	}
 	for level, nodes := range levels {
-		refs := make([]Ref, 0, len(nodes))
+		refs := make([]blockformat.Ref, 0, len(nodes))
 		for ref := range nodes {
 			refs = append(refs, ref)
 		}
@@ -156,7 +146,7 @@ func (p *Packer) Convert(input Ref) (Locator, error) {
 		var batch []stagedPage
 		base, _, err := encodePack(level+1, nil)
 		if err != nil {
-			return Locator{}, err
+			return blockformat.Locator{}, err
 		}
 		batchSize := len(base)
 		for _, ref := range refs {
@@ -167,7 +157,7 @@ func (p *Packer) Convert(input Ref) (Locator, error) {
 				if e.Child != nil {
 					loc, ok := p.converted[*e.Child]
 					if !ok {
-						return Locator{}, errors.New("missing child placement")
+						return blockformat.Locator{}, errors.New("missing child placement")
 					}
 					pe.Child = &loc
 				}
@@ -175,16 +165,16 @@ func (p *Packer) Convert(input Ref) (Locator, error) {
 			}
 			plain, err := json.Marshal(out)
 			if err != nil {
-				return Locator{}, err
+				return blockformat.Locator{}, err
 			}
 			encoded, b, err := p.codec.seal(nodeKind, [][]byte{plain})
 			if err != nil {
-				return Locator{}, err
+				return blockformat.Locator{}, err
 			}
 			page := stagedPage{ref, encoded, b}
 			descriptor, err := json.Marshal(encoded)
 			if err != nil {
-				return Locator{}, err
+				return blockformat.Locator{}, err
 			}
 			addition := len(descriptor) + len(b)
 			if len(batch) > 0 {
@@ -192,20 +182,20 @@ func (p *Packer) Convert(input Ref) (Locator, error) {
 			}
 			if batchSize+addition > p.limit || (level > 0 && !p.packInternal && len(batch) > 0) {
 				if err = p.publish(level+1, batch); err != nil {
-					return Locator{}, err
+					return blockformat.Locator{}, err
 				}
 				batch = nil
 				batchSize = len(base)
 				addition = len(descriptor) + len(b)
 			}
 			if batchSize+addition > p.limit {
-				return Locator{}, errors.New("metadata page exceeds pack budget")
+				return blockformat.Locator{}, errors.New("metadata page exceeds pack budget")
 			}
 			batchSize += addition
 			batch = append(batch, page)
 		}
 		if err = p.publish(level+1, batch); err != nil {
-			return Locator{}, err
+			return blockformat.Locator{}, err
 		}
 	}
 	out := packedRoot{Capacity: shape.Capacity, Fanout: shape.Fanout, Level: shape.Level}
@@ -215,22 +205,22 @@ func (p *Packer) Convert(input Ref) (Locator, error) {
 	}
 	plain, err := json.Marshal(out)
 	if err != nil {
-		return Locator{}, err
+		return blockformat.Locator{}, err
 	}
 	ref, b, err := p.codec.seal(rootKind, [][]byte{plain})
 	if err != nil {
-		return Locator{}, err
+		return blockformat.Locator{}, err
 	}
 	if err = p.publish(shape.Level+2, []stagedPage{{input, ref, b}}); err != nil {
-		return Locator{}, err
+		return blockformat.Locator{}, err
 	}
 	return p.converted[input], nil
 }
-func pageBytes(c *Codec, s *Store, l Locator) ([]byte, error) {
+func pageBytes(c *Codec, s *Store, l blockformat.Locator) ([]byte, error) {
 	if l.Pack.Size < 8 || l.Pack.Size > 4<<20 || l.Pack.Rank < 1 || l.Pack.Rank > 6 || l.Page.Size <= 0 || l.Page.Size > maxMetadata+1024 || l.Offset < 8 || l.Offset > l.Pack.Size-l.Page.Size {
 		return nil, errors.New("invalid locator")
 	}
-	b, err := s.readRange(Ref{Digest: l.Pack.Digest, Size: l.Pack.Size}, l.Offset, l.Page.Size)
+	b, err := s.readRange(blockformat.Ref{Digest: l.Pack.Digest, Size: l.Pack.Size}, l.Offset, l.Page.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +232,7 @@ func pageBytes(c *Codec, s *Store, l Locator) ([]byte, error) {
 	}
 	return c.metadata(tmp, l.Page)
 }
-func openPacked(c *Codec, s *Store, l Locator) (packedRoot, error) {
+func openPacked(c *Codec, s *Store, l blockformat.Locator) (packedRoot, error) {
 	var out packedRoot
 	if l.Page.Kind != rootKind {
 		return out, errors.New("packed root required")
@@ -266,7 +256,7 @@ func openPacked(c *Codec, s *Store, l Locator) (packedRoot, error) {
 	}
 	return out, nil
 }
-func loadPacked(c *Codec, s *Store, l Locator, shape packedRoot, level int, start uint64) (packedNode, error) {
+func loadPacked(c *Codec, s *Store, l blockformat.Locator, shape packedRoot, level int, start uint64) (packedNode, error) {
 	var out packedNode
 	if l.Page.Kind != nodeKind || l.Pack.Rank != level+1 {
 		return out, errors.New("packed node rank")
@@ -296,7 +286,7 @@ func loadPacked(c *Codec, s *Store, l Locator, shape packedRoot, level int, star
 }
 
 // ReadPacked reads one logical block without the converter's placement map.
-func ReadPacked(c *Codec, data, packs *Store, root Locator, block uint64) ([]byte, error) {
+func ReadPacked(c *Codec, data, packs *Store, root blockformat.Locator, block uint64) ([]byte, error) {
 	shape, err := openPacked(c, packs, root)
 	if err != nil {
 		return nil, err
@@ -336,11 +326,11 @@ func rootShape(r packedRoot) root {
 // PackChildren is an offline certification experiment: it hashes a whole pack,
 // checks every directory entry and encrypted page, and derives unique physical
 // dependencies. Full tree range/geometry checks remain the reader's responsibility.
-func PackChildren(c *Codec, s *Store, ref PackRef) ([]PackRef, []Ref, error) {
+func PackChildren(c *Codec, s *Store, ref blockformat.PackRef) ([]blockformat.PackRef, []blockformat.Ref, error) {
 	if ref.Size < 8 || ref.Size > 4<<20 || ref.Rank < 1 || ref.Rank > 6 {
 		return nil, nil, errors.New("invalid pack descriptor")
 	}
-	raw, err := s.get(Ref{Digest: ref.Digest, Size: ref.Size})
+	raw, err := s.get(blockformat.Ref{Digest: ref.Digest, Size: ref.Size})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -358,16 +348,16 @@ func PackChildren(c *Codec, s *Store, ref PackRef) ([]PackRef, []Ref, error) {
 	if dir.Rank != ref.Rank || len(dir.Pages) == 0 {
 		return nil, nil, errors.New("directory rank")
 	}
-	seen := map[Ref]bool{}
-	packSet := map[PackRef]bool{}
-	dataSet := map[Ref]bool{}
+	seen := map[blockformat.Ref]bool{}
+	packSet := map[blockformat.PackRef]bool{}
+	dataSet := map[blockformat.Ref]bool{}
 	offset := int64(8 + size)
 	for _, page := range dir.Pages {
 		if seen[page] {
 			return nil, nil, errors.New("duplicate page")
 		}
 		seen[page] = true
-		loc := Locator{ref, page, offset}
+		loc := blockformat.Locator{Pack: ref, Page: page, Offset: offset}
 		b, err := pageBytes(c, s, loc)
 		if err != nil {
 			return nil, nil, err
@@ -420,11 +410,11 @@ func PackChildren(c *Codec, s *Store, ref PackRef) ([]PackRef, []Ref, error) {
 	if offset != int64(len(raw)) {
 		return nil, nil, errors.New("unlisted pack bytes")
 	}
-	var packs []PackRef
+	var packs []blockformat.PackRef
 	for p := range packSet {
 		packs = append(packs, p)
 	}
-	var data []Ref
+	var data []blockformat.Ref
 	for r := range dataSet {
 		data = append(data, r)
 	}

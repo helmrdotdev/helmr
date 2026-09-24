@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 const BlockSize = 4096
@@ -24,17 +26,6 @@ const (
 	rootKind    byte = 3
 )
 
-// Ref binds both the random encryption identity and immutable ciphertext identity.
-// These experimental JSON representations have no compatibility promise.
-type Ref struct {
-	Digest [32]byte
-	Salt   [32]byte
-	Key    string
-	Kind   byte
-	Count  uint32
-	Size   int64
-}
-
 type Metrics struct{ Objects, Bytes, Gets, Ranges, ReadBytes int64 }
 
 // Store owns immutable bytes in memory. Reads return copies, never writable views.
@@ -45,7 +36,7 @@ type Store struct {
 }
 
 func NewStore() *Store { return &Store{objects: make(map[[32]byte][]byte)} }
-func (s *Store) put(r Ref, b []byte) error {
+func (s *Store) put(r blockformat.Ref, b []byte) error {
 	if int64(len(b)) != r.Size || sha256.Sum256(b) != r.Digest {
 		return errors.New("object identity mismatch")
 	}
@@ -60,7 +51,7 @@ func (s *Store) put(r Ref, b []byte) error {
 	s.Metrics.Bytes += int64(len(b))
 	return nil
 }
-func (s *Store) get(r Ref) ([]byte, error) {
+func (s *Store) get(r blockformat.Ref) ([]byte, error) {
 	s.Metrics.Gets++
 	b, ok := s.objects[r.Digest]
 	if !ok {
@@ -72,7 +63,7 @@ func (s *Store) get(r Ref) ([]byte, error) {
 	s.Metrics.ReadBytes += int64(len(b))
 	return bytes.Clone(b), nil
 }
-func (s *Store) readRange(r Ref, offset, size int64) ([]byte, error) {
+func (s *Store) readRange(r blockformat.Ref, offset, size int64) ([]byte, error) {
 	s.Metrics.Ranges++
 	b, ok := s.objects[r.Digest]
 	if !ok {
@@ -114,7 +105,7 @@ func field(b *bytes.Buffer, p []byte) {
 	_ = binary.Write(b, binary.BigEndian, uint32(len(p)))
 	b.Write(p)
 }
-func (c *Codec) header(r Ref) ([]byte, error) {
+func (c *Codec) header(r blockformat.Ref) ([]byte, error) {
 	if len(c.Scope) == 0 || len(c.Scope) > 256 || len(r.Key) == 0 || len(r.Key) > 128 || r.Count == 0 || r.Count > maxRecords || r.Kind < segmentKind || r.Kind > rootKind || (r.Kind != segmentKind && r.Count != 1) {
 		return nil, errors.New("invalid object context")
 	}
@@ -127,7 +118,7 @@ func (c *Codec) header(r Ref) ([]byte, error) {
 	_ = binary.Write(&b, binary.BigEndian, r.Count)
 	return b.Bytes(), nil
 }
-func (c *Codec) aead(r Ref, header []byte) (cipher.AEAD, error) {
+func (c *Codec) aead(r blockformat.Ref, header []byte) (cipher.AEAD, error) {
 	key := c.Keys[r.Key]
 	if len(key) != 32 {
 		return nil, errors.New("unknown key version")
@@ -152,24 +143,24 @@ func recordContext(header []byte, ordinal uint64, length uint32) ([]byte, []byte
 	_ = binary.Write(&b, binary.BigEndian, length)
 	return nonce, b.Bytes()
 }
-func (c *Codec) seal(kind byte, records [][]byte) (Ref, []byte, error) {
-	r := Ref{Key: c.ActiveKey, Kind: kind, Count: uint32(len(records))}
+func (c *Codec) seal(kind byte, records [][]byte) (blockformat.Ref, []byte, error) {
+	r := blockformat.Ref{Key: c.ActiveKey, Kind: kind, Count: uint32(len(records))}
 	if _, err := io.ReadFull(c.entropy, r.Salt[:]); err != nil {
-		return Ref{}, nil, err
+		return blockformat.Ref{}, nil, err
 	}
 	h, err := c.header(r)
 	if err != nil {
-		return Ref{}, nil, err
+		return blockformat.Ref{}, nil, err
 	}
 	a, err := c.aead(r, h)
 	if err != nil {
-		return Ref{}, nil, err
+		return blockformat.Ref{}, nil, err
 	}
 	var out bytes.Buffer
 	out.Write(h)
 	for i, p := range records {
 		if (kind == segmentKind && len(p) != BlockSize) || len(p) > maxMetadata {
-			return Ref{}, nil, errors.New("invalid record length")
+			return blockformat.Ref{}, nil, errors.New("invalid record length")
 		}
 		ordinal := uint64(i)
 		if kind == segmentKind {
@@ -184,7 +175,7 @@ func (c *Codec) seal(kind byte, records [][]byte) (Ref, []byte, error) {
 	r.Digest = sha256.Sum256(b)
 	return r, b, nil
 }
-func (c *Codec) metadata(s *Store, r Ref) ([]byte, error) {
+func (c *Codec) metadata(s *Store, r blockformat.Ref) ([]byte, error) {
 	if r.Kind == segmentKind {
 		return nil, errors.New("metadata required")
 	}
@@ -213,7 +204,7 @@ func (c *Codec) metadata(s *Store, r Ref) ([]byte, error) {
 	nonce, aad := recordContext(h, 0, n)
 	return a.Open(nil, nonce, b[len(h)+4:], aad)
 }
-func (c *Codec) block(s *Store, r Ref, ordinal uint32) ([]byte, error) {
+func (c *Codec) block(s *Store, r blockformat.Ref, ordinal uint32) ([]byte, error) {
 	if r.Kind != segmentKind || ordinal >= r.Count {
 		return nil, errors.New("invalid block reference")
 	}

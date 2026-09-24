@@ -5,20 +5,22 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 type reachability struct {
 	Objects, Edges, Bytes, SegmentBytes, LiveDataBytes int64
-	Refs                                               map[Ref]bool
+	Refs                                               map[blockformat.Ref]bool
 }
 
-func closure(t *testing.T, c *Codec, s *Store, roots ...Ref) reachability {
+func closure(t *testing.T, c *Codec, s *Store, roots ...blockformat.Ref) reachability {
 	t.Helper()
 	var out reachability
-	seen := map[Ref]bool{}
-	records := map[Ref]map[uint32]bool{}
-	var visit func(Ref)
-	visit = func(r Ref) {
+	seen := map[blockformat.Ref]bool{}
+	records := map[blockformat.Ref]map[uint32]bool{}
+	var visit func(blockformat.Ref)
+	visit = func(r blockformat.Ref) {
 		if seen[r] {
 			return
 		}

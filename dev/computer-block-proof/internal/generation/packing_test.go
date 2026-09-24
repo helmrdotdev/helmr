@@ -6,19 +6,21 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 type packReach struct {
 	Packs, Edges, Bytes, MetadataBytes, DataBytes int64
-	Seen                                          map[PackRef]bool
+	Seen                                          map[blockformat.PackRef]bool
 }
 
-func packedClosure(t *testing.T, c *Codec, s *Store, roots ...Locator) packReach {
+func packedClosure(t *testing.T, c *Codec, s *Store, roots ...blockformat.Locator) packReach {
 	t.Helper()
-	out := packReach{Seen: map[PackRef]bool{}}
-	data := map[Ref]bool{}
-	var visit func(PackRef)
-	visit = func(ref PackRef) {
+	out := packReach{Seen: map[blockformat.PackRef]bool{}}
+	data := map[blockformat.Ref]bool{}
+	var visit func(blockformat.PackRef)
+	visit = func(ref blockformat.PackRef) {
 		if out.Seen[ref] {
 			return
 		}
@@ -209,17 +211,17 @@ func TestPackingMeasurement(t *testing.T) {
 // logicalPackedBytes counts only pages actually selected by the current tree,
 // and whole data segments those pages reference. Physical GC must instead retain
 // the transitive union of all pages inside each reachable pack.
-func logicalPackedBytes(t *testing.T, c *Codec, packs *Store, r Locator) (int64, int64) {
+func logicalPackedBytes(t *testing.T, c *Codec, packs *Store, r blockformat.Locator) (int64, int64) {
 	t.Helper()
 	shape, err := openPacked(c, packs, r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pages := map[Locator]bool{r: true}
-	data := map[Ref]bool{}
+	pages := map[blockformat.Locator]bool{r: true}
+	data := map[blockformat.Ref]bool{}
 	d := &Disk{shape: rootShape(shape)}
-	var walk func(*Locator, int, uint64)
-	walk = func(l *Locator, level int, start uint64) {
+	var walk func(*blockformat.Locator, int, uint64)
+	walk = func(l *blockformat.Locator, level int, start uint64) {
 		if l == nil {
 			return
 		}
@@ -275,7 +277,7 @@ func TestPackingRetentionComparison(t *testing.T) {
 				t.Fatal(err)
 			}
 			initial := packedClosure(t, pc, packs, r)
-			var pins []Locator
+			var pins []blockformat.Locator
 			pins = append(pins, r)
 			for cut := 0; cut < 16; cut++ {
 				for _, b := range blocks[cut*64 : (cut+1)*64] {
@@ -309,7 +311,7 @@ func TestPackingRetentionComparison(t *testing.T) {
 func TestPackBoundsBeforeFetch(t *testing.T) {
 	c, _ := fixture(t)
 	s := NewStore()
-	for _, ref := range []PackRef{{Size: 5 << 20, Rank: 1}, {Size: 7, Rank: 1}, {Size: 10, Rank: 9}} {
+	for _, ref := range []blockformat.PackRef{{Size: 5 << 20, Rank: 1}, {Size: 7, Rank: 1}, {Size: 10, Rank: 9}} {
 		if _, _, err := PackChildren(c, s, ref); err == nil {
 			t.Fatal("invalid pack accepted")
 		}
@@ -337,7 +339,7 @@ func TestPackingHotColdAndZero(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pins := []Locator{r}
+			pins := []blockformat.Locator{r}
 			for cut := 0; cut < 32; cut++ {
 				d.WriteAt(bytes.Repeat([]byte{byte(cut + 1)}, BlockSize), 0)
 				value := bytes.Repeat([]byte{0x52}, BlockSize)
@@ -455,9 +457,9 @@ func TestPackingRandomOverwriteTrend(t *testing.T) {
 		d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), blocks[i]*BlockSize)
 	}
 	sourceRoot := mustCapture(t, d)
-	sourcePins := []Ref{sourceRoot}
+	sourcePins := []blockformat.Ref{sourceRoot}
 	var packers []*Packer
-	var pins [][]Locator
+	var pins [][]blockformat.Locator
 	for _, internal := range []bool{true, false} {
 		pc, _ := NewCodec(c.Scope, c.ActiveKey, c.Keys)
 		pc.entropy = rand.New(rand.NewSource(47))
@@ -467,7 +469,7 @@ func TestPackingRandomOverwriteTrend(t *testing.T) {
 			t.Fatal(err)
 		}
 		packers = append(packers, p)
-		pins = append(pins, []Locator{r})
+		pins = append(pins, []blockformat.Locator{r})
 	}
 	for cut := 1; cut <= 64; cut++ {
 		// Replacement permits repeats and cold survivors, unlike a full permutation.

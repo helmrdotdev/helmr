@@ -7,6 +7,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -21,6 +22,18 @@ func TestGenerationRootFraming(t *testing.T) {
 	got, err := ParseGenerationRoot(raw, 4096)
 	if err != nil || got != valid {
 		t.Fatalf("root roundtrip: %v", err)
+	}
+	locator, err := valid.Locator(4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored, err := NewGenerationRoot(locator, 4096); err != nil || restored != valid {
+		t.Fatalf("descriptor conversion: %v", err)
+	}
+	badLocator := locator
+	badLocator.Page.Kind = 255
+	if r, err := NewGenerationRoot(badLocator, 4096); err == nil || r != (GenerationRoot{}) {
+		t.Fatal("invalid codec root returned usable descriptor")
 	}
 	cases := map[string]func(*GenerationRoot){
 		"version":       func(r *GenerationRoot) { r.FormatVersion = 0 },
@@ -42,6 +55,9 @@ func TestGenerationRootFraming(t *testing.T) {
 			mutate(&r)
 			if err := r.Validate(4096); err == nil {
 				t.Fatal("invalid locator accepted")
+			}
+			if l, err := r.Locator(4096); err == nil || l != (blockformat.Locator{}) {
+				t.Fatal("invalid descriptor returned usable locator")
 			}
 		})
 	}

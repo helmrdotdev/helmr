@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/dev/computer-block-proof/internal/generation"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -111,7 +112,7 @@ func (s store) publishLocal(ctx context.Context, p publication, m manifest, c *g
 type encryptedFixture struct {
 	codec       *generation.Codec
 	data, packs *generation.Store
-	root        generation.Locator
+	root        blockformat.Locator
 	inventory   generation.Inspection
 	local       *generation.Local
 	dir         string
@@ -204,7 +205,7 @@ func generationCases(test func(string, func(*fixture))) {
 		}
 		root, data, packs, err := e.local.Reopen(e.codec, inspectionObjects, inspectionBytes)
 		f.ok(err)
-		var selected generation.Locator
+		var selected blockformat.Locator
 		f.ok(json.Unmarshal([]byte(stored.ID), &selected))
 		if selected != root {
 			f.t.Fatal("stored locator differs")

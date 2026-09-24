@@ -1,14 +1,18 @@
 package generation
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+)
 
 // Repack rewrites the selected live records into new segments and metadata. It is
 // a single-owner, development-only full rewrite, not a production compactor. The
 // caller retains the old root until it explicitly chooses the returned root.
 // Failure never returns a usable root; immutable unreferenced objects may remain.
 // maxLive bounds the work accepted by this experiment, not disk capacity.
-func Repack(c *Codec, data, packs *Store, current Locator, limit int, internal bool, maxLive uint64) (Locator, Metrics, error) {
-	var none Locator
+func Repack(c *Codec, data, packs *Store, current blockformat.Locator, limit int, internal bool, maxLive uint64) (blockformat.Locator, Metrics, error) {
+	var none blockformat.Locator
 	if maxLive == 0 || maxLive > maxBlocks {
 		return none, Metrics{}, errors.New("invalid repack work bound")
 	}
@@ -26,8 +30,8 @@ func Repack(c *Codec, data, packs *Store, current Locator, limit int, internal b
 		return none, staging.Metrics, err
 	}
 	var live uint64
-	var walk func(*Locator, int, uint64) error
-	walk = func(l *Locator, level int, start uint64) error {
+	var walk func(*blockformat.Locator, int, uint64) error
+	walk = func(l *blockformat.Locator, level int, start uint64) error {
 		if l == nil {
 			return nil
 		}
@@ -71,9 +75,9 @@ func Repack(c *Codec, data, packs *Store, current Locator, limit int, internal b
 	}
 	// Copy only segments selected by the final tree. Intermediate source index
 	// objects stay in staging; their cost is returned separately for measurement.
-	var copyData func(*Ref, int, uint64) error
-	seen := make(map[Ref]bool)
-	copyData = func(ref *Ref, level int, start uint64) error {
+	var copyData func(*blockformat.Ref, int, uint64) error
+	seen := make(map[blockformat.Ref]bool)
+	copyData = func(ref *blockformat.Ref, level int, start uint64) error {
 		n, err := d.load(ref, level, start)
 		if err != nil {
 			return err

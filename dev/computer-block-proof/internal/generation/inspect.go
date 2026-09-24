@@ -6,6 +6,8 @@ import (
 	"errors"
 	"slices"
 	"sort"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 // InspectedObject describes one fully verified physical object and its immediate
@@ -22,7 +24,7 @@ type InspectedObject struct {
 // Inspection binds a selected root and its geometry to the entire physical graph.
 // Objects are ordered children first. No result escapes on failed verification.
 type Inspection struct {
-	Root     Locator
+	Root     blockformat.Locator
 	Capacity int64
 	Objects  []InspectedObject
 }
@@ -31,7 +33,7 @@ type Inspection struct {
 // object edges from verified bytes. Stores and keys must remain single-owner and
 // immutable throughout both passes. The duplicate reads are intentional for this
 // development proof; this is not an incremental production certifier.
-func Inspect(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes int64) (Inspection, error) {
+func Inspect(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects, maxBytes int64) (Inspection, error) {
 	if _, err := Certify(c, data, packs, root, maxObjects, maxBytes); err != nil {
 		return Inspection{}, err
 	}
@@ -48,9 +50,9 @@ func Inspect(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		objects[o.Digest] = o
 		return nil
 	}
-	seen := map[PackRef]bool{}
-	var visit func(PackRef) error
-	visit = func(p PackRef) error {
+	seen := map[blockformat.PackRef]bool{}
+	var visit func(blockformat.PackRef) error
+	visit = func(p blockformat.PackRef) error {
 		if seen[p] {
 			return nil
 		}
@@ -59,7 +61,7 @@ func Inspect(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		if err != nil {
 			return err
 		}
-		raw, err := packs.get(Ref{Digest: p.Digest, Size: p.Size})
+		raw, err := packs.get(blockformat.Ref{Digest: p.Digest, Size: p.Size})
 		if err != nil {
 			return err
 		}

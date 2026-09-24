@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"sort"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 const maxBlocks = 1 << 28 // finite experimental geometry, up to 1 TiB
@@ -16,24 +18,24 @@ type root struct {
 	Capacity int64
 	Fanout   int
 	Level    int
-	Index    *Ref
+	Index    *blockformat.Ref
 }
 type entry struct {
 	Slot    int
-	Child   *Ref   `json:",omitempty"`
-	Segment int    `json:",omitempty"`
-	Record  uint32 `json:",omitempty"`
+	Child   *blockformat.Ref `json:",omitempty"`
+	Segment int              `json:",omitempty"`
+	Record  uint32           `json:",omitempty"`
 }
 type node struct {
 	Capacity int64
 	Fanout   int
 	Level    int
 	Start    uint64
-	Segments []Ref `json:",omitempty"`
+	Segments []blockformat.Ref `json:",omitempty"`
 	Entries  []entry
 }
 type location struct {
-	Segment Ref
+	Segment blockformat.Ref
 	Record  uint32
 }
 
@@ -43,7 +45,7 @@ type Disk struct {
 	codec    *Codec
 	store    *Store
 	shape    root
-	snapshot Ref
+	snapshot blockformat.Ref
 	dirty    map[uint64][]byte
 }
 
@@ -74,7 +76,7 @@ func decode(p []byte, out any) error {
 	}
 	return nil
 }
-func loadRoot(c *Codec, s *Store, r Ref) (root, error) {
+func loadRoot(c *Codec, s *Store, r blockformat.Ref) (root, error) {
 	var out root
 	if r.Kind != rootKind {
 		return out, errors.New("root required")
@@ -98,21 +100,21 @@ func loadRoot(c *Codec, s *Store, r Ref) (root, error) {
 	}
 	return out, nil
 }
-func Open(c *Codec, s *Store, r Ref) (*Disk, error) {
+func Open(c *Codec, s *Store, r blockformat.Ref) (*Disk, error) {
 	shape, err := loadRoot(c, s, r)
 	if err != nil {
 		return nil, err
 	}
 	return &Disk{codec: c, store: s, shape: shape, snapshot: r, dirty: make(map[uint64][]byte)}, nil
 }
-func (d *Disk) save(kind byte, v any) (Ref, error) {
+func (d *Disk) save(kind byte, v any) (blockformat.Ref, error) {
 	p, err := json.Marshal(v)
 	if err != nil {
-		return Ref{}, err
+		return blockformat.Ref{}, err
 	}
 	r, b, err := d.codec.seal(kind, [][]byte{p})
 	if err != nil {
-		return Ref{}, err
+		return blockformat.Ref{}, err
 	}
 	return r, d.store.put(r, b)
 }
@@ -123,7 +125,7 @@ func (d *Disk) stride(level int) uint64 {
 	}
 	return n
 }
-func (d *Disk) load(r *Ref, level int, start uint64) (node, error) {
+func (d *Disk) load(r *blockformat.Ref, level int, start uint64) (node, error) {
 	n := node{Level: level, Start: start, Capacity: d.shape.Capacity, Fanout: d.shape.Fanout}
 	if r == nil {
 		return n, nil
@@ -146,7 +148,7 @@ func (d *Disk) validateNode(n node, level int, start uint64) (node, error) {
 		return n, errors.New("invalid node geometry")
 	}
 	used := make(map[int]bool)
-	seen := make(map[Ref]bool)
+	seen := make(map[blockformat.Ref]bool)
 	last := -1
 	for _, e := range n.Entries {
 		if e.Slot <= last || e.Slot >= d.shape.Fanout || start+uint64(e.Slot)*d.stride(level) >= uint64(d.shape.Capacity/BlockSize) {
@@ -250,7 +252,7 @@ func (d *Disk) WriteAt(p []byte, off int64) error {
 	}
 	return nil
 }
-func (d *Disk) update(old *Ref, level int, start uint64, changes map[uint64]*location) (*Ref, error) {
+func (d *Disk) update(old *blockformat.Ref, level int, start uint64, changes map[uint64]*location) (*blockformat.Ref, error) {
 	n, err := d.load(old, level, start)
 	if err != nil {
 		return nil, err
@@ -274,7 +276,7 @@ func (d *Disk) update(old *Ref, level int, start uint64, changes map[uint64]*loc
 		}
 		n.Entries = nil
 		n.Segments = nil
-		table := make(map[Ref]int)
+		table := make(map[blockformat.Ref]int)
 		for slot := 0; slot < d.shape.Fanout; slot++ {
 			loc, ok := values[slot]
 			if !ok {
@@ -328,7 +330,7 @@ func (d *Disk) update(old *Ref, level int, start uint64, changes map[uint64]*loc
 }
 
 // Capture is an immutable cut, not a durable commit or remote publication.
-func (d *Disk) Capture() (Ref, error) {
+func (d *Disk) Capture() (blockformat.Ref, error) {
 	if len(d.dirty) == 0 {
 		return d.snapshot, nil
 	}
@@ -368,22 +370,22 @@ func (d *Disk) Capture() (Ref, error) {
 		pending = append(pending, block)
 		if len(records) == maxRecords {
 			if err := flush(); err != nil {
-				return Ref{}, err
+				return blockformat.Ref{}, err
 			}
 		}
 	}
 	if err := flush(); err != nil {
-		return Ref{}, err
+		return blockformat.Ref{}, err
 	}
 	index, err := d.update(d.shape.Index, d.shape.Level, 0, changes)
 	if err != nil {
-		return Ref{}, err
+		return blockformat.Ref{}, err
 	}
 	shape := d.shape
 	shape.Index = index
 	r, err := d.save(rootKind, shape)
 	if err != nil {
-		return Ref{}, err
+		return blockformat.Ref{}, err
 	}
 	d.shape = shape
 	d.snapshot = r
@@ -393,8 +395,8 @@ func (d *Disk) Capture() (Ref, error) {
 
 // Children authenticates metadata before deriving its unique immediate edges.
 // Geometry is checked against an expected root/node by the index reader as well.
-func (c *Codec) Children(s *Store, r Ref) ([]Ref, error) {
-	var refs []Ref
+func (c *Codec) Children(s *Store, r blockformat.Ref) ([]blockformat.Ref, error) {
+	var refs []blockformat.Ref
 	if r.Kind == rootKind {
 		shape, err := loadRoot(c, s, r)
 		if err != nil {
@@ -435,8 +437,8 @@ func (c *Codec) Children(s *Store, r Ref) ([]Ref, error) {
 	} else {
 		return nil, errors.New("metadata required")
 	}
-	seen := make(map[Ref]bool)
-	out := make([]Ref, 0, len(refs))
+	seen := make(map[blockformat.Ref]bool)
+	out := make([]blockformat.Ref, 0, len(refs))
 	for _, ref := range refs {
 		if _, err := c.header(ref); err != nil {
 			return nil, err
@@ -451,29 +453,29 @@ func (c *Codec) Children(s *Store, r Ref) ([]Ref, error) {
 
 // Import reads exactly the declared raw capacity without a filepack bridge.
 // It streams finite batches; incomplete imports return no published root.
-func Import(c *Codec, s *Store, capacity int64, fanout int, source io.Reader) (Ref, error) {
+func Import(c *Codec, s *Store, capacity int64, fanout int, source io.Reader) (blockformat.Ref, error) {
 	d, err := New(c, s, capacity, fanout)
 	if err != nil {
-		return Ref{}, err
+		return blockformat.Ref{}, err
 	}
 	batch := make([]byte, maxRecords*BlockSize)
 	for off := int64(0); off < capacity; {
 		n := min(int64(len(batch)), capacity-off)
 		if _, err = io.ReadFull(source, batch[:n]); err != nil {
-			return Ref{}, err
+			return blockformat.Ref{}, err
 		}
 		if err = d.WriteAt(batch[:n], off); err != nil {
-			return Ref{}, err
+			return blockformat.Ref{}, err
 		}
 		if _, err = d.Capture(); err != nil {
-			return Ref{}, err
+			return blockformat.Ref{}, err
 		}
 		off += n
 	}
 	var extra [1]byte
 	n, err := source.Read(extra[:])
 	if n != 0 || err != io.EOF {
-		return Ref{}, errors.New("seed length differs from capacity")
+		return blockformat.Ref{}, errors.New("seed length differs from capacity")
 	}
 	return d.snapshot, nil
 }

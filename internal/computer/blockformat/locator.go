@@ -1,4 +1,4 @@
-package generation
+package blockformat
 
 import (
 	"encoding/binary"
@@ -8,7 +8,7 @@ import (
 )
 
 // MarshalJSON uses a fixed binary descriptor inside a JSON byte string. This
-// unshipped experiment has one encoding, not a legacy-format fallback. Both
+// format has one encoding. Both
 // physical and page identities remain authenticated; no digest is removed.
 func (l Locator) MarshalJSON() ([]byte, error) {
 	if len(l.Page.Key) > 128 || l.Pack.Rank < 0 || l.Pack.Rank > 255 || l.Pack.Size < 0 || l.Page.Size < 0 || l.Offset < 0 {

@@ -8,9 +8,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
-func certifyRoot(t *testing.T, c *Codec, packs *Store, shape packedRoot) Locator {
+func certifyRoot(t *testing.T, c *Codec, packs *Store, shape packedRoot) blockformat.Locator {
 	t.Helper()
 	plain, e := json.Marshal(shape)
 	if e != nil {
@@ -61,7 +63,7 @@ func TestCertificationClosure(t *testing.T) {
 			}
 			t.Logf("packs=%d segments=%d closure_bytes=%d read_bytes=%d read_calls=%d", proof.Packs, proof.Segments, proof.Bytes, read, requests)
 			ds, ps := retainPacked(t, c, data, packs, r, old)
-			for _, root := range []Locator{old, r} {
+			for _, root := range []blockformat.Locator{old, r} {
 				if _, e = Certify(c, ds, ps, root, 10000, 64<<20); e != nil {
 					t.Fatal(e)
 				}
@@ -128,7 +130,7 @@ func TestCertificationRefusesInvalidEdges(t *testing.T) {
 		break
 	}
 	beforeD, beforeP := data.Metrics, packs.Metrics
-	for _, root := range []Locator{{Pack: PackRef{Size: -1}}, {Pack: PackRef{Size: 5 << 20, Rank: 1}}} {
+	for _, root := range []blockformat.Locator{{Pack: blockformat.PackRef{Size: -1}}, {Pack: blockformat.PackRef{Size: 5 << 20, Rank: 1}}} {
 		if _, e = Certify(c, data, packs, root, 100, 8<<20); e == nil {
 			t.Fatal("descriptor accepted")
 		}
@@ -145,8 +147,8 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 	packs := NewStore()
 	p, _ := NewPacker(c, nil, packs, 1<<20, true)
 	var pages []stagedPage
-	var refs []Ref
-	var segments []Ref
+	var refs []blockformat.Ref
+	var segments []blockformat.Ref
 	oldKey := c.ActiveKey
 	for i := 0; i < 2; i++ {
 		if i == 1 {
@@ -161,7 +163,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 			t.Fatal(e)
 		}
 		segments = append(segments, seg)
-		n := packedNode{Capacity: 64 * BlockSize, Fanout: 64, Segments: []Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
+		n := packedNode{Capacity: 64 * BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
 		plain, e := json.Marshal(n)
 		if e != nil {
 			t.Fatal(e)
@@ -209,7 +211,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 	if _, e := Certify(c, data, packs, root, 100, 8<<20); e == nil {
 		t.Fatal("obsolete dependency ignored")
 	}
-	if out, err := Inspect(c, data, packs, root, 100, 8<<20); err == nil || len(out.Objects) != 0 || out.Root != (Locator{}) {
+	if out, err := Inspect(c, data, packs, root, 100, 8<<20); err == nil || len(out.Objects) != 0 || out.Root != (blockformat.Locator{}) {
 		t.Fatal("failed inspection exposed a partial graph")
 	}
 
@@ -227,7 +229,7 @@ func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {
 	if e = data.put(seg, raw); e != nil {
 		t.Fatal(e)
 	}
-	n := packedNode{Capacity: 64 * BlockSize, Fanout: 64, Segments: []Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
+	n := packedNode{Capacity: 64 * BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
 	plain, e := json.Marshal(n)
 	if e != nil {
 		t.Fatal(e)

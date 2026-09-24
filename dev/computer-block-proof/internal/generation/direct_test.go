@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
 func TestDirectGenerations(t *testing.T) {
@@ -21,7 +23,7 @@ func TestDirectGenerations(t *testing.T) {
 				oracle := mustDisk(t, c, NewStore(), 32<<30, fanout)
 				rng := rand.New(rand.NewSource(51))
 				want := map[uint64]byte{}
-				var roots []Locator
+				var roots []blockformat.Locator
 				var states []map[uint64]byte
 				for cut := 0; cut < 8; cut++ {
 					changes := map[uint64][]byte{}
@@ -92,7 +94,7 @@ func TestDirectGenerations(t *testing.T) {
 				// Failure while encoding must leave the prior root readable.
 				c.entropy = bytes.NewReader(nil)
 				failed, e := CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{1}, BlockSize)}, 1<<20, internal)
-				if e == nil || failed != (Locator{}) {
+				if e == nil || failed != (blockformat.Locator{}) {
 					t.Fatal("failed capture returned root")
 				}
 				if _, e = ReadPacked(c, data, packs, old, 0); e != nil {
@@ -173,7 +175,7 @@ func TestCompactLocator(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	var got Locator
+	var got blockformat.Locator
 	if e = json.Unmarshal(raw, &got); e != nil || got != r {
 		t.Fatal("roundtrip", e)
 	}
@@ -218,7 +220,7 @@ func TestDirectFailureAndCompleteZero(t *testing.T) {
 	beforeD, beforeP := data.Metrics.Bytes, packs.Metrics.Bytes
 	for _, invalid := range []map[uint64][]byte{tooMany, {64: make([]byte, BlockSize)}} {
 		r, e := CapturePacked(c, data, packs, old, invalid, 64<<10, true)
-		if e == nil || r != (Locator{}) {
+		if e == nil || r != (blockformat.Locator{}) {
 			t.Fatal("invalid input accepted")
 		}
 	}
@@ -228,7 +230,7 @@ func TestDirectFailureAndCompleteZero(t *testing.T) {
 	// One segment and leaf can be sealed; the root seal then runs out of entropy.
 	c.entropy = bytes.NewReader(bytes.Repeat([]byte{0xab}, 64))
 	r, err := CapturePacked(c, data, packs, old, change, 64<<10, true)
-	if err == nil || r != (Locator{}) || packs.Metrics.Bytes <= beforeP {
+	if err == nil || r != (blockformat.Locator{}) || packs.Metrics.Bytes <= beforeP {
 		t.Fatal("late failure not exercised")
 	}
 	got, err := ReadPacked(c, data, packs, old, 0)
