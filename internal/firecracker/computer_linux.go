@@ -63,6 +63,7 @@ func runtimeDrivesWithComputer(root, scratch, substrate, computer string, drives
 	if computer != "" {
 		result[2].DriveID = firecracker.String("computer")
 		result[2].IsReadOnly = firecracker.Bool(false)
+		result[2].CacheType = firecracker.String(writableBlockCache)
 	}
 	return result
 }

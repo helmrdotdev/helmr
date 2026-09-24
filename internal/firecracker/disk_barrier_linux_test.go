@@ -17,7 +17,7 @@ import (
 )
 
 func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
-	for _, scenario := range []string{"valid", "async read", "async write", "missing engine", "extra writer", "missing disk", "duplicate", "wrong path", "wrong inode", "missing source", "oversize", "http error"} {
+	for _, scenario := range []string{"valid", "missing cache", "unsafe computer", "unsafe scratch", "async read", "async write", "missing engine", "extra writer", "missing disk", "duplicate", "wrong path", "wrong inode", "missing source", "oversize", "http error"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			jail := filepath.Join(root, "jail")
@@ -38,11 +38,17 @@ func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = closeRuntimeDiskFiles(files) })
 			drives := []map[string]any{
-				{"drive_id": "computer", "io_engine": "Sync", "is_read_only": false, "path_on_host": "/computer.ext4"},
-				{"drive_id": "scratch", "io_engine": "Sync", "is_read_only": false, "path_on_host": "scratch.ext4"},
+				{"drive_id": "computer", "io_engine": "Sync", "is_read_only": false, "cache_type": "Writeback", "path_on_host": "/computer.ext4"},
+				{"drive_id": "scratch", "io_engine": "Sync", "is_read_only": false, "cache_type": "Writeback", "path_on_host": "scratch.ext4"},
 				{"drive_id": "rootfs", "io_engine": "Sync", "is_read_only": true, "path_on_host": "root.squashfs"},
 			}
 			switch scenario {
+			case "missing cache":
+				delete(drives[0], "cache_type")
+			case "unsafe computer":
+				drives[0]["cache_type"] = "Unsafe"
+			case "unsafe scratch":
+				drives[1]["cache_type"] = "Unsafe"
 			case "async read":
 				drives[2]["io_engine"] = "Async"
 			case "async write":
@@ -115,6 +121,9 @@ func TestPausedBackingSyncErrorIsReturned(t *testing.T) {
 func TestRuntimeDrivesPinSynchronousIO(t *testing.T) {
 	for _, computer := range []string{"", "computer.ext4"} {
 		for _, drive := range runtimeDrivesWithComputer("root", "scratch", "substrate", computer, nil, nil) {
+			if !*drive.IsReadOnly && (drive.CacheType == nil || *drive.CacheType != "Writeback") {
+				t.Fatalf("guest flush disabled: %+v", drive)
+			}
 			if drive.IoEngine == nil || *drive.IoEngine != "Sync" {
 				t.Fatalf("unqualified device: %+v", drive)
 			}

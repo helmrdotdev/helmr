@@ -1390,6 +1390,9 @@ func runtimeDrivesWithReadOnlyPaths(
 	}
 	for i := range drives {
 		drives[i].IoEngine = firecracker.String(blockIOEngine)
+		if !*drives[i].IsReadOnly {
+			drives[i].CacheType = firecracker.String(writableBlockCache)
+		}
 	}
 	return drives
 }

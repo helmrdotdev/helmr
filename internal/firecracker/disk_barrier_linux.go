@@ -59,6 +59,7 @@ func (s *guestSession) syncPausedDisks(ctx context.Context) error {
 	var config struct {
 		Drives []struct {
 			ID       string `json:"drive_id"`
+			Cache    string `json:"cache_type"`
 			Engine   string `json:"io_engine"`
 			ReadOnly *bool  `json:"is_read_only"`
 			Path     string `json:"path_on_host"`
@@ -87,6 +88,9 @@ func (s *guestSession) syncPausedDisks(ctx context.Context) error {
 		}
 		// API paths belong to the VMM jail, not the Worker's host root.
 		actual := filepath.Join(s.jailRoot, strings.TrimPrefix(drive.Path, "/"))
+		if drive.Cache != writableBlockCache {
+			return fmt.Errorf("paused %s device requires writeback cache", drive.ID)
+		}
 		if *drive.ReadOnly || strings.TrimPrefix(drive.Path, "/") != filepath.Base(path) {
 			return fmt.Errorf("paused %s device does not match its owned backing file", drive.ID)
 		}

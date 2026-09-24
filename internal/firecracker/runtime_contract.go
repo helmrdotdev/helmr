@@ -42,6 +42,7 @@ const (
 	snapshotMemoryBackend      = "File"
 	machineHugePages           = "None"
 	blockIOEngine              = "Sync"
+	writableBlockCache         = "Writeback"
 
 	GuestNetworkCIDRV0   = "192.168.127.2/30"
 	GuestGatewayIPv4V0   = "192.168.127.1"
@@ -90,12 +91,13 @@ type VMRuntimeBootProfile struct {
 }
 
 type VMRuntimeDeviceDescriptor struct {
-	BlockIOEngine string                     `json:"block_io_engine"`
-	Drives        []VMRuntimeDriveDescriptor `json:"drives"`
-	NetworkID     string                     `json:"network_id"`
-	NetworkIDRule string                     `json:"network_id_rule"`
-	Vsock         VMRuntimeVsockDescriptor   `json:"vsock"`
-	Absent        []string                   `json:"absent"`
+	WritableBlockCache string                     `json:"writable_block_cache"`
+	BlockIOEngine      string                     `json:"block_io_engine"`
+	Drives             []VMRuntimeDriveDescriptor `json:"drives"`
+	NetworkID          string                     `json:"network_id"`
+	NetworkIDRule      string                     `json:"network_id_rule"`
+	Vsock              VMRuntimeVsockDescriptor   `json:"vsock"`
+	Absent             []string                   `json:"absent"`
 }
 
 type VMRuntimeVsockDescriptor struct {
@@ -180,8 +182,8 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			DynamicFlags: []string{runtimeSubstrateKernelFlag, runtimeProgramKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
 		},
 		Devices: VMRuntimeDeviceDescriptor{
-			BlockIOEngine: blockIOEngine,
-			Drives:        drives, NetworkID: guestNetworkInterfaceID,
+			BlockIOEngine: blockIOEngine, WritableBlockCache: writableBlockCache,
+			Drives: drives, NetworkID: guestNetworkInterfaceID,
 			NetworkIDRule: "one_based_sdk_slice_order",
 			Vsock: VMRuntimeVsockDescriptor{
 				ID: guestVsockID, HostPath: "<jail_root>/" + vsockSocketName,
