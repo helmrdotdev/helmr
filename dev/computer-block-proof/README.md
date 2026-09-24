@@ -302,6 +302,12 @@ publication. This development format has no compatibility or migration promise.
 not select it. This qualifies a private device claim and one exact direct child,
 not production Computer storage, VMM cleanup, or the proof store's suitability
 for production. The consumer cannot fork descendants or delegate descriptors.
+The process owner binds an exit-proof channel before launch, owns stopping and
+waiting, and closes that channel only after the exact child is reaped. The NBD
+attachment never starts or kills the consumer itself; release waits for the bound
+proof. A failed or ambiguous launch does not remove this obligation. A future VMM
+owner must include every delegated device user in that proof, not merely signal
+that a stop request was sent.
 The helper performs blocking ioctls on an isolated process and holds claim/setup
 and `DO_IT` on the same locked OS thread. The controller receives a duplicate
 exclusive descriptor before exposing the device, so helper death does not permit

@@ -1,7 +1,6 @@
 //go:build linux || darwin
 
-// Package nbd owns exclusive Linux NBD claims for the development qualifier.
-// It is not selected by the production VM connector. Both-owner death requires
+// Package nbd owns exclusive Linux NBD claims. Both-owner death requires
 // external reconciliation before new admission; journals are evidence, not an
 // orphan reclaimer. Never infer permission to reuse a device from PID absence.
 package nbd
@@ -42,9 +41,7 @@ type Attachment struct {
 	waitErr        error
 	seq            uint64
 	released       bool
-	consumer       *exec.Cmd
-	consumerDone   chan struct{}
-	consumerErr    error
+	consumerExit   <-chan struct{}
 	device         string // diagnostic identity, never authority to reclaim a device
 	Arena          string
 }
@@ -225,39 +222,22 @@ func (a *Attachment) Flush(ctx context.Context) error {
 	return err
 }
 
-// StartConsumer transfers one exact direct child to this owner. The qualifier
-// consumer must not fork descendants or delegate device descriptors. Production
-// VMM ownership is deliberately not wired to this development-only lifecycle.
-func (a *Attachment) StartConsumer(cmd *exec.Cmd) error {
+// BindConsumer binds the exact consumer owner's exit proof before it can open
+// the device. The owner closes exited only after its process and all delegated
+// device users are proven absent (or launch was never attempted). It owns launch,
+// stop and wait; the attachment must not infer exit from a PID or a stop request.
+// Failed/ambiguous launch still requires the bound owner's proof before release.
+func (a *Attachment) BindConsumer(exited <-chan struct{}) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.released || !a.ready || a.closing || a.consumer != nil {
+	if exited == nil || a.released || !a.ready || a.closing || a.consumerExit != nil {
 		return errors.New("consumer ownership unavailable")
 	}
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	a.consumer = cmd
-	a.consumerDone = make(chan struct{})
-	go func() { a.consumerErr = cmd.Wait(); close(a.consumerDone) }()
+	a.consumerExit = exited
 	return nil
 }
-func (a *Attachment) WaitConsumer(ctx context.Context) error {
-	a.mu.Lock()
-	done := a.consumerDone
-	a.mu.Unlock()
-	if done == nil {
-		return errors.New("no consumer")
-	}
-	select {
-	case <-done:
-		return a.consumerErr
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
 
-// Release requires affirmative exact-child exit before disconnect. Timeout or
+// Release requires affirmative bound-consumer exit before disconnect. Timeout or
 // an ambiguous helper result keeps the attachment unreleased and its arena intact.
 // In particular no PID/device-name recovery or optimistic SIGKILL proof is used.
 func (a *Attachment) Release(ctx context.Context) error {
@@ -275,20 +255,14 @@ func (a *Attachment) Release(ctx context.Context) error {
 		return err
 	}
 	a.closing = true
-	if a.consumer != nil {
+	if a.consumerExit != nil {
 		select {
-		case <-a.consumerDone:
-		default:
-			if err := a.consumer.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				return fmt.Errorf("consumer stop unproven: %w", err)
-			}
-			select {
-			case <-a.consumerDone:
-			case <-ctx.Done():
-				return fmt.Errorf("consumer exit unproven: %w", ctx.Err())
-			}
+		case <-a.consumerExit:
+		case <-ctx.Done():
+			return fmt.Errorf("consumer exit unproven: %w", ctx.Err())
 		}
 	}
+
 	if _, err := a.call(ctx, request{Op: "release"}); err != nil {
 		return fmt.Errorf("cleanup unproven; retain %s: %w", a.Arena, err)
 	}

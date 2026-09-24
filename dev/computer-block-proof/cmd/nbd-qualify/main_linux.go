@@ -125,8 +125,23 @@ func qualify(backend, arena string, crash bool) error {
 	}
 	consumer.Stderr = os.Stderr
 	consumer.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534, NoSetGroups: true}}
-	if err = attachment.StartConsumer(consumer); err != nil {
+	consumerExit := make(chan struct{})
+	if err = attachment.BindConsumer(consumerExit); err != nil {
 		return err
+	}
+	if err = consumer.Start(); err != nil {
+		close(consumerExit)
+		return err
+	}
+	var consumerErr error
+	go func() { consumerErr = consumer.Wait(); close(consumerExit) }()
+	waitConsumer := func(ctx context.Context) error {
+		select {
+		case <-consumerExit:
+			return consumerErr
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	if crash {
 		if line, e := ready.ReadString('\n'); e != nil || line != "consumer-ready\n" {
@@ -192,13 +207,22 @@ func qualify(backend, arena string, crash bool) error {
 		if e = rejectSecond(ctx, exe, backend, arena, attachment.Device()); e != nil {
 			return e
 		}
-		if e = attachment.Release(ctx); e == nil {
-			return errors.New("dead-helper cleanup falsely succeeded")
+		short, stop := context.WithTimeout(ctx, 20*time.Millisecond)
+		e = attachment.Release(short)
+		stop()
+		if e == nil {
+			return errors.New("live-consumer cleanup falsely succeeded")
 		}
-		e = attachment.WaitConsumer(ctx)
+		if e = consumer.Process.Kill(); e != nil {
+			return e
+		}
+		e = waitConsumer(ctx)
 		var exitErr *exec.ExitError
 		if !errors.As(e, &exitErr) {
 			return fmt.Errorf("consumer exit unproven: %v", e)
+		}
+		if e = attachment.Release(ctx); e == nil {
+			return errors.New("dead-helper cleanup falsely succeeded")
 		}
 		if e = server.Process.Kill(); e != nil {
 			return e
@@ -207,7 +231,7 @@ func qualify(backend, arena string, crash bool) error {
 		fmt.Println("PASS: helper death refused fresh claim while consumer alive; cleanup stayed unproven; consumer reaped")
 		return nil // Process exit drops the retained descriptor only after consumer exit.
 	}
-	if err = attachment.WaitConsumer(ctx); err != nil {
+	if err = waitConsumer(ctx); err != nil {
 		return err
 	}
 	if err = attachment.Flush(ctx); err != nil {

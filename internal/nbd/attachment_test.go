@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -37,7 +36,7 @@ func TestUnprovenConsumerDoesNotDisconnectOrPermitReuse(t *testing.T) {
 	parent, peer := net.Pipe()
 	defer parent.Close()
 	defer peer.Close()
-	a := &Attachment{conn: parent, decoder: json.NewDecoder(parent), consumer: reapedChild(t), consumerDone: make(chan struct{})}
+	a := &Attachment{conn: parent, decoder: json.NewDecoder(parent), consumerExit: make(chan struct{})}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	if err := a.Release(ctx); err == nil {
@@ -46,7 +45,7 @@ func TestUnprovenConsumerDoesNotDisconnectOrPermitReuse(t *testing.T) {
 	if a.released {
 		t.Fatal("marked released")
 	}
-	if err := a.StartConsumer(exec.Command("false")); err == nil {
+	if err := a.BindConsumer(make(chan struct{})); err == nil {
 		t.Fatal("second consumer accepted")
 	}
 	peer.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
@@ -59,13 +58,14 @@ func TestReleaseCanRetryAfterUnprovenConsumer(t *testing.T) {
 	parent, peer := net.Pipe()
 	defer peer.Close()
 	done := make(chan struct{})
-	a := &Attachment{conn: parent, decoder: json.NewDecoder(parent), done: done, consumer: reapedChild(t), consumerDone: make(chan struct{})}
+	consumerExit := make(chan struct{})
+	a := &Attachment{conn: parent, decoder: json.NewDecoder(parent), done: done, consumerExit: consumerExit}
 	short, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 	if err := a.Release(short); err == nil {
 		t.Fatal("expected stop failure")
 	}
-	close(a.consumerDone)
+	close(consumerExit)
 	go func() {
 		var r request
 		_ = json.NewDecoder(peer).Decode(&r)
@@ -82,33 +82,30 @@ func TestReleaseCanRetryAfterUnprovenConsumer(t *testing.T) {
 		t.Fatal("flush after release accepted")
 	}
 }
-func TestCancelledReleaseDoesNotKillConsumer(t *testing.T) {
-	cmd := exec.Command("sleep", "10")
+func TestConsumerBindingIsExclusiveAndReleaseDoesNotSignalExit(t *testing.T) {
+	exited := make(chan struct{})
 	a := &Attachment{ready: true}
-	if err := a.StartConsumer(cmd); err != nil {
+	if err := a.BindConsumer(nil); err == nil {
+		t.Fatal("nil proof accepted")
+	}
+	if err := a.BindConsumer(exited); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = cmd.Process.Kill(); <-a.consumerDone }()
+	if err := a.BindConsumer(make(chan struct{})); err == nil {
+		t.Fatal("consumer replaced")
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if !errors.Is(a.Release(ctx), context.Canceled) {
 		t.Fatal("cancel ignored")
 	}
 	select {
-	case <-a.consumerDone:
-		t.Fatal("cancelled release killed consumer")
+	case <-exited:
+		t.Fatal("release fabricated exit proof")
 	default:
 	}
 }
 
-func reapedChild(t *testing.T) *exec.Cmd {
-	t.Helper()
-	cmd := exec.Command("true")
-	if err := cmd.Run(); err != nil {
-		t.Fatal(err)
-	}
-	return cmd
-}
 func TestPreCancelledClaimCreatesNothing(t *testing.T) {
 	arena := t.TempDir()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -139,7 +136,7 @@ func TestAmbiguousReleaseRetainsAttachment(t *testing.T) {
 	if a.released {
 		t.Fatal("uncertain attachment released")
 	}
-	if err := a.StartConsumer(exec.Command("true")); err == nil {
+	if err := a.BindConsumer(make(chan struct{})); err == nil {
 		t.Fatal("uncertain attachment reused")
 	}
 }
