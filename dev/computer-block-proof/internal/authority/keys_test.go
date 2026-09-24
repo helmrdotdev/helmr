@@ -193,6 +193,7 @@ func computerKeyCases(test func(string, func(*fixture))) {
 		if !bytes.Equal(got, bytes.Repeat([]byte{11}, generation.BlockSize)) {
 			f.t.Fatal("new generation lost write")
 		}
+		f.checkReadKeySummaries()
 		f.assertCount(2, `SELECT count(DISTINCT key_id) FROM computer_object_keys WHERE environment_id='env' AND computer_id='computer'`)
 	})
 }

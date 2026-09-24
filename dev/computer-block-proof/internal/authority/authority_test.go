@@ -177,6 +177,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	}
 	generationCases(test)
 	computerKeyCases(test)
+	readKeyCases(test)
 
 	test("registration does not grant possession and tombstones cannot revive", func(f *fixture) {
 		p, _ := f.candidate("candidate")

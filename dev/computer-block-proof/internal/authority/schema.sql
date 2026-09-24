@@ -71,6 +71,17 @@ CREATE TABLE computer_object_keys (
   FOREIGN KEY (environment_id,computer_id,key_id,required)
     REFERENCES computer_keys(environment_id,computer_id,id,available) ON DELETE RESTRICT
 );
+-- Certification records the union of direct keys and certified child summaries.
+-- Cardinality follows key versions, not disk blocks or descendant objects.
+CREATE TABLE computer_object_read_keys (
+  environment_id text NOT NULL, computer_id text NOT NULL, digest text NOT NULL,
+  key_id text NOT NULL, required boolean GENERATED ALWAYS AS (true) STORED,
+  PRIMARY KEY (environment_id,computer_id,digest,key_id),
+  FOREIGN KEY (environment_id,computer_id,digest)
+    REFERENCES computer_objects(environment_id,computer_id,digest) ON DELETE CASCADE,
+  FOREIGN KEY (environment_id,computer_id,key_id,required)
+    REFERENCES computer_keys(environment_id,computer_id,id,available) ON DELETE RESTRICT
+);
 CREATE TABLE computer_object_edges (
   environment_id text NOT NULL, computer_id text NOT NULL, parent_digest text NOT NULL, child_digest text NOT NULL,
   parent_rank integer NOT NULL, child_rank integer NOT NULL,

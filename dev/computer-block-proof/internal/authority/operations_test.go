@@ -142,15 +142,12 @@ func admit(ctx context.Context, tx pgx.Tx, p publication, o object) error {
 	// authenticated key dependency. Key presence alone never grants write authority.
 	for _, key := range o.Keys {
 		var allowed bool
-		err = tx.QueryRow(ctx, `WITH RECURSIVE source(digest) AS (
-    SELECT r.digest FROM computer_version_roots r JOIN computer_publications p
-      ON p.environment_id=r.environment_id AND p.computer_id=r.computer_id AND p.source_pin=r.version_id
-      WHERE p.environment_id=$1 AND p.id=$2
-    UNION SELECT e.child_digest FROM computer_object_edges e JOIN source s ON e.parent_digest=s.digest
-      WHERE e.environment_id=$1 AND e.computer_id=$3
-   ) SELECT p.write_key_id=$4 OR EXISTS(SELECT 1 FROM source s JOIN computer_object_keys k ON k.digest=s.digest
-      WHERE k.environment_id=$1 AND k.computer_id=$3 AND k.key_id=$4)
-   FROM computer_publications p WHERE p.environment_id=$1 AND p.id=$2`, p.Env, p.ID, p.Computer, key).Scan(&allowed)
+		err = tx.QueryRow(ctx, `SELECT p.write_key_id=$4 OR EXISTS(
+    SELECT 1 FROM computer_version_roots r
+    JOIN computer_object_read_keys k USING(environment_id,computer_id,digest)
+    WHERE r.environment_id=p.environment_id AND r.computer_id=p.computer_id
+      AND r.version_id=p.source_pin AND k.key_id=$4)
+   FROM computer_publications p WHERE p.environment_id=$1 AND p.id=$2 AND p.computer_id=$3`, p.Env, p.ID, p.Computer, key).Scan(&allowed)
 		if err != nil {
 			return err
 		}
@@ -296,6 +293,20 @@ func (s store) certify(ctx context.Context, p publication, o object, children []
 			if err = exec(ctx, tx, `INSERT INTO computer_object_edges(environment_id,computer_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$6,$2,$3,$4,$5)`, p.Env, o.Digest, child, rank, childRank, p.Computer); err != nil {
 				return err
 			}
+		}
+		// Child summaries are immutable after certification; read only immediate
+		// children, never the full graph closure, before exposing certification.
+		if err = exec(ctx, tx, `INSERT INTO computer_object_read_keys(environment_id,computer_id,digest,key_id)
+ SELECT $1,$2,$3,key_id FROM (
+   SELECT key_id FROM computer_object_keys
+    WHERE environment_id=$1 AND computer_id=$2 AND digest=$3
+   UNION
+   SELECT k.key_id FROM computer_object_edges e
+    JOIN computer_object_read_keys k ON k.environment_id=e.environment_id
+      AND k.computer_id=e.computer_id AND k.digest=e.child_digest
+    WHERE e.environment_id=$1 AND e.computer_id=$2 AND e.parent_digest=$3
+ ) keys`, p.Env, p.Computer, o.Digest); err != nil {
+			return err
 		}
 		return exec(ctx, tx, `UPDATE computer_objects SET certified_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$3 AND digest=$2`, p.Env, o.Digest, p.Computer)
 	})
