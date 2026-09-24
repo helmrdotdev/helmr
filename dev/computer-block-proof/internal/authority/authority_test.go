@@ -174,6 +174,8 @@ func TestAuthorityPostgres(t *testing.T) {
 	test := func(name string, fn func(*fixture)) {
 		t.Run(name, func(t *testing.T) { n++; fn(newFixture(t, db, n)) })
 	}
+	generationCases(test)
+
 	test("registration does not grant possession and tombstones cannot revive", func(f *fixture) {
 		p, _ := f.candidate("candidate")
 		o := object{"data", "segment", 0, 64}

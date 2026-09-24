@@ -175,6 +175,22 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 	if proof, e := Certify(c, data, packs, root, 100, 8<<20); e != nil || proof.Segments != 2 {
 		t.Fatal("physical dependencies", e)
 	}
+
+	inspected, err := Inspect(c, data, packs, root, 100, 8<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges := map[[32]byte]bool{}
+	for _, o := range inspected.Objects {
+		if o.Digest == loc.Pack.Digest {
+			for _, d := range o.Children {
+				edges[d] = true
+			}
+		}
+	}
+	if inspected.Root != root || inspected.Capacity != 64*BlockSize || !edges[segments[0].Digest] || !edges[segments[1].Digest] {
+		t.Fatal("inspection omitted obsolete physical dependency")
+	}
 	delete(data.objects, segments[1].Digest)
 	if got, e := ReadPacked(c, data, packs, root, 0); e != nil || got[0] != 1 {
 		t.Fatal("selected tree unexpectedly broken", e)
@@ -182,6 +198,10 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 	if _, e := Certify(c, data, packs, root, 100, 8<<20); e == nil {
 		t.Fatal("obsolete dependency ignored")
 	}
+	if out, err := Inspect(c, data, packs, root, 100, 8<<20); err == nil || len(out.Objects) != 0 || out.Root != (Locator{}) {
+		t.Fatal("failed inspection exposed a partial graph")
+	}
+
 }
 
 func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {

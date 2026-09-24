@@ -671,3 +671,38 @@ artifact strings demonstrate exact pairing, not their storage durability. The
 experiment does not test remote object services, key delivery, VM stop/restore,
 physical reader exclusion, power loss or public retention policy. It does not
 change SDK behavior or make ordinary Turn completion wait for disk publication.
+
+## Encrypted generation to SQL integration
+
+The local bridge in `internal/authority/generation_test.go` registers descriptors
+before installing immutable local objects, then independently reopens and verifies
+those bytes before SQL certification. `generation.Inspect` reuses complete physical
+closure authentication, derives immediate dependencies from every packed page
+(including obsolete pages), and binds the selected full locator and capacity.
+It returns no partial graph on failure. Its extra inspection reads are deliberate;
+this does not qualify production verifier performance.
+
+SQL receives only the newly inspected edges. The sealed request identity contains
+the full locator; capacity/offset/digest must also match. The experiment uses the
+existing publication identity field for the serialized locator, not a production
+locator-storage design. A confirmed matching receipt is returned before reading
+storage again, including after the head/epoch changes. Unpublished requests still
+require valid stored bytes and active candidate membership.
+
+Tests publish and read real encrypted generations, compare SQL edges with their
+physical dependencies, and retain the earlier generation across a head update.
+Negative cases cover missing/corrupt segments and packs, wrong keys/scope, invalid
+selected locators, false capacity, omitted registration and abandoned candidates.
+The complete generation verifier tests also exercise obsolete-page dependencies.
+
+```sh
+nix develop .#default -c env -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_TESTS \
+  go test -race -count=1 ./dev/computer-block-proof/internal/generation \
+  ./dev/computer-block-proof/internal/authority
+```
+
+This narrows the earlier model's trusted-byte/geometry premise only for the local
+bridge. Caller authorization, immutable retention during inspection, already
+provisioned single-version keys, and the four non-Computer checkpoint artifacts
+remain test premises. No production permissions, cross-environment reuse, remote
+object lifecycle, VM exclusion, performance or retention policy is established.
