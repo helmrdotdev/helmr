@@ -620,6 +620,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
 				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/initialization/key", s.workerInitialComputerKey)
+				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/computer-source", s.workerComputerSource)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/certify", s.workerCertifyInitialComputerObject)
 				r.Post("/run/runtime-instances/initialization/register", s.workerRegisterComputerInitialization)

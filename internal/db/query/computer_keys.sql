@@ -1,7 +1,7 @@
 -- The owning operation holds Computer and Runtime authority. No caller-provided
 -- key selection is accepted. Provider I/O happens only after committing these pins.
 
--- name: GetInitialComputerWriteKey :one
+-- name: GetRuntimeComputerWriteKey :one
 SELECT k.*
   FROM runtime_instances r
   JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.workspace_id

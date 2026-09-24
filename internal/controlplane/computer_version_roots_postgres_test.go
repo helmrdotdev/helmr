@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -213,6 +214,49 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 		t.Fatalf("source delivery: %v", err)
 	}
 	delivered.clear()
+	client := sourceKeyHTTPClient(t, f, b, fence)
+	wire, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{RuntimeInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
+	if err != nil || wire.Root != root || wire.VersionID != pgvalue.UUIDString(versionID) || wire.WriteKeyID != key.ID || len(wire.Keys) != 2 {
+		t.Fatalf("authenticated source transport: %v", err)
+	}
+	wire.Clear()
+	if _, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{RuntimeInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 2}); err == nil {
+		t.Fatal("stale source fence accepted")
+	}
+
+	// Construct a continuation preparation with no write-key pin. Its retained
+	// root still needs both old read keys, while new writes use the Computer key.
+	writeID := uuid.NewV7().String()
+	writePlain := bytes.Repeat([]byte{9}, 32)
+	defer clear(writePlain)
+	writeEnvelope, err := b.wrapper.Wrap(t.Context(), key.Scope, writeID, writePlain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,$4,$5)`, writeID, env, computerID, writeEnvelope.WrappingKeyID, writeEnvelope.Ciphertext)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET computer_write_key_id=NULL WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, writeID)
+	for i := range 2 {
+		wire, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{RuntimeInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
+		if err != nil {
+			t.Fatal("distinct write key delivery", err)
+		}
+		if wire.Root != root || wire.WriteKeyID != writeID || len(wire.Keys) != 3 || wire.Keys[2].ID != writeID || !bytes.Equal(wire.Keys[2].Key, writePlain) {
+			wire.Clear()
+			t.Fatal("distinct write key not appended to retained closure")
+		}
+		wire.Clear()
+		var pinned pgtype.UUID
+		if err := f.Pool.QueryRow(t.Context(), `SELECT computer_write_key_id FROM runtime_instances WHERE id=$1`, f.runtime).Scan(&pinned); err != nil || pgvalue.UUIDString(pinned) != writeID {
+			t.Fatal("runtime write key not pinned", err)
+		}
+		if i == 0 {
+			// Changing the Computer's key cannot change an existing Runtime pin.
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, key.ID)
+		}
+	}
+	assertRetained()
+
 	failing := &partialSourceWrapper{ComputerKeyWrapper: b.wrapper}
 	b.wrapper = failing
 	if _, err = b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {

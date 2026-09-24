@@ -111,7 +111,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 		return errors.New("object writer claims changed")
 	}
 	q := db.New(tx)
-	key, err := q.GetInitialComputerWriteKey(ctx, db.GetInitialComputerWriteKeyParams{RuntimeInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})
+	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})
 	if err != nil {
 		return err
 	}

@@ -126,3 +126,47 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		t.Fatal("revoked runtime delivered key")
 	}
 }
+
+func sourceKeyHTTPClient(t *testing.T, f initialPublicationFixture, broker *computerKeyBroker, fence computerKeyFence) *workerclient.Client {
+	t.Helper()
+	credentialID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_instance_credentials
+ (id,worker_group_id,worker_instance_id,key_prefix,secret_hash,claim_version)
+ VALUES ($1,$2,$3,'key-test-prefix',$4,$5)`, credentialID, fence.WorkerGroupID, fence.WorkerID, []byte("test-hash"), fence.ClaimVersion)
+	signingKey := bytes.Repeat([]byte{0x49}, 32)
+	claims := auth.WorkerClaims{
+		WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerInstanceID: pgvalue.UUIDString(fence.WorkerID),
+		CredentialID: credentialID.String(), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion,
+		GroupClaimVersion: fence.GroupClaimVersion, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour),
+	}
+	issue := func(c auth.WorkerClaims) string {
+		t.Helper()
+		token, err := auth.IssueWorkerToken(signingKey, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return token
+	}
+	token := issue(claims)
+	f.server.computerKeys = broker
+	f.server.workerTokenSigningKey = signingKey
+	f.server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := chi.NewRouter()
+	f.server.mountWorkerRoutes(router)
+	// Token exchange is independently tested. This fixture supplies a signed token;
+	// the production route still authorizes its credential, epoch and claims in SQL.
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/worker/v1/instance/token" {
+			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: token, ExpiresInSeconds: 3600})
+			return
+		}
+		router.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+	client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(claims.WorkerInstanceID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return client
+}

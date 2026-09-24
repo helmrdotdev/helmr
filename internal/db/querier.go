@@ -237,9 +237,6 @@ type Querier interface {
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (Environment, error)
 	GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyClaimParams) (IdempotencyClaim, error)
-	// The owning operation holds Computer and Runtime authority. No caller-provided
-	// key selection is accepted. Provider I/O happens only after committing these pins.
-	GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerDataKey, error)
 	GetLiveRunLeaseLocators(ctx context.Context, arg GetLiveRunLeaseLocatorsParams) (GetLiveRunLeaseLocatorsRow, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingActorInputRunWait(ctx context.Context, arg GetPendingActorInputRunWaitParams) (RunWait, error)
@@ -269,6 +266,9 @@ type Querier interface {
 	// This is retention evidence, not live authorization; callers hold/recheck their
 	// Runtime and Worker fences before granting source or key access.
 	GetRuntimeComputerSourceRoot(ctx context.Context, runtimeInstanceID pgtype.UUID) (GetRuntimeComputerSourceRootRow, error)
+	// The owning operation holds Computer and Runtime authority. No caller-provided
+	// key selection is accepted. Provider I/O happens only after committing these pins.
+	GetRuntimeComputerWriteKey(ctx context.Context, arg GetRuntimeComputerWriteKeyParams) (ComputerDataKey, error)
 	GetRuntimeIdentityForCheckpoint(ctx context.Context, id string) (RuntimeIdentity, error)
 	GetRuntimePreparationFailureAuthority(ctx context.Context, arg GetRuntimePreparationFailureAuthorityParams) (GetRuntimePreparationFailureAuthorityRow, error)
 	GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (RuntimeSubstrate, error)

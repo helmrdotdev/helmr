@@ -116,7 +116,7 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	q := db.New(tx)
-	row, err := q.GetInitialComputerWriteKey(ctx, db.GetInitialComputerWriteKeyParams{RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+	row, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A missing row is initialization only when both authoritative pointers are
 		// empty. Never replace an unavailable/corrupt persisted key with a fresh one.

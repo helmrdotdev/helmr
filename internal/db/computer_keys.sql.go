@@ -47,7 +47,7 @@ func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyPa
 	return i, err
 }
 
-const getInitialComputerWriteKey = `-- name: GetInitialComputerWriteKey :one
+const getRuntimeComputerWriteKey = `-- name: GetRuntimeComputerWriteKey :one
 
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available
   FROM runtime_instances r
@@ -58,7 +58,7 @@ SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, 
    AND r.workspace_id=$3 AND r.reclaimed_at IS NULL
 `
 
-type GetInitialComputerWriteKeyParams struct {
+type GetRuntimeComputerWriteKeyParams struct {
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	ComputerID        pgtype.UUID `json:"computer_id"`
@@ -66,8 +66,8 @@ type GetInitialComputerWriteKeyParams struct {
 
 // The owning operation holds Computer and Runtime authority. No caller-provided
 // key selection is accepted. Provider I/O happens only after committing these pins.
-func (q *Queries) GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerDataKey, error) {
-	row := q.db.QueryRow(ctx, getInitialComputerWriteKey, arg.RuntimeInstanceID, arg.EnvironmentID, arg.ComputerID)
+func (q *Queries) GetRuntimeComputerWriteKey(ctx context.Context, arg GetRuntimeComputerWriteKeyParams) (ComputerDataKey, error) {
+	row := q.db.QueryRow(ctx, getRuntimeComputerWriteKey, arg.RuntimeInstanceID, arg.EnvironmentID, arg.ComputerID)
 	var i ComputerDataKey
 	err := row.Scan(
 		&i.ID,

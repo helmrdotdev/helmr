@@ -12,9 +12,9 @@ import (
 )
 
 type computerSourceKeys struct {
-	VersionID, Scope string
-	Root             computer.GenerationRoot
-	Keys             []computerKeyMaterial
+	VersionID, Scope, WriteKeyID string
+	Root                         computer.GenerationRoot
+	Keys                         []computerKeyMaterial
 }
 
 func (s *computerSourceKeys) clear() {
@@ -23,8 +23,8 @@ func (s *computerSourceKeys) clear() {
 	}
 }
 
-// source returns only the retained generation's read keys during preparation.
-// Provider calls run outside SQL locks. This does not grant a write key, runtime
+// source pins the Runtime write key and returns the retained generation's read keys.
+// Provider calls run outside SQL locks. This does not grant runtime
 // execution or publication. The caller owns clearing every returned plaintext.
 func (b *computerKeyBroker) source(ctx context.Context, f computerKeyFence) (_ computerSourceKeys, retErr error) {
 	source, rows, err := b.sourceEnvelopes(ctx, f)
@@ -46,7 +46,7 @@ func (b *computerKeyBroker) source(ctx context.Context, f computerKeyFence) (_ c
 		source.Keys = append(source.Keys, computerKeyMaterial{Scope: source.Scope, ID: id, Key: key})
 	}
 	current, currentRows, err := b.sourceEnvelopes(ctx, f)
-	if err != nil || current.VersionID != source.VersionID || current.Scope != source.Scope || current.Root != source.Root || len(currentRows) != len(rows) {
+	if err != nil || current.VersionID != source.VersionID || current.Scope != source.Scope || current.WriteKeyID != source.WriteKeyID || current.Root != source.Root || len(currentRows) != len(rows) {
 		return computerSourceKeys{}, errComputerKeyUnavailable
 	}
 	for i, row := range rows {
@@ -73,9 +73,26 @@ func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFe
 	if err != nil || !claims {
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
 	}
-	retained, root, keys, err := loadRuntimeComputerGeneration(ctx, db.New(tx), f.RuntimeID)
+	q := db.New(tx)
+	retained, root, keys, err := loadRuntimeComputerGeneration(ctx, q, f.RuntimeID)
 	if err != nil || retained.VersionID != authority.VersionID || root.LogicalBytes != authority.LogicalBytes {
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
+	}
+
+	writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+	if err != nil {
+		return computerSourceKeys{}, nil, errComputerKeyUnavailable
+	}
+	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+	if err != nil || n != 1 {
+		return computerSourceKeys{}, nil, errComputerKeyUnavailable
+	}
+	found := false
+	for _, k := range keys {
+		found = found || k.ID == writeKey.ID
+	}
+	if !found {
+		keys = append(keys, writeKey)
 	}
 	scope, err := computer.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
 	if err != nil {
@@ -87,5 +104,5 @@ func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFe
 	if err = tx.Commit(ctx); err != nil {
 		return computerSourceKeys{}, nil, err
 	}
-	return computerSourceKeys{VersionID: pgvalue.UUIDString(retained.VersionID), Scope: scope, Root: root}, keys, nil
+	return computerSourceKeys{VersionID: pgvalue.UUIDString(retained.VersionID), Scope: scope, Root: root, WriteKeyID: pgvalue.UUIDString(writeKey.ID)}, keys, nil
 }
