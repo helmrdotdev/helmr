@@ -160,7 +160,9 @@ func closeRuntimeDiskFiles(files map[string]*os.File) error {
 	var result error
 	for _, id := range []string{"computer", scratchDriveID} {
 		if file := files[id]; file != nil {
-			result = errors.Join(result, file.Close())
+			if err := file.Close(); !errors.Is(err, os.ErrClosed) {
+				result = errors.Join(result, err)
+			}
 		}
 	}
 	return result

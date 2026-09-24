@@ -52,11 +52,12 @@ var nextGuestCID atomic.Uint32
 var dialVsock = vsock.DialContext
 
 type Connector struct {
-	cfg         Config
-	artifacts   runtimeArtifacts
-	kernelArgs  string
-	datapath    *datapath.Manager
-	hostRuntime *hostRuntimeEvidenceStore
+	cfg             Config
+	artifacts       runtimeArtifacts
+	kernelArgs      string
+	datapath        *datapath.Manager
+	hostRuntime     *hostRuntimeEvidenceStore
+	computerDevices *sync.Map // Shared by per-launch connector copies; keyed by exact vm.Owner.
 }
 
 // Launch purpose is connector-owned, independent of the SDK's VM lifetime
@@ -87,11 +88,12 @@ func NewConnector(cfg Config) (*Connector, error) {
 		return nil, err
 	}
 	return &Connector{
-		cfg:         cfg,
-		artifacts:   artifacts,
-		kernelArgs:  runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
-		datapath:    datapath.NewManager(),
-		hostRuntime: newHostRuntimeEvidenceStore(),
+		cfg:             cfg,
+		artifacts:       artifacts,
+		kernelArgs:      runtimeKernelArgs(vm.RuntimeTopology{}, nil, cfg.NetworkResolverIPv4),
+		datapath:        datapath.NewManager(),
+		hostRuntime:     newHostRuntimeEvidenceStore(),
+		computerDevices: &sync.Map{},
 	}, nil
 }
 
@@ -211,7 +213,7 @@ func (c *Connector) connect(ctx context.Context, mode launchMode, request vm.Con
 		request.Topology,
 		request.ReadOnlyDrives,
 		nil,
-		false,
+		nil,
 	)
 }
 
@@ -280,7 +282,7 @@ func (c *Connector) materialize(ctx context.Context, request vm.MaterializeReque
 		request.Topology,
 		request.ReadOnlyDrives,
 		request.RecordPhase,
-		false,
+		nil,
 	)
 }
 
@@ -298,6 +300,19 @@ func (c *Connector) cleanup(ctx context.Context, owner vm.Owner) error {
 	if err := owner.Validate(); err != nil {
 		return cleanupUnproven(owner, err)
 	}
+	retained := c.lockComputerOwner(owner)
+	if retained != nil {
+		defer retained.mu.Unlock()
+	}
+	return c.cleanupOwned(ctx, owner, retained)
+}
+
+func (c *Connector) cleanupOwned(ctx context.Context, owner vm.Owner, retained *computerDeviceOwner) (retErr error) {
+	defer func() {
+		if retErr == nil && retained != nil {
+			c.computerDevices.CompareAndDelete(owner, retained)
+		}
+	}()
 	statePath := filepath.Join(c.cfg.StateDir, owner.ID)
 	jailerPath := filepath.Join(c.cfg.JailerChrootBaseDir, "firecracker", owner.ID)
 	pids, err := exactRuntimePIDs(owner.ID)
@@ -317,7 +332,7 @@ func (c *Connector) cleanup(ctx context.Context, owner vm.Owner) error {
 		return cleanupUnproven(owner, fmt.Errorf("inspect Firecracker jailer state: %w", err))
 	}
 	if !stateExists && !jailerExists && !netns && len(pids) == 0 {
-		return nil
+		return c.releaseComputerDevice(ctx, owner, retained)
 	}
 	if !stateExists {
 		return cleanupUnproven(owner, errors.New("the Firecracker ownership marker is missing"))
@@ -352,6 +367,9 @@ func (c *Connector) cleanup(ctx context.Context, owner vm.Owner) error {
 		return cleanupUnproven(owner, fmt.Errorf("verify Firecracker jailer state absent: %w", verifyErr))
 	} else if exists {
 		return cleanupUnproven(owner, errors.New("verify Firecracker jailer state absent: path remains"))
+	}
+	if err := c.releaseComputerDevice(ctx, owner, retained); err != nil {
+		return err
 	}
 	if err := removeStateRootLast(statePath, owner); err != nil {
 		return cleanupUnproven(owner, err)
@@ -707,6 +725,16 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		return nil, errors.New("checkpoint memory or scratch size does not match runtime reservation")
 	}
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}
+	retained := c.lockComputerOwner(owner)
+	if retained == nil {
+		return nil, errors.New("runtime ownership is not configured")
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			retained.mu.Unlock()
+		}
+	}()
 	ownerDir, err := createOwnerStateRoot(c.cfg.StateDir, owner)
 	if err != nil {
 		return nil, err
@@ -741,7 +769,8 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child := *c
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
-	session, err := child.start(ctx, workloadLaunch, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, true)
+	transferred = true // prepareSession consumes the held restore guard.
+	session, err := child.start(ctx, workloadLaunch, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
 	if err != nil {
 		return nil, err
 	}
@@ -923,8 +952,8 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (vm.CheckpointableSession, error) {
-	session, err := c.prepareSession(ctx, mode, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, ownerPrepared)
+func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), preparedOwner *computerDeviceOwner) (vm.CheckpointableSession, error) {
+	session, err := c.prepareSession(ctx, mode, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, preparedOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -936,7 +965,10 @@ func (c *Connector) start(ctx context.Context, mode launchMode, instanceID strin
 	return session, nil
 }
 
-func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), ownerPrepared bool) (_ *guestSession, retErr error) {
+func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), preparedOwner *computerDeviceOwner) (_ *guestSession, retErr error) {
+	if preparedOwner != nil {
+		defer preparedOwner.mu.Unlock()
+	}
 	if err := validateCPUTemplateLaunch(c.cfg.CPUTemplateSelector); err != nil {
 		return nil, err
 	}
@@ -961,8 +993,15 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 			runtimeIdentity.ID,
 		)
 	}
+	retained := preparedOwner
+	if retained == nil {
+		retained = c.lockComputerOwner(owner)
+		if retained != nil {
+			defer retained.mu.Unlock()
+		}
+	}
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
-	if ownerPrepared {
+	if preparedOwner != nil {
 		if err := validateOwnerMarker(instanceDir, owner); err != nil {
 			return nil, fmt.Errorf("validate prepared Firecracker ownership evidence: %w", err)
 		}
@@ -977,9 +1016,14 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		if retErr != nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
 			defer cancel()
-			retErr = errors.Join(retErr, c.cleanup(cleanupCtx, owner))
+			retErr = errors.Join(retErr, c.cleanupOwned(cleanupCtx, owner, retained))
 		}
 	}()
+	if topology.Computer != nil && topology.Computer.Device != nil {
+		if err := retainComputerDevice(retained, topology.Computer.Device); err != nil {
+			return nil, err
+		}
+	}
 	scratchDiskPath := filepath.Join(instanceDir, scratchDiskName)
 	if strings.TrimSpace(scratchDiskRestorePath) != "" {
 		scratchDiskPath = scratchDiskRestorePath
@@ -1029,7 +1073,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 			return nil, err
 		}
 		copy := *topology.Computer
-		copy.Path, copy.File = computerDiskPath, nil
+		copy.Path, copy.File, copy.Device = computerDiskPath, nil, nil
 		topology.Computer = &copy
 	}
 	readOnlyDrivePaths := map[string]string(nil)
@@ -1118,6 +1162,9 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	if err != nil {
 		return nil, err
 	}
+	if retained != nil {
+		retained.files = diskFiles
+	}
 	defer func() {
 		if retErr != nil {
 			retErr = errors.Join(retErr, closeRuntimeDiskFiles(diskFiles))
@@ -1134,12 +1181,22 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		machineCancel()
 		return nil, fmt.Errorf("create Firecracker machine: %w", err)
 	}
+	var exportFailure *computerExportWatch
+	if retained != nil && retained.device != nil {
+		exportFailure = watchComputerExport(machineCtx, machineCancel, retained.device)
+		defer func() {
+			if retErr != nil {
+				machineCancel()
+				retErr = errors.Join(retErr, exportFailure.join())
+			}
+		}()
+	}
 	machine.Logger().Printf("starting Firecracker machine")
 	phaseStarted = time.Now()
 	if err := startMachineContext(ctx, machine, machineCtx, machineCancel); err != nil {
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
-		_ = stopMachine(context.Background(), machine)
-		return nil, fmt.Errorf("start Firecracker machine: %w", err)
+		stopErr := stopMachine(context.Background(), machine)
+		return nil, errors.Join(fmt.Errorf("start Firecracker machine: %w", err), stopErr)
 	}
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	machineExit := watchMachineExit(machine)
@@ -1181,6 +1238,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		machine:         machine,
 		machineCancel:   machineCancel,
 		machineExit:     machineExit,
+		computerExport:  exportFailure,
 		cfg:             launchCfg,
 		kernelArgs:      c.kernelArgsValue(),
 		runtimeIdentity: runtimeIdentity,
@@ -1913,6 +1971,7 @@ type guestSession struct {
 	machine         *firecracker.Machine
 	machineCancel   context.CancelFunc
 	machineExit     *machineExit
+	computerExport  *computerExportWatch
 	cfg             Config
 	kernelArgs      string
 	runtimeIdentity runtimeid.Profile
@@ -1998,7 +2057,11 @@ func (s *guestSession) Wait(ctx context.Context) error {
 	s.mu.Lock()
 	networkErr := s.networkErr
 	s.mu.Unlock()
-	return errors.Join(waitErr, networkErr)
+	var exportErr error
+	if s.computerExport != nil {
+		exportErr = s.computerExport.failure()
+	}
+	return errors.Join(waitErr, networkErr, exportErr)
 }
 
 func (s *guestSession) watchNetworkFailure() {
@@ -2044,6 +2107,10 @@ func (s *guestSession) Close(ctx context.Context) error {
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
+		var exportErr error
+		if s.computerExport != nil {
+			exportErr = s.computerExport.join()
+		}
 		var streamErr error
 		if stream != nil {
 			streamErr = closeGuestStream(ctx, stream)
@@ -2065,6 +2132,7 @@ func (s *guestSession) Close(ctx context.Context) error {
 		}
 		s.err = errors.Join(
 			streamErr,
+			exportErr,
 			diskFilesErr,
 			deactivateErr,
 			stopErr,
@@ -3054,5 +3122,6 @@ func cloneRuntimeComputer(source *vm.RuntimeComputer) *vm.RuntimeComputer {
 	}
 	result := *source
 	result.File = nil
+	result.Device = nil
 	return &result
 }

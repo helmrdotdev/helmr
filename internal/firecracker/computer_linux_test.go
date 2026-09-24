@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,28 +105,20 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	exited := make(chan struct{})
-	if err := device.BindConsumer(exited); err != nil {
-		t.Fatal(err)
-	}
 	dir := filepath.Join(arena, "instance")
 	if err := os.Mkdir(dir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	private, err := device.LinkInto(ctx, dir, os.Getuid(), os.Getgid())
-	if err != nil {
+	owner := vm.Owner{Kind: vm.OwnerRuntime, ID: key}
+	connector := &Connector{cfg: Config{StateDir: filepath.Join(arena, "owners"), JailerChrootBaseDir: filepath.Join(arena, "jails"), IPPath: "/bin/true"}, computerDevices: &sync.Map{}}
+	if _, err := createOwnerStateRoot(connector.cfg.StateDir, owner); err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.OpenFile(private, os.O_RDWR, 0)
-	if err != nil {
+	retained := connector.lockComputerOwner(owner)
+	if err := retainComputerDevice(retained, device); err != nil {
 		t.Fatal(err)
 	}
-	disk := &vm.RuntimeComputer{File: source, SizeBytes: size, VersionID: key}
-	disk.SizeBytes *= 2
-	if err := validateComputerDisk(disk); err == nil {
-		t.Fatal("block stat size used instead of actual capacity")
-	}
-	disk.SizeBytes = size
+	disk := &vm.RuntimeComputer{Device: device, SizeBytes: size, VersionID: key}
 	attached, err := attachComputerDisk(ctx, disk, dir, os.Getuid(), os.Getgid())
 	if err != nil {
 		t.Fatal(err)
@@ -149,6 +142,12 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	retained.files = files
+	retained.mu.Unlock()
+	wrongCapacity := &vm.RuntimeComputer{File: files["computer"], SizeBytes: size * 2, VersionID: key}
+	if err := validateComputerDisk(wrongCapacity); err == nil {
+		t.Fatal("accepted wrong device capacity")
+	}
 	data := bytes.Repeat([]byte{0xad}, 4096)
 	if _, err := files["computer"].WriteAt(data, 4096); err != nil {
 		t.Fatal(err)
@@ -164,14 +163,7 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err := syncPausedBacking(files["computer"], attached, replacement); err == nil {
 		t.Fatal("replacement inode accepted")
 	}
-	if err := closeRuntimeDiskFiles(files); err != nil {
-		t.Fatal(err)
-	}
-	if err := source.Close(); err != nil {
-		t.Fatal(err)
-	}
-	close(exited)
-	if err := device.Close(ctx); err != nil {
+	if err := connector.cleanup(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
 	reopened, err := computer.OpenLocalGeneration(ctx, cfg)

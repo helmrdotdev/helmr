@@ -1744,7 +1744,7 @@ func TestSessionEntryPointsRejectWorkloadRuntimeIdentityMismatch(t *testing.T) {
 		vm.RuntimeTopology{},
 		nil,
 		nil,
-		false,
+		nil,
 	); err == nil || !strings.Contains(err.Error(), "does not match bound host runtime") {
 		t.Fatalf("prepare session runtime identity error = %v", err)
 	}

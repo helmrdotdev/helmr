@@ -94,13 +94,28 @@ type RuntimeTopology struct {
 // File is a private backing inode, valid through Materialize; the connector
 // retains its own inode link. For a block device the Runtime must also retain its
 // attachment and export until the VMM and all device users are proven absent.
+// Device transfers that ownership to the connector when BindConsumer succeeds.
 // VersionID identifies the published source, not subsequent guest writes.
 type RuntimeComputer struct {
 	ComputerID string
 	Path       string
 	File       *os.File
+	Device     ComputerDevice `json:"-"`
 	VersionID  string
 	SizeBytes  int64
+}
+
+// ComputerDevice transfers the live export to the VM lifecycle owner. The owner
+// binds before launch and signals exclusion only after exact physical cleanup.
+// Close failure retains the device for another Cleanup attempt. File and Device
+// are mutually exclusive; snapshots contain neither process-local capability.
+// Wait must return when its context is canceled. A rejected bind leaves ownership
+// with the caller; successful binding retains ownership even if launch fails.
+type ComputerDevice interface {
+	BindConsumer(<-chan struct{}) error
+	LinkInto(context.Context, string, int, int) (string, error)
+	Wait(context.Context) error
+	Close(context.Context) error
 }
 
 type RuntimeSubstrateSource interface {

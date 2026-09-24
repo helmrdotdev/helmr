@@ -18,11 +18,14 @@ import (
 )
 
 func validateComputerDisk(disk *vm.RuntimeComputer) error {
-	if disk == nil || disk.File == nil || disk.Path != "" || disk.SizeBytes <= 0 || disk.SizeBytes%4096 != 0 {
+	if disk == nil || (disk.File == nil) == (disk.Device == nil) || disk.Path != "" || disk.SizeBytes <= 0 || disk.SizeBytes%4096 != 0 {
 		return errors.New("computer working disk is incomplete")
 	}
 	if err := ids.Validate(disk.VersionID); err != nil {
 		return err
+	}
+	if disk.Device != nil {
+		return nil
 	}
 	info, err := disk.File.Stat()
 	if err != nil {
@@ -47,6 +50,24 @@ func attachComputerDisk(ctx context.Context, disk *vm.RuntimeComputer, directory
 	}
 	if err := validateComputerDisk(disk); err != nil {
 		return "", err
+	}
+	if disk.Device != nil {
+		path, err := disk.Device.LinkInto(ctx, directory, uid, gid)
+		if err != nil {
+			return "", err
+		}
+		file, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil || info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+			return "", errors.Join(errors.New("computer export requires a block device"), err)
+		}
+		projected := *disk
+		projected.File, projected.Device = file, nil
+		return attachComputerDisk(ctx, &projected, directory, uid, gid)
 	}
 	if err := disk.File.Chown(uid, gid); err != nil {
 		return "", err
