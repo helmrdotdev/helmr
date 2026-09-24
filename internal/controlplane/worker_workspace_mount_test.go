@@ -8,9 +8,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"io"
 	"log/slog"
 	"net/http"
@@ -168,5 +170,98 @@ func TestExecGenerationRejectsUnpublishedAndChangedCapture(t *testing.T) {
 	f.root = retainedTestGeneration(t, f.Pool, f.server, f.runtimeID.String(), computerPublicationKey("exec", pgvalue.UUID(f.processID), pgvalue.UUID(f.processID)))
 	if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 409 {
 		t.Fatalf("changed capture %d %s", w.Code, w.Body)
+	}
+}
+
+// Models an already committed save; live save admission is outside this fixture.
+func (f *execGenerationFixture) advanceSavedHead(t *testing.T) uuid.UUID {
+	t.Helper()
+	id := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,content_digest,size_bytes,entry_count,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ SELECT $2,v.environment_id,v.workspace_id,v.id,v.content_digest,v.size_bytes,v.entry_count,'committed',(SELECT id FROM workspace_leases WHERE owner_process_id=$3),c.ownership_generation,c.writer_generation,now()
+ FROM computers c JOIN computer_versions v ON v.id=c.head_version_id WHERE c.id=$1`, f.computerID, id, f.processID)
+	raw, err := json.Marshal(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator) VALUES($1,$2,$3,$4)`, f.EnvironmentID, f.computerID, id, raw)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET head_version_id=$2 WHERE id=$1`, f.computerID, id)
+	return id
+}
+
+func TestExecSettlementAfterSavedHeadAdvancement(t *testing.T) {
+	for _, mode := range []string{"complete", "recovered complete", "failure", "recovered failure", "changed staged predecessor"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newExecGenerationFixture(t)
+			head := f.advanceSavedHead(t)
+			if mode == "recovered failure" {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL WHERE id=$1`, f.mountID)
+				f.recoverExec(t)
+			} else if mode == "failure" {
+				w := f.call(t, f.server.workerFailWorkspaceMount, workerapi.WorkspaceMountFailRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), Error: json.RawMessage(`{"code":"fixture_failure"}`)})
+				if w.Code != 200 {
+					t.Fatalf("failure: %d %s", w.Code, w.Body)
+				}
+			} else {
+				if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 200 {
+					t.Fatalf("capture: %d %s", w.Code, w.Body)
+				}
+				if mode == "changed staged predecessor" {
+					head = f.advanceSavedHead(t)
+				}
+				if mode == "recovered complete" {
+					f.recoverExec(t)
+				} else {
+					w := f.call(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC()}})
+					if mode == "complete" && w.Code != 200 {
+						t.Fatalf("stop: %d %s", w.Code, w.Body)
+					}
+					if mode == "changed staged predecessor" && w.Code == 200 {
+						t.Fatal("stale publication replaced newer saved head")
+					}
+				}
+			}
+			var origin, saved uuid.UUID
+			var parent *uuid.UUID
+			var status string
+			if err := f.Pool.QueryRow(t.Context(), `SELECT p.base_workspace_version_id,c.head_version_id,v.parent_version_id,c.status FROM workspace_processes p JOIN computers c ON c.id=p.workspace_id JOIN computer_versions v ON v.id=c.head_version_id WHERE p.id=$1`, f.processID).Scan(&origin, &saved, &parent, &status); err != nil {
+				t.Fatal(err)
+			}
+			if origin != f.baseID {
+				t.Fatal("execution origin changed")
+			}
+			if mode == "complete" || mode == "recovered complete" {
+				if saved == head || parent == nil || *parent != head {
+					t.Fatal("completion did not follow saved predecessor")
+				}
+			} else if saved != head {
+				t.Fatal("failure replaced saved head")
+			}
+			if (mode == "failure" || mode == "recovered failure") && status != "recovery_required" {
+				t.Fatalf("status %s", status)
+			}
+		})
+	}
+}
+
+func (f *execGenerationFixture) recoverExec(t *testing.T) {
+	t.Helper()
+	if _, err := f.server.db.LoseWorkspaceExecMount(t.Context(), db.LoseWorkspaceExecMountParams{WorkspaceMountID: pgvalue.UUID(f.mountID), WorkspaceID: pgvalue.UUID(f.computerID), ReasonCode: pgvalue.Text("fixture_loss")}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := workspace.NewFencingKey(bytes.Repeat([]byte{9}, workspace.FencingKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := dispatch.NewRunAuthority(f.Pool, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revision int64
+	if err := f.Pool.QueryRow(t.Context(), `SELECT revision FROM workspace_processes WHERE id=$1`, f.processID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.RecoverWorkspaceExec(t.Context(), dispatch.RecoverableWorkspaceExecCandidate{OrgID: pgvalue.UUID(f.OrgID), ProcessID: pgvalue.UUID(f.processID), WorkspaceID: pgvalue.UUID(f.computerID), ExpectedRevision: revision}); err != nil {
+		t.Fatal(err)
 	}
 }

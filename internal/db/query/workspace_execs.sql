@@ -381,7 +381,8 @@ UPDATE runtime_instances
    AND reservation_expires_at > clock_timestamp();
 
 -- name: LockWorkspaceExecWorkerAuthority :one
-SELECT sqlc.embed(workspace_processes),
+SELECT computers.head_version_id AS saved_head_version_id,
+       sqlc.embed(workspace_processes),
        sqlc.embed(workspace_mounts),
        sqlc.embed(workspace_leases),
        sqlc.embed(runtime_instances),
@@ -490,7 +491,8 @@ SELECT workspace_processes.workspace_mount_id,
    AND workspace_processes.status IN ('starting', 'running', 'exit_requested');
 
 -- name: LockWorkspaceExecFailureAuthority :one
-SELECT sqlc.embed(workspace_processes),
+SELECT computers.head_version_id AS saved_head_version_id,
+       sqlc.embed(workspace_processes),
        sqlc.embed(workspace_mounts),
        sqlc.embed(workspace_leases)
   FROM workspace_processes
@@ -544,10 +546,12 @@ SELECT computers.id,
  FOR UPDATE;
 
 -- name: LockWorkspaceExecRecoveryAuthority :one
-SELECT sqlc.embed(workspace_processes),
+SELECT computers.head_version_id AS saved_head_version_id,
+       sqlc.embed(workspace_processes),
        sqlc.embed(workspace_mounts),
        sqlc.embed(workspace_leases)
   FROM workspace_processes
+  JOIN computers ON computers.id = workspace_processes.workspace_id
   JOIN workspace_mounts
     ON workspace_mounts.id = workspace_processes.workspace_mount_id
    AND workspace_mounts.workspace_id = workspace_processes.workspace_id
@@ -710,7 +714,7 @@ RETURNING requested.*;
 
 -- name: StageWorkspaceExecCapture :one
 WITH authority AS (
-    SELECT workspace_mounts.*, workspace_processes.base_workspace_version_id,
+    SELECT workspace_mounts.*, computers.head_version_id,
            workspace_leases.id AS source_workspace_lease_id,
            workspace_leases.ownership_generation,
            workspace_leases.writer_generation
@@ -719,6 +723,11 @@ WITH authority AS (
         ON workspace_processes.workspace_mount_id = workspace_mounts.id
        AND workspace_processes.workspace_id = workspace_mounts.workspace_id
        AND workspace_processes.status = 'exit_requested'
+      JOIN computers ON computers.id = workspace_mounts.workspace_id
+      JOIN computer_versions predecessor ON predecessor.id = computers.head_version_id
+       AND predecessor.workspace_id = computers.id
+       AND predecessor.environment_id = computers.environment_id
+       AND predecessor.status = 'committed'
       JOIN workspace_leases
         ON workspace_leases.workspace_mount_id = workspace_mounts.id
        AND workspace_leases.owner_process_id = workspace_processes.id
@@ -729,7 +738,7 @@ WITH authority AS (
        AND workspace_mounts.status = 'unmounting'
        AND workspace_mounts.finalization_kind = 'capture'
        AND workspace_mounts.staged_version_id IS NULL
-     FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
+     FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases, computers
 ), created AS (
     INSERT INTO computer_versions (
         id, environment_id, workspace_id,
@@ -737,7 +746,7 @@ WITH authority AS (
         ownership_generation, writer_generation
     )
     SELECT sqlc.arg(workspace_version_id),
-           authority.environment_id, authority.workspace_id, authority.base_workspace_version_id,
+           authority.environment_id, authority.workspace_id, authority.head_version_id,
            sqlc.arg(content_digest), sqlc.arg(size_bytes),
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
@@ -776,7 +785,7 @@ UPDATE computers
        revision = revision + 1,
        updated_at = transaction_timestamp()
  WHERE computers.id = sqlc.arg(workspace_id)
-   AND computers.head_version_id = sqlc.arg(base_workspace_version_id)
+   AND computers.head_version_id = sqlc.arg(expected_head_version_id)
    AND computers.ownership_generation = sqlc.arg(ownership_generation)
    AND computers.writer_generation = sqlc.arg(writer_generation)
    AND (sqlc.narg(version_id)::uuid IS NULL OR EXISTS (
@@ -794,7 +803,7 @@ UPDATE computers
        revision = revision + 1,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(workspace_id)
-   AND head_version_id = sqlc.arg(base_workspace_version_id)
+   AND head_version_id = sqlc.arg(expected_head_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
 RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;

@@ -339,12 +339,12 @@ func (s *Server) finalizeWorkspaceExec(
 	if _, err := work.q.FinalizeWorkspaceExecWorkspace(
 		ctx,
 		db.FinalizeWorkspaceExecWorkspaceParams{
-			VersionID:              versionID,
-			RestoreDesiredState:    process.RestoreDesiredState,
-			WorkspaceID:            process.WorkspaceID,
-			BaseWorkspaceVersionID: process.BaseWorkspaceVersionID,
-			OwnershipGeneration:    lease.OwnershipGeneration,
-			WriterGeneration:       lease.WriterGeneration,
+			VersionID:             versionID,
+			RestoreDesiredState:   process.RestoreDesiredState,
+			WorkspaceID:           process.WorkspaceID,
+			ExpectedHeadVersionID: authority.SavedHeadVersionID,
+			OwnershipGeneration:   lease.OwnershipGeneration,
+			WriterGeneration:      lease.WriterGeneration,
 		},
 	); err != nil {
 		return err
@@ -556,10 +556,10 @@ func (s *Server) failWorkspaceExec(
 	if _, err := work.q.MarkWorkspaceExecRecoveryRequired(
 		ctx,
 		db.MarkWorkspaceExecRecoveryRequiredParams{
-			WorkspaceID:            process.WorkspaceID,
-			BaseWorkspaceVersionID: process.BaseWorkspaceVersionID,
-			OwnershipGeneration:    lease.OwnershipGeneration,
-			WriterGeneration:       lease.WriterGeneration,
+			WorkspaceID:           process.WorkspaceID,
+			ExpectedHeadVersionID: authority.SavedHeadVersionID,
+			OwnershipGeneration:   lease.OwnershipGeneration,
+			WriterGeneration:      lease.WriterGeneration,
 		},
 	); err != nil {
 		return err

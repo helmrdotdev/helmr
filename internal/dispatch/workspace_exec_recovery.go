@@ -246,12 +246,12 @@ func finalizeRecoveredWorkspaceExec(
 	if _, err := q.FinalizeWorkspaceExecWorkspace(
 		ctx,
 		db.FinalizeWorkspaceExecWorkspaceParams{
-			VersionID:              versionID,
-			RestoreDesiredState:    process.RestoreDesiredState,
-			WorkspaceID:            process.WorkspaceID,
-			BaseWorkspaceVersionID: process.BaseWorkspaceVersionID,
-			OwnershipGeneration:    lease.OwnershipGeneration,
-			WriterGeneration:       lease.WriterGeneration,
+			VersionID:             versionID,
+			RestoreDesiredState:   process.RestoreDesiredState,
+			WorkspaceID:           process.WorkspaceID,
+			ExpectedHeadVersionID: authority.SavedHeadVersionID,
+			OwnershipGeneration:   lease.OwnershipGeneration,
+			WriterGeneration:      lease.WriterGeneration,
 		},
 	); err != nil {
 		return classifyWorkspaceExecRecoveryError(err)
@@ -355,10 +355,10 @@ func failUncertainWorkspaceExec(
 	if _, err := q.MarkWorkspaceExecRecoveryRequired(
 		ctx,
 		db.MarkWorkspaceExecRecoveryRequiredParams{
-			WorkspaceID:            authority.WorkspaceProcess.WorkspaceID,
-			BaseWorkspaceVersionID: authority.WorkspaceProcess.BaseWorkspaceVersionID,
-			OwnershipGeneration:    authority.WorkspaceLease.OwnershipGeneration,
-			WriterGeneration:       authority.WorkspaceLease.WriterGeneration,
+			WorkspaceID:           authority.WorkspaceProcess.WorkspaceID,
+			ExpectedHeadVersionID: authority.SavedHeadVersionID,
+			OwnershipGeneration:   authority.WorkspaceLease.OwnershipGeneration,
+			WriterGeneration:      authority.WorkspaceLease.WriterGeneration,
 		},
 	); err != nil {
 		return classifyWorkspaceExecRecoveryError(err)

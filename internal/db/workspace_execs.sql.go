@@ -1088,12 +1088,12 @@ RETURNING computers.id, computers.environment_id, computers.region_id, computers
 `
 
 type FinalizeWorkspaceExecWorkspaceParams struct {
-	VersionID              pgtype.UUID `json:"version_id"`
-	RestoreDesiredState    string      `json:"restore_desired_state"`
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
-	OwnershipGeneration    int64       `json:"ownership_generation"`
-	WriterGeneration       int64       `json:"writer_generation"`
+	VersionID             pgtype.UUID `json:"version_id"`
+	RestoreDesiredState   string      `json:"restore_desired_state"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	ExpectedHeadVersionID pgtype.UUID `json:"expected_head_version_id"`
+	OwnershipGeneration   int64       `json:"ownership_generation"`
+	WriterGeneration      int64       `json:"writer_generation"`
 }
 
 type FinalizeWorkspaceExecWorkspaceRow struct {
@@ -1123,7 +1123,7 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 		arg.VersionID,
 		arg.RestoreDesiredState,
 		arg.WorkspaceID,
-		arg.BaseWorkspaceVersionID,
+		arg.ExpectedHeadVersionID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
@@ -1627,7 +1627,8 @@ func (q *Queries) ListRecoverableWorkspaceExecCandidates(ctx context.Context, ro
 }
 
 const lockWorkspaceExecFailureAuthority = `-- name: LockWorkspaceExecFailureAuthority :one
-SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
+SELECT computers.head_version_id AS saved_head_version_id,
+       workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
        workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
        workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.status, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_workspace_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_processes
@@ -1664,9 +1665,10 @@ type LockWorkspaceExecFailureAuthorityParams struct {
 }
 
 type LockWorkspaceExecFailureAuthorityRow struct {
-	WorkspaceProcess WorkspaceProcess `json:"workspace_process"`
-	WorkspaceMount   WorkspaceMount   `json:"workspace_mount"`
-	WorkspaceLease   WorkspaceLease   `json:"workspace_lease"`
+	SavedHeadVersionID pgtype.UUID      `json:"saved_head_version_id"`
+	WorkspaceProcess   WorkspaceProcess `json:"workspace_process"`
+	WorkspaceMount     WorkspaceMount   `json:"workspace_mount"`
+	WorkspaceLease     WorkspaceLease   `json:"workspace_lease"`
 }
 
 func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg LockWorkspaceExecFailureAuthorityParams) (LockWorkspaceExecFailureAuthorityRow, error) {
@@ -1679,6 +1681,7 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 	)
 	var i LockWorkspaceExecFailureAuthorityRow
 	err := row.Scan(
+		&i.SavedHeadVersionID,
 		&i.WorkspaceProcess.ID,
 		&i.WorkspaceProcess.OrgID,
 		&i.WorkspaceProcess.ProjectID,
@@ -1853,10 +1856,12 @@ func (q *Queries) LockWorkspaceExecFailureWorkspace(ctx context.Context, arg Loc
 }
 
 const lockWorkspaceExecRecoveryAuthority = `-- name: LockWorkspaceExecRecoveryAuthority :one
-SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
+SELECT computers.head_version_id AS saved_head_version_id,
+       workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
        workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
        workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.status, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_workspace_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_processes
+  JOIN computers ON computers.id = workspace_processes.workspace_id
   JOIN workspace_mounts
     ON workspace_mounts.id = workspace_processes.workspace_mount_id
    AND workspace_mounts.workspace_id = workspace_processes.workspace_id
@@ -1887,9 +1892,10 @@ type LockWorkspaceExecRecoveryAuthorityParams struct {
 }
 
 type LockWorkspaceExecRecoveryAuthorityRow struct {
-	WorkspaceProcess WorkspaceProcess `json:"workspace_process"`
-	WorkspaceMount   WorkspaceMount   `json:"workspace_mount"`
-	WorkspaceLease   WorkspaceLease   `json:"workspace_lease"`
+	SavedHeadVersionID pgtype.UUID      `json:"saved_head_version_id"`
+	WorkspaceProcess   WorkspaceProcess `json:"workspace_process"`
+	WorkspaceMount     WorkspaceMount   `json:"workspace_mount"`
+	WorkspaceLease     WorkspaceLease   `json:"workspace_lease"`
 }
 
 func (q *Queries) LockWorkspaceExecRecoveryAuthority(ctx context.Context, arg LockWorkspaceExecRecoveryAuthorityParams) (LockWorkspaceExecRecoveryAuthorityRow, error) {
@@ -1901,6 +1907,7 @@ func (q *Queries) LockWorkspaceExecRecoveryAuthority(ctx context.Context, arg Lo
 	)
 	var i LockWorkspaceExecRecoveryAuthorityRow
 	err := row.Scan(
+		&i.SavedHeadVersionID,
 		&i.WorkspaceProcess.ID,
 		&i.WorkspaceProcess.OrgID,
 		&i.WorkspaceProcess.ProjectID,
@@ -2129,7 +2136,8 @@ func (q *Queries) LockWorkspaceExecSecretRevocationAuthority(ctx context.Context
 }
 
 const lockWorkspaceExecWorkerAuthority = `-- name: LockWorkspaceExecWorkerAuthority :one
-SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
+SELECT computers.head_version_id AS saved_head_version_id,
+       workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
        workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
        workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.status, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_workspace_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
        runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.computer_source_version_id, runtime_instances.retained_computer_source_version_id, runtime_instances.computer_write_key_id, runtime_instances.retained_computer_write_key_id, runtime_instances.computer_key_available, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at,
@@ -2230,6 +2238,7 @@ type LockWorkspaceExecWorkerAuthorityParams struct {
 }
 
 type LockWorkspaceExecWorkerAuthorityRow struct {
+	SavedHeadVersionID pgtype.UUID      `json:"saved_head_version_id"`
 	WorkspaceProcess   WorkspaceProcess `json:"workspace_process"`
 	WorkspaceMount     WorkspaceMount   `json:"workspace_mount"`
 	WorkspaceLease     WorkspaceLease   `json:"workspace_lease"`
@@ -2248,6 +2257,7 @@ func (q *Queries) LockWorkspaceExecWorkerAuthority(ctx context.Context, arg Lock
 	)
 	var i LockWorkspaceExecWorkerAuthorityRow
 	err := row.Scan(
+		&i.SavedHeadVersionID,
 		&i.WorkspaceProcess.ID,
 		&i.WorkspaceProcess.OrgID,
 		&i.WorkspaceProcess.ProjectID,
@@ -2461,10 +2471,10 @@ RETURNING computers.id, computers.environment_id, computers.region_id, computers
 `
 
 type MarkWorkspaceExecRecoveryRequiredParams struct {
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
-	OwnershipGeneration    int64       `json:"ownership_generation"`
-	WriterGeneration       int64       `json:"writer_generation"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	ExpectedHeadVersionID pgtype.UUID `json:"expected_head_version_id"`
+	OwnershipGeneration   int64       `json:"ownership_generation"`
+	WriterGeneration      int64       `json:"writer_generation"`
 }
 
 type MarkWorkspaceExecRecoveryRequiredRow struct {
@@ -2492,7 +2502,7 @@ type MarkWorkspaceExecRecoveryRequiredRow struct {
 func (q *Queries) MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (MarkWorkspaceExecRecoveryRequiredRow, error) {
 	row := q.db.QueryRow(ctx, markWorkspaceExecRecoveryRequired,
 		arg.WorkspaceID,
-		arg.BaseWorkspaceVersionID,
+		arg.ExpectedHeadVersionID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
@@ -2893,7 +2903,7 @@ func (q *Queries) SetWorkspaceExecResult(ctx context.Context, arg SetWorkspaceEx
 
 const stageWorkspaceExecCapture = `-- name: StageWorkspaceExecCapture :one
 WITH authority AS (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, workspace_processes.base_workspace_version_id,
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, computers.head_version_id,
            workspace_leases.id AS source_workspace_lease_id,
            workspace_leases.ownership_generation,
            workspace_leases.writer_generation
@@ -2902,6 +2912,11 @@ WITH authority AS (
         ON workspace_processes.workspace_mount_id = workspace_mounts.id
        AND workspace_processes.workspace_id = workspace_mounts.workspace_id
        AND workspace_processes.status = 'exit_requested'
+      JOIN computers ON computers.id = workspace_mounts.workspace_id
+      JOIN computer_versions predecessor ON predecessor.id = computers.head_version_id
+       AND predecessor.workspace_id = computers.id
+       AND predecessor.environment_id = computers.environment_id
+       AND predecessor.status = 'committed'
       JOIN workspace_leases
         ON workspace_leases.workspace_mount_id = workspace_mounts.id
        AND workspace_leases.owner_process_id = workspace_processes.id
@@ -2912,7 +2927,7 @@ WITH authority AS (
        AND workspace_mounts.status = 'unmounting'
        AND workspace_mounts.finalization_kind = 'capture'
        AND workspace_mounts.staged_version_id IS NULL
-     FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
+     FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases, computers
 ), created AS (
     INSERT INTO computer_versions (
         id, environment_id, workspace_id,
@@ -2920,7 +2935,7 @@ WITH authority AS (
         ownership_generation, writer_generation
     )
     SELECT $4,
-           authority.environment_id, authority.workspace_id, authority.base_workspace_version_id,
+           authority.environment_id, authority.workspace_id, authority.head_version_id,
            $5, $6,
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
