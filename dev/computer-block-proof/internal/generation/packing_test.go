@@ -52,9 +52,9 @@ func packedClosure(t *testing.T, c *Codec, s *Store, roots ...blockformat.Locato
 func TestPackedRoundtripAndImmutableReuse(t *testing.T) {
 	c, s := fixture(t)
 	d := mustDisk(t, c, s, 32<<30, 256)
-	want := bytes.Repeat([]byte{0x63}, BlockSize)
+	want := bytes.Repeat([]byte{0x63}, blockformat.BlockSize)
 	for i := int64(0); i < 1024; i++ {
-		if err := d.WriteAt(want, i*8192*BlockSize); err != nil {
+		if err := d.WriteAt(want, i*8192*blockformat.BlockSize); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -79,7 +79,7 @@ func TestPackedRoundtripAndImmutableReuse(t *testing.T) {
 	if err != nil || again != old || packs.Metrics.Objects != before.Objects {
 		t.Fatal("retry altered packs", err)
 	}
-	d.WriteAt(bytes.Repeat([]byte{0x42}, BlockSize), 0)
+	d.WriteAt(bytes.Repeat([]byte{0x42}, blockformat.BlockSize), 0)
 	next, err := p.Convert(mustCapture(t, d))
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestPackedRoundtripAndImmutableReuse(t *testing.T) {
 func TestPackedCorruptionAndDirectory(t *testing.T) {
 	c, s := fixture(t)
 	d := mustDisk(t, c, s, 1<<20, 64)
-	d.WriteAt(bytes.Repeat([]byte{1}, BlockSize), 0)
+	d.WriteAt(bytes.Repeat([]byte{1}, blockformat.BlockSize), 0)
 	packs := NewStore()
 	p, _ := NewPacker(c, s, packs, 64<<10, true)
 	r, e := p.Convert(mustCapture(t, d))
@@ -162,7 +162,7 @@ func TestPackingMeasurement(t *testing.T) {
 						b := int64(i)
 						if layout == "dispersed" {
 							for {
-								b = rng.Int63n(d.shape.Capacity / BlockSize)
+								b = rng.Int63n(d.shape.Capacity / blockformat.BlockSize)
 								if !seen[b] {
 									break
 								}
@@ -170,7 +170,7 @@ func TestPackingMeasurement(t *testing.T) {
 						}
 						seen[b] = true
 						blocks[i] = b
-						d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), b*BlockSize)
+						d.WriteAt(bytes.Repeat([]byte{0x61}, blockformat.BlockSize), b*blockformat.BlockSize)
 					}
 					root := mustCapture(t, d)
 					plain := closure(t, c, s, root)
@@ -184,7 +184,7 @@ func TestPackingMeasurement(t *testing.T) {
 					}
 					first := packedClosure(t, pc, packs, r)
 					before := packs.Metrics
-					d.WriteAt(bytes.Repeat([]byte{0x62}, BlockSize), blocks[0]*BlockSize)
+					d.WriteAt(bytes.Repeat([]byte{0x62}, blockformat.BlockSize), blocks[0]*blockformat.BlockSize)
 					newRoot := mustCapture(t, d)
 					next, e := p.Convert(newRoot)
 					if e != nil {
@@ -259,14 +259,14 @@ func TestPackingRetentionComparison(t *testing.T) {
 			seen := map[int64]bool{}
 			for i := range blocks {
 				for {
-					b := rng.Int63n(d.shape.Capacity / BlockSize)
+					b := rng.Int63n(d.shape.Capacity / blockformat.BlockSize)
 					if !seen[b] {
 						seen[b] = true
 						blocks[i] = b
 						break
 					}
 				}
-				d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), blocks[i]*BlockSize)
+				d.WriteAt(bytes.Repeat([]byte{0x61}, blockformat.BlockSize), blocks[i]*blockformat.BlockSize)
 			}
 			pc, _ := NewCodec(c.Scope, c.ActiveKey, c.Keys)
 			pc.entropy = rand.New(rand.NewSource(47))
@@ -281,7 +281,7 @@ func TestPackingRetentionComparison(t *testing.T) {
 			pins = append(pins, r)
 			for cut := 0; cut < 16; cut++ {
 				for _, b := range blocks[cut*64 : (cut+1)*64] {
-					if err = d.WriteAt(bytes.Repeat([]byte{byte(cut + 1)}, BlockSize), b*BlockSize); err != nil {
+					if err = d.WriteAt(bytes.Repeat([]byte{byte(cut + 1)}, blockformat.BlockSize), b*blockformat.BlockSize); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -329,7 +329,7 @@ func TestPackingHotColdAndZero(t *testing.T) {
 			d := mustDisk(t, c, s, 32<<30, 256)
 			// One block per 256 MiB region, leaving a long-lived cold page in many packs.
 			for i := int64(0); i < 128; i++ {
-				d.WriteAt(bytes.Repeat([]byte{0x31}, BlockSize), i*(256<<20))
+				d.WriteAt(bytes.Repeat([]byte{0x31}, blockformat.BlockSize), i*(256<<20))
 			}
 			pc, _ := NewCodec(c.Scope, c.ActiveKey, c.Keys)
 			pc.entropy = rand.New(rand.NewSource(99))
@@ -341,8 +341,8 @@ func TestPackingHotColdAndZero(t *testing.T) {
 			}
 			pins := []blockformat.Locator{r}
 			for cut := 0; cut < 32; cut++ {
-				d.WriteAt(bytes.Repeat([]byte{byte(cut + 1)}, BlockSize), 0)
-				value := bytes.Repeat([]byte{0x52}, BlockSize)
+				d.WriteAt(bytes.Repeat([]byte{byte(cut + 1)}, blockformat.BlockSize), 0)
+				value := bytes.Repeat([]byte{0x52}, blockformat.BlockSize)
 				if cut%3 == 0 {
 					clear(value)
 				}
@@ -358,7 +358,7 @@ func TestPackingHotColdAndZero(t *testing.T) {
 			meta, data := logicalPackedBytes(t, pc, packs, r)
 			t.Logf("hotcold_latest_packs=%d physical_metadata=%d logical_metadata=%d physical_data=%d logical_data=%d all_pins_bytes=%d", physical.Packs, physical.MetadataBytes, meta, physical.DataBytes, data, all.Bytes)
 			for i := uint64(0); i < 128; i++ {
-				got, err := ReadPacked(pc, s, packs, r, i*(256<<20)/BlockSize)
+				got, err := ReadPacked(pc, s, packs, r, i*(256<<20)/blockformat.BlockSize)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -388,12 +388,12 @@ func BenchmarkPacking(b *testing.B) {
 	rng := rand.New(rand.NewSource(20260923))
 	seen := map[int64]bool{}
 	for len(seen) < 1024 {
-		block := rng.Int63n(d.shape.Capacity / BlockSize)
+		block := rng.Int63n(d.shape.Capacity / blockformat.BlockSize)
 		if seen[block] {
 			continue
 		}
 		seen[block] = true
-		if err := d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), block*BlockSize); err != nil {
+		if err := d.WriteAt(bytes.Repeat([]byte{0x61}, blockformat.BlockSize), block*blockformat.BlockSize); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -426,7 +426,7 @@ func TestPackRejectsOutOfGeometryNode(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ref, raw, err := c.seal(nodeKind, [][]byte{plain})
+		ref, raw, err := c.seal(blockformat.NodeKind, [][]byte{plain})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -447,14 +447,14 @@ func TestPackingRandomOverwriteTrend(t *testing.T) {
 	seen := map[int64]bool{}
 	for i := range blocks {
 		for {
-			block := rng.Int63n(d.shape.Capacity / BlockSize)
+			block := rng.Int63n(d.shape.Capacity / blockformat.BlockSize)
 			if !seen[block] {
 				seen[block] = true
 				blocks[i] = block
 				break
 			}
 		}
-		d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), blocks[i]*BlockSize)
+		d.WriteAt(bytes.Repeat([]byte{0x61}, blockformat.BlockSize), blocks[i]*blockformat.BlockSize)
 	}
 	sourceRoot := mustCapture(t, d)
 	sourcePins := []blockformat.Ref{sourceRoot}
@@ -475,7 +475,7 @@ func TestPackingRandomOverwriteTrend(t *testing.T) {
 		// Replacement permits repeats and cold survivors, unlike a full permutation.
 		for range 32 {
 			block := blocks[rng.Intn(len(blocks))]
-			if err := d.WriteAt(bytes.Repeat([]byte{byte(cut)}, BlockSize), block*BlockSize); err != nil {
+			if err := d.WriteAt(bytes.Repeat([]byte{byte(cut)}, blockformat.BlockSize), block*blockformat.BlockSize); err != nil {
 				t.Fatal(err)
 			}
 		}

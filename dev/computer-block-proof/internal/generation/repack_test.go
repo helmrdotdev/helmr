@@ -53,7 +53,7 @@ func TestRepackRetention(t *testing.T) {
 			want := map[uint64]byte{}
 			for i := range blocks {
 				for {
-					b := uint64(rng.Int63n(d.shape.Capacity / BlockSize))
+					b := uint64(rng.Int63n(d.shape.Capacity / blockformat.BlockSize))
 					if !seen[b] {
 						seen[b] = true
 						blocks[i] = b
@@ -61,7 +61,7 @@ func TestRepackRetention(t *testing.T) {
 					}
 				}
 				want[blocks[i]] = 0x61
-				if err := d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), int64(blocks[i])*BlockSize); err != nil {
+				if err := d.WriteAt(bytes.Repeat([]byte{0x61}, blockformat.BlockSize), int64(blocks[i])*blockformat.BlockSize); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -80,7 +80,7 @@ func TestRepackRetention(t *testing.T) {
 				for range 32 {
 					b := blocks[rng.Intn(len(blocks))]
 					want[b] = byte(cut)
-					if err = d.WriteAt(bytes.Repeat([]byte{byte(cut)}, BlockSize), int64(b)*BlockSize); err != nil {
+					if err = d.WriteAt(bytes.Repeat([]byte{byte(cut)}, blockformat.BlockSize), int64(b)*blockformat.BlockSize); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -119,7 +119,7 @@ func TestRepackRetention(t *testing.T) {
 						expected = 0x61
 					}
 					got, e := ReadPacked(c, ds, ps, r, b)
-					if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{expected}, BlockSize)) {
+					if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{expected}, blockformat.BlockSize)) {
 						t.Fatalf("read block %d: %v", b, e)
 					}
 				}
@@ -134,7 +134,7 @@ func TestRepackRetention(t *testing.T) {
 			}
 			for _, b := range blocks {
 				got, e := ReadPacked(c, ds, ps, again, b)
-				if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{want[b]}, BlockSize)) {
+				if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{want[b]}, blockformat.BlockSize)) {
 					t.Fatal("repeated rewrite", e)
 				}
 			}
@@ -156,12 +156,12 @@ func TestRepackBoundsZeroAndFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := ReadPacked(c, data, packs, r, 0)
-	if err != nil || !bytes.Equal(got, make([]byte, BlockSize)) {
+	if err != nil || !bytes.Equal(got, make([]byte, blockformat.BlockSize)) {
 		t.Fatal("empty", err)
 	}
 	// Crosses the 1,024-record staging capture boundary; every second block is a hole.
 	for i := 0; i < 1025; i++ {
-		if err = d.WriteAt(bytes.Repeat([]byte{byte(i%255 + 1)}, BlockSize), int64(i*2)*BlockSize); err != nil {
+		if err = d.WriteAt(bytes.Repeat([]byte{byte(i%255 + 1)}, blockformat.BlockSize), int64(i*2)*blockformat.BlockSize); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -185,7 +185,7 @@ func TestRepackBoundsZeroAndFailure(t *testing.T) {
 			expected = byte((i/2)%255 + 1)
 		}
 		got, e := ReadPacked(c, data, packs, next, uint64(i))
-		if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{expected}, BlockSize)) {
+		if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{expected}, blockformat.BlockSize)) {
 			t.Fatal("batch/hole", i, e)
 		}
 	}

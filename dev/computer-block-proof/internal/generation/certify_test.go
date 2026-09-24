@@ -18,7 +18,7 @@ func certifyRoot(t *testing.T, c *Codec, packs *Store, shape packedRoot) blockfo
 	if e != nil {
 		t.Fatal(e)
 	}
-	r, b, e := c.seal(rootKind, [][]byte{plain})
+	r, b, e := c.seal(blockformat.RootKind, [][]byte{plain})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -39,14 +39,14 @@ func TestCertificationClosure(t *testing.T) {
 			}
 			changes := map[uint64][]byte{}
 			for i := uint64(0); i < 1024; i++ {
-				changes[i*8192] = bytes.Repeat([]byte{1}, BlockSize)
+				changes[i*8192] = bytes.Repeat([]byte{1}, blockformat.BlockSize)
 			}
 			r, e = CapturePacked(c, data, packs, r, changes, 1<<20, internal)
 			if e != nil {
 				t.Fatal(e)
 			}
 			old := r
-			r, e = CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{2}, BlockSize)}, 1<<20, internal)
+			r, e = CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{2}, blockformat.BlockSize)}, 1<<20, internal)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -83,11 +83,11 @@ func TestCertificationClosure(t *testing.T) {
 func TestCertificationRefusesInvalidEdges(t *testing.T) {
 	c, data := fixture(t)
 	packs := NewStore()
-	r, e := NewPacked(c, packs, 128*BlockSize, 64, 1<<20)
+	r, e := NewPacked(c, packs, 128*blockformat.BlockSize, 64, 1<<20)
 	if e != nil {
 		t.Fatal(e)
 	}
-	r, e = CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{7}, BlockSize)}, 1<<20, true)
+	r, e = CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{7}, blockformat.BlockSize)}, 1<<20, true)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -104,7 +104,7 @@ func TestCertificationRefusesInvalidEdges(t *testing.T) {
 		t.Fatal("directory membership", e)
 	}
 	shape.Index = &original
-	shape.Capacity = 192 * BlockSize
+	shape.Capacity = 192 * blockformat.BlockSize
 	forged = certifyRoot(t, c, packs, shape)
 	if _, e = Certify(c, data, packs, forged, 100, 8<<20); e == nil {
 		t.Fatal("cross-geometry splice")
@@ -155,7 +155,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 			c.ActiveKey = "rotated"
 			c.Keys["rotated"] = bytes.Repeat([]byte{0x71}, 32)
 		}
-		seg, raw, e := c.seal(segmentKind, [][]byte{bytes.Repeat([]byte{byte(i + 1)}, BlockSize)})
+		seg, raw, e := c.seal(blockformat.SegmentKind, [][]byte{bytes.Repeat([]byte{byte(i + 1)}, blockformat.BlockSize)})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -163,12 +163,12 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 			t.Fatal(e)
 		}
 		segments = append(segments, seg)
-		n := packedNode{Capacity: 64 * BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
+		n := packedNode{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
 		plain, e := json.Marshal(n)
 		if e != nil {
 			t.Fatal(e)
 		}
-		ref, b, e := c.seal(nodeKind, [][]byte{plain})
+		ref, b, e := c.seal(blockformat.NodeKind, [][]byte{plain})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -179,7 +179,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 		t.Fatal(e)
 	}
 	loc := p.converted[refs[0]]
-	root := certifyRoot(t, c, packs, packedRoot{Capacity: 64 * BlockSize, Fanout: 64, Index: &loc})
+	root := certifyRoot(t, c, packs, packedRoot{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Index: &loc})
 	if proof, e := Certify(c, data, packs, root, 100, 8<<20); e != nil || proof.Segments != 2 {
 		t.Fatal("physical dependencies", e)
 	}
@@ -201,7 +201,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 			}
 		}
 	}
-	if inspected.Root != root || inspected.Capacity != 64*BlockSize || !edges[segments[0].Digest] || !edges[segments[1].Digest] {
+	if inspected.Root != root || inspected.Capacity != 64*blockformat.BlockSize || !edges[segments[0].Digest] || !edges[segments[1].Digest] {
 		t.Fatal("inspection omitted obsolete physical dependency")
 	}
 	delete(data.objects, segments[1].Digest)
@@ -220,7 +220,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {
 	c, data := fixture(t)
 	packs := NewStore()
-	seg, raw, e := c.seal(segmentKind, [][]byte{bytes.Repeat([]byte{1}, BlockSize), bytes.Repeat([]byte{2}, BlockSize)})
+	seg, raw, e := c.seal(blockformat.SegmentKind, [][]byte{bytes.Repeat([]byte{1}, blockformat.BlockSize), bytes.Repeat([]byte{2}, blockformat.BlockSize)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -229,12 +229,12 @@ func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {
 	if e = data.put(seg, raw); e != nil {
 		t.Fatal(e)
 	}
-	n := packedNode{Capacity: 64 * BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
+	n := packedNode{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
 	plain, e := json.Marshal(n)
 	if e != nil {
 		t.Fatal(e)
 	}
-	ref, b, e := c.seal(nodeKind, [][]byte{plain})
+	ref, b, e := c.seal(blockformat.NodeKind, [][]byte{plain})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -243,7 +243,7 @@ func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {
 		t.Fatal(e)
 	}
 	loc := p.converted[ref]
-	root := certifyRoot(t, c, packs, packedRoot{Capacity: 64 * BlockSize, Fanout: 64, Index: &loc})
+	root := certifyRoot(t, c, packs, packedRoot{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Index: &loc})
 	if got, e := ReadPacked(c, data, packs, root, 0); e != nil || got[0] != 1 {
 		t.Fatal("selected record", e)
 	}

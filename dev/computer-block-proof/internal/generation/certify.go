@@ -34,14 +34,14 @@ func Certify(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects,
 		if segments[r] {
 			return nil
 		}
-		if r.Kind != segmentKind {
+		if r.Kind != blockformat.SegmentKind {
 			return errors.New("segment required")
 		}
-		h, err := c.header(r)
+		h, err := blockformat.Header(c.Scope, r)
 		if err != nil {
 			return err
 		}
-		if r.Size != int64(len(h))+int64(r.Count)*(BlockSize+20) {
+		if r.Size != int64(len(h))+int64(r.Count)*(blockformat.BlockSize+20) {
 			return errors.New("segment geometry mismatch")
 		}
 		if err = charge(r.Size); err != nil {
@@ -121,7 +121,7 @@ func Certify(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects,
 			}
 		}
 		for _, l := range locators {
-			if l.Page.Kind == rootKind {
+			if l.Page.Kind == blockformat.RootKind {
 				shape, e := openPacked(c, packs, l)
 				if e != nil {
 					return e

@@ -130,11 +130,11 @@ func encrypted(t *testing.T) *encryptedFixture {
 		t.Fatal(err)
 	}
 	data, packs := generation.NewStore(), generation.NewStore()
-	root, err := generation.NewPacked(c, packs, 128*generation.BlockSize, 64, 1<<20)
+	root, err := generation.NewPacked(c, packs, 128*blockformat.BlockSize, 64, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err = generation.CapturePacked(c, data, packs, root, map[uint64][]byte{0: bytes.Repeat([]byte{7}, generation.BlockSize), 65: bytes.Repeat([]byte{9}, generation.BlockSize)}, 1<<20, true)
+	root, err = generation.CapturePacked(c, data, packs, root, map[uint64][]byte{0: bytes.Repeat([]byte{7}, blockformat.BlockSize), 65: bytes.Repeat([]byte{9}, blockformat.BlockSize)}, 1<<20, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func generationCases(test func(string, func(*fixture))) {
 		for block, want := range map[uint64]byte{0: 7, 65: 9, 1: 0} {
 			got, err := generation.ReadPacked(e.codec, data, packs, selected, block)
 			f.ok(err)
-			if !bytes.Equal(got, bytes.Repeat([]byte{want}, generation.BlockSize)) {
+			if !bytes.Equal(got, bytes.Repeat([]byte{want}, blockformat.BlockSize)) {
 				f.t.Fatalf("restored block %d", block)
 			}
 		}
@@ -223,7 +223,7 @@ func generationCases(test func(string, func(*fixture))) {
 		next.ID = "encrypted-next"
 		next.Source = result
 		f.ok(f.begin(f.ctx, next))
-		nextRoot, err := generation.CapturePacked(e.codec, e.data, e.packs, e.root, map[uint64][]byte{0: bytes.Repeat([]byte{4}, generation.BlockSize)}, 1<<20, true)
+		nextRoot, err := generation.CapturePacked(e.codec, e.data, e.packs, e.root, map[uint64][]byte{0: bytes.Repeat([]byte{4}, blockformat.BlockSize)}, 1<<20, true)
 		f.ok(err)
 		e.root = nextRoot
 		e.inventory, err = generation.Inspect(e.codec, e.data, e.packs, e.root, inspectionObjects, inspectionBytes)

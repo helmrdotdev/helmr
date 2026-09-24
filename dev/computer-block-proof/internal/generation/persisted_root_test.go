@@ -27,13 +27,13 @@ func TestPersistedGenerationRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err = CapturePacked(codec, data, packs, root, map[uint64][]byte{0: bytes.Repeat([]byte{7}, BlockSize)}, 1<<20, true)
+	root, err = CapturePacked(codec, data, packs, root, map[uint64][]byte{0: bytes.Repeat([]byte{7}, blockformat.BlockSize)}, 1<<20, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := root
 	codec.ActiveKey = key2
-	root, err = CapturePacked(codec, data, packs, root, map[uint64][]byte{8192: bytes.Repeat([]byte{9}, BlockSize)}, 1<<20, true)
+	root, err = CapturePacked(codec, data, packs, root, map[uint64][]byte{8192: bytes.Repeat([]byte{9}, blockformat.BlockSize)}, 1<<20, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,13 +59,13 @@ func TestPersistedGenerationRoot(t *testing.T) {
 			t.Fatalf("locator changed across persistence: %v", err)
 		}
 		got, err := ReadPacked(codec, data, packs, restored, 0)
-		if err != nil || !bytes.Equal(got, bytes.Repeat([]byte{7}, BlockSize)) {
+		if err != nil || !bytes.Equal(got, bytes.Repeat([]byte{7}, blockformat.BlockSize)) {
 			t.Fatalf("restored earlier data: %v", err)
 		}
 		got, err = ReadPacked(codec, data, packs, restored, 8192)
-		want := make([]byte, BlockSize)
+		want := make([]byte, blockformat.BlockSize)
 		if locator == root {
-			want = bytes.Repeat([]byte{9}, BlockSize)
+			want = bytes.Repeat([]byte{9}, blockformat.BlockSize)
 		}
 		if err != nil || !bytes.Equal(got, want) {
 			t.Fatalf("restored generation-specific data: %v", err)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/dev/computer-block-proof/internal/generation"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -171,7 +172,7 @@ func computerKeyCases(test func(string, func(*fixture))) {
 		keys := map[string][]byte{"1": e.codec.Keys["1"], "2": bytes.Repeat([]byte{0x42}, 32)}
 		e.codec, err = generation.NewCodec(e.codec.Scope, "2", keys)
 		f.ok(err)
-		e.root, err = generation.CapturePacked(e.codec, e.data, e.packs, e.root, map[uint64][]byte{1: bytes.Repeat([]byte{11}, generation.BlockSize)}, 1<<20, true)
+		e.root, err = generation.CapturePacked(e.codec, e.data, e.packs, e.root, map[uint64][]byte{1: bytes.Repeat([]byte{11}, blockformat.BlockSize)}, 1<<20, true)
 		f.ok(err)
 		e.inventory, err = generation.Inspect(e.codec, e.data, e.packs, e.root, inspectionObjects, inspectionBytes)
 		f.ok(err)
@@ -185,12 +186,12 @@ func computerKeyCases(test func(string, func(*fixture))) {
 		f.assertCount(2, `SELECT count(*) FROM computer_keys WHERE environment_id='env' AND computer_id='computer' AND available`)
 		got, err := generation.ReadPacked(e.codec, e.data, e.packs, oldRoot, 0)
 		f.ok(err)
-		if !bytes.Equal(got, bytes.Repeat([]byte{7}, generation.BlockSize)) {
+		if !bytes.Equal(got, bytes.Repeat([]byte{7}, blockformat.BlockSize)) {
 			f.t.Fatal("old generation changed after rotation")
 		}
 		got, err = generation.ReadPacked(e.codec, e.data, e.packs, e.root, 1)
 		f.ok(err)
-		if !bytes.Equal(got, bytes.Repeat([]byte{11}, generation.BlockSize)) {
+		if !bytes.Equal(got, bytes.Repeat([]byte{11}, blockformat.BlockSize)) {
 			f.t.Fatal("new generation lost write")
 		}
 		f.checkReadKeySummaries()

@@ -33,7 +33,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 	}
 	blocks := make([]uint64, 0, len(changes))
 	for b, v := range changes {
-		if b >= uint64(shape.Capacity/BlockSize) || len(v) != BlockSize {
+		if b >= uint64(shape.Capacity/blockformat.BlockSize) || len(v) != blockformat.BlockSize {
 			return blockformat.Locator{}, errors.New("invalid changed block")
 		}
 		blocks = append(blocks, b)
@@ -49,7 +49,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 		if len(records) == 0 {
 			return nil
 		}
-		r, raw, e := c.seal(segmentKind, records)
+		r, raw, e := c.seal(blockformat.SegmentKind, records)
 		if e != nil {
 			return e
 		}
@@ -63,7 +63,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 		pending = nil
 		return nil
 	}
-	zero := make([]byte, BlockSize)
+	zero := make([]byte, blockformat.BlockSize)
 	for _, b := range blocks {
 		if bytes.Equal(changes[b], zero) {
 			values[b] = nil
@@ -71,7 +71,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 		}
 		records = append(records, changes[b])
 		pending = append(pending, b)
-		if len(records) == maxRecords {
+		if len(records) == blockformat.MaxRecords {
 			if err = flushData(); err != nil {
 				return blockformat.Locator{}, err
 			}
@@ -186,7 +186,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 			if e != nil {
 				return blockformat.Locator{}, e
 			}
-			ref, raw, e := c.seal(nodeKind, [][]byte{plain})
+			ref, raw, e := c.seal(blockformat.NodeKind, [][]byte{plain})
 			if e != nil {
 				return blockformat.Locator{}, e
 			}
@@ -226,7 +226,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 	if err != nil {
 		return blockformat.Locator{}, err
 	}
-	ref, raw, err := c.seal(rootKind, [][]byte{plain})
+	ref, raw, err := c.seal(blockformat.RootKind, [][]byte{plain})
 	if err != nil {
 		return blockformat.Locator{}, err
 	}
@@ -238,7 +238,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 
 // NewPacked creates an empty packed generation without an intermediate index.
 func NewPacked(c *Codec, packs *Store, capacity int64, fanout, limit int) (blockformat.Locator, error) {
-	if capacity <= 0 || capacity%BlockSize != 0 || capacity/BlockSize > maxBlocks || (fanout != 64 && fanout != 256) {
+	if capacity <= 0 || capacity%blockformat.BlockSize != 0 || capacity/blockformat.BlockSize > maxBlocks || (fanout != 64 && fanout != 256) {
 		return blockformat.Locator{}, errors.New("unsupported geometry")
 	}
 	p, err := NewPacker(c, nil, packs, limit, true)
@@ -246,14 +246,14 @@ func NewPacked(c *Codec, packs *Store, capacity int64, fanout, limit int) (block
 		return blockformat.Locator{}, err
 	}
 	shape := packedRoot{Capacity: capacity, Fanout: fanout}
-	for span := int64(fanout); span < capacity/BlockSize; span *= int64(fanout) {
+	for span := int64(fanout); span < capacity/blockformat.BlockSize; span *= int64(fanout) {
 		shape.Level++
 	}
 	plain, err := json.Marshal(shape)
 	if err != nil {
 		return blockformat.Locator{}, err
 	}
-	ref, raw, err := c.seal(rootKind, [][]byte{plain})
+	ref, raw, err := c.seal(blockformat.RootKind, [][]byte{plain})
 	if err != nil {
 		return blockformat.Locator{}, err
 	}

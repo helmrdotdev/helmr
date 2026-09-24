@@ -15,11 +15,11 @@ func localFixture(t *testing.T) (*Codec, *Local, blockformat.Locator, *Store, *S
 	t.Helper()
 	c, data := fixture(t)
 	packs := NewStore()
-	root, e := NewPacked(c, packs, 64*BlockSize, 64, 64<<10)
+	root, e := NewPacked(c, packs, 64*blockformat.BlockSize, 64, 64<<10)
 	if e != nil {
 		t.Fatal(e)
 	}
-	root, e = CapturePacked(c, data, packs, root, map[uint64][]byte{0: bytes.Repeat([]byte{1}, BlockSize)}, 64<<10, true)
+	root, e = CapturePacked(c, data, packs, root, map[uint64][]byte{0: bytes.Repeat([]byte{1}, blockformat.BlockSize)}, 64<<10, true)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -39,7 +39,7 @@ func assertLocal(t *testing.T, c *Codec, l *Local, want byte) {
 		t.Fatal(e)
 	}
 	got, e := ReadPacked(c, d, p, r, 0)
-	if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{want}, BlockSize)) {
+	if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{want}, blockformat.BlockSize)) {
 		t.Fatal("reopened value", e)
 	}
 }
@@ -52,7 +52,7 @@ func TestLocalCommitAndReopen(t *testing.T) {
 		}
 	}
 	assertLocal(t, c, l, 1)
-	next, e := CapturePacked(c, data, packs, old, map[uint64][]byte{0: bytes.Repeat([]byte{2}, BlockSize)}, 64<<10, true)
+	next, e := CapturePacked(c, data, packs, old, map[uint64][]byte{0: bytes.Repeat([]byte{2}, blockformat.BlockSize)}, 64<<10, true)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -103,7 +103,7 @@ func TestLocalFailureBoundaries(t *testing.T) {
 	for _, stage := range []string{"object-synced", "object-installed", "objects-synced", "root-synced", "root-installed", "root-directory-synced"} {
 		t.Run(stage, func(t *testing.T) {
 			c, l, old, data, packs := localFixture(t)
-			next, e := CapturePacked(c, data, packs, old, map[uint64][]byte{0: bytes.Repeat([]byte{2}, BlockSize)}, 64<<10, true)
+			next, e := CapturePacked(c, data, packs, old, map[uint64][]byte{0: bytes.Repeat([]byte{2}, blockformat.BlockSize)}, 64<<10, true)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -167,7 +167,7 @@ func TestLocalCrashChild(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	next, e := CapturePacked(c, d, p, r, map[uint64][]byte{0: bytes.Repeat([]byte{2}, BlockSize)}, 64<<10, true)
+	next, e := CapturePacked(c, d, p, r, map[uint64][]byte{0: bytes.Repeat([]byte{2}, blockformat.BlockSize)}, 64<<10, true)
 	if e != nil {
 		t.Fatal(e)
 	}

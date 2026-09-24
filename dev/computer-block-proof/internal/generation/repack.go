@@ -54,11 +54,11 @@ func Repack(c *Codec, data, packs *Store, current blockformat.Locator, limit int
 			if err != nil {
 				return err
 			}
-			if err = d.WriteAt(b, int64(block)*BlockSize); err != nil {
+			if err = d.WriteAt(b, int64(block)*blockformat.BlockSize); err != nil {
 				return err
 			}
 			live++
-			if live%maxRecords == 0 {
+			if live%blockformat.MaxRecords == 0 {
 				if _, err = d.Capture(); err != nil {
 					return err
 				}

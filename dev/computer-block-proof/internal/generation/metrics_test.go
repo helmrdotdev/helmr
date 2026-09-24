@@ -27,7 +27,7 @@ func closure(t *testing.T, c *Codec, s *Store, roots ...blockformat.Ref) reachab
 		seen[r] = true
 		out.Objects++
 		out.Bytes += r.Size
-		if r.Kind == segmentKind {
+		if r.Kind == blockformat.SegmentKind {
 			out.SegmentBytes += r.Size
 			return
 		}
@@ -39,7 +39,7 @@ func closure(t *testing.T, c *Codec, s *Store, roots ...blockformat.Ref) reachab
 		for _, child := range children {
 			visit(child)
 		}
-		if r.Kind == nodeKind {
+		if r.Kind == blockformat.NodeKind {
 			raw, _ := c.metadata(s, r)
 			var n node
 			if e = decode(raw, &n); e != nil {
@@ -60,7 +60,7 @@ func closure(t *testing.T, c *Codec, s *Store, roots ...blockformat.Ref) reachab
 		visit(r)
 	}
 	for _, set := range records {
-		out.LiveDataBytes += int64(len(set)) * BlockSize
+		out.LiveDataBytes += int64(len(set)) * blockformat.BlockSize
 	}
 	out.Refs = seen
 	return out
@@ -81,7 +81,7 @@ func TestMeasurementMatrix(t *testing.T) {
 						b := int64(i)
 						if layout == "dispersed" {
 							for {
-								b = rng.Int63n(d.shape.Capacity / BlockSize)
+								b = rng.Int63n(d.shape.Capacity / blockformat.BlockSize)
 								if !chosen[b] {
 									break
 								}
@@ -92,7 +92,7 @@ func TestMeasurementMatrix(t *testing.T) {
 					}
 					before := s.Metrics
 					for _, b := range blocks {
-						if e := d.WriteAt(bytes.Repeat([]byte{0x61}, BlockSize), b*BlockSize); e != nil {
+						if e := d.WriteAt(bytes.Repeat([]byte{0x61}, blockformat.BlockSize), b*blockformat.BlockSize); e != nil {
 							t.Fatal(e)
 						}
 					}
@@ -100,7 +100,7 @@ func TestMeasurementMatrix(t *testing.T) {
 					created := s.Metrics
 					first := closure(t, c, s, r)
 					// A single changed block retains the rest of the old packed segment.
-					d.WriteAt(bytes.Repeat([]byte{0x62}, BlockSize), blocks[0]*BlockSize)
+					d.WriteAt(bytes.Repeat([]byte{0x62}, blockformat.BlockSize), blocks[0]*blockformat.BlockSize)
 					newRoot := mustCapture(t, d)
 					latest := closure(t, c, s, newRoot)
 					var changedNodes, changedEdges, changedBytes int64
@@ -109,7 +109,7 @@ func TestMeasurementMatrix(t *testing.T) {
 							continue
 						}
 						changedBytes += ref.Size
-						if ref.Kind != segmentKind {
+						if ref.Kind != blockformat.SegmentKind {
 							changedNodes++
 							children, err := c.Children(s, ref)
 							if err != nil {
@@ -126,8 +126,8 @@ func TestMeasurementMatrix(t *testing.T) {
 					if e != nil {
 						t.Fatal(e)
 					}
-					p := make([]byte, BlockSize)
-					if e = cold.ReadAt(p, blocks[0]*BlockSize); e != nil || p[0] != 0x61 {
+					p := make([]byte, blockformat.BlockSize)
+					if e = cold.ReadAt(p, blocks[0]*blockformat.BlockSize); e != nil || p[0] != 0x61 {
 						t.Fatal(e)
 					}
 					if s.Metrics.Gets > int64(d.shape.Level+2) || s.Metrics.Ranges != 2 {
@@ -158,10 +158,10 @@ func TestDenseSeedImport(t *testing.T) {
 	}
 	all := closure(t, c, s, r)
 	t.Logf("dense8MiB objects=%d bytes=%d edges=%d live=%d", all.Objects, all.Bytes, all.Edges, all.LiveDataBytes)
-	if _, e = Import(c, s, BlockSize, 64, bytes.NewReader(data[:BlockSize-1])); e == nil {
+	if _, e = Import(c, s, blockformat.BlockSize, 64, bytes.NewReader(data[:blockformat.BlockSize-1])); e == nil {
 		t.Fatal("truncated seed")
 	}
-	if _, e = Import(c, s, BlockSize, 64, bytes.NewReader(data[:BlockSize+1])); e == nil {
+	if _, e = Import(c, s, blockformat.BlockSize, 64, bytes.NewReader(data[:blockformat.BlockSize+1])); e == nil {
 		t.Fatal("oversized seed")
 	}
 }

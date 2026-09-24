@@ -264,11 +264,11 @@ func (l *Local) Reopen(c *Codec, maxObjects, maxBytes int64) (blockformat.Locato
 			if segments[r] {
 				continue
 			}
-			h, e := c.header(r)
+			h, e := blockformat.Header(c.Scope, r)
 			if e != nil {
 				return e
 			}
-			if r.Kind != segmentKind || r.Size != int64(len(h))+int64(r.Count)*(BlockSize+20) {
+			if r.Kind != blockformat.SegmentKind || r.Size != int64(len(h))+int64(r.Count)*(blockformat.BlockSize+20) {
 				return errors.New("invalid local segment")
 			}
 			if e = read(r, data); e != nil {

@@ -99,8 +99,8 @@ func TestOracleSnapshotsAndBranches(t *testing.T) {
 }
 func TestAuthenticatedRanges(t *testing.T) {
 	c, s := fixture(t)
-	p := bytes.Repeat([]byte{0xab}, BlockSize)
-	r, b, e := c.seal(segmentKind, [][]byte{p, bytes.Repeat([]byte{0xcd}, BlockSize)})
+	p := bytes.Repeat([]byte{0xab}, blockformat.BlockSize)
+	r, b, e := c.seal(blockformat.SegmentKind, [][]byte{p, bytes.Repeat([]byte{0xcd}, blockformat.BlockSize)})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -111,8 +111,8 @@ func TestAuthenticatedRanges(t *testing.T) {
 	if e != nil || got[0] != 0xcd {
 		t.Fatal(e)
 	}
-	h, _ := c.header(r)
-	frame := BlockSize + 20
+	h, _ := blockformat.Header(c.Scope, r)
+	frame := blockformat.BlockSize + 20
 	cases := map[string]func([]byte) []byte{
 		"header":  func(x []byte) []byte { x[0] ^= 1; return x },
 		"record":  func(x []byte) []byte { x[len(h)+4] ^= 1; return x },
@@ -134,7 +134,7 @@ func TestAuthenticatedRanges(t *testing.T) {
 		t.Fatal("scope substitution")
 	}
 	other.ActiveKey = "k2"
-	rr, bb, _ := other.seal(segmentKind, [][]byte{p, p})
+	rr, bb, _ := other.seal(blockformat.SegmentKind, [][]byte{p, p})
 	s.objects[r.Digest] = bb
 	if _, e = c.block(s, r, 0); e == nil {
 		t.Fatal("valid segment substitution", rr)
@@ -154,7 +154,7 @@ func TestAuthenticatedRanges(t *testing.T) {
 		t.Fatal("retry changed identity", e)
 	}
 	c.ActiveKey = "k2"
-	r2, b2, e := c.seal(segmentKind, [][]byte{p})
+	r2, b2, e := c.seal(blockformat.SegmentKind, [][]byte{p})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -168,21 +168,21 @@ func TestAuthenticatedRanges(t *testing.T) {
 }
 func TestFailedReadsAndWritesAreAtomic(t *testing.T) {
 	c, s := fixture(t)
-	d := mustDisk(t, c, s, 4*BlockSize, 64)
-	d.WriteAt(bytes.Repeat([]byte{1}, 2*BlockSize), 0)
+	d := mustDisk(t, c, s, 4*blockformat.BlockSize, 64)
+	d.WriteAt(bytes.Repeat([]byte{1}, 2*blockformat.BlockSize), 0)
 	r := mustCapture(t, d)
 	var seg blockformat.Ref
 	refs, _ := c.Children(s, r)
 	leaves, _ := c.Children(s, refs[0])
 	seg = leaves[0]
 	old := bytes.Clone(s.objects[seg.Digest])
-	h, _ := c.header(seg)
-	s.objects[seg.Digest][len(h)+BlockSize+20+4] ^= 1
-	out := bytes.Repeat([]byte{9}, 2*BlockSize)
+	h, _ := blockformat.Header(c.Scope, seg)
+	s.objects[seg.Digest][len(h)+blockformat.BlockSize+20+4] ^= 1
+	out := bytes.Repeat([]byte{9}, 2*blockformat.BlockSize)
 	if e := d.ReadAt(out, 0); e == nil || !bytes.Equal(out, bytes.Repeat([]byte{9}, len(out))) {
 		t.Fatal("partial data escaped")
 	}
-	if e := d.WriteAt(bytes.Repeat([]byte{3}, 2*BlockSize), 0); e == nil || len(d.dirty) != 0 {
+	if e := d.WriteAt(bytes.Repeat([]byte{3}, 2*blockformat.BlockSize), 0); e == nil || len(d.dirty) != 0 {
 		t.Fatal("partial write committed")
 	}
 	s.objects[seg.Digest] = old
@@ -196,7 +196,7 @@ func TestFailedReadsAndWritesAreAtomic(t *testing.T) {
 func TestMetadataValidationAndChildren(t *testing.T) {
 	c, s := fixture(t)
 	d := mustDisk(t, c, s, 32<<30, 256)
-	d.WriteAt(bytes.Repeat([]byte{4}, BlockSize), 0)
+	d.WriteAt(bytes.Repeat([]byte{4}, blockformat.BlockSize), 0)
 	r := mustCapture(t, d)
 	seen := map[blockformat.Ref]bool{}
 	var visit func(blockformat.Ref)
@@ -205,7 +205,7 @@ func TestMetadataValidationAndChildren(t *testing.T) {
 			return
 		}
 		seen[ref] = true
-		if ref.Kind == segmentKind {
+		if ref.Kind == blockformat.SegmentKind {
 			return
 		}
 		children, e := c.Children(s, ref)
@@ -225,7 +225,7 @@ func TestMetadataValidationAndChildren(t *testing.T) {
 	var n node
 	json.Unmarshal(raw, &n)
 	n.Level = 99
-	bad, e := d.save(nodeKind, n)
+	bad, e := d.save(blockformat.NodeKind, n)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -246,13 +246,13 @@ func TestMetadataValidationAndChildren(t *testing.T) {
 func TestZeroRemovesOldMapping(t *testing.T) {
 	c, s := fixture(t)
 	d := mustDisk(t, c, s, 1<<20, 64)
-	d.WriteAt(bytes.Repeat([]byte{2}, BlockSize), 0)
+	d.WriteAt(bytes.Repeat([]byte{2}, blockformat.BlockSize), 0)
 	old := mustCapture(t, d)
-	d.WriteAt(make([]byte, BlockSize), 0)
+	d.WriteAt(make([]byte, blockformat.BlockSize), 0)
 	now := mustCapture(t, d)
 	clone, _ := Open(c, s, now)
-	got := make([]byte, BlockSize)
-	if e := clone.ReadAt(got, 0); e != nil || !bytes.Equal(got, make([]byte, BlockSize)) {
+	got := make([]byte, blockformat.BlockSize)
+	if e := clone.ReadAt(got, 0); e != nil || !bytes.Equal(got, make([]byte, blockformat.BlockSize)) {
 		t.Fatal(e)
 	}
 	prior, _ := Open(c, s, old)
@@ -263,7 +263,7 @@ func TestZeroRemovesOldMapping(t *testing.T) {
 }
 func TestCiphertextIdentity(t *testing.T) {
 	c, s := fixture(t)
-	r, b, e := c.seal(rootKind, [][]byte{[]byte("metadata")})
+	r, b, e := c.seal(blockformat.RootKind, [][]byte{[]byte("metadata")})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -278,14 +278,14 @@ func TestMalformedNodeNeverBecomesZero(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			c, s := fixture(t)
 			d := mustDisk(t, c, s, 1<<20, 64)
-			ref, b, e := c.seal(nodeKind, [][]byte{[]byte(body)})
+			ref, b, e := c.seal(blockformat.NodeKind, [][]byte{[]byte(body)})
 			if e != nil {
 				t.Fatal(e)
 			}
 			s.put(ref, b)
 			d.shape.Index = &ref
-			got := bytes.Repeat([]byte{5}, BlockSize)
-			if e = d.ReadAt(got, 0); e == nil || !bytes.Equal(got, bytes.Repeat([]byte{5}, BlockSize)) {
+			got := bytes.Repeat([]byte{5}, blockformat.BlockSize)
+			if e = d.ReadAt(got, 0); e == nil || !bytes.Equal(got, bytes.Repeat([]byte{5}, blockformat.BlockSize)) {
 				t.Fatal("malformed node yielded data", e)
 			}
 			if _, e = c.Children(s, ref); e == nil {

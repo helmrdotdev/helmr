@@ -33,11 +33,11 @@ func TestDirectGenerations(t *testing.T) {
 						if i%5 == 0 {
 							v = 0
 						}
-						changes[b] = bytes.Repeat([]byte{v}, BlockSize)
+						changes[b] = bytes.Repeat([]byte{v}, blockformat.BlockSize)
 						want[b] = v
 					}
 					for b, v := range changes {
-						if err = oracle.WriteAt(v, int64(b)*BlockSize); err != nil {
+						if err = oracle.WriteAt(v, int64(b)*blockformat.BlockSize); err != nil {
 							t.Fatal(err)
 						}
 					}
@@ -50,11 +50,11 @@ func TestDirectGenerations(t *testing.T) {
 					for b, v := range want {
 						state[b] = v
 						got, e := ReadPacked(c, data, packs, r, b)
-						expected := make([]byte, BlockSize)
+						expected := make([]byte, blockformat.BlockSize)
 						if e != nil {
 							t.Fatal(e)
 						}
-						if e = oracle.ReadAt(expected, int64(b)*BlockSize); e != nil || !bytes.Equal(got, expected) {
+						if e = oracle.ReadAt(expected, int64(b)*blockformat.BlockSize); e != nil || !bytes.Equal(got, expected) {
 							t.Fatal("oracle mismatch", e)
 						}
 					}
@@ -65,13 +65,13 @@ func TestDirectGenerations(t *testing.T) {
 				for i, r := range roots {
 					for b, v := range states[i] {
 						got, e := ReadPacked(c, ds, ps, r, b)
-						if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{v}, BlockSize)) {
+						if e != nil || !bytes.Equal(got, bytes.Repeat([]byte{v}, blockformat.BlockSize)) {
 							t.Fatal("historical mismatch", e)
 						}
 					}
 				}
 				// A branch from an old generation leaves the newest generation untouched.
-				branch, e := CapturePacked(c, data, packs, roots[0], map[uint64][]byte{0: bytes.Repeat([]byte{99}, BlockSize)}, 1<<20, internal)
+				branch, e := CapturePacked(c, data, packs, roots[0], map[uint64][]byte{0: bytes.Repeat([]byte{99}, blockformat.BlockSize)}, 1<<20, internal)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -93,7 +93,7 @@ func TestDirectGenerations(t *testing.T) {
 				}
 				// Failure while encoding must leave the prior root readable.
 				c.entropy = bytes.NewReader(nil)
-				failed, e := CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{1}, BlockSize)}, 1<<20, internal)
+				failed, e := CapturePacked(c, data, packs, r, map[uint64][]byte{0: bytes.Repeat([]byte{1}, blockformat.BlockSize)}, 1<<20, internal)
 				if e == nil || failed != (blockformat.Locator{}) {
 					t.Fatal("failed capture returned root")
 				}
@@ -118,7 +118,7 @@ func TestDirectMeasurement(t *testing.T) {
 			changes := map[uint64][]byte{}
 			rng := rand.New(rand.NewSource(51))
 			for len(changes) < 1024 {
-				changes[uint64(rng.Int63n((32<<30)/BlockSize))] = bytes.Repeat([]byte{1}, BlockSize)
+				changes[uint64(rng.Int63n((32<<30)/blockformat.BlockSize))] = bytes.Repeat([]byte{1}, blockformat.BlockSize)
 			}
 			dm, pm := data.Metrics, packs.Metrics
 			r, e := CapturePacked(c, data, packs, base, changes, 1<<20, internal)
@@ -132,7 +132,7 @@ func TestDirectMeasurement(t *testing.T) {
 			cc.entropy = rand.New(rand.NewSource(19))
 			d := mustDisk(t, cc, source, 32<<30, 256)
 			for b, v := range changes {
-				if e = d.WriteAt(v, int64(b)*BlockSize); e != nil {
+				if e = d.WriteAt(v, int64(b)*blockformat.BlockSize); e != nil {
 					t.Fatal(e)
 				}
 			}
@@ -154,7 +154,7 @@ func TestDirectMeasurement(t *testing.T) {
 			}
 			{
 				b := selected
-				r, e = CapturePacked(c, data, packs, r, map[uint64][]byte{b: make([]byte, BlockSize)}, 1<<20, internal)
+				r, e = CapturePacked(c, data, packs, r, map[uint64][]byte{b: make([]byte, blockformat.BlockSize)}, 1<<20, internal)
 				if e != nil {
 					t.Fatal(e)
 				}
@@ -204,11 +204,11 @@ func TestCompactLocator(t *testing.T) {
 func TestDirectFailureAndCompleteZero(t *testing.T) {
 	c, data := fixture(t)
 	packs := NewStore()
-	base, err := NewPacked(c, packs, 64*BlockSize, 64, 64<<10)
+	base, err := NewPacked(c, packs, 64*blockformat.BlockSize, 64, 64<<10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	change := map[uint64][]byte{0: bytes.Repeat([]byte{7}, BlockSize)}
+	change := map[uint64][]byte{0: bytes.Repeat([]byte{7}, blockformat.BlockSize)}
 	old, err := CapturePacked(c, data, packs, base, change, 64<<10, true)
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestDirectFailureAndCompleteZero(t *testing.T) {
 		tooMany[uint64(i)] = nil
 	}
 	beforeD, beforeP := data.Metrics.Bytes, packs.Metrics.Bytes
-	for _, invalid := range []map[uint64][]byte{tooMany, {64: make([]byte, BlockSize)}} {
+	for _, invalid := range []map[uint64][]byte{tooMany, {64: make([]byte, blockformat.BlockSize)}} {
 		r, e := CapturePacked(c, data, packs, old, invalid, 64<<10, true)
 		if e == nil || r != (blockformat.Locator{}) {
 			t.Fatal("invalid input accepted")
@@ -238,7 +238,7 @@ func TestDirectFailureAndCompleteZero(t *testing.T) {
 		t.Fatal("old root after late failure", err)
 	}
 	c.entropy = rand.New(rand.NewSource(91))
-	empty, err := CapturePacked(c, data, packs, old, map[uint64][]byte{0: make([]byte, BlockSize)}, 64<<10, true)
+	empty, err := CapturePacked(c, data, packs, old, map[uint64][]byte{0: make([]byte, blockformat.BlockSize)}, 64<<10, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestDirectFailureAndCompleteZero(t *testing.T) {
 		t.Fatal("zero tree retains data")
 	}
 	got, err = ReadPacked(c, ds, ps, empty, 0)
-	if err != nil || !bytes.Equal(got, make([]byte, BlockSize)) {
+	if err != nil || !bytes.Equal(got, make([]byte, blockformat.BlockSize)) {
 		t.Fatal(err)
 	}
 }

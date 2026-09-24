@@ -74,7 +74,7 @@ func Inspect(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects,
 		o := InspectedObject{Digest: p.Digest, Size: p.Size, Kind: "index", Rank: p.Rank}
 		for _, page := range dir.Pages {
 			o.Keys = append(o.Keys, page.Key)
-			if page.Kind == rootKind {
+			if page.Kind == blockformat.RootKind {
 				o.Kind = "root"
 			}
 		}

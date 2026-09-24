@@ -50,15 +50,15 @@ type Disk struct {
 }
 
 func New(c *Codec, s *Store, capacity int64, fanout int) (*Disk, error) {
-	if capacity <= 0 || capacity%BlockSize != 0 || capacity/BlockSize > maxBlocks || (fanout != 64 && fanout != 256) {
+	if capacity <= 0 || capacity%blockformat.BlockSize != 0 || capacity/blockformat.BlockSize > maxBlocks || (fanout != 64 && fanout != 256) {
 		return nil, errors.New("unsupported geometry")
 	}
 	level := 0
-	for span := uint64(fanout); span < uint64(capacity/BlockSize); span *= uint64(fanout) {
+	for span := uint64(fanout); span < uint64(capacity/blockformat.BlockSize); span *= uint64(fanout) {
 		level++
 	}
 	d := &Disk{codec: c, store: s, shape: root{Capacity: capacity, Fanout: fanout, Level: level}, dirty: make(map[uint64][]byte)}
-	r, err := d.save(rootKind, d.shape)
+	r, err := d.save(blockformat.RootKind, d.shape)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +78,7 @@ func decode(p []byte, out any) error {
 }
 func loadRoot(c *Codec, s *Store, r blockformat.Ref) (root, error) {
 	var out root
-	if r.Kind != rootKind {
+	if r.Kind != blockformat.RootKind {
 		return out, errors.New("root required")
 	}
 	b, err := c.metadata(s, r)
@@ -88,14 +88,14 @@ func loadRoot(c *Codec, s *Store, r blockformat.Ref) (root, error) {
 	if err = decode(b, &out); err != nil {
 		return out, err
 	}
-	if out.Capacity <= 0 || out.Capacity%BlockSize != 0 || out.Capacity/BlockSize > maxBlocks || (out.Fanout != 64 && out.Fanout != 256) {
+	if out.Capacity <= 0 || out.Capacity%blockformat.BlockSize != 0 || out.Capacity/blockformat.BlockSize > maxBlocks || (out.Fanout != 64 && out.Fanout != 256) {
 		return out, errors.New("root geometry")
 	}
 	level := 0
-	for span := int64(out.Fanout); span < out.Capacity/BlockSize; span *= int64(out.Fanout) {
+	for span := int64(out.Fanout); span < out.Capacity/blockformat.BlockSize; span *= int64(out.Fanout) {
 		level++
 	}
-	if out.Level != level || (out.Index != nil && out.Index.Kind != nodeKind) {
+	if out.Level != level || (out.Index != nil && out.Index.Kind != blockformat.NodeKind) {
 		return out, errors.New("root index")
 	}
 	return out, nil
@@ -130,7 +130,7 @@ func (d *Disk) load(r *blockformat.Ref, level int, start uint64) (node, error) {
 	if r == nil {
 		return n, nil
 	}
-	if r.Kind != nodeKind {
+	if r.Kind != blockformat.NodeKind {
 		return n, errors.New("index required")
 	}
 	b, err := d.codec.metadata(d.store, *r)
@@ -151,12 +151,12 @@ func (d *Disk) validateNode(n node, level int, start uint64) (node, error) {
 	seen := make(map[blockformat.Ref]bool)
 	last := -1
 	for _, e := range n.Entries {
-		if e.Slot <= last || e.Slot >= d.shape.Fanout || start+uint64(e.Slot)*d.stride(level) >= uint64(d.shape.Capacity/BlockSize) {
+		if e.Slot <= last || e.Slot >= d.shape.Fanout || start+uint64(e.Slot)*d.stride(level) >= uint64(d.shape.Capacity/blockformat.BlockSize) {
 			return n, errors.New("invalid slot")
 		}
 		last = e.Slot
 		if level > 0 {
-			if e.Child == nil || e.Child.Kind != nodeKind || e.Segment != 0 || e.Record != 0 {
+			if e.Child == nil || e.Child.Kind != blockformat.NodeKind || e.Segment != 0 || e.Record != 0 {
 				return n, errors.New("invalid child")
 			}
 		} else {
@@ -164,7 +164,7 @@ func (d *Disk) validateNode(n node, level int, start uint64) (node, error) {
 				return n, errors.New("invalid segment index")
 			}
 			ref := n.Segments[e.Segment]
-			if ref.Kind != segmentKind || e.Record >= ref.Count {
+			if ref.Kind != blockformat.SegmentKind || e.Record >= ref.Count {
 				return n, errors.New("invalid record")
 			}
 			used[e.Segment] = true
@@ -195,7 +195,7 @@ func (d *Disk) readBlock(block uint64) ([]byte, error) {
 		slot := int((block - start) / d.stride(level))
 		i := sort.Search(len(n.Entries), func(i int) bool { return n.Entries[i].Slot >= slot })
 		if i == len(n.Entries) || n.Entries[i].Slot != slot {
-			return make([]byte, BlockSize), nil
+			return make([]byte, blockformat.BlockSize), nil
 		}
 		e := n.Entries[i]
 		if level == 0 {
@@ -214,11 +214,11 @@ func (d *Disk) ReadAt(p []byte, off int64) error {
 	out := make([]byte, len(p))
 	for pos := 0; pos < len(p); {
 		at := off + int64(pos)
-		b, err := d.readBlock(uint64(at / BlockSize))
+		b, err := d.readBlock(uint64(at / blockformat.BlockSize))
 		if err != nil {
 			return err
 		}
-		n := copy(out[pos:], b[at%BlockSize:])
+		n := copy(out[pos:], b[at%blockformat.BlockSize:])
 		pos += n
 	}
 	copy(p, out)
@@ -232,7 +232,7 @@ func (d *Disk) WriteAt(p []byte, off int64) error {
 	newCount := 0
 	for pos := 0; pos < len(p); {
 		at := off + int64(pos)
-		block := uint64(at / BlockSize)
+		block := uint64(at / blockformat.BlockSize)
 		if _, ok := d.dirty[block]; !ok {
 			newCount++
 		}
@@ -243,7 +243,7 @@ func (d *Disk) WriteAt(p []byte, off int64) error {
 		if err != nil {
 			return err
 		}
-		n := copy(b[at%BlockSize:], p[pos:])
+		n := copy(b[at%blockformat.BlockSize:], p[pos:])
 		next[block] = b
 		pos += n
 	}
@@ -325,7 +325,7 @@ func (d *Disk) update(old *blockformat.Ref, level int, start uint64, changes map
 	if len(n.Entries) == 0 {
 		return nil, nil
 	}
-	r, err := d.save(nodeKind, n)
+	r, err := d.save(blockformat.NodeKind, n)
 	return &r, err
 }
 
@@ -346,7 +346,7 @@ func (d *Disk) Capture() (blockformat.Ref, error) {
 		if len(records) == 0 {
 			return nil
 		}
-		r, b, err := d.codec.seal(segmentKind, records)
+		r, b, err := d.codec.seal(blockformat.SegmentKind, records)
 		if err != nil {
 			return err
 		}
@@ -362,13 +362,13 @@ func (d *Disk) Capture() (blockformat.Ref, error) {
 	}
 	for _, block := range blocks {
 		p := d.dirty[block]
-		if bytes.Equal(p, make([]byte, BlockSize)) {
+		if bytes.Equal(p, make([]byte, blockformat.BlockSize)) {
 			changes[block] = nil
 			continue
 		}
 		records = append(records, p)
 		pending = append(pending, block)
-		if len(records) == maxRecords {
+		if len(records) == blockformat.MaxRecords {
 			if err := flush(); err != nil {
 				return blockformat.Ref{}, err
 			}
@@ -383,7 +383,7 @@ func (d *Disk) Capture() (blockformat.Ref, error) {
 	}
 	shape := d.shape
 	shape.Index = index
-	r, err := d.save(rootKind, shape)
+	r, err := d.save(blockformat.RootKind, shape)
 	if err != nil {
 		return blockformat.Ref{}, err
 	}
@@ -397,7 +397,7 @@ func (d *Disk) Capture() (blockformat.Ref, error) {
 // Geometry is checked against an expected root/node by the index reader as well.
 func (c *Codec) Children(s *Store, r blockformat.Ref) ([]blockformat.Ref, error) {
 	var refs []blockformat.Ref
-	if r.Kind == rootKind {
+	if r.Kind == blockformat.RootKind {
 		shape, err := loadRoot(c, s, r)
 		if err != nil {
 			return nil, err
@@ -405,7 +405,7 @@ func (c *Codec) Children(s *Store, r blockformat.Ref) ([]blockformat.Ref, error)
 		if shape.Index != nil {
 			refs = append(refs, *shape.Index)
 		}
-	} else if r.Kind == nodeKind {
+	} else if r.Kind == blockformat.NodeKind {
 		p, err := c.metadata(s, r)
 		if err != nil {
 			return nil, err
@@ -414,14 +414,14 @@ func (c *Codec) Children(s *Store, r blockformat.Ref) ([]blockformat.Ref, error)
 		if err = decode(p, &n); err != nil {
 			return nil, err
 		}
-		if n.Capacity <= 0 || n.Capacity%BlockSize != 0 || n.Capacity/BlockSize > maxBlocks || (n.Fanout != 64 && n.Fanout != 256) || n.Level < 0 || n.Level > 4 {
+		if n.Capacity <= 0 || n.Capacity%blockformat.BlockSize != 0 || n.Capacity/blockformat.BlockSize > maxBlocks || (n.Fanout != 64 && n.Fanout != 256) || n.Level < 0 || n.Level > 4 {
 			return nil, errors.New("node geometry")
 		}
 		maxLevel := 0
-		for span := int64(n.Fanout); span < n.Capacity/BlockSize; span *= int64(n.Fanout) {
+		for span := int64(n.Fanout); span < n.Capacity/blockformat.BlockSize; span *= int64(n.Fanout) {
 			maxLevel++
 		}
-		if n.Level > maxLevel || n.Start >= uint64(n.Capacity/BlockSize) {
+		if n.Level > maxLevel || n.Start >= uint64(n.Capacity/blockformat.BlockSize) {
 			return nil, errors.New("node rank")
 		}
 		d := &Disk{codec: c, store: s, shape: root{Capacity: n.Capacity, Fanout: n.Fanout}}
@@ -440,7 +440,7 @@ func (c *Codec) Children(s *Store, r blockformat.Ref) ([]blockformat.Ref, error)
 	seen := make(map[blockformat.Ref]bool)
 	out := make([]blockformat.Ref, 0, len(refs))
 	for _, ref := range refs {
-		if _, err := c.header(ref); err != nil {
+		if _, err := blockformat.Header(c.Scope, ref); err != nil {
 			return nil, err
 		}
 		if !seen[ref] {
@@ -458,7 +458,7 @@ func Import(c *Codec, s *Store, capacity int64, fanout int, source io.Reader) (b
 	if err != nil {
 		return blockformat.Ref{}, err
 	}
-	batch := make([]byte, maxRecords*BlockSize)
+	batch := make([]byte, blockformat.MaxRecords*blockformat.BlockSize)
 	for off := int64(0); off < capacity; {
 		n := min(int64(len(batch)), capacity-off)
 		if _, err = io.ReadFull(source, batch[:n]); err != nil {
