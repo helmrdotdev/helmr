@@ -844,6 +844,8 @@ CREATE TABLE workspaces (
     ownership_generation BIGINT NOT NULL DEFAULT 0 CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL DEFAULT 0 CHECK (writer_generation >= 0),
     head_version_id UUID,
+    write_key_id UUID,
+    write_key_available BOOLEAN GENERATED ALWAYS AS (true) STORED,
     status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'deleting', 'recovery_required', 'deleted')),
     desired_state TEXT NOT NULL DEFAULT 'active'
@@ -1779,6 +1781,29 @@ CREATE INDEX workspace_leases_expiry_idx
 CREATE INDEX workspace_leases_worker_replay_idx
     ON workspace_leases (worker_instance_id, worker_epoch, status, id)
     WHERE status IN ('active', 'releasing');
+
+-- Data-key identity survives retirement; wrapped material does not. This table
+-- never stores a plaintext data key or the wrapping provider's credentials.
+CREATE TABLE computer_keys (
+    id UUID PRIMARY KEY,
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    wrapping_key_id TEXT NOT NULL CHECK (octet_length(wrapping_key_id) BETWEEN 1 AND 2048),
+    wrapped_key BYTEA,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    retired_at TIMESTAMPTZ,
+    available BOOLEAN GENERATED ALWAYS AS (retired_at IS NULL) STORED,
+    CONSTRAINT computer_keys_material_check CHECK (
+        (retired_at IS NULL AND wrapped_key IS NOT NULL AND octet_length(wrapped_key) BETWEEN 1 AND 6144)
+        OR (retired_at IS NOT NULL AND wrapped_key IS NULL)
+    ),
+    UNIQUE (environment_id, computer_id, id),
+    UNIQUE (environment_id, computer_id, id, available),
+    FOREIGN KEY (environment_id, computer_id) REFERENCES workspaces(environment_id, id) ON DELETE RESTRICT
+);
+ALTER TABLE workspaces ADD CONSTRAINT workspaces_write_key_fkey
+    FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
+    REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
 
 CREATE TABLE workspace_versions (
     id UUID PRIMARY KEY,
@@ -2846,6 +2871,10 @@ CREATE TABLE runtime_instances (
     reserved_attempt_number INTEGER CHECK (reserved_attempt_number IS NULL OR reserved_attempt_number > 0),
     reserved_process_id UUID,
     reserved_workspace_version_id UUID,
+    computer_write_key_id UUID,
+    retained_computer_write_key_id UUID GENERATED ALWAYS AS
+        (CASE WHEN reclaimed_at IS NULL THEN computer_write_key_id END) STORED,
+    computer_key_available BOOLEAN GENERATED ALWAYS AS (true) STORED,
     preparation_expires_at TIMESTAMPTZ NOT NULL,
     reservation_expires_at TIMESTAMPTZ,
     desired_state TEXT NOT NULL DEFAULT 'ready'
@@ -2866,6 +2895,10 @@ CREATE TABLE runtime_instances (
     terminal_reason_code TEXT,
     terminal_error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT runtime_instances_computer_write_key_fkey FOREIGN KEY (environment_id, workspace_id, computer_write_key_id)
+        REFERENCES computer_keys(environment_id, computer_id, id) ON DELETE RESTRICT,
+    CONSTRAINT runtime_instances_retained_computer_key_fkey FOREIGN KEY (environment_id, workspace_id, retained_computer_write_key_id, computer_key_available)
+        REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_computer_identity_key UNIQUE (environment_id, workspace_id, id),
     CONSTRAINT runtime_instances_placement_identity_key UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id),
     FOREIGN KEY (org_id, project_id, environment_id)

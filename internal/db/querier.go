@@ -127,6 +127,7 @@ type Querier interface {
 	CreateAttemptSecretResolutions(ctx context.Context, arg CreateAttemptSecretResolutionsParams) (int64, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
+	CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerKey, error)
 	CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error)
@@ -229,6 +230,9 @@ type Querier interface {
 	GetDeviceCodeForPoll(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	GetEnvironment(ctx context.Context, arg GetEnvironmentParams) (Environment, error)
 	GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyClaimParams) (IdempotencyClaim, error)
+	// The owning operation holds Computer and Runtime authority. No caller-provided
+	// key selection is accepted. Provider I/O happens only after committing these pins.
+	GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerKey, error)
 	GetLiveRunLeaseLocators(ctx context.Context, arg GetLiveRunLeaseLocatorsParams) (GetLiveRunLeaseLocatorsRow, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingActorInputRunWait(ctx context.Context, arg GetPendingActorInputRunWaitParams) (RunWait, error)
@@ -311,6 +315,7 @@ type Querier interface {
 	GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspaceSecretCAPublicParams) (GetWorkspaceSecretCAPublicRow, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
 	HoldSessionExecution(ctx context.Context, arg HoldSessionExecutionParams) (Session, error)
+	InitializeComputerWriteKey(ctx context.Context, arg InitializeComputerWriteKeyParams) (int64, error)
 	// Creation-only: caller owns the insert transaction and uses inserted created_at.
 	// No preparation or later lifecycle operation may initialize or replace a CA.
 	InitializeWorkspaceSecretCA(ctx context.Context, arg InitializeWorkspaceSecretCAParams) (int64, error)
@@ -485,6 +490,7 @@ type Querier interface {
 	MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDeletingParams) (MarkWorkspaceDeletingRow, error)
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (MarkWorkspaceExecRecoveryRequiredRow, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
+	PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)

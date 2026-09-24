@@ -30,6 +30,8 @@ ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_runtime_instance_id_
 DROP TABLE IF EXISTS runtime_instances;
 DROP TABLE IF EXISTS workspace_mounts;
 DROP TABLE IF EXISTS workspace_secrets;
+ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_write_key_fkey;
+DROP TABLE IF EXISTS computer_keys;
 DROP TABLE IF EXISTS workspaces CASCADE;
 DROP TABLE IF EXISTS auth_sessions;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_run_lease_id_fkey;

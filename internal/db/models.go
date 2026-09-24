@@ -327,6 +327,17 @@ type ComputerInitialization struct {
 	AvailabilityRequired  pgtype.Bool        `json:"availability_required"`
 }
 
+type ComputerKey struct {
+	ID            pgtype.UUID        `json:"id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	ComputerID    pgtype.UUID        `json:"computer_id"`
+	WrappingKeyID string             `json:"wrapping_key_id"`
+	WrappedKey    []byte             `json:"wrapped_key"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RetiredAt     pgtype.Timestamptz `json:"retired_at"`
+	Available     pgtype.Bool        `json:"available"`
+}
+
 type ControlOutbox struct {
 	ID             pgtype.UUID        `json:"id"`
 	Topic          string             `json:"topic"`
@@ -755,6 +766,9 @@ type RuntimeInstance struct {
 	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
+	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
+	ComputerKeyAvailable            pgtype.Bool        `json:"computer_key_available"`
 	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
 	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
 	DesiredState                    string             `json:"desired_state"`
@@ -1137,6 +1151,8 @@ type Workspace struct {
 	OwnershipGeneration          int64              `json:"ownership_generation"`
 	WriterGeneration             int64              `json:"writer_generation"`
 	HeadVersionID                pgtype.UUID        `json:"head_version_id"`
+	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
+	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
 	Status                       string             `json:"status"`
 	DesiredState                 string             `json:"desired_state"`
 	DirtyState                   string             `json:"dirty_state"`

@@ -368,7 +368,8 @@ func assertNoBusinessDatabaseLogic(
 	}
 
 	// Generated columns project physical byte accounting and FK availability
-	// keys. Lifecycle transitions and metadata admission remain owned by Go.
+	// keys and conditional retention references. Lifecycle transitions and metadata
+	// admission remain owned by Go.
 	var generatedColumns []string
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(array_agg(c.relname || '.' || a.attname || ':' || a.attgenerated::text ORDER BY c.relname, a.attname), ARRAY[]::text[])
@@ -379,7 +380,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_initializations.availability_required:s,run_checkpoint_objects.availability_required:s,telemetry_outbox.ingest_size_bytes:s" {
+	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_initializations.availability_required:s,computer_keys.available:s,run_checkpoint_objects.availability_required:s,run_finalization_objects.availability_required:s,runtime_instances.computer_key_available:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s,workspaces.write_key_available:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
