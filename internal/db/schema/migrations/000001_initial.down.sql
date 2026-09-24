@@ -1,7 +1,6 @@
 DROP TABLE IF EXISTS runtime_computer_object_pins;
 DROP TABLE IF EXISTS run_finalization_objects;
 DROP TABLE IF EXISTS run_checkpoint_objects;
-DROP TABLE IF EXISTS computer_initializations;
 ALTER TABLE run_checkpoints DROP CONSTRAINT IF EXISTS run_checkpoints_run_wait_id_fkey;
 DROP TABLE IF EXISTS run_waits;
 DROP TABLE IF EXISTS session_events CASCADE;

@@ -5,8 +5,7 @@
 SELECT lifetime.digest
   FROM cas_object_lifetimes lifetime
  WHERE lifetime.retired_at IS NULL
-   AND (EXISTS (SELECT 1 FROM computer_initializations i WHERE i.digest=lifetime.digest AND i.status='abandoned')
-        OR EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=lifetime.digest AND c.checkpoint_status IN ('invalid','deleted')))
+   AND EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=lifetime.digest AND c.checkpoint_status IN ('invalid','deleted'))
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.digest=lifetime.digest)
  ORDER BY lifetime.digest
  LIMIT sqlc.arg(row_limit);
@@ -18,8 +17,7 @@ UPDATE cas_object_lifetimes lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.digest=sqlc.arg(digest)
    AND lifetime.retired_at IS NULL
-   AND (EXISTS (SELECT 1 FROM computer_initializations i WHERE i.digest=lifetime.digest AND i.status='abandoned')
-        OR EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=lifetime.digest AND c.checkpoint_status IN ('invalid','deleted')));
+   AND EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=lifetime.digest AND c.checkpoint_status IN ('invalid','deleted'));
 
 -- Claim only scheduling responsibility, not permission to adopt the digest.
 -- A crashed sweeper becomes eligible again; repeated deletion is idempotent.

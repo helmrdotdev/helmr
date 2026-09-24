@@ -11,12 +11,6 @@ import (
 )
 
 type Querier interface {
-	AbandonComputerInitialization(ctx context.Context, arg AbandonComputerInitializationParams) (ComputerInitialization, error)
-	// Revocation only: take Runtime before candidate locks, matching publication.
-	// A lost preparation cannot become usable again under its original fence. Keep
-	// the abandoned row: neither VM termination nor this transition excludes a late
-	// host upload, and neither authorizes deleting an object from shared storage.
-	AbandonRevokedComputerInitializations(ctx context.Context, rowLimit int32) (int64, error)
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionTurn, error)
 	ActivateWorkerInstance(ctx context.Context, arg ActivateWorkerInstanceParams) (WorkerInstance, error)
@@ -222,7 +216,6 @@ type Querier interface {
 	GetCheckpointFailedReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointFailedReplayRow, error)
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
-	GetComputerInitialization(ctx context.Context, arg GetComputerInitializationParams) (ComputerInitialization, error)
 	GetComputerVersionAuthority(ctx context.Context, arg GetComputerVersionAuthorityParams) (GetComputerVersionAuthorityRow, error)
 	GetComputerVersionRoot(ctx context.Context, arg GetComputerVersionRootParams) ([]byte, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
@@ -303,9 +296,6 @@ type Querier interface {
 	// read-only replay before lineage locks.
 	GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error)
 	GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error)
-	// Historical receipt access is scoped to the original authenticated Worker and
-	// recorded preparation fence. Current readiness/head/desired state is irrelevant.
-	GetWorkerComputerInitialization(ctx context.Context, arg GetWorkerComputerInitializationParams) (ComputerInitialization, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
 	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetWorkerGroupStatus(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStatusRow, error)
@@ -519,11 +509,6 @@ type Querier interface {
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
-	// The caller owns current preparation authority and has verified the object.
-	// Root publication, Computer configuration and candidate consumption are one
-	// statement: none can be committed alone. Historical receipt retrieval uses GetComputerInitialization;
-	// this mutation never reopens a consumed candidate or grants further execution.
-	PublishComputerInitialization(ctx context.Context, arg PublishComputerInitializationParams) (ComputerInitialization, error)
 	// The owner validates the exact certified root page and holds the preparation
 	// locks. Publication records success once; pending uploads remain Runtime pins.
 	PublishInitialComputerVersion(ctx context.Context, arg PublishInitialComputerVersionParams) (PublishInitialComputerVersionRow, error)
@@ -551,17 +536,6 @@ type Querier interface {
 	// Registration never observes remote existence or grants guest execution. The
 	// entire four-object set must succeed or roll back; exact replays preserve candidate identity.
 	RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error)
-	// These are transaction primitives. The publication owner must lock and validate
-	// current preparation authority before registration and publication. Publication
-	// commits the root and Computer-owned boot configuration and consumes its candidate
-	// atomically. A receipt is not an execution or upload grant. No remote deletion is authorized by these queries.
-	// A registration conflict (no row) is resolved with GetComputerInitialization:
-	// mismatched, consumed and abandoned candidates must not be registered anew.
-	// A digest already owned by another runtime raises a unique violation; replacement
-	// runtimes produce their own candidate rather than transfer cleanup ownership.
-	// A publisher that loses the root transition receives no row. Resolve the
-	// winning receipt separately; never rewrite the committed root or its references.
-	RegisterComputerInitialization(ctx context.Context, arg RegisterComputerInitializationParams) (ComputerInitialization, error)
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error

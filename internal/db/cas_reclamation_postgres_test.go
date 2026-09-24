@@ -26,19 +26,41 @@ func requireFK(t *testing.T, err error) {
 	}
 }
 
+// Use a current checkpoint upload owner to exercise physical CAS retirement.
+// Computer generations use their own immutable object graph and retention pins.
+type checkpointUploadCandidate struct {
+	ID        uuid.UUID
+	Digest    string
+	SizeBytes int64
+	MediaType string
+}
+
+func checkpointUpload(t *testing.T, f runtest.Fixture) checkpointUploadCandidate {
+	t.Helper()
+	work := f.AddRunLease(t, "assigned", time.Now().Add(-time.Minute))
+	p := checkpointUploadCandidate{ID: uuid.NewV7(), Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, MediaType: "application/octet-stream"}
+	waitID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO run_waits(id,environment_id,run_id,workspace_id,kind,due_at,expected_run_revision,attempt_number,current_run_lease_id,resume_attach_id)
+ SELECT $1,environment_id,id,workspace_id,'timer',now()+interval '1 minute',revision,1,$2,$3 FROM runs WHERE id=$4`, waitID, work.LeaseID, uuid.NewV7(), work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id)
+ SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4`, p.ID, work.RunID, waitID, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, p.Digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO run_checkpoint_objects(checkpoint_id,role,digest,size_bytes,media_type,checkpoint_status) VALUES($1,'memory',$2,$3,$4,'creating')`, p.ID, p.Digest, p.SizeBytes, p.MediaType)
+	return p
+}
+func abandonCheckpointUpload(t *testing.T, f runtest.Fixture, p checkpointUploadCandidate) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='checkpoint_failed' WHERE id=$1`, p.ID)
+}
+
 func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
 	f := runtest.New(t)
 	q := db.New(f.Pool)
-	p := initializationParams(t, f)
-	if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
-		t.Fatal(err)
-	}
+	p := checkpointUpload(t, f)
 	// A direct physical-key mutation cannot bypass a registered upload pin.
 	_, err := f.Pool.Exec(t.Context(), `UPDATE cas_object_lifetimes SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, p.Digest)
 	requireFK(t, err)
-	if _, err := q.AbandonComputerInitialization(t.Context(), initializationAbandon(p)); err != nil {
-		t.Fatal(err)
-	}
+	abandonCheckpointUpload(t, f, p)
 	// Even another organization's observed membership protects the global key.
 	otherOrg := pgvalue.UUID(uuid.NewV7())
 	if _, err := q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: otherOrg, Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType}); err != nil {
@@ -57,7 +79,7 @@ func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
 	_, err = f.Pool.Exec(t.Context(), `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,$4)`, otherOrg, p.Digest, p.SizeBytes, p.MediaType)
 	requireFK(t, err)
 	// Same-owner replay cannot reopen the upload pin after abandonment.
-	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_initializations SET status='registered',abandoned_at=NULL WHERE id=$1`, p.ID)
+	_, err = f.Pool.Exec(t.Context(), `UPDATE run_checkpoints SET status='creating',invalidated_at=NULL,invalidation_reason_code=NULL WHERE id=$1`, p.ID)
 	requireFK(t, err)
 }
 
@@ -69,14 +91,8 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			f := runtest.New(t)
-			q := db.New(f.Pool)
-			p := initializationParams(t, f)
-			if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := q.AbandonComputerInitialization(t.Context(), initializationAbandon(p)); err != nil {
-				t.Fatal(err)
-			}
+			p := checkpointUpload(t, f)
+			abandonCheckpointUpload(t, f, p)
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
 			first, err := f.Pool.Begin(ctx)
@@ -185,13 +201,8 @@ func (s *reclaimProbe) ReclaimVersions(ctx context.Context, digest string) error
 func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 	f := runtest.New(t)
 	q := db.New(f.Pool)
-	p := initializationParams(t, f)
-	if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := q.AbandonComputerInitialization(t.Context(), initializationAbandon(p)); err != nil {
-		t.Fatal(err)
-	}
+	p := checkpointUpload(t, f)
+	abandonCheckpointUpload(t, f, p)
 	store := &reclaimProbe{t: t, q: q, uploads: []string{"upload-1"}, versions: 1, failDelete: true}
 	r, err := artifactgc.New(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -240,13 +251,8 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 func TestCasReclamationFairMultipartProgress(t *testing.T) {
 	f := runtest.New(t)
 	q := db.New(f.Pool)
-	p := initializationParams(t, f)
-	if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := q.AbandonComputerInitialization(t.Context(), initializationAbandon(p)); err != nil {
-		t.Fatal(err)
-	}
+	p := checkpointUpload(t, f)
+	abandonCheckpointUpload(t, f, p)
 	store := &reclaimProbe{t: t, q: q, slowID: "00", attempted: make(map[string]bool), versions: 1}
 	for i := range 25 {
 		store.uploads = append(store.uploads, fmt.Sprintf("%02d", i))

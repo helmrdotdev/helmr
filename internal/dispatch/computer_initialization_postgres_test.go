@@ -11,8 +11,8 @@ import (
 func TestActorInitialPreparationRejectsCancelledRun(t *testing.T) {
 	f := newRunPlacementFixture(t)
 	convertFreshRunToActor(t, f)
-	candidate := registerPreparationCandidate(t, f)
-	fence := ComputerPreparationFence{RuntimeID: candidate.RuntimeInstanceID, WorkerID: pgvalue.UUID(f.workerID), WorkerGroupID: f.groupID, WorkerEpoch: 1, DesiredVersion: 1}
+	runtimeID, _ := prepareInitialGeneration(t, f)
+	fence := ComputerPreparationFence{RuntimeID: runtimeID, WorkerID: pgvalue.UUID(f.workerID), WorkerGroupID: f.groupID, WorkerEpoch: 1, DesiredVersion: 1}
 	tx, err := f.pool.Begin(f.ctx)
 	if err != nil {
 		t.Fatal(err)

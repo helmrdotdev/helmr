@@ -3106,59 +3106,6 @@ ALTER TABLE computer_versions
     FOREIGN KEY (environment_id, workspace_id, publisher_runtime_instance_id)
     REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT;
 
--- Initial disk uploads retain ownership independently of runtime termination.
--- Registration is not evidence that the object exists or that a version is committed.
-CREATE TABLE computer_initializations (
-    id UUID PRIMARY KEY,
-    environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
-    version_id UUID NOT NULL,
-    runtime_instance_id UUID NOT NULL UNIQUE,
-    runtime_desired_version BIGINT NOT NULL CHECK (runtime_desired_version > 0),
-    ownership_generation BIGINT NOT NULL CHECK (ownership_generation >= 0),
-    writer_generation BIGINT NOT NULL CHECK (writer_generation >= 0),
-    digest TEXT NOT NULL UNIQUE CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
-    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
-    logical_bytes BIGINT NOT NULL CHECK (
-        logical_bytes > 0 AND logical_bytes % 4096 = 0
-        AND logical_bytes <= 4611686018426339327
-    ),
-    media_type TEXT NOT NULL CHECK (media_type = 'application/vnd.helmr.computer.disk.v0+filepack+aesgcm'),
-    initial_config JSONB NOT NULL CHECK (jsonb_typeof(initial_config) = 'object'),
-    status TEXT NOT NULL DEFAULT 'registered' CHECK (status IN ('registered', 'consumed', 'abandoned')),
-    artifact_id UUID,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    consumed_at TIMESTAMPTZ,
-    abandoned_at TIMESTAMPTZ,
-    availability_required BOOLEAN GENERATED ALWAYS AS (
-        CASE WHEN status = 'registered' THEN true END
-    ) STORED,
-    FOREIGN KEY (digest) REFERENCES cas_object_lifetimes(digest),
-    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available),
-    FOREIGN KEY (environment_id, computer_id, runtime_instance_id)
-        REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, computer_id, version_id)
-        REFERENCES computer_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, artifact_id)
-        REFERENCES artifacts(environment_id, id) ON DELETE RESTRICT,
-    CONSTRAINT computer_initializations_encoding_bound_check CHECK (
-        size_bytes <= logical_bytes * 2 + 2097152
-    ),
-    CONSTRAINT computer_initializations_lifecycle_check CHECK (
-        (status = 'registered' AND artifact_id IS NULL AND consumed_at IS NULL AND abandoned_at IS NULL)
-        OR (status = 'consumed' AND artifact_id IS NOT NULL AND consumed_at IS NOT NULL AND consumed_at >= created_at AND abandoned_at IS NULL)
-        OR (status = 'abandoned' AND artifact_id IS NULL AND consumed_at IS NULL AND abandoned_at IS NOT NULL AND abandoned_at >= created_at)
-    )
-);
-
-CREATE INDEX computer_initializations_registered_idx
-    ON computer_initializations (created_at, id)
-    WHERE status = 'registered';
-
-CREATE UNIQUE INDEX computer_initializations_consumed_computer_uidx
-    ON computer_initializations (computer_id)
-    WHERE status = 'consumed';
-
 ALTER TABLE run_leases
     ADD CONSTRAINT run_leases_runtime_instance_id_fkey
     FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)

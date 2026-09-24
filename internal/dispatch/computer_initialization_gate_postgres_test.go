@@ -3,7 +3,6 @@ package dispatch
 import (
 	"errors"
 	"testing"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -13,9 +12,9 @@ import (
 
 func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T) {
 	f := newRunPlacementFixture(t)
-	candidate := registerPreparationCandidate(t, f)
+	runtimeID, versionID := prepareInitialGeneration(t, f)
 	// Allocation/admission is already complete; no persistent disk exists yet.
-	params := runPlacementRuntimeReadyParams(t, f, candidate.RuntimeInstanceID)
+	params := runPlacementRuntimeReadyParams(t, f, runtimeID)
 	if _, err := db.New(f.pool).MarkRuntimeInstanceReady(f.ctx, params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("initializing Computer became ready: %v", err)
 	}
@@ -29,21 +28,14 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 		t.Fatalf("initializing Computer passed execution authority: %v", err)
 	}
 
-	// This tests the DB publication boundary, not remote verification or boot.
-	artifactID := pgvalue.UUID(uuid.NewV7())
-	dbtest.MustExec(t, f.ctx, f.pool, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`, f.orgID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
-	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type)
-    VALUES ($1,$2,$3,$4,$5,'workspace_version',$6,$7)`, artifactID, f.orgID, f.projectID, f.environmentID, candidate.Digest, candidate.SizeBytes, candidate.MediaType)
-	if _, err := db.New(f.pool).PublishComputerInitialization(f.ctx, db.PublishComputerInitializationParams{
-		ID: candidate.ID, EnvironmentID: candidate.EnvironmentID, ComputerID: candidate.ComputerID, ArtifactID: artifactID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	// The fixture already has a certified root; commit its version status as
+	// the current generation publisher does. Runtime retention is still required.
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions v SET status='committed',published_at=clock_timestamp(),content_digest=r.root_digest,size_bytes=r.logical_bytes,publisher_runtime_instance_id=$2,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('a1',32),'hex') FROM computer_version_roots r WHERE v.id=$1 AND r.version_id=v.id`, versionID, runtimeID)
 	if _, err := db.New(f.pool).MarkRuntimeInstanceReady(f.ctx, params); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("whole-file publication passed generation gate: %v", err)
+		t.Fatalf("unretained generation passed readiness gate: %v", err)
 	}
 	// The fixture already has a generation root. Pin it as the generation publisher does.
-	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runtime_instances SET computer_source_version_id=reserved_workspace_version_id WHERE id=$1`, candidate.RuntimeInstanceID)
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runtime_instances SET computer_source_version_id=reserved_workspace_version_id WHERE id=$1`, runtimeID)
 	// Publication does not itself start user code; readiness and mount are still required.
 	var leases int
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM run_leases WHERE run_id=$1`, f.runID).Scan(&leases); err != nil || leases != 0 {
@@ -61,7 +53,7 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 	if err != nil || !granted.LeaseCreated {
 		t.Fatalf("grant after publication and readiness: %+v %v", granted, err)
 	}
-	if workspaceHeadVersion(t, f) != candidate.VersionID {
+	if workspaceHeadVersion(t, f) != versionID {
 		t.Fatal("publication replaced initial base identity")
 	}
 }
