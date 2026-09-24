@@ -234,7 +234,7 @@ func validateActorCompletionAuthority(
 		!authority.attempt.SessionInputStartSequence.Valid || !authority.run.SessionInputStartSequence.Valid || !authority.run.SessionInputHighWatermark.Valid {
 		return errStaleActorCompletion
 	}
-	if authority.workspaceLease.BaseWorkspaceVersionID != authority.workspace.HeadVersionID {
+	if authority.workspaceLease.BaseWorkspaceVersionID != authority.attempt.BaseWorkspaceVersionID {
 		base, err := getActorWorkspaceVersion(ctx, store, authority, authority.workspaceLease.BaseWorkspaceVersionID)
 		if err != nil {
 			return staleActorCompletion(err)
@@ -310,7 +310,7 @@ func validateRestoredActorBase(
 
 	validLineage, err := store.ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
-		CheckpointID: checkpoint.ID, CommittedHeadVersionID: authority.workspace.HeadVersionID,
+		CheckpointID:        checkpoint.ID,
 		OwnershipGeneration: authority.workspace.OwnershipGeneration,
 	})
 	if err != nil {

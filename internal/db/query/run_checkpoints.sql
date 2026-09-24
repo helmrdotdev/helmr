@@ -476,11 +476,20 @@ SELECT sqlc.embed(run_leases),
    AND run_leases.workspace_id = sqlc.arg(workspace_id);
 
 -- name: ActorCheckpointLineageIsValid :one
+-- Anchor to the immutable Attempt origin, never the moving saved Computer head.
 -- Existing checkpoint and acknowledged handback receipts prove the private chain.
 -- The source writer strictly decreases on every edge, so cycles cannot qualify.
 -- Historical expiry is irrelevant after an acknowledged restore; callers retain
 -- the latest candidate's expiry and live execution checks under owner locks.
-WITH RECURSIVE proven AS NOT MATERIALIZED (
+WITH RECURSIVE origin AS MATERIALIZED (
+ SELECT a.base_workspace_version_id FROM run_attempts a
+ JOIN computers c ON c.id=a.workspace_id
+ JOIN computer_versions saved ON saved.id=c.head_version_id
+   AND saved.workspace_id=c.id AND saved.environment_id=c.environment_id
+   AND saved.status='committed'
+ WHERE a.run_id=sqlc.arg(run_id)::uuid AND a.number=sqlc.arg(attempt_number)::integer
+ AND a.workspace_id=sqlc.arg(workspace_id)::uuid AND a.entrypoint_kind='actor'
+), proven AS NOT MATERIALIZED (
     SELECT c.id, c.base_workspace_version_id, c.private_workspace_version_id,
            source.writer_generation, runtime.restore_checkpoint_id,
            w.kind, w.child_run_id, w.condition_status, w.suspension_status,
@@ -532,7 +541,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        AND prior.writer_generation < current.writer_generation
        AND prior.suspension_status = 'released'
        AND prior.resume_request_version > 0 AND prior.resume_ack_version = prior.resume_request_version
-     WHERE current.base_workspace_version_id <> sqlc.arg(committed_head_version_id)::uuid
+     WHERE current.base_workspace_version_id <> (SELECT base_workspace_version_id FROM origin)
        AND (
            (prior.resume_workspace_version_id IS NULL
             AND prior.handoff_base_version_id IS NULL
@@ -610,7 +619,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
 )
 SELECT EXISTS (
     SELECT 1 FROM lineage JOIN computer_versions head ON head.id = lineage.base_workspace_version_id
-     WHERE head.id = sqlc.arg(committed_head_version_id)::uuid
+     WHERE head.id = (SELECT base_workspace_version_id FROM origin)
        AND head.workspace_id = sqlc.arg(workspace_id)::uuid AND head.status = 'committed'
 );
 

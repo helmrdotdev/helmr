@@ -314,7 +314,6 @@ func validateTaskCompletionAuthority(
 			return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointParentWait, errStaleTaskCompletion)
 		}
 	} else if !authority.workspace.HeadVersionID.Valid ||
-		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID ||
 		authority.workspace.OwnerRunID != authority.run.ID ||
 		authority.workspace.OwnerSessionID.Valid {
 		return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointWorkspaceOwner, errStaleTaskCompletion)
@@ -410,6 +409,8 @@ func taskCompletionRetryAt(
 	return completedAt.Add(delay), true, nil
 }
 
+// Committed versions advance the saved head. The lease and Attempt keep the
+// execution origin, including a restored private checkpoint, unchanged.
 func recordTaskWorkspaceVersion(
 	ctx context.Context,
 	store taskWorkspaceVersionStore,
@@ -421,7 +422,7 @@ func recordTaskWorkspaceVersion(
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-		ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+		ParentVersionID: authority.workspace.HeadVersionID,
 		ContentDigest:   pgvalue.Text(capture.root.Pack.Digest), SizeBytes: capture.root.LogicalBytes, EntryCount: 0,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
@@ -527,8 +528,8 @@ func scheduleTaskRetry(
 		if _, err := store.AdvanceTaskRetryWorkspaceHead(ctx, db.AdvanceTaskRetryWorkspaceHeadParams{
 			ResultWorkspaceVersionID: versionID, CompletedAt: completedAt,
 			WorkspaceID: authority.workspace.ID, RunID: authority.run.ID,
-			BaseWorkspaceVersionID: authority.run.BaseWorkspaceVersionID,
-			OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
+			ExpectedHeadVersionID: authority.workspace.HeadVersionID,
+			OwnershipGeneration:   authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 		}); err != nil {
 			return staleTaskCompletion(err)
 		}
@@ -599,7 +600,7 @@ func finishTask(
 		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
 		RunID: authority.run.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		WriterGeneration:      authority.workspace.WriterGeneration,
-		ExpectedHeadVersionID: authority.run.BaseWorkspaceVersionID,
+		ExpectedHeadVersionID: authority.workspace.HeadVersionID,
 	}); err != nil {
 		return staleTaskCompletion(err)
 	}

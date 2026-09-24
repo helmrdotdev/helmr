@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-func TestRestoredActorCompletionAdvancesFromPrivateLeaseBase(t *testing.T) {
+func TestRestoredActorCompletionPreservesLeaseBaseAndAdvancesSavedHead(t *testing.T) {
 	fixture := newRestoredActorCompletionPostgresFixture(t, false)
 	completion, err := parseActorCompletionRequest(fixture.request)
 	if err != nil {
@@ -24,7 +24,7 @@ func TestRestoredActorCompletionAdvancesFromPrivateLeaseBase(t *testing.T) {
 	}
 
 	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus string
-	var headVersionID, mountVersionID, publishedParentID uuid.UUID
+	var headVersionID, mountVersionID, publishedParentID, leaseBaseID uuid.UUID
 	var committedInput, terminalInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
 SELECT runs.status,
@@ -33,7 +33,7 @@ SELECT runs.status,
        workspace_leases.status,
        computers.head_version_id,
        workspace_mounts.materialized_version_id,
-       published.parent_version_id,
+       published.parent_version_id, workspace_leases.base_workspace_version_id,
        sessions.committed_input_sequence,
        run_attempts.terminal_session_input_sequence
   FROM runs
@@ -46,7 +46,7 @@ SELECT runs.status,
   JOIN computer_versions AS published ON published.id = computers.head_version_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
 		&runStatus, &leaseStatus, &attemptOutcome, &workspaceLeaseStatus,
-		&headVersionID, &mountVersionID, &publishedParentID,
+		&headVersionID, &mountVersionID, &publishedParentID, &leaseBaseID,
 		&committedInput, &terminalInput,
 	); err != nil {
 		t.Fatal(err)
@@ -56,9 +56,9 @@ SELECT runs.status,
 			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus)
 	}
 	if headVersionID == fixture.headVersionID || headVersionID == fixture.privateVersionID ||
-		mountVersionID != headVersionID || publishedParentID != fixture.privateVersionID {
-		t.Fatalf("Workspace frontier = head:%s mount:%s parent:%s; want new D mounted with parent C:%s",
-			headVersionID, mountVersionID, publishedParentID, fixture.privateVersionID)
+		mountVersionID != headVersionID || publishedParentID != fixture.headVersionID || leaseBaseID != fixture.privateVersionID {
+		t.Fatalf("Workspace frontier = head:%s mount:%s parent:%s; want new D mounted with saved predecessor:%s",
+			headVersionID, mountVersionID, publishedParentID, fixture.headVersionID)
 	}
 	if committedInput != 1 || terminalInput != 1 {
 		t.Fatalf("Actor cursor = committed:%d terminal:%d", committedInput, terminalInput)
@@ -114,7 +114,7 @@ SELECT runs.status,
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT r.root_digest,v.parent_version_id FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
 		t.Fatal(err)
 	}
-	if digest != fixture.request.Workspace.Captured.Disk.Root.Pack.Digest || parent != fixture.privateVersionID {
+	if digest != fixture.request.Workspace.Captured.Disk.Root.Pack.Digest || parent != fixture.headVersionID {
 		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
 	}
 	var countBefore, countAfter int

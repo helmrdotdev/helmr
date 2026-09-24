@@ -12,7 +12,15 @@ import (
 )
 
 const actorCheckpointLineageIsValid = `-- name: ActorCheckpointLineageIsValid :one
-WITH RECURSIVE proven AS NOT MATERIALIZED (
+WITH RECURSIVE origin AS MATERIALIZED (
+ SELECT a.base_workspace_version_id FROM run_attempts a
+ JOIN computers c ON c.id=a.workspace_id
+ JOIN computer_versions saved ON saved.id=c.head_version_id
+   AND saved.workspace_id=c.id AND saved.environment_id=c.environment_id
+   AND saved.status='committed'
+ WHERE a.run_id=$2::uuid AND a.number=$3::integer
+ AND a.workspace_id=$1::uuid AND a.entrypoint_kind='actor'
+), proven AS NOT MATERIALIZED (
     SELECT c.id, c.base_workspace_version_id, c.private_workspace_version_id,
            source.writer_generation, runtime.restore_checkpoint_id,
            w.kind, w.child_run_id, w.condition_status, w.suspension_status,
@@ -34,7 +42,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
       JOIN workspace_leases source ON source.id = c.source_workspace_lease_id
        AND source.id = v.source_workspace_lease_id AND source.workspace_id = c.workspace_id
        AND source.base_workspace_version_id = c.base_workspace_version_id
-       AND source.ownership_generation = $3::bigint
+       AND source.ownership_generation = $4::bigint
        AND v.ownership_generation = source.ownership_generation
        AND v.writer_generation = source.writer_generation
        AND source.status IN ('released', 'fenced') AND source.owner_process_id IS NULL
@@ -45,8 +53,8 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        AND runtime.workspace_id = c.workspace_id AND runtime.runtime_identity_id = lease.runtime_identity_id
        AND runtime.program_deployment_id = r.deployment_id
        AND runtime.reclaimed_at IS NOT NULL AND runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
-     WHERE c.run_id = $4::uuid AND c.attempt_number = $5::integer
-       AND c.workspace_id = $2::uuid AND c.status = 'ready'
+     WHERE c.run_id = $2::uuid AND c.attempt_number = $3::integer
+       AND c.workspace_id = $1::uuid AND c.status = 'ready'
        AND c.actor_speculative_input_sequence IS NOT NULL
        AND (w.turn_id IS NULL OR (
            w.turn_session_id = s.id AND w.turn_run_generation = s.run_generation
@@ -56,7 +64,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        ))
 ), lineage AS (
     SELECT p.id, p.base_workspace_version_id, p.writer_generation, p.restore_checkpoint_id
-      FROM proven p WHERE p.id = $6::uuid
+      FROM proven p WHERE p.id = $5::uuid
     UNION ALL
     SELECT prior.id, prior.base_workspace_version_id, prior.writer_generation, prior.restore_checkpoint_id
       FROM lineage current
@@ -64,7 +72,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        AND prior.writer_generation < current.writer_generation
        AND prior.suspension_status = 'released'
        AND prior.resume_request_version > 0 AND prior.resume_ack_version = prior.resume_request_version
-     WHERE current.base_workspace_version_id <> $1::uuid
+     WHERE current.base_workspace_version_id <> (SELECT base_workspace_version_id FROM origin)
        AND (
            (prior.resume_workspace_version_id IS NULL
             AND prior.handoff_base_version_id IS NULL
@@ -73,14 +81,14 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                prior.kind = 'child'
                AND prior.handoff_base_version_id = prior.private_workspace_version_id
                AND prior.resume_workspace_version_id = current.base_workspace_version_id
-               AND prior.handoff_ownership_generation = $3::bigint
+               AND prior.handoff_ownership_generation = $4::bigint
                AND prior.parent_writer_generation = prior.writer_generation
                AND prior.parent_writer_generation < prior.resume_writer_generation
                AND prior.resume_writer_generation = current.writer_generation
                AND EXISTS (
                    SELECT 1 FROM runs child
-                   WHERE child.id = prior.child_run_id AND child.parent_run_id = $4::uuid
-                     AND child.workspace_id = $2::uuid
+                   WHERE child.id = prior.child_run_id AND child.parent_run_id = $2::uuid
+                     AND child.workspace_id = $1::uuid
                      AND child.parent_owns_lifecycle AND child.entrypoint_kind = 'task'
                      AND EXISTS (
                          SELECT 1 FROM run_attempts origin
@@ -112,8 +120,8 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                           JOIN runtime_instances child_runtime ON child_runtime.id = child_lease.runtime_instance_id
                            AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                           WHERE child_version.id = current.base_workspace_version_id
-                            AND child_version.workspace_id = $2::uuid AND child_version.status = 'private'
-                            AND child_version.ownership_generation = $3::bigint
+                            AND child_version.workspace_id = $1::uuid AND child_version.status = 'private'
+                            AND child_version.ownership_generation = $4::bigint
                             AND child_version.writer_generation = prior.child_writer_generation
                             AND prior.parent_writer_generation < prior.child_writer_generation
                             AND prior.child_writer_generation < prior.resume_writer_generation
@@ -142,31 +150,30 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
 )
 SELECT EXISTS (
     SELECT 1 FROM lineage JOIN computer_versions head ON head.id = lineage.base_workspace_version_id
-     WHERE head.id = $1::uuid
-       AND head.workspace_id = $2::uuid AND head.status = 'committed'
+     WHERE head.id = (SELECT base_workspace_version_id FROM origin)
+       AND head.workspace_id = $1::uuid AND head.status = 'committed'
 )
 `
 
 type ActorCheckpointLineageIsValidParams struct {
-	CommittedHeadVersionID pgtype.UUID `json:"committed_head_version_id"`
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-	OwnershipGeneration    int64       `json:"ownership_generation"`
-	RunID                  pgtype.UUID `json:"run_id"`
-	AttemptNumber          int32       `json:"attempt_number"`
-	CheckpointID           pgtype.UUID `json:"checkpoint_id"`
+	WorkspaceID         pgtype.UUID `json:"workspace_id"`
+	RunID               pgtype.UUID `json:"run_id"`
+	AttemptNumber       int32       `json:"attempt_number"`
+	OwnershipGeneration int64       `json:"ownership_generation"`
+	CheckpointID        pgtype.UUID `json:"checkpoint_id"`
 }
 
+// Anchor to the immutable Attempt origin, never the moving saved Computer head.
 // Existing checkpoint and acknowledged handback receipts prove the private chain.
 // The source writer strictly decreases on every edge, so cycles cannot qualify.
 // Historical expiry is irrelevant after an acknowledged restore; callers retain
 // the latest candidate's expiry and live execution checks under owner locks.
 func (q *Queries) ActorCheckpointLineageIsValid(ctx context.Context, arg ActorCheckpointLineageIsValidParams) (bool, error) {
 	row := q.db.QueryRow(ctx, actorCheckpointLineageIsValid,
-		arg.CommittedHeadVersionID,
 		arg.WorkspaceID,
-		arg.OwnershipGeneration,
 		arg.RunID,
 		arg.AttemptNumber,
+		arg.OwnershipGeneration,
 		arg.CheckpointID,
 	)
 	var exists bool

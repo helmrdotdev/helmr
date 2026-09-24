@@ -207,7 +207,7 @@ func testTaskFailureRetainsPhysicalFrontier(t *testing.T, retry bool) {
 		if _, err := queries.AdvanceTaskRetryWorkspaceHead(ctx, AdvanceTaskRetryWorkspaceHeadParams{
 			ResultWorkspaceVersionID: pgvalue.UUID(restoredVersionID), CompletedAt: completedAt,
 			WorkspaceID: pgvalue.UUID(authority.workspaceID), RunID: pgvalue.UUID(work.runID),
-			BaseWorkspaceVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID), OwnershipGeneration: 1, WriterGeneration: 1,
+			ExpectedHeadVersionID: pgvalue.UUID(authority.baseWorkspaceVersionID), OwnershipGeneration: 1, WriterGeneration: 1,
 		}); err != nil {
 			t.Fatal(err)
 		}

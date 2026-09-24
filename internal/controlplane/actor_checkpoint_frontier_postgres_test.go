@@ -519,7 +519,7 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 	}{
 		{name: "wrong Run", mutate: func(a *runLeaseClaimAuthority) { a.run.ID = pgvalue.NewUUIDv7() }},
 		{name: "wrong attempt", mutate: func(a *runLeaseClaimAuthority) { a.attempt.Number++ }},
-		{name: "wrong head", mutate: func(a *runLeaseClaimAuthority) { a.workspace.HeadVersionID = pgvalue.UUID(uuid.NewV7()) }},
+		{name: "wrong attempt origin", sql: `UPDATE run_attempts SET base_workspace_version_id=$2 WHERE run_id=$1 AND number=1`, args: []any{f.runID, uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "wrong current generation", mutate: func(a *runLeaseClaimAuthority) { a.workspace.WriterGeneration++ }},
 		{name: "wrong private parent", sql: `UPDATE computer_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "private generation rewritten", constraint: "computer_versions_source_writer_fence_fkey", sql: `UPDATE computer_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},

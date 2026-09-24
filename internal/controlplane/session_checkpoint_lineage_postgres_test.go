@@ -63,7 +63,7 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	if base.String() != c1.WorkspaceVersionID || base.String() == f.rootID.String() {
 		t.Fatalf("second checkpoint base=%s first=%s head=%s", base, c1.WorkspaceVersionID, f.rootID.String())
 	}
-	params := db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(c2.CheckpointID)), CommittedHeadVersionID: pgvalue.UUID(uuid.MustParse(f.rootID.String())), OwnershipGeneration: f.claim.workspace.OwnershipGeneration}
+	params := db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(c2.CheckpointID)), OwnershipGeneration: f.claim.workspace.OwnershipGeneration}
 	for _, test := range []struct {
 		name, query string
 		arg         uuid.UUID
@@ -385,11 +385,6 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 			child := checkpointChildAndResume(t, f, scope, capture, test.outcome)
 			if test.again {
 				checkpoint := checkpointTokenAndResume(t, f, scope, 2, child)
-
-				var head pgtype.UUID
-				if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
-					t.Fatal(err)
-				}
 				tx, err := f.Pool.Begin(t.Context())
 				if err != nil {
 					t.Fatal(err)
@@ -410,7 +405,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 				if _, err = tx.Exec(t.Context(), corrupt, uuid.MustParse(checkpoint.CheckpointID)); err != nil {
 					t.Fatal(err)
 				}
-				valid, err := db.New(tx).ActorCheckpointLineageIsValid(t.Context(), db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(checkpoint.CheckpointID)), CommittedHeadVersionID: head, OwnershipGeneration: f.claim.workspace.OwnershipGeneration})
+				valid, err := db.New(tx).ActorCheckpointLineageIsValid(t.Context(), db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(checkpoint.CheckpointID)), OwnershipGeneration: f.claim.workspace.OwnershipGeneration})
 				if err != nil || valid {
 					t.Fatalf("wrong child handback accepted=%v err=%v", valid, err)
 				}

@@ -55,6 +55,11 @@ SELECT
     sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation),
     sqlc.arg(published_at)
+FROM computer_versions predecessor
+WHERE predecessor.id=sqlc.arg(parent_version_id)
+  AND predecessor.environment_id=sqlc.arg(environment_id)
+  AND predecessor.workspace_id=sqlc.arg(workspace_id)
+  AND predecessor.status='committed'
 RETURNING *;
 
 -- name: UpdateTaskWorkspaceMountFrontier :one
@@ -462,7 +467,7 @@ UPDATE computers
        updated_at = sqlc.arg(completed_at)
  WHERE id = sqlc.arg(workspace_id)
    AND owner_run_id = sqlc.arg(run_id)
-   AND head_version_id = sqlc.arg(base_workspace_version_id)
+   AND head_version_id = sqlc.arg(expected_head_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
 RETURNING id;

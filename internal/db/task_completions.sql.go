@@ -30,7 +30,7 @@ type AdvanceTaskRetryWorkspaceHeadParams struct {
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
 	RunID                    pgtype.UUID        `json:"run_id"`
-	BaseWorkspaceVersionID   pgtype.UUID        `json:"base_workspace_version_id"`
+	ExpectedHeadVersionID    pgtype.UUID        `json:"expected_head_version_id"`
 	OwnershipGeneration      int64              `json:"ownership_generation"`
 	WriterGeneration         int64              `json:"writer_generation"`
 }
@@ -41,7 +41,7 @@ func (q *Queries) AdvanceTaskRetryWorkspaceHead(ctx context.Context, arg Advance
 		arg.CompletedAt,
 		arg.WorkspaceID,
 		arg.RunID,
-		arg.BaseWorkspaceVersionID,
+		arg.ExpectedHeadVersionID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
 	)
@@ -815,6 +815,11 @@ SELECT
     $9,
     $10,
     $11
+FROM computer_versions predecessor
+WHERE predecessor.id=$4
+  AND predecessor.environment_id=$2
+  AND predecessor.workspace_id=$3
+  AND predecessor.status='committed'
 RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 

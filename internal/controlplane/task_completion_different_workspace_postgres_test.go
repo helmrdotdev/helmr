@@ -28,6 +28,14 @@ func TestDifferentWorkspaceChildCompletesAfterBeginFinalization(t *testing.T) {
 	testDifferentWorkspaceChildCompletion(t, "")
 }
 
+func TestDifferentWorkspaceChildCompletesAfterSavedHeadAdvancement(t *testing.T) {
+	testDifferentWorkspaceChildCompletion(t, "saved")
+}
+
+func TestDifferentWorkspaceChildRetriesAfterSavedHeadAdvancement(t *testing.T) {
+	testDifferentWorkspaceChildCompletion(t, "saved retry")
+}
+
 func TestDifferentWorkspaceChildCompletionRefreshesDrainedWorkerClaims(t *testing.T) {
 	testDifferentWorkspaceChildCompletion(t, "worker")
 }
@@ -103,7 +111,27 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	capture.Receipt.OperationID = frozen.OperationID
 	setCaptureFingerprint(t, capture)
 	registerFinalizationTestDisk(t, base.Pool, server, worker, assignment.Fence(), capture, frozen.OperationID)
+	var savedHead uuid.UUID
+	if transition == "saved" || transition == "saved retry" {
+		// Model two prior committed saves while retaining the immutable execution
+		// fence. Their storage locator is already certified by the capture fixture.
+		raw, err := json.Marshal(capture.Disk.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 2 {
+			savedHead = uuid.NewV7()
+			dbtest.MustExec(t, ctx, base.Pool, `INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,content_digest,size_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ SELECT $2,c.environment_id,c.id,c.head_version_id,$4,$5,'committed',$3,c.ownership_generation,c.writer_generation,now() FROM computers c WHERE c.id=$1`, childWorkspace, savedHead, workspaceLeaseID, capture.Disk.Root.Pack.Digest, capture.Disk.Root.LogicalBytes)
+			dbtest.MustExec(t, ctx, base.Pool, `INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator) SELECT environment_id,id,$2,$3 FROM computers WHERE id=$1`, childWorkspace, savedHead, raw)
+			dbtest.MustExec(t, ctx, base.Pool, `UPDATE computers SET head_version_id=$2,revision=revision+1 WHERE id=$1`, childWorkspace, savedHead)
+		}
+	}
 	request := workerapi.CompleteTaskRequest{Lease: assignment.Fence(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`{"ok":true}`)}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
+	if transition == "saved retry" {
+		dbtest.MustExec(t, ctx, base.Pool, `UPDATE runs SET retry_policy='{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'::jsonb WHERE id=$1`, child.RunID)
+		request.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "retry me"}}
+	}
 	completion, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +176,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 			})
 		}
 	}
-	if transition != "" {
+	if transition != "" && transition != "saved" && transition != "saved retry" {
 		keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
 		if err != nil {
 			t.Fatal(err)
@@ -254,6 +282,27 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	if err := server.completeTask(ctx, worker, request, completion); err != nil {
 		point, _ := staleAuthorityPointOf(err)
 		t.Fatalf("complete task at %s: %v", point, err)
+	}
+	if transition == "saved" || transition == "saved retry" {
+		var origin, parent uuid.UUID
+		if err := base.Pool.QueryRow(ctx, `SELECT a.base_workspace_version_id,v.parent_version_id FROM run_attempts a JOIN computers c ON c.id=a.workspace_id JOIN computer_versions v ON v.id=c.head_version_id WHERE a.run_id=$1 AND a.number=1`, child.RunID).Scan(&origin, &parent); err != nil {
+			t.Fatal(err)
+		}
+		if origin != childVersion || parent != savedHead {
+			t.Fatalf("wrong execution origin or publication predecessor: %s/%s", origin, parent)
+		}
+	}
+	if transition == "saved retry" {
+		var status, condition string
+		var attempt int32
+		var nextBase, head uuid.UUID
+		if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_status,r.current_attempt_number,a.base_workspace_version_id,c.head_version_id FROM runs r JOIN run_waits w ON w.child_run_id=r.id JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number JOIN computers c ON c.id=r.workspace_id WHERE r.id=$1`, child.RunID).Scan(&status, &condition, &attempt, &nextBase, &head); err != nil {
+			t.Fatal(err)
+		}
+		if status != "retry_delayed" || condition != "pending" || attempt != 2 || nextBase != head || head == savedHead {
+			t.Fatalf("retry lost saved frontier: %s/%s attempt=%d base=%s head=%s", status, condition, attempt, nextBase, head)
+		}
+		return
 	}
 	var status, condition string
 	if err := base.Pool.QueryRow(ctx, `SELECT r.status,w.condition_status FROM runs r JOIN run_waits w ON w.child_run_id=r.id WHERE r.id=$1`, child.RunID).Scan(&status, &condition); err != nil {

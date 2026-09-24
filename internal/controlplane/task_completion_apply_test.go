@@ -202,7 +202,7 @@ func TestRecordTaskWorkspaceVersionRecordsGenerationIdentity(t *testing.T) {
 			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 		},
 		workspace: db.LockRunLeaseClaimWorkspaceRow{
-			ID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
+			ID: pgvalue.UUID(uuid.NewV7()), HeadVersionID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
 		},
 		workspaceLease: db.WorkspaceLease{
 			ID: pgvalue.UUID(uuid.NewV7()), BaseWorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
@@ -222,6 +222,9 @@ func TestRecordTaskWorkspaceVersionRecordsGenerationIdentity(t *testing.T) {
 	)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if store.publish.ParentVersionID != authority.workspace.HeadVersionID {
+		t.Fatal("publication used execution baseline as predecessor")
 	}
 	if got != versionID || store.publish.ContentDigest.String != capture.root.Pack.Digest ||
 		store.publish.SizeBytes != capture.root.LogicalBytes || store.publish.EntryCount != 0 {

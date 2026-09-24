@@ -14,6 +14,7 @@ type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionTurn, error)
 	ActivateWorkerInstance(ctx context.Context, arg ActivateWorkerInstanceParams) (WorkerInstance, error)
+	// Anchor to the immutable Attempt origin, never the moving saved Computer head.
 	// Existing checkpoint and acknowledged handback receipts prove the private chain.
 	// The source writer strictly decreases on every edge, so cycles cannot qualify.
 	// Historical expiry is irrelevant after an acknowledged restore; callers retain

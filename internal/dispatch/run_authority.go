@@ -108,7 +108,6 @@ func lockRunPlacementAuthority(
 	var actorRunGeneration int64
 	var actorCommittedInputSequence int64
 	var actorNextInputSequence int64
-	var workspaceHeadVersionID pgtype.UUID
 	var err error
 	if err := tx.QueryRow(ctx, `
 SELECT entrypoint_kind, session_id
@@ -507,7 +506,6 @@ SELECT computers.deployment_definition_id,
        computers.region_id,
        computers.ownership_generation,
        computers.writer_generation,
-       computers.head_version_id,
        workspace_definitions.manifest_version,
        workspace_definitions.manifest
   FROM computers
@@ -537,7 +535,6 @@ SELECT computers.deployment_definition_id,
 		&authority.regionID,
 		&authority.ownershipGeneration,
 		&authority.writerGeneration,
-		&workspaceHeadVersionID,
 		&manifestVersion,
 		&manifest,
 	)
@@ -685,7 +682,7 @@ SELECT run_attempts.base_workspace_version_id,
 		if authority.entrypointKind == "actor" {
 			validLineage, err := db.New(tx).ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 				RunID: authority.runID, AttemptNumber: authority.attemptNumber, WorkspaceID: authority.workspaceID,
-				CheckpointID: authority.restoreCheckpointID, CommittedHeadVersionID: workspaceHeadVersionID,
+				CheckpointID:        authority.restoreCheckpointID,
 				OwnershipGeneration: authority.ownershipGeneration,
 			})
 			if err != nil {

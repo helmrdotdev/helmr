@@ -540,7 +540,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		valid, err := q.ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 			RunID: authority.parentRun.ID, AttemptNumber: authority.parentAttempt.Number,
 			WorkspaceID: authority.workspace.ID, CheckpointID: checkpoint.RunCheckpoint.ID,
-			CommittedHeadVersionID: authority.workspace.HeadVersionID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		})
 		if err != nil {
 			return runLeaseClaimAuthority{}, err
@@ -809,7 +809,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 		valid, err := q.ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 			RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 			WorkspaceID: authority.workspace.ID, CheckpointID: authority.checkpoint.ID,
-			CommittedHeadVersionID: authority.workspace.HeadVersionID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		})
 		if err != nil {
 			return runLeaseClaimAuthority{}, err
