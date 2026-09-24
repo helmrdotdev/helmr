@@ -18,13 +18,13 @@ import (
 
 // This provider boundary is consumed only by the CP broker. The transport and
 // Worker never choose an envelope, wrapping key, scope or data-key identifier.
-type computerKeyWrapper interface {
+type ComputerKeyWrapper interface {
 	Wrap(context.Context, string, string, []byte) (computerkey.Envelope, error)
 	Unwrap(context.Context, string, string, computerkey.Envelope) ([]byte, error)
 }
 type computerKeyBroker struct {
 	tx      TxBeginner
-	wrapper computerKeyWrapper
+	wrapper ComputerKeyWrapper
 }
 type computerKeyFence struct {
 	dispatch.ComputerPreparationFence
@@ -37,7 +37,7 @@ type computerKeyMaterial struct {
 
 var errComputerKeyUnavailable = errors.New("computer key authority is unavailable")
 
-func newComputerKeyBroker(tx TxBeginner, wrapper computerKeyWrapper) (*computerKeyBroker, error) {
+func newComputerKeyBroker(tx TxBeginner, wrapper ComputerKeyWrapper) (*computerKeyBroker, error) {
 	if tx == nil || wrapper == nil {
 		return nil, errors.New("computer key transactions and wrapping provider are required")
 	}

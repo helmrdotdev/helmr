@@ -57,6 +57,7 @@ type SubjectEventReader interface {
 }
 
 type Server struct {
+	computerKeys          *computerKeyBroker
 	log                   *slog.Logger
 	deploymentMode        string
 	db                    db.Querier
@@ -105,6 +106,7 @@ type TxBeginner interface {
 }
 
 type ServerConfig struct {
+	ComputerKeys   ComputerKeyWrapper
 	Log            *slog.Logger
 	DeploymentMode string
 
@@ -222,7 +224,12 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if apiOrigin == nil {
 		apiOrigin = cfg.PublicURL
 	}
+	computerKeys, err := newComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
+	if err != nil {
+		return nil, err
+	}
 	server := &Server{
+		computerKeys:          computerKeys,
 		log:                   log,
 		deploymentMode:        deploymentMode,
 		db:                    cfg.DB,
@@ -612,6 +619,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
+				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/initialization/key", s.workerInitialComputerKey)
 				r.Post("/run/runtime-instances/initialization/register", s.workerRegisterComputerInitialization)
 				r.Post("/run/runtime-instances/initialization/publish", s.workerPublishComputerInitialization)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)

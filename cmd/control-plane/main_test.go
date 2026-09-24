@@ -18,6 +18,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -37,7 +38,12 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	computerKeys, err := computerkey.NewLocal("test", make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+		ComputerKeys:          computerKeys,
 		Log:                   log,
 		DB:                    store,
 		TX:                    panicTxBeginner{},
@@ -443,4 +449,34 @@ func postJSON(t *testing.T, url string, body string) *http.Response {
 	}
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
+}
+
+func TestConfiguredComputerKeysExplicitProvider(t *testing.T) {
+	local := config.ControlPlane{DeploymentMode: config.DeploymentModeSelfHosted,
+		ComputerWrappingKeyID: "root-1", ComputerWrappingKey: bytes.Repeat([]byte{0x29}, 32)}
+	provider, err := configuredComputerKeys(t.Context(), local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataKey := bytes.Repeat([]byte{0x37}, 32)
+	envelope, err := provider.Wrap(t.Context(), "scope", "key-id", dataKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := provider.Unwrap(t.Context(), "scope", "key-id", envelope)
+	defer clear(plain)
+	if err != nil || !bytes.Equal(plain, dataKey) {
+		t.Fatal("configured local provider cannot roundtrip")
+	}
+	for _, mode := range []string{config.DeploymentModeManagedCloud, ""} {
+		cfg := local
+		cfg.DeploymentMode = mode
+		if _, err := configuredComputerKeys(t.Context(), cfg); err == nil {
+			t.Fatal("missing managed configuration selected local material")
+		}
+	}
+	local.ComputerWrappingKey = nil
+	if _, err := configuredComputerKeys(t.Context(), local); err == nil {
+		t.Fatal("missing local root accepted")
+	}
 }

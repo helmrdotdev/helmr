@@ -43,6 +43,9 @@ type ControlPlane struct {
 	SetupToken                      string
 	AuthKey                         []byte
 	EncryptionKey                   []byte
+	ComputerWrappingKey             []byte
+	ComputerWrappingKeyID           string
+	ComputerKMSKeyARN               string
 	WorkspaceFencingKey             []byte
 	TokenCredentialKey              []byte
 	PublicURL                       string

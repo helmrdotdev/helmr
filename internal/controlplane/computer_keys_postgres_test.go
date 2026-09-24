@@ -17,7 +17,7 @@ import (
 )
 
 type observingKeyWrapper struct {
-	computerKeyWrapper
+	ComputerKeyWrapper
 	wrap      func()
 	unwrap    func()
 	returned  []byte
@@ -28,10 +28,10 @@ func (w *observingKeyWrapper) Wrap(ctx context.Context, scope, id string, key []
 	if w.wrap != nil {
 		w.wrap()
 	}
-	return w.computerKeyWrapper.Wrap(ctx, scope, id, key)
+	return w.ComputerKeyWrapper.Wrap(ctx, scope, id, key)
 }
 func (w *observingKeyWrapper) Unwrap(ctx context.Context, scope, id string, e computerkey.Envelope) ([]byte, error) {
-	key, err := w.computerKeyWrapper.Unwrap(ctx, scope, id, e)
+	key, err := w.ComputerKeyWrapper.Unwrap(ctx, scope, id, e)
 	w.returned = key
 	if w.unwrap != nil {
 		w.unwrap()
@@ -111,7 +111,7 @@ func TestInitialComputerKeyProviderRunsOutsideLocks(t *testing.T) {
 			t.Fatal("provider called under Computer lock", err)
 		}
 	}
-	b.wrapper = &observingKeyWrapper{computerKeyWrapper: b.wrapper, wrap: check, unwrap: check}
+	b.wrapper = &observingKeyWrapper{ComputerKeyWrapper: b.wrapper, wrap: check, unwrap: check}
 	key, err := b.initial(t.Context(), fence)
 	if err != nil {
 		t.Fatal(err)
@@ -139,7 +139,7 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='cancel_requested' WHERE id=(SELECT reserved_run_id FROM runtime_instances WHERE id=$1)`, f.runtime)
 					}
 				}
-				observer := &observingKeyWrapper{computerKeyWrapper: b.wrapper}
+				observer := &observingKeyWrapper{ComputerKeyWrapper: b.wrapper}
 				if phase == "wrap" {
 					observer.wrap = revoke
 				} else {
@@ -163,7 +163,7 @@ func TestInitialComputerKeyConcurrentFirstFetch(t *testing.T) {
 	entered := make(chan struct{}, 2)
 	release := make(chan struct{})
 	local := b.wrapper
-	wrap := &barrierKeyWrapper{computerKeyWrapper: local, entered: entered, release: release}
+	wrap := &barrierKeyWrapper{ComputerKeyWrapper: local, entered: entered, release: release}
 	b.wrapper = wrap
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -201,7 +201,7 @@ func TestInitialComputerKeyConcurrentFirstFetch(t *testing.T) {
 }
 
 type barrierKeyWrapper struct {
-	computerKeyWrapper
+	ComputerKeyWrapper
 	entered chan struct{}
 	release chan struct{}
 }
@@ -213,7 +213,7 @@ func (w *barrierKeyWrapper) Wrap(ctx context.Context, scope, id string, key []by
 	case <-ctx.Done():
 		return computerkey.Envelope{}, ctx.Err()
 	}
-	return w.computerKeyWrapper.Wrap(ctx, scope, id, key)
+	return w.ComputerKeyWrapper.Wrap(ctx, scope, id, key)
 }
 func TestInitialComputerKeyRejectsAnotherWorker(t *testing.T) {
 	_, b, fence := initialKeyFixture(t)
@@ -295,7 +295,7 @@ func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
 
 func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T) {
 	f, b, fence := initialKeyFixture(t)
-	observer := &observingKeyWrapper{computerKeyWrapper: b.wrapper, unwrapErr: errors.New("provider timeout")}
+	observer := &observingKeyWrapper{ComputerKeyWrapper: b.wrapper, unwrapErr: errors.New("provider timeout")}
 	b.wrapper = observer
 	if result, err := b.initial(t.Context(), fence); err == nil || len(result.Key) != 0 {
 		t.Fatal("provider error returned key")

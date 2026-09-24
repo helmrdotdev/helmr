@@ -114,6 +114,20 @@ func (t *Transport) Do(req *http.Request) (*http.Response, error) {
 	return resp, nil
 }
 
+// DoSensitive avoids retaining server-provided error bodies, which may contain
+// secret material. Successful bodies remain the caller's bounded-read responsibility.
+func (t *Transport) DoSensitive(req *http.Request) (*http.Response, error) {
+	resp, err := t.httpClient.Do(req)
+	if err != nil {
+		return nil, errors.New("sensitive HTTP request failed")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		resp.Body.Close()
+		return nil, &Error{StatusCode: resp.StatusCode, Status: http.StatusText(resp.StatusCode)}
+	}
+	return resp, nil
+}
+
 func (t *Transport) DoJSON(req *http.Request, out any) error {
 	resp, err := t.Do(req)
 	if err != nil {

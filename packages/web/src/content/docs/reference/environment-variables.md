@@ -92,6 +92,22 @@ ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when t
 Each must be base64 and decode to exactly 32 bytes. Every Control Plane replica uses
 the same values. Online rotation and multi-key verification are not supported.
 
+Computer data keys have a separate Control Plane wrapping root:
+
+- Self-hosted deployments require `COMPUTER_WRAPPING_KEY_ID` (a stable, nonempty
+  identifier) and `COMPUTER_WRAPPING_KEY` (base64, exactly 32 bytes). All Control
+  Plane replicas must use the same values. Preserve this key and identifier with
+  database backups; replacing either makes existing Computer keys unreadable.
+- Managed-cloud deployments require `COMPUTER_KMS_KEY_ARN`, the full ARN of a
+  symmetric KMS key. The Control Plane uses native AWS credentials and the ARN's
+  region. Its identity needs encrypt permission on that key and decrypt permission
+  on every wrapping key still referenced by retained Computer keys. Retain those
+  KMS keys; changing the configured ARN to another key in the same region only
+  affects newly wrapped keys. Cross-region wrapping-key migration is not supported.
+- Wrapping keys and provider credentials belong only to the Control Plane.
+  Workers receive scoped data keys through authenticated runtime authority.
+  Provider errors never fall back to local wrapping material.
+
 Email delivery is disabled by default. Set `EMAIL_PROVIDER` to choose a sender:
 
 | Provider | Required variables | Optional variables |

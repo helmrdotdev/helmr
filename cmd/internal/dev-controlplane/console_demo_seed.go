@@ -71,6 +71,10 @@ func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	queueConfig := `{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`
 
 	if _, err := tx.Exec(ctx, `
+WITH lifetimes AS (
+    INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3)
+    ON CONFLICT (digest) DO NOTHING
+)
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
     ($1::uuid, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),

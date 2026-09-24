@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -180,7 +181,15 @@ func main() {
 		log.Error("parse public URL", "error", err)
 		os.Exit(1)
 	}
+	// This development-only entrypoint uses local roots even when exercising
+	// managed-cloud console behavior. Production composition lives in control-plane.
+	computerKeys, err := computerkey.NewLocal("dev-computer-root", cfg.computerWrappingKey)
+	if err != nil {
+		log.Error("configure Computer wrapping key", "error", err)
+		os.Exit(1)
+	}
 	app, err := controlplane.NewServer(controlplane.ServerConfig{
+		ComputerKeys:          computerKeys,
 		Log:                   log,
 		DeploymentMode:        cfg.deploymentMode,
 		DB:                    queries,
@@ -251,6 +260,7 @@ type devConfig struct {
 	setupToken                      string
 	workerTokenKey                  []byte
 	encryptionKey                   []byte
+	computerWrappingKey             []byte
 	workspaceFencingKey             []byte
 	tokenCredentialKey              []byte
 	seedData                        bool
@@ -285,6 +295,7 @@ func loadConfig() (devConfig, error) {
 	}{
 		{name: "AUTH_KEY", fallback: defaultAuthKey, target: &cfg.authKey},
 		{name: "WORKER_TOKEN_SIGNING_KEY", fallback: defaultWorkerTokenKey, target: &cfg.workerTokenKey},
+		{name: "COMPUTER_WRAPPING_KEY", fallback: "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", target: &cfg.computerWrappingKey},
 		{name: "ENCRYPTION_KEY", fallback: defaultSecretEncryptionKey, target: &cfg.encryptionKey},
 		{name: "WORKSPACE_FENCING_KEY", fallback: defaultWorkspaceFencingKey, target: &cfg.workspaceFencingKey},
 		{name: "TOKEN_CREDENTIAL_KEY", fallback: defaultTokenCredentialKey, target: &cfg.tokenCredentialKey},

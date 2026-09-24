@@ -445,6 +445,9 @@ func setControlPlaneRequiredEnv(t *testing.T) {
 }
 
 func setControlPlaneTokenCredentialEnv(t *testing.T) {
+	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")
+	t.Setenv("COMPUTER_WRAPPING_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
+	t.Setenv("COMPUTER_KMS_KEY_ARN", "arn:aws:kms:us-east-1:123456789012:key/test")
 	t.Helper()
 	t.Setenv("TOKEN_CREDENTIAL_KEY", "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=")
 }
@@ -689,6 +692,36 @@ func TestLoadDispatcherRequiresEncryptionKey(t *testing.T) {
 			t.Setenv("ENCRYPTION_KEY", value)
 			if _, err := LoadDispatcher(); err == nil {
 				t.Fatal("missing/invalid dispatcher encryption key accepted")
+			}
+		})
+	}
+}
+
+func TestComputerWrappingConfigIsRequiredByDeploymentMode(t *testing.T) {
+	for _, tc := range []struct{ name, mode, missing string }{
+		{"local-root", DeploymentModeSelfHosted, "COMPUTER_WRAPPING_KEY"},
+		{"local-identity", DeploymentModeSelfHosted, "COMPUTER_WRAPPING_KEY_ID"},
+		{"managed-root", DeploymentModeManagedCloud, "COMPUTER_KMS_KEY_ARN"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setControlPlaneRequiredEnv(t)
+			t.Setenv("DEPLOYMENT_MODE", tc.mode)
+			t.Setenv("DATABASE_URL", "postgres://example")
+			t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+			t.Setenv("CAS_URI", "s3://helmr-cas")
+			for _, name := range []string{"WORKER_TOKEN_SIGNING_KEY", "AUTH_KEY", "ENCRYPTION_KEY"} {
+				t.Setenv(name, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+			}
+			t.Setenv("SETUP_TOKEN", "setup-token")
+			t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client")
+			t.Setenv("GITHUB_OAUTH_CLIENT_SECRET", "secret")
+			t.Setenv("EMAIL_PROVIDER", "none")
+			for _, name := range []string{"EMAIL_FROM", "RESEND_API_KEY", "SMTP_ADDR", "SMTP_USERNAME", "SMTP_PASSWORD"} {
+				t.Setenv(name, "")
+			}
+			t.Setenv(tc.missing, "")
+			if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), tc.missing) {
+				t.Fatalf("expected missing %s, got %v", tc.missing, err)
 			}
 		})
 	}
