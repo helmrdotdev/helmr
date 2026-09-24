@@ -129,6 +129,9 @@ type Querier interface {
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
 	CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerKey, error)
+	// These operations run only under the owning Computer/Runtime fence. Locator
+	// framing, authenticated page membership and upload correspondence are prerequisites.
+	CreateComputerVersionRoot(ctx context.Context, arg CreateComputerVersionRootParams) error
 	CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error)
@@ -218,6 +221,7 @@ type Querier interface {
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
 	GetComputerInitialization(ctx context.Context, arg GetComputerInitializationParams) (ComputerInitialization, error)
+	GetComputerVersionRoot(ctx context.Context, arg GetComputerVersionRootParams) ([]byte, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error)
 	GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error)
@@ -364,6 +368,9 @@ type Querier interface {
 	ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, limitCount int32) ([]ListRunExecutionLeaseRecoveryCandidatesRow, error)
 	ListRunListItems(ctx context.Context, arg ListRunListItemsParams) ([]ListRunListItemsRow, error)
 	ListRunWorkerCapacityPressureCandidates(ctx context.Context, arg ListRunWorkerCapacityPressureCandidatesParams) ([]ListRunWorkerCapacityPressureCandidatesRow, error)
+	// Derive keys from the Runtime's pinned source, not from a caller-supplied root.
+	// The broker must revalidate its full live authority before/after provider I/O.
+	ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInstanceID pgtype.UUID) ([]ComputerKey, error)
 	ListRuntimeReconcileTargets(ctx context.Context, arg ListRuntimeReconcileTargetsParams) ([]ListRuntimeReconcileTargetsRow, error)
 	ListSameWorkspaceAncestorRuns(ctx context.Context, arg ListSameWorkspaceAncestorRunsParams) ([]ListSameWorkspaceAncestorRunsRow, error)
 	ListScheduleSecrets(ctx context.Context, arg ListScheduleSecretsParams) ([]ScheduleSecret, error)
@@ -499,6 +506,7 @@ type Querier interface {
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (MarkWorkspaceExecRecoveryRequiredRow, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
 	PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error)
+	PinRuntimeComputerSource(ctx context.Context, arg PinRuntimeComputerSourceParams) (int64, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)

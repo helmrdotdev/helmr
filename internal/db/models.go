@@ -380,6 +380,18 @@ type ComputerObjectReadKey struct {
 	AvailabilityRequired pgtype.Bool `json:"availability_required"`
 }
 
+type ComputerVersionRoot struct {
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	ComputerID            pgtype.UUID `json:"computer_id"`
+	VersionID             pgtype.UUID `json:"version_id"`
+	Locator               []byte      `json:"locator"`
+	RootDigest            string      `json:"root_digest"`
+	RootSizeBytes         int64       `json:"root_size_bytes"`
+	RootRank              int32       `json:"root_rank"`
+	RootKeyID             pgtype.UUID `json:"root_key_id"`
+	CertificationRequired pgtype.Bool `json:"certification_required"`
+}
+
 type ControlOutbox struct {
 	ID             pgtype.UUID        `json:"id"`
 	Topic          string             `json:"topic"`
@@ -808,6 +820,8 @@ type RuntimeInstance struct {
 	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	ComputerSourceVersionID         pgtype.UUID        `json:"computer_source_version_id"`
+	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
 	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
 	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
 	ComputerKeyAvailable            pgtype.Bool        `json:"computer_key_available"`

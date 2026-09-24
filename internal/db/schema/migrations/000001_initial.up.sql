@@ -1825,6 +1825,7 @@ CREATE TABLE computer_objects (
     PRIMARY KEY (environment_id, computer_id, digest),
     UNIQUE (environment_id, computer_id, digest, rank),
     UNIQUE (environment_id, computer_id, digest, rank, certified),
+    UNIQUE (environment_id, computer_id, digest, size_bytes, rank, certified),
     UNIQUE (environment_id, computer_id, digest, certified),
     FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id) REFERENCES workspaces(environment_id, id) ON DELETE RESTRICT,
@@ -1955,6 +1956,28 @@ CREATE TABLE workspace_versions (
         OR (status = 'discarded' AND published_at IS NULL AND discarded_at IS NOT NULL)
     )
 );
+
+-- Payload retention is separate from version audit lineage. The full locator
+-- has one stored representation; FK columns are derived from that representation.
+CREATE TABLE computer_version_roots (
+    environment_id UUID NOT NULL,
+    computer_id UUID NOT NULL,
+    version_id UUID NOT NULL,
+    locator JSONB NOT NULL CHECK ((jsonb_typeof(locator) = 'object' AND locator->>'format_version' = '1') IS TRUE),
+    root_digest TEXT GENERATED ALWAYS AS (locator->'pack'->>'digest') STORED NOT NULL,
+    root_size_bytes BIGINT GENERATED ALWAYS AS ((locator->'pack'->>'size_bytes')::bigint) STORED NOT NULL,
+    root_rank INTEGER GENERATED ALWAYS AS ((locator->'pack'->>'rank')::integer) STORED NOT NULL,
+    root_key_id UUID GENERATED ALWAYS AS ((locator->'page'->>'key_id')::uuid) STORED NOT NULL,
+    certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    PRIMARY KEY (environment_id, computer_id, version_id),
+    FOREIGN KEY (environment_id, computer_id, version_id)
+        REFERENCES workspace_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, computer_id, root_digest, root_size_bytes, root_rank, certification_required)
+        REFERENCES computer_objects(environment_id, computer_id, digest, size_bytes, rank, certified) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, computer_id, root_digest, root_key_id)
+        REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id) ON DELETE RESTRICT
+);
+CREATE INDEX computer_version_roots_object_idx ON computer_version_roots(environment_id, computer_id, root_digest);
 
 CREATE UNIQUE INDEX workspace_versions_root_uidx
     ON workspace_versions (workspace_id)
@@ -2951,6 +2974,9 @@ CREATE TABLE runtime_instances (
     reserved_attempt_number INTEGER CHECK (reserved_attempt_number IS NULL OR reserved_attempt_number > 0),
     reserved_process_id UUID,
     reserved_workspace_version_id UUID,
+    computer_source_version_id UUID,
+    retained_computer_source_version_id UUID GENERATED ALWAYS AS
+        (CASE WHEN reclaimed_at IS NULL THEN computer_source_version_id END) STORED,
     computer_write_key_id UUID,
     retained_computer_write_key_id UUID GENERATED ALWAYS AS
         (CASE WHEN reclaimed_at IS NULL THEN computer_write_key_id END) STORED,
@@ -2975,6 +3001,10 @@ CREATE TABLE runtime_instances (
     terminal_reason_code TEXT,
     terminal_error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT runtime_instances_computer_source_version_fkey FOREIGN KEY (environment_id, workspace_id, computer_source_version_id)
+        REFERENCES workspace_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
+    CONSTRAINT runtime_instances_retained_computer_source_fkey FOREIGN KEY (environment_id, workspace_id, retained_computer_source_version_id)
+        REFERENCES computer_version_roots(environment_id, computer_id, version_id) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_computer_write_key_fkey FOREIGN KEY (environment_id, workspace_id, computer_write_key_id)
         REFERENCES computer_keys(environment_id, computer_id, id) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_retained_computer_key_fkey FOREIGN KEY (environment_id, workspace_id, retained_computer_write_key_id, computer_key_available)

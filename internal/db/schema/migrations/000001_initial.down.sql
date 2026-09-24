@@ -20,6 +20,8 @@ ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_base_wor
 ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_materialized_version_id_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_base_workspace_version_fk;
 ALTER TABLE run_attempts DROP CONSTRAINT IF EXISTS run_attempts_base_workspace_version_fk;
+ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_retained_computer_source_fkey;
+DROP TABLE IF EXISTS computer_version_roots;
 DROP TABLE IF EXISTS workspace_versions CASCADE;
 ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_owner_process_id_fkey;
 ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_reserved_process_id_workspace_id_fkey;
