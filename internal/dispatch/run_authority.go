@@ -234,7 +234,7 @@ SELECT runs.id,
 	                  ON child_workspace_lease.owner_run_lease_id = child_lease.id
 	                 AND child_workspace_lease.workspace_id = child_lease.workspace_id
 				 AND (
-				     child_lease.status = 'checkpointed'
+				     (child_lease.status = 'checkpointed' AND child_lease.attempt_number = runs.current_attempt_number)
 				     OR (
 				         child_lease.status = 'expired'
 				         AND child_workspace_lease.status = 'expired'
@@ -270,11 +270,40 @@ SELECT runs.id,
 				                  COALESCE(resume_edge.resume_workspace_version_id, resume_checkpoint.private_workspace_version_id)
 				         )
 				     )
-				     OR child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+				     OR (child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+				         AND runs.base_workspace_version_id = edge.base_workspace_version_id
+				         AND child_lease.attempt_number = runs.current_attempt_number)
+				     OR EXISTS (
+				         SELECT 1
+				           FROM computer_versions AS retry_version
+				           JOIN artifacts AS retry_artifact ON retry_artifact.id = retry_version.artifact_id
+				           JOIN run_finalization_objects AS retry_capture
+				             ON retry_capture.run_lease_id = child_lease.id
+				            AND retry_capture.operation_id = child_lease.finalization_operation_id
+				            AND retry_capture.lease_status = 'failed'
+				            AND retry_capture.digest = retry_artifact.digest
+				            AND retry_capture.size_bytes = retry_artifact.size_bytes
+				            AND retry_capture.media_type = retry_artifact.media_type
+				            AND retry_capture.logical_bytes = retry_version.size_bytes
+				          WHERE retry_version.id = runs.base_workspace_version_id
+				            AND retry_version.workspace_id = runs.workspace_id
+				            AND retry_version.status = 'private'
+				            AND retry_version.source_workspace_lease_id = child_workspace_lease.id
+				            AND retry_version.parent_version_id = child_workspace_lease.base_workspace_version_id
+				            AND retry_version.ownership_generation = child_workspace_lease.ownership_generation
+				            AND retry_version.writer_generation = child_workspace_lease.writer_generation
+				            AND child_lease.attempt_number = runs.current_attempt_number - 1
+				            AND child_lease.status = 'failed'
+				            AND child_lease.terminal_at IS NOT NULL
+				            AND child_lease.terminal_request_fingerprint IS NOT NULL
+				            AND child_lease.finalization_kind = 'capture'
+				     )
 				     OR EXISTS (
 				         SELECT 1
 				           FROM run_waits AS resume_edge
 				          WHERE resume_edge.run_id = runs.id
+				            AND resume_edge.attempt_number = child_lease.attempt_number
+				            AND child_lease.attempt_number = runs.current_attempt_number
 				            AND resume_edge.workspace_id = runs.workspace_id
 				            AND resume_edge.suspension_status = 'resume_pending'
 				            AND resume_edge.ownership_generation = edge.ownership_generation
@@ -293,7 +322,7 @@ SELECT runs.id,
                  AND (
                      child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
                      OR (
-                         child_lease.status = 'checkpointed'
+                         (child_lease.status = 'checkpointed' AND child_lease.attempt_number = runs.current_attempt_number)
                          AND EXISTS (
                              SELECT 1
                               FROM run_waits AS resume_edge
@@ -310,6 +339,7 @@ SELECT runs.id,
                                AND resume_checkpoint.base_workspace_version_id = child_workspace_lease.base_workspace_version_id
                               WHERE resume_edge.run_id = runs.id
                                 AND resume_edge.attempt_number = child_lease.attempt_number
+                                AND child_lease.attempt_number = runs.current_attempt_number
                                 AND resume_edge.workspace_id = runs.workspace_id
                                 AND resume_edge.suspension_status = 'resume_pending'
                                 AND resume_edge.prior_run_lease_id = child_lease.id
@@ -330,8 +360,12 @@ SELECT runs.id,
           AND edge.workspace_id = runs.workspace_id
           AND edge.condition_status = 'pending'
           AND edge.suspension_status = 'parked'
-          AND edge.base_workspace_version_id =
-              runs.base_workspace_version_id
+          AND EXISTS (
+              SELECT 1 FROM run_attempts origin
+               WHERE origin.run_id = runs.id AND origin.number = 1
+                 AND origin.workspace_id = edge.workspace_id
+                 AND origin.base_workspace_version_id = edge.base_workspace_version_id
+          )
 	          AND edge.ownership_generation IS NOT NULL
 	          AND edge.parent_writer_generation IS NOT NULL
 	          AND (edge.child_writer_generation IS NULL
@@ -747,10 +781,22 @@ SELECT source_lease.worker_group_id,
                   AND child.parent_run_id = run_waits.run_id
                   AND child.parent_owns_lifecycle
                   AND child.entrypoint_kind = 'task'
-                  AND child.base_workspace_version_id = run_checkpoints.private_workspace_version_id
+                  AND EXISTS (
+                      SELECT 1 FROM run_attempts origin
+                       WHERE origin.run_id = child.id AND origin.number = 1
+                         AND origin.workspace_id = child.workspace_id
+                         AND origin.base_workspace_version_id = run_checkpoints.private_workspace_version_id
+                  )
                   AND child.current_attempt_number = child_lease.attempt_number
                   AND child.current_run_lease_id IS NULL
                   AND child.status = 'succeeded'
+                  AND EXISTS (SELECT 1 FROM run_attempts terminal_attempt
+                      WHERE terminal_attempt.run_id = child.id
+                        AND terminal_attempt.number = child.current_attempt_number
+                        AND terminal_attempt.workspace_id = child.workspace_id
+                        AND terminal_attempt.base_workspace_version_id = child.base_workspace_version_id
+                        AND terminal_attempt.terminal_at IS NOT NULL
+                        AND terminal_attempt.terminal_outcome = 'succeeded')
                 WHERE child_version.id = run_waits.resume_workspace_version_id
                   AND child_version.workspace_id = run_checkpoints.workspace_id
                   AND child_version.status = 'private'
@@ -915,7 +961,13 @@ WITH RECURSIVE owned(id) AS (
        AND parent.workspace_id = child.workspace_id
      WHERE parent.id = $1 AND child.id = $2 AND child.workspace_id = $3
        AND child.parent_owns_lifecycle AND child.entrypoint_kind = 'task'
-       AND child.base_workspace_version_id = $6
+       -- Retry may advance the current base. The original attempt binds this
+       -- logical child to the parent's parked checkpoint throughout its lifetime.
+       AND EXISTS (
+           SELECT 1 FROM run_attempts origin
+            WHERE origin.run_id = child.id AND origin.number = 1
+              AND origin.workspace_id = $3 AND origin.base_workspace_version_id = $6
+       )
        AND (($7 = 'cancelled' AND child.status = 'cancelled')
             OR ($7 = 'failed' AND child.status IN ('failed', 'expired', 'system_failed')))
     UNION

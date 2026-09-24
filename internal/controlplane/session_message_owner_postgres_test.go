@@ -378,10 +378,11 @@ func TestSessionTokenResumeStopAuthorityPostgres(t *testing.T) {
 			if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,rw.kind FROM run_waits rw JOIN run_checkpoints c ON c.id=rw.suspend_checkpoint_id JOIN run_attempts a ON a.run_id=rw.run_id AND a.number=rw.attempt_number JOIN computers w ON w.id=rw.workspace_id WHERE rw.id=$1`, registration.WaitID).Scan(&checkpointBase, &attemptBase, &head, &waitKind); err != nil {
 				t.Fatal(err)
 			}
-			if checkpointBase != head || checkpointBase == attemptBase || waitKind != "token" {
+			// Turn completion does not save the disk or advance the attempt base.
+			if checkpointBase != head || checkpointBase != attemptBase || head != f.rootID || waitKind != "token" {
 				t.Fatalf("invalid active checkpoint fixture: %s %s %s %s", checkpointBase, attemptBase, head, waitKind)
 			}
-			t.Logf("active Token checkpoint uses committed head %s, attempt origin %s", checkpointBase, attemptBase)
+			t.Logf("Turn settlement preserved head %s and attempt origin %s before Token suspension", checkpointBase, attemptBase)
 			f.placeAndClaim(t)
 			wait := f.claim.runWait
 			start := workerapi.RunStartRequest{Lease: f.fence(), Restore: &workerapi.RunStartRestore{RunWaitID: pgvalue.UUIDString(wait.ID), CheckpointID: pgvalue.UUIDString(wait.SuspendCheckpointID), ResumeAttachID: pgvalue.UUIDString(wait.ResumeAttachID), ResumeRequestVersion: wait.ResumeRequestVersion}}
@@ -493,7 +494,9 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,c.private_workspace_version_id FROM run_checkpoints c JOIN run_attempts a ON a.run_id=c.run_id AND a.number=c.attempt_number JOIN computers w ON w.id=c.workspace_id WHERE c.id=$1`, uuid.MustParse(childCheckpoint.CheckpointID)).Scan(&checkpointBase, &attemptBase, &committedHead, &childBase); err != nil {
 		t.Fatal(err)
 	}
-	if checkpointBase != committedHead || checkpointBase == attemptBase || childBase != pgvalue.UUID(uuid.MustParse(childCheckpoint.WorkspaceVersionID)) || childBase == committedHead {
+	// The first managed suspension creates the child's private disk frontier;
+	// the preceding Turn completion left the committed head and attempt unchanged.
+	if checkpointBase != committedHead || checkpointBase != attemptBase || committedHead != pgvalue.UUID(f.rootID) || childBase != pgvalue.UUID(uuid.MustParse(childCheckpoint.WorkspaceVersionID)) || childBase == committedHead {
 		t.Fatalf("Actor parent/Task child frontier: checkpoint=%v attempt=%v committed=%v child=%v", checkpointBase, attemptBase, committedHead, childBase)
 	}
 	parentID := f.runID

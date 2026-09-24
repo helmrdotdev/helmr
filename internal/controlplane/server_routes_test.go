@@ -222,6 +222,9 @@ POST /worker/v1/run/logs/append
 POST /worker/v1/run/metadata/update
 POST /worker/v1/run/runtime-instances/closed
 POST /worker/v1/run/runtime-instances/failed
+POST /worker/v1/run/runtime-instances/initialization/key
+POST /worker/v1/run/runtime-instances/initialization/objects/certify
+POST /worker/v1/run/runtime-instances/initialization/objects/register
 POST /worker/v1/run/runtime-instances/initialization/publish
 POST /worker/v1/run/runtime-instances/initialization/register
 POST /worker/v1/run/runtime-instances/ready

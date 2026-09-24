@@ -265,7 +265,8 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	}
 }
 
-// The CAS read occurs after middleware authentication and before the completion transaction.
+// The descriptor check occurs after authentication and before the completion
+// transaction. Inject revocation at that actual boundary, before authority is locked.
 type completionDrainCAS struct {
 	cas.Store
 	once  sync.Once
@@ -273,10 +274,10 @@ type completionDrainCAS struct {
 	err   error
 }
 
-func (c *completionDrainCAS) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
+func (c *completionDrainCAS) Stat(ctx context.Context, digest string) (cas.Object, error) {
 	c.once.Do(func() { c.err = c.drain(ctx) })
 	if c.err != nil {
-		return nil, c.err
+		return cas.Object{}, c.err
 	}
-	return c.Store.Get(ctx, digest)
+	return c.Store.Stat(ctx, digest)
 }

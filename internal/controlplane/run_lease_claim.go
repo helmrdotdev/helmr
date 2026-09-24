@@ -392,9 +392,12 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		!authority.run.ParentOwnsLifecycle.Valid ||
 		!authority.run.ParentOwnsLifecycle.Bool ||
 		authority.run.DeploymentID != authority.parentRun.DeploymentID ||
-		authority.run.WorkspaceID != authority.parentRun.WorkspaceID ||
-		authority.run.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
+		authority.run.WorkspaceID != authority.parentRun.WorkspaceID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	if err := validateChildCheckpointOrigin(ctx, q, authority.run, locators.EnclosingBaseWorkspaceVersionID); err != nil {
+		return runLeaseClaimAuthority{}, err
 	}
 
 	authority.workspace, err = q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
@@ -470,7 +473,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.EntrypointKind != "task" ||
 		authority.attempt.SessionInputStartSequence.Valid ||
-		authority.attempt.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
+		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -481,7 +484,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		leaseID,
 		leaseSequence,
 		locators,
-		locators.EnclosingBaseWorkspaceVersionID,
+		authority.attempt.BaseWorkspaceVersionID,
 		authority,
 	)
 	if err != nil {
@@ -498,6 +501,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 		}
 		if err := validateActiveEnclosingWait(
+			ctx, q,
 			enclosingWait,
 			authority.parentRun,
 			locators.EnclosingParentWriterGeneration.Int64,
@@ -732,6 +736,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 		}
 		if err := validateActiveEnclosingWait(
+			ctx, q,
 			authority.enclosingWait,
 			authority.run,
 			authority.workspace.WriterGeneration,
@@ -1212,6 +1217,8 @@ func hasCompleteEnclosingSameWorkspaceLocator(locators db.GetRunLeaseClaimLocato
 }
 
 func validateActiveEnclosingWait(
+	ctx context.Context,
+	store db.Querier,
 	wait db.RunWait,
 	child db.Run,
 	expectedWriterGeneration int64,
@@ -1233,7 +1240,6 @@ func validateActiveEnclosingWait(
 		wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
 		wait.ResumeRequestVersion != wait.ResumeAckVersion ||
 		!wait.BaseWorkspaceVersionID.Valid ||
-		wait.BaseWorkspaceVersionID != child.BaseWorkspaceVersionID ||
 		!wait.BaseWorkspaceContentDigest.Valid ||
 		wait.ResumeWorkspaceVersionID.Valid ||
 		!wait.OwnershipGeneration.Valid ||
@@ -1245,7 +1251,7 @@ func validateActiveEnclosingWait(
 		wait.ChildWriterGeneration.Int64 != expectedWriterGeneration {
 		return errStaleRunLeaseClaim
 	}
-	return nil
+	return validateChildCheckpointOrigin(ctx, store, child, wait.BaseWorkspaceVersionID)
 }
 
 func validateSameWorkspaceChildWait(
@@ -1333,4 +1339,19 @@ func runtimeHasExclusionProof(runtime db.RuntimeInstance) bool {
 	default:
 		return false
 	}
+}
+
+// The owning Run is already locked. Its first attempt preserves the parent
+// checkpoint identity even when later retries advance the Run's current base.
+func validateChildCheckpointOrigin(ctx context.Context, store db.Querier, child db.Run, base pgtype.UUID) error {
+	origin, err := store.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
+		RunID: child.ID, Number: 1, WorkspaceID: child.WorkspaceID,
+	})
+	if err != nil {
+		return staleRunLeaseClaim(err)
+	}
+	if !base.Valid || origin.BaseWorkspaceVersionID != base || origin.EntrypointKind != "task" {
+		return errStaleRunLeaseClaim
+	}
+	return nil
 }

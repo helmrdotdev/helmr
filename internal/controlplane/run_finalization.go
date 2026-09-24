@@ -476,6 +476,9 @@ func lockSameWorkspaceChildFinalization(
 	if err != nil {
 		return staleRunFinalization(err)
 	}
+	if err := validateChildCheckpointOrigin(ctx, store, authority.run, wait.BaseWorkspaceVersionID); err != nil {
+		return staleRunFinalization(err)
+	}
 	authority.runWait = wait
 	authority.enclosingWait = wait
 	if err := validateSameWorkspaceChildFinalization(*authority); err != nil {
@@ -507,7 +510,6 @@ func validateSameWorkspaceChildFinalization(authority runLeaseClaimAuthority) er
 		wait.CheckpointRequestVersion <= 0 ||
 		wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
 		wait.ResumeRequestVersion != wait.ResumeAckVersion ||
-		wait.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
 		!wait.BaseWorkspaceContentDigest.Valid ||
 		wait.ResumeWorkspaceVersionID.Valid ||
 		!wait.OwnershipGeneration.Valid ||

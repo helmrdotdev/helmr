@@ -82,10 +82,22 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                    WHERE child.id = prior.child_run_id AND child.parent_run_id = $4::uuid
                      AND child.workspace_id = $2::uuid
                      AND child.parent_owns_lifecycle AND child.entrypoint_kind = 'task'
-                     AND child.base_workspace_version_id = prior.private_workspace_version_id
+                     AND EXISTS (
+                         SELECT 1 FROM run_attempts origin
+                          WHERE origin.run_id = child.id AND origin.number = 1
+                            AND origin.workspace_id = child.workspace_id
+                            AND origin.base_workspace_version_id = prior.private_workspace_version_id
+                     )
                      AND child.current_run_lease_id IS NULL
                      AND (
                        (prior.condition_status = 'completed' AND child.status = 'succeeded'
+                  AND EXISTS (SELECT 1 FROM run_attempts terminal_attempt
+                      WHERE terminal_attempt.run_id = child.id
+                        AND terminal_attempt.number = child.current_attempt_number
+                        AND terminal_attempt.workspace_id = child.workspace_id
+                        AND terminal_attempt.base_workspace_version_id = child.base_workspace_version_id
+                        AND terminal_attempt.terminal_at IS NOT NULL
+                        AND terminal_attempt.terminal_outcome = 'succeeded')
                         AND EXISTS (
                           SELECT 1 FROM computer_versions child_version
                           JOIN workspace_leases child_source ON child_source.id = child_version.source_workspace_lease_id

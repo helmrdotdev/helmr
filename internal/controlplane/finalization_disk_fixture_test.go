@@ -23,7 +23,7 @@ func finalizationTestCAS(t *testing.T) cas.Store {
 // Disk encryption and restoration are exercised separately by the host producer.
 func registerFinalizationTestDisk(t *testing.T, pool *pgxpool.Pool, server *Server, worker workerActor, lease workerapi.RunLeaseFence, capture *workerapi.TaskWorkspaceCapture, marker string) {
 	t.Helper()
-	object, err := server.cas.Put(t.Context(), computer.DiskMediaType, strings.NewReader("opaque terminal disk fixture:"+marker))
+	object, err := server.cas.Put(t.Context(), computer.DiskMediaType, strings.NewReader("opaque terminal disk fixture:"+capture.Receipt.OperationID+":"+marker))
 	if err != nil {
 		t.Fatal(err)
 	}

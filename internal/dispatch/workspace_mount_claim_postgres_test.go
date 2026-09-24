@@ -312,7 +312,7 @@ func cloneClaimableRunMount(t *testing.T, fixture runPlacementFixture, sourceMou
 	defer func() { _ = tx.Rollback(fixture.ctx) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO computers
+WITH cloned AS (
 SELECT (jsonb_populate_record(
     NULL::computers,
     to_jsonb(source_workspace) || jsonb_build_object(
@@ -322,10 +322,28 @@ SELECT (jsonb_populate_record(
         'created_at', transaction_timestamp(),
         'updated_at', transaction_timestamp()
     )
-)).*
+)) AS row
   FROM workspace_mounts source_mount
   JOIN computers source_workspace ON source_workspace.id = source_mount.workspace_id
- WHERE source_mount.id = $1`, sourceMountID, workspaceID, runID, versionID)
+ WHERE source_mount.id = $1
+)
+INSERT INTO computers (
+    id, environment_id, region_id, sandbox_declared_id,
+    deployment_definition_id, key, revision, owner_session_id,
+    owner_run_id, ownership_generation, writer_generation, head_version_id,
+    initial_config, write_key_id, status, desired_state,
+    dirty_state, last_activity_at, created_at, updated_at,
+    deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext,
+    secret_ca_not_after
+)
+SELECT (row).id, (row).environment_id, (row).region_id, (row).sandbox_declared_id,
+    (row).deployment_definition_id, (row).key, (row).revision, (row).owner_session_id,
+    (row).owner_run_id, (row).ownership_generation, (row).writer_generation, (row).head_version_id,
+    (row).initial_config, (row).write_key_id, (row).status, (row).desired_state,
+    (row).dirty_state, (row).last_activity_at, (row).created_at, (row).updated_at,
+    (row).deleted_at, (row).secret_ca_certificate, (row).secret_ca_private_key_nonce, (row).secret_ca_private_key_ciphertext,
+    (row).secret_ca_not_after
+FROM cloned`, sourceMountID, workspaceID, runID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions
 SELECT (jsonb_populate_record(
@@ -378,7 +396,7 @@ SELECT (jsonb_populate_record(
     SELECT runtime_instance_id FROM workspace_mounts WHERE id = $1
  )`, sourceMountID, runID, workspaceID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO runtime_instances
+WITH cloned AS (
 SELECT (jsonb_populate_record(
     NULL::runtime_instances,
     to_jsonb(source_runtime) || jsonb_build_object(
@@ -389,10 +407,36 @@ SELECT (jsonb_populate_record(
         'reservation_expires_at', transaction_timestamp() + interval '10 minutes',
         'updated_at', transaction_timestamp()
     )
-)).*
+)) AS row
   FROM workspace_mounts source_mount
   JOIN runtime_instances source_runtime ON source_runtime.id = source_mount.runtime_instance_id
- WHERE source_mount.id = $1`, sourceMountID, runtimeID, workspaceID, runID, versionID)
+ WHERE source_mount.id = $1
+)
+INSERT INTO runtime_instances (
+    id, org_id, worker_group_id, project_id,
+    environment_id, region_id, worker_instance_id, runtime_identity_id,
+    deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count,
+    cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes,
+    reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id,
+    reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id,
+    computer_source_version_id, computer_write_key_id, preparation_expires_at, reservation_expires_at,
+    desired_state, desired_version, desired_at, desired_reason,
+    observed_state, observed_version, observed_desired_version, observed_at,
+    allocated_at, ready_at, terminal_at, reclaimed_at,
+    reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+)
+SELECT (row).id, (row).org_id, (row).worker_group_id, (row).project_id,
+    (row).environment_id, (row).region_id, (row).worker_instance_id, (row).runtime_identity_id,
+    (row).deployment_definition_id, (row).runtime_substrate_id, (row).worker_epoch, (row).vm_vcpu_count,
+    (row).cpu_config_digest, (row).reserved_cpu_millis, (row).reserved_memory_bytes, (row).reserved_guest_ephemeral_disk_bytes,
+    (row).reserved_execution_slots, (row).workspace_id, (row).program_deployment_id, (row).restore_checkpoint_id,
+    (row).reserved_run_id, (row).reserved_attempt_number, (row).reserved_process_id, (row).reserved_workspace_version_id,
+    (row).computer_source_version_id, (row).computer_write_key_id, (row).preparation_expires_at, (row).reservation_expires_at,
+    (row).desired_state, (row).desired_version, (row).desired_at, (row).desired_reason,
+    (row).observed_state, (row).observed_version, (row).observed_desired_version, (row).observed_at,
+    (row).allocated_at, (row).ready_at, (row).terminal_at, (row).reclaimed_at,
+    (row).reclaim_evidence, (row).terminal_reason_code, (row).terminal_error, (row).updated_at
+FROM cloned`, sourceMountID, runtimeID, workspaceID, runID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO workspace_mounts
 SELECT (jsonb_populate_record(
