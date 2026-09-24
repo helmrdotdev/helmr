@@ -3084,15 +3084,17 @@ CREATE TABLE runtime_instances (
     CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
 );
 
--- Physical Runtime ownership keeps staged generation objects alive until
--- quiescence is proved. Releasing a candidate does not delete graph objects.
+-- Each publication retains its own staged objects until consumer quiescence.
+-- Runtime reclamation releases all remaining publications after physical exclusion.
+-- Releasing a pin does not delete graph objects.
 CREATE TABLE runtime_computer_object_pins (
     runtime_instance_id UUID NOT NULL,
+    publication_key BYTEA NOT NULL CHECK (octet_length(publication_key)=32),
     digest TEXT NOT NULL,
     environment_id UUID NOT NULL,
     computer_id UUID NOT NULL,
     runtime_desired_version BIGINT NOT NULL CHECK (runtime_desired_version > 0),
-    PRIMARY KEY (runtime_instance_id, digest),
+    PRIMARY KEY (runtime_instance_id, publication_key, digest),
     FOREIGN KEY (environment_id, computer_id, runtime_instance_id)
         REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, digest)

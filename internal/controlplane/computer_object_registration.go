@@ -123,7 +123,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	if !pinned {
 		return errors.New("initial writer key is not pinned")
 	}
-	if err = recordComputerObjectLocked(ctx, tx, owner, fence.RuntimeID, fence.DesiredVersion, inspection, uploaded, false, map[string]bool{pgvalue.UUIDString(key.ID): true}); err != nil {
+	if err = recordComputerObjectLocked(ctx, tx, owner, fence.RuntimeID, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID), fence.DesiredVersion, inspection, uploaded, false, map[string]bool{pgvalue.UUIDString(key.ID): true}); err != nil {
 		return err
 	}
 	if err = owner.CheckDeadlines(ctx, tx); err != nil {
@@ -134,7 +134,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 
 // The caller owns current preparation or checkpoint/finalization authority and
 // rechecks deadlines after this operation. No remote I/O occurs under its locks.
-func recordComputerObjectLocked(ctx context.Context, tx pgx.Tx, owner dispatch.ComputerPreparation, runtimeID pgtype.UUID, desiredVersion int64, inspection blockformat.ObjectInspection, uploaded *cas.Object, reuse bool, allowedKeys map[string]bool) error {
+func recordComputerObjectLocked(ctx context.Context, tx pgx.Tx, owner dispatch.ComputerPreparation, runtimeID pgtype.UUID, publicationKey []byte, desiredVersion int64, inspection blockformat.ObjectInspection, uploaded *cas.Object, reuse bool, allowedKeys map[string]bool) error {
 	object, err := describeComputerObject(inspection)
 	if err != nil {
 		return err
@@ -179,16 +179,16 @@ func recordComputerObjectLocked(ctx context.Context, tx pgx.Tx, owner dispatch.C
 		return computerObjectConflict("referenced computer object is not certified")
 	}
 	if uploaded == nil {
-		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version) VALUES($1,$2,$3,$4,$5)
- ON CONFLICT(runtime_instance_id,digest) DO UPDATE SET runtime_desired_version=EXCLUDED.runtime_desired_version
+		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)
+ ON CONFLICT(runtime_instance_id,publication_key,digest) DO UPDATE SET runtime_desired_version=EXCLUDED.runtime_desired_version
  WHERE runtime_computer_object_pins.environment_id=EXCLUDED.environment_id
  AND runtime_computer_object_pins.computer_id=EXCLUDED.computer_id
- AND runtime_computer_object_pins.runtime_desired_version<=EXCLUDED.runtime_desired_version`, runtimeID, object.digest, owner.EnvironmentID, owner.ComputerID, desiredVersion); err != nil {
+ AND runtime_computer_object_pins.runtime_desired_version<=EXCLUDED.runtime_desired_version`, runtimeID, object.digest, owner.EnvironmentID, owner.ComputerID, desiredVersion, publicationKey); err != nil {
 			return err
 		}
 	}
 	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3)`, runtimeID, object.digest, desiredVersion).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3 AND publication_key=$4)`, runtimeID, object.digest, desiredVersion, publicationKey).Scan(&retained); err != nil {
 		return err
 	}
 	if !retained {

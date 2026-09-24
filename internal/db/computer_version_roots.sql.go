@@ -157,17 +157,24 @@ const requireRuntimeComputerObjectPin = `-- name: RequireRuntimeComputerObjectPi
 SELECT digest FROM runtime_computer_object_pins
  WHERE runtime_instance_id=$1
  AND runtime_desired_version=$2
- AND digest=$3
+ AND publication_key=$3
+ AND digest=$4
 `
 
 type RequireRuntimeComputerObjectPinParams struct {
 	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
 	RuntimeDesiredVersion int64       `json:"runtime_desired_version"`
+	PublicationKey        []byte      `json:"publication_key"`
 	Digest                string      `json:"digest"`
 }
 
 func (q *Queries) RequireRuntimeComputerObjectPin(ctx context.Context, arg RequireRuntimeComputerObjectPinParams) (string, error) {
-	row := q.db.QueryRow(ctx, requireRuntimeComputerObjectPin, arg.RuntimeInstanceID, arg.RuntimeDesiredVersion, arg.Digest)
+	row := q.db.QueryRow(ctx, requireRuntimeComputerObjectPin,
+		arg.RuntimeInstanceID,
+		arg.RuntimeDesiredVersion,
+		arg.PublicationKey,
+		arg.Digest,
+	)
 	var digest string
 	err := row.Scan(&digest)
 	return digest, err

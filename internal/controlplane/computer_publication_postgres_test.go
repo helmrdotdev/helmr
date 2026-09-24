@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -236,5 +237,30 @@ func TestInitialGenerationPublicationRevocationWinsLockWait(t *testing.T) {
 	var count int
 	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE publisher_runtime_instance_id=$1`, f.runtime).Scan(&count); err != nil || count != 0 {
 		t.Fatal("revoked publication retained audit", err)
+	}
+}
+
+func TestComputerPublicationPinsRejectOtherOwnerAndReleaseOneAtATime(t *testing.T) {
+	f, fence, input := generationPublicationFixture(t)
+	other := bytes.Repeat([]byte{0xab}, 32)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_computer_object_pins SET publication_key=$2 WHERE runtime_instance_id=$1`, f.runtime, other)
+	if _, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input); err == nil {
+		t.Fatal("other publication pin authorized initial root")
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,publication_key,digest,environment_id,computer_id,runtime_desired_version)
+ SELECT runtime_instance_id,$2,digest,environment_id,computer_id,runtime_desired_version FROM runtime_computer_object_pins WHERE runtime_instance_id=$1`, f.runtime, computerPublicationKey("initial", f.runtime, f.runtime))
+	if n, err := f.server.db.ReleaseReclaimedComputerObjects(t.Context(), 1); err != nil || n != 0 {
+		t.Fatalf("live Runtime released pins: %d %v", n, err)
+	}
+	// The test supplies physical exclusion evidence; it does not prove host cleanup.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',reserved_run_id=NULL,reserved_attempt_number=NULL,reserved_workspace_version_id=NULL,terminal_at=clock_timestamp(),terminal_reason_code='fixture',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
+	for want := 1; want >= 0; want-- {
+		if n, err := f.server.db.ReleaseReclaimedComputerObjects(t.Context(), 1); err != nil || n != 1 {
+			t.Fatalf("bounded release: %d %v", n, err)
+		}
+		var retained int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runtime_computer_object_pins WHERE runtime_instance_id=$1`, f.runtime).Scan(&retained); err != nil || retained != want {
+			t.Fatalf("released another publication: %d want %d (%v)", retained, want, err)
+		}
 	}
 }

@@ -81,7 +81,7 @@ func TestRunFinalizationRegistrationPostgres(t *testing.T) {
 
 func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) {
 	f, req := finalizingActorRequest(t)
-	req.Workspace.Captured.Disk.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
+	req.Workspace.Captured.Disk.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("finalization", f.claim.runLease.ID, pgvalue.UUID(uuid.MustParse(req.Workspace.Captured.Receipt.OperationID))))
 	parsed, err := parseActorCompletionRequest(req)
 	if err != nil {
 		t.Fatal(err)
@@ -99,7 +99,7 @@ func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) 
 	}
 	changed := req
 	changed.Workspace.Captured = cloneTaskWorkspaceCapture(req.Workspace.Captured)
-	changed.Workspace.Captured.Disk.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
+	changed.Workspace.Captured.Disk.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("finalization", f.claim.runLease.ID, pgvalue.UUID(uuid.MustParse(req.Workspace.Captured.Receipt.OperationID))))
 	if status := finalizationActorStatus(t, f, changed); status != http.StatusConflict {
 		t.Fatalf("changed candidate status=%d", status)
 	}

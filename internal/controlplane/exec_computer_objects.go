@@ -145,10 +145,10 @@ func (s *Server) recordExecComputerObject(ctx context.Context, worker workerActo
 			if !reflect.DeepEqual(stored, request.Inspection) {
 				return computerObjectConflict("object differs from registered inspection")
 			}
-			if _, err = q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: runtime.ID, RuntimeDesiredVersion: runtime.DesiredVersion, Digest: object.digest}); err != nil {
+			if _, err = q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: runtime.ID, PublicationKey: computerPublicationKey("exec", process.ID, process.ID), RuntimeDesiredVersion: runtime.DesiredVersion, Digest: object.digest}); err != nil {
 				return err
 			}
-		} else if err = recordComputerObjectLocked(ctx, tx, owner, runtime.ID, runtime.DesiredVersion, request.Inspection, uploaded, operation == "reuse", allowed); err != nil {
+		} else if err = recordComputerObjectLocked(ctx, tx, owner, runtime.ID, computerPublicationKey("exec", process.ID, process.ID), runtime.DesiredVersion, request.Inspection, uploaded, operation == "reuse", allowed); err != nil {
 			return err
 		}
 		return nil

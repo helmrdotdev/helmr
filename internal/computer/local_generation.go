@@ -58,15 +58,18 @@ func (s localGenerationSource) GetRange(ctx context.Context, digest string, size
 // it is not external durability and does not tolerate loss of the host's disk.
 // Do not unlink/replace the directory or owner.lock while any owner can use it.
 type LocalGeneration struct {
-	life      sync.RWMutex
-	commit    sync.Mutex
-	store     *cas.File
-	disk      *WritableGeneration
-	directory string
-	head      localGenerationHead
-	lock      *os.File
-	closed    bool
-	phase     func(string) error // Deterministic test crash/fault injection, set before use.
+	life          sync.RWMutex
+	commit        sync.Mutex
+	store         *cas.File
+	disk          *WritableGeneration
+	directory     string
+	head          localGenerationHead
+	installedRoot GenerationRoot
+	lock          *os.File
+	closed        bool
+	stagedBytes   int64
+	captures      map[*LocalCapture]GenerationRoot
+	phase         func(string) error // Deterministic test crash/fault injection, set before use.
 }
 
 func syncGenerationDirectory(path string) error {
@@ -248,7 +251,7 @@ func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os
 	if err != nil {
 		return nil, err
 	}
-	return &LocalGeneration{store: store, disk: disk, directory: cfg.Directory, head: head, lock: lock}, nil
+	return &LocalGeneration{store: store, disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]GenerationRoot)}, nil
 }
 
 func (p *LocalGeneration) step(phase string) error {
@@ -287,6 +290,7 @@ func (p *LocalGeneration) persist(ctx context.Context, head localGenerationHead)
 	if err = os.Rename(file.Name(), filepath.Join(p.directory, "root")); err != nil {
 		return err
 	}
+	p.installedRoot = head.Root
 	if err = p.step("root-renamed"); err != nil {
 		return err
 	}
@@ -329,6 +333,10 @@ func (p *LocalGeneration) Flush(ctx context.Context) (GenerationRoot, error) {
 	}
 	p.commit.Lock()
 	defer p.commit.Unlock()
+	return p.flushLocked(ctx)
+}
+
+func (p *LocalGeneration) flushLocked(ctx context.Context) (GenerationRoot, error) {
 	root, err := p.disk.Capture(ctx)
 	if err != nil {
 		return GenerationRoot{}, err
@@ -368,7 +376,10 @@ func (p *LocalGeneration) Publish(ctx context.Context, root GenerationRoot, publ
 	}
 	p.commit.Lock()
 	capacity := p.head.Base.LogicalBytes
+	pin := &LocalCapture{}
+	p.captures[pin] = root
 	p.commit.Unlock()
+	defer func() { p.commit.Lock(); delete(p.captures, pin); p.commit.Unlock() }()
 	if root.LogicalBytes != capacity {
 		return errors.New("publication capacity differs from admitted Computer")
 	}

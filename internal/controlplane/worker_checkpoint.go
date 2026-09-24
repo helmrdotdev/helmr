@@ -518,7 +518,7 @@ func (s *Server) commitCheckpointReady(
 		if _, err := work.q.RequireRegisteredCheckpointManifest(ctx, db.RequireRegisteredCheckpointManifestParams{ID: pgvalue.UUID(ready.checkpointID), Manifest: encoded}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		workspaceVersionID, err := recordCheckpointComputerVersion(ctx, work.q, worker, authority, ready.computer)
+		workspaceVersionID, err := recordCheckpointComputerVersion(ctx, work.q, worker, authority, pgvalue.UUID(ready.checkpointID), ready.computer)
 		if err != nil {
 			return err
 		}
@@ -870,9 +870,10 @@ func recordCheckpointComputerVersion(
 	store db.Querier,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
+	publicationID pgtype.UUID,
 	disk workerapi.CheckpointComputer,
 ) (pgtype.UUID, error) {
-	if err := requireCertifiedComputerRoot(ctx, store, authority, disk.Root); err != nil {
+	if err := requireCertifiedComputerRoot(ctx, store, authority, computerPublicationKey("checkpoint", publicationID, publicationID), disk.Root); err != nil {
 		return pgtype.UUID{}, err
 	}
 	return recordChildTaskWorkspaceVersion(ctx, store, worker, authority, workspaceVersionCapture{root: disk.Root})

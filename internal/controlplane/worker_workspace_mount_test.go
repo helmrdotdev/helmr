@@ -91,7 +91,7 @@ UPDATE workspace_mounts
 	if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.claim_version,g.claim_version FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1`, fixture.WorkerID).Scan(&worker.ClaimVersion, &worker.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	root := retainedTestGeneration(t, fixture.Pool, server, runtimeID.String())
+	root := retainedTestGeneration(t, fixture.Pool, server, runtimeID.String(), computerPublicationKey("exec", pgvalue.UUID(processID), pgvalue.UUID(processID)))
 	return &execGenerationFixture{fixture, server, worker, workspaceID, baseWorkspaceVersionID, runtimeID, mountID, processID, root}
 }
 func (f *execGenerationFixture) call(t *testing.T, handler http.HandlerFunc, body any) *httptest.ResponseRecorder {
@@ -165,7 +165,7 @@ func TestExecGenerationRejectsUnpublishedAndChangedCapture(t *testing.T) {
 	if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 200 {
 		t.Fatalf("capture %d %s", w.Code, w.Body)
 	}
-	f.root = retainedTestGeneration(t, f.Pool, f.server, f.runtimeID.String())
+	f.root = retainedTestGeneration(t, f.Pool, f.server, f.runtimeID.String(), computerPublicationKey("exec", pgvalue.UUID(f.processID), pgvalue.UUID(f.processID)))
 	if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 409 {
 		t.Fatalf("changed capture %d %s", w.Code, w.Body)
 	}

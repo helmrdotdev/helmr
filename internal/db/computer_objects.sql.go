@@ -51,19 +51,64 @@ func (q *Queries) CertifyComputerObject(ctx context.Context, arg CertifyComputer
 	return result.RowsAffected(), nil
 }
 
+const deleteUnreferencedComputerCasMembership = `-- name: DeleteUnreferencedComputerCasMembership :execrows
+DELETE FROM cas_objects c
+ WHERE c.org_id=$1 AND c.digest=$2
+ AND NOT EXISTS (SELECT 1 FROM computer_objects o WHERE o.org_id=c.org_id AND o.digest=c.digest)
+ AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.org_id=c.org_id AND a.digest=c.digest)
+`
+
+type DeleteUnreferencedComputerCasMembershipParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	Digest string      `json:"digest"`
+}
+
+// Run only after deleting the selected Computer object in the same transaction.
+// Other Computers and artifact kinds may still own the shared physical bytes.
+func (q *Queries) DeleteUnreferencedComputerCasMembership(ctx context.Context, arg DeleteUnreferencedComputerCasMembershipParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnreferencedComputerCasMembership, arg.OrgID, arg.Digest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteUnreferencedComputerObject = `-- name: DeleteUnreferencedComputerObject :execrows
+DELETE FROM computer_objects o
+ WHERE o.environment_id=$1 AND o.computer_id=$2 AND o.digest=$3
+ AND NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
+`
+
+type DeleteUnreferencedComputerObjectParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	Digest        string      `json:"digest"`
+}
+
+func (q *Queries) DeleteUnreferencedComputerObject(ctx context.Context, arg DeleteUnreferencedComputerObjectParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnreferencedComputerObject, arg.EnvironmentID, arg.ComputerID, arg.Digest)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const hasRegisteredInitialComputerObject = `-- name: HasRegisteredInitialComputerObject :one
 SELECT EXISTS (
  SELECT 1 FROM runtime_instances r
- JOIN runtime_computer_object_pins p ON p.runtime_instance_id=r.id AND p.runtime_desired_version=r.desired_version
+ JOIN runtime_computer_object_pins p ON p.runtime_instance_id=r.id AND p.publication_key=$1 AND p.runtime_desired_version=r.desired_version
  JOIN computer_objects o ON o.environment_id=p.environment_id AND o.computer_id=p.computer_id AND o.digest=p.digest
- WHERE r.id=$1 AND r.worker_instance_id=$2
-   AND r.worker_group_id=$3 AND r.worker_epoch=$4
-   AND r.desired_version=$5 AND r.reclaimed_at IS NULL
-   AND o.digest=$6 AND o.inspection=$7::jsonb
+ WHERE r.id=$2 AND r.worker_instance_id=$3
+   AND r.worker_group_id=$4 AND r.worker_epoch=$5
+   AND r.desired_version=$6 AND r.reclaimed_at IS NULL
+   AND o.digest=$7 AND o.inspection=$8::jsonb
 )
 `
 
 type HasRegisteredInitialComputerObjectParams struct {
+	PublicationKey []byte      `json:"publication_key"`
 	RuntimeID      pgtype.UUID `json:"runtime_id"`
 	WorkerID       pgtype.UUID `json:"worker_id"`
 	WorkerGroupID  pgtype.UUID `json:"worker_group_id"`
@@ -75,6 +120,7 @@ type HasRegisteredInitialComputerObjectParams struct {
 
 func (q *Queries) HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error) {
 	row := q.db.QueryRow(ctx, hasRegisteredInitialComputerObject,
+		arg.PublicationKey,
 		arg.RuntimeID,
 		arg.WorkerID,
 		arg.WorkerGroupID,
@@ -133,6 +179,66 @@ func (q *Queries) ListComputerObjectReadKeys(ctx context.Context, arg ListComput
 	return items, nil
 }
 
+const listUnreferencedComputerObjects = `-- name: ListUnreferencedComputerObjects :many
+SELECT o.environment_id,o.computer_id,o.digest,o.org_id
+ FROM computer_objects o
+ WHERE NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
+ ORDER BY o.rank DESC,o.environment_id,o.computer_id,o.digest
+ LIMIT $1
+`
+
+type ListUnreferencedComputerObjectsRow struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	Digest        string      `json:"digest"`
+	OrgID         pgtype.UUID `json:"org_id"`
+}
+
+// Roots, active publications and parent objects are the availability owners.
+// Version history is not deleted. The final DELETE's FKs arbitrate concurrent
+// adoption after this discovery snapshot.
+func (q *Queries) ListUnreferencedComputerObjects(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerObjectsRow, error) {
+	rows, err := q.db.Query(ctx, listUnreferencedComputerObjects, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnreferencedComputerObjectsRow
+	for rows.Next() {
+		var i ListUnreferencedComputerObjectsRow
+		if err := rows.Scan(
+			&i.EnvironmentID,
+			&i.ComputerID,
+			&i.Digest,
+			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockCollectedComputerLifetime = `-- name: LockCollectedComputerLifetime :one
+SELECT digest FROM cas_object_lifetimes WHERE digest=$1 FOR NO KEY UPDATE
+`
+
+// Collectors deleting different logical owners of the same physical digest must
+// serialize membership cleanup. Acquire in a separate statement after object
+// deletion; subsequent statements then see the previous collector's commit.
+// NO KEY UPDATE avoids blocking ordinary FK acquisition until actual retirement.
+func (q *Queries) LockCollectedComputerLifetime(ctx context.Context, digest string) (string, error) {
+	row := q.db.QueryRow(ctx, lockCollectedComputerLifetime, digest)
+	var digest_2 string
+	err := row.Scan(&digest_2)
+	return digest_2, err
+}
+
 const lockComputerObject = `-- name: LockComputerObject :one
 
 SELECT environment_id, computer_id, digest, org_id, project_id, size_bytes, media_type, kind, rank, inspection, certified_at, certified, certified_org_id, availability_required FROM computer_objects
@@ -175,20 +281,39 @@ func (q *Queries) LockComputerObject(ctx context.Context, arg LockComputerObject
 
 const releaseReclaimedComputerObjects = `-- name: ReleaseReclaimedComputerObjects :execrows
 WITH released AS (
- SELECT p.runtime_instance_id,p.digest FROM runtime_computer_object_pins p
+ SELECT p.runtime_instance_id,p.publication_key,p.digest FROM runtime_computer_object_pins p
  JOIN runtime_instances r ON r.id=p.runtime_instance_id
  WHERE r.reclaimed_at IS NOT NULL
- ORDER BY p.runtime_instance_id,p.digest LIMIT $1
+ ORDER BY p.runtime_instance_id,p.publication_key,p.digest LIMIT $1
  FOR UPDATE OF p SKIP LOCKED
 )
 DELETE FROM runtime_computer_object_pins p USING released r
- WHERE p.runtime_instance_id=r.runtime_instance_id AND p.digest=r.digest
+ WHERE p.runtime_instance_id=r.runtime_instance_id AND p.publication_key=r.publication_key AND p.digest=r.digest
 `
 
 // Physical reclamation is monotonic and already requires exclusion evidence.
 // Bound cleanup independently of remote storage; graph/object FKs remain intact.
 func (q *Queries) ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit int32) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseReclaimedComputerObjects, rowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireCollectedComputerObject = `-- name: RetireCollectedComputerObject :execrows
+UPDATE cas_object_lifetimes l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp()
+ WHERE l.digest=$1 AND l.retired_at IS NULL
+ AND NOT EXISTS (SELECT 1 FROM cas_objects c WHERE c.digest=l.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_objects o WHERE o.digest=l.digest)
+ AND NOT EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=l.digest AND c.checkpoint_status='creating')
+`
+
+// The caller has removed an abandoned graph owner in this transaction, not
+// merely observed an arbitrary temporarily unowned upload. Permanent retirement
+// prevents late upload/adoption from reviving the same physical key.
+func (q *Queries) RetireCollectedComputerObject(ctx context.Context, digest string) (int64, error) {
+	result, err := q.db.Exec(ctx, retireCollectedComputerObject, digest)
 	if err != nil {
 		return 0, err
 	}

@@ -340,7 +340,7 @@ func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid
 	// tree capture still used by the separate turn-completion test helper.
 	req.Manifest.RuntimeState.Computer = &workerapi.CheckpointComputer{
 		ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes,
-		Root: retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID)),
+		Root: retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("checkpoint", pgvalue.UUID(uuid.MustParse(req.CheckpointID)), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))),
 	}
 	for _, a := range []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.ScratchDiskArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0]} {
 		obj, err := f.server.cas.Put(t.Context(), a.MediaType, strings.NewReader(req.CheckpointID+capture.Artifact.Digest+a.MediaType))

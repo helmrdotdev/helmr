@@ -24,8 +24,8 @@ func TestInitialGenerationRecoveryRetainsObjectsUntilPhysicalReclamation(t *test
 	runtimeID, root := prepareInitialGeneration(t, f)
 	// Reuse the fixture generation as a registered candidate. This proves DB
 	// retention across revocation, not remote verification or physical shutdown.
-	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,runtime_desired_version,environment_id,computer_id,digest)
- SELECT r.id,r.desired_version,r.environment_id,r.workspace_id,v.root_digest FROM runtime_instances r JOIN computer_version_roots v ON v.version_id=$2 WHERE r.id=$1`, runtimeID, root)
+	dbtest.MustExec(t, f.ctx, f.pool, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,publication_key,runtime_desired_version,environment_id,computer_id,digest)
+ SELECT r.id,decode(repeat('a1',32),'hex'),r.desired_version,r.environment_id,r.workspace_id,v.root_digest FROM runtime_instances r JOIN computer_version_roots v ON v.version_id=$2 WHERE r.id=$1`, runtimeID, root)
 	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runtime_instances SET preparation_expires_at=now()-interval '1 second' WHERE id=$1`, runtimeID)
 	n, err := f.authority.RecoverExpiredRuntimeReservations(f.ctx, 10)
 	if err != nil || n != 1 {

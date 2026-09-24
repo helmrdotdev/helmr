@@ -29,7 +29,7 @@ func ptrGenerationRoot(capacity int64) *computer.GenerationRoot {
 
 // Publish real authenticated bytes with a retained Runtime writer. Higher-level
 // checkpoint/outcome fixtures exercise their own live commit fences separately.
-func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, runtimeID string) computer.GenerationRoot {
+func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, runtimeID string, publicationKey []byte) computer.GenerationRoot {
 	t.Helper()
 	ctx := t.Context()
 	var owner dispatch.ComputerPreparation
@@ -78,7 +78,7 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, ru
 	}
 	defer tx.Rollback(ctx)
 	for _, object := range []*cas.Object{nil, &uploaded} {
-		if err := recordComputerObjectLocked(ctx, tx, owner, pgvalue.UUID(uuid.MustParse(runtimeID)), desired, evidence, object, false, map[string]bool{writer.ActiveKey: true}); err != nil {
+		if err := recordComputerObjectLocked(ctx, tx, owner, pgvalue.UUID(uuid.MustParse(runtimeID)), publicationKey, desired, evidence, object, false, map[string]bool{writer.ActiveKey: true}); err != nil {
 			t.Fatal(err)
 		}
 	}

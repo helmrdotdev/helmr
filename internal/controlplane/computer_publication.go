@@ -97,7 +97,7 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 		return empty, err
 	}
 	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND runtime_desired_version=$2 AND digest=$3)`, fence.RuntimeID, fence.DesiredVersion, input.Root.Pack.Digest).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$4 AND runtime_desired_version=$2 AND digest=$3)`, fence.RuntimeID, fence.DesiredVersion, input.Root.Pack.Digest, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID)).Scan(&retained); err != nil {
 		return empty, err
 	}
 	if !retained {

@@ -13,11 +13,11 @@ import (
 
 // The caller holds the live Runtime and Computer authority through commit.
 // Certification proves the immutable DAG; the pin proves this Runtime retained it.
-func requireCertifiedComputerRoot(ctx context.Context, q db.Querier, authority runLeaseClaimAuthority, root computer.GenerationRoot) error {
-	return requireRuntimeComputerRoot(ctx, q, authority.runtime, authority.run.EnvironmentID, authority.workspace.ID, root)
+func requireCertifiedComputerRoot(ctx context.Context, q db.Querier, authority runLeaseClaimAuthority, publicationKey []byte, root computer.GenerationRoot) error {
+	return requireRuntimeComputerRoot(ctx, q, authority.runtime, authority.run.EnvironmentID, authority.workspace.ID, publicationKey, root)
 }
 
-func requireRuntimeComputerRoot(ctx context.Context, q db.Querier, runtime db.RuntimeInstance, environmentID, computerID pgtype.UUID, root computer.GenerationRoot) error {
+func requireRuntimeComputerRoot(ctx context.Context, q db.Querier, runtime db.RuntimeInstance, environmentID, computerID pgtype.UUID, publicationKey []byte, root computer.GenerationRoot) error {
 	locator, err := root.Locator(runtime.ReservedGuestEphemeralDiskBytes)
 	if err != nil {
 		return err
@@ -39,7 +39,7 @@ func requireRuntimeComputerRoot(ctx context.Context, q db.Querier, runtime db.Ru
 	if err := evidence.Pack.CheckRoot(locator, root.LogicalBytes); err != nil {
 		return err
 	}
-	_, err = q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: runtime.ID, RuntimeDesiredVersion: runtime.DesiredVersion, Digest: root.Pack.Digest})
+	_, err = q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: runtime.ID, PublicationKey: publicationKey, RuntimeDesiredVersion: runtime.DesiredVersion, Digest: root.Pack.Digest})
 	return err
 }
 

@@ -165,6 +165,10 @@ type Querier interface {
 	DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error)
 	DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error)
 	DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error
+	// Run only after deleting the selected Computer object in the same transaction.
+	// Other Computers and artifact kinds may still own the shared physical bytes.
+	DeleteUnreferencedComputerCasMembership(ctx context.Context, arg DeleteUnreferencedComputerCasMembershipParams) (int64, error)
+	DeleteUnreferencedComputerObject(ctx context.Context, arg DeleteUnreferencedComputerObjectParams) (int64, error)
 	DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DetachCheckpointSource(ctx context.Context, arg DetachCheckpointSourceParams) (DetachCheckpointSourceRow, error)
@@ -384,6 +388,10 @@ type Querier interface {
 	ListTimedOutTokenWaitCandidates(ctx context.Context, rowLimit int32) ([]ListTimedOutTokenWaitCandidatesRow, error)
 	ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error)
 	ListTokens(ctx context.Context, arg ListTokensParams) ([]ListTokensRow, error)
+	// Roots, active publications and parent objects are the availability owners.
+	// Version history is not deleted. The final DELETE's FKs arbitrate concurrent
+	// adoption after this discovery snapshot.
+	ListUnreferencedComputerObjects(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerObjectsRow, error)
 	ListUnsettledSessionMessages(ctx context.Context, arg ListUnsettledSessionMessagesParams) ([]SessionMessage, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
@@ -412,6 +420,11 @@ type Querier interface {
 	LockCancellationWorkspaces(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockChildWorkspacePair(ctx context.Context, arg LockChildWorkspacePairParams) ([]LockChildWorkspacePairRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error)
+	// Collectors deleting different logical owners of the same physical digest must
+	// serialize membership cleanup. Acquire in a separate statement after object
+	// deletion; subsequent statements then see the previous collector's commit.
+	// NO KEY UPDATE avoids blocking ordinary FK acquisition until actual retirement.
+	LockCollectedComputerLifetime(ctx context.Context, digest string) (string, error)
 	// The caller owns the fenced publication transaction. These storage operations
 	// neither authenticate a Worker nor accept an unverified ciphertext declaration.
 	// Admission/edge/key mutation must lock the parent and reject certified objects;
@@ -586,6 +599,10 @@ type Querier interface {
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
 	RetireAbandonedCasObject(ctx context.Context, digest string) (int64, error)
+	// The caller has removed an abandoned graph owner in this transaction, not
+	// merely observed an arbitrary temporarily unowned upload. Permanent retirement
+	// prevents late upload/adoption from reviving the same physical key.
+	RetireCollectedComputerObject(ctx context.Context, digest string) (int64, error)
 	RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireExpiredIdempotencyClaimParams) (IdempotencyClaim, error)
 	RetryControlOutbox(ctx context.Context, arg RetryControlOutboxParams) (ControlOutbox, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)

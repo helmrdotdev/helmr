@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -52,7 +53,7 @@ func (p runHTTPPublication) Upload(ctx context.Context, d cas.Descriptor, f *os.
 // physical VMM stop/restore remains a separate environment acceptance gate.
 func TestRunGenerationPublicationRestoresAfterSourceRemoval(t *testing.T) {
 	f, completion := finalizingActorRequest(t)
-	base := retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
+	base := retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("finalization", f.claim.runLease.ID, pgvalue.UUID(uuid.MustParse(completion.Workspace.Captured.Receipt.OperationID))))
 	remote := f.server.cas.(*cas.File)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(context.WithValue(r.Context(), workerContextKey{}, f.worker))

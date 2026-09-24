@@ -81,8 +81,10 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 	q := db.New(tx)
 	var authority runLeaseClaimAuthority
 	var expires pgtype.Timestamptz
+	var publicationKey []byte
 	if cp := request.Checkpoint; cp != nil {
 		id, err := parseCanonicalUUID("checkpoint_id", cp.ID)
+		publicationKey = computerPublicationKey("checkpoint", pgvalue.UUID(id), pgvalue.UUID(id))
 		if err != nil {
 			return err
 		}
@@ -111,6 +113,7 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 		}
 	} else {
 		operation, err := parseCanonicalUUID("operation_id", request.OperationID)
+		publicationKey = computerPublicationKey("finalization", pgvalue.UUID(lease.leaseID), pgvalue.UUID(operation))
 		if err != nil {
 			return err
 		}
@@ -175,10 +178,10 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 		if !reflect.DeepEqual(stored, request.Inspection) {
 			return computerObjectConflict("object differs from registered inspection")
 		}
-		if _, err := q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: authority.runtime.ID, RuntimeDesiredVersion: authority.runtime.DesiredVersion, Digest: object.digest}); err != nil {
+		if _, err := q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: authority.runtime.ID, PublicationKey: publicationKey, RuntimeDesiredVersion: authority.runtime.DesiredVersion, Digest: object.digest}); err != nil {
 			return err
 		}
-	} else if err = recordComputerObjectLocked(ctx, tx, owner, authority.runtime.ID, authority.runtime.DesiredVersion, request.Inspection, uploaded, operation == "reuse", allowed); err != nil {
+	} else if err = recordComputerObjectLocked(ctx, tx, owner, authority.runtime.ID, publicationKey, authority.runtime.DesiredVersion, request.Inspection, uploaded, operation == "reuse", allowed); err != nil {
 		return err
 	}
 	now, err := q.GetRunLeaseRenewalTime(ctx)

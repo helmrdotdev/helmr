@@ -23,7 +23,7 @@ import (
 func checkpointPublicationFixture(t *testing.T) (*actorCheckpointFixture, workerapi.RegisterCheckpointRequest, func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
+	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("checkpoint", pgvalue.UUID(uuid.MustParse(req.CheckpointID)), pgvalue.UUID(uuid.MustParse(req.CheckpointID))))
 	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
 	for i, a := range artifacts {

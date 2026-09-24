@@ -47,4 +47,5 @@ WHERE r.id=sqlc.arg(runtime_instance_id);
 SELECT digest FROM runtime_computer_object_pins
  WHERE runtime_instance_id=sqlc.arg(runtime_instance_id)
  AND runtime_desired_version=sqlc.arg(runtime_desired_version)
+ AND publication_key=sqlc.arg(publication_key)
  AND digest=sqlc.arg(digest);

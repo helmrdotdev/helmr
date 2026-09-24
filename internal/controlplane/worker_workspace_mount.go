@@ -145,7 +145,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		if request.Computer.ComputerID != pgvalue.UUIDString(a.WorkspaceProcess.WorkspaceID) {
 			return conflict(errors.New("captured Computer differs from exec"))
 		}
-		if err := requireRuntimeComputerRoot(r.Context(), q, a.RuntimeInstance, a.WorkspaceProcess.EnvironmentID, a.WorkspaceProcess.WorkspaceID, request.Computer.Root); err != nil {
+		if err := requireRuntimeComputerRoot(r.Context(), q, a.RuntimeInstance, a.WorkspaceProcess.EnvironmentID, a.WorkspaceProcess.WorkspaceID, computerPublicationKey("exec", a.WorkspaceProcess.ID, a.WorkspaceProcess.ID), request.Computer.Root); err != nil {
 			return fmt.Errorf("require exec root: %w", err)
 		}
 		raw, err := json.Marshal(request.Computer.Root)

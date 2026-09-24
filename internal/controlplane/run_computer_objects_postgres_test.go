@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -31,7 +32,7 @@ func runObjectStatus(t *testing.T, f *actorCheckpointFixture, request workerapi.
 func runObjectFixture(t *testing.T) (*actorCheckpointFixture, workerapi.RunComputerObjectRequest) {
 	t.Helper()
 	f, completion := finalizingActorRequest(t)
-	root := retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
+	root := retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("finalization", f.claim.runLease.ID, pgvalue.UUID(uuid.MustParse(completion.Workspace.Captured.Receipt.OperationID))))
 	completion.Workspace.Captured.Disk.Root = root
 	if err := f.server.registerRunFinalization(t.Context(), f.worker, workerapi.RegisterRunFinalizationRequest{Lease: completion.Lease, OperationID: completion.Workspace.Captured.Receipt.OperationID, Disk: completion.Workspace.Captured.Disk}); err != nil {
 		t.Fatal(err)
@@ -92,5 +93,43 @@ func TestRunComputerObjectPublicationAuthority(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRunComputerObjectPinsArePublicationScoped(t *testing.T) {
+	f, request := runObjectFixture(t)
+	var digest string
+	if request.Inspection.Pack != nil {
+		digest = objectDigest(request.Inspection.Pack.Pages[0].Locator.Pack.Digest)
+	} else {
+		digest = objectDigest(request.Inspection.Segment.Digest)
+	}
+	operation := pgvalue.UUID(uuid.MustParse(request.OperationID))
+	other := computerPublicationKey("checkpoint", operation, operation)
+	current := computerPublicationKey("finalization", f.claim.runLease.ID, pgvalue.UUID(uuid.MustParse(request.OperationID)))
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,publication_key,digest,environment_id,computer_id,runtime_desired_version)
+ SELECT runtime_instance_id,$2,digest,environment_id,computer_id,runtime_desired_version FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$3 AND digest=$4`, f.claim.runtime.ID, other, current, digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$2`, f.claim.runtime.ID, current)
+	if status := runObjectStatus(t, f, request, "certify"); status != 409 {
+		t.Fatalf("another operation authorized certification: %d", status)
+	}
+	if status := runObjectStatus(t, f, request, "reuse"); status != 200 {
+		t.Fatalf("current owner could not acquire its own pin: %d", status)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$2`, f.claim.runtime.ID, other)
+	if status := runObjectStatus(t, f, request, "certify"); status != 200 {
+		t.Fatalf("releasing another owner removed current protection: %d", status)
+	}
+}
+
+func TestFinalizationPublicationCannotBorrowPriorLeasePin(t *testing.T) {
+	f, request := runObjectFixture(t)
+	wrong := computerPublicationKey("finalization", pgvalue.NewUUIDv7(), pgvalue.UUID(uuid.MustParse(request.OperationID)))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_computer_object_pins SET publication_key=$2 WHERE runtime_instance_id=$1`, f.claim.runtime.ID, wrong)
+	if status := runObjectStatus(t, f, request, "certify"); status != 409 {
+		t.Fatalf("same operation UUID from another lease authorized certification: %d", status)
+	}
+	if status := runObjectStatus(t, f, request, "reuse"); status != 200 {
+		t.Fatalf("current owner could not retain certified object: %d", status)
 	}
 }

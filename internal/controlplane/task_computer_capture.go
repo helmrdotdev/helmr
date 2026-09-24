@@ -41,7 +41,7 @@ func requireFinalizationComputer(ctx context.Context, q db.Querier, authority ru
 	if err != nil {
 		return err
 	}
-	return requireCertifiedComputerRoot(ctx, q, authority, capture.disk.Root)
+	return requireCertifiedComputerRoot(ctx, q, authority, computerPublicationKey("finalization", authority.runLease.ID, pgvalue.UUID(uuid.MustParse(capture.receipt.OperationID))), capture.disk.Root)
 }
 
 // Check after all potentially blocking publication writes. The transaction keeps

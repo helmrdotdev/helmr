@@ -45,7 +45,7 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 		// Runtime's Computer. This is not a commit grant: the owner rechecks all live
 		// preparation authority and exact facts after storage I/O.
 		var registered bool
-		registered, err = s.db.HasRegisteredInitialComputerObject(r.Context(), db.HasRegisteredInitialComputerObjectParams{RuntimeID: fence.RuntimeID, WorkerID: fence.WorkerID, WorkerGroupID: fence.WorkerGroupID, WorkerEpoch: fence.WorkerEpoch, DesiredVersion: fence.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
+		registered, err = s.db.HasRegisteredInitialComputerObject(r.Context(), db.HasRegisteredInitialComputerObjectParams{RuntimeID: fence.RuntimeID, PublicationKey: computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID), WorkerID: fence.WorkerID, WorkerGroupID: fence.WorkerGroupID, WorkerEpoch: fence.WorkerEpoch, DesiredVersion: fence.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
 		if err != nil || !registered {
 			writeError(w, conflict(errors.New("computer object registration is unavailable")))
 			return

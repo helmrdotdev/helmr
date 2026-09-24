@@ -22,6 +22,7 @@ type Store interface {
 }
 
 type Reclaimer struct {
+	pool    *pgxpool.Pool
 	queries *db.Queries
 	store   Store
 	log     *slog.Logger
@@ -31,7 +32,7 @@ func New(pool *pgxpool.Pool, store Store, log *slog.Logger) (*Reclaimer, error) 
 	if pool == nil || store == nil || log == nil {
 		return nil, errors.New("artifact reclamation requires database, storage and logger")
 	}
-	return &Reclaimer{queries: db.New(pool), store: store, log: log}, nil
+	return &Reclaimer{pool: pool, queries: db.New(pool), store: store, log: log}, nil
 }
 
 func (r *Reclaimer) Run(ctx context.Context) error {
@@ -53,6 +54,9 @@ func (r *Reclaimer) Run(ctx context.Context) error {
 // storage uncertainty leaves the permanent tombstone discoverable for retry.
 func (r *Reclaimer) Reconcile(ctx context.Context) error {
 	if _, err := r.queries.ReleaseReclaimedComputerObjects(ctx, 1000); err != nil {
+		return err
+	}
+	if err := r.collectComputerObjects(ctx); err != nil {
 		return err
 	}
 	candidates, err := r.queries.ListAbandonedCasObjects(ctx, 100)

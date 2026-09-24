@@ -800,6 +800,7 @@ type RunWait struct {
 
 type RuntimeComputerObjectPin struct {
 	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	PublicationKey        []byte      `json:"publication_key"`
 	Digest                string      `json:"digest"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ComputerID            pgtype.UUID `json:"computer_id"`
