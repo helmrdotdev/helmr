@@ -13,7 +13,7 @@ import (
 
 const certifyComputerObject = `-- name: CertifyComputerObject :execrows
 WITH object AS MATERIALIZED (
- SELECT o.environment_id, o.computer_id, o.digest, o.org_id, o.project_id, o.size_bytes, o.media_type, o.kind, o.rank, o.certified_at, o.certified, o.certified_org_id, o.availability_required FROM computer_objects o
+ SELECT o.environment_id, o.computer_id, o.digest, o.org_id, o.project_id, o.size_bytes, o.media_type, o.kind, o.rank, o.inspection, o.certified_at, o.certified, o.certified_org_id, o.availability_required FROM computer_objects o
  WHERE o.environment_id=$1 AND o.computer_id=$2
    AND o.digest=$3 AND NOT o.certified
    AND EXISTS(SELECT 1 FROM computer_object_keys k WHERE k.environment_id=o.environment_id AND k.computer_id=o.computer_id AND k.digest=o.digest)
@@ -99,7 +99,7 @@ func (q *Queries) ListComputerObjectReadKeys(ctx context.Context, arg ListComput
 
 const lockComputerObject = `-- name: LockComputerObject :one
 
-SELECT environment_id, computer_id, digest, org_id, project_id, size_bytes, media_type, kind, rank, certified_at, certified, certified_org_id, availability_required FROM computer_objects
+SELECT environment_id, computer_id, digest, org_id, project_id, size_bytes, media_type, kind, rank, inspection, certified_at, certified, certified_org_id, availability_required FROM computer_objects
  WHERE environment_id=$1 AND computer_id=$2
    AND digest=$3
  FOR UPDATE
@@ -128,6 +128,7 @@ func (q *Queries) LockComputerObject(ctx context.Context, arg LockComputerObject
 		&i.MediaType,
 		&i.Kind,
 		&i.Rank,
+		&i.Inspection,
 		&i.CertifiedAt,
 		&i.Certified,
 		&i.CertifiedOrgID,

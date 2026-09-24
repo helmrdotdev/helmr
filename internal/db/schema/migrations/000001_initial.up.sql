@@ -1818,6 +1818,8 @@ CREATE TABLE computer_objects (
     media_type TEXT NOT NULL CHECK (btrim(media_type) <> ''),
     kind TEXT NOT NULL CHECK (kind IN ('segment', 'index', 'root')),
     rank INTEGER NOT NULL CHECK ((kind = 'segment' AND rank = 0) OR (kind <> 'segment' AND rank BETWEEN 1 AND 6)),
+    -- Immutable host byte-inspection facts; publication authority remains with the owner.
+    inspection JSONB NOT NULL CHECK (jsonb_typeof(inspection) = 'object' AND pg_column_size(inspection) <= 16777216),
     certified_at TIMESTAMPTZ,
     certified BOOLEAN GENERATED ALWAYS AS (certified_at IS NOT NULL) STORED,
     certified_org_id UUID GENERATED ALWAYS AS (CASE WHEN certified_at IS NOT NULL THEN org_id END) STORED,

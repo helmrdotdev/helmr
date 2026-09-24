@@ -37,7 +37,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 		t.Helper()
 		digest := dbtest.Digest(label)
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream',$6,$7)`, env, computerID, digest, f.OrgID, f.ProjectID, kind, rank)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream',$6,$7,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID, kind, rank)
 		if key.Valid {
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, computerID, digest, key)
 		}
@@ -159,7 +159,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	}
 	foreign := dbtest.Digest("foreign-root")
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, foreign)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',2)`, env, sibling, foreign, f.OrgID, f.ProjectID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',2,'{}')`, env, sibling, foreign, f.OrgID, f.ProjectID)
 	_, err = f.Pool.Exec(t.Context(), `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, sibling, foreign, key2)
 	state(err, "23503")
 	_, err = f.Pool.Exec(t.Context(), edgeSQL, env, sibling, foreign, child)
@@ -199,7 +199,7 @@ func TestComputerObjectCertificationRollback(t *testing.T) {
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,64,'application/octet-stream')`, f.OrgID, digest)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',1)`, env, computerID, digest, f.OrgID, f.ProjectID)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',1,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, computerID, digest, material.ID)
 	if n, err := db.New(tx).CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certification: %d %v", n, err)

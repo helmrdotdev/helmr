@@ -348,6 +348,7 @@ type ComputerObject struct {
 	MediaType            string             `json:"media_type"`
 	Kind                 string             `json:"kind"`
 	Rank                 int32              `json:"rank"`
+	Inspection           []byte             `json:"inspection"`
 	CertifiedAt          pgtype.Timestamptz `json:"certified_at"`
 	Certified            pgtype.Bool        `json:"certified"`
 	CertifiedOrgID       pgtype.UUID        `json:"certified_org_id"`
