@@ -53,7 +53,7 @@ func OpenWritableGeneration(ctx context.Context, writer blockformat.Writer, root
 	if _, err := ids.Parse(writer.ActiveKey); err != nil {
 		return nil, errors.New("generation write key identity is invalid")
 	}
-	if len(writer.Scope) == 0 || len(writer.Scope) > 256 || writer.Source == nil || writer.Sink == nil || dirtyBlocks <= 0 || dirtyBlocks > blockformat.MaxChangedBlocks || stagedBytes <= 0 || len(writer.Keys[writer.ActiveKey]) != 32 || writer.PackLimit < blockformat.MinPackLimit || writer.PackLimit > 4<<20 {
+	if len(writer.Scope) == 0 || len(writer.Scope) > 256 || writer.Source == nil || writer.Sink == nil || dirtyBlocks <= 0 || dirtyBlocks > blockformat.MaxChangedBlocks || stagedBytes < 0 || len(writer.Keys[writer.ActiveKey]) != 32 || writer.PackLimit < blockformat.MinPackLimit || writer.PackLimit > 4<<20 {
 		return nil, errors.New("writable generation requires admitted source, writer and finite budgets")
 	}
 	keys := make(map[string][]byte, len(writer.Keys))

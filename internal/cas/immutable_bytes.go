@@ -75,12 +75,21 @@ func (c *File) StoreObject(ctx context.Context, digest [32]byte, raw []byte) err
 			return ErrDigestMismatch
 		}
 	}
-	directory, err := os.Open(dir)
-	if err != nil {
-		return err
+	// Persist newly created hash-directory ancestors too. Syncing only the
+	// leaf can leave a successfully stored object unreachable after restart.
+	// The owner is responsible for the CAS root's entry in its parent directory.
+	for current := dir; ; current = filepath.Dir(current) {
+		directory, err := os.Open(current)
+		if err != nil {
+			return err
+		}
+		if err = errors.Join(directory.Sync(), directory.Close(), ctx.Err()); err != nil {
+			return err
+		}
+		if current == filepath.Clean(c.root) {
+			return nil
+		}
 	}
-	err = errors.Join(directory.Sync(), directory.Close(), ctx.Err())
-	return err
 }
 
 // OpenImmutable opens a locally staged object read-only for exact-byte upload.
