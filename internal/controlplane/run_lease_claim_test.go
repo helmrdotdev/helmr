@@ -923,6 +923,7 @@ func TestClaimSameWorkspaceChildRunLeaseInTxLocksParentBeforeChild(t *testing.T)
 		wantOrder := []string{
 			"parent_run",
 			"run",
+			"attempt", // Immutable child origin, after its owning Run.
 			"workspace",
 			"parent_attempt",
 			"attempt",
@@ -1066,9 +1067,9 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingWait(t *testing.T) {
 		)
 	}
 	if !slices.Equal(store.calls, []string{
-		"parent_run", "run", "workspace", "parent_attempt", "attempt",
+		"parent_run", "run", "attempt", "workspace", "parent_attempt", "attempt",
 		"worker_group", "worker", "runtime", "run_lease",
-		"workspace_mount", "workspace_lease", "enclosing_wait", "same_workspace_wait",
+		"workspace_mount", "workspace_lease", "enclosing_wait", "parent_attempt", "same_workspace_wait",
 		"checkpoint", "mark_starting",
 	}) {
 		t.Fatalf("lock order = %v", store.calls)
@@ -1447,24 +1448,24 @@ func validRunLeaseClaimSecretFixture(
 		RevocationGeneration: 2,
 	}
 	return db.LockAttemptSecretDeliveryRow{
-			WorkspaceSecret: db.WorkspaceSecret{
-				WorkspaceID:     locators.WorkspaceID,
-				EnvironmentID:   locators.EnvironmentID,
-				PlacementKind:   "env",
-				PlacementTarget: "API_KEY",
-				SecretID:        secretID,
-			},
-			Secret:                         secretRow,
-			ResolutionID:                   pgvalue.UUID(uuid.New()),
-			ResolutionRunID:                locators.RunID,
-			ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
-			ResolutionSecretVersionID:      versionID,
-			ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
-		}, db.SecretVersion{
-			ID:       versionID,
-			SecretID: secretID,
-			Version:  1,
-		}
+		WorkspaceSecret: db.WorkspaceSecret{
+			WorkspaceID:     locators.WorkspaceID,
+			EnvironmentID:   locators.EnvironmentID,
+			PlacementKind:   "env",
+			PlacementTarget: "API_KEY",
+			SecretID:        secretID,
+		},
+		Secret:                         secretRow,
+		ResolutionID:                   pgvalue.UUID(uuid.New()),
+		ResolutionRunID:                locators.RunID,
+		ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
+		ResolutionSecretVersionID:      versionID,
+		ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
+	}, db.SecretVersion{
+		ID:       versionID,
+		SecretID: secretID,
+		Version:  1,
+	}
 }
 
 func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
