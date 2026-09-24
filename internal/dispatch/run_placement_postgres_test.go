@@ -237,13 +237,13 @@ SELECT runs.current_run_lease_id,
        runs.runtime_preparation_count,
        runs.next_runtime_preparation_at,
        runtime_instances.reserved_run_id,
-       workspaces.writer_generation,
+       computers.writer_generation,
        workspace_mounts.fencing_generation,
        workspace_leases.id,
        workspace_leases.owner_run_lease_id,
        workspace_leases.fencing_token_hash
   FROM runs
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN run_leases ON run_leases.id = runs.current_run_lease_id
   JOIN runtime_instances ON runtime_instances.id = run_leases.runtime_instance_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
@@ -331,7 +331,7 @@ UPDATE runtime_instances
        reservation_expires_at = NULL
  WHERE id = $1`, reserved.RuntimeInstanceID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
+UPDATE computers SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
 
 	secondRunID := uuid.New()
 	secondWorkspaceID := uuid.New()
@@ -345,25 +345,25 @@ UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id, sandbox_declared_id,
     deployment_definition_id, owner_run_id, ownership_generation,
     writer_generation, head_version_id
 )
 SELECT $1, environment_id, region_id, sandbox_declared_id,
        deployment_definition_id, $2, 1, 0, $3
-  FROM workspaces
+  FROM computers
  WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, content_digest, artifact_id,
     size_bytes, entry_count, status,
     ownership_generation, writer_generation, published_at
 )
 SELECT $1, environment_id, $2, content_digest, artifact_id,
        size_bytes, entry_count, status, 0, 0, transaction_timestamp()
-  FROM workspace_versions
- WHERE id = (SELECT head_version_id FROM workspaces WHERE id = $3)`,
+  FROM computer_versions
+ WHERE id = (SELECT head_version_id FROM computers WHERE id = $3)`,
 		secondVersionID, secondWorkspaceID, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
@@ -393,7 +393,7 @@ INSERT INTO run_attempts (
 		ExpectedRunRevision: 1,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
+UPDATE computers SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, secondCandidate); !errors.Is(err, ErrCapacityUnavailable) {
 		t.Fatalf("dirty Workspace pressure error = %v, want ErrCapacityUnavailable", err)
 	}
@@ -406,7 +406,7 @@ UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, fixture.workspaceID)
 		t.Fatalf("dirty Workspace Mount state = %s, want mounted", protectedState)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1`, fixture.workspaceID)
+UPDATE computers SET dirty_state = 'clean' WHERE id = $1`, fixture.workspaceID)
 
 	processClaimID := uuid.New()
 	processID := uuid.New()
@@ -426,7 +426,7 @@ INSERT INTO workspace_processes (
     created_by_subject_type, created_by_subject_id
 ) VALUES (
     $1, $2, $3, $4, $5,
-    (SELECT head_version_id FROM workspaces WHERE id = $5),
+    (SELECT head_version_id FROM computers WHERE id = $5),
     'active', 'pending', '{}'::jsonb, $6, 'test', 'capacity-pressure'
 )`, processID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		fixture.workspaceID, processClaimID)
@@ -465,14 +465,14 @@ SELECT ('00000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
 	 CROSS JOIN generate_series(1, 128) AS value
 	 WHERE source.id = $1`, fixture.workerID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id, deployment_definition_id,
     status, desired_state, deleted_at
 )
 SELECT ('20000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid,
        source.environment_id, source.region_id, source.deployment_definition_id,
        'deleted', 'deleted', now()
-  FROM workspaces AS source
+  FROM computers AS source
  CROSS JOIN generate_series(1, 128) AS value
  WHERE source.id = $1`, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -814,7 +814,7 @@ func TestRunPlanningExcludesQueuedRunWithoutPlacementOwnership(t *testing.T) {
 	}
 
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL
  WHERE id = $1`, fixture.workspaceID)
 
@@ -950,7 +950,7 @@ UPDATE runs
  WHERE id = $1`, runID, base.Add(time.Duration(index)*time.Millisecond))
 		if index < 35 {
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces
+UPDATE computers
    SET region_id = 'blocked-region'
  WHERE id = $1`, workspaceID)
 		}
@@ -1078,7 +1078,7 @@ VALUES ('blocked-region', 'Blocked region')`)
 			workspaceID = fixture.workspaceID
 		}
 		dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces
+UPDATE computers
    SET region_id = 'blocked-region'
  WHERE id = $1`, workspaceID)
 	}
@@ -1181,7 +1181,7 @@ UPDATE run_attempts
    SET entrypoint_kind = 'actor', session_input_start_sequence = 1
  WHERE run_id = $1 AND number = 1`, runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL, owner_session_id = $2
  WHERE id = $1`, fixture.workspaceID, actorID)
 	if err := tx.Commit(fixture.ctx); err != nil {
@@ -1297,7 +1297,7 @@ INSERT INTO artifacts (
 		privateDigest, workspace.ArtifactMediaType,
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id,
     parent_version_id, content_digest, status, source_workspace_lease_id,
     ownership_generation, writer_generation, artifact_id,
@@ -1803,7 +1803,7 @@ SELECT runs.status, run_waits.suspension_status, run_waits.current_run_lease_id,
 	       runs.revision, run_waits.resume_request_version,
 	       run_attempts.terminal_outcome, run_attempts.terminal_at,
 	       runs.terminal_at, runs.active_elapsed_ms,
-       workspaces.owner_run_id, run_leases.status, run_leases.terminal_reason_code,
+       computers.owner_run_id, run_leases.status, run_leases.terminal_reason_code,
        workspace_leases.status, workspace_leases.terminal_reason_code,
        workspace_mounts.status
   FROM runs
@@ -1811,7 +1811,7 @@ SELECT runs.status, run_waits.suspension_status, run_waits.current_run_lease_id,
   JOIN run_attempts
     ON run_attempts.run_id = runs.id
    AND run_attempts.number = runs.current_attempt_number
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN run_leases ON run_leases.id = $2
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
@@ -1975,10 +1975,10 @@ UPDATE workspace_leases
 			var terminalCursor pgtype.Int8
 			err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT sessions.status, sessions.current_run_id, sessions.run_generation, sessions.revision,
-	   sessions.failure->>'code', workspaces.owner_session_id, workspaces.ownership_generation,
+	   sessions.failure->>'code', computers.owner_session_id, computers.ownership_generation,
        run_waits.suspension_status, runs.status, run_attempts.terminal_session_input_sequence
   FROM sessions
-  JOIN workspaces ON workspaces.id = sessions.workspace_id
+  JOIN computers ON computers.id = sessions.workspace_id
   JOIN runs ON runs.id = $2
   JOIN run_waits ON run_waits.id = $3
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = runs.current_attempt_number
@@ -2073,28 +2073,28 @@ UPDATE runs
        output = '{}'::jsonb, terminal_at = transaction_timestamp()
  WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id,
     content_digest, size_bytes, entry_count, status,
     source_workspace_lease_id, ownership_generation, writer_generation,
     artifact_id, published_at
 )
-SELECT $1, workspace_versions.environment_id, workspace_versions.workspace_id,
-       workspace_versions.id,
-       workspace_versions.content_digest, workspace_versions.size_bytes,
-       workspace_versions.entry_count, 'committed', $2,
-       workspaces.ownership_generation, workspaces.writer_generation,
-       workspace_versions.artifact_id,
+SELECT $1, computer_versions.environment_id, computer_versions.workspace_id,
+       computer_versions.id,
+       computer_versions.content_digest, computer_versions.size_bytes,
+       computer_versions.entry_count, 'committed', $2,
+       computers.ownership_generation, computers.writer_generation,
+       computer_versions.artifact_id,
        transaction_timestamp()
-  FROM workspace_versions
-  JOIN workspaces ON workspaces.id = workspace_versions.workspace_id
- WHERE workspace_versions.id = $3`, continuationFrontierID, workspaceLeaseID, frontierID)
+  FROM computer_versions
+  JOIN computers ON computers.id = computer_versions.workspace_id
+ WHERE computer_versions.id = $3`, continuationFrontierID, workspaceLeaseID, frontierID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_mounts
    SET materialized_version_id = $2, updated_at = transaction_timestamp()
  WHERE id = $1`, mounting.WorkspaceMountID, continuationFrontierID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE workspaces SET head_version_id = $2 WHERE id = $1`, fixture.workspaceID, continuationFrontierID)
+UPDATE computers SET head_version_id = $2 WHERE id = $1`, fixture.workspaceID, continuationFrontierID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE sessions
    SET current_run_id = NULL, committed_input_sequence = 1,
@@ -2165,7 +2165,7 @@ UPDATE sessions
    SET status = 'closed', current_run_id = NULL, closed_at = transaction_timestamp()
  WHERE id = $1`, actorID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces SET owner_session_id = NULL WHERE id = $1`, fixture.workspaceID)
+UPDATE computers SET owner_session_id = NULL WHERE id = $1`, fixture.workspaceID)
 	processID, _ := placeWorkspaceExecForClaim(t, fixture)
 	var processRuntimeID pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
@@ -2257,7 +2257,7 @@ UPDATE run_attempts
        entrypoint_entered_at = transaction_timestamp()
  WHERE run_id = $1 AND number = 1`, fixture.runID)
 		dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE workspaces SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
+UPDATE computers SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
 	}
 	dbtest.MustExec(t, fixture.ctx, tx, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3) ON CONFLICT (org_id, digest) DO NOTHING`,
 		fixture.orgID, privateDigest, workspace.ArtifactMediaType)
@@ -2266,7 +2266,7 @@ INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, siz
 VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fixture.orgID,
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id, content_digest, status, source_workspace_lease_id, ownership_generation,
     writer_generation, artifact_id, entry_count, size_bytes
 ) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, $7, 1, 1)`,
@@ -2627,7 +2627,7 @@ INSERT INTO worker_instances (
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id,
     sandbox_declared_id, deployment_definition_id,
     owner_run_id, ownership_generation, writer_generation, head_version_id

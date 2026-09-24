@@ -137,23 +137,23 @@ INSERT INTO run_leases (
 RETURNING *;
 
 -- name: AdvanceRunWorkspaceWriter :one
-UPDATE workspaces
+UPDATE computers
    SET writer_generation = sqlc.arg(writer_generation),
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.environment_id = sqlc.arg(environment_id)
+ WHERE computers.environment_id = sqlc.arg(environment_id)
    AND EXISTS (
        SELECT 1 FROM environments
-        WHERE environments.id = workspaces.environment_id
+        WHERE environments.id = computers.environment_id
           AND environments.org_id = sqlc.arg(org_id)
           AND environments.project_id = sqlc.arg(project_id)
    )
-   AND workspaces.id = sqlc.arg(workspace_id)
-   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
-   AND workspaces.writer_generation = sqlc.arg(expected_writer_generation)
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+   AND computers.id = sqlc.arg(workspace_id)
+   AND computers.ownership_generation = sqlc.arg(ownership_generation)
+   AND computers.writer_generation = sqlc.arg(expected_writer_generation)
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: AdvanceRunWorkspaceMountFence :one
 UPDATE workspace_mounts

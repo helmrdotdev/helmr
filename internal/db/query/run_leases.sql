@@ -397,32 +397,32 @@ SELECT *
  FOR UPDATE;
 
 -- name: LockRunLeaseClaimWorkspace :one
-SELECT workspaces.id,
-       workspaces.environment_id,
-       workspaces.region_id,
-       workspaces.sandbox_declared_id,
-       workspaces.deployment_definition_id,
-       workspaces.key,
-       workspaces.revision,
-       workspaces.owner_session_id,
-       workspaces.owner_run_id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
-       workspaces.head_version_id,
-       workspaces.status,
-       workspaces.desired_state,
-       workspaces.dirty_state,
-       workspaces.last_activity_at,
-       workspaces.created_at,
-       workspaces.updated_at,
-       workspaces.deleted_at
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE workspaces.id = sqlc.arg(id)
+SELECT computers.id,
+       computers.environment_id,
+       computers.region_id,
+       computers.sandbox_declared_id,
+       computers.deployment_definition_id,
+       computers.key,
+       computers.revision,
+       computers.owner_session_id,
+       computers.owner_run_id,
+       computers.ownership_generation,
+       computers.writer_generation,
+       computers.head_version_id,
+       computers.status,
+       computers.desired_state,
+       computers.dirty_state,
+       computers.last_activity_at,
+       computers.created_at,
+       computers.updated_at,
+       computers.deleted_at
+  FROM computers
+  JOIN environments ON environments.id = computers.environment_id
+ WHERE computers.id = sqlc.arg(id)
    AND environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.region_id = sqlc.arg(region_id)
+   AND computers.environment_id = sqlc.arg(environment_id)
+   AND computers.region_id = sqlc.arg(region_id)
  FOR UPDATE;
 
 -- name: LockRunLeaseClaimAttempt :one
@@ -757,22 +757,22 @@ UPDATE runs
 RETURNING *;
 
 -- name: TouchRunWorkspaceActivity :one
-UPDATE workspaces
+UPDATE computers
    SET last_activity_at = greatest(last_activity_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
- WHERE workspaces.id = sqlc.arg(id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
+ WHERE computers.id = sqlc.arg(id)
+   AND computers.environment_id = sqlc.arg(environment_id)
    AND EXISTS (
        SELECT 1 FROM environments
-        WHERE environments.id = workspaces.environment_id
+        WHERE environments.id = computers.environment_id
           AND environments.org_id = sqlc.arg(org_id)
           AND environments.project_id = sqlc.arg(project_id)
    )
-   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
-   AND workspaces.writer_generation = sqlc.arg(writer_generation)
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+   AND computers.ownership_generation = sqlc.arg(ownership_generation)
+   AND computers.writer_generation = sqlc.arg(writer_generation)
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: MarkRunEntrypointEntered :one
 UPDATE run_attempts
@@ -855,8 +855,8 @@ SELECT runs.org_id,
                AND run_checkpoints.attempt_number = runs.current_attempt_number
                AND run_checkpoints.run_wait_id = run_waits.id
                AND run_checkpoints.workspace_id = runs.workspace_id
-              JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+              JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
+               AND computer_versions.workspace_id = run_checkpoints.workspace_id
               JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
                AND source_run_leases.run_id = runs.id
                AND source_run_leases.attempt_number = runs.current_attempt_number
@@ -865,7 +865,7 @@ SELECT runs.org_id,
                 AND sessions.dispatch_hold_id IS NULL
                 AND run_checkpoints.status = 'ready'
                 AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                AND workspace_versions.status = 'private'
+                AND computer_versions.status = 'private'
                 AND source_run_leases.status = 'checkpointed'
                 AND run_checkpoints.actor_speculative_input_sequence
                     BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
@@ -975,9 +975,9 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                    AND EXISTS (
                             SELECT 1
                               FROM run_checkpoints
-                              JOIN workspace_versions
-                                ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-                               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+                              JOIN computer_versions
+                                ON computer_versions.id = run_checkpoints.private_workspace_version_id
+                               AND computer_versions.workspace_id = run_checkpoints.workspace_id
                               JOIN run_leases AS source_run_leases
                                 ON source_run_leases.id = run_checkpoints.source_run_lease_id
                                AND source_run_leases.run_id = run_checkpoints.run_id
@@ -991,7 +991,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                                AND run_checkpoints.status = 'ready'
                                AND (run_checkpoints.expires_at IS NULL
                                     OR run_checkpoints.expires_at > transaction_timestamp())
-                               AND workspace_versions.status = 'private'
+                               AND computer_versions.status = 'private'
                                AND source_run_leases.status = 'checkpointed'
                                AND run_checkpoints.actor_speculative_input_sequence
                                    BETWEEN sessions.committed_input_sequence
@@ -1147,8 +1147,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      FOR UPDATE OF edge, parent
 ), locked_workspaces AS MATERIALIZED (
     SELECT locked_runs.*,
-           workspaces.ownership_generation,
-           workspaces.writer_generation,
+           computers.ownership_generation,
+           computers.writer_generation,
            EXISTS (
                SELECT 1
                  FROM locked_same_workspace_ancestors AS nested
@@ -1204,33 +1204,33 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                   AND nested.depth = 0
            ) AS enclosing_child_writer_generation
       FROM locked_runs
-      JOIN workspaces ON workspaces.id = locked_runs.workspace_id
-     WHERE workspaces.environment_id = locked_runs.environment_id
+      JOIN computers ON computers.id = locked_runs.workspace_id
+     WHERE computers.environment_id = locked_runs.environment_id
        AND ((locked_runs.entrypoint_kind = 'task'
-             AND ((workspaces.owner_run_id = locked_runs.run_id
-                   AND workspaces.owner_session_id IS NULL)
+             AND ((computers.owner_run_id = locked_runs.run_id
+                   AND computers.owner_session_id IS NULL)
                   OR EXISTS (
                           SELECT 1
                             FROM locked_same_workspace_ancestors AS root
                            WHERE root.run_id = locked_runs.run_id
                              AND (root.next_parent_run_id IS NULL
                                   OR root.parent_owns_lifecycle IS NOT TRUE)
-                             AND root.ownership_generation = workspaces.ownership_generation
+                             AND root.ownership_generation = computers.ownership_generation
                              AND ((root.parent_session_id IS NULL
-                                   AND workspaces.owner_run_id = root.parent_run_id
-                                   AND workspaces.owner_session_id IS NULL)
+                                   AND computers.owner_run_id = root.parent_run_id
+                                   AND computers.owner_session_id IS NULL)
                                   OR (root.parent_session_id IS NOT NULL
-                                      AND workspaces.owner_session_id = root.parent_session_id
-                                      AND workspaces.owner_run_id IS NULL))
+                                      AND computers.owner_session_id = root.parent_session_id
+                                      AND computers.owner_run_id IS NULL))
                       )))
             OR (locked_runs.entrypoint_kind = 'actor'
-                AND workspaces.owner_session_id = locked_runs.session_id
-                AND workspaces.owner_run_id IS NULL))
-       AND workspaces.status = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.dirty_state = 'clean'
-     ORDER BY workspaces.id
-     FOR UPDATE OF workspaces
+                AND computers.owner_session_id = locked_runs.session_id
+                AND computers.owner_run_id IS NULL))
+       AND computers.status = 'active'
+       AND computers.desired_state = 'active'
+       AND computers.dirty_state = 'clean'
+     ORDER BY computers.id
+     FOR UPDATE OF computers
 ), locked_attempts AS MATERIALIZED (
     SELECT locked_workspaces.*
       FROM locked_workspaces
@@ -1380,7 +1380,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
            (run_checkpoints.status = 'ready'
             AND (run_checkpoints.expires_at IS NULL
                  OR run_checkpoints.expires_at > transaction_timestamp())
-            AND workspace_versions.status = 'private'
+            AND computer_versions.status = 'private'
             AND source_run_leases.status = 'checkpointed'
             AND ((loss_authority.entrypoint_kind = 'task'
                   AND run_checkpoints.actor_speculative_input_sequence IS NULL)
@@ -1397,16 +1397,16 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_checkpoints.attempt_number = loss_authority.current_attempt_number
        AND run_checkpoints.run_wait_id = loss_authority.run_wait_id
        AND run_checkpoints.workspace_id = loss_authority.workspace_id
-      JOIN workspace_versions
-        ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-       AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+      JOIN computer_versions
+        ON computer_versions.id = run_checkpoints.private_workspace_version_id
+       AND computer_versions.workspace_id = run_checkpoints.workspace_id
       JOIN run_leases AS source_run_leases
         ON source_run_leases.id = run_checkpoints.source_run_lease_id
        AND source_run_leases.run_id = run_checkpoints.run_id
        AND source_run_leases.attempt_number = run_checkpoints.attempt_number
        AND source_run_leases.workspace_id = run_checkpoints.workspace_id
      ORDER BY run_checkpoints.id
-     FOR UPDATE OF run_checkpoints, workspace_versions
+     FOR UPDATE OF run_checkpoints, computer_versions
 ), expired_run_leases AS (
     UPDATE run_leases
        SET status = 'expired',
@@ -1585,22 +1585,22 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND failed_waits.run_id = failed_runs.id
     RETURNING run_waits.id, failed_runs.id AS run_id
 ), released_owners AS (
-    UPDATE workspaces
+    UPDATE computers
        SET owner_run_id = NULL,
-           ownership_generation = workspaces.ownership_generation + 1,
-           revision = workspaces.revision + 1,
+           ownership_generation = computers.ownership_generation + 1,
+           revision = computers.revision + 1,
            last_activity_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
       FROM locked_checkpoints
       JOIN failed_waits ON failed_waits.run_id = locked_checkpoints.run_id
-     WHERE workspaces.id = locked_checkpoints.workspace_id
+     WHERE computers.id = locked_checkpoints.workspace_id
        AND NOT locked_checkpoints.nested_same_workspace
        AND locked_checkpoints.entrypoint_kind = 'task'
-       AND workspaces.owner_run_id = failed_waits.run_id
-       AND workspaces.owner_session_id IS NULL
-       AND workspaces.ownership_generation = locked_checkpoints.ownership_generation
-       AND workspaces.writer_generation = locked_checkpoints.writer_generation
-    RETURNING workspaces.id
+       AND computers.owner_run_id = failed_waits.run_id
+       AND computers.owner_session_id IS NULL
+       AND computers.ownership_generation = locked_checkpoints.ownership_generation
+       AND computers.writer_generation = locked_checkpoints.writer_generation
+    RETURNING computers.id
 ), terminal_events AS (
     INSERT INTO telemetry_outbox (
         org_id,

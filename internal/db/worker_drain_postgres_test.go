@@ -89,9 +89,9 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 
 	var runtimeID, workspaceID, baseWorkspaceVersionID uuid.UUID
 	if err := pool.QueryRow(ctx, `
-		SELECT runtime_instances.id, runtime_instances.workspace_id, workspaces.head_version_id
+		SELECT runtime_instances.id, runtime_instances.workspace_id, computers.head_version_id
 		  FROM runtime_instances
-		  JOIN workspaces ON workspaces.id = runtime_instances.workspace_id
+		  JOIN computers ON computers.id = runtime_instances.workspace_id
 		 WHERE runtime_instances.worker_instance_id = $1
 	`, fixture.workerID).Scan(&runtimeID, &workspaceID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
@@ -429,9 +429,9 @@ func prepareOldEpochStartupRecovery(
 	fixture := seedRuntimeSubstrateAuthority(t, ctx, pool)
 	var runtimeID, baseWorkspaceVersionID uuid.UUID
 	if err := pool.QueryRow(ctx, `
-SELECT runtime_instances.id, workspaces.head_version_id
+SELECT runtime_instances.id, computers.head_version_id
   FROM runtime_instances
-  JOIN workspaces ON workspaces.id = runtime_instances.workspace_id
+  JOIN computers ON computers.id = runtime_instances.workspace_id
  WHERE runtime_instances.worker_instance_id = $1`, fixture.workerID).Scan(
 		&runtimeID, &baseWorkspaceVersionID,
 	); err != nil {

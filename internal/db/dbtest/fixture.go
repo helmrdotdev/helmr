@@ -106,7 +106,7 @@ SELECT $1, org_id, project_id, id, $3, 'workspace_version', 1024,
        'application/vnd.helmr.computer.disk.v0+filepack+aesgcm'
   FROM environments WHERE id = $2`, artifactID, environmentID, digest)
 	MustExec(t, ctx, executor, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, artifact_id, content_digest, size_bytes,
     status, ownership_generation, writer_generation, published_at
 ) VALUES ($1, $2, $3, $4, $5, 4096, 'committed', 0, 0, now())`,

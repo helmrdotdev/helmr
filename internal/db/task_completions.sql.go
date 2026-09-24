@@ -12,7 +12,7 @@ import (
 )
 
 const advanceTaskRetryWorkspaceHead = `-- name: AdvanceTaskRetryWorkspaceHead :one
-UPDATE workspaces
+UPDATE computers
    SET head_version_id = $1,
        revision = revision + 1,
        last_activity_at = $2,
@@ -788,7 +788,7 @@ func (q *Queries) GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz
 }
 
 const publishTaskWorkspaceVersion = `-- name: PublishTaskWorkspaceVersion :one
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id,
     environment_id,
     workspace_id,
@@ -839,7 +839,7 @@ type PublishTaskWorkspaceVersionParams struct {
 	PublishedAt            pgtype.Timestamptz `json:"published_at"`
 }
 
-func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error) {
+func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (ComputerVersion, error) {
 	row := q.db.QueryRow(ctx, publishTaskWorkspaceVersion,
 		arg.ID,
 		arg.EnvironmentID,
@@ -854,7 +854,7 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 		arg.WriterGeneration,
 		arg.PublishedAt,
 	)
-	var i WorkspaceVersion
+	var i ComputerVersion
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -1046,40 +1046,40 @@ func (q *Queries) ReleaseTaskWorkspaceLease(ctx context.Context, arg ReleaseTask
 }
 
 const releaseTaskWorkspaceOwner = `-- name: ReleaseTaskWorkspaceOwner :one
-UPDATE workspaces
-   SET head_version_id = COALESCE($1, workspaces.head_version_id),
+UPDATE computers
+   SET head_version_id = COALESCE($1, computers.head_version_id),
        owner_run_id = NULL,
-       ownership_generation = workspaces.ownership_generation + 1,
-       revision = workspaces.revision + 1,
+       ownership_generation = computers.ownership_generation + 1,
+       revision = computers.revision + 1,
        last_activity_at = $2,
        updated_at = $2
   FROM environments
- WHERE workspaces.id = $3
-   AND environments.id = workspaces.environment_id
+ WHERE computers.id = $3
+   AND environments.id = computers.environment_id
    AND environments.org_id = $4
    AND environments.project_id = $5
-   AND workspaces.environment_id = $6
-   AND workspaces.owner_run_id = $7
-   AND workspaces.owner_session_id IS NULL
-   AND workspaces.ownership_generation = $8
-   AND workspaces.writer_generation = $9
-   AND workspaces.head_version_id = $10
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-   AND workspaces.dirty_state = 'clean'
+   AND computers.environment_id = $6
+   AND computers.owner_run_id = $7
+   AND computers.owner_session_id IS NULL
+   AND computers.ownership_generation = $8
+   AND computers.writer_generation = $9
+   AND computers.head_version_id = $10
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+   AND computers.dirty_state = 'clean'
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_processes
-        WHERE workspace_processes.workspace_id = workspaces.id
+        WHERE workspace_processes.workspace_id = computers.id
           AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type ReleaseTaskWorkspaceOwnerParams struct {

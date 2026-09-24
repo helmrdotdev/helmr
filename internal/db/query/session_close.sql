@@ -27,7 +27,7 @@ RETURNING *;
 
 -- name: LockActorCloseWorkspace :one
 SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
-  FROM workspaces
+  FROM computers
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(workspace_id)
    AND owner_session_id = sqlc.arg(session_id)

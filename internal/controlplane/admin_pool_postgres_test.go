@@ -755,7 +755,7 @@ SELECT id
 	}
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT deployment_definition_id, head_version_id
-  FROM workspaces
+  FROM computers
  WHERE id = $1`, product.workspaceIDs[0]).Scan(&sandboxDefinitionID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}

@@ -57,8 +57,8 @@ UPDATE runs
 	var rootArtifact uuid.UUID
 	var rootDigest string
 	var rootBytes int64
-	if err := tx.QueryRow(fixture.ctx, `SELECT v.artifact_id,v.content_digest,v.size_bytes FROM workspace_versions v
-JOIN workspaces w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).Scan(&rootArtifact, &rootDigest, &rootBytes); err != nil {
+	if err := tx.QueryRow(fixture.ctx, `SELECT v.artifact_id,v.content_digest,v.size_bytes FROM computer_versions v
+JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).Scan(&rootArtifact, &rootDigest, &rootBytes); err != nil {
 		t.Fatal(err)
 	}
 	workspaces := make([][]any, 0, rows-1)
@@ -98,11 +98,11 @@ JOIN workspaces w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID)
 		attempts = append(attempts, []any{runID, int32(1), "task", workspaceID, versionID})
 	}
 
-	copyRows(t, fixture.ctx, tx, "workspaces", []string{
+	copyRows(t, fixture.ctx, tx, "computers", []string{
 		"id", "environment_id", "region_id", "sandbox_declared_id", "deployment_definition_id",
 		"owner_run_id", "ownership_generation", "writer_generation", "head_version_id",
 	}, workspaces)
-	copyRows(t, fixture.ctx, tx, "workspace_versions", []string{
+	copyRows(t, fixture.ctx, tx, "computer_versions", []string{
 		"id", "environment_id", "workspace_id", "content_digest", "artifact_id", "size_bytes", "status",
 		"ownership_generation", "writer_generation", "published_at",
 	}, versions)
@@ -120,7 +120,7 @@ JOIN workspaces w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID)
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `ANALYZE runs`)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `ANALYZE workspaces`)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `ANALYZE computers`)
 }
 
 func copyRows(t *testing.T, ctx context.Context, tx pgx.Tx, table string, columns []string, rows [][]any) {

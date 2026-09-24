@@ -107,7 +107,7 @@ SELECT *
  WHERE id = sqlc.arg(id);
 
 -- name: CreatePrivateCheckpointWorkspaceVersion :one
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id,
     parent_version_id, artifact_id, content_digest,
     size_bytes, entry_count, status, source_workspace_lease_id,
@@ -500,7 +500,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        AND w.suspend_checkpoint_id = c.id AND w.prior_run_lease_id = c.source_run_lease_id
        AND w.checkpoint_request_version > 0 AND w.checkpoint_ack_version = w.checkpoint_request_version
        AND w.actor_speculative_input_sequence = c.actor_speculative_input_sequence
-      JOIN workspace_versions v ON v.id = c.private_workspace_version_id
+      JOIN computer_versions v ON v.id = c.private_workspace_version_id
        AND v.workspace_id = c.workspace_id AND v.status = 'private'
        AND v.parent_version_id = c.base_workspace_version_id
       JOIN workspace_leases source ON source.id = c.source_workspace_lease_id
@@ -559,7 +559,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                      AND (
                        (prior.condition_status = 'completed' AND child.status = 'succeeded'
                         AND EXISTS (
-                          SELECT 1 FROM workspace_versions child_version
+                          SELECT 1 FROM computer_versions child_version
                           JOIN workspace_leases child_source ON child_source.id = child_version.source_workspace_lease_id
                            AND child_source.workspace_id = child_version.workspace_id
                            AND child_source.base_workspace_version_id = child_version.parent_version_id
@@ -601,7 +601,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        )
 )
 SELECT EXISTS (
-    SELECT 1 FROM lineage JOIN workspace_versions head ON head.id = lineage.base_workspace_version_id
+    SELECT 1 FROM lineage JOIN computer_versions head ON head.id = lineage.base_workspace_version_id
      WHERE head.id = sqlc.arg(committed_head_version_id)::uuid
        AND head.workspace_id = sqlc.arg(workspace_id)::uuid AND head.status = 'committed'
 );

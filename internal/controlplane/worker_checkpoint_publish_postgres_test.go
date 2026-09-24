@@ -72,7 +72,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	}
 	var status, digest, media string
 	var logical, entries int64
-	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.content_digest,v.size_bytes,v.entry_count,a.media_type FROM workspace_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &entries, &media)
+	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.content_digest,v.size_bytes,v.entry_count,a.media_type FROM computer_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &entries, &media)
 	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Artifact.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || entries != 0 || media != req.Manifest.RuntimeState.Computer.Artifact.MediaType {
 		t.Fatalf("version %s %s %d %d %s: %v", status, digest, logical, entries, media, err)
 	}
@@ -191,7 +191,7 @@ func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
 		}
 	}
 	var n int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_versions WHERE source_workspace_lease_id=$1`, f.claim.workspaceLease.ID).Scan(&n); err != nil || n != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE source_workspace_lease_id=$1`, f.claim.workspaceLease.ID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("versions=%d %v", n, err)
 	}
 }

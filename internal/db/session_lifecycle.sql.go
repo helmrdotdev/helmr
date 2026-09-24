@@ -884,7 +884,7 @@ func (q *Queries) LockSessionMessage(ctx context.Context, arg LockSessionMessage
 const lockWorkerSessionOperationActors = `-- name: LockWorkerSessionOperationActors :many
 SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at FROM sessions s
 WHERE s.environment_id=$1
- AND (s.id=$2 OR s.id=(SELECT w.owner_session_id FROM workspaces w WHERE w.id=$3))
+ AND (s.id=$2 OR s.id=(SELECT w.owner_session_id FROM computers w WHERE w.id=$3))
 ORDER BY s.id FOR UPDATE OF s
 `
 
@@ -1003,7 +1003,7 @@ func (q *Queries) ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSe
 }
 
 const reconcileSessionComputer = `-- name: ReconcileSessionComputer :execrows
-UPDATE workspaces
+UPDATE computers
    SET status = 'active',
        desired_state = 'active',
        dirty_state = 'clean',
@@ -1104,7 +1104,7 @@ func (q *Queries) SessionOwnedExecutionsExcluded(ctx context.Context, parentRunI
 }
 
 const sessionRecoveryHeadCommitted = `-- name: SessionRecoveryHeadCommitted :one
-SELECT EXISTS(SELECT 1 FROM workspace_versions
+SELECT EXISTS(SELECT 1 FROM computer_versions
  WHERE environment_id=$1 AND workspace_id=$2 AND id=$3 AND status='committed') AS committed
 `
 

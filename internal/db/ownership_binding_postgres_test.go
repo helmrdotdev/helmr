@@ -175,7 +175,7 @@ func TestOwnershipDerivedVersionInsertionGates(t *testing.T) {
 			p := ownershipVersionParams(t, f, work)
 			wrong := pgvalue.UUID(uuid.NewV7())
 			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) SELECT $1,org_id,project_id,environment_id,digest,'deployment_program',size_bytes,media_type FROM artifacts WHERE id=$2", wrong, p.ArtifactID)
-			insert := func(q *Queries, p CreatePrivateCheckpointWorkspaceVersionParams) (WorkspaceVersion, error) {
+			insert := func(q *Queries, p CreatePrivateCheckpointWorkspaceVersionParams) (ComputerVersion, error) {
 				if !publish {
 					return q.CreatePrivateCheckpointWorkspaceVersion(ctx, p)
 				}
@@ -196,7 +196,7 @@ func TestOwnershipDerivedVersionInsertionGates(t *testing.T) {
 					t.Fatal(err)
 				}
 				var exists bool
-				if err := f.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM workspace_versions WHERE id=$1)", p.ID).Scan(&exists); err != nil || exists {
+				if err := f.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM computer_versions WHERE id=$1)", p.ID).Scan(&exists); err != nil || exists {
 					t.Fatalf("invalid gate inserted row: %v %v", exists, err)
 				}
 			}
@@ -212,7 +212,7 @@ func TestOwnershipDerivedVersionInsertionGates(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(ctx)
-			rejectSchemaRow(t, tx, "23503", "UPDATE workspace_versions SET writer_generation=writer_generation+1 WHERE id=$1", p.ID)
+			rejectSchemaRow(t, tx, "23503", "UPDATE computer_versions SET writer_generation=writer_generation+1 WHERE id=$1", p.ID)
 		})
 	}
 }

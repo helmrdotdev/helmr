@@ -475,8 +475,8 @@ SELECT runs.id AS run_id,
                AND run_checkpoints.attempt_number = runs.current_attempt_number
                AND run_checkpoints.run_wait_id = run_waits.id
                AND run_checkpoints.workspace_id = runs.workspace_id
-              JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+              JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
+               AND computer_versions.workspace_id = run_checkpoints.workspace_id
               JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
                AND source_run_leases.run_id = runs.id
                AND source_run_leases.attempt_number = runs.current_attempt_number
@@ -485,7 +485,7 @@ SELECT runs.id AS run_id,
                 AND sessions.dispatch_hold_id IS NULL
                 AND run_checkpoints.status = 'ready'
                 AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                AND workspace_versions.status = 'private'
+                AND computer_versions.status = 'private'
                 AND source_run_leases.status = 'checkpointed'
                 AND run_checkpoints.actor_speculative_input_sequence
                     BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
@@ -1148,7 +1148,7 @@ func (q *Queries) LockCancellationWorkspaceLeases(ctx context.Context, runLeaseI
 
 const lockCancellationWorkspaces = `-- name: LockCancellationWorkspaces :many
 SELECT id
-  FROM workspaces
+  FROM computers
  WHERE id IN (
        SELECT workspace_id
          FROM runs
@@ -1245,7 +1245,7 @@ func (q *Queries) RecordRunTerminalEvent(ctx context.Context, arg RecordRunTermi
 }
 
 const releaseTaskWorkspace = `-- name: ReleaseTaskWorkspace :exec
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL,
        ownership_generation = ownership_generation + 1,
        revision = revision + 1,
@@ -1267,20 +1267,20 @@ func (q *Queries) ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorks
 }
 
 const requireLostRunComputerRecovery = `-- name: RequireLostRunComputerRecovery :execrows
-UPDATE workspaces
+UPDATE computers
    SET status = 'recovery_required',
        desired_state = 'stopped',
        dirty_state = 'dirty_state_lost',
        revision = revision + 1,
        updated_at = transaction_timestamp()
   FROM workspace_leases
- WHERE workspaces.id = $1
-   AND workspace_leases.workspace_id = workspaces.id
+ WHERE computers.id = $1
+   AND workspace_leases.workspace_id = computers.id
    AND workspace_leases.owner_run_lease_id = $2
-   AND workspace_leases.ownership_generation = workspaces.ownership_generation
-   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.ownership_generation = computers.ownership_generation
+   AND workspace_leases.writer_generation = computers.writer_generation
    AND workspace_leases.status IN ('active', 'releasing')
-   AND workspaces.status = 'active'
+   AND computers.status = 'active'
 `
 
 type RequireLostRunComputerRecoveryParams struct {

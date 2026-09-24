@@ -816,7 +816,7 @@ func lockCancellationWorkspaces(
 ) error {
 	_, err := db.New(tx).LockCancellationWorkspaces(ctx, pgUUIDs(runIDs))
 	if err != nil {
-		return cancellationAuthority("lock cancellation workspaces", err)
+		return cancellationAuthority("lock cancellation computers", err)
 	}
 	return nil
 }

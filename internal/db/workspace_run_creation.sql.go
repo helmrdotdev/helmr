@@ -32,7 +32,7 @@ WITH selected_definition AS (
        AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed')
      FOR UPDATE OF runs
 ), created_workspace AS (
-    INSERT INTO workspaces (
+    INSERT INTO computers (
         id,
         environment_id,
         region_id,
@@ -49,9 +49,9 @@ WITH selected_definition AS (
            $5,
            $6
       FROM selected_definition
-    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 ), created_version AS (
-    INSERT INTO workspace_versions (
+    INSERT INTO computer_versions (
         id,
         environment_id,
         workspace_id,

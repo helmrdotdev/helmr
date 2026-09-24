@@ -243,7 +243,7 @@ func TestSessionHTTPPostgresIdleCloseReleasesWorkspace(t *testing.T) {
 	}
 	var status string
 	var owner *uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.status,w.owner_session_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &owner); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.status,w.owner_session_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &owner); err != nil {
 		t.Fatal(err)
 	}
 	if status != "closed" || owner != nil {
@@ -280,10 +280,10 @@ func TestSessionRecoveryHTTPPostgresAuthenticatesKeyAndRepairsNullTurn(t *testin
 		t.Fatal(err)
 	}
 	var version, otherVersion uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceIDs[0]).Scan(&version); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceIDs[0]).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceIDs[1]).Scan(&otherVersion); err != nil {
+	if err := f.pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceIDs[1]).Scan(&otherVersion); err != nil {
 		t.Fatal(err)
 	}
 	userID := uuid.NewV7()

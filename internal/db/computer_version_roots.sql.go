@@ -105,7 +105,7 @@ UPDATE runtime_instances r SET computer_source_version_id=$1
    AND r.reserved_workspace_version_id=$1
    AND EXISTS(SELECT 1 FROM computer_version_roots v WHERE v.environment_id=r.environment_id
       AND v.computer_id=r.workspace_id AND v.version_id=$1
-      AND (v.locator->>'logical_bytes')::bigint=r.reserved_guest_ephemeral_disk_bytes)
+      AND v.logical_bytes=r.reserved_guest_ephemeral_disk_bytes)
    AND (r.computer_source_version_id IS NULL OR r.computer_source_version_id=$1)
 `
 

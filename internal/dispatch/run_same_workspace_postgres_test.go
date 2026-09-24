@@ -74,7 +74,7 @@ INSERT INTO artifacts (
 		bArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		bDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
@@ -201,10 +201,10 @@ UPDATE workspace_leases
 	var childWriter, workspaceWriter int64
 	var childLeaseBase pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT run_waits.child_writer_generation, workspaces.writer_generation,
+SELECT run_waits.child_writer_generation, computers.writer_generation,
        workspace_leases.base_workspace_version_id
   FROM run_waits
-  JOIN workspaces ON workspaces.id = run_waits.workspace_id
+  JOIN computers ON computers.id = run_waits.workspace_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = $2
  WHERE run_waits.id = $1`, waitID, childLease.ID).Scan(
 		&childWriter, &workspaceWriter, &childLeaseBase,
@@ -243,7 +243,7 @@ UPDATE run_leases SET status = 'running', created_at = transaction_timestamp() -
 			if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT p.status, c.status, w.status, w.owner_run_id, rw.suspension_status
  FROM runs p JOIN runs c ON c.parent_run_id = p.id
- JOIN workspaces w ON w.id = p.workspace_id JOIN run_waits rw ON rw.child_run_id = c.id
+ JOIN computers w ON w.id = p.workspace_id JOIN run_waits rw ON rw.child_run_id = c.id
  WHERE c.id = $1`, childID).Scan(&parentStatus, &childStatus, &computerStatus, &owner, &suspension); err != nil {
 				t.Fatal(err)
 			}
@@ -289,7 +289,7 @@ SELECT p.status, c.status, w.status, w.owner_run_id, rw.suspension_status
 		var owner pgtype.UUID
 		if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT w.status, w.dirty_state, w.owner_run_id, rw.suspension_status, rc.status
- FROM workspaces w JOIN run_waits rw ON rw.id = $2
+ FROM computers w JOIN run_waits rw ON rw.id = $2
  JOIN run_checkpoints rc ON rc.id = rw.suspend_checkpoint_id
  WHERE w.id = $1`, fixture.workspaceID, waitID).Scan(&computer, &dirty, &owner, &suspension, &checkpoint); err != nil {
 			t.Fatal(err)
@@ -337,7 +337,7 @@ INSERT INTO artifacts (
 		nestedBaseArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		nestedBaseDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
@@ -438,7 +438,7 @@ UPDATE workspace_leases
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE workspaces SET writer_generation = 3 WHERE id = $1`, fixture.workspaceID)
+	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE computers SET writer_generation = 3 WHERE id = $1`, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `UPDATE run_waits SET child_writer_generation = 3 WHERE id = $1`, innerWaitID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_leases (
@@ -486,7 +486,7 @@ INSERT INTO artifacts (
 		nestedResultArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		nestedResultDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
@@ -545,12 +545,12 @@ UPDATE run_waits
 	var ownershipGeneration, resumeWriter int64
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT workspace_leases.id, workspace_mounts.fencing_generation,
-       workspaces.owner_run_id, workspaces.ownership_generation,
-       workspaces.writer_generation, outer_edge.child_writer_generation,
+       computers.owner_run_id, computers.ownership_generation,
+       computers.writer_generation, outer_edge.child_writer_generation,
        inner_edge.resume_writer_generation
   FROM workspace_leases
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
-  JOIN workspaces ON workspaces.id = workspace_leases.workspace_id
+  JOIN computers ON computers.id = workspace_leases.workspace_id
   JOIN run_waits AS outer_edge ON outer_edge.id = $2
 	  JOIN run_waits AS inner_edge ON inner_edge.id = $3
 	 WHERE workspace_leases.owner_run_lease_id = $1`, childLease.ID, waitID, innerWaitID).Scan(
@@ -605,14 +605,14 @@ UPDATE run_checkpoints
 	var terminalOwnership int64
 	var terminalChildStatus, terminalParentStatus, terminalOuterCondition, terminalOuterSuspension string
 	if err := terminalRecoveryTx.QueryRow(fixture.ctx, `
-SELECT workspaces.owner_run_id, workspaces.ownership_generation,
+SELECT computers.owner_run_id, computers.ownership_generation,
        child.status, parent.status, outer_edge.condition_status,
        outer_edge.suspension_status
-  FROM workspaces
+  FROM computers
   JOIN runs AS child ON child.id = $2
   JOIN runs AS parent ON parent.id = $3
   JOIN run_waits AS outer_edge ON outer_edge.id = $4
- WHERE workspaces.id = $1`, fixture.workspaceID, childID, fixture.runID, waitID).Scan(
+ WHERE computers.id = $1`, fixture.workspaceID, childID, fixture.runID, waitID).Scan(
 		&terminalOwner, &terminalOwnership, &terminalChildStatus, &terminalParentStatus,
 		&terminalOuterCondition, &terminalOuterSuspension,
 	); err != nil {
@@ -704,12 +704,12 @@ SELECT runs.status, run_leases.status, workspace_leases.status, run_waits.suspen
 		nestedGranted.WorkspaceMountID, nestedGranted.Lease
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT workspace_leases.id, workspace_mounts.fencing_generation,
-       workspaces.owner_run_id, workspaces.ownership_generation,
-       workspaces.writer_generation, outer_edge.child_writer_generation,
+       computers.owner_run_id, computers.ownership_generation,
+       computers.writer_generation, outer_edge.child_writer_generation,
        inner_edge.resume_writer_generation
   FROM workspace_leases
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
-  JOIN workspaces ON workspaces.id = workspace_leases.workspace_id
+  JOIN computers ON computers.id = workspace_leases.workspace_id
   JOIN run_waits AS outer_edge ON outer_edge.id = $2
   JOIN run_waits AS inner_edge ON inner_edge.id = $3
  WHERE workspace_leases.owner_run_lease_id = $1`, childLease.ID, waitID, innerWaitID).Scan(
@@ -742,7 +742,7 @@ INSERT INTO artifacts (
 		cArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID,
 		cDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (

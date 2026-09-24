@@ -73,12 +73,12 @@ func TestScheduledWorkspaceCACreationAndRollback(t *testing.T) {
 			admission.now = func() time.Time { return candidate.NextFireAt.Time }
 			if mode == "after-generation-failure" {
 				dbtest.MustExec(t, t.Context(), pool, `CREATE FUNCTION reject_ca_run() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-    IF NOT EXISTS(SELECT 1 FROM workspaces WHERE id=NEW.workspace_id AND secret_ca_certificate IS NOT NULL) THEN RAISE EXCEPTION 'CA not generated'; END IF;
+    IF NOT EXISTS(SELECT 1 FROM computers WHERE id=NEW.workspace_id AND secret_ca_certificate IS NOT NULL) THEN RAISE EXCEPTION 'CA not generated'; END IF;
     RAISE EXCEPTION 'synthetic post-generation failure'; END $$;
     CREATE TRIGGER reject_ca_run BEFORE INSERT ON runs FOR EACH ROW EXECUTE FUNCTION reject_ca_run();`)
 			}
 			var before int
-			if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM workspaces").Scan(&before); err != nil {
+			if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&before); err != nil {
 				t.Fatal(err)
 			}
 			err = admission.AdmitSchedule(t.Context(), candidate)
@@ -90,7 +90,7 @@ func TestScheduledWorkspaceCACreationAndRollback(t *testing.T) {
 					t.Fatal(err)
 				}
 				var after int
-				if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM workspaces").Scan(&after); err != nil {
+				if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&after); err != nil {
 					t.Fatal(err)
 				}
 				if before != after {
@@ -116,7 +116,7 @@ func TestScheduledWorkspaceCACreationAndRollback(t *testing.T) {
 			}
 			if hasCA {
 				var created time.Time
-				if err := pool.QueryRow(t.Context(), "SELECT created_at FROM workspaces WHERE id=$1", receipt.WorkspaceID).Scan(&created); err != nil {
+				if err := pool.QueryRow(t.Context(), "SELECT created_at FROM computers WHERE id=$1", receipt.WorkspaceID).Scan(&created); err != nil {
 					t.Fatal(err)
 				}
 				if !ca.NotAfter.Time.Equal(created.AddDate(10, 0, 0).Truncate(time.Second)) {

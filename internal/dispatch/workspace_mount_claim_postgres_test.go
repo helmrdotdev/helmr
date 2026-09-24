@@ -251,7 +251,7 @@ func prepareClaimableWorkspaceExecMount(t *testing.T) (runPlacementFixture, uuid
 	claimID := uuid.NewV7()
 	processID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
+UPDATE computers SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash, request_fingerprint, accepted_at, expires_at
@@ -312,9 +312,9 @@ func cloneClaimableRunMount(t *testing.T, fixture runPlacementFixture, sourceMou
 	defer func() { _ = tx.Rollback(fixture.ctx) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspaces
+INSERT INTO computers
 SELECT (jsonb_populate_record(
-    NULL::workspaces,
+    NULL::computers,
     to_jsonb(source_workspace) || jsonb_build_object(
         'id', $2::text,
         'owner_run_id', $3::text,
@@ -324,12 +324,12 @@ SELECT (jsonb_populate_record(
     )
 )).*
   FROM workspace_mounts source_mount
-  JOIN workspaces source_workspace ON source_workspace.id = source_mount.workspace_id
+  JOIN computers source_workspace ON source_workspace.id = source_mount.workspace_id
  WHERE source_mount.id = $1`, sourceMountID, workspaceID, runID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO workspace_versions
+INSERT INTO computer_versions
 SELECT (jsonb_populate_record(
-    NULL::workspace_versions,
+    NULL::computer_versions,
     to_jsonb(source_version) || jsonb_build_object(
         'id', $2::text,
         'workspace_id', $3::text,
@@ -338,7 +338,7 @@ SELECT (jsonb_populate_record(
     )
 )).*
   FROM workspace_mounts source_mount
-  JOIN workspace_versions source_version
+  JOIN computer_versions source_version
     ON source_version.id = source_mount.materialized_version_id
  WHERE source_mount.id = $1`, sourceMountID, versionID, workspaceID)
 	dbtest.MustExec(t, fixture.ctx, tx, `

@@ -67,24 +67,24 @@ WITH candidate AS MATERIALIZED (
        AND initialization.status = 'registered'
      FOR UPDATE OF initialization
 ), published AS (
-    UPDATE workspace_versions AS version
+    UPDATE computer_versions AS version
        SET artifact_id = candidate.verified_artifact_id,
            content_digest = candidate.digest,
            size_bytes = candidate.logical_bytes,
            status = 'committed', published_at = clock_timestamp()
-      FROM candidate, workspaces
+      FROM candidate, computers
      WHERE version.environment_id = candidate.environment_id
        AND version.workspace_id = candidate.computer_id
        AND version.id = candidate.version_id
        AND version.status = 'initializing'
        AND version.parent_version_id IS NULL
-       AND workspaces.environment_id = version.environment_id
-       AND workspaces.id = version.workspace_id
-       AND workspaces.head_version_id = version.id
-       AND workspaces.initial_config IS NULL
+       AND computers.environment_id = version.environment_id
+       AND computers.id = version.workspace_id
+       AND computers.head_version_id = version.id
+       AND computers.initial_config IS NULL
     RETURNING version.id, version.artifact_id, version.published_at
 ), configured AS (
-    UPDATE workspaces AS computer
+    UPDATE computers AS computer
        SET initial_config = candidate.initial_config,
            updated_at = published.published_at
       FROM candidate, published

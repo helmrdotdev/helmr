@@ -185,16 +185,16 @@ SELECT worker_instances.*,
 
 -- name: ListQueuedRunEligibleScopes :many
 WITH candidate_scopes AS (
-    SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+    SELECT runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
            coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
-               runs.environment_id::text || ':' || workspaces.region_id || ':' ||
+               runs.environment_id::text || ':' || computers.region_id || ':' ||
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
       FROM runs
-      JOIN workspaces ON workspaces.environment_id = runs.environment_id
-                     AND workspaces.id = runs.workspace_id
+      JOIN computers ON computers.environment_id = runs.environment_id
+                     AND computers.id = runs.workspace_id
      WHERE runs.status = 'queued'
-       AND (sqlc.arg(region_filter)::text = '' OR workspaces.region_id = sqlc.arg(region_filter))
+       AND (sqlc.arg(region_filter)::text = '' OR computers.region_id = sqlc.arg(region_filter))
        AND runs.current_run_lease_id IS NULL
        AND (runs.next_runtime_preparation_at IS NULL
             OR runs.next_runtime_preparation_at <= transaction_timestamp())
@@ -203,8 +203,8 @@ WITH candidate_scopes AS (
             AND runs.session_id IS NULL
             AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
             AND (
-              (workspaces.owner_run_id = runs.id
-               AND workspaces.owner_session_id IS NULL
+              (computers.owner_run_id = runs.id
+               AND computers.owner_session_id IS NULL
                AND (NOT EXISTS (
                SELECT 1
                  FROM run_waits
@@ -223,10 +223,10 @@ WITH candidate_scopes AS (
                   AND run_checkpoints.workspace_id = run_waits.workspace_id
                   AND run_checkpoints.status = 'ready'
                   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-                 JOIN workspace_versions
-                   ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-                  AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-                  AND workspace_versions.status = 'private'
+                 JOIN computer_versions
+                   ON computer_versions.workspace_id = run_checkpoints.workspace_id
+                  AND computer_versions.id = run_checkpoints.private_workspace_version_id
+                  AND computer_versions.status = 'private'
                 WHERE run_waits.run_id = runs.id
                   AND run_waits.suspension_status = 'resume_pending'
               )))
@@ -247,7 +247,7 @@ WITH candidate_scopes AS (
                      AND checkpoint.run_wait_id = edge.id
                      AND checkpoint.workspace_id = edge.workspace_id
                      AND checkpoint.status = 'ready'
-                    JOIN workspace_versions AS base
+                    JOIN computer_versions AS base
                       ON base.workspace_id = edge.workspace_id
                      AND base.id = edge.base_workspace_version_id
                      AND base.status = 'private'
@@ -363,8 +363,8 @@ WITH candidate_scopes AS (
             AND runs.session_id IS NOT NULL
             AND runs.cause_kind IN ('actor_start', 'continuation')
             AND runs.parent_run_id IS NULL
-            AND workspaces.owner_session_id = runs.session_id
-            AND workspaces.owner_run_id IS NULL
+            AND computers.owner_session_id = runs.session_id
+            AND computers.owner_run_id IS NULL
             AND EXISTS (
                 SELECT 1 FROM sessions
                  WHERE sessions.id = runs.session_id
@@ -410,10 +410,10 @@ WITH candidate_scopes AS (
                    AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
                    AND run_checkpoints.status = 'ready'
                    AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-                  JOIN workspace_versions
-                    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-                   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-                   AND workspace_versions.status = 'private'
+                  JOIN computer_versions
+                    ON computer_versions.workspace_id = run_checkpoints.workspace_id
+                   AND computer_versions.id = run_checkpoints.private_workspace_version_id
+                   AND computer_versions.status = 'private'
                   JOIN run_leases AS restore_source_lease
                     ON restore_source_lease.id = run_checkpoints.source_run_lease_id
                    AND restore_source_lease.run_id = runs.id
@@ -445,7 +445,7 @@ WITH candidate_scopes AS (
             )))
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-     GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+     GROUP BY runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
               coalesce(runs.concurrency_key, ''), runs.queue_name
 )
 SELECT candidate_scopes.*
@@ -601,8 +601,8 @@ SELECT input_scopes.scope_ordinal,
                           AND run_checkpoints.attempt_number = runs.current_attempt_number
                           AND run_checkpoints.run_wait_id = run_waits.id
                           AND run_checkpoints.workspace_id = runs.workspace_id
-                         JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-                          AND workspace_versions.workspace_id = runs.workspace_id
+                         JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
+                          AND computer_versions.workspace_id = runs.workspace_id
                          JOIN run_leases AS source_lease ON source_lease.id = run_checkpoints.source_run_lease_id
                           AND source_lease.run_id = runs.id
                           AND source_lease.attempt_number = runs.current_attempt_number
@@ -613,7 +613,7 @@ SELECT input_scopes.scope_ordinal,
                            AND run_waits.suspension_status = 'resume_pending'
                            AND run_checkpoints.status = 'ready'
                            AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                           AND workspace_versions.status = 'private'
+                           AND computer_versions.status = 'private'
                            AND source_lease.status = 'checkpointed'
                            AND run_checkpoints.actor_speculative_input_sequence
                                BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
@@ -700,11 +700,11 @@ SELECT runs.org_id,
        COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract,
        runs.queue_score_at AS candidate_score_at
   FROM runs
-  JOIN workspaces ON workspaces.environment_id = runs.environment_id
-                 AND workspaces.id = runs.workspace_id
+  JOIN computers ON computers.environment_id = runs.environment_id
+                 AND computers.id = runs.workspace_id
   JOIN deployment_definitions AS workspace_definitions
-    ON workspace_definitions.environment_id = workspaces.environment_id
-   AND workspace_definitions.id = workspaces.deployment_definition_id
+    ON workspace_definitions.environment_id = computers.environment_id
+   AND workspace_definitions.id = computers.deployment_definition_id
    AND workspace_definitions.kind = 'sandbox'
   LEFT JOIN LATERAL (
       SELECT source_lease.worker_group_id,
@@ -753,7 +753,7 @@ SELECT runs.org_id,
        (get_byte(uuid_send(input_scopes.org_id), 15) & 63)
    AND runs.project_id = input_scopes.project_id
    AND runs.environment_id = input_scopes.environment_id
-   AND workspaces.region_id = input_scopes.region_id
+   AND computers.region_id = input_scopes.region_id
    AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
    AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
@@ -765,8 +765,8 @@ SELECT runs.org_id,
         AND runs.session_id IS NULL
         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
         AND (
-          (workspaces.owner_run_id = runs.id
-           AND workspaces.owner_session_id IS NULL
+          (computers.owner_run_id = runs.id
+           AND computers.owner_session_id IS NULL
            AND (NOT EXISTS (
            SELECT 1
              FROM run_waits
@@ -785,10 +785,10 @@ SELECT runs.org_id,
               AND run_checkpoints.workspace_id = run_waits.workspace_id
               AND run_checkpoints.status = 'ready'
               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-             JOIN workspace_versions
-               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-              AND workspace_versions.status = 'private'
+             JOIN computer_versions
+               ON computer_versions.workspace_id = run_checkpoints.workspace_id
+              AND computer_versions.id = run_checkpoints.private_workspace_version_id
+              AND computer_versions.status = 'private'
             WHERE run_waits.run_id = runs.id
               AND run_waits.suspension_status = 'resume_pending'
           )))
@@ -808,7 +808,7 @@ SELECT runs.org_id,
                  AND checkpoint.run_wait_id = edge.id
                  AND checkpoint.workspace_id = edge.workspace_id
                  AND checkpoint.status = 'ready'
-                JOIN workspace_versions AS base
+                JOIN computer_versions AS base
                   ON base.workspace_id = edge.workspace_id
                  AND base.id = edge.base_workspace_version_id
                  AND base.status = 'private'
@@ -924,8 +924,8 @@ SELECT runs.org_id,
         AND runs.session_id IS NOT NULL
         AND runs.cause_kind IN ('actor_start', 'continuation')
         AND runs.parent_run_id IS NULL
-        AND workspaces.owner_session_id = runs.session_id
-        AND workspaces.owner_run_id IS NULL
+        AND computers.owner_session_id = runs.session_id
+        AND computers.owner_run_id IS NULL
         AND EXISTS (
             SELECT 1 FROM sessions
              WHERE sessions.id = runs.session_id
@@ -971,10 +971,10 @@ SELECT runs.org_id,
                AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
                AND run_checkpoints.status = 'ready'
                AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-              JOIN workspace_versions
-                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.status = 'private'
+              JOIN computer_versions
+                ON computer_versions.workspace_id = run_checkpoints.workspace_id
+               AND computer_versions.id = run_checkpoints.private_workspace_version_id
+               AND computer_versions.status = 'private'
               JOIN run_leases AS restore_source_lease
                     ON restore_source_lease.id = run_checkpoints.source_run_lease_id
                    AND restore_source_lease.run_id = runs.id

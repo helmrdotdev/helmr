@@ -64,7 +64,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 		       (SELECT count(*) FROM run_attempts WHERE run_id = r.id),
 		       (SELECT count(*) FROM secret_resolutions WHERE run_id = r.id)
 		  FROM runs r
-		  JOIN workspaces w ON w.id = r.workspace_id
+		  JOIN computers w ON w.id = r.workspace_id
 		 WHERE r.id = $1
 	`, created.RunID).Scan(&workspaceOwner, &attempts, &resolutions); err != nil {
 		t.Fatal(err)
@@ -154,7 +154,7 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 	var targetVersionID uuid.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT head_version_id
-		  FROM workspaces
+		  FROM computers
 		 WHERE id = $1
 	`, fixture.workspaceIDs[1]).Scan(&targetVersionID); err != nil {
 		t.Fatal(err)

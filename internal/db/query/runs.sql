@@ -35,7 +35,7 @@ WITH selected_target AS MATERIALIZED (
            definitions.declared_id AS entrypoint_declared_id,
            environments.org_id,
            environments.project_id,
-           workspaces.id AS workspace_id
+           computers.id AS workspace_id
       FROM environments
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = environments.id
@@ -45,13 +45,13 @@ WITH selected_target AS MATERIALIZED (
       JOIN deployments
         ON deployments.environment_id = definitions.environment_id
        AND deployments.id = definitions.deployment_id
-      JOIN workspaces
-        ON workspaces.environment_id = environments.id
-       AND workspaces.id = sqlc.arg(workspace_id)
-      JOIN workspace_versions
-        ON workspace_versions.workspace_id = workspaces.id
-       AND workspace_versions.id = sqlc.arg(base_workspace_version_id)
-       AND workspace_versions.status = 'committed'
+      JOIN computers
+        ON computers.environment_id = environments.id
+       AND computers.id = sqlc.arg(workspace_id)
+      JOIN computer_versions
+        ON computer_versions.workspace_id = computers.id
+       AND computer_versions.id = sqlc.arg(base_workspace_version_id)
+       AND computer_versions.status = 'committed'
      WHERE environments.id = sqlc.arg(environment_id)
        AND environments.org_id = sqlc.arg(org_id)
        AND environments.project_id = sqlc.arg(project_id)
@@ -364,20 +364,20 @@ WITH selected_target AS MATERIALIZED (
            parent.org_id,
            parent.project_id,
            parent.id AS parent_run_id,
-           workspaces.id AS workspace_id
+           computers.id AS workspace_id
       FROM runs AS parent
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = parent.environment_id
        AND definitions.deployment_id = parent.deployment_id
        AND definitions.kind = 'task'
        AND definitions.declared_id = sqlc.arg(entrypoint_declared_id)
-      JOIN workspaces
-        ON workspaces.environment_id = parent.environment_id
-       AND workspaces.id = sqlc.arg(workspace_id)
-      JOIN workspace_versions
-        ON workspace_versions.workspace_id = workspaces.id
-       AND workspace_versions.id = sqlc.arg(base_workspace_version_id)
-       AND workspace_versions.status = 'committed'
+      JOIN computers
+        ON computers.environment_id = parent.environment_id
+       AND computers.id = sqlc.arg(workspace_id)
+      JOIN computer_versions
+        ON computer_versions.workspace_id = computers.id
+       AND computer_versions.id = sqlc.arg(base_workspace_version_id)
+       AND computer_versions.status = 'committed'
       LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = sqlc.narg(claim_id)
@@ -507,7 +507,7 @@ WITH selected_target AS MATERIALIZED (
        AND checkpoint.status = 'ready'
        AND checkpoint.private_workspace_version_id =
            sqlc.arg(base_workspace_version_id)
-      JOIN workspace_versions AS base
+      JOIN computer_versions AS base
         ON base.workspace_id = parent.workspace_id
        AND base.id = checkpoint.private_workspace_version_id
        AND base.status = 'private'
@@ -742,19 +742,19 @@ UPDATE runs
    AND queued_expires_at <= transaction_timestamp();
 
 -- name: ReleaseQueuedRunWorkspace :execrows
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL,
        ownership_generation = ownership_generation + 1,
        revision = revision + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.id = sqlc.arg(workspace_id)
-   AND workspaces.owner_run_id = sqlc.arg(run_id)
-   AND workspaces.owner_session_id IS NULL
+ WHERE computers.id = sqlc.arg(workspace_id)
+   AND computers.owner_run_id = sqlc.arg(run_id)
+   AND computers.owner_session_id IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    );
 

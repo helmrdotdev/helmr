@@ -64,43 +64,43 @@ SELECT workspace_processes.id AS process_id,
                    FROM runtime_instances
                    JOIN worker_instances
                      ON worker_instances.id = runtime_instances.worker_instance_id
-                  WHERE runtime_instances.workspace_id = workspaces.id
+                  WHERE runtime_instances.workspace_id = computers.id
                     AND runtime_instances.reclaimed_at IS NULL
                  UNION
                  SELECT worker_instances.worker_pool_id
                    FROM workspace_leases
                    JOIN worker_instances
                      ON worker_instances.id = workspace_leases.worker_instance_id
-                  WHERE workspace_leases.workspace_id = workspaces.id
+                  WHERE workspace_leases.workspace_id = computers.id
                     AND workspace_leases.status IN ('active', 'releasing')
              ) AS accounting
             ORDER BY accounting.worker_pool_id
        )::uuid[] AS accounted_pool_ids
   FROM workspace_processes
-  JOIN workspaces
-    ON workspaces.environment_id = workspace_processes.environment_id
-   AND workspaces.id = workspace_processes.workspace_id
+  JOIN computers
+    ON computers.environment_id = workspace_processes.environment_id
+   AND computers.id = workspace_processes.workspace_id
   JOIN environments
-    ON environments.id = workspaces.environment_id
+    ON environments.id = computers.environment_id
    AND environments.org_id = workspace_processes.org_id
    AND environments.project_id = workspace_processes.project_id
   JOIN deployment_definitions AS definitions
-    ON definitions.environment_id = workspaces.environment_id
-   AND definitions.id = workspaces.deployment_definition_id
+    ON definitions.environment_id = computers.environment_id
+   AND definitions.id = computers.deployment_definition_id
    AND definitions.kind = 'sandbox'
-   AND definitions.declared_id = workspaces.sandbox_declared_id
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = workspaces.id
-   AND workspace_versions.id = workspace_processes.base_workspace_version_id
-   AND workspace_versions.status IN ('initializing', 'committed')
+   AND definitions.declared_id = computers.sandbox_declared_id
+  JOIN computer_versions
+    ON computer_versions.workspace_id = computers.id
+   AND computer_versions.id = workspace_processes.base_workspace_version_id
+   AND computer_versions.status IN ('initializing', 'committed')
  WHERE workspace_processes.status = 'pending'
-   AND workspaces.region_id = sqlc.arg(region_id)
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state IN ('active', 'stopped')
-   AND workspaces.dirty_state = 'clean'
-   AND workspaces.head_version_id = workspace_processes.base_workspace_version_id
-   AND workspaces.owner_session_id IS NULL
-   AND workspaces.owner_run_id IS NULL
+   AND computers.region_id = sqlc.arg(region_id)
+   AND computers.status = 'active'
+   AND computers.desired_state IN ('active', 'stopped')
+   AND computers.dirty_state = 'clean'
+   AND computers.head_version_id = workspace_processes.base_workspace_version_id
+   AND computers.owner_session_id IS NULL
+   AND computers.owner_run_id IS NULL
  ORDER BY workspace_processes.created_at, workspace_processes.id
  LIMIT sqlc.arg(row_limit);
 
@@ -233,7 +233,7 @@ UPDATE runtime_instances
 RETURNING *;
 
 -- name: AdvanceWorkspaceExecWriter :one
-UPDATE workspaces
+UPDATE computers
    SET ownership_generation = sqlc.arg(ownership_generation),
        writer_generation = sqlc.arg(writer_generation),
        desired_state = 'active',
@@ -241,33 +241,33 @@ UPDATE workspaces
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
   FROM environments
- WHERE environments.id = workspaces.environment_id
+ WHERE environments.id = computers.environment_id
    AND environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.id = sqlc.arg(workspace_id)
-   AND workspaces.head_version_id = sqlc.arg(base_workspace_version_id)
+   AND computers.environment_id = sqlc.arg(environment_id)
+   AND computers.id = sqlc.arg(workspace_id)
+   AND computers.head_version_id = sqlc.arg(base_workspace_version_id)
    AND EXISTS (
-       SELECT 1 FROM workspace_versions AS base
-        WHERE base.workspace_id = workspaces.id
-          AND base.id = workspaces.head_version_id
+       SELECT 1 FROM computer_versions AS base
+        WHERE base.workspace_id = computers.id
+          AND base.id = computers.head_version_id
           AND base.status = 'committed'
           AND base.artifact_id IS NOT NULL
    )
-   AND workspaces.ownership_generation = sqlc.arg(expected_ownership_generation)
-   AND workspaces.writer_generation = sqlc.arg(expected_writer_generation)
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state IN ('active', 'stopped')
-   AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_session_id IS NULL
-   AND workspaces.owner_run_id IS NULL
+   AND computers.ownership_generation = sqlc.arg(expected_ownership_generation)
+   AND computers.writer_generation = sqlc.arg(expected_writer_generation)
+   AND computers.status = 'active'
+   AND computers.desired_state IN ('active', 'stopped')
+   AND computers.dirty_state = 'clean'
+   AND computers.owner_session_id IS NULL
+   AND computers.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: AdvanceWorkspaceExecMountFence :one
 UPDATE workspace_mounts
@@ -384,8 +384,8 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_leases.workspace_id = workspace_processes.workspace_id
    AND workspace_leases.workspace_mount_id = workspace_processes.workspace_mount_id
    AND workspace_leases.owner_process_id = workspace_processes.id
-  JOIN workspaces
-    ON workspaces.id = workspace_processes.workspace_id
+  JOIN computers
+    ON computers.id = workspace_processes.workspace_id
   JOIN worker_groups
     ON worker_groups.id = workspace_processes.worker_group_id
    AND worker_groups.region_id = workspace_processes.region_id
@@ -425,8 +425,8 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND workspace_leases.status IN ('active', 'releasing')
    AND workspace_leases.expires_at > transaction_timestamp()
-   AND workspace_leases.ownership_generation = workspaces.ownership_generation
-   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.ownership_generation = computers.ownership_generation
+   AND workspace_leases.writer_generation = computers.writer_generation
    AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
    AND (
        workspace_processes.status <> 'starting'
@@ -484,8 +484,8 @@ SELECT sqlc.embed(workspace_processes),
   JOIN workspace_leases
     ON workspace_leases.workspace_mount_id = workspace_mounts.id
    AND workspace_leases.owner_process_id = workspace_processes.id
-  JOIN workspaces
-    ON workspaces.id = workspace_processes.workspace_id
+  JOIN computers
+    ON computers.id = workspace_processes.workspace_id
  WHERE workspace_processes.org_id = sqlc.arg(org_id)
    AND workspace_processes.id = sqlc.arg(process_id)
    AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
@@ -496,35 +496,35 @@ SELECT sqlc.embed(workspace_processes),
    AND workspace_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND workspace_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND workspace_leases.status IN ('active', 'releasing')
-   AND workspace_leases.ownership_generation = workspaces.ownership_generation
-   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.ownership_generation = computers.ownership_generation
+   AND workspace_leases.writer_generation = computers.writer_generation
    AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
  FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases;
 
 -- name: LockWorkspaceExecFailureWorkspace :one
-SELECT workspaces.id,
-       workspaces.environment_id,
-       workspaces.region_id,
-       workspaces.sandbox_declared_id,
-       workspaces.deployment_definition_id,
-       workspaces.key,
-       workspaces.revision,
-       workspaces.owner_session_id,
-       workspaces.owner_run_id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
-       workspaces.head_version_id,
-       workspaces.status,
-       workspaces.desired_state,
-       workspaces.dirty_state,
-       workspaces.last_activity_at,
-       workspaces.created_at,
-       workspaces.updated_at,
-       workspaces.deleted_at
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
+SELECT computers.id,
+       computers.environment_id,
+       computers.region_id,
+       computers.sandbox_declared_id,
+       computers.deployment_definition_id,
+       computers.key,
+       computers.revision,
+       computers.owner_session_id,
+       computers.owner_run_id,
+       computers.ownership_generation,
+       computers.writer_generation,
+       computers.head_version_id,
+       computers.status,
+       computers.desired_state,
+       computers.dirty_state,
+       computers.last_activity_at,
+       computers.created_at,
+       computers.updated_at,
+       computers.deleted_at
+  FROM computers
+  JOIN environments ON environments.id = computers.environment_id
  WHERE environments.org_id = sqlc.arg(org_id)
-   AND workspaces.id = sqlc.arg(workspace_id)
+   AND computers.id = sqlc.arg(workspace_id)
  FOR UPDATE;
 
 -- name: LockWorkspaceExecRecoveryAuthority :one
@@ -715,7 +715,7 @@ WITH authority AS (
        AND workspace_mounts.staged_version_id IS NULL
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
 ), created AS (
-    INSERT INTO workspace_versions (
+    INSERT INTO computer_versions (
         id, environment_id, workspace_id,
         parent_version_id, artifact_id, content_digest,
         size_bytes, entry_count, status, source_workspace_lease_id,
@@ -731,7 +731,7 @@ WITH authority AS (
       JOIN artifacts ON artifacts.environment_id = authority.environment_id
                     AND artifacts.id = sqlc.arg(artifact_id)
                     AND artifacts.kind = 'workspace_version'
-    RETURNING workspace_versions.*
+    RETURNING computer_versions.*
 ), staged AS (
     UPDATE workspace_mounts
        SET staged_version_id = created.id,
@@ -745,11 +745,11 @@ SELECT created.*
   JOIN staged ON true;
 
 -- name: GetStagedWorkspaceExecCapture :one
-SELECT workspace_versions.*
+SELECT computer_versions.*
   FROM workspace_mounts
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = workspace_mounts.workspace_id
-   AND workspace_versions.id = workspace_mounts.staged_version_id
+  JOIN computer_versions
+    ON computer_versions.workspace_id = workspace_mounts.workspace_id
+   AND computer_versions.id = workspace_mounts.staged_version_id
  WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
    AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
    AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
@@ -757,7 +757,7 @@ SELECT workspace_versions.*
    AND workspace_mounts.finalization_kind = 'capture';
 
 -- name: CommitStagedWorkspaceExecVersion :one
-UPDATE workspace_versions
+UPDATE computer_versions
    SET status = 'committed',
        published_at = transaction_timestamp()
  WHERE id = sqlc.arg(version_id)
@@ -766,7 +766,7 @@ UPDATE workspace_versions
 RETURNING *;
 
 -- name: FinalizeWorkspaceExecWorkspace :one
-UPDATE workspaces
+UPDATE computers
    SET head_version_id = COALESCE(sqlc.narg(version_id), head_version_id),
        desired_state = sqlc.arg(restore_desired_state),
        dirty_state = 'clean',
@@ -776,10 +776,10 @@ UPDATE workspaces
    AND head_version_id = sqlc.arg(base_workspace_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: MarkWorkspaceExecRecoveryRequired :one
-UPDATE workspaces
+UPDATE computers
    SET status = 'recovery_required',
        desired_state = 'stopped',
        dirty_state = 'dirty_state_lost',
@@ -789,7 +789,7 @@ UPDATE workspaces
    AND head_version_id = sqlc.arg(base_workspace_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: FinalizeWorkspaceExecProcess :one
 UPDATE workspace_processes
@@ -823,7 +823,7 @@ UPDATE workspace_processes
 RETURNING *;
 
 -- name: DiscardStagedWorkspaceExecVersion :execrows
-UPDATE workspace_versions
+UPDATE computer_versions
    SET status = 'discarded',
        discarded_at = transaction_timestamp()
  WHERE id = sqlc.arg(version_id)

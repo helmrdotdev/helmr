@@ -388,7 +388,7 @@ UPDATE runtime_instances
        ready_at = NULL, runtime_substrate_id = NULL,
        reserved_run_id = w.owner_run_id, reserved_attempt_number = 1,
        reserved_workspace_version_id = w.head_version_id
-  FROM workspaces w
+  FROM computers w
  WHERE runtime_instances.id = $1 AND w.id=runtime_instances.workspace_id`, runtimeID)
 }
 

@@ -59,13 +59,13 @@ SELECT addressed.id AS wait_id,
 
 -- name: GetTokenWaitRegistrationLocator :one
 SELECT runs.workspace_id,
-       workspaces.owner_session_id,
+       computers.owner_session_id,
        runs.org_id,
        runs.project_id
   FROM runs
-  JOIN workspaces
-    ON workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
+  JOIN computers
+    ON computers.environment_id = runs.environment_id
+   AND computers.id = runs.workspace_id
  WHERE runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(run_id);
 
@@ -78,7 +78,7 @@ SELECT *
 -- name: LockTokenWaitWorkspace :one
 SELECT owner_session_id, owner_run_id, status, desired_state,
        ownership_generation, writer_generation
-  FROM workspaces
+  FROM computers
  WHERE id = sqlc.arg(workspace_id)
    AND environment_id = sqlc.arg(environment_id)
  FOR UPDATE;
@@ -168,13 +168,13 @@ SELECT run_waits.id AS wait_id,
        run_waits.run_id,
        run_waits.workspace_id,
        run_waits.attempt_number,
-       workspaces.owner_session_id
+       computers.owner_session_id
   FROM run_waits
   JOIN runs
     ON runs.environment_id = run_waits.environment_id
    AND runs.id = run_waits.run_id
-  JOIN workspaces
-    ON workspaces.id = run_waits.workspace_id
+  JOIN computers
+    ON computers.id = run_waits.workspace_id
  WHERE run_waits.id = sqlc.arg(wait_id)
    AND run_waits.environment_id = sqlc.arg(environment_id)
    AND run_waits.run_id = sqlc.arg(run_id)

@@ -4,7 +4,7 @@
 -- name: GetInitialComputerWriteKey :one
 SELECT k.*
   FROM runtime_instances r
-  JOIN workspaces c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
+  JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
   JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
     AND k.id=COALESCE(r.computer_write_key_id,c.write_key_id) AND k.available
  WHERE r.id=sqlc.arg(runtime_instance_id) AND r.environment_id=sqlc.arg(environment_id)
@@ -16,7 +16,7 @@ VALUES(sqlc.arg(id),sqlc.arg(environment_id),sqlc.arg(computer_id),sqlc.arg(wrap
 RETURNING *;
 
 -- name: InitializeComputerWriteKey :execrows
-UPDATE workspaces SET write_key_id=sqlc.arg(key_id)
+UPDATE computers SET write_key_id=sqlc.arg(key_id)
  WHERE environment_id=sqlc.arg(environment_id) AND id=sqlc.arg(computer_id) AND write_key_id IS NULL;
 
 -- name: PinRuntimeComputerKey :execrows

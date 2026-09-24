@@ -92,7 +92,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1
+		UPDATE computers SET dirty_state = 'dirty' WHERE id = $1
 	`, fixture.workspaceIDs[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1
+		UPDATE computers SET dirty_state = 'clean' WHERE id = $1
 	`, fixture.workspaceIDs[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestActorStartPostgresKeylessRequestsRemainAtLeastOnce(t *testing.T) {
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
 		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL)
+		    (SELECT count(*) FROM computers WHERE owner_session_id IS NOT NULL)
 	`).Scan(&claims, &sessions, &runs, &owned); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
 		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL)
+		    (SELECT count(*) FROM computers WHERE owner_session_id IS NOT NULL)
 	`).Scan(&claimCount, &actorCount, &runCount, &ownedCount); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func assertActorStartTupleWithQueue(
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT owner_session_id FROM workspaces WHERE id = $1
+		SELECT owner_session_id FROM computers WHERE id = $1
 	`, fixture.workspaceIDs[0]).Scan(&workspaceOwner); err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +550,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		fixture.workspaceRefs[index] = workspaceID.String()
 		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)
 		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO workspaces (
+			INSERT INTO computers (
 			    id, environment_id, region_id,
 			    sandbox_declared_id, deployment_definition_id, head_version_id, key
 			) VALUES ($1, $2, 'us-east-1', 'workspace.v1', $3, $4, $5)

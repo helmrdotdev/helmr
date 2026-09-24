@@ -819,7 +819,7 @@ CREATE TABLE schedule_secrets (
 CREATE INDEX schedule_secrets_secret_idx
     ON schedule_secrets (secret_id, schedule_id);
 
-CREATE TABLE workspaces (
+CREATE TABLE computers (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
@@ -861,7 +861,7 @@ CREATE TABLE workspaces (
     secret_ca_private_key_nonce BYTEA,
     secret_ca_private_key_ciphertext BYTEA,
     secret_ca_not_after TIMESTAMPTZ,
-    CONSTRAINT workspaces_secret_ca_tuple_check CHECK (
+    CONSTRAINT computers_secret_ca_tuple_check CHECK (
         num_nonnulls(secret_ca_certificate, secret_ca_private_key_nonce,
                      secret_ca_private_key_ciphertext, secret_ca_not_after) = 0
         OR (
@@ -878,12 +878,12 @@ CREATE TABLE workspaces (
     FOREIGN KEY (environment_id)
         REFERENCES environments(id)
         ON DELETE CASCADE,
-    CONSTRAINT workspaces_deployment_definition_fk
+    CONSTRAINT computers_deployment_definition_fk
         FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT,
-    CONSTRAINT workspaces_exclusive_owner_check CHECK (num_nonnulls(owner_session_id, owner_run_id) <= 1),
-    CONSTRAINT workspaces_deletion_shape_check CHECK (
+    CONSTRAINT computers_exclusive_owner_check CHECK (num_nonnulls(owner_session_id, owner_run_id) <= 1),
+    CONSTRAINT computers_deletion_shape_check CHECK (
         (status <> 'deleted'
          AND sandbox_declared_id IS NOT NULL
          AND deployment_definition_id IS NOT NULL
@@ -900,23 +900,23 @@ CREATE TABLE workspaces (
          AND desired_state = 'deleted'
          AND deleted_at IS NOT NULL)
     ),
-    CONSTRAINT workspaces_deletion_intent_check CHECK (status <> 'deleting' OR desired_state = 'deleted'),
-    CONSTRAINT workspaces_recovery_shape_check CHECK (
+    CONSTRAINT computers_deletion_intent_check CHECK (status <> 'deleting' OR desired_state = 'deleted'),
+    CONSTRAINT computers_recovery_shape_check CHECK (
         (status = 'recovery_required' AND dirty_state = 'dirty_state_lost' AND desired_state = 'stopped')
         OR
         (status <> 'recovery_required' AND dirty_state <> 'dirty_state_lost')
     )
 );
 
-CREATE INDEX workspaces_deployment_definition_idx
-    ON workspaces (
+CREATE INDEX computers_deployment_definition_idx
+    ON computers (
         environment_id,
         deployment_definition_id,
         sandbox_declared_id
     );
 
-CREATE INDEX workspaces_environment_created_idx
-    ON workspaces (environment_id, created_at DESC, id DESC)
+CREATE INDEX computers_environment_created_idx
+    ON computers (environment_id, created_at DESC, id DESC)
     WHERE deleted_at IS NULL;
 
 CREATE TABLE workspace_secrets (
@@ -938,7 +938,7 @@ CREATE TABLE workspace_secrets (
     PRIMARY KEY (workspace_id, placement_kind, placement_target),
     CONSTRAINT workspace_secrets_delivery_identity_key UNIQUE (workspace_id, placement_kind, placement_target, secret_id),
     FOREIGN KEY (environment_id, workspace_id)
-        REFERENCES workspaces(environment_id, id)
+        REFERENCES computers(environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, secret_id)
         REFERENCES secrets(environment_id, id)
@@ -1017,7 +1017,7 @@ CREATE TABLE sessions (
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, workspace_id)
-        REFERENCES workspaces(environment_id, id)
+        REFERENCES computers(environment_id, id)
         ON DELETE RESTRICT,
     CHECK (key IS NULL OR (
         octet_length(key) BETWEEN 1 AND 512
@@ -1269,15 +1269,15 @@ CREATE TABLE runs (
     CONSTRAINT runs_retry_time_check CHECK ((status = 'retry_delayed') = (retry_at IS NOT NULL))
 );
 
-ALTER TABLE workspaces
-    ADD CONSTRAINT workspaces_owner_actor_fk
+ALTER TABLE computers
+    ADD CONSTRAINT computers_owner_actor_fk
     FOREIGN KEY (owner_session_id, id)
     REFERENCES sessions(id, workspace_id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE workspaces
-    ADD CONSTRAINT workspaces_owner_run_fk
+ALTER TABLE computers
+    ADD CONSTRAINT computers_owner_run_fk
     FOREIGN KEY (owner_run_id, id)
     REFERENCES runs(id, workspace_id)
     ON DELETE RESTRICT
@@ -1539,7 +1539,7 @@ CREATE TABLE workspace_mounts (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT workspace_mounts_placement_identity_key UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id),
     FOREIGN KEY (environment_id, workspace_id)
-        REFERENCES workspaces(environment_id, id)
+        REFERENCES computers(environment_id, id)
         ON DELETE RESTRICT,
     CHECK (jsonb_typeof(request) = 'object'),
     CONSTRAINT workspace_mounts_channel_token_expiry_check CHECK (
@@ -1733,7 +1733,7 @@ CREATE TABLE workspace_processes (
     UNIQUE (workspace_id, id),
     UNIQUE (id, workspace_id, runtime_instance_id),
     FOREIGN KEY (environment_id, workspace_id)
-        REFERENCES workspaces(environment_id, id)
+        REFERENCES computers(environment_id, id)
         ON DELETE CASCADE,
     CONSTRAINT workspace_processes_mount_placement_fkey FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id)
         REFERENCES workspace_mounts(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id)
@@ -1800,9 +1800,9 @@ CREATE TABLE computer_data_keys (
     ),
     UNIQUE (environment_id, computer_id, id),
     UNIQUE (environment_id, computer_id, id, available),
-    FOREIGN KEY (environment_id, computer_id) REFERENCES workspaces(environment_id, id) ON DELETE RESTRICT
+    FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT
 );
-ALTER TABLE workspaces ADD CONSTRAINT workspaces_write_key_fkey
+ALTER TABLE computers ADD CONSTRAINT computers_write_key_fkey
     FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
     REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
 
@@ -1828,10 +1828,10 @@ CREATE TABLE computer_objects (
     PRIMARY KEY (environment_id, computer_id, digest),
     UNIQUE (environment_id, computer_id, digest, rank),
     UNIQUE (environment_id, computer_id, digest, rank, certified),
-    UNIQUE (environment_id, computer_id, digest, size_bytes, rank, certified),
+    UNIQUE (environment_id, computer_id, digest, size_bytes, rank, certified, kind),
     UNIQUE (environment_id, computer_id, digest, certified),
     FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, computer_id) REFERENCES workspaces(environment_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available) ON DELETE RESTRICT,
     FOREIGN KEY (certified_org_id, digest, size_bytes, media_type)
         REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT
@@ -1874,7 +1874,7 @@ CREATE TABLE computer_object_edges (
 CREATE INDEX computer_object_edges_child_idx
     ON computer_object_edges(environment_id, computer_id, child_digest);
 
-CREATE TABLE workspace_versions (
+CREATE TABLE computer_versions (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1894,12 +1894,12 @@ CREATE TABLE workspace_versions (
     UNIQUE (workspace_id, id),
     UNIQUE (environment_id, workspace_id, id),
     FOREIGN KEY (environment_id, workspace_id)
-        REFERENCES workspaces(environment_id, id)
+        REFERENCES computers(environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, parent_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
+        REFERENCES computer_versions(workspace_id, id)
         ON DELETE RESTRICT,
-    CONSTRAINT workspace_versions_source_writer_fence_fkey FOREIGN KEY (
+    CONSTRAINT computer_versions_source_writer_fence_fkey FOREIGN KEY (
         workspace_id,
         source_workspace_lease_id,
         ownership_generation,
@@ -1915,7 +1915,7 @@ CREATE TABLE workspace_versions (
     FOREIGN KEY (environment_id, artifact_id)
         REFERENCES artifacts(environment_id, id)
         ON DELETE RESTRICT,
-    CONSTRAINT workspace_versions_source_shape_check CHECK (
+    CONSTRAINT computer_versions_source_shape_check CHECK (
         (
             parent_version_id IS NULL
             AND source_workspace_lease_id IS NULL
@@ -1938,7 +1938,7 @@ CREATE TABLE workspace_versions (
             AND status <> 'initializing'
         )
     ),
-    CONSTRAINT workspace_versions_publication_lifecycle_check CHECK (
+    CONSTRAINT computer_versions_publication_lifecycle_check CHECK (
         (status IN ('initializing', 'private') AND published_at IS NULL AND discarded_at IS NULL)
         OR (status = 'committed' AND published_at IS NOT NULL AND discarded_at IS NULL)
         OR (status = 'discarded' AND published_at IS NULL AND discarded_at IS NOT NULL)
@@ -1952,6 +1952,8 @@ CREATE TABLE computer_version_roots (
     computer_id UUID NOT NULL,
     version_id UUID NOT NULL,
     locator JSONB NOT NULL CHECK ((jsonb_typeof(locator) = 'object' AND locator->>'format_version' = '1') IS TRUE),
+    logical_bytes BIGINT GENERATED ALWAYS AS ((locator->>'logical_bytes')::bigint) STORED NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
+    root_kind TEXT GENERATED ALWAYS AS ('root'::text) STORED,
     root_digest TEXT GENERATED ALWAYS AS (locator->'pack'->>'digest') STORED NOT NULL,
     root_size_bytes BIGINT GENERATED ALWAYS AS ((locator->'pack'->>'size_bytes')::bigint) STORED NOT NULL,
     root_rank INTEGER GENERATED ALWAYS AS ((locator->'pack'->>'rank')::integer) STORED NOT NULL,
@@ -1960,62 +1962,62 @@ CREATE TABLE computer_version_roots (
     certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     PRIMARY KEY (environment_id, computer_id, version_id),
     FOREIGN KEY (environment_id, computer_id, version_id)
-        REFERENCES workspace_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, computer_id, root_digest, root_size_bytes, root_rank, certification_required)
-        REFERENCES computer_objects(environment_id, computer_id, digest, size_bytes, rank, certified) ON DELETE RESTRICT,
+        REFERENCES computer_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, computer_id, root_digest, root_size_bytes, root_rank, certification_required, root_kind)
+        REFERENCES computer_objects(environment_id, computer_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, root_digest, root_key_id, direct_key_required)
         REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id, is_direct) ON DELETE RESTRICT
 );
 CREATE INDEX computer_version_roots_object_idx ON computer_version_roots(environment_id, computer_id, root_digest);
 
-CREATE UNIQUE INDEX workspace_versions_root_uidx
-    ON workspace_versions (workspace_id)
+CREATE UNIQUE INDEX computer_versions_root_uidx
+    ON computer_versions (workspace_id)
     WHERE parent_version_id IS NULL;
 
 ALTER TABLE workspace_mounts
     ADD CONSTRAINT workspace_mounts_materialized_version_id_fkey
     FOREIGN KEY (environment_id, workspace_id, materialized_version_id)
-    REFERENCES workspace_versions(environment_id, workspace_id, id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE workspace_mounts
     ADD CONSTRAINT workspace_mounts_staged_version_id_fkey
     FOREIGN KEY (workspace_id, staged_version_id)
-    REFERENCES workspace_versions(workspace_id, id)
+    REFERENCES computer_versions(workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_base_workspace_version_id_fkey
     FOREIGN KEY (environment_id, workspace_id, base_workspace_version_id)
-    REFERENCES workspace_versions(environment_id, workspace_id, id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE workspaces
-    ADD CONSTRAINT workspaces_head_version_id_fkey
+ALTER TABLE computers
+    ADD CONSTRAINT computers_head_version_id_fkey
     FOREIGN KEY (environment_id, id, head_version_id)
-    REFERENCES workspace_versions(environment_id, workspace_id, id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE workspace_processes
     ADD CONSTRAINT workspace_processes_base_workspace_version_id_fkey
     FOREIGN KEY (workspace_id, base_workspace_version_id)
-    REFERENCES workspace_versions(workspace_id, id)
+    REFERENCES computer_versions(workspace_id, id)
     ON DELETE RESTRICT;
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_base_workspace_version_fk
     FOREIGN KEY (environment_id, workspace_id, base_workspace_version_id)
-    REFERENCES workspace_versions(environment_id, workspace_id, id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
     ON DELETE RESTRICT;
 
 ALTER TABLE run_attempts
     ADD CONSTRAINT run_attempts_base_workspace_version_fk
     FOREIGN KEY (workspace_id, base_workspace_version_id)
-    REFERENCES workspace_versions(workspace_id, id)
+    REFERENCES computer_versions(workspace_id, id)
     ON DELETE RESTRICT;
 
 CREATE TABLE secret_resolutions (
@@ -2338,7 +2340,7 @@ CREATE TABLE run_leases (
         REFERENCES run_attempts(run_id, number)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, workspace_id, region_id)
-        REFERENCES workspaces(environment_id, id, region_id)
+        REFERENCES computers(environment_id, id, region_id)
         ON DELETE RESTRICT,
     CONSTRAINT run_leases_expiry_order_check CHECK (expires_at > created_at),
     CONSTRAINT run_leases_start_deadline_check CHECK (start_deadline_at <= expires_at),
@@ -2480,10 +2482,10 @@ CREATE TABLE run_checkpoints (
         REFERENCES workspace_leases(workspace_id, owner_run_lease_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
+        REFERENCES computer_versions(workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, private_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
+        REFERENCES computer_versions(workspace_id, id)
         ON DELETE RESTRICT,
     CONSTRAINT run_checkpoints_runtime_config_artifact_fk
         FOREIGN KEY (runtime_config_artifact_id)
@@ -2709,10 +2711,10 @@ CREATE TABLE run_waits (
         REFERENCES session_turns(session_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, base_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
+        REFERENCES computer_versions(workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (workspace_id, resume_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
+        REFERENCES computer_versions(workspace_id, id)
         ON DELETE RESTRICT,
     CHECK (jsonb_typeof(metadata) = 'object'),
     CHECK (cardinality(tags) <= 32),
@@ -2991,7 +2993,7 @@ CREATE TABLE runtime_instances (
     terminal_error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT runtime_instances_computer_source_version_fkey FOREIGN KEY (environment_id, workspace_id, computer_source_version_id)
-        REFERENCES workspace_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
+        REFERENCES computer_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_retained_computer_source_fkey FOREIGN KEY (environment_id, workspace_id, retained_computer_source_version_id)
         REFERENCES computer_version_roots(environment_id, computer_id, version_id) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_computer_write_key_fkey FOREIGN KEY (environment_id, workspace_id, computer_write_key_id)
@@ -3010,7 +3012,7 @@ CREATE TABLE runtime_instances (
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_workspace_definition_fkey FOREIGN KEY (environment_id, workspace_id, deployment_definition_id)
-        REFERENCES workspaces(environment_id, id, deployment_definition_id)
+        REFERENCES computers(environment_id, id, deployment_definition_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, program_deployment_id)
         REFERENCES deployments(environment_id, id)
@@ -3030,7 +3032,7 @@ CREATE TABLE runtime_instances (
         REFERENCES runs(environment_id, id, deployment_id)
         ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_reserved_workspace_version_fkey FOREIGN KEY (workspace_id, reserved_workspace_version_id)
-        REFERENCES workspace_versions(workspace_id, id)
+        REFERENCES computer_versions(workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (reserved_process_id, workspace_id)
         REFERENCES workspace_processes(id, workspace_id)
@@ -3128,7 +3130,7 @@ CREATE TABLE computer_initializations (
     FOREIGN KEY (environment_id, computer_id, runtime_instance_id)
         REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, version_id)
-        REFERENCES workspace_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
+        REFERENCES computer_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, artifact_id)
         REFERENCES artifacts(environment_id, id) ON DELETE RESTRICT,
     CONSTRAINT computer_initializations_encoding_bound_check CHECK (
@@ -3209,8 +3211,8 @@ CREATE INDEX runs_schedule_idx
 CREATE INDEX runs_schedule_id_idx
     ON runs (schedule_id)
     WHERE schedule_id IS NOT NULL;
-CREATE INDEX workspaces_region_scope_idx
-    ON workspaces(region_id, environment_id, id);
+CREATE INDEX computers_region_scope_idx
+    ON computers(region_id, environment_id, id);
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX auth_sessions_user_active_idx ON auth_sessions(user_id) WHERE revoked_at IS NULL;
 CREATE INDEX auth_sessions_expiry_active_idx ON auth_sessions(expires_at) WHERE revoked_at IS NULL;
@@ -3250,14 +3252,14 @@ CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_secret_f
     WHERE status = 'pending';
 CREATE INDEX run_waits_run_suspension_status_idx
     ON run_waits(run_id, suspension_status, created_at DESC);
-CREATE INDEX workspaces_status_idx ON workspaces(environment_id, status, updated_at DESC);
-CREATE UNIQUE INDEX workspaces_environment_key_uidx ON workspaces(environment_id, key)
+CREATE INDEX computers_status_idx ON computers(environment_id, status, updated_at DESC);
+CREATE UNIQUE INDEX computers_environment_key_uidx ON computers(environment_id, key)
     WHERE key IS NOT NULL;
-CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(workspace_id, created_at DESC);
+CREATE INDEX computer_versions_workspace_created_idx ON computer_versions(workspace_id, created_at DESC);
 CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expires_at, id)
     WHERE status = 'active';
 
-ALTER TABLE session_events ADD FOREIGN KEY (workspace_id, workspace_version_id) REFERENCES workspace_versions(workspace_id, id);
+ALTER TABLE session_events ADD FOREIGN KEY (workspace_id, workspace_version_id) REFERENCES computer_versions(workspace_id, id);
 
 ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_attempt_fk FOREIGN KEY (dispatch_hold_run_id, dispatch_hold_attempt_number) REFERENCES run_attempts(run_id, number);
 ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_run_fk FOREIGN KEY (id, dispatch_hold_run_id) REFERENCES runs(session_id, id);

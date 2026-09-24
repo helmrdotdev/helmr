@@ -58,7 +58,7 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 			assertSessionExecutionHeld(t, f, f.rootID.String(), scope.TurnID, next.TurnID, "system_failed", "fenced")
 			var computer, dirty string
 			var hold uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,s.dispatch_hold_id FROM workspaces w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &hold); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,s.dispatch_hold_id FROM computers w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &hold); err != nil {
 				t.Fatal(err)
 			}
 			if computer != "recovery_required" || dirty != "dirty_state_lost" {
@@ -84,7 +84,7 @@ func TestSessionCheckpointFailureRequiresRecoveryPostgres(t *testing.T) {
 			assertSessionRecoveryCanResume(t, f)
 			var cursor int64
 			var savedHead uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,w.head_version_id,s.committed_input_sequence FROM workspaces w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &savedHead, &cursor); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,w.head_version_id,s.committed_input_sequence FROM computers w JOIN sessions s ON s.workspace_id=w.id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &savedHead, &cursor); err != nil {
 				t.Fatal(err)
 			}
 			expectedCursor := int64(1)
@@ -156,7 +156,7 @@ func TestSessionFailedCompletionRequiresRecoveryPostgres(t *testing.T) {
 				t.Fatalf("old committed disk accepted: %v", err)
 			}
 			var actualHead uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&actualHead); err != nil || actualHead != retainedHead {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceID).Scan(&actualHead); err != nil || actualHead != retainedHead {
 				t.Fatalf("head changed=%s %v", actualHead, err)
 			}
 			assertSessionRecoveryCanResume(t, f)
@@ -174,7 +174,7 @@ func assertSessionExecutionHeld(t *testing.T, f *actorCheckpointFixture, head st
 	var current, owner, actualHead uuid.UUID
 	var actualActive *uuid.UUID
 	var attempt, count, events int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,s.dispatch_hold_reason,s.current_run_id,s.active_turn_id,w.owner_session_id,w.head_version_id,r.status,r.current_attempt_number,l.status,a.terminal_outcome,wl.status,rt.desired_state,(SELECT count(*) FROM run_attempts WHERE run_id=r.id),(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.held') FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN workspaces w ON w.id=s.workspace_id JOIN run_leases l ON l.id=$2 JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances rt ON rt.id=l.runtime_instance_id WHERE s.id=$1`, f.sessionID, f.claim.runLease.ID).Scan(&state, &reason, &current, &actualActive, &owner, &actualHead, &runState, &attempt, &leaseState, &attemptState, &workspaceLeaseState, &runtimeDesired, &count, &events); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.status,s.dispatch_hold_reason,s.current_run_id,s.active_turn_id,w.owner_session_id,w.head_version_id,r.status,r.current_attempt_number,l.status,a.terminal_outcome,wl.status,rt.desired_state,(SELECT count(*) FROM run_attempts WHERE run_id=r.id),(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.held') FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN computers w ON w.id=s.workspace_id JOIN run_leases l ON l.id=$2 JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances rt ON rt.id=l.runtime_instance_id WHERE s.id=$1`, f.sessionID, f.claim.runLease.ID).Scan(&state, &reason, &current, &actualActive, &owner, &actualHead, &runState, &attempt, &leaseState, &attemptState, &workspaceLeaseState, &runtimeDesired, &count, &events); err != nil {
 		t.Fatal(err)
 	}
 	if state != "open" || reason != "recovery_required" || current != f.runID || owner != f.sessionID || actualHead.String() != head || runState != wantRun || attempt != 1 || count != 1 || events != 1 || leaseState != "failed" || attemptState != "failed" || workspaceLeaseState != wantWorkspaceLease || runtimeDesired != "closed" {
@@ -203,7 +203,7 @@ func assertSessionRecoveryCanResume(t *testing.T, f *actorCheckpointFixture) {
 	t.Helper()
 	var hold, head uuid.UUID
 	var active *uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,w.head_version_id,s.active_turn_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&hold, &head, &active); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,w.head_version_id,s.active_turn_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&hold, &head, &active); err != nil {
 		t.Fatal(err)
 	}
 	disposition := ""
@@ -255,7 +255,7 @@ func TestSessionSuccessfulReturnPreservesPendingWorkPostgres(t *testing.T) {
 				f.turn(t, 1)
 			}
 			var head uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
 				t.Fatal(err)
 			}
 			a := f.claim
@@ -312,7 +312,7 @@ func assertRetainedActorCapture(t *testing.T, f *actorCheckpointFixture, capture
 	t.Helper()
 	var head uuid.UUID
 	var digest string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id, a.digest FROM workspaces w JOIN workspace_versions v ON v.id=w.head_version_id JOIN artifacts a ON a.id=v.artifact_id WHERE w.id=$1`, f.workspaceID).Scan(&head, &digest); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id, a.digest FROM computers w JOIN computer_versions v ON v.id=w.head_version_id JOIN artifacts a ON a.id=v.artifact_id WHERE w.id=$1`, f.workspaceID).Scan(&head, &digest); err != nil {
 		t.Fatal(err)
 	}
 	if head == previous || digest != capture.Disk.Artifact.Digest {

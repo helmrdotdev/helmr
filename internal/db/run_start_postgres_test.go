@@ -20,7 +20,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 
 	var originalWorkspaceActivity time.Time
 	if err := fixture.pool.QueryRow(ctx,
-		`SELECT last_activity_at FROM workspaces WHERE id = $1`,
+		`SELECT last_activity_at FROM computers WHERE id = $1`,
 		locators.WorkspaceID,
 	).Scan(&originalWorkspaceActivity); err != nil {
 		t.Fatal(err)
@@ -400,11 +400,11 @@ func (fixture runLeaseClaimFixture) freshRunStartState(
 		       runs.active_started_at,
 		       runs.revision,
 		       runs.active_elapsed_ms,
-		       workspaces.last_activity_at,
+		       computers.last_activity_at,
 		       run_attempts.entrypoint_entered_at
 		  FROM run_leases
 		  JOIN runs ON runs.id = run_leases.run_id
-		  JOIN workspaces ON workspaces.id = runs.workspace_id
+		  JOIN computers ON computers.id = runs.workspace_id
 		  JOIN run_attempts
 		    ON run_attempts.run_id = runs.id
 		   AND run_attempts.number = run_leases.attempt_number

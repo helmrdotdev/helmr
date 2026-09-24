@@ -38,7 +38,7 @@ func TestWorkspaceReadPostgresProjectsSessionOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(list.Workspaces) != 2 {
-		t.Fatalf("workspaces = %+v", list)
+		t.Fatalf("computers = %+v", list)
 	}
 	for _, item := range list.Workspaces {
 		switch item.ID {
@@ -93,7 +93,7 @@ func TestWorkspaceReadPostgresProjectsRunOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := fixture.workspaceIDs[0].String()
-	if _, err := fixture.pool.Exec(t.Context(), "UPDATE workspaces SET owner_session_id=NULL,owner_run_id=$2 WHERE id=$1", fixture.workspaceIDs[0], started.BootRunID); err != nil {
+	if _, err := fixture.pool.Exec(t.Context(), "UPDATE computers SET owner_session_id=NULL,owner_run_id=$2 WHERE id=$1", fixture.workspaceIDs[0], started.BootRunID); err != nil {
 		t.Fatal(err)
 	}
 	principal := auth.Actor{

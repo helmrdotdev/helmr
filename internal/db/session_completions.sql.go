@@ -12,28 +12,28 @@ import (
 )
 
 const advanceActorWorkspaceHead = `-- name: AdvanceActorWorkspaceHead :one
-UPDATE workspaces
+UPDATE computers
    SET head_version_id = $1,
        revision = revision + 1,
        last_activity_at = $2,
        updated_at = $2
- WHERE workspaces.id = $3
-   AND workspaces.environment_id = $4
+ WHERE computers.id = $3
+   AND computers.environment_id = $4
    AND EXISTS (
        SELECT 1 FROM environments
-        WHERE environments.id = workspaces.environment_id
+        WHERE environments.id = computers.environment_id
           AND environments.org_id = $5
           AND environments.project_id = $6
    )
-   AND workspaces.owner_session_id = $7
-   AND workspaces.owner_run_id IS NULL
-   AND workspaces.ownership_generation = $8
-   AND workspaces.writer_generation = $9
-   AND workspaces.head_version_id = $10
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-   AND workspaces.dirty_state = 'clean'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+   AND computers.owner_session_id = $7
+   AND computers.owner_run_id IS NULL
+   AND computers.ownership_generation = $8
+   AND computers.writer_generation = $9
+   AND computers.head_version_id = $10
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+   AND computers.dirty_state = 'clean'
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type AdvanceActorWorkspaceHeadParams struct {
@@ -183,7 +183,7 @@ WITH created_run AS (
            definitions.deployment_id, sessions.deployment_definition_id, 'actor',
            sessions.actor_declared_id, 'continuation', sessions.id,
            sessions.committed_input_sequence, sessions.next_input_sequence - 1,
-           sessions.workspace_id, workspaces.head_version_id,
+           sessions.workspace_id, computers.head_version_id,
            sessions.run_metadata, sessions.run_tags,
            sessions.run_queue_name, sessions.run_concurrency_key,
            sessions.run_queue_concurrency_limit, sessions.run_priority,
@@ -200,11 +200,11 @@ WITH created_run AS (
        AND definitions.id = sessions.deployment_definition_id
        AND definitions.kind = 'actor'
        AND definitions.declared_id = sessions.actor_declared_id
-      JOIN workspaces
-        ON workspaces.id = sessions.workspace_id
-       AND workspaces.owner_session_id = sessions.id
-       AND workspaces.owner_run_id IS NULL
-       AND workspaces.head_version_id IS NOT NULL
+      JOIN computers
+        ON computers.id = sessions.workspace_id
+       AND computers.owner_session_id = sessions.id
+       AND computers.owner_run_id IS NULL
+       AND computers.head_version_id IS NOT NULL
      WHERE sessions.environment_id = $5
        AND sessions.id = $6
        AND sessions.workspace_id = $7
@@ -216,13 +216,13 @@ WITH created_run AS (
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_leases
-            WHERE workspace_leases.workspace_id = workspaces.id
+            WHERE workspace_leases.workspace_id = computers.id
               AND workspace_leases.status IN ('active', 'releasing')
        )
        AND NOT EXISTS (
            SELECT 1
              FROM workspace_processes
-            WHERE workspace_processes.workspace_id = workspaces.id
+            WHERE workspace_processes.workspace_id = computers.id
               AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
        )
 	ON CONFLICT (session_id)
@@ -627,32 +627,32 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 }
 
 const releaseActorWorkspaceOwner = `-- name: ReleaseActorWorkspaceOwner :one
-UPDATE workspaces
+UPDATE computers
    SET owner_session_id = NULL,
        ownership_generation = ownership_generation + 1,
        revision = revision + 1,
        last_activity_at = $1,
        updated_at = $1
- WHERE workspaces.id = $2
-   AND workspaces.environment_id = $3
-   AND workspaces.owner_session_id = $4
-   AND workspaces.owner_run_id IS NULL
-   AND workspaces.ownership_generation = $5
-   AND workspaces.writer_generation = $6
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-   AND workspaces.dirty_state = 'clean'
+ WHERE computers.id = $2
+   AND computers.environment_id = $3
+   AND computers.owner_session_id = $4
+   AND computers.owner_run_id IS NULL
+   AND computers.ownership_generation = $5
+   AND computers.writer_generation = $6
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+   AND computers.dirty_state = 'clean'
    AND NOT EXISTS (
        SELECT 1 FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1 FROM workspace_processes
-        WHERE workspace_processes.workspace_id = workspaces.id
+        WHERE workspace_processes.workspace_id = computers.id
           AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type ReleaseActorWorkspaceOwnerParams struct {

@@ -274,9 +274,9 @@ func (f *taskWorkspaceVersionFixture) CreateArtifact(
 func (f *taskWorkspaceVersionFixture) PublishTaskWorkspaceVersion(
 	_ context.Context,
 	params db.PublishTaskWorkspaceVersionParams,
-) (db.WorkspaceVersion, error) {
+) (db.ComputerVersion, error) {
 	f.publish = params
-	return db.WorkspaceVersion{ID: f.versionID}, nil
+	return db.ComputerVersion{ID: f.versionID}, nil
 }
 
 func (f *taskWorkspaceVersionFixture) UpdateTaskWorkspaceMountFrontier(

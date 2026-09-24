@@ -33,12 +33,12 @@ WITH same_workspace_child_authority AS MATERIALIZED (
        AND checkpoint.status = 'ready'
        AND (checkpoint.expires_at IS NULL
             OR checkpoint.expires_at > transaction_timestamp())
-      JOIN workspaces
-        ON workspaces.id = edge.workspace_id
-       AND workspaces.environment_id = edge.environment_id
-       AND workspaces.ownership_generation = edge.ownership_generation
+      JOIN computers
+        ON computers.id = edge.workspace_id
+       AND computers.environment_id = edge.environment_id
+       AND computers.ownership_generation = edge.ownership_generation
        AND (
-           workspaces.writer_generation = coalesce(
+           computers.writer_generation = coalesce(
                edge.child_writer_generation,
                edge.parent_writer_generation
            )
@@ -51,7 +51,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
                   AND resume_edge.suspension_status = 'resume_pending'
                   AND resume_edge.ownership_generation = edge.ownership_generation
                   AND resume_edge.parent_writer_generation = edge.child_writer_generation
-                  AND resume_edge.child_writer_generation = workspaces.writer_generation
+                  AND resume_edge.child_writer_generation = computers.writer_generation
                   AND resume_edge.resume_writer_generation IS NULL
                   AND resume_edge.resume_workspace_version_id = sqlc.arg(workspace_version_id)
            )
@@ -131,17 +131,17 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
   JOIN run_attempts ON run_attempts.run_id = runtime_instances.reserved_run_id
                    AND run_attempts.number = runtime_instances.reserved_attempt_number
                    AND run_attempts.workspace_id = runtime_instances.workspace_id
-  JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
-                         AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+  JOIN computer_versions ON computer_versions.workspace_id = runtime_instances.workspace_id
+                         AND computer_versions.id = runtime_instances.reserved_workspace_version_id
                          AND (
                              (runtime_instances.restore_checkpoint_id IS NOT NULL
-                              AND workspace_versions.status = 'private')
+                              AND computer_versions.status = 'private')
                              OR
                              (runtime_instances.restore_checkpoint_id IS NULL
-                              AND workspace_versions.status = 'committed')
+                              AND computer_versions.status = 'committed')
                              OR
                              (runtime_instances.restore_checkpoint_id IS NULL
-                              AND workspace_versions.status = 'private'
+                              AND computer_versions.status = 'private'
                               AND EXISTS (
                                   SELECT 1
                                     FROM same_workspace_child_authority
@@ -182,10 +182,10 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
     ON workspace_processes.id = runtime_instances.reserved_process_id
    AND workspace_processes.workspace_id = runtime_instances.workspace_id
    AND workspace_processes.status = 'pending'
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = runtime_instances.workspace_id
-   AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND workspace_versions.status = 'committed'
+  JOIN computer_versions
+    ON computer_versions.workspace_id = runtime_instances.workspace_id
+   AND computer_versions.id = runtime_instances.reserved_workspace_version_id
+   AND computer_versions.status = 'committed'
  WHERE runtime_instances.org_id = sqlc.arg(org_id)
    AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
    AND runtime_instances.id = sqlc.arg(runtime_instance_id)
@@ -250,13 +250,13 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
        image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
        image_artifacts.media_type AS image_artifact_media_type,
-       workspace_versions.artifact_id AS workspace_artifact_id,
+       computer_versions.artifact_id AS workspace_artifact_id,
        COALESCE(workspace_artifacts.digest, '') AS workspace_artifact_digest,
        COALESCE(workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
        COALESCE(workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
-	   workspace_versions.content_digest AS workspace_content_digest,
-	   workspace_versions.size_bytes AS workspace_logical_size_bytes,
-       workspace_versions.entry_count AS workspace_entry_count
+	   computer_versions.content_digest AS workspace_content_digest,
+	   computer_versions.size_bytes AS workspace_logical_size_bytes,
+       computer_versions.entry_count AS workspace_entry_count
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
@@ -269,12 +269,12 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
    AND deployment_definitions.kind = 'sandbox'
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = claimed.workspace_id
-   AND workspace_versions.id = claimed.materialized_version_id
+  JOIN computer_versions
+    ON computer_versions.workspace_id = claimed.workspace_id
+   AND computer_versions.id = claimed.materialized_version_id
   LEFT JOIN artifacts AS workspace_artifacts
-    ON workspace_artifacts.environment_id = workspace_versions.environment_id
-   AND workspace_artifacts.id = workspace_versions.artifact_id
+    ON workspace_artifacts.environment_id = computer_versions.environment_id
+   AND workspace_artifacts.id = computer_versions.artifact_id
   JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id;
@@ -428,15 +428,15 @@ SELECT stopped.* FROM stopped
 WITH candidates AS (
     SELECT workspace_mounts.id
       FROM workspace_mounts
-      JOIN workspaces
-        ON workspaces.environment_id = workspace_mounts.environment_id
-       AND workspaces.id = workspace_mounts.workspace_id
+      JOIN computers
+        ON computers.environment_id = workspace_mounts.environment_id
+       AND computers.id = workspace_mounts.workspace_id
      WHERE workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch) AND workspace_mounts.status = 'mounted'
-       AND workspaces.status = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.dirty_state = 'clean'
-       AND workspaces.head_version_id = workspace_mounts.materialized_version_id
+       AND computers.status = 'active'
+       AND computers.desired_state = 'active'
+       AND computers.dirty_state = 'clean'
+       AND computers.head_version_id = workspace_mounts.materialized_version_id
        AND NOT EXISTS (SELECT 1 FROM workspace_leases
                         WHERE workspace_mount_id = workspace_mounts.id AND status IN ('active','releasing'))
        AND NOT EXISTS (SELECT 1 FROM workspace_processes

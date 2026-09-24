@@ -101,7 +101,7 @@ func (q *Queries) AdvanceWorkspaceExecMountFence(ctx context.Context, arg Advanc
 }
 
 const advanceWorkspaceExecWriter = `-- name: AdvanceWorkspaceExecWriter :one
-UPDATE workspaces
+UPDATE computers
    SET ownership_generation = $1,
        writer_generation = $2,
        desired_state = 'active',
@@ -109,33 +109,33 @@ UPDATE workspaces
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
   FROM environments
- WHERE environments.id = workspaces.environment_id
+ WHERE environments.id = computers.environment_id
    AND environments.org_id = $3
    AND environments.project_id = $4
-   AND workspaces.environment_id = $5
-   AND workspaces.id = $6
-   AND workspaces.head_version_id = $7
+   AND computers.environment_id = $5
+   AND computers.id = $6
+   AND computers.head_version_id = $7
    AND EXISTS (
-       SELECT 1 FROM workspace_versions AS base
-        WHERE base.workspace_id = workspaces.id
-          AND base.id = workspaces.head_version_id
+       SELECT 1 FROM computer_versions AS base
+        WHERE base.workspace_id = computers.id
+          AND base.id = computers.head_version_id
           AND base.status = 'committed'
           AND base.artifact_id IS NOT NULL
    )
-   AND workspaces.ownership_generation = $8
-   AND workspaces.writer_generation = $9
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state IN ('active', 'stopped')
-   AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_session_id IS NULL
-   AND workspaces.owner_run_id IS NULL
+   AND computers.ownership_generation = $8
+   AND computers.writer_generation = $9
+   AND computers.status = 'active'
+   AND computers.desired_state IN ('active', 'stopped')
+   AND computers.dirty_state = 'clean'
+   AND computers.owner_session_id IS NULL
+   AND computers.owner_run_id IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type AdvanceWorkspaceExecWriterParams struct {
@@ -329,7 +329,7 @@ func (q *Queries) CloseWorkspaceExecRuntime(ctx context.Context, arg CloseWorksp
 }
 
 const commitStagedWorkspaceExecVersion = `-- name: CommitStagedWorkspaceExecVersion :one
-UPDATE workspace_versions
+UPDATE computer_versions
    SET status = 'committed',
        published_at = transaction_timestamp()
  WHERE id = $1
@@ -343,9 +343,9 @@ type CommitStagedWorkspaceExecVersionParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) CommitStagedWorkspaceExecVersion(ctx context.Context, arg CommitStagedWorkspaceExecVersionParams) (WorkspaceVersion, error) {
+func (q *Queries) CommitStagedWorkspaceExecVersion(ctx context.Context, arg CommitStagedWorkspaceExecVersionParams) (ComputerVersion, error) {
 	row := q.db.QueryRow(ctx, commitStagedWorkspaceExecVersion, arg.VersionID, arg.WorkspaceID)
-	var i WorkspaceVersion
+	var i ComputerVersion
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -718,7 +718,7 @@ func (q *Queries) CreateWorkspaceExecRuntimeReservation(ctx context.Context, arg
 }
 
 const discardStagedWorkspaceExecVersion = `-- name: DiscardStagedWorkspaceExecVersion :execrows
-UPDATE workspace_versions
+UPDATE computer_versions
    SET status = 'discarded',
        discarded_at = transaction_timestamp()
  WHERE id = $1
@@ -1048,7 +1048,7 @@ func (q *Queries) FinalizeWorkspaceExecProcess(ctx context.Context, arg Finalize
 }
 
 const finalizeWorkspaceExecWorkspace = `-- name: FinalizeWorkspaceExecWorkspace :one
-UPDATE workspaces
+UPDATE computers
    SET head_version_id = COALESCE($1, head_version_id),
        desired_state = $2,
        dirty_state = 'clean',
@@ -1058,7 +1058,7 @@ UPDATE workspaces
    AND head_version_id = $4
    AND ownership_generation = $5
    AND writer_generation = $6
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type FinalizeWorkspaceExecWorkspaceParams struct {
@@ -1127,11 +1127,11 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 }
 
 const getStagedWorkspaceExecCapture = `-- name: GetStagedWorkspaceExecCapture :one
-SELECT workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.status, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+SELECT computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
   FROM workspace_mounts
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = workspace_mounts.workspace_id
-   AND workspace_versions.id = workspace_mounts.staged_version_id
+  JOIN computer_versions
+    ON computer_versions.workspace_id = workspace_mounts.workspace_id
+   AND computer_versions.id = workspace_mounts.staged_version_id
  WHERE workspace_mounts.id = $1
    AND workspace_mounts.worker_instance_id = $2
    AND workspace_mounts.worker_epoch = $3
@@ -1145,9 +1145,9 @@ type GetStagedWorkspaceExecCaptureParams struct {
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
 
-func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStagedWorkspaceExecCaptureParams) (WorkspaceVersion, error) {
+func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStagedWorkspaceExecCaptureParams) (ComputerVersion, error) {
 	row := q.db.QueryRow(ctx, getStagedWorkspaceExecCapture, arg.WorkspaceMountID, arg.WorkerInstanceID, arg.WorkerEpoch)
-	var i WorkspaceVersion
+	var i ComputerVersion
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -1507,43 +1507,43 @@ SELECT workspace_processes.id AS process_id,
                    FROM runtime_instances
                    JOIN worker_instances
                      ON worker_instances.id = runtime_instances.worker_instance_id
-                  WHERE runtime_instances.workspace_id = workspaces.id
+                  WHERE runtime_instances.workspace_id = computers.id
                     AND runtime_instances.reclaimed_at IS NULL
                  UNION
                  SELECT worker_instances.worker_pool_id
                    FROM workspace_leases
                    JOIN worker_instances
                      ON worker_instances.id = workspace_leases.worker_instance_id
-                  WHERE workspace_leases.workspace_id = workspaces.id
+                  WHERE workspace_leases.workspace_id = computers.id
                     AND workspace_leases.status IN ('active', 'releasing')
              ) AS accounting
             ORDER BY accounting.worker_pool_id
        )::uuid[] AS accounted_pool_ids
   FROM workspace_processes
-  JOIN workspaces
-    ON workspaces.environment_id = workspace_processes.environment_id
-   AND workspaces.id = workspace_processes.workspace_id
+  JOIN computers
+    ON computers.environment_id = workspace_processes.environment_id
+   AND computers.id = workspace_processes.workspace_id
   JOIN environments
-    ON environments.id = workspaces.environment_id
+    ON environments.id = computers.environment_id
    AND environments.org_id = workspace_processes.org_id
    AND environments.project_id = workspace_processes.project_id
   JOIN deployment_definitions AS definitions
-    ON definitions.environment_id = workspaces.environment_id
-   AND definitions.id = workspaces.deployment_definition_id
+    ON definitions.environment_id = computers.environment_id
+   AND definitions.id = computers.deployment_definition_id
    AND definitions.kind = 'sandbox'
-   AND definitions.declared_id = workspaces.sandbox_declared_id
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = workspaces.id
-   AND workspace_versions.id = workspace_processes.base_workspace_version_id
-   AND workspace_versions.status IN ('initializing', 'committed')
+   AND definitions.declared_id = computers.sandbox_declared_id
+  JOIN computer_versions
+    ON computer_versions.workspace_id = computers.id
+   AND computer_versions.id = workspace_processes.base_workspace_version_id
+   AND computer_versions.status IN ('initializing', 'committed')
  WHERE workspace_processes.status = 'pending'
-   AND workspaces.region_id = $1
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state IN ('active', 'stopped')
-   AND workspaces.dirty_state = 'clean'
-   AND workspaces.head_version_id = workspace_processes.base_workspace_version_id
-   AND workspaces.owner_session_id IS NULL
-   AND workspaces.owner_run_id IS NULL
+   AND computers.region_id = $1
+   AND computers.status = 'active'
+   AND computers.desired_state IN ('active', 'stopped')
+   AND computers.dirty_state = 'clean'
+   AND computers.head_version_id = workspace_processes.base_workspace_version_id
+   AND computers.owner_session_id IS NULL
+   AND computers.owner_run_id IS NULL
  ORDER BY workspace_processes.created_at, workspace_processes.id
  LIMIT $2
 `
@@ -1653,8 +1653,8 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
   JOIN workspace_leases
     ON workspace_leases.workspace_mount_id = workspace_mounts.id
    AND workspace_leases.owner_process_id = workspace_processes.id
-  JOIN workspaces
-    ON workspaces.id = workspace_processes.workspace_id
+  JOIN computers
+    ON computers.id = workspace_processes.workspace_id
  WHERE workspace_processes.org_id = $1
    AND workspace_processes.id = $2
    AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
@@ -1665,8 +1665,8 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
    AND workspace_leases.worker_instance_id = $4
    AND workspace_leases.worker_epoch = $5
    AND workspace_leases.status IN ('active', 'releasing')
-   AND workspace_leases.ownership_generation = workspaces.ownership_generation
-   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.ownership_generation = computers.ownership_generation
+   AND workspace_leases.writer_generation = computers.writer_generation
    AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
  FOR UPDATE OF workspace_processes, workspace_mounts, workspace_leases
 `
@@ -1788,29 +1788,29 @@ func (q *Queries) LockWorkspaceExecFailureAuthority(ctx context.Context, arg Loc
 }
 
 const lockWorkspaceExecFailureWorkspace = `-- name: LockWorkspaceExecFailureWorkspace :one
-SELECT workspaces.id,
-       workspaces.environment_id,
-       workspaces.region_id,
-       workspaces.sandbox_declared_id,
-       workspaces.deployment_definition_id,
-       workspaces.key,
-       workspaces.revision,
-       workspaces.owner_session_id,
-       workspaces.owner_run_id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
-       workspaces.head_version_id,
-       workspaces.status,
-       workspaces.desired_state,
-       workspaces.dirty_state,
-       workspaces.last_activity_at,
-       workspaces.created_at,
-       workspaces.updated_at,
-       workspaces.deleted_at
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
+SELECT computers.id,
+       computers.environment_id,
+       computers.region_id,
+       computers.sandbox_declared_id,
+       computers.deployment_definition_id,
+       computers.key,
+       computers.revision,
+       computers.owner_session_id,
+       computers.owner_run_id,
+       computers.ownership_generation,
+       computers.writer_generation,
+       computers.head_version_id,
+       computers.status,
+       computers.desired_state,
+       computers.dirty_state,
+       computers.last_activity_at,
+       computers.created_at,
+       computers.updated_at,
+       computers.deleted_at
+  FROM computers
+  JOIN environments ON environments.id = computers.environment_id
  WHERE environments.org_id = $1
-   AND workspaces.id = $2
+   AND computers.id = $2
  FOR UPDATE
 `
 
@@ -2163,8 +2163,8 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
    AND workspace_leases.workspace_id = workspace_processes.workspace_id
    AND workspace_leases.workspace_mount_id = workspace_processes.workspace_mount_id
    AND workspace_leases.owner_process_id = workspace_processes.id
-  JOIN workspaces
-    ON workspaces.id = workspace_processes.workspace_id
+  JOIN computers
+    ON computers.id = workspace_processes.workspace_id
   JOIN worker_groups
     ON worker_groups.id = workspace_processes.worker_group_id
    AND worker_groups.region_id = workspace_processes.region_id
@@ -2204,8 +2204,8 @@ SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.p
    AND workspace_leases.worker_epoch = $5
    AND workspace_leases.status IN ('active', 'releasing')
    AND workspace_leases.expires_at > transaction_timestamp()
-   AND workspace_leases.ownership_generation = workspaces.ownership_generation
-   AND workspace_leases.writer_generation = workspaces.writer_generation
+   AND workspace_leases.ownership_generation = computers.ownership_generation
+   AND workspace_leases.writer_generation = computers.writer_generation
    AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
    AND (
        workspace_processes.status <> 'starting'
@@ -2414,7 +2414,7 @@ func (q *Queries) LoseWorkspaceExecMount(ctx context.Context, arg LoseWorkspaceE
 }
 
 const markWorkspaceExecRecoveryRequired = `-- name: MarkWorkspaceExecRecoveryRequired :one
-UPDATE workspaces
+UPDATE computers
    SET status = 'recovery_required',
        desired_state = 'stopped',
        dirty_state = 'dirty_state_lost',
@@ -2424,7 +2424,7 @@ UPDATE workspaces
    AND head_version_id = $2
    AND ownership_generation = $3
    AND writer_generation = $4
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type MarkWorkspaceExecRecoveryRequiredParams struct {
@@ -2881,7 +2881,7 @@ WITH authority AS (
        AND workspace_mounts.staged_version_id IS NULL
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases
 ), created AS (
-    INSERT INTO workspace_versions (
+    INSERT INTO computer_versions (
         id, environment_id, workspace_id,
         parent_version_id, artifact_id, content_digest,
         size_bytes, entry_count, status, source_workspace_lease_id,
@@ -2897,7 +2897,7 @@ WITH authority AS (
       JOIN artifacts ON artifacts.environment_id = authority.environment_id
                     AND artifacts.id = $5
                     AND artifacts.kind = 'workspace_version'
-    RETURNING workspace_versions.id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.status, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+    RETURNING computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
 ), staged AS (
     UPDATE workspace_mounts
        SET staged_version_id = created.id,

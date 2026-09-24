@@ -105,7 +105,7 @@ func LockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 		return ComputerPreparation{}, pgx.ErrNoRows
 	}
 	var root pgtype.UUID
-	err = tx.QueryRow(ctx, `SELECT v.id FROM workspace_versions v JOIN workspaces w ON w.id=v.workspace_id
+	err = tx.QueryRow(ctx, `SELECT v.id FROM computer_versions v JOIN computers w ON w.id=v.workspace_id
         WHERE v.environment_id=$1 AND v.workspace_id=$2 AND v.id=$3 AND w.head_version_id=v.id
         AND v.parent_version_id IS NULL AND v.status='initializing'`, authority.environmentID, computer, authority.baseWorkspaceVersionID).Scan(&root)
 	if err != nil {

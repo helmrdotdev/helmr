@@ -130,7 +130,7 @@ func workspaceHeadVersion(t *testing.T, fixture runPlacementFixture) pgtype.UUID
 	var versionID pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT head_version_id
-  FROM workspaces
+  FROM computers
  WHERE id = $1`,
 		fixture.workspaceID,
 	).Scan(&versionID); err != nil {
@@ -147,7 +147,7 @@ func createPendingWorkspaceExec(t *testing.T, fixture runPlacementFixture) uuid.
 	claimID := uuid.NewV7()
 	processID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL
  WHERE id = $1`,
 		fixture.workspaceID,

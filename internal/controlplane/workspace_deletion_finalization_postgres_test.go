@@ -42,13 +42,13 @@ func (f workspaceDeletionPhysicalFixture) setDeleting(t *testing.T, clearOwner b
 	t.Helper()
 	if clearOwner {
 		dbtest.MustExec(t, t.Context(), f.base.Pool, `
-UPDATE workspaces
+UPDATE computers
    SET status = 'deleting', desired_state = 'deleted', owner_run_id = NULL
  WHERE id = $1`, f.workspaceID)
 		return
 	}
 	dbtest.MustExec(t, t.Context(), f.base.Pool, `
-UPDATE workspaces SET status = 'deleting', desired_state = 'deleted'
+UPDATE computers SET status = 'deleting', desired_state = 'deleted'
  WHERE id = $1`, f.workspaceID)
 }
 
@@ -102,7 +102,7 @@ func TestWorkspaceDeleteFinalizationAuthorityBlockers(t *testing.T) {
 			t.Fatalf("owner-blocked finalization = %v", rows)
 		}
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool,
-			`UPDATE workspaces SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
+			`UPDATE computers SET owner_run_id = NULL WHERE id = $1`, fixture.workspaceID)
 		if rows := fixture.finalize(t); len(rows) != 1 || rows[0] != fixture.workspaceID {
 			t.Fatalf("owner-released finalization = %v", rows)
 		}
@@ -119,7 +119,7 @@ func TestWorkspaceDeleteFinalizationAuthorityBlockers(t *testing.T) {
 			t.Fatalf("session-owner-blocked finalization = %v", rows)
 		}
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool,
-			`UPDATE workspaces SET owner_session_id = NULL WHERE id = $1`, fixture.workspaceID)
+			`UPDATE computers SET owner_session_id = NULL WHERE id = $1`, fixture.workspaceID)
 		if rows := fixture.finalize(t); len(rows) != 1 || rows[0] != fixture.workspaceID {
 			t.Fatalf("session-owner-released finalization = %v", rows)
 		}
@@ -195,7 +195,7 @@ UPDATE runtime_instances
 		processID := uuid.NewV7()
 		var versionID uuid.UUID
 		if err := fixture.base.Pool.QueryRow(t.Context(), `
-SELECT head_version_id FROM workspaces WHERE id = $1`, fixture.workspaceID).Scan(&versionID); err != nil {
+SELECT head_version_id FROM computers WHERE id = $1`, fixture.workspaceID).Scan(&versionID); err != nil {
 			t.Fatal(err)
 		}
 		dbtest.MustExec(t, t.Context(), fixture.base.Pool, `

@@ -51,7 +51,7 @@ const getInitialComputerWriteKey = `-- name: GetInitialComputerWriteKey :one
 
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available
   FROM runtime_instances r
-  JOIN workspaces c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
+  JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
   JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
     AND k.id=COALESCE(r.computer_write_key_id,c.write_key_id) AND k.available
  WHERE r.id=$1 AND r.environment_id=$2
@@ -83,7 +83,7 @@ func (q *Queries) GetInitialComputerWriteKey(ctx context.Context, arg GetInitial
 }
 
 const initializeComputerWriteKey = `-- name: InitializeComputerWriteKey :execrows
-UPDATE workspaces SET write_key_id=$1
+UPDATE computers SET write_key_id=$1
  WHERE environment_id=$2 AND id=$3 AND write_key_id IS NULL
 `
 

@@ -28,7 +28,7 @@ SELECT run_leases.terminal_request_fingerprint
 SELECT clock_timestamp()::timestamptz;
 
 -- name: PublishTaskWorkspaceVersion :one
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id,
     environment_id,
     workspace_id,
@@ -370,40 +370,40 @@ UPDATE run_waits
 RETURNING run_waits.*;
 
 -- name: ReleaseTaskWorkspaceOwner :one
-UPDATE workspaces
-   SET head_version_id = COALESCE(sqlc.narg(new_head_version_id), workspaces.head_version_id),
+UPDATE computers
+   SET head_version_id = COALESCE(sqlc.narg(new_head_version_id), computers.head_version_id),
        owner_run_id = NULL,
-       ownership_generation = workspaces.ownership_generation + 1,
-       revision = workspaces.revision + 1,
+       ownership_generation = computers.ownership_generation + 1,
+       revision = computers.revision + 1,
        last_activity_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
   FROM environments
- WHERE workspaces.id = sqlc.arg(id)
-   AND environments.id = workspaces.environment_id
+ WHERE computers.id = sqlc.arg(id)
+   AND environments.id = computers.environment_id
    AND environments.org_id = sqlc.arg(org_id)
    AND environments.project_id = sqlc.arg(project_id)
-   AND workspaces.environment_id = sqlc.arg(environment_id)
-   AND workspaces.owner_run_id = sqlc.arg(run_id)
-   AND workspaces.owner_session_id IS NULL
-   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
-   AND workspaces.writer_generation = sqlc.arg(writer_generation)
-   AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-   AND workspaces.dirty_state = 'clean'
+   AND computers.environment_id = sqlc.arg(environment_id)
+   AND computers.owner_run_id = sqlc.arg(run_id)
+   AND computers.owner_session_id IS NULL
+   AND computers.ownership_generation = sqlc.arg(ownership_generation)
+   AND computers.writer_generation = sqlc.arg(writer_generation)
+   AND computers.head_version_id = sqlc.arg(expected_head_version_id)
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+   AND computers.dirty_state = 'clean'
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    )
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_processes
-        WHERE workspace_processes.workspace_id = workspaces.id
+        WHERE workspace_processes.workspace_id = computers.id
           AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
    )
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: ReadyRunRetries :many
 WITH candidates AS (
@@ -461,7 +461,7 @@ SELECT readied.id,
   FROM readied;
 
 -- name: AdvanceTaskRetryWorkspaceHead :one
-UPDATE workspaces
+UPDATE computers
    SET head_version_id = sqlc.arg(result_workspace_version_id),
        revision = revision + 1,
        last_activity_at = sqlc.arg(completed_at),

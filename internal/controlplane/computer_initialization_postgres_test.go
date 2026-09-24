@@ -38,7 +38,7 @@ func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=$2::jsonb WHERE id=$1`, f.WorkspaceDefinitionID, fmt.Sprintf(`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`, dbtest.Digest("run-lease-image")))
 	diskBytes := int64(compute.WorkspaceGuestEphemeralDiskMiB) * 1048576
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET reserved_guest_ephemeral_disk_bytes=$2 WHERE id=$1`, runtime, diskBytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions SET status='initializing',artifact_id=NULL,content_digest=NULL,size_bytes=0,published_at=NULL WHERE workspace_id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET status='initializing',artifact_id=NULL,content_digest=NULL,size_bytes=0,published_at=NULL WHERE workspace_id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, runtime)
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestComputerInitialPublicationExpiryDuringCandidateLock(t *testing.T) {
 			var unpublished bool
 			if err := f.Pool.QueryRow(ctx, `SELECT v.status='initializing' AND c.status='registered' AND c.artifact_id IS NULL
 AND NOT EXISTS(SELECT 1 FROM artifacts WHERE digest=c.digest)
-FROM computer_initializations c JOIN workspace_versions v ON v.id=c.version_id WHERE c.runtime_instance_id=$1`, f.runtime).Scan(&unpublished); err != nil || !unpublished {
+FROM computer_initializations c JOIN computer_versions v ON v.id=c.version_id WHERE c.runtime_instance_id=$1`, f.runtime).Scan(&unpublished); err != nil || !unpublished {
 				t.Fatalf("deadline rejection left publication writes: %v %v", unpublished, err)
 			}
 		})
@@ -269,7 +269,7 @@ func TestComputerInitialPublicationForExplicitExec(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT workspace_id,reserved_workspace_version_id FROM runtime_instances WHERE id=$1`, f.runtime).Scan(&computerID, &root); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET owner_run_id=NULL WHERE id=$1`, computerID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET owner_run_id=NULL WHERE id=$1`, computerID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims (id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,expires_at)
 VALUES ($1,$2,'workspace.exec',decode(repeat('51',32),'hex'),decode(repeat('52',32),'hex'),now(),now()+interval '30 days')`, claim, f.EnvironmentID)
 	if _, err := db.New(f.Pool).CreateWorkspaceExec(t.Context(), db.CreateWorkspaceExecParams{

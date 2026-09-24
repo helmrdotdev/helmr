@@ -48,7 +48,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 		          'application/vnd.helmr.workspace.v0.tar', $6)
 	`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest, fixture.workerID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		INSERT INTO workspace_versions (
+		INSERT INTO computer_versions (
 			id, environment_id, workspace_id, parent_version_id,
 			artifact_id, content_digest,
 			size_bytes, entry_count, status, source_workspace_lease_id,
@@ -126,7 +126,7 @@ func TestChildWorkspacePairLocksConvergeForOppositeDirections(t *testing.T) {
 			},
 		})
 		if err == nil && len(rows) != 2 {
-			err = fmt.Errorf("locked %d workspaces, want 2", len(rows))
+			err = fmt.Errorf("locked %d computers, want 2", len(rows))
 		}
 		if err == nil {
 			err = tx.Commit(ctx)

@@ -280,7 +280,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO workspaces (
+		INSERT INTO computers (
 			id, environment_id, region_id,
 			sandbox_declared_id, deployment_definition_id, head_version_id
 		) VALUES ($1, $2, $3, 'authority-workspace', $4, $5)

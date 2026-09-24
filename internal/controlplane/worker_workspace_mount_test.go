@@ -188,7 +188,7 @@ UPDATE workspace_mounts
 	}
 	snapshotCapture := func() []byte {
 		var b []byte
-		if err := fixture.Pool.QueryRow(t.Context(), "SELECT jsonb_build_array(to_jsonb(m),to_jsonb(p),(SELECT jsonb_agg(to_jsonb(v) ORDER BY v.id) FROM workspace_versions v WHERE v.workspace_id=m.workspace_id)) FROM workspace_mounts m JOIN workspace_processes p ON p.workspace_mount_id=m.id WHERE m.id=$1", mountID).Scan(&b); err != nil {
+		if err := fixture.Pool.QueryRow(t.Context(), "SELECT jsonb_build_array(to_jsonb(m),to_jsonb(p),(SELECT jsonb_agg(to_jsonb(v) ORDER BY v.id) FROM computer_versions v WHERE v.workspace_id=m.workspace_id)) FROM workspace_mounts m JOIN workspace_processes p ON p.workspace_mount_id=m.id WHERE m.id=$1", mountID).Scan(&b); err != nil {
 			t.Fatal(err)
 		}
 		return b
@@ -229,11 +229,11 @@ UPDATE workspace_mounts
 	var versionSize, artifactSize int64
 	var versionEntries int32
 	if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT workspace_versions.parent_version_id, workspace_versions.content_digest, workspace_versions.size_bytes,
-       workspace_versions.entry_count, artifacts.digest, artifacts.size_bytes
-  FROM workspace_versions
-  JOIN artifacts ON artifacts.id = workspace_versions.artifact_id
- WHERE workspace_versions.id = $1`, versionID).Scan(
+SELECT computer_versions.parent_version_id, computer_versions.content_digest, computer_versions.size_bytes,
+       computer_versions.entry_count, artifacts.digest, artifacts.size_bytes
+  FROM computer_versions
+  JOIN artifacts ON artifacts.id = computer_versions.artifact_id
+ WHERE computer_versions.id = $1`, versionID).Scan(
 		&parentVersionID, &versionDigest, &versionSize, &versionEntries, &artifactDigest, &artifactSize,
 	); err != nil {
 		t.Fatal(err)

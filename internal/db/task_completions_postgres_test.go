@@ -82,12 +82,12 @@ func TestTaskCompletionQueriesCommitReplayAndRollback(t *testing.T) {
 	var eventCount int
 	if err := fixture.pool.QueryRow(ctx, `
 		SELECT runs.status, run_leases.status, run_attempts.terminal_outcome,
-		       workspaces.owner_run_id,
+		       computers.owner_run_id,
 		       (SELECT count(*) FROM telemetry_outbox WHERE run_id = runs.id AND kind = 'run.completed')
 		  FROM runs
 		  JOIN run_leases ON run_leases.id = $1
 		  JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
-		  JOIN workspaces ON workspaces.id = runs.workspace_id
+		  JOIN computers ON computers.id = runs.workspace_id
 		 WHERE runs.id = $2
 	`, work.leaseID, work.runID).Scan(
 		&runStatus, &leaseStatus, &attemptOutcome, &ownerRunID, &eventCount,
@@ -164,7 +164,7 @@ func testTaskFailureRetainsPhysicalFrontier(t *testing.T, retry bool) {
 		) VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, 'application/octet-stream', $6)
 	`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest, fixture.workerID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		INSERT INTO workspace_versions (
+		INSERT INTO computer_versions (
 			id, environment_id, workspace_id,
 			parent_version_id, artifact_id, content_digest,
 			size_bytes, entry_count, status, source_workspace_lease_id,
@@ -250,9 +250,9 @@ func testTaskFailureRetainsPhysicalFrontier(t *testing.T, retry bool) {
 	var mountedVersionID, headVersionID uuid.UUID
 	var ownerRunID pgtype.UUID
 	if err := fixture.pool.QueryRow(ctx, `
-		SELECT workspace_mounts.materialized_version_id, workspaces.head_version_id, workspaces.owner_run_id
+		SELECT workspace_mounts.materialized_version_id, computers.head_version_id, computers.owner_run_id
 		  FROM workspace_mounts
-		  JOIN workspaces ON workspaces.id = workspace_mounts.workspace_id
+		  JOIN computers ON computers.id = workspace_mounts.workspace_id
 		 WHERE workspace_mounts.id = $1
 	`, authority.mountID).Scan(&mountedVersionID, &headVersionID, &ownerRunID); err != nil {
 		t.Fatal(err)

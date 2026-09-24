@@ -90,7 +90,7 @@ func TestInitialComputerKeyRetryAndDurablePin(t *testing.T) {
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
 	// Removing the current pointer cannot release an unreclaimed runtime's key.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET write_key_id=NULL WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=NULL WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime)
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, first.ID)
 	requireKeyFK(t, err)
 }
@@ -107,7 +107,7 @@ func TestInitialComputerKeyProviderRunsOutsideLocks(t *testing.T) {
 		if _, err = tx.Exec(ctx, `SELECT id FROM runtime_instances WHERE id=$1 FOR UPDATE`, f.runtime); err != nil {
 			t.Fatal("provider called under runtime lock", err)
 		}
-		if _, err = tx.Exec(ctx, `SELECT id FROM workspaces WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1) FOR UPDATE`, f.runtime); err != nil {
+		if _, err = tx.Exec(ctx, `SELECT id FROM computers WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1) FOR UPDATE`, f.runtime); err != nil {
 			t.Fatal("provider called under Computer lock", err)
 		}
 	}
@@ -232,7 +232,7 @@ func TestInitialComputerKeyRotationKeepsAdmittedRuntime(t *testing.T) {
 	defer clear(first.Key)
 	next := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,wrapping_key_id,wrapped_key FROM computer_data_keys WHERE id=$1`, first.ID, next)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET write_key_id=$2 WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime, next)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime, next)
 	// The new current key is deliberately not decryptable under its new ID. A
 	// re-fetch must use the runtime's original pin, not mutable current state.
 	again, err := b.initial(t.Context(), fence)
@@ -284,12 +284,12 @@ func TestInitialComputerKeyForeignComputerPointersRejected(t *testing.T) {
 	other := uuid.NewV7()
 	// A deleted sibling is sufficient to exercise scope FKs without inventing
 	// another active runtime/reservation or changing the fixture's head authority.
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO workspaces(id,environment_id,region_id,deployment_definition_id,status,desired_state,deleted_at) SELECT $2,environment_id,region_id,deployment_definition_id,'deleted','deleted',clock_timestamp() FROM workspaces WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime, other)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computers(id,environment_id,region_id,deployment_definition_id,status,desired_state,deleted_at) SELECT $2,environment_id,region_id,deployment_definition_id,'deleted','deleted',clock_timestamp() FROM computers WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime, other)
 	foreign := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('00','hex'))`, foreign, pgvalue.UUID(f.EnvironmentID), other)
 	_, err = f.Pool.Exec(t.Context(), `UPDATE runtime_instances SET computer_write_key_id=$2 WHERE id=$1`, f.runtime, foreign)
 	requireKeyFK(t, err)
-	_, err = f.Pool.Exec(t.Context(), `UPDATE workspaces SET write_key_id=$2 WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime, foreign)
+	_, err = f.Pool.Exec(t.Context(), `UPDATE computers SET write_key_id=$2 WHERE id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, f.runtime, foreign)
 	requireKeyFK(t, err)
 }
 

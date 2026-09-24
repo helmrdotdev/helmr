@@ -78,7 +78,7 @@ func TestRunGrantRejectsDeadlineAfterMountLockWait(t *testing.T) {
 			}
 			markRunPlacementMountReady(t, f, mount.id)
 			var beforeLeases, beforeWriter int64
-			if err := f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=r.id),w.writer_generation FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&beforeLeases, &beforeWriter); err != nil {
+			if err := f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=r.id),w.writer_generation FROM runs r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&beforeLeases, &beforeWriter); err != nil {
 				t.Fatal(err)
 			}
 			deadline := armRunDeadline(t, f, checkpoint)
@@ -108,7 +108,7 @@ func TestRunGrantRejectsDeadlineAfterMountLockWait(t *testing.T) {
 			}
 			var afterLeases, afterWriter int64
 			var lease pgtype.UUID
-			if err := f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=r.id),w.writer_generation,r.current_run_lease_id FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&afterLeases, &afterWriter, &lease); err != nil {
+			if err := f.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM run_leases WHERE run_id=r.id),w.writer_generation,r.current_run_lease_id FROM runs r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&afterLeases, &afterWriter, &lease); err != nil {
 				t.Fatal(err)
 			}
 			if afterLeases != beforeLeases || afterWriter != beforeWriter || lease.Valid {

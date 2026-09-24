@@ -66,7 +66,7 @@ func TestSessionComputerRecoveryAtomicReplayPostgres(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,w.head_version_id,s.dispatch_hold_reason,s.current_run_id,s.committed_input_sequence,
  (SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.recovered'),
  (SELECT count(*) FROM session_turns WHERE session_id=s.id AND status='completed')
- FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &head, &reason, &current, &cursor, &events, &completed); err != nil {
+ FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&computer, &dirty, &head, &reason, &current, &cursor, &events, &completed); err != nil {
 		t.Fatal(err)
 	}
 	if computer != "active" || dirty != "clean" || head != f.rootID || reason != "recovered" || current != nil || cursor != 1 || events != 1 || completed != 1 {
@@ -87,7 +87,7 @@ func assertUnrecoveredSessionComputer(t *testing.T, f *actorCheckpointFixture, h
 	t.Helper()
 	var status, dirty string
 	var actual uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,s.dispatch_hold_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &dirty, &actual); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,w.dirty_state,s.dispatch_hold_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &dirty, &actual); err != nil {
 		t.Fatal(err)
 	}
 	if status != "recovery_required" || dirty != "dirty_state_lost" || actual != hold {

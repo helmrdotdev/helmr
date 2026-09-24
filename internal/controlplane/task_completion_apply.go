@@ -457,7 +457,7 @@ func recordTaskWorkspaceVersion(
 type taskWorkspaceVersionStore interface {
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
-	PublishTaskWorkspaceVersion(context.Context, db.PublishTaskWorkspaceVersionParams) (db.WorkspaceVersion, error)
+	PublishTaskWorkspaceVersion(context.Context, db.PublishTaskWorkspaceVersionParams) (db.ComputerVersion, error)
 	UpdateTaskWorkspaceMountFrontier(context.Context, db.UpdateTaskWorkspaceMountFrontierParams) (db.WorkspaceMount, error)
 }
 

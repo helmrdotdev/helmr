@@ -136,7 +136,7 @@ INSERT INTO schedules (
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id, sandbox_declared_id, deployment_definition_id,
     head_version_id, key, owner_session_id
 ) VALUES
@@ -148,7 +148,7 @@ INSERT INTO workspaces (
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, content_digest, status,
     ownership_generation, writer_generation, published_at, size_bytes, entry_count
 ) VALUES

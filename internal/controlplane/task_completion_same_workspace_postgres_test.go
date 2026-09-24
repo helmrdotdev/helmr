@@ -299,7 +299,7 @@ UPDATE run_waits
  WHERE id = $1`, waitID, checkpointID, baseWorkspaceVersionID,
 		workspace.CanonicalEmptyTreeDigest)
 	dbtest.MustExec(t, ctx, tx, `
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = $2, owner_session_id = NULL,
        ownership_generation = 1, writer_generation = 2
  WHERE id = $1`, workspaceID, parentRunID)

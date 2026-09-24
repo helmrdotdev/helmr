@@ -64,7 +64,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspaces (
+		INSERT INTO computers (
 			id, environment_id, region_id, sandbox_declared_id,
 			deployment_definition_id, head_version_id
 		) VALUES ($1, $2, $3, 'capacity-workspace', $4, $5)
@@ -152,20 +152,20 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		 WHERE id = $1
 	`, processID)
 
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET desired_state = 'stopped' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET desired_state = 'stopped' WHERE id = $1`, workspaceID)
 	requireVisible(queries, true, "stopped Workspace")
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET desired_state = 'deleted' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET desired_state = 'deleted' WHERE id = $1`, workspaceID)
 	requireVisible(queries, false, "deleted desired state")
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET desired_state = 'active' WHERE id = $1`, workspaceID)
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET desired_state = 'active' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET dirty_state = 'dirty' WHERE id = $1`, workspaceID)
 	requireVisible(queries, false, "dirty Workspace")
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET dirty_state = 'clean' WHERE id = $1`, workspaceID)
 	dbtest.MustExec(t, ctx, pool, `
-		UPDATE workspaces SET status = 'deleting', desired_state = 'deleted' WHERE id = $1
+		UPDATE computers SET status = 'deleting', desired_state = 'deleted' WHERE id = $1
 	`, workspaceID)
 	requireVisible(queries, false, "non-active Workspace")
 	dbtest.MustExec(t, ctx, pool, `
-		UPDATE workspaces SET status = 'active', desired_state = 'active' WHERE id = $1
+		UPDATE computers SET status = 'active', desired_state = 'active' WHERE id = $1
 	`, workspaceID)
 
 	for _, authority := range []struct {
@@ -182,7 +182,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			}
 			defer func() { _ = tx.Rollback(context.Background()) }()
 			dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-			dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET `+authority.column+` = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
+			dbtest.MustExec(t, ctx, tx, `UPDATE computers SET `+authority.column+` = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
 			requireVisible(db.New(tx), false, authority.name)
 		})
 	}
@@ -194,7 +194,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-		dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET head_version_id = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
+		dbtest.MustExec(t, ctx, tx, `UPDATE computers SET head_version_id = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
 		requireVisible(db.New(tx), false, "mismatched head")
 	})
 

@@ -105,7 +105,7 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	dbtest.MustExec(t, ctx, tx, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')`, fixture.orgID, digest)
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest)
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_versions (id,environment_id,workspace_id,parent_version_id,
+		INSERT INTO computer_versions (id,environment_id,workspace_id,parent_version_id,
 		 artifact_id,content_digest,source_workspace_lease_id,ownership_generation,writer_generation)
 		SELECT $1,environment_id,workspace_id,base_workspace_version_id,$2,$3,id,ownership_generation,writer_generation
 		FROM workspace_leases WHERE owner_run_lease_id=$4
@@ -115,17 +115,17 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 		"source_workspace_lease_id=NULL",
 	} {
 		t.Run(set, func(t *testing.T) {
-			rejectSchemaRow(t, tx, "23514", "UPDATE workspace_versions SET "+set+" WHERE id=$1", versionID)
+			rejectSchemaRow(t, tx, "23514", "UPDATE computer_versions SET "+set+" WHERE id=$1", versionID)
 		})
 	}
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET artifact_id=$2 WHERE id=$1`, versionID, uuid.NewV7())
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET writer_generation=writer_generation+1 WHERE id=$1`, versionID)
+	rejectSchemaRow(t, tx, "23503", `UPDATE computer_versions SET artifact_id=$2 WHERE id=$1`, versionID, uuid.NewV7())
+	rejectSchemaRow(t, tx, "23503", `UPDATE computer_versions SET writer_generation=writer_generation+1 WHERE id=$1`, versionID)
 
 	// A same-kind artifact in another environment must not cross the composite FK.
 	otherEnvironment, crossScopeArtifact := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO environments (id,org_id,project_id,slug,name,color_hex) VALUES ($1,$2,$3,'other','Other','#123456')`, otherEnvironment, fixture.orgID, fixture.projectID)
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')`, crossScopeArtifact, fixture.orgID, fixture.projectID, otherEnvironment, digest)
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET artifact_id=$2 WHERE id=$1`, versionID, crossScopeArtifact)
+	rejectSchemaRow(t, tx, "23503", `UPDATE computer_versions SET artifact_id=$2 WHERE id=$1`, versionID, crossScopeArtifact)
 	dbtest.MustExec(t, ctx, tx, "SAVEPOINT checkpoint_boundaries")
 	assertCheckpointArtifactBoundaries(t, tx, fixture, work, versionID, otherEnvironment)
 	dbtest.MustExec(t, ctx, tx, "ROLLBACK TO SAVEPOINT checkpoint_boundaries")
@@ -142,10 +142,10 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL, finalization_error='{}' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounted', unmounted_at=now(), terminal_at=now(), terminal_reason_code='exec_failed' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `SAVEPOINT private_version`)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET status='discarded', discarded_at=now() WHERE id=$1`, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE computer_versions SET status='discarded', discarded_at=now() WHERE id=$1`, versionID)
 	// Restore the private row before checking its alternate publication path.
 	dbtest.MustExec(t, ctx, tx, `ROLLBACK TO SAVEPOINT private_version`)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET status='committed', discarded_at=NULL, published_at=now() WHERE id=$1`, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE computer_versions SET status='committed', discarded_at=NULL, published_at=now() WHERE id=$1`, versionID)
 }
 
 func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {

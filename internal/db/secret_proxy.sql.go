@@ -54,7 +54,7 @@ WITH authority AS (
    )
  ) AS live
  FROM runtime_instances r
- JOIN workspaces w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
+ JOIN computers w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
  JOIN worker_instances worker ON worker.id = r.worker_instance_id AND worker.worker_group_id = r.worker_group_id
  JOIN worker_groups worker_group ON worker_group.id = worker.worker_group_id
  WHERE r.id = $3
@@ -191,7 +191,7 @@ WITH authority AS (
    )
  ) AS live
  FROM runtime_instances r
- JOIN workspaces w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
+ JOIN computers w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
  JOIN worker_instances worker ON worker.id = r.worker_instance_id AND worker.worker_group_id = r.worker_group_id
  JOIN worker_groups worker_group ON worker_group.id = worker.worker_group_id
  WHERE r.id = $1
@@ -260,7 +260,7 @@ func (q *Queries) CaptureSecretProxyPreparation(ctx context.Context, arg Capture
 
 const getWorkspaceSecretCAPublic = `-- name: GetWorkspaceSecretCAPublic :one
 SELECT secret_ca_certificate AS certificate, secret_ca_not_after AS not_after
-FROM workspaces WHERE environment_id = $1 AND id = $2
+FROM computers WHERE environment_id = $1 AND id = $2
 `
 
 type GetWorkspaceSecretCAPublicParams struct {
@@ -281,7 +281,7 @@ func (q *Queries) GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspa
 }
 
 const initializeWorkspaceSecretCA = `-- name: InitializeWorkspaceSecretCA :execrows
-UPDATE workspaces SET secret_ca_certificate = $1,
+UPDATE computers SET secret_ca_certificate = $1,
  secret_ca_private_key_nonce = $2,
  secret_ca_private_key_ciphertext = $3,
  secret_ca_not_after = $4

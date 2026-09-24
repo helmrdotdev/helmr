@@ -29,13 +29,13 @@ func initializationParams(t *testing.T, f runtest.Fixture) db.RegisterComputerIn
 	}
 	if err := f.Pool.QueryRow(t.Context(), `
 SELECT r.id, r.desired_version, w.id, w.head_version_id, w.ownership_generation, w.writer_generation
-  FROM runtime_instances r JOIN workspaces w ON w.id = r.workspace_id
+  FROM runtime_instances r JOIN computers w ON w.id = r.workspace_id
   JOIN run_leases l ON l.runtime_instance_id = r.id WHERE l.id = $1`, work.LeaseID).Scan(
 		&p.RuntimeInstanceID, &p.RuntimeDesiredVersion, &p.ComputerID, &p.VersionID, &p.OwnershipGeneration, &p.WriterGeneration,
 	); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions
     SET status='initializing', artifact_id=NULL, content_digest=NULL, size_bytes=0, published_at=NULL
     WHERE id=$1`, p.VersionID)
 	return p
@@ -134,7 +134,7 @@ func TestComputerInitializationConsumptionIsTransactional(t *testing.T) {
 	assertConfig := func(query db.DBTX, published bool) {
 		t.Helper()
 		var matches bool
-		if err := query.QueryRow(t.Context(), `SELECT CASE WHEN $2 THEN initial_config=$3::jsonb ELSE initial_config IS NULL END FROM workspaces WHERE id=$1`, p.ComputerID, published, p.InitialConfig).Scan(&matches); err != nil || !matches {
+		if err := query.QueryRow(t.Context(), `SELECT CASE WHEN $2 THEN initial_config=$3::jsonb ELSE initial_config IS NULL END FROM computers WHERE id=$1`, p.ComputerID, published, p.InitialConfig).Scan(&matches); err != nil || !matches {
 			t.Fatalf("Computer config publication=%v: matches=%v err=%v", published, matches, err)
 		}
 	}
@@ -408,7 +408,7 @@ func assertInitializationRoot(t *testing.T, f runtest.Fixture, p db.RegisterComp
 	var head, base pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `
 SELECT v.status,v.artifact_id,v.content_digest,v.size_bytes,v.published_at,w.head_version_id,a.base_workspace_version_id
-FROM workspace_versions v JOIN workspaces w ON w.id=v.workspace_id
+FROM computer_versions v JOIN computers w ON w.id=v.workspace_id
 JOIN run_attempts a ON a.workspace_id=w.id
 WHERE v.id=$1`, p.VersionID).Scan(&gotStatus, &gotArtifact, &digest, &size, &published, &head, &base); err != nil {
 		t.Fatal(err)
@@ -458,10 +458,10 @@ VALUES ($1,$2,'test-task',$3,$4,'* * * * *','UTC','active',now(),now()+interval 
 			var valid bool
 			if err := f.Pool.QueryRow(t.Context(), `SELECT v.id=$2 AND v.status='initializing' AND v.parent_version_id IS NULL
 AND v.artifact_id IS NULL AND v.content_digest IS NULL AND v.size_bytes=0 AND v.published_at IS NULL
-FROM workspaces w JOIN workspace_versions v ON v.id=w.head_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
+FROM computers w JOIN computer_versions v ON v.id=w.head_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
 				t.Fatalf("new root fabricated persistence: %v %v", valid, err)
 			}
-			_, err = f.Pool.Exec(t.Context(), `UPDATE workspace_versions SET status='committed',published_at=now() WHERE id=$1`, rootID)
+			_, err = f.Pool.Exec(t.Context(), `UPDATE computer_versions SET status='committed',published_at=now() WHERE id=$1`, rootID)
 			var check *pgconn.PgError
 			if !errors.As(err, &check) || check.Code != "23514" {
 				t.Fatalf("root without disk committed: %v", err)
@@ -485,11 +485,11 @@ func TestComputerInitializationWorkerReceiptSurvivesHeadAdvance(t *testing.T) {
 	// This fixture owns an existing lease. Advance a child version under that
 	// recorded provenance; do not rewrite or remove the original root receipt.
 	next := pgvalue.UUID(uuid.NewV7())
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO workspace_versions
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions
 (id,environment_id,workspace_id,parent_version_id,artifact_id,content_digest,size_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
 SELECT $1,v.environment_id,v.workspace_id,v.id,v.artifact_id,v.content_digest,v.size_bytes,'committed',l.id,l.ownership_generation,l.writer_generation,now()
-FROM workspace_versions v JOIN workspace_leases l ON l.workspace_id=v.workspace_id WHERE v.id=$2`, next, p.VersionID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET head_version_id=$2 WHERE id=$1`, p.ComputerID, next)
+FROM computer_versions v JOIN workspace_leases l ON l.workspace_id=v.workspace_id WHERE v.id=$2`, next, p.VersionID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET head_version_id=$2 WHERE id=$1`, p.ComputerID, next)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, p.RuntimeInstanceID)
 	args := db.GetWorkerComputerInitializationParams{RuntimeInstanceID: p.RuntimeInstanceID, RuntimeDesiredVersion: p.RuntimeDesiredVersion, WorkerInstanceID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: 1}
 	receipt, err := q.GetWorkerComputerInitialization(t.Context(), args)
@@ -510,7 +510,7 @@ func TestComputerInitializationDoesNotReplaceComputerConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := initializationArtifact(t, f, f.Pool, p)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET initial_config='{"User":"existing"}' WHERE id=$1`, p.ComputerID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config='{"User":"existing"}' WHERE id=$1`, p.ComputerID)
 	if _, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("publication over existing Computer config: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestComputerInitializationDoesNotReplaceComputerConfig(t *testing.T) {
 		t.Fatalf("failed publication consumed receipt: %v", err)
 	}
 	var user string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config->>'User' FROM workspaces WHERE id=$1`, p.ComputerID).Scan(&user); err != nil || user != "existing" {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config->>'User' FROM computers WHERE id=$1`, p.ComputerID).Scan(&user); err != nil || user != "existing" {
 		t.Fatalf("existing config changed: %q %v", user, err)
 	}
 }

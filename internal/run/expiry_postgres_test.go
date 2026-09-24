@@ -141,9 +141,9 @@ UPDATE run_waits
 			var failureCode string
 			var ownerRunID *uuid.UUID
 			if err := fixture.pool.QueryRow(ctx, `
-SELECT runs.status, runs.failure->>'code', workspaces.owner_run_id
+SELECT runs.status, runs.failure->>'code', computers.owner_run_id
   FROM runs
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
  WHERE runs.id = $1`,
 				child.runID,
 			).Scan(&childStatus, &failureCode, &ownerRunID); err != nil {

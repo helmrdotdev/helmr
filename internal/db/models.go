@@ -305,6 +305,35 @@ type CasRetiredUpload struct {
 	NextReclaimAt pgtype.Timestamptz `json:"next_reclaim_at"`
 }
 
+type Computer struct {
+	ID                           pgtype.UUID        `json:"id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	RegionID                     string             `json:"region_id"`
+	SandboxDeclaredID            pgtype.Text        `json:"sandbox_declared_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	Key                          pgtype.Text        `json:"key"`
+	Revision                     int64              `json:"revision"`
+	OwnerSessionID               pgtype.UUID        `json:"owner_session_id"`
+	OwnerRunID                   pgtype.UUID        `json:"owner_run_id"`
+	OwnershipGeneration          int64              `json:"ownership_generation"`
+	WriterGeneration             int64              `json:"writer_generation"`
+	HeadVersionID                pgtype.UUID        `json:"head_version_id"`
+	InitialConfig                []byte             `json:"initial_config"`
+	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
+	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
+	Status                       string             `json:"status"`
+	DesiredState                 string             `json:"desired_state"`
+	DirtyState                   string             `json:"dirty_state"`
+	LastActivityAt               pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt                    pgtype.Timestamptz `json:"deleted_at"`
+	SecretCaCertificate          []byte             `json:"secret_ca_certificate"`
+	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
+	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
+	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
+}
+
 type ComputerDataKey struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
@@ -374,11 +403,31 @@ type ComputerObjectKey struct {
 	AvailabilityRequired pgtype.Bool `json:"availability_required"`
 }
 
+type ComputerVersion struct {
+	ID                     pgtype.UUID        `json:"id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID        `json:"artifact_id"`
+	ContentDigest          pgtype.Text        `json:"content_digest"`
+	SizeBytes              int64              `json:"size_bytes"`
+	EntryCount             int32              `json:"entry_count"`
+	Status                 string             `json:"status"`
+	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64              `json:"ownership_generation"`
+	WriterGeneration       int64              `json:"writer_generation"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz `json:"discarded_at"`
+}
+
 type ComputerVersionRoot struct {
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
 	ComputerID            pgtype.UUID `json:"computer_id"`
 	VersionID             pgtype.UUID `json:"version_id"`
 	Locator               []byte      `json:"locator"`
+	LogicalBytes          int64       `json:"logical_bytes"`
+	RootKind              pgtype.Text `json:"root_kind"`
 	RootDigest            string      `json:"root_digest"`
 	RootSizeBytes         int64       `json:"root_size_bytes"`
 	RootRank              int32       `json:"root_rank"`
@@ -1197,35 +1246,6 @@ type WorkerPoolCpuShape struct {
 	CPUConfigDigest string      `json:"cpu_config_digest"`
 }
 
-type Workspace struct {
-	ID                           pgtype.UUID        `json:"id"`
-	EnvironmentID                pgtype.UUID        `json:"environment_id"`
-	RegionID                     string             `json:"region_id"`
-	SandboxDeclaredID            pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
-	Key                          pgtype.Text        `json:"key"`
-	Revision                     int64              `json:"revision"`
-	OwnerSessionID               pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID                   pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration          int64              `json:"ownership_generation"`
-	WriterGeneration             int64              `json:"writer_generation"`
-	HeadVersionID                pgtype.UUID        `json:"head_version_id"`
-	InitialConfig                []byte             `json:"initial_config"`
-	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
-	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
-	Status                       string             `json:"status"`
-	DesiredState                 string             `json:"desired_state"`
-	DirtyState                   string             `json:"dirty_state"`
-	LastActivityAt               pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt                    pgtype.Timestamptz `json:"deleted_at"`
-	SecretCaCertificate          []byte             `json:"secret_ca_certificate"`
-	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
-	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
-	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
-}
-
 type WorkspaceLease struct {
 	ID                     pgtype.UUID        `json:"id"`
 	OrgID                  pgtype.UUID        `json:"org_id"`
@@ -1333,22 +1353,4 @@ type WorkspaceSecret struct {
 	AllowedOrigins  []string           `json:"allowed_origins"`
 	Placeholder     string             `json:"placeholder"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-}
-
-type WorkspaceVersion struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID        `json:"artifact_id"`
-	ContentDigest          pgtype.Text        `json:"content_digest"`
-	SizeBytes              int64              `json:"size_bytes"`
-	EntryCount             int32              `json:"entry_count"`
-	Status                 string             `json:"status"`
-	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	PublishedAt            pgtype.Timestamptz `json:"published_at"`
-	DiscardedAt            pgtype.Timestamptz `json:"discarded_at"`
 }

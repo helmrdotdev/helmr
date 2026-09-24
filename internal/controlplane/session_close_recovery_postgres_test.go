@@ -100,7 +100,7 @@ func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
 			var hold, current, owner *uuid.UUID
 			read := func() {
 				t.Helper()
-				if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_id,s.current_run_id,w.owner_session_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &hold, &current, &owner); err != nil {
+				if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_id,s.current_run_id,w.owner_session_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &hold, &current, &owner); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -109,7 +109,7 @@ func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
 				t.Fatalf("close discarded unresolved execution: %s hold=%v run=%v owner=%v", status, hold, current, owner)
 			}
 			var head uuid.UUID
-			if err := f.pool.QueryRow(ctx, `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceIDs[0]).Scan(&head); err != nil {
+			if err := f.pool.QueryRow(ctx, `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceIDs[0]).Scan(&head); err != nil {
 				t.Fatal(err)
 			}
 			var recovered api.SessionRecoveryReceipt

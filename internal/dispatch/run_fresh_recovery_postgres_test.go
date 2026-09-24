@@ -687,7 +687,7 @@ UPDATE run_attempts
    SET entrypoint_kind = 'actor', session_input_start_sequence = 1
  WHERE run_id = $1 AND number = 1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-UPDATE workspaces SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`,
+UPDATE computers SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`,
 		fixture.workspaceID, actorID)
 	if err := tx.Commit(fixture.ctx); err != nil {
 		t.Fatal(err)
@@ -726,7 +726,7 @@ func assertLostComputerRequiresRecovery(t *testing.T, fixture runPlacementFixtur
 	t.Helper()
 	var status, desired, dirty string
 	var head, base pgtype.UUID
-	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT w.status, w.desired_state, w.dirty_state, w.head_version_id, r.base_workspace_version_id FROM workspaces w JOIN runs r ON r.workspace_id=w.id WHERE r.id=$1`, fixture.runID).Scan(&status, &desired, &dirty, &head, &base); err != nil {
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT w.status, w.desired_state, w.dirty_state, w.head_version_id, r.base_workspace_version_id FROM computers w JOIN runs r ON r.workspace_id=w.id WHERE r.id=$1`, fixture.runID).Scan(&status, &desired, &dirty, &head, &base); err != nil {
 		t.Fatal(err)
 	}
 	if status != "recovery_required" || desired != "stopped" || dirty != "dirty_state_lost" || !head.Valid || head != base {
@@ -745,7 +745,7 @@ func TestLostComputerRecoveryRollsBackWithRunFailure(t *testing.T) {
 		t.Fatal("terminal failure was ignored")
 	}
 	var state string
-	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT status FROM workspaces WHERE id=$1`, fixture.workspaceID).Scan(&state); err != nil {
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT status FROM computers WHERE id=$1`, fixture.workspaceID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
 	if state != "active" {

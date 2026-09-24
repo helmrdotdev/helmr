@@ -70,7 +70,7 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	}{
 		{"broken restore pointer", `UPDATE runtime_instances SET restore_checkpoint_id=NULL WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, uuid.MustParse(c2.CheckpointID)},
 		{"unacknowledged prior restore", `UPDATE run_waits SET resume_ack_version=0 WHERE id=(SELECT run_wait_id FROM run_checkpoints WHERE id=$1)`, uuid.MustParse(c1.CheckpointID)},
-		{"wrong private parent", `UPDATE workspace_versions SET parent_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_versions.workspace_id) WHERE id=$1`, uuid.MustParse(c2.WorkspaceVersionID)},
+		{"wrong private parent", `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.workspace_id) WHERE id=$1`, uuid.MustParse(c2.WorkspaceVersionID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tx, err := f.Pool.Begin(t.Context())
@@ -280,15 +280,15 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 	if outcome == "success" && scope.TurnID != uuid.Nil() {
 		var childVersion, parentVersion pgtype.UUID
 		var revision int64
-		if err := f.Pool.QueryRow(t.Context(), `SELECT w.resume_workspace_version_id,v.parent_version_id,r.revision FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN workspace_versions v ON v.id=w.resume_workspace_version_id WHERE w.id=$1`, uuid.MustParse(req.RunWaitID)).Scan(&childVersion, &parentVersion, &revision); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT w.resume_workspace_version_id,v.parent_version_id,r.revision FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN computer_versions v ON v.id=w.resume_workspace_version_id WHERE w.id=$1`, uuid.MustParse(req.RunWaitID)).Scan(&childVersion, &parentVersion, &revision); err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions SET parent_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_versions.workspace_id) WHERE id=$1`, childVersion)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.workspace_id) WHERE id=$1`, childVersion)
 		_, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(parentID), ExpectedRunRevision: revision})
 		if !errors.Is(err, dispatch.ErrCandidateChanged) {
 			t.Fatalf("wrong latest child output parent placement: %v", err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, childVersion, parentVersion)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET parent_version_id=$2 WHERE id=$1`, childVersion, parentVersion)
 	}
 	f.placeAndClaim(t)
 	if outcome == "descendant cancellation" {
@@ -333,7 +333,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 				checkpoint := checkpointTokenAndResume(t, f, scope, 2, child)
 
 				var head pgtype.UUID
-				if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
 					t.Fatal(err)
 				}
 				tx, err := f.Pool.Begin(t.Context())
@@ -346,7 +346,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 					corrupt = `UPDATE run_waits SET condition_status=CASE WHEN condition_status='failed' THEN 'cancelled' ELSE 'failed' END WHERE id=(SELECT prior.run_wait_id FROM run_checkpoints current JOIN run_leases source ON source.id=current.source_run_lease_id JOIN runtime_instances runtime ON runtime.id=source.runtime_instance_id JOIN run_checkpoints prior ON prior.id=runtime.restore_checkpoint_id WHERE current.id=$1)`
 				}
 				if strings.HasPrefix(test.outcome, "nested ") {
-					corrupt = `UPDATE runs SET base_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=runs.workspace_id) WHERE id=(SELECT w.child_run_id FROM run_checkpoints current JOIN run_leases source ON source.id=current.source_run_lease_id JOIN runtime_instances runtime ON runtime.id=source.runtime_instance_id JOIN run_checkpoints prior ON prior.id=runtime.restore_checkpoint_id JOIN run_waits w ON w.id=prior.run_wait_id WHERE current.id=$1)`
+					corrupt = `UPDATE runs SET base_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=runs.workspace_id) WHERE id=(SELECT w.child_run_id FROM run_checkpoints current JOIN run_leases source ON source.id=current.source_run_lease_id JOIN runtime_instances runtime ON runtime.id=source.runtime_instance_id JOIN run_checkpoints prior ON prior.id=runtime.restore_checkpoint_id JOIN run_waits w ON w.id=prior.run_wait_id WHERE current.id=$1)`
 				}
 
 				if strings.HasPrefix(test.outcome, "parked ") {

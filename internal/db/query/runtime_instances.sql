@@ -16,16 +16,16 @@ WITH worker AS (
 SELECT runtime_instances.*,
        deployment_definitions.manifest_version AS sandbox_manifest_version,
        deployment_definitions.manifest AS sandbox_manifest,
-       reserved_workspace_versions.status AS computer_version_status,
+       reserved_computer_versions.status AS computer_version_status,
        computer.initial_config AS computer_initial_config,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
        '/workspace'::text AS workspace_mount_path,
-       reserved_workspace_versions.id AS base_workspace_version_id,
-	   reserved_workspace_versions.content_digest AS workspace_content_digest,
-	   reserved_workspace_versions.size_bytes AS workspace_logical_size_bytes,
-       reserved_workspace_versions.entry_count AS workspace_entry_count,
+       reserved_computer_versions.id AS base_workspace_version_id,
+	   reserved_computer_versions.content_digest AS workspace_content_digest,
+	   reserved_computer_versions.size_bytes AS workspace_logical_size_bytes,
+       reserved_computer_versions.entry_count AS workspace_entry_count,
        COALESCE(reserved_workspace_artifacts.digest, '') AS workspace_artifact_digest,
        COALESCE(reserved_workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
        COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
@@ -51,17 +51,17 @@ SELECT runtime_instances.*,
    AND deployment_definitions.kind = 'sandbox'
   JOIN artifacts ON artifacts.environment_id = deployment_definitions.environment_id
                 AND artifacts.id = deployment_definitions.artifact_id
-  LEFT JOIN workspace_versions AS reserved_workspace_versions
-    ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
-   AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
-   AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.status IN ('initializing', 'committed', 'private')
-  JOIN workspaces AS computer
+  LEFT JOIN computer_versions AS reserved_computer_versions
+    ON reserved_computer_versions.environment_id = runtime_instances.environment_id
+   AND reserved_computer_versions.workspace_id = runtime_instances.workspace_id
+   AND reserved_computer_versions.id = runtime_instances.reserved_workspace_version_id
+   AND reserved_computer_versions.status IN ('initializing', 'committed', 'private')
+  JOIN computers AS computer
     ON computer.environment_id = runtime_instances.environment_id
    AND computer.id = runtime_instances.workspace_id
   LEFT JOIN artifacts AS reserved_workspace_artifacts
-    ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
-   AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
+    ON reserved_workspace_artifacts.environment_id = reserved_computer_versions.environment_id
+   AND reserved_workspace_artifacts.id = reserved_computer_versions.artifact_id
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
@@ -260,33 +260,33 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
       FROM restore_run_authority
       JOIN runtime_instances
         ON runtime_instances.id = restore_run_authority.runtime_instance_id
-      JOIN workspaces
-        ON workspaces.id = runtime_instances.workspace_id
-       AND workspaces.environment_id = runtime_instances.environment_id
+      JOIN computers
+        ON computers.id = runtime_instances.workspace_id
+       AND computers.environment_id = runtime_instances.environment_id
        AND ((restore_run_authority.entrypoint_kind = 'task'
              AND (
-                 (workspaces.owner_run_id = runtime_instances.reserved_run_id
-                  AND workspaces.owner_session_id IS NULL)
+                 (computers.owner_run_id = runtime_instances.reserved_run_id
+                  AND computers.owner_session_id IS NULL)
                  OR EXISTS (
                      SELECT 1
                        FROM restore_same_workspace_root_authority AS root
                       WHERE root.runtime_instance_id = runtime_instances.id
-                        AND root.ownership_generation = workspaces.ownership_generation
+                        AND root.ownership_generation = computers.ownership_generation
                         AND ((root.parent_session_id IS NULL
-                              AND workspaces.owner_run_id = root.parent_run_id
-                              AND workspaces.owner_session_id IS NULL)
+                              AND computers.owner_run_id = root.parent_run_id
+                              AND computers.owner_session_id IS NULL)
                              OR (root.parent_session_id IS NOT NULL
-                                 AND workspaces.owner_session_id = root.parent_session_id
-                                 AND workspaces.owner_run_id IS NULL))
+                                 AND computers.owner_session_id = root.parent_session_id
+                                 AND computers.owner_run_id IS NULL))
                  )
              ))
             OR (restore_run_authority.entrypoint_kind = 'actor'
-                AND workspaces.owner_session_id = restore_run_authority.session_id
-                AND workspaces.owner_run_id IS NULL))
-       AND workspaces.status = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.dirty_state = 'clean'
-     FOR UPDATE OF workspaces
+                AND computers.owner_session_id = restore_run_authority.session_id
+                AND computers.owner_run_id IS NULL))
+       AND computers.status = 'active'
+       AND computers.desired_state = 'active'
+       AND computers.dirty_state = 'clean'
+     FOR UPDATE OF computers
 ), restore_attempt_authority AS MATERIALIZED (
     SELECT restore_workspace_authority.*
       FROM restore_workspace_authority
@@ -394,10 +394,10 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
        AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
        AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
-      JOIN workspace_versions
-        ON workspace_versions.workspace_id = runtime_instances.workspace_id
-       AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-       AND workspace_versions.status = 'private'
+      JOIN computer_versions
+        ON computer_versions.workspace_id = runtime_instances.workspace_id
+       AND computer_versions.id = runtime_instances.reserved_workspace_version_id
+       AND computer_versions.status = 'private'
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
@@ -405,7 +405,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
              WHERE workspace_secrets.workspace_id = runtime_instances.workspace_id)
            = (SELECT count(*) FROM restore_secret_authority
                WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
-     FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
+     FOR UPDATE OF run_waits, run_checkpoints, computer_versions
 ), ready_decision AS MATERIALIZED (
     -- Sample time after all preparation/restore row locks, not at transaction
     -- start or while a row-locking SELECT is still waiting for its input.
@@ -429,7 +429,7 @@ UPDATE runtime_instances
    AND runtime_instances.observed_state = 'allocated'
    AND runtime_instances.preparation_expires_at > ready_decision.decided_at
    AND EXISTS (
-       SELECT 1 FROM workspace_versions AS persistent_version
+       SELECT 1 FROM computer_versions AS persistent_version
         WHERE persistent_version.environment_id = runtime_instances.environment_id
           AND persistent_version.workspace_id = runtime_instances.workspace_id
           AND persistent_version.id = runtime_instances.reserved_workspace_version_id

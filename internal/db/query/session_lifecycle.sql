@@ -112,7 +112,7 @@ SELECT NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_leases.workspac
   AND c.parent_owns_lifecycle AND c.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS excluded;
 
 -- name: ReconcileSessionComputer :execrows
-UPDATE workspaces
+UPDATE computers
    SET status = 'active',
        desired_state = 'active',
        dirty_state = 'clean',
@@ -177,11 +177,11 @@ FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1;
 -- name: LockWorkerSessionOperationActors :many
 SELECT s.* FROM sessions s
 WHERE s.environment_id=sqlc.arg(environment_id)
- AND (s.id=sqlc.arg(target_session_id) OR s.id=(SELECT w.owner_session_id FROM workspaces w WHERE w.id=sqlc.arg(source_workspace_id)))
+ AND (s.id=sqlc.arg(target_session_id) OR s.id=(SELECT w.owner_session_id FROM computers w WHERE w.id=sqlc.arg(source_workspace_id)))
 ORDER BY s.id FOR UPDATE OF s;
 
 -- name: SessionRecoveryHeadCommitted :one
-SELECT EXISTS(SELECT 1 FROM workspace_versions
+SELECT EXISTS(SELECT 1 FROM computer_versions
  WHERE environment_id=$1 AND workspace_id=$2 AND id=$3 AND status='committed') AS committed;
 
 -- name: RunWaitSessionStopped :one

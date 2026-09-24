@@ -210,7 +210,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspaces (
+		INSERT INTO computers (
 			id, environment_id, region_id,
 			sandbox_declared_id, deployment_definition_id,
 			owner_run_id, ownership_generation, writer_generation, head_version_id
@@ -364,7 +364,7 @@ INSERT INTO sessions (
     3, 1, 'default', 300000, $6::jsonb
 )`, actorID, fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
 	dbtest.MustExec(t, ctx, tx, `
-UPDATE workspaces
+UPDATE computers
    SET owner_session_id = $1, owner_run_id = NULL
  WHERE id = $2`, actorID, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `

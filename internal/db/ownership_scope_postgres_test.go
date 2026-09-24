@@ -46,7 +46,7 @@ func TestOwnershipSurvivingScopePathsRejectAndRollback(t *testing.T) {
 		table string
 		id    any
 	}{
-		{"worker_groups", runLeaseTestWorkerGroup}, {"worker_instances", f.workerID}, {"runtime_instances", runtimeID}, {"workspace_mounts", mountID}, {"workspaces", workspaceID}, {"runs", work.runID}, {"run_waits", w.ID},
+		{"worker_groups", runLeaseTestWorkerGroup}, {"worker_instances", f.workerID}, {"runtime_instances", runtimeID}, {"workspace_mounts", mountID}, {"computers", workspaceID}, {"runs", work.runID}, {"run_waits", w.ID},
 	} {
 		t.Run("delete "+test.table, func(t *testing.T) { rejectSchemaRow(t, tx, "23001", "DELETE FROM "+test.table+" WHERE id=$1", test.id) })
 	}

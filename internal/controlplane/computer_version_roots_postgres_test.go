@@ -68,6 +68,20 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 		p.Locator = encode(bad)
 		integrity(q.CreateComputerVersionRoot(t.Context(), p))
 	}
+	// Exact size/rank/certification are insufficient: an index pack is not a root.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_objects SET kind='index' WHERE digest=$1`, digest)
+	integrity(q.CreateComputerVersionRoot(t.Context(), params))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_objects SET kind='root' WHERE digest=$1`, digest)
+	for _, capacity := range []int64{0, -4096, 4097} {
+		bad := root
+		bad.LogicalBytes = capacity
+		p := params
+		p.Locator = encode(bad)
+		var pg *pgconn.PgError
+		if e := q.CreateComputerVersionRoot(t.Context(), p); !errors.As(e, &pg) || pg.Code != "23514" {
+			t.Fatalf("invalid persisted capacity %d accepted: %v", capacity, e)
+		}
+	}
 	// Merely belonging to the transitive read-key set does not authorize a key
 	// as the root page's own encryption key. Roll back this isolated fixture.
 	inheritedTx, err := f.Pool.Begin(t.Context())

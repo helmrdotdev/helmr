@@ -79,7 +79,7 @@ func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *ac
 	}
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,$3,'test-workspace',$4,$5)`, f.workspaceID, b.EnvironmentID, runtest.Region, b.WorkspaceDefinitionID, f.rootID)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,$3,'test-workspace',$4,$5)`, f.workspaceID, b.EnvironmentID, runtest.Region, b.WorkspaceDefinitionID, f.rootID)
 	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, b.EnvironmentID, f.workspaceID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func (f *actorCheckpointFixture) capture(t *testing.T, value string) testWorkspa
 func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64) workerapi.CommitActorTurnResponse {
 	t.Helper()
 	var headBefore, baseBefore uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID).Scan(&headBefore, &baseBefore); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id FROM computers w JOIN workspace_leases l ON l.workspace_id=w.id WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID).Scan(&headBefore, &baseBefore); err != nil {
 		t.Fatal(err)
 	}
 	scope := f.receiveTurn(t, sequence)
@@ -283,7 +283,7 @@ func (f *actorCheckpointFixture) turn(t *testing.T, sequence int64) workerapi.Co
 	var cursor int64
 	var version pgtype.UUID
 	var data []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id,s.committed_input_sequence,e.workspace_version_id,e.data FROM workspaces w JOIN workspace_leases l ON l.workspace_id=w.id JOIN sessions s ON s.id=$3 JOIN session_events e ON e.id=$4 WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID, f.sessionID, uuid.MustParse(out.EventID)).Scan(&head, &base, &cursor, &version, &data); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id,l.base_workspace_version_id,s.committed_input_sequence,e.workspace_version_id,e.data FROM computers w JOIN workspace_leases l ON l.workspace_id=w.id JOIN sessions s ON s.id=$3 JOIN session_events e ON e.id=$4 WHERE w.id=$1 AND l.owner_run_lease_id=$2`, f.workspaceID, f.claim.runLease.ID, f.sessionID, uuid.MustParse(out.EventID)).Scan(&head, &base, &cursor, &version, &data); err != nil {
 		t.Fatal(err)
 	}
 	if head != headBefore || base != baseBefore || cursor != sequence || version.Valid || strings.Contains(string(data), "workspace_version_id") {
@@ -431,7 +431,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 			sourceLeaseID := f.claim.workspaceLease.ID
 			var root, head, parent uuid.UUID
 			var generation int64
-			if err := f.Pool.QueryRow(t.Context(), `SELECT a.base_workspace_version_id,w.head_version_id,v.parent_version_id,v.writer_generation FROM run_attempts a JOIN workspaces w ON w.id=a.workspace_id JOIN workspace_versions v ON v.id=$2 WHERE a.run_id=$1 AND a.number=1`, f.runID, uuid.MustParse(checkpoint.WorkspaceVersionID)).Scan(&root, &head, &parent, &generation); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT a.base_workspace_version_id,w.head_version_id,v.parent_version_id,v.writer_generation FROM run_attempts a JOIN computers w ON w.id=a.workspace_id JOIN computer_versions v ON v.id=$2 WHERE a.run_id=$1 AND a.number=1`, f.runID, uuid.MustParse(checkpoint.WorkspaceVersionID)).Scan(&root, &head, &parent, &generation); err != nil {
 				t.Fatal(err)
 			}
 			if root != f.rootID || head.String() != f.rootID.String() || parent != head || root != head || generation != 1 {
@@ -463,7 +463,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 				}
 				var status string
 				var retainedHead uuid.UUID
-				if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.head_version_id FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&status, &retainedHead); err != nil {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.head_version_id FROM runs r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, f.runID).Scan(&status, &retainedHead); err != nil {
 					t.Fatal(err)
 				}
 				if status != "running" || retainedHead != head {
@@ -487,7 +487,7 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 			f.complete(t, terminal, last)
 			var retainedGeneration int64
 			var retainedSource, retainedParent uuid.UUID
-			if err := f.Pool.QueryRow(t.Context(), `SELECT writer_generation,source_workspace_lease_id,parent_version_id FROM workspace_versions WHERE id=$1`, uuid.MustParse(checkpoint.WorkspaceVersionID)).Scan(&retainedGeneration, &retainedSource, &retainedParent); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT writer_generation,source_workspace_lease_id,parent_version_id FROM computer_versions WHERE id=$1`, uuid.MustParse(checkpoint.WorkspaceVersionID)).Scan(&retainedGeneration, &retainedSource, &retainedParent); err != nil {
 				t.Fatal(err)
 			}
 			if retainedGeneration != generation || retainedParent != head || pgvalue.UUID(retainedSource) != sourceLeaseID {
@@ -520,10 +520,10 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 		{name: "wrong attempt", mutate: func(a *runLeaseClaimAuthority) { a.attempt.Number++ }},
 		{name: "wrong head", mutate: func(a *runLeaseClaimAuthority) { a.workspace.HeadVersionID = pgvalue.UUID(uuid.NewV7()) }},
 		{name: "wrong current generation", mutate: func(a *runLeaseClaimAuthority) { a.workspace.WriterGeneration++ }},
-		{name: "wrong private parent", sql: `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), uuid.MustParse(checkpoint.WorkspaceVersionID)}},
-		{name: "private generation rewritten", constraint: "workspace_versions_source_writer_fence_fkey", sql: `UPDATE workspace_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
+		{name: "wrong private parent", sql: `UPDATE computer_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), uuid.MustParse(checkpoint.WorkspaceVersionID)}},
+		{name: "private generation rewritten", constraint: "computer_versions_source_writer_fence_fkey", sql: `UPDATE computer_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "wrong source lease", constraint: "run_checkpoints_source_workspace_lease_fkey", sql: `UPDATE run_checkpoints SET source_workspace_lease_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID), f.claim.workspaceLease.ID}},
-		{name: "wrong private artifact", sql: `UPDATE workspace_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
+		{name: "wrong private artifact", sql: `UPDATE computer_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
 		{name: "source still running", constraint: "runtime_instances_close_observation_check", sql: `UPDATE runtime_instances SET observed_state='ready' WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 		{name: "checkpoint invalid", sql: `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='test' WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 	} {
@@ -647,7 +647,7 @@ func TestActorCheckpointFrontierRecoveredRestorePostgres(t *testing.T) {
 			f.complete(t, 2, last)
 			var parent, source uuid.UUID
 			var generation int64
-			if err := f.Pool.QueryRow(t.Context(), `SELECT parent_version_id,source_workspace_lease_id,writer_generation FROM workspace_versions WHERE id=$1`, uuid.MustParse(cp.WorkspaceVersionID)).Scan(&parent, &source, &generation); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT parent_version_id,source_workspace_lease_id,writer_generation FROM computer_versions WHERE id=$1`, uuid.MustParse(cp.WorkspaceVersionID)).Scan(&parent, &source, &generation); err != nil {
 				t.Fatal(err)
 			}
 			if parent.String() != f.rootID.String() || pgvalue.UUID(source) != sourceLease || generation != 1 {
@@ -682,13 +682,13 @@ func TestActorCheckpointFrontierRejectsWrongRecoveredWriterPostgres(t *testing.T
 			case "private base":
 				sql, args = `UPDATE workspace_leases SET base_workspace_version_id=$2 WHERE id=$1`, []any{f.claim.workspaceLease.ID, f.rootID}
 			case "generation":
-				sql, args = `UPDATE workspaces SET writer_generation=writer_generation+1 WHERE id=$1`, []any{f.workspaceID}
+				sql, args = `UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1`, []any{f.workspaceID}
 			case "ownership":
-				sql, args = `UPDATE workspaces SET ownership_generation=ownership_generation+1 WHERE id=$1`, []any{f.workspaceID}
+				sql, args = `UPDATE computers SET ownership_generation=ownership_generation+1 WHERE id=$1`, []any{f.workspaceID}
 			case "head":
-				sql, args = `UPDATE workspaces SET head_version_id=$2 WHERE id=$1`, []any{f.workspaceID, f.claim.workspaceLease.BaseWorkspaceVersionID}
+				sql, args = `UPDATE computers SET head_version_id=$2 WHERE id=$1`, []any{f.workspaceID, f.claim.workspaceLease.BaseWorkspaceVersionID}
 			case "owner":
-				sql, args = `UPDATE workspaces SET owner_session_id=NULL WHERE id=$1`, []any{f.workspaceID}
+				sql, args = `UPDATE computers SET owner_session_id=NULL WHERE id=$1`, []any{f.workspaceID}
 			case "terminal reason":
 				sql, args = `UPDATE run_leases SET terminal_reason_code='max_active_duration_exceeded' WHERE id=$1`, []any{f.claim.runLease.ID}
 			case "terminal state":
@@ -789,7 +789,7 @@ func TestSettledTurnCannotResumeHistoricalCheckpointAfterHostLossPostgres(t *tes
 			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,r.status,s.committed_input_sequence,w.head_version_id,
     (SELECT count(*) FROM run_checkpoints WHERE run_id=r.id AND status='ready'),
     (SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.completed')
-    FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &runStatus, &cursor, &head, &ready, &results); err != nil {
+    FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &runStatus, &cursor, &head, &ready, &results); err != nil {
 				t.Fatal(err)
 			}
 			if status != "recovery_required" || runStatus != "system_failed" || cursor != 2 || head != f.rootID || ready != 0 || results != 2 {

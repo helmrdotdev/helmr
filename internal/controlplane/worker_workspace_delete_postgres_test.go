@@ -46,7 +46,7 @@ UPDATE run_attempts SET entrypoint_entered_at = now()
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id, sandbox_declared_id,
     deployment_definition_id, key, head_version_id
 ) VALUES ($1, $2, $3, 'test-workspace', $4, 'worker-delete-replay', $5)`,

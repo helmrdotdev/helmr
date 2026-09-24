@@ -17,7 +17,7 @@ import (
 // persisted version is not evidence of remote verification or writable VM boot.
 func registerPreparationCandidate(t *testing.T, f runPlacementFixture) db.ComputerInitialization {
 	t.Helper()
-	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE workspace_versions SET status='initializing', artifact_id=NULL,
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET status='initializing', artifact_id=NULL,
     content_digest=NULL, size_bytes=0, published_at=NULL WHERE workspace_id=$1 AND parent_version_id IS NULL`, f.workspaceID)
 	placement, err := f.authority.PlaceReadyRun(f.ctx, ReadyRunCandidate{
 		OrgID: pgvalue.UUID(f.orgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: 1,
@@ -33,7 +33,7 @@ func registerPreparationCandidate(t *testing.T, f runPlacementFixture) db.Comput
 	if err := f.pool.QueryRow(f.ctx, `
 SELECT r.environment_id, r.workspace_id, r.reserved_workspace_version_id,
        r.desired_version, w.ownership_generation, w.writer_generation
-  FROM runtime_instances r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`,
+  FROM runtime_instances r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`,
 		placement.RuntimeInstanceID).Scan(&p.EnvironmentID, &p.ComputerID, &p.VersionID,
 		&p.RuntimeDesiredVersion, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
 		t.Fatal(err)

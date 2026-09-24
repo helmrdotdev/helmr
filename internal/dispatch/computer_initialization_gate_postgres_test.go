@@ -64,7 +64,7 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 func TestInitializingComputerAcceptsExplicitExecWithoutGrant(t *testing.T) {
 	f := newRunPlacementFixture(t)
 	root := workspaceHeadVersion(t, f)
-	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE workspace_versions SET status='initializing', artifact_id=NULL,
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET status='initializing', artifact_id=NULL,
 content_digest=NULL,size_bytes=0,published_at=NULL WHERE id=$1`, root)
 	processID := createPendingWorkspaceExec(t, f)
 	q := db.New(f.pool)

@@ -474,7 +474,7 @@ func assertScheduleAdmissionCounts(
 	}
 	var workspaceCount int
 	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*) FROM workspaces WHERE environment_id = $1
+		SELECT count(*) FROM computers WHERE environment_id = $1
 	`, value.EnvironmentID).Scan(&workspaceCount); err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func assertScheduleAdmissionCounts(
 		SELECT count(*) FILTER (WHERE owner_run_id IS NOT NULL),
 		       min(revision), max(revision),
 		       min(ownership_generation), max(ownership_generation)
-		  FROM workspaces
+		  FROM computers
 		 WHERE environment_id = $1
 	`, value.EnvironmentID).Scan(
 		&owned, &minRevision, &maxRevision,

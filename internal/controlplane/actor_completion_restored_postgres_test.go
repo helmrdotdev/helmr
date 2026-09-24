@@ -31,7 +31,7 @@ SELECT runs.status,
        run_leases.status,
        run_attempts.terminal_outcome,
        workspace_leases.status,
-       workspaces.head_version_id,
+       computers.head_version_id,
        workspace_mounts.materialized_version_id,
        published.parent_version_id,
        sessions.committed_input_sequence,
@@ -40,10 +40,10 @@ SELECT runs.status,
   JOIN run_leases ON run_leases.id = $2
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
   JOIN sessions ON sessions.id = runs.session_id
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
-  JOIN workspace_versions AS published ON published.id = workspaces.head_version_id
+  JOIN computer_versions AS published ON published.id = computers.head_version_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
 		&runStatus, &leaseStatus, &attemptOutcome, &workspaceLeaseStatus,
 		&headVersionID, &mountVersionID, &publishedParentID,
@@ -84,7 +84,7 @@ SELECT runs.status,
        run_attempts.terminal_outcome,
        workspace_leases.status,
        sessions.status,
-       workspaces.head_version_id,
+       computers.head_version_id,
        workspace_mounts.materialized_version_id,
        sessions.committed_input_sequence,
        sessions.dispatch_hold_reason
@@ -92,7 +92,7 @@ SELECT runs.status,
   JOIN run_leases ON run_leases.id = $2
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
   JOIN sessions ON sessions.id = runs.session_id
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
@@ -111,20 +111,20 @@ SELECT runs.status,
 	}
 	var digest string
 	var parent uuid.UUID
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT a.digest,v.parent_version_id FROM workspace_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT a.digest,v.parent_version_id FROM computer_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
 		t.Fatal(err)
 	}
 	if digest != fixture.request.Workspace.Captured.Disk.Artifact.Digest || parent != fixture.privateVersionID {
 		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
 	}
 	var countBefore, countAfter int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countBefore); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countBefore); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.server.completeActor(t.Context(), fixture.worker, fixture.request, completion); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM workspace_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countAfter); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countAfter); err != nil {
 		t.Fatal(err)
 	}
 	if countAfter != countBefore {
@@ -162,15 +162,15 @@ func newRestoredActorCompletionPostgresFixture(t *testing.T, failed bool) restor
 	var ownershipGeneration, writerGeneration, mountGeneration int64
 	if err := base.Pool.QueryRow(ctx, `
 SELECT runs.workspace_id,
-       workspaces.head_version_id,
+       computers.head_version_id,
        run_leases.runtime_instance_id,
        workspace_leases.workspace_mount_id,
        workspace_leases.id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
+       computers.ownership_generation,
+       computers.writer_generation,
        workspace_mounts.fencing_generation
   FROM runs
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN run_leases ON run_leases.id = $2 AND run_leases.run_id = runs.id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
@@ -207,7 +207,7 @@ SELECT runs.workspace_id,
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, ctx, tx, `
-UPDATE workspaces SET writer_generation = 3 WHERE id = $1`, workspaceID)
+UPDATE computers SET writer_generation = 3 WHERE id = $1`, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases SET writer_generation = 3 WHERE id = $1`, workspaceLeaseID)
 	dbtest.MustExec(t, ctx, tx, `
@@ -298,7 +298,7 @@ INSERT INTO artifacts (
 		checkpointArtifactID, base.OrgID, base.ProjectID, base.EnvironmentID,
 		checkpointDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id,
     artifact_id, content_digest, size_bytes, entry_count,
     status, source_workspace_lease_id, ownership_generation, writer_generation
@@ -384,7 +384,7 @@ INSERT INTO artifacts (
 		privateArtifactID, base.OrgID, base.ProjectID, base.EnvironmentID,
 		privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO workspace_versions (
+INSERT INTO computer_versions (
     id, environment_id, workspace_id, parent_version_id,
     artifact_id, content_digest, size_bytes, entry_count,
     status, source_workspace_lease_id, ownership_generation, writer_generation

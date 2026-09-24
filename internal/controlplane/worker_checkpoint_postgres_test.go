@@ -132,7 +132,7 @@ func TestWorkerCheckpointFailureRequiresComputerRecoveryRegardlessOfRetryPolicy(
 			fixture, work, receipt, worker := checkpointFailureFixture(t)
 			dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runs SET retry_policy=$2 WHERE id=$1`, work.RunID, policy)
 			var originalHead string
-			if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.head_version_id::text FROM workspaces w JOIN runs r ON r.workspace_id=w.id WHERE r.id=$1`, work.RunID).Scan(&originalHead); err != nil {
+			if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.head_version_id::text FROM computers w JOIN runs r ON r.workspace_id=w.id WHERE r.id=$1`, work.RunID).Scan(&originalHead); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
@@ -146,7 +146,7 @@ func TestWorkerCheckpointFailureRequiresComputerRecoveryRegardlessOfRetryPolicy(
 			var noRetry, noOwner bool
 			err := fixture.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,w.dirty_state,r.failure->>'code',r.failure->>'message',w.head_version_id::text,
  (SELECT count(*) FROM run_attempts a WHERE a.run_id=r.id),r.retry_at IS NULL,w.owner_run_id IS NULL
- FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &dirty, &reason, &message, &head, &attempts, &noRetry, &noOwner)
+ FROM runs r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &dirty, &reason, &message, &head, &attempts, &noRetry, &noOwner)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -293,7 +293,7 @@ func TestSharedComputerCheckpointFailureStopsOwnerAndChildPostgres(t *testing.T)
 		if err := f.pool.QueryRow(ctx, `SELECT r.status,r.failure->>'code',w.status,w.dirty_state,w.owner_run_id IS NULL,
  (SELECT count(*) FROM run_attempts a WHERE a.run_id=r.id),
  (SELECT count(*) FROM run_checkpoints c WHERE c.run_id=r.id AND c.status='ready')
- FROM runs r JOIN workspaces w ON w.id=r.workspace_id WHERE r.id=$1`, id).Scan(&status, &reason, &computer, &dirty, &ownerGone, &attempts, &ready); err != nil {
+ FROM runs r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, id).Scan(&status, &reason, &computer, &dirty, &ownerGone, &attempts, &ready); err != nil {
 			t.Fatal(err)
 		}
 		want := "computer_recovery_required"
@@ -315,7 +315,7 @@ func TestCheckpointFailureRollsBackReceiptAndComputerPostgres(t *testing.T) {
 	}
 	var status, computer, checkpoint string
 	var noReceipt bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,c.status,c.failed_request_fingerprint IS NULL FROM runs r JOIN workspaces w ON w.id=r.workspace_id JOIN run_checkpoints c ON c.run_id=r.id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &checkpoint, &noReceipt); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,c.status,c.failed_request_fingerprint IS NULL FROM runs r JOIN computers w ON w.id=r.workspace_id JOIN run_checkpoints c ON c.run_id=r.id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &checkpoint, &noReceipt); err != nil {
 		t.Fatal(err)
 	}
 	if status != "waiting" || computer != "active" || checkpoint != "creating" || !noReceipt {

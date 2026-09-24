@@ -43,7 +43,7 @@ WITH authority AS (
    )
  ) AS live
  FROM runtime_instances r
- JOIN workspaces w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
+ JOIN computers w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
  JOIN worker_instances worker ON worker.id = r.worker_instance_id AND worker.worker_group_id = r.worker_group_id
  JOIN worker_groups worker_group ON worker_group.id = worker.worker_group_id
  WHERE r.id = sqlc.arg(runtime_instance_id)
@@ -115,7 +115,7 @@ WITH authority AS (
    )
  ) AS live
  FROM runtime_instances r
- JOIN workspaces w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
+ JOIN computers w ON w.id = r.workspace_id AND w.environment_id = r.environment_id
  JOIN worker_instances worker ON worker.id = r.worker_instance_id AND worker.worker_group_id = r.worker_group_id
  JOIN worker_groups worker_group ON worker_group.id = worker.worker_group_id
  WHERE r.id = sqlc.arg(runtime_instance_id)
@@ -140,12 +140,12 @@ WHERE a.live OR (
 
 -- name: GetWorkspaceSecretCAPublic :one
 SELECT secret_ca_certificate AS certificate, secret_ca_not_after AS not_after
-FROM workspaces WHERE environment_id = sqlc.arg(environment_id) AND id = sqlc.arg(workspace_id);
+FROM computers WHERE environment_id = sqlc.arg(environment_id) AND id = sqlc.arg(workspace_id);
 
 -- name: InitializeWorkspaceSecretCA :execrows
 -- Creation-only: caller owns the insert transaction and uses inserted created_at.
 -- No preparation or later lifecycle operation may initialize or replace a CA.
-UPDATE workspaces SET secret_ca_certificate = sqlc.arg(certificate),
+UPDATE computers SET secret_ca_certificate = sqlc.arg(certificate),
  secret_ca_private_key_nonce = sqlc.arg(private_key_nonce),
  secret_ca_private_key_ciphertext = sqlc.arg(private_key_ciphertext),
  secret_ca_not_after = sqlc.arg(not_after)

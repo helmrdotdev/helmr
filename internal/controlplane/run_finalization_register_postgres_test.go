@@ -103,7 +103,7 @@ func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) 
 		t.Fatalf("unregistered completion status=%d", status)
 	}
 	var head uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&head); err != nil || head != f.rootID {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceID).Scan(&head); err != nil || head != f.rootID {
 		t.Fatalf("unregistered publication changed head: %s %v", head, err)
 	}
 	registration := workerapi.RegisterRunFinalizationRequest{Lease: req.Lease, OperationID: req.Workspace.Captured.Receipt.OperationID, Disk: req.Workspace.Captured.Disk}
@@ -218,7 +218,7 @@ func TestRunFinalizationPublicationExpiresDuringMembershipWritePostgres(t *testi
 	var head uuid.UUID
 	var status string
 	var memberships int
-	if err := f.Pool.QueryRow(ctx, `SELECT w.head_version_id,l.status,(SELECT count(*) FROM cas_objects WHERE digest=$3) FROM workspaces w JOIN run_leases l ON l.id=$2 WHERE w.id=$1`, f.workspaceID, f.claim.runLease.ID, req.Workspace.Captured.Disk.Artifact.Digest).Scan(&head, &status, &memberships); err != nil {
+	if err := f.Pool.QueryRow(ctx, `SELECT w.head_version_id,l.status,(SELECT count(*) FROM cas_objects WHERE digest=$3) FROM computers w JOIN run_leases l ON l.id=$2 WHERE w.id=$1`, f.workspaceID, f.claim.runLease.ID, req.Workspace.Captured.Disk.Artifact.Digest).Scan(&head, &status, &memberships); err != nil {
 		t.Fatal(err)
 	}
 	if head != f.rootID || status != "finalizing" || memberships != 0 {

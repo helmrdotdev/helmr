@@ -17,7 +17,7 @@ UPDATE runtime_instances r SET computer_source_version_id=sqlc.arg(version_id)
    AND r.reserved_workspace_version_id=sqlc.arg(version_id)
    AND EXISTS(SELECT 1 FROM computer_version_roots v WHERE v.environment_id=r.environment_id
       AND v.computer_id=r.workspace_id AND v.version_id=sqlc.arg(version_id)
-      AND (v.locator->>'logical_bytes')::bigint=r.reserved_guest_ephemeral_disk_bytes)
+      AND v.logical_bytes=r.reserved_guest_ephemeral_disk_bytes)
    AND (r.computer_source_version_id IS NULL OR r.computer_source_version_id=sqlc.arg(version_id));
 
 -- Derive keys from the Runtime's pinned source, not from a caller-supplied root.

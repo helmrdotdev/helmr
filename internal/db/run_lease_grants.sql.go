@@ -101,23 +101,23 @@ func (q *Queries) AdvanceRunWorkspaceMountFence(ctx context.Context, arg Advance
 }
 
 const advanceRunWorkspaceWriter = `-- name: AdvanceRunWorkspaceWriter :one
-UPDATE workspaces
+UPDATE computers
    SET writer_generation = $1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.environment_id = $2
+ WHERE computers.environment_id = $2
    AND EXISTS (
        SELECT 1 FROM environments
-        WHERE environments.id = workspaces.environment_id
+        WHERE environments.id = computers.environment_id
           AND environments.org_id = $3
           AND environments.project_id = $4
    )
-   AND workspaces.id = $5
-   AND workspaces.ownership_generation = $6
-   AND workspaces.writer_generation = $7
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+   AND computers.id = $5
+   AND computers.ownership_generation = $6
+   AND computers.writer_generation = $7
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type AdvanceRunWorkspaceWriterParams struct {

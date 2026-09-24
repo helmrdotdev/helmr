@@ -269,7 +269,7 @@ func (s *Server) createWorkspace(ctx context.Context, request workspaceCreateReq
 		if err != nil {
 			var postgresError *pgconn.PgError
 			if errors.As(err, &postgresError) &&
-				postgresError.ConstraintName == "workspaces_environment_key_uidx" &&
+				postgresError.ConstraintName == "computers_environment_key_uidx" &&
 				request.Key != nil {
 				return WorkspaceKeyConflictError{Key: *request.Key}
 			}

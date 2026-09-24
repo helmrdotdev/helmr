@@ -42,7 +42,7 @@ func assertTurnStopped(t *testing.T, f *actorCheckpointFixture, scope session.Tu
 	var status, hold, runStatus string
 	var active, head uuid.UUID
 	var cursor, terminals int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence,w.head_version_id,x.status,(SELECT count(*) FROM session_events e WHERE e.session_id=s.id AND e.kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id JOIN runs x ON x.id=s.current_run_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &hold, &active, &cursor, &head, &runStatus, &terminals); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence,w.head_version_id,x.status,(SELECT count(*) FROM session_events e WHERE e.session_id=s.id AND e.kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id JOIN runs x ON x.id=s.current_run_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &hold, &active, &cursor, &head, &runStatus, &terminals); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || hold != "interrupt_requested" || active != scope.TurnID || cursor != 0 || head != f.rootID || runStatus != "running" || terminals != 0 {
@@ -158,7 +158,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 		var cursor, terminal int
 		var hold bool
 		var head uuid.UUID
-		if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.dispatch_hold_id IS NOT NULL,w.head_version_id,(SELECT count(*) FROM session_events WHERE turn_id=r.id AND kind='turn.completed') FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &hold, &head, &terminal); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.dispatch_hold_id IS NOT NULL,w.head_version_id,(SELECT count(*) FROM session_events WHERE turn_id=r.id AND kind='turn.completed') FROM sessions s JOIN session_turns r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &hold, &head, &terminal); err != nil {
 			t.Fatal(err)
 		}
 		if status != "completed" || cursor != 1 || hold || head != f.rootID || terminal != 1 {
@@ -309,7 +309,7 @@ func TestSessionTurnSettlementRollbackPostgres(t *testing.T) {
 	var status string
 	var cursor, events int
 	var head, active uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.active_turn_id,w.head_version_id,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &active, &head, &events); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.active_turn_id,w.head_version_id,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &active, &head, &events); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || cursor != 0 || active != scope.TurnID || head != f.rootID || events != 0 {
@@ -385,7 +385,7 @@ func TestSessionTurnHoldRejectsLegacyLifecyclePostgres(t *testing.T) {
 	var active, head uuid.UUID
 	var status, reason, runStatus string
 	var cursor, terminals int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_reason,s.committed_input_sequence,t.status,w.head_version_id,r.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed','turn.interrupted')) FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id JOIN workspaces w ON w.id=s.workspace_id JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&active, &reason, &cursor, &status, &head, &runStatus, &terminals); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_reason,s.committed_input_sequence,t.status,w.head_version_id,r.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed','turn.interrupted')) FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id JOIN computers w ON w.id=s.workspace_id JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&active, &reason, &cursor, &status, &head, &runStatus, &terminals); err != nil {
 		t.Fatal(err)
 	}
 	if active != scope.TurnID || reason != "recovery_required" || cursor != 0 || status != "running" || head != f.rootID || runStatus != "system_failed" || terminals != 0 {

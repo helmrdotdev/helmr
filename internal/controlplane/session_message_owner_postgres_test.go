@@ -313,7 +313,7 @@ func TestSessionParkedTurnInterruptRecoveryPostgres(t *testing.T) {
 	}
 	var status, reason string
 	var held, active, head, owner uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_id,s.dispatch_hold_reason,s.active_turn_id,w.head_version_id,w.owner_session_id FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &held, &reason, &active, &head, &owner); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_id,s.dispatch_hold_reason,s.active_turn_id,w.head_version_id,w.owner_session_id FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &held, &reason, &active, &head, &owner); err != nil {
 		t.Fatal(err)
 	}
 	if status != "cancelled" || held != *stopped.HoldID || reason != "interrupt_requested" || active != scope.TurnID || head.String() != f.rootID.String() || owner != f.sessionID {
@@ -375,7 +375,7 @@ func TestSessionTokenResumeStopAuthorityPostgres(t *testing.T) {
 			}
 			var checkpointBase, attemptBase, head uuid.UUID
 			var waitKind string
-			if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,rw.kind FROM run_waits rw JOIN run_checkpoints c ON c.id=rw.suspend_checkpoint_id JOIN run_attempts a ON a.run_id=rw.run_id AND a.number=rw.attempt_number JOIN workspaces w ON w.id=rw.workspace_id WHERE rw.id=$1`, registration.WaitID).Scan(&checkpointBase, &attemptBase, &head, &waitKind); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,rw.kind FROM run_waits rw JOIN run_checkpoints c ON c.id=rw.suspend_checkpoint_id JOIN run_attempts a ON a.run_id=rw.run_id AND a.number=rw.attempt_number JOIN computers w ON w.id=rw.workspace_id WHERE rw.id=$1`, registration.WaitID).Scan(&checkpointBase, &attemptBase, &head, &waitKind); err != nil {
 				t.Fatal(err)
 			}
 			if checkpointBase != head || checkpointBase == attemptBase || waitKind != "token" {
@@ -490,7 +490,7 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	}
 	childCheckpoint := f.suspendWait(t, uuid.MustParse(request.RunWaitID), capture)
 	var checkpointBase, attemptBase, committedHead, childBase pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,c.private_workspace_version_id FROM run_checkpoints c JOIN run_attempts a ON a.run_id=c.run_id AND a.number=c.attempt_number JOIN workspaces w ON w.id=c.workspace_id WHERE c.id=$1`, uuid.MustParse(childCheckpoint.CheckpointID)).Scan(&checkpointBase, &attemptBase, &committedHead, &childBase); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,c.private_workspace_version_id FROM run_checkpoints c JOIN run_attempts a ON a.run_id=c.run_id AND a.number=c.attempt_number JOIN computers w ON w.id=c.workspace_id WHERE c.id=$1`, uuid.MustParse(childCheckpoint.CheckpointID)).Scan(&checkpointBase, &attemptBase, &committedHead, &childBase); err != nil {
 		t.Fatal(err)
 	}
 	if checkpointBase != committedHead || checkpointBase == attemptBase || childBase != pgvalue.UUID(uuid.MustParse(childCheckpoint.WorkspaceVersionID)) || childBase == committedHead {
@@ -523,7 +523,7 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,r.revision FROM run_checkpoints c JOIN runs r ON r.id=c.run_id WHERE c.id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID)).Scan(&originalBase, &revision); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET base_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=run_checkpoints.workspace_id) WHERE id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET base_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=run_checkpoints.workspace_id) WHERE id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID))
 	if _, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}); !errors.Is(err, dispatch.ErrCandidateChanged) {
 		t.Fatalf("corrupt Task checkpoint source base placement: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 
 	var bound, owner, active pgtype.UUID
 	var childStatus string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT rw.turn_id,w.owner_session_id,s.active_turn_id,r.status FROM run_waits rw JOIN runs r ON r.id=rw.run_id JOIN workspaces w ON w.id=r.workspace_id JOIN sessions s ON s.current_run_id=$2 WHERE rw.id=$1`, registration.WaitID, parentID).Scan(&bound, &owner, &active, &childStatus); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT rw.turn_id,w.owner_session_id,s.active_turn_id,r.status FROM run_waits rw JOIN runs r ON r.id=rw.run_id JOIN computers w ON w.id=r.workspace_id JOIN sessions s ON s.current_run_id=$2 WHERE rw.id=$1`, registration.WaitID, parentID).Scan(&bound, &owner, &active, &childStatus); err != nil {
 		t.Fatal(err)
 	}
 	if bound.Valid || owner != pgvalue.UUID(f.sessionID) || active != pgvalue.UUID(scope.TurnID) || childStatus != "running" {

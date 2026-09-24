@@ -33,7 +33,7 @@ SELECT $1,
        actor_definition.environment_id,
        actor_definition.declared_id,
        actor_definition.id,
-       workspaces.id,
+       computers.id,
        $2,
        $3,
        $4,
@@ -54,18 +54,18 @@ SELECT $1,
    AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL
    AND deployments.runtime_artifact_digest IS NOT NULL
-  JOIN workspaces
-    ON workspaces.environment_id = actor_definition.environment_id
-   AND workspaces.id = $12
+  JOIN computers
+    ON computers.environment_id = actor_definition.environment_id
+   AND computers.id = $12
   JOIN environments AS actor_environment
-    ON actor_environment.id = workspaces.environment_id
+    ON actor_environment.id = computers.environment_id
    AND actor_environment.org_id = $13
    AND actor_environment.project_id = $14
   JOIN deployment_definitions AS workspace_definition
-    ON workspace_definition.environment_id = workspaces.environment_id
-   AND workspace_definition.id = workspaces.deployment_definition_id
+    ON workspace_definition.environment_id = computers.environment_id
+   AND workspace_definition.id = computers.deployment_definition_id
    AND workspace_definition.kind = 'sandbox'
-   AND workspace_definition.declared_id = workspaces.sandbox_declared_id
+   AND workspace_definition.declared_id = computers.sandbox_declared_id
  WHERE actor_definition.environment_id = $15
    AND actor_definition.id = $16
    AND actor_definition.kind = 'actor'

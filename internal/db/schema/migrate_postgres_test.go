@@ -175,10 +175,10 @@ func assertPrimitiveLifecycleSchema(
 		"run_leases",
 		"runtime_instances",
 		"runtime_instances",
-		"workspaces",
-		"workspaces",
-		"workspaces",
-		"workspace_versions",
+		"computers",
+		"computers",
+		"computers",
+		"computer_versions",
 		"workspace_mounts",
 		"workspace_leases",
 		"workspace_processes",
@@ -380,7 +380,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_initializations.availability_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.root_digest:s,computer_version_roots.root_key_id:s,computer_version_roots.root_rank:s,computer_version_roots.root_size_bytes:s,run_checkpoint_objects.availability_required:s,run_finalization_objects.availability_required:s,runtime_instances.computer_key_available:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s,workspaces.write_key_available:s" {
+	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_initializations.availability_required:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.logical_bytes:s,computer_version_roots.root_digest:s,computer_version_roots.root_key_id:s,computer_version_roots.root_kind:s,computer_version_roots.root_rank:s,computer_version_roots.root_size_bytes:s,computers.write_key_available:s,run_checkpoint_objects.availability_required:s,run_finalization_objects.availability_required:s,runtime_instances.computer_key_available:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -666,7 +666,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
-		   AND table_name = 'workspace_versions'
+		   AND table_name = 'computer_versions'
 		   AND column_name = ANY($1::text[])
 	`, []string{
 		"parent_version_id",
@@ -690,7 +690,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 			SELECT 1
 			  FROM pg_indexes
 			 WHERE schemaname = 'public'
-			   AND tablename = 'workspace_versions'
+			   AND tablename = 'computer_versions'
 			   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
 			   AND indexdef LIKE '%(workspace_id)%'
 			   AND indexdef LIKE '%WHERE (parent_version_id IS NULL)%'
@@ -706,7 +706,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		SELECT EXISTS (
 			SELECT 1
 			  FROM pg_constraint
-			 WHERE conrelid = 'workspace_versions'::regclass
+			 WHERE conrelid = 'computer_versions'::regclass
 			   AND contype = 'f'
 			   AND pg_get_constraintdef(oid) LIKE '%source_workspace_lease_id, ownership_generation, writer_generation%'
 		)
@@ -721,7 +721,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		SELECT EXISTS (
 			SELECT 1
 			  FROM pg_constraint
-			 WHERE conrelid = 'workspace_versions'::regclass
+			 WHERE conrelid = 'computer_versions'::regclass
 			   AND contype = 'f'
 			   AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (environment_id, artifact_id) REFERENCES artifacts(environment_id, id)%'
 		)
@@ -861,7 +861,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_turns", "session_messages", "session_events", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "computers", "sessions", "session_turns", "session_messages", "session_events", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns

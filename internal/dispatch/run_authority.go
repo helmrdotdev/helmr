@@ -223,7 +223,7 @@ SELECT runs.id,
           AND checkpoint.status = 'ready'
           AND (checkpoint.expires_at IS NULL
                OR checkpoint.expires_at > transaction_timestamp())
-         JOIN workspace_versions AS base
+         JOIN computer_versions AS base
            ON base.workspace_id = edge.workspace_id
           AND base.id = edge.base_workspace_version_id
           AND base.status = 'private'
@@ -362,7 +362,7 @@ SELECT runs.id,
    AND restore_checkpoint.status = 'ready'
    AND (restore_checkpoint.expires_at IS NULL
         OR restore_checkpoint.expires_at > transaction_timestamp())
-	  LEFT JOIN workspace_versions AS restore_version
+	  LEFT JOIN computer_versions AS restore_version
 	    ON restore_version.workspace_id = restore_checkpoint.workspace_id
 	   AND restore_version.id = coalesce(
 	       restore_wait.resume_workspace_version_id,
@@ -458,44 +458,44 @@ SELECT runs.id,
 	}
 	var manifestVersion int32
 	var manifest []byte
-	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_session_id IS NULL"
+	workspaceOwnerPredicate := "computers.owner_run_id = $5 AND computers.owner_session_id IS NULL"
 	workspaceOwnerID := authority.runID
 	if authority.sameWorkspaceChildWaitID.Valid {
 		if authority.ownerActorID.Valid {
-			workspaceOwnerPredicate = "workspaces.owner_session_id = $5 AND workspaces.owner_run_id IS NULL"
+			workspaceOwnerPredicate = "computers.owner_session_id = $5 AND computers.owner_run_id IS NULL"
 			workspaceOwnerID = authority.ownerActorID
 		} else {
 			workspaceOwnerID = sameWorkspaceRootRunID
 		}
 	} else if authority.entrypointKind == "actor" {
-		workspaceOwnerPredicate = "workspaces.owner_session_id = $5 AND workspaces.owner_run_id IS NULL"
+		workspaceOwnerPredicate = "computers.owner_session_id = $5 AND computers.owner_run_id IS NULL"
 		workspaceOwnerID = authority.actorID
 	}
 	err = tx.QueryRow(ctx, fmt.Sprintf(`
-SELECT workspaces.deployment_definition_id,
-       workspaces.region_id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
-       workspaces.head_version_id,
+SELECT computers.deployment_definition_id,
+       computers.region_id,
+       computers.ownership_generation,
+       computers.writer_generation,
+       computers.head_version_id,
        workspace_definitions.manifest_version,
        workspace_definitions.manifest
-  FROM workspaces
+  FROM computers
   JOIN environments AS workspace_environment
-    ON workspace_environment.id = workspaces.environment_id
+    ON workspace_environment.id = computers.environment_id
   JOIN deployment_definitions AS workspace_definitions
-    ON workspace_definitions.environment_id = workspaces.environment_id
-   AND workspace_definitions.id = workspaces.deployment_definition_id
+    ON workspace_definitions.environment_id = computers.environment_id
+   AND workspace_definitions.id = computers.deployment_definition_id
    AND workspace_definitions.kind = 'sandbox'
-   AND workspace_definitions.declared_id = workspaces.sandbox_declared_id
+   AND workspace_definitions.declared_id = computers.sandbox_declared_id
  WHERE workspace_environment.org_id = $1
    AND workspace_environment.project_id = $2
-   AND workspaces.environment_id = $3
-   AND workspaces.id = $4
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-   AND workspaces.dirty_state = 'clean'
+   AND computers.environment_id = $3
+   AND computers.id = $4
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+   AND computers.dirty_state = 'clean'
    AND %s
- FOR UPDATE OF workspaces`, workspaceOwnerPredicate),
+ FOR UPDATE OF computers`, workspaceOwnerPredicate),
 		authority.orgID,
 		authority.projectID,
 		authority.environmentID,
@@ -615,14 +615,14 @@ SELECT EXISTS (
 SELECT run_attempts.base_workspace_version_id,
        run_attempts.session_input_start_sequence
   FROM run_attempts
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = run_attempts.workspace_id
-   AND workspace_versions.id = run_attempts.base_workspace_version_id
-   AND (($5::boolean AND workspace_versions.status = 'private')
-        OR (NOT $5::boolean AND workspace_versions.status = 'committed')
+  JOIN computer_versions
+    ON computer_versions.workspace_id = run_attempts.workspace_id
+   AND computer_versions.id = run_attempts.base_workspace_version_id
+   AND (($5::boolean AND computer_versions.status = 'private')
+        OR (NOT $5::boolean AND computer_versions.status = 'committed')
         OR ($6::boolean AND NOT $5::boolean
-            AND workspace_versions.status = 'initializing'
-            AND workspace_versions.parent_version_id IS NULL))
+            AND computer_versions.status = 'initializing'
+            AND computer_versions.parent_version_id IS NULL))
  WHERE run_attempts.run_id = $1
    AND run_attempts.number = $2
    AND run_attempts.entrypoint_kind = $4
@@ -688,10 +688,10 @@ SELECT source_lease.worker_group_id,
             AND run_checkpoints.actor_speculative_input_sequence BETWEEN $11 AND $12))
    AND (run_checkpoints.expires_at IS NULL
         OR run_checkpoints.expires_at > transaction_timestamp())
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-   AND workspace_versions.status = 'private'
+  JOIN computer_versions
+    ON computer_versions.workspace_id = run_checkpoints.workspace_id
+   AND computer_versions.id = run_checkpoints.private_workspace_version_id
+   AND computer_versions.status = 'private'
   JOIN run_leases AS source_lease
     ON source_lease.id = run_checkpoints.source_run_lease_id
    AND source_lease.run_id = run_checkpoints.run_id
@@ -704,10 +704,10 @@ SELECT source_lease.worker_group_id,
    AND source_workspace_lease.owner_run_lease_id = source_lease.id
 	   AND source_workspace_lease.base_workspace_version_id = run_checkpoints.base_workspace_version_id
    AND source_workspace_lease.status IN ('released', 'fenced')
-   AND workspace_versions.parent_version_id = run_checkpoints.base_workspace_version_id
-   AND workspace_versions.source_workspace_lease_id = source_workspace_lease.id
-   AND workspace_versions.ownership_generation = source_workspace_lease.ownership_generation
-   AND workspace_versions.writer_generation = source_workspace_lease.writer_generation
+   AND computer_versions.parent_version_id = run_checkpoints.base_workspace_version_id
+   AND computer_versions.source_workspace_lease_id = source_workspace_lease.id
+   AND computer_versions.ownership_generation = source_workspace_lease.ownership_generation
+   AND computer_versions.writer_generation = source_workspace_lease.writer_generation
    AND source_workspace_lease.ownership_generation = $14
    AND source_workspace_lease.owner_process_id IS NULL
    AND ($10 <> 'actor' OR (
@@ -723,7 +723,7 @@ SELECT source_lease.worker_group_id,
            AND run_waits.resume_writer_generation IS NULL
            AND ((run_waits.condition_status = 'completed' AND EXISTS (
                SELECT 1
-                 FROM workspace_versions AS child_version
+                 FROM computer_versions AS child_version
                  JOIN workspace_leases AS child_source
                    ON child_source.id = child_version.source_workspace_lease_id
                   AND child_source.workspace_id = child_version.workspace_id
@@ -819,7 +819,7 @@ SELECT source_lease.worker_group_id,
 	   AND run_checkpoints.id = $7
 	   AND (run_waits.resume_workspace_version_id IS NULL
 	        OR run_waits.resume_workspace_version_id = $5)
-	 FOR UPDATE OF run_waits, run_checkpoints, workspace_versions`,
+	 FOR UPDATE OF run_waits, run_checkpoints, computer_versions`,
 			authority.resumeRunWaitID,
 			authority.runID,
 			authority.attemptNumber,

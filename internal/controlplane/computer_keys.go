@@ -121,7 +121,7 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 		// A missing row is initialization only when both authoritative pointers are
 		// empty. Never replace an unavailable/corrupt persisted key with a fresh one.
 		var current, runtime pgtype.UUID
-		if err = tx.QueryRow(ctx, `SELECT c.write_key_id,r.computer_write_key_id FROM workspaces c JOIN runtime_instances r ON r.environment_id=c.environment_id AND r.workspace_id=c.id WHERE r.id=$1`, f.RuntimeID).Scan(&current, &runtime); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT c.write_key_id,r.computer_write_key_id FROM computers c JOIN runtime_instances r ON r.environment_id=c.environment_id AND r.workspace_id=c.id WHERE r.id=$1`, f.RuntimeID).Scan(&current, &runtime); err != nil {
 			return db.ComputerDataKey{}, "", err
 		}
 		if current.Valid || runtime.Valid {
