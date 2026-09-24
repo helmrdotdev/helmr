@@ -10,8 +10,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -100,5 +102,53 @@ func TestRuntimeReservationRetainsExactComputerGeneration(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestExecPlacementUsesGenerationWithoutArtifact(t *testing.T) {
+	f := newRunPlacementFixture(t)
+	root := workspaceHeadVersion(t, f)
+	process := createPendingWorkspaceExec(t, f)
+	candidate := ReadyWorkspaceExecCandidate{OrgID: pgvalue.UUID(f.orgID), ProcessID: pgvalue.UUID(process), ExpectedRevision: 1}
+	reserved, err := f.authority.PlaceWorkspaceExec(f.ctx, candidate)
+	if err != nil || !reserved.RuntimeInstanceID.Valid {
+		t.Fatalf("reserve: %+v %v", reserved, err)
+	}
+	// Model initial generation publication by the reserved Runtime, without a
+	// whole-file artifact. Publication itself has separate HTTP/byte-level tests.
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET artifact_id=NULL,publisher_runtime_instance_id=$2,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('a1',32),'hex') WHERE id=$1`, root, reserved.RuntimeInstanceID)
+	markRunPlacementRuntimeReady(t, f, reserved.RuntimeInstanceID)
+	mounting, err := f.authority.PlaceWorkspaceExec(f.ctx, candidate)
+	if err != nil || !mounting.WorkspaceMountID.Valid {
+		t.Fatalf("mount: %+v %v", mounting, err)
+	}
+	markRunPlacementMountReady(t, f, mounting.WorkspaceMountID)
+	bound, err := f.authority.PlaceWorkspaceExec(f.ctx, candidate)
+	if err != nil || !bound.ProcessBound {
+		t.Fatalf("grant: %+v %v", bound, err)
+	}
+	var origin pgtype.UUID
+	if err := f.pool.QueryRow(f.ctx, `SELECT base_workspace_version_id FROM workspace_processes WHERE id=$1 AND workspace_mount_id=$2 AND status='starting'`, process, bound.WorkspaceMountID).Scan(&origin); err != nil {
+		t.Fatal(err)
+	}
+	if origin != root {
+		t.Fatal("execution source changed")
+	}
+}
+
+func TestExecWriterRejectsArtifactWithoutGeneration(t *testing.T) {
+	f := newRunPlacementFixture(t)
+	root := workspaceHeadVersion(t, f)
+	createPendingWorkspaceExec(t, f)
+	dbtest.MustExec(t, f.ctx, f.pool, `DELETE FROM computer_version_roots WHERE version_id=$1`, root)
+	var ownership, writer int64
+	if err := f.pool.QueryRow(f.ctx, `SELECT ownership_generation,writer_generation FROM computers WHERE id=$1`, f.workspaceID).Scan(&ownership, &writer); err != nil {
+		t.Fatal(err)
+	}
+	_, err := db.New(f.pool).AdvanceWorkspaceExecWriter(f.ctx, db.AdvanceWorkspaceExecWriterParams{
+		OrgID: pgvalue.UUID(f.orgID), ProjectID: pgvalue.UUID(f.projectID), EnvironmentID: pgvalue.UUID(f.environmentID), WorkspaceID: pgvalue.UUID(f.workspaceID), BaseWorkspaceVersionID: root,
+		ExpectedOwnershipGeneration: ownership, ExpectedWriterGeneration: writer, OwnershipGeneration: ownership + 1, WriterGeneration: writer + 1})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing generation granted writer: %v", err)
 	}
 }

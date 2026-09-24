@@ -264,10 +264,13 @@ UPDATE computers
    AND computers.head_version_id = sqlc.arg(base_workspace_version_id)
    AND EXISTS (
        SELECT 1 FROM computer_versions AS base
+       JOIN computer_version_roots root
+         ON root.environment_id=base.environment_id
+        AND root.computer_id=base.workspace_id AND root.version_id=base.id
         WHERE base.workspace_id = computers.id
           AND base.id = computers.head_version_id
           AND base.status = 'committed'
-          AND base.artifact_id IS NOT NULL
+          AND base.environment_id = computers.environment_id
    )
    AND computers.ownership_generation = sqlc.arg(expected_ownership_generation)
    AND computers.writer_generation = sqlc.arg(expected_writer_generation)
