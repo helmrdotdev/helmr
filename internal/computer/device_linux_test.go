@@ -87,8 +87,12 @@ func TestDeviceOwnedKernelLifecycle(t *testing.T) {
 	if err := file.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	root, err := device.Flush(t.Context())
-	if err != nil || root == cfg.Base {
+	capture, err := device.Capture(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capture.Release()
+	if capture.Root() == cfg.Base {
 		t.Fatalf("flush: %v", err)
 	}
 	short, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)

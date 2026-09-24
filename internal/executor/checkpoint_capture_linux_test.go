@@ -67,6 +67,9 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 		if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
 			t.Fatal("capacity released before upload")
 		}
+		if session.artifact.Computer.Capture.(*generationCaptureFixture).released {
+			t.Fatal("capture released before uploads joined")
+		}
 		attempts = append(attempts, d)
 		data, err := io.ReadAll(io.NewSectionReader(f, 0, d.SizeBytes))
 		if err != nil {
@@ -95,6 +98,9 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 	}
 	if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
 		t.Fatal("staging reservation leaked")
+	}
+	if !session.artifact.Computer.Capture.(*generationCaptureFixture).released {
+		t.Fatal("successful capture retention leaked")
 	}
 	if session.closeCount != 0 {
 		t.Fatal("successful source stopped before ready")

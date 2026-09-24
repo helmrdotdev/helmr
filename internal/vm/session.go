@@ -50,7 +50,6 @@ type CheckpointableSession interface {
 	Session
 	SnapshotLimits() (SnapshotLimits, error)
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
-	PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error
 }
 
 // ComputerCaptureSession holds customer execution and device dispatch until
@@ -59,7 +58,6 @@ type ComputerCaptureSession interface {
 	Session
 	SnapshotLimits() (SnapshotLimits, error)
 	PauseComputer(context.Context) (*ComputerSnapshot, error)
-	PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error
 }
 
 type ConnectRequest struct {
@@ -115,8 +113,7 @@ type RuntimeComputer struct {
 // Wait must return when its context is canceled. A rejected bind leaves ownership
 // with the caller; successful binding retains ownership even if launch fails.
 type ComputerDevice interface {
-	Flush(context.Context) (computer.GenerationRoot, error)
-	Publish(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error
+	Capture(context.Context) (computer.CapturedGeneration, error)
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
 	Wait(context.Context) error
@@ -146,9 +143,11 @@ type SnapshotRequest struct {
 	ID string
 }
 
+// ComputerSnapshot transfers retention of the exact cut to its receiver.
+// The receiver releases Capture after all publishers have joined.
 type ComputerSnapshot struct {
 	ComputerID string
-	Root       computer.GenerationRoot
+	Capture    computer.CapturedGeneration
 }
 
 type SnapshotArtifact struct {

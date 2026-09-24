@@ -26,6 +26,7 @@ type terminalCaptureSession struct {
 	disk                            *computer.LocalGeneration
 	pauseErr, limitsErr, publishErr error
 	pauses                          int
+	captures, releases              int
 }
 
 func (s *terminalCaptureSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
@@ -33,20 +34,23 @@ func (s *terminalCaptureSession) PauseComputer(ctx context.Context) (*vm.Compute
 	if s.pauseErr != nil {
 		return nil, s.pauseErr
 	}
-	root, err := s.disk.Flush(ctx)
-	return &vm.ComputerSnapshot{ComputerID: s.artifact.Computer.ComputerID, Root: root}, err
+	capture, err := s.disk.Capture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.captures++
+	return &vm.ComputerSnapshot{ComputerID: s.artifact.Computer.ComputerID, Capture: &generationCaptureFixture{root: capture.Root(), publish: func(ctx context.Context, p computer.ContinuationPublication) error {
+		if s.publishErr != nil {
+			return s.publishErr
+		}
+		return capture.Publish(ctx, p)
+	}, release: func() { s.releases++; capture.Release() }}}, nil
 }
 func (s *terminalCaptureSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	if s.limitsErr != nil {
 		return vm.SnapshotLimits{}, s.limitsErr
 	}
 	return s.checkpointSession.SnapshotLimits()
-}
-func (s *terminalCaptureSession) PublishComputer(ctx context.Context, r computer.GenerationRoot, p computer.ContinuationPublication) error {
-	if s.publishErr != nil {
-		return s.publishErr
-	}
-	return s.disk.Publish(ctx, r, p, 1000)
 }
 func (s *terminalCaptureSession) Close(ctx context.Context) error {
 	err := s.checkpointSession.Close(ctx)
@@ -141,6 +145,9 @@ func TestTerminalComputerCaptureRegistersAndRestoresGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if s := session; s.captures != 1 || s.releases != 1 {
+		t.Fatalf("capture ownership: %d/%d", s.captures, s.releases)
+	}
 	if got != candidate.Disk || session.pauses != 1 || session.closeCount != 1 || registrations != 2 || p.uploads < 2 {
 		t.Fatalf("capture/stop/retry mismatch: %+v", got)
 	}
@@ -183,6 +190,9 @@ func TestTerminalComputerCaptureFailureAlwaysStopsSource(t *testing.T) {
 				s.closeErr = failure
 			}
 			_, err := c.capture(t.Context(), lease, "operation", register)
+			if s.releases != s.captures {
+				t.Fatalf("capture retention leaked: captures=%d releases=%d", s.captures, s.releases)
+			}
 			if err == nil || s.closeCount != 1 {
 				t.Fatalf("error=%v stops=%d", err, s.closeCount)
 			}

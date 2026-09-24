@@ -86,6 +86,9 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		}
 		// All encoders and uploads have joined. These ciphertext files have no VMM
 		// writer, so close and reclaim them even when source shutdown is uncertain.
+		if artifact.Computer != nil && artifact.Computer.Capture != nil {
+			artifact.Computer.Capture.Release()
+		}
 		var cleanupErr error
 		for _, candidate := range candidates {
 			cleanupErr = errors.Join(cleanupErr, candidate.close())
@@ -150,10 +153,10 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	if err != nil {
 		return result, err
 	}
-	if artifact.Computer == nil || artifact.Computer.ComputerID == "" || artifact.Computer.Root.LogicalBytes != shape.ComputerBytes || len(artifact.Memory) != 1 || artifact.VMVCPUCount <= 0 || !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
+	if artifact.Computer == nil || artifact.Computer.Capture == nil || artifact.Computer.ComputerID == "" || artifact.Computer.Capture.Root().LogicalBytes != shape.ComputerBytes || len(artifact.Memory) != 1 || artifact.VMVCPUCount <= 0 || !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
 		return result, errors.New("incomplete or changed paired checkpoint snapshot")
 	}
-	if err := artifact.Computer.Root.Validate(shape.ComputerBytes); err != nil {
+	if err := artifact.Computer.Capture.Root().Validate(shape.ComputerBytes); err != nil {
 		return result, err
 	}
 	inputs := []struct {
@@ -188,13 +191,13 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 			return result, stageErr
 		}
 	}
-	result.Manifest = c.checkpointManifest(request, artifact, artifact.Computer.Root, candidates)
+	result.Manifest = c.checkpointManifest(request, artifact, artifact.Computer.Capture.Root(), candidates)
 	result.Manifest.Phases = append(workerCheckpointPhases(artifact.Phases), workerapi.CheckpointPhase{Name: "capture_checkpoint", DurationMs: durationMilliseconds(time.Since(started))})
 	// The registered descriptors stay fixed through uncertain replies and retries.
 	if err := request.Register(ctx, result.Manifest); err != nil {
 		return result, err
 	}
-	if err := c.session.PublishComputer(ctx, artifact.Computer.Root, c.publication(request)); err != nil {
+	if err := artifact.Computer.Capture.Publish(ctx, c.publication(request)); err != nil {
 		return result, err
 	}
 	for _, candidate := range candidates {

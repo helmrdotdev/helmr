@@ -2185,6 +2185,12 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
+	transferredCapture := false
+	defer func() {
+		if !transferredCapture {
+			capturedComputer.Capture.Release()
+		}
+	}()
 	recordPhase("pause_and_sync_disks", started)
 	started = time.Now()
 	if err := captureSnapshotState(ctx, s.machine.Cfg.SocketPath, s.jailRoot, memName, stateName, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
@@ -2263,6 +2269,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return vm.SnapshotArtifact{}, fmt.Errorf("remove raw checkpoint memory: %w", err)
 	}
 	cleanupRawSnapshot = false
+	transferredCapture = true
 	return vm.SnapshotArtifact{
 		Computer:            capturedComputer,
 		RuntimeBackend:      "firecracker",

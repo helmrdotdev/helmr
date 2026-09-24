@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -30,11 +29,11 @@ func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot,
 	if s.topology.Computer.Device == nil {
 		return nil, errors.New("owned generation device required for capture")
 	}
-	root, err := s.topology.Computer.Device.Flush(ctx)
+	capture, err := s.topology.Computer.Device.Capture(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return &vm.ComputerSnapshot{ComputerID: s.topology.Computer.ComputerID, Root: root}, nil
+	return &vm.ComputerSnapshot{ComputerID: s.topology.Computer.ComputerID, Capture: capture}, nil
 }
 
 // syncPausedDisks requires an acknowledged API Pause, whose dispatch hold must
@@ -174,11 +173,4 @@ func closeRuntimeDiskFiles(files map[string]*os.File) error {
 		}
 	}
 	return result
-}
-
-func (s *guestSession) PublishComputer(ctx context.Context, root computer.GenerationRoot, publisher computer.ContinuationPublication) error {
-	if s.topology.Computer == nil || s.topology.Computer.Device == nil {
-		return errors.New("computer publication owner unavailable")
-	}
-	return s.topology.Computer.Device.Publish(ctx, root, publisher)
 }

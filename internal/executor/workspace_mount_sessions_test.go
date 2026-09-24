@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"io"
 	"net"
 	"sync/atomic"
@@ -414,10 +413,6 @@ func (s *countingReadWriteCloser) Close() error {
 
 func (s *borrowedParentSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
-}
-
-func (*borrowedParentSession) PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error {
-	return nil
 }
 
 func (s *borrowedParentSession) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {

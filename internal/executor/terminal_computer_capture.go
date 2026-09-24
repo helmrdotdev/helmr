@@ -39,15 +39,18 @@ func (c terminalComputerCapturer) capture(ctx context.Context, lease workerapi.R
 	if err != nil {
 		return result, err
 	}
-	if disk == nil || disk.ComputerID != lease.WorkspaceID || disk.Root.Validate(shape.ComputerBytes) != nil {
+	if disk != nil && disk.Capture != nil {
+		defer disk.Capture.Release()
+	}
+	if disk == nil || disk.Capture == nil || disk.ComputerID != lease.WorkspaceID || disk.Capture.Root().Validate(shape.ComputerBytes) != nil {
 		return result, errors.New("paused Computer differs from finalization authority")
 	}
-	result = workerapi.CheckpointComputer{ComputerID: disk.ComputerID, LogicalBytes: disk.Root.LogicalBytes, Root: disk.Root}
+	result = workerapi.CheckpointComputer{ComputerID: disk.ComputerID, LogicalBytes: disk.Capture.Root().LogicalBytes, Root: disk.Capture.Root()}
 	request := workerapi.RegisterRunFinalizationRequest{Lease: lease.Fence(), OperationID: operationID, Disk: result}
 	if err = retryRunLeaseRequest(ctx, func(ctx context.Context) error { return register(ctx, request) }); err != nil {
 		return result, err
 	}
-	if err = c.session.PublishComputer(ctx, disk.Root, c.publication(lease, operationID)); err != nil {
+	if err = disk.Capture.Publish(ctx, c.publication(lease, operationID)); err != nil {
 		return result, err
 	}
 	return result, nil

@@ -116,18 +116,22 @@ func (d *Device) LinkInto(ctx context.Context, directory string, uid, gid int) (
 	return target, nil
 }
 
-// Flush requires the VMM dispatch hold. It drains the kernel device first, then
-// returns the fsynced local generation. This is not remote publication.
-func (d *Device) Flush(ctx context.Context) (GenerationRoot, error) {
+// Capture requires the VMM dispatch hold. It drains the kernel device, then
+// atomically flushes and retains the exact cut through subsequent collection.
+func (d *Device) Capture(ctx context.Context) (CapturedGeneration, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed || d.attachment == nil {
-		return GenerationRoot{}, errors.New("device attachment unavailable")
+		return nil, errors.New("device attachment unavailable")
 	}
 	if err := d.attachment.Flush(ctx); err != nil {
-		return GenerationRoot{}, err
+		return nil, err
 	}
-	return d.disk.Flush(ctx)
+	capture, err := d.disk.Capture(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return capture, nil
 }
 
 // Wait reports export termination, not consumer exit or safe device release.
@@ -173,8 +177,4 @@ func (d *Device) Close(ctx context.Context) error {
 	}
 	d.closed = true
 	return nil
-}
-
-func (d *Device) Publish(ctx context.Context, root GenerationRoot, publisher ContinuationPublication) error {
-	return d.disk.Publish(ctx, root, publisher, 1<<20)
 }

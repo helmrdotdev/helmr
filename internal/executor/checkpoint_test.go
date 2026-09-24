@@ -385,6 +385,9 @@ func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
 				t.Fatalf("stream closed %d times", stream.closed)
 			}
 			assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
+			if len(session.snapshotRequests) > 0 && artifact.Computer != nil && !artifact.Computer.Capture.(*generationCaptureFixture).released {
+				t.Fatal("capture retention leaked after failure")
+			}
 			if len(session.snapshotRequests) > 0 && artifact.VMState.Path != "" {
 				assertRemoved(t, artifact.VMState.Path)
 			}
@@ -697,7 +700,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		t.Fatal(err)
 	}
 	return vm.SnapshotArtifact{
-		Computer:            &vm.ComputerSnapshot{ComputerID: "01912345-6789-7abc-8def-0123456789ab", Root: testGenerationRoot(4096)},
+		Computer:            &vm.ComputerSnapshot{ComputerID: "01912345-6789-7abc-8def-0123456789ab", Capture: &generationCaptureFixture{root: testGenerationRoot(4096)}},
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           "sha256:runtime",
 		RuntimeArch:         "x86_64",
@@ -819,6 +822,29 @@ func (c *checkpointCAS) Publish(ctx context.Context, d cas.Descriptor, file *os.
 }
 
 func testCheckpointPublication(CheckpointRequest) computer.ContinuationPublication { return nil }
-func (s *checkpointSession) PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error {
+
+type generationCaptureFixture struct {
+	root     computer.GenerationRoot
+	publish  func(context.Context, computer.ContinuationPublication) error
+	release  func()
+	released bool
+}
+
+func (c *generationCaptureFixture) Root() computer.GenerationRoot { return c.root }
+func (c *generationCaptureFixture) Publish(ctx context.Context, p computer.ContinuationPublication) error {
+	if c.released {
+		return errors.New("capture already released")
+	}
+	if c.publish != nil {
+		return c.publish(ctx, p)
+	}
 	return nil
+}
+func (c *generationCaptureFixture) Release() {
+	if !c.released {
+		c.released = true
+		if c.release != nil {
+			c.release()
+		}
+	}
 }

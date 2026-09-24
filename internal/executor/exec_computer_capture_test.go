@@ -31,12 +31,15 @@ func (s *execCaptureSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 }
 func (s *execCaptureSession) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {
 	*s.events = append(*s.events, "pause")
-	return &vm.ComputerSnapshot{ComputerID: "computer", Root: s.root}, s.pauseErr
+	if s.pauseErr != nil {
+		return nil, s.pauseErr
+	}
+	return &vm.ComputerSnapshot{ComputerID: "computer", Capture: &generationCaptureFixture{root: s.root, publish: func(context.Context, computer.ContinuationPublication) error {
+		*s.events = append(*s.events, "publish")
+		return s.publishErr
+	}, release: func() { *s.events = append(*s.events, "release") }}}, nil
 }
-func (s *execCaptureSession) PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error {
-	*s.events = append(*s.events, "publish")
-	return s.publishErr
-}
+
 func (s *execCaptureSession) Close(ctx context.Context) error {
 	*s.events = append(*s.events, "close")
 	return s.workspaceMaterializerTestSession.Close(ctx)
@@ -129,7 +132,7 @@ func TestExecComputerCaptureRequiresWritebackPublicationAndPhysicalClose(t *test
 				t.Fatalf("error=%v", err)
 			}
 			if success {
-				want := []string{"pause", "publish", "stage", "close", "settle"}
+				want := []string{"pause", "publish", "stage", "release", "close", "settle"}
 				if mode == "discard" {
 					want = []string{"close", "settle"}
 				}
@@ -138,6 +141,17 @@ func TestExecComputerCaptureRequiresWritebackPublicationAndPhysicalClose(t *test
 				}
 			} else if client.stops != 0 || session.closeCount() == 0 {
 				t.Fatalf("failed capture settled or did not stop: %v", events)
+			}
+			if mode == "publish fails" || mode == "stage rejects" || mode == "close fails" {
+				found := false
+				for _, event := range events {
+					if event == "release" {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("capture leaked on failure: %v", events)
+				}
 			}
 			if mode == "success" && (len(client.captures) != 1 || client.captures[0].Computer.Root != session.root) {
 				t.Fatal("capture root changed")

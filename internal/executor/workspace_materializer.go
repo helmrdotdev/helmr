@@ -1146,14 +1146,17 @@ func (m WorkspaceMaterializer) captureExecComputer(ctx context.Context, session 
 	if err != nil {
 		return err
 	}
-	if disk == nil || disk.ComputerID != mount.WorkspaceID || disk.Root.Validate(shape.ComputerBytes) != nil {
+	if disk != nil && disk.Capture != nil {
+		defer disk.Capture.Release()
+	}
+	if disk == nil || disk.Capture == nil || disk.ComputerID != mount.WorkspaceID || disk.Capture.Root().Validate(shape.ComputerBytes) != nil {
 		return errors.New("paused Computer differs from exec authority")
 	}
 	publisher := execComputerPublisher{client: client, objects: m.ComputerObjects, request: workerapi.ExecComputerObjectRequest{OrgID: mount.OrgID, WorkspaceMountID: mount.ID}}
-	if err = c.PublishComputer(ctx, disk.Root, publisher); err != nil {
+	if err = disk.Capture.Publish(ctx, publisher); err != nil {
 		return err
 	}
-	request := workerapi.WorkspaceMountCaptureRequest{OrgID: mount.OrgID, WorkspaceMountID: mount.ID, Computer: workerapi.CheckpointComputer{ComputerID: disk.ComputerID, LogicalBytes: disk.Root.LogicalBytes, Root: disk.Root}}
+	request := workerapi.WorkspaceMountCaptureRequest{OrgID: mount.OrgID, WorkspaceMountID: mount.ID, Computer: workerapi.CheckpointComputer{ComputerID: disk.ComputerID, LogicalBytes: disk.Capture.Root().LogicalBytes, Root: disk.Capture.Root()}}
 	return retryRunLeaseRequest(ctx, func(ctx context.Context) error { _, err := client.CaptureWorkspaceMount(ctx, request); return err })
 }
 

@@ -16,10 +16,11 @@ import (
 )
 
 type ownedComputerFixture struct {
-	excluded <-chan struct{}
-	closeErr error
-	closes   int
-	failure  chan error
+	excluded           <-chan struct{}
+	closeErr           error
+	closes             int
+	failure            chan error
+	captures, releases int
 }
 
 func (d *ownedComputerFixture) BindConsumer(excluded <-chan struct{}) error {
@@ -187,9 +188,23 @@ func TestComputerCleanupWaitsForStartupBeforeDeviceBinding(t *testing.T) {
 	}
 }
 
-func (*ownedComputerFixture) Flush(context.Context) (computer.GenerationRoot, error) {
-	return computer.GenerationRoot{}, nil
+func (d *ownedComputerFixture) Capture(context.Context) (computer.CapturedGeneration, error) {
+	d.captures++
+	return &ownedCaptureFixture{owner: d}, nil
 }
-func (*ownedComputerFixture) Publish(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error {
-	return nil
+
+type ownedCaptureFixture struct {
+	owner    *ownedComputerFixture
+	released bool
+}
+
+func (*ownedCaptureFixture) Root() computer.GenerationRoot { return computer.GenerationRoot{} }
+func (*ownedCaptureFixture) Publish(context.Context, computer.ContinuationPublication) error {
+	return errors.New("unexpected publication")
+}
+func (c *ownedCaptureFixture) Release() {
+	if !c.released {
+		c.released = true
+		c.owner.releases++
+	}
 }

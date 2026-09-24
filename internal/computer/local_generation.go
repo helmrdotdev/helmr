@@ -363,30 +363,3 @@ func (p *LocalGeneration) Close() error {
 	p.closed = true
 	return errors.Join(p.disk.Close(), p.lock.Close())
 }
-
-// Publish exports the root returned by a prior successful Flush. Local bytes stay
-// retained while newer writes and flushes proceed. Close joins publication before
-// clearing keys. The caller must keep remote source/key ownership until the
-// generation has been committed by the Control Plane; this does not commit it.
-func (p *LocalGeneration) Publish(ctx context.Context, root GenerationRoot, publisher ContinuationPublication, maxObjects int) error {
-	p.life.RLock()
-	defer p.life.RUnlock()
-	if p.closed {
-		return os.ErrClosed
-	}
-	p.commit.Lock()
-	capacity := p.head.Base.LogicalBytes
-	pin := &LocalCapture{}
-	p.captures[pin] = root
-	p.commit.Unlock()
-	defer func() { p.commit.Lock(); delete(p.captures, pin); p.commit.Unlock() }()
-	if root.LogicalBytes != capacity {
-		return errors.New("publication capacity differs from admitted Computer")
-	}
-	locator, err := root.Locator(root.LogicalBytes)
-	if err != nil {
-		return err
-	}
-	_, err = publishGeneration(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, root.LogicalBytes, maxObjects, publisher, publisher)
-	return err
-}

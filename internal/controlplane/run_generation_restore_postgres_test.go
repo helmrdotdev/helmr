@@ -87,10 +87,12 @@ func TestRunGenerationPublicationRestoresAfterSourceRemoval(t *testing.T) {
 	if _, err := local.WriteAt(t.Context(), want, 4096); err != nil {
 		t.Fatal(err)
 	}
-	root, err := local.Flush(t.Context())
+	held, err := local.Capture(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer held.Release()
+	root := held.Root()
 	completion.Workspace.Captured.Disk.Root = root
 	request := workerapi.RegisterRunFinalizationRequest{Lease: completion.Lease, OperationID: completion.Workspace.Captured.Receipt.OperationID, Disk: completion.Workspace.Captured.Disk}
 	if err := f.server.registerRunFinalization(t.Context(), f.worker, request); err != nil {
@@ -98,7 +100,7 @@ func TestRunGenerationPublicationRestoresAfterSourceRemoval(t *testing.T) {
 	}
 	publisher := runHTTPPublication{client, remote, workerapi.RunComputerObjectRequest{Lease: completion.Lease, OperationID: request.OperationID}}
 	for range 2 {
-		if err := local.Publish(t.Context(), root, publisher, 1000); err != nil {
+		if err := held.Publish(t.Context(), publisher); err != nil {
 			t.Fatal(err)
 		}
 	}

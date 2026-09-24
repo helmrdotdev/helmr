@@ -96,11 +96,20 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				}
 			}
 
-			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4"), Device: &ownedComputerFixture{}}
+			device := &ownedComputerFixture{}
+			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4"), Device: device}
 			session.cfg.MemoryMiB = 4
 			session.cfg.ScratchDiskMiB = 4
 			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()
 			_, err = session.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint"})
+			if device.captures != device.releases {
+				t.Fatalf("capture retention leaked: %d/%d", device.captures, device.releases)
+			}
+			if stage == "snapshot rejected" || stage == "invalid runtime identity" || stage == "invalid manifest" {
+				if device.captures != 1 {
+					t.Fatal("post-capture failure did not acquire capture")
+				}
+			}
 			if err == nil {
 				t.Fatal("expected capture failure")
 			}

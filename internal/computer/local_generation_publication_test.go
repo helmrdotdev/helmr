@@ -62,13 +62,15 @@ func TestLocalGenerationPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T
 			if _, err = disk.WriteAt(t.Context(), []byte{8}, 4096); err != nil {
 				t.Fatal(err)
 			}
-			saved, err := disk.Flush(t.Context())
+			capture, err := disk.Capture(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer capture.Release()
+			saved := capture.Root()
 			publisher.fail = failure
 			publisher.rejectReuse = failure == "reuse"
-			err = disk.Publish(t.Context(), saved, publisher, 1000)
+			err = capture.Publish(t.Context(), publisher)
 			if failure != "" && err == nil {
 				t.Fatal("uncertain publication succeeded")
 			}
@@ -85,7 +87,7 @@ func TestLocalGenerationPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T
 			if _, err = disk.Flush(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			if err = disk.Publish(t.Context(), saved, publisher, 1000); err != nil {
+			if err = capture.Publish(t.Context(), publisher); err != nil {
 				t.Fatal(err)
 			}
 			if publisher.reused == 0 {
@@ -103,7 +105,11 @@ func TestLocalGenerationPublicationRetainsOldSnapshotAcrossNewFlush(t *testing.T
 			if err != nil || got[0] != 8 {
 				t.Fatalf("saved bytes changed: %v %v", got, err)
 			}
-			if err = disk.Publish(t.Context(), saved, publisher, 1); err == nil {
+			savedLocator, err := saved.Locator(saved.LogicalBytes)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = publishGeneration(t.Context(), disk.store, disk.disk.writer.Source, cfg.Scope, cfg.Keys, savedLocator, saved.LogicalBytes, 1, publisher, publisher); err == nil {
 				t.Fatal("object budget not enforced")
 			}
 		})
@@ -146,15 +152,17 @@ func TestLocalGenerationPublicationAllowsConcurrentFlush(t *testing.T) {
 	if _, err = disk.WriteAt(t.Context(), []byte{2}, 7); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := disk.Flush(t.Context())
+	capture, err := disk.Capture(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer capture.Release()
+	saved := capture.Root()
 	publisher := &blockedGenerationPublication{continuationTestPublication: base, entered: make(chan struct{}), resume: make(chan struct{})}
 	done := make(chan error, 1)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	go func() { done <- disk.Publish(ctx, saved, publisher, 1000) }()
+	go func() { done <- capture.Publish(ctx, publisher) }()
 	select {
 	case <-publisher.entered:
 	case <-ctx.Done():
@@ -201,10 +209,12 @@ func TestLocalGenerationPublicationRejectsMissingUnpublishedSegment(t *testing.T
 	if _, err = disk.WriteAt(t.Context(), []byte{8}, 4096); err != nil {
 		t.Fatal(err)
 	}
-	saved, err := disk.Flush(t.Context())
+	capture, err := disk.Capture(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer capture.Release()
+	saved := capture.Root()
 	locator, err = saved.Locator(saved.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +258,7 @@ func TestLocalGenerationPublicationRejectsMissingUnpublishedSegment(t *testing.T
 	if !removed {
 		t.Fatal("fixture did not contain local segment")
 	}
-	if err = disk.Publish(t.Context(), saved, publisher, 1000); err == nil {
+	if err = capture.Publish(t.Context(), publisher); err == nil {
 		t.Fatal("missing unpublished bytes treated as retained")
 	}
 	if _, ok := publisher.certified[saved.Pack.Digest]; ok {

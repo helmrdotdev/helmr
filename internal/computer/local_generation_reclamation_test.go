@@ -102,7 +102,7 @@ func TestLocalCollectionRetainsCapturedAndDirtySuccessor(t *testing.T) {
 	if err != nil || n == 0 {
 		t.Fatalf("released capture not collected: %d %v", n, err)
 	}
-	if err = capture.Publish(t.Context(), nil, 1000); !errors.Is(err, os.ErrClosed) {
+	if err = capture.Publish(t.Context(), nil); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("released capture usable: %v", err)
 	}
 }
@@ -213,7 +213,7 @@ func TestLocalCollectionDuringPublication(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- capture.Publish(ctx, publisher, 1000) }()
+	go func() { done <- capture.Publish(ctx, publisher) }()
 	<-publisher.entered
 	p.WriteAt(t.Context(), []byte{3}, 7)
 	if _, err = p.Flush(t.Context()); err != nil {

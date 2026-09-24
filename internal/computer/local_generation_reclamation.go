@@ -26,13 +26,24 @@ type LocalCapture struct {
 
 func (c *LocalCapture) Root() GenerationRoot { return c.root }
 
-func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublication, maxObjects int) error {
+func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublication) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.released {
 		return os.ErrClosed
 	}
-	return c.owner.Publish(ctx, c.root, publisher, maxObjects)
+	p := c.owner
+	p.life.RLock()
+	defer p.life.RUnlock()
+	if p.closed {
+		return os.ErrClosed
+	}
+	locator, err := c.root.Locator(c.root.LogicalBytes)
+	if err != nil {
+		return err
+	}
+	_, err = publishGeneration(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, c.root.LogicalBytes, 1<<20, publisher, publisher)
+	return err
 }
 
 func (c *LocalCapture) Release() {
