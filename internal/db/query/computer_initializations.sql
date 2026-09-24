@@ -1,7 +1,7 @@
 -- These are transaction primitives. The publication owner must lock and validate
 -- current preparation authority before registration and publication. Publication
--- commits the root and consumes its candidate atomically. A receipt is not an execution
--- or upload grant. No remote deletion is authorized by these queries.
+-- commits the root and Computer-owned boot configuration and consumes its candidate
+-- atomically. A receipt is not an execution or upload grant. No remote deletion is authorized by these queries.
 -- A registration conflict (no row) is resolved with GetComputerInitialization:
 -- mismatched, consumed and abandoned candidates must not be registered anew.
 -- A digest already owned by another runtime raises a unique violation; replacement
@@ -47,8 +47,8 @@ SELECT * FROM computer_initializations
    AND runtime_instance_id = sqlc.arg(runtime_instance_id);
 
 -- The caller owns current preparation authority and has verified the object.
--- Root publication and candidate consumption are one statement: neither can be
--- committed alone. Historical receipt retrieval uses GetComputerInitialization;
+-- Root publication, Computer configuration and candidate consumption are one
+-- statement: none can be committed alone. Historical receipt retrieval uses GetComputerInitialization;
 -- this mutation never reopens a consumed candidate or grants further execution.
 -- name: PublishComputerInitialization :one
 WITH candidate AS MATERIALIZED (
@@ -81,13 +81,24 @@ WITH candidate AS MATERIALIZED (
        AND workspaces.environment_id = version.environment_id
        AND workspaces.id = version.workspace_id
        AND workspaces.head_version_id = version.id
+       AND workspaces.initial_config IS NULL
     RETURNING version.id, version.artifact_id, version.published_at
+), configured AS (
+    UPDATE workspaces AS computer
+       SET initial_config = candidate.initial_config,
+           updated_at = published.published_at
+      FROM candidate, published
+     WHERE computer.environment_id = candidate.environment_id
+       AND computer.id = candidate.computer_id
+       AND published.id = candidate.version_id
+    RETURNING computer.id
 )
 UPDATE computer_initializations AS initialization
    SET status = 'consumed', artifact_id = published.artifact_id,
        consumed_at = published.published_at
-  FROM published
+  FROM published, configured
  WHERE initialization.id = sqlc.arg(id)
+   AND initialization.computer_id = configured.id
    AND initialization.version_id = published.id
    AND initialization.status = 'registered'
 RETURNING initialization.*;

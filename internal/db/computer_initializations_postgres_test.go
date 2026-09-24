@@ -131,6 +131,14 @@ func TestComputerInitializationConsumptionIsTransactional(t *testing.T) {
 	f := runtest.New(t)
 	q := db.New(f.Pool)
 	p := initializationParams(t, f)
+	assertConfig := func(query db.DBTX, published bool) {
+		t.Helper()
+		var matches bool
+		if err := query.QueryRow(t.Context(), `SELECT CASE WHEN $2 THEN initial_config=$3::jsonb ELSE initial_config IS NULL END FROM workspaces WHERE id=$1`, p.ComputerID, published, p.InitialConfig).Scan(&matches); err != nil || !matches {
+			t.Fatalf("Computer config publication=%v: matches=%v err=%v", published, matches, err)
+		}
+	}
+	assertConfig(f.Pool, false)
 	// A transaction can begin before another transaction creates the candidate.
 	// Its old transaction timestamp must not backdate a consumption receipt.
 	tx, err := f.Pool.Begin(t.Context())
@@ -146,9 +154,11 @@ func TestComputerInitializationConsumptionIsTransactional(t *testing.T) {
 	if err != nil || consumed.Status != "consumed" {
 		t.Fatalf("consume: %+v, %v", consumed, err)
 	}
+	assertConfig(tx, true)
 	if err := tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	assertConfig(f.Pool, false)
 	retained, err := q.GetComputerInitialization(t.Context(), initializationGet(p))
 	if err != nil || retained.Status != "registered" || retained.ArtifactID.Valid {
 		t.Fatalf("rollback lost candidate: %+v, %v", retained, err)
@@ -160,6 +170,7 @@ func TestComputerInitializationConsumptionIsTransactional(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertInitializationRoot(t, f, p, "committed", artifact)
+	assertConfig(f.Pool, true)
 	if _, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("consumed candidate published again: %v", err)
 	}
@@ -488,5 +499,28 @@ FROM workspace_versions v JOIN workspace_leases l ON l.workspace_id=v.workspace_
 	args.WorkerInstanceID = pgvalue.UUID(uuid.NewV7())
 	if _, err = q.GetWorkerComputerInitialization(t.Context(), args); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("another Worker read receipt: %v", err)
+	}
+}
+
+func TestComputerInitializationDoesNotReplaceComputerConfig(t *testing.T) {
+	f := runtest.New(t)
+	q := db.New(f.Pool)
+	p := initializationParams(t, f)
+	if _, err := q.RegisterComputerInitialization(t.Context(), p); err != nil {
+		t.Fatal(err)
+	}
+	artifact := initializationArtifact(t, f, f.Pool, p)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspaces SET initial_config='{"User":"existing"}' WHERE id=$1`, p.ComputerID)
+	if _, err := q.PublishComputerInitialization(t.Context(), initializationConsume(p, artifact)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("publication over existing Computer config: %v", err)
+	}
+	assertInitializationRoot(t, f, p, "initializing", pgtype.UUID{})
+	row, err := q.GetComputerInitialization(t.Context(), initializationGet(p))
+	if err != nil || row.Status != "registered" {
+		t.Fatalf("failed publication consumed receipt: %v", err)
+	}
+	var user string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT initial_config->>'User' FROM workspaces WHERE id=$1`, p.ComputerID).Scan(&user); err != nil || user != "existing" {
+		t.Fatalf("existing config changed: %q %v", user, err)
 	}
 }

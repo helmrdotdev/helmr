@@ -844,6 +844,7 @@ CREATE TABLE workspaces (
     ownership_generation BIGINT NOT NULL DEFAULT 0 CHECK (ownership_generation >= 0),
     writer_generation BIGINT NOT NULL DEFAULT 0 CHECK (writer_generation >= 0),
     head_version_id UUID,
+    initial_config JSONB CHECK (initial_config IS NULL OR jsonb_typeof(initial_config) = 'object'),
     write_key_id UUID,
     write_key_available BOOLEAN GENERATED ALWAYS AS (true) STORED,
     status TEXT NOT NULL DEFAULT 'active'

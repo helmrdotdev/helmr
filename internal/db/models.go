@@ -1216,6 +1216,7 @@ type Workspace struct {
 	OwnershipGeneration          int64              `json:"ownership_generation"`
 	WriterGeneration             int64              `json:"writer_generation"`
 	HeadVersionID                pgtype.UUID        `json:"head_version_id"`
+	InitialConfig                []byte             `json:"initial_config"`
 	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
 	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
 	Status                       string             `json:"status"`

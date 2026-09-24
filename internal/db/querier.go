@@ -512,8 +512,8 @@ type Querier interface {
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
 	// The caller owns current preparation authority and has verified the object.
-	// Root publication and candidate consumption are one statement: neither can be
-	// committed alone. Historical receipt retrieval uses GetComputerInitialization;
+	// Root publication, Computer configuration and candidate consumption are one
+	// statement: none can be committed alone. Historical receipt retrieval uses GetComputerInitialization;
 	// this mutation never reopens a consumed candidate or grants further execution.
 	PublishComputerInitialization(ctx context.Context, arg PublishComputerInitializationParams) (ComputerInitialization, error)
 	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
@@ -542,8 +542,8 @@ type Querier interface {
 	RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error)
 	// These are transaction primitives. The publication owner must lock and validate
 	// current preparation authority before registration and publication. Publication
-	// commits the root and consumes its candidate atomically. A receipt is not an execution
-	// or upload grant. No remote deletion is authorized by these queries.
+	// commits the root and Computer-owned boot configuration and consumes its candidate
+	// atomically. A receipt is not an execution or upload grant. No remote deletion is authorized by these queries.
 	// A registration conflict (no row) is resolved with GetComputerInitialization:
 	// mismatched, consumed and abandoned candidates must not be registered anew.
 	// A digest already owned by another runtime raises a unique violation; replacement

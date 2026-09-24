@@ -333,4 +333,12 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 		continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != published.VersionID {
 		t.Fatalf("published: %+v", continued)
 	}
+	// Initial configuration is Computer state. Projection must not require an
+	// upload receipt, even after the deployment's defaults change. Deleting the
+	// fixture receipt here proves that dependency is absent; it is not a GC policy.
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_initializations WHERE runtime_instance_id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=jsonb_set(manifest,'{image,config}', '{"User":"changed"}') WHERE id=$1`, f.WorkspaceDefinitionID)
+	if source := read(); source.Config.User != "root" || source.Config.WorkingDir != "/workspace" || source.Disk == nil || source.Disk.Digest != f.request.Disk.Digest {
+		t.Fatalf("continuation depended on receipt or new deployment: %+v", source)
+	}
 }
