@@ -62,8 +62,12 @@ func TestProductionWriterAgainstOracle(t *testing.T) {
 					}
 					// Independent physical closure verification checks every directory/page and
 					// segment record, including content not selected by the individual reads.
-					if _, err = Certify(c, data, packs, root, 10000, 128<<20); err != nil {
+					expected, err := Certify(c, data, packs, root, 10000, 128<<20)
+					if err != nil {
 						t.Fatal(err)
+					}
+					if actual := inspectProductionClosure(t, c, source, root); actual != expected {
+						t.Fatalf("physical closure mismatch: %+v != %+v", actual, expected)
 					}
 					for block := range values {
 						want := make([]byte, 4096)
@@ -90,4 +94,53 @@ func TestProductionWriterAgainstOracle(t *testing.T) {
 			})
 		}
 	}
+}
+
+// inspectProductionClosure exercises the production per-object verifier against
+// the independent complete-closure proof. Its cache is local to this immutable
+// fixture; it supplies no persisted certificate or retention authority.
+func inspectProductionClosure(t *testing.T, c *Codec, source treeRanges, root blockformat.Locator) Certification {
+	t.Helper()
+	packs := map[blockformat.PackRef]blockformat.PackInspection{}
+	segments := map[blockformat.Ref]bool{}
+	var report Certification
+	var visit func(blockformat.PackRef) blockformat.PackInspection
+	visit = func(ref blockformat.PackRef) blockformat.PackInspection {
+		if p, ok := packs[ref]; ok {
+			return p
+		}
+		p, err := blockformat.InspectPack(t.Context(), source, c.Scope, c.Keys, ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packs[ref] = p
+		report.Packs++
+		report.Bytes += ref.Size
+		for _, page := range p.Pages {
+			for _, segment := range page.Segments {
+				if segments[segment] {
+					continue
+				}
+				if err = blockformat.InspectSegment(t.Context(), source, c.Scope, c.Keys[segment.Key], segment); err != nil {
+					t.Fatal(err)
+				}
+				segments[segment] = true
+				report.Segments++
+				report.Bytes += segment.Size
+			}
+			for _, child := range page.Children {
+				if child.Locator.Pack.Rank >= ref.Rank {
+					t.Fatal("non-decreasing dependency")
+				}
+				if err = visit(child.Locator.Pack).CheckNode(child); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		return p
+	}
+	if err := visit(root.Pack).CheckRoot(root, 32<<30); err != nil {
+		t.Fatal(err)
+	}
+	return report
 }
