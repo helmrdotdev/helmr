@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"sort"
 )
 
 const MaxBlocks = 1 << 28 // At most 1 TiB with 4 KiB blocks.
@@ -162,34 +161,8 @@ func OpenTree(ctx context.Context, source RangeSource, scope string, keys map[st
 }
 func (t *Tree) Capacity() int64 { return t.shape.Capacity }
 func (t *Tree) ReadBlock(ctx context.Context, block uint64) ([]byte, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	if block >= uint64(t.shape.Capacity/BlockSize) {
 		return nil, errors.New("generation block bounds")
 	}
-	ref := t.shape.Index
-	start := uint64(0)
-	for level := t.shape.Level; level >= 0; level-- {
-		if ref == nil {
-			return make([]byte, BlockSize), nil
-		}
-		n, err := ReadNode(ctx, t.source, t.scope, t.keys, *ref, t.shape, level, start)
-		if err != nil {
-			return nil, err
-		}
-		slot := int((block - start) / stride(t.shape.Fanout, level))
-		i := sort.Search(len(n.Entries), func(i int) bool { return n.Entries[i].Slot >= slot })
-		if i == len(n.Entries) || n.Entries[i].Slot != slot {
-			return make([]byte, BlockSize), nil
-		}
-		e := n.Entries[i]
-		if level == 0 {
-			segment := n.Segments[e.Segment]
-			return ReadBlock(ctx, t.source, t.scope, t.keys[segment.Key], segment, e.Record)
-		}
-		ref = e.Child
-		start += uint64(slot) * stride(t.shape.Fanout, level)
-	}
-	return nil, errors.New("invalid generation tree")
+	return t.ReadRange(ctx, int64(block)*BlockSize, BlockSize)
 }

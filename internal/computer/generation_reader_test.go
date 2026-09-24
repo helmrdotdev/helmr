@@ -228,3 +228,63 @@ func TestGenerationTreeRejectsMalformedRoots(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerationRangeReads(t *testing.T) {
+	f := newGenerationFixture(t)
+	const capacity = 128 * 4096
+	segment := f.segment()
+	left := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Segments: []blockformat.Ref{segment}, Entries: []blockformat.Entry{{Slot: 63}}})
+	right := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Start: 64, Segments: []blockformat.Ref{segment}, Entries: []blockformat.Entry{{Slot: 1}}})
+	index := f.page(blockformat.NodeKind, 2, blockformat.Node{Capacity: capacity, Fanout: 64, Level: 1, Entries: []blockformat.Entry{{Slot: 0, Child: &left}, {Slot: 1, Child: &right}}})
+	root := f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Level: 1, Index: &index})
+	tree, err := OpenGeneration(t.Context(), f.source, "scope", f.keys, root, capacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := f.source.calls
+	got, err := tree.ReadRange(t.Context(), 63*4096-2, 8196)
+	want := make([]byte, 8196)
+	copy(want[2:], bytes.Repeat([]byte{9}, 4096))
+	copy(want[8194:], []byte{9, 9})
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("unaligned cross-node range: %v", err)
+	}
+	// One index, two leaves and two (header, frame) pairs. No metadata path
+	// reread for adjacent blocks, including the absent block between data.
+	if calls := f.source.calls - before; calls != 7 {
+		t.Fatalf("range read repeated paths: %d reads", calls)
+	}
+	before = f.source.calls
+	for _, request := range []struct {
+		offset int64
+		length int
+	}{
+		{-1, 1}, {capacity, 1}, {capacity - 1, 2}, {0, -1}, {0, blockformat.MaxReadBytes + 1}, {1<<63 - 1, 1},
+	} {
+		if data, err := tree.ReadRange(t.Context(), request.offset, request.length); err == nil || data != nil {
+			t.Fatalf("invalid read accepted: %+v", request)
+		}
+	}
+	if data, err := tree.ReadRange(t.Context(), capacity, 0); err != nil || len(data) != 0 {
+		t.Fatalf("empty boundary read: %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if data, err := tree.ReadRange(ctx, 0, 4096); err == nil || data != nil {
+		t.Fatal("cancelled range returned data")
+	}
+	if f.source.calls != before {
+		t.Fatal("invalid, empty or cancelled read performed I/O")
+	}
+	// A missing branch outside the request is irrelevant. Crossing into it
+	// must fail without returning the successfully read prefix as a valid range.
+	if err := f.source.Delete(t.Context(), "sha256:"+hex.EncodeToString(right.Pack.Digest[:])); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := tree.ReadRange(t.Context(), 63*4096, 4096); err != nil || !bytes.Equal(data, bytes.Repeat([]byte{9}, 4096)) {
+		t.Fatalf("unrequested missing branch affected read: %v", err)
+	}
+	if data, err := tree.ReadRange(t.Context(), 63*4096, 3*4096); err == nil || data != nil {
+		t.Fatal("missing later branch returned partial data or a hole")
+	}
+}

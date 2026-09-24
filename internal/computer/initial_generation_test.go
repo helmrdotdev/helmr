@@ -148,6 +148,13 @@ func TestInitialGenerationMultiBatchAndPublicationRetry(t *testing.T) {
 					t.Fatalf("block %d: %v", block, err)
 				}
 			}
+			if failure == "certify" {
+				// The largest unaligned VM read spans 1,025 encryption blocks.
+				data, err := tree.ReadRange(t.Context(), 1, blockformat.MaxReadBytes)
+				if err != nil || !bytes.Equal(data, content[1:1+blockformat.MaxReadBytes]) {
+					t.Fatalf("maximum unaligned generation range: %v", err)
+				}
+			}
 			if err = candidate.Close(); err != nil {
 				t.Fatal(err)
 			}
