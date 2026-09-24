@@ -91,6 +91,8 @@ type ClickHouse struct {
 }
 
 type Worker struct {
+	ComputerDevices              []string
+	ComputerStagingMiB           int64
 	ControlPlaneURL              string
 	WorkerResourceID             string
 	WorkerPoolName               string

@@ -317,6 +317,7 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
        deployment_definitions.manifest AS sandbox_manifest,
        reserved_computer_versions.status AS computer_version_status,
        computer.initial_config AS computer_initial_config,
+       computer_root.locator AS computer_generation_locator,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
@@ -358,6 +359,10 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
   JOIN computers AS computer
     ON computer.environment_id = runtime_instances.environment_id
    AND computer.id = runtime_instances.workspace_id
+  LEFT JOIN computer_version_roots AS computer_root
+    ON computer_root.environment_id=reserved_computer_versions.environment_id
+   AND computer_root.computer_id=reserved_computer_versions.workspace_id
+   AND computer_root.version_id=reserved_computer_versions.id
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.environment_id = reserved_computer_versions.environment_id
    AND reserved_workspace_artifacts.id = reserved_computer_versions.artifact_id
@@ -455,6 +460,7 @@ type ListRuntimeReconcileTargetsRow struct {
 	SandboxManifest                 []byte             `json:"sandbox_manifest"`
 	ComputerVersionStatus           pgtype.Text        `json:"computer_version_status"`
 	ComputerInitialConfig           []byte             `json:"computer_initial_config"`
+	ComputerGenerationLocator       []byte             `json:"computer_generation_locator"`
 	WorkspaceImageDigest            string             `json:"workspace_image_digest"`
 	WorkspaceImageSizeBytes         int64              `json:"workspace_image_size_bytes"`
 	WorkspaceImageMediaType         string             `json:"workspace_image_media_type"`
@@ -544,6 +550,7 @@ func (q *Queries) ListRuntimeReconcileTargets(ctx context.Context, arg ListRunti
 			&i.SandboxManifest,
 			&i.ComputerVersionStatus,
 			&i.ComputerInitialConfig,
+			&i.ComputerGenerationLocator,
 			&i.WorkspaceImageDigest,
 			&i.WorkspaceImageSizeBytes,
 			&i.WorkspaceImageMediaType,

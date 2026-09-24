@@ -21,7 +21,7 @@ worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
 worker_min_size                     = 1
 worker_max_size                     = 1
-worker_root_volume_size_gb          = 120
+worker_root_volume_size_gb          = 256
 worker_disk_mib                     = null
 ```
 
@@ -35,6 +35,23 @@ Workers are filesystem-first. Their root EBS volume holds runtime data, staged
 artifacts, and cache. Leave `worker_disk_mib = null` to advertise detected
 filesystem capacity, or set it to cap the advertised value. The worker always
 withholds `worker_disk_reserve_mib` before certifying usable capacity.
+
+## Computer storage
+
+The host must provide an exclusive NBD device pool. Set
+`WORKER_COMPUTER_DEVICES` to a space-separated allowlist of devices dedicated to
+this Worker (for example, `/dev/nbd0 /dev/nbd1`). Do not share these devices with
+another service. The Worker fails startup without an explicit allowlist.
+
+`WORKER_COMPUTER_STAGING_MIB` bounds local encrypted generation staging per
+Runtime (default: 65536 MiB). This host reservation is additional to guest disk
+capacity; admission waits when the local ledger cannot reserve it. It does not
+change the Computer's logical disk size or make local writes externally durable.
+
+The Worker binary runs its own NBD helper. Keep the Computer preparation arena
+and VMM state on the same filesystem. If the Worker dies while a helper owns a
+device, retain the arena and reconcile the exact owner before reusing the device;
+missing process-local state is not proof that the attachment was released.
 
 ## AMI and enrollment contract
 

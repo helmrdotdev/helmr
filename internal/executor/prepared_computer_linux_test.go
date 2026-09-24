@@ -6,82 +6,77 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/capacity"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// File-backed publication is a test transport, not a proof of object-store immutability.
 type computerPreparationTransport struct {
 	cas.Store
-	target  workerapi.RuntimeReconcileTarget
-	events  []string
-	request workerapi.ComputerInitializationRequest
-	fail    string
+	mu           sync.Mutex
+	targets      map[string]workerapi.RuntimeReconcileTarget
+	root         computer.GenerationRoot
+	fail         string
+	key          []byte
+	publications int
 }
 
-func (s *computerPreparationTransport) Publish(ctx context.Context, expected cas.Descriptor, file *os.File) (cas.Object, error) {
-	s.events = append(s.events, "upload")
+const preparationKey = "01950000-0000-7000-8000-000000000004"
+
+func (s *computerPreparationTransport) Publish(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
 	if s.fail == "upload" {
-		return cas.Object{}, errors.New("upload unavailable")
+		return cas.Object{}, errors.New("upload failed")
 	}
-	object, err := s.Store.Put(ctx, expected.MediaType, file)
-	if err == nil && (object.Digest != expected.Digest || object.SizeBytes != expected.SizeBytes) {
-		return object, errors.New("candidate changed")
-	}
-	return object, err
+	return s.Store.Put(ctx, d.MediaType, f)
 }
-func (s *computerPreparationTransport) RegisterComputerInitialization(_ context.Context, r workerapi.ComputerInitializationRequest) (workerapi.ComputerInitializationResponse, error) {
-	s.events = append(s.events, "register")
-	s.request = r
+func (s *computerPreparationTransport) RegisterInitialComputerObject(context.Context, workerapi.InitialComputerObjectRequest) error {
 	if s.fail == "register" {
-		return workerapi.ComputerInitializationResponse{}, errors.New("registration unavailable")
+		return errors.New("register failed")
 	}
-	return s.receipt("registered"), nil
+	return nil
 }
-func (s *computerPreparationTransport) PublishComputerInitialization(_ context.Context, r workerapi.ComputerInitializationRequest) (workerapi.ComputerInitializationResponse, error) {
-	s.events = append(s.events, "commit")
-	if !reflect.DeepEqual(r, s.request) {
-		return workerapi.ComputerInitializationResponse{}, errors.New("publication request changed")
-	}
+func (s *computerPreparationTransport) CertifyInitialComputerObject(context.Context, workerapi.InitialComputerObjectRequest) error {
+	return nil
+}
+func (s *computerPreparationTransport) InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error) {
+	return workerapi.ComputerKeyMaterial{Scope: "fixture", ID: preparationKey, Key: bytes.Clone(s.key)}, nil
+}
+func (s *computerPreparationTransport) PublishInitialComputerGeneration(_ context.Context, r workerapi.InitialComputerGenerationRequest) (workerapi.InitialComputerGenerationResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.fail == "commit" {
-		return workerapi.ComputerInitializationResponse{}, errors.New("publication unavailable")
+		return workerapi.InitialComputerGenerationResponse{}, errors.New("commit failed")
 	}
-	return s.receipt("consumed"), nil
+	s.root = r.Root
+	s.publications++
+	target := s.targets[r.RuntimeInstanceID]
+	return workerapi.InitialComputerGenerationResponse{ComputerID: target.Source.WorkspaceID, VersionID: target.Source.Computer.VersionID}, nil
 }
-func (s *computerPreparationTransport) receipt(status string) workerapi.ComputerInitializationResponse {
-	r := workerapi.ComputerInitializationResponse{ID: "01950000-0000-7000-8000-000000000004", ComputerID: s.target.Source.WorkspaceID, VersionID: s.target.Source.Computer.VersionID, Status: status}
-	if status == "consumed" {
-		r.ArtifactID = "01950000-0000-7000-8000-000000000005"
-	}
-	return r
+func (s *computerPreparationTransport) ComputerSource(_ context.Context, r workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return workerapi.ComputerSourceMaterial{Root: s.root, VersionID: s.targets[r.RuntimeInstanceID].Source.Computer.VersionID, WriteKeyID: preparationKey, Keys: []workerapi.ComputerKeyMaterial{{ID: preparationKey, Scope: "fixture", Key: bytes.Clone(s.key)}}}, nil
 }
 
 func TestComputerPreparationPublicationAndRestore(t *testing.T) {
-	root := t.TempDir()
-	objects, err := cas.NewFile(filepath.Join(root, "objects"))
+	objects, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := checkpoint.New(bytes.Repeat([]byte{7}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	source := filepath.Join(root, "seed.raw")
-	file, err := os.OpenFile(source, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "seed.raw")
+	file, err := os.Create(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +86,9 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if _, err = file.WriteAt([]byte("customer-state"), 8192); err != nil {
 		t.Fatal(err)
 	}
-	if err = file.Close(); err != nil {
-		t.Fatal(err)
-	}
-	packed := filepath.Join(root, "seed.filepack")
-	seed, err := computer.EncodeSeed(t.Context(), source, packed)
+	file.Close()
+	packed := filepath.Join(dir, "seed.pack")
+	seed, err := computer.EncodeSeed(t.Context(), raw, packed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,140 +101,68 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: "01950000-0000-7000-8000-000000000001", WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{WorkspaceID: "01950000-0000-7000-8000-000000000002", ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: "01950000-0000-7000-8000-000000000003", LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: computer.SeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
-	limit, err := (computer.DiskStore{CAS: objects, Cipher: cipher}).CaptureSizeLimit(computer.SeedCapacity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{WorkspaceID: uuid.NewV7().String(), ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: computer.SeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
+	const budget = 64 << 20
 	for _, failure := range []string{"capacity", "register", "upload", "commit", ""} {
-		name := failure
-		if name == "" {
-			name = "success"
-		}
-		t.Run(name, func(t *testing.T) {
-			diskCapacity := limit
+		t.Run("failure="+failure, func(t *testing.T) {
+			admitted := int64(budget)
 			if failure == "capacity" {
-				diskCapacity--
+				admitted--
 			}
-			ledger, err := capacity.New(capacity.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: diskCapacity})
+			ledger, err := capacity.New(capacity.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: admitted})
 			if err != nil {
 				t.Fatal(err)
 			}
-			transport := &computerPreparationTransport{Store: objects, target: target, fail: failure}
-			pool := &PreparedRuntimePool{TempDir: t.TempDir(), CAS: objects, CheckpointEncryptor: cipher, Capacity: ledger, ComputerObjects: transport, ComputerInitializations: transport}
-			disk, cleanup, err := pool.prepareComputerDisk(t.Context(), target)
+			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.RuntimeReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
+			pool := &PreparedRuntimePool{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Capacity: ledger}
+			disk, err := pool.prepareComputerGeneration(t.Context(), target)
 			if failure != "" {
 				if err == nil || disk != nil {
-					t.Fatal("failed preparation exposed a disk")
-				}
-				if failure == "capacity" && (!errors.Is(err, errPreparedRuntimeCapacityBusy) || len(transport.events) != 0) {
-					t.Fatalf("capacity did not defer before publication: %v", err)
-				}
-				if _, err := os.Stat(pool.computerPreparationDirectory(target.ID, target.WorkerEpoch)); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("failed preparation leaked files: %v", err)
+					t.Fatal("failed preparation exposed generation")
 				}
 			} else {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if !reflect.DeepEqual(transport.events, []string{"register", "upload", "commit"}) {
-					t.Fatalf("wrong publication order: %v", transport.events)
+				data := make([]byte, 14)
+				if _, err := disk.ReadAt(t.Context(), data, 8192); err != nil || string(data) != "customer-state" {
+					t.Fatalf("initial data: %q %v", data, err)
 				}
-				got := make([]byte, 14)
-				if _, err := disk.ReadAt(got, 8192); err != nil || string(got) != "customer-state" {
-					t.Fatalf("wrong prepared data: %q %v", got, err)
+				if err := disk.Close(); err != nil {
+					t.Fatal(err)
 				}
-				if err := cleanup(); err != nil {
+				if err := pool.releaseRuntimeCapacity(target.ID, target.WorkerEpoch); err != nil {
 					t.Fatal(err)
 				}
 				continuation := target
-				c := *target.Source.Computer
-				continuation.Source.Computer = &c
-				c.Seed = nil
-				c.Disk = &transport.request.Disk
-				transport.events = nil
-				restored, closeRestored, err := pool.prepareComputerDisk(t.Context(), continuation)
+				source := *target.Source.Computer
+				source.Seed = nil
+				continuation.Source.Computer = &source
+				disk, err = pool.prepareComputerGeneration(t.Context(), continuation)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(transport.events) != 0 {
-					t.Fatal("continuation republished initialization")
+				if _, err := disk.ReadAt(t.Context(), data, 8192); err != nil || string(data) != "customer-state" {
+					t.Fatalf("restored data: %q %v", data, err)
 				}
-				if _, err := restored.ReadAt(got, 8192); err != nil || string(got) != "customer-state" {
-					t.Fatalf("wrong restored data: %q %v", got, err)
+				if client.publications != 1 {
+					t.Fatal("continuation republished seed")
 				}
-				if err := closeRestored(); err != nil {
+				if err := disk.Close(); err != nil {
 					t.Fatal(err)
 				}
 			}
-
-			if failure == "" {
-				target.Source.ReservedCPUMillis = 1000
-				target.Source.ReservedMemoryMiB = 512
-				target.Source.DeploymentDefinitionID = "01950000-0000-7000-8000-000000000006"
-				ledger, err := capacity.New(capacity.Vector{CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 2*computer.SeedCapacity + limit, VMSlots: 1})
-				if err != nil {
-					t.Fatal(err)
-				}
-				pool.Capacity = ledger
-				client := &typedRuntimeClient{}
-				pool.RuntimeInstances = client
-				transport.events = nil
-				connector := &inspectingComputerConnector{inspect: func(r vm.MaterializeRequest) {
-					if !reflect.DeepEqual(transport.events, []string{"register", "upload", "commit"}) {
-						t.Fatalf("boot before publication: %v", transport.events)
-					}
-					if r.Topology.Computer == nil || r.Topology.Substrate != nil {
-						t.Fatal("wrong materialization topology")
-					}
-					got := make([]byte, 14)
-					if _, err := r.Topology.Computer.File.ReadAt(got, 8192); err != nil || string(got) != "customer-state" {
-						t.Fatalf("wrong connector disk: %q %v", got, err)
-					}
-					snapshot := ledger.Snapshot()
-					if len(snapshot.Reservations) != 1 || snapshot.Used.GuestEphemeralDiskBytes != 2*computer.SeedCapacity {
-						t.Fatalf("wrong post-publication capacity: %+v", snapshot)
-					}
-				}}
-				pool.Connector = connector
-				mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
-				if err := pool.prepareAndStore(t.Context(), target.ID, mount, target, func() {}); err != nil {
-					t.Fatal(err)
-				}
-				if connector.calls != 1 || len(client.failed) != 1 {
-					t.Fatalf("calls=%d failures=%d", connector.calls, len(client.failed))
-				}
-				if len(ledger.Snapshot().Reservations) != 1 {
-					t.Fatal("released uncertain materialization capacity")
-				}
-				if _, err := os.Stat(pool.computerPreparationDirectory(target.ID, target.WorkerEpoch)); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("source files remain after transfer failure: %v", err)
-				}
-				if err := pool.ReclaimFailedRuntimeTarget(t.Context(), client, target); err != nil {
-					t.Fatal(err)
-				}
-				if len(ledger.Snapshot().Reservations) != 0 {
-					t.Fatal("proven cleanup retained capacity")
-				}
+			if failure == "capacity" && !errors.Is(err, errPreparedRuntimeCapacityBusy) {
+				t.Fatal("capacity failure was not deferred")
+			}
+			if err := pool.releaseRuntimeCapacity(target.ID, target.WorkerEpoch); err != nil {
+				t.Fatal(err)
 			}
 			if len(ledger.Snapshot().Reservations) != 0 {
-				t.Fatalf("staging reservation leaked: %+v", ledger.Snapshot())
+				t.Fatal("reservation leaked")
 			}
 		})
 	}
-}
-
-// The host call path must publish before handing a writable file to a connector.
-type inspectingComputerConnector struct {
-	inspect func(vm.MaterializeRequest)
-	calls   int
-}
-
-func (c *inspectingComputerConnector) Cleanup(context.Context, vm.Owner) error { return nil }
-func (c *inspectingComputerConnector) Materialize(_ context.Context, r vm.MaterializeRequest) (vm.Session, error) {
-	c.calls++
-	c.inspect(r)
-	return nil, errors.New("injected materialization failure")
 }
 
 func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
@@ -286,6 +207,14 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 	case <-time.After(time.Second):
 		t.Fatal("reconciler returned before its attempts drained")
 	}
+	for _, target := range items {
+		if err := pool.ReclaimFailedRuntimeTarget(t.Context(), client, target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.RemoveAll(pool.TempDir); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(logs.String(), `msg="prepared runtime phase"`) ||
 		!strings.Contains(logs.String(), "phase=test_materialize") {
 		t.Fatalf("fresh materialize phase was not logged: %s", logs.String())
@@ -329,45 +258,54 @@ func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.
 	if len(client.failed) != 1 {
 		t.Fatalf("failure reports=%d", len(client.failed))
 	}
+	if err := pool.ReclaimFailedRuntimeTarget(t.Context(), client, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(pool.TempDir); err != nil {
+		t.Fatal(err)
+	}
 }
 
-// Reconciliation tests exercise the real Linux encrypted disk path up to a fake VM connector.
 func configureComputerPreparationTest(t *testing.T, pool *PreparedRuntimePool, targets []workerapi.RuntimeReconcileTarget) {
 	t.Helper()
-	dir := t.TempDir()
-	objects, err := cas.NewFile(filepath.Join(dir, "objects"))
+	if os.Getenv("HELMR_DISPOSABLE_NBD_PROOF") != "1" {
+		t.Skip("requires disposable NBD host")
+	}
+	// Keep attachment evidence outside testing's automatic directory cleanup.
+	// The qualification harness removes it only after device/process postflight.
+	arena, err := os.MkdirTemp("", "worker-nbd-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := checkpoint.New(bytes.Repeat([]byte{8}, 32))
+	pool.TempDir = arena
+	t.Log("NBD evidence arena:", arena)
+	pool.ComputerHelper = os.Getenv("HELMR_NBD_TEST_HELPER")
+	pool.ComputerDevices = []string{"/dev/nbd14", "/dev/nbd15"}
+	objects, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := filepath.Join(dir, "raw")
-	f, err := os.Create(raw)
+	key := bytes.Repeat([]byte{8}, 32)
+	writer := blockformat.Writer{Source: objects, Sink: objects, Scope: "fixture", ActiveKey: preparationKey, Keys: map[string][]byte{preparationKey: key}, PackLimit: blockformat.MinPackLimit}
+	locator, err := writer.Empty(t.Context(), computer.SeedCapacity, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Truncate(computer.SeedCapacity); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	candidate, err := (computer.DiskStore{CAS: objects, Cipher: cipher}).Capture(t.Context(), targets[0].Source.WorkspaceID, raw, dir)
+	root, err := computer.NewGenerationRoot(locator, computer.SeedCapacity)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer candidate.Close()
-	if err := candidate.Upload(t.Context(), &computerPreparationTransport{Store: objects}); err != nil {
-		t.Fatal(err)
+	client := &computerPreparationTransport{Store: objects, root: root, key: key, targets: make(map[string]workerapi.RuntimeReconcileTarget)}
+	for _, target := range targets {
+		client.targets[target.ID] = target
 	}
-	artifact := candidate.Artifact()
-	for i := range targets {
-		targets[i].Source.Computer.Disk = &workerapi.CASObject{Digest: artifact.Object.Digest, SizeBytes: artifact.Object.SizeBytes, MediaType: artifact.Object.MediaType}
-	}
+	pool.ComputerPreparation = client
+	pool.ComputerObjects = client
+	pool.ComputerRanges = objects
 	pool.CAS = objects
-	pool.CheckpointEncryptor = cipher
+	pool.ComputerStagingBytes = 64 << 20
 	n := int64(len(targets))
-	pool.Capacity, err = capacity.New(capacity.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * 2 * computer.SeedCapacity, VMSlots: n})
+	pool.Capacity, err = capacity.New(capacity.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * (2*computer.SeedCapacity + pool.ComputerStagingBytes), VMSlots: n})
 	if err != nil {
 		t.Fatal(err)
 	}

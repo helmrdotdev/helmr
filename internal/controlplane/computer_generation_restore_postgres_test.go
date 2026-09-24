@@ -38,7 +38,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer disk.Close()
-	if err := disk.Truncate(f.request.LogicalBytes); err != nil {
+	if err := disk.Truncate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
 	const offset = 8192
@@ -47,7 +47,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate, err := computer.CaptureInitialGeneration(t.Context(), computer.GenerationCapture{
-		Disk: disk, Capacity: f.request.LogicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key,
+		Disk: disk, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key,
 		Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000,
 	})
 	if err != nil {
@@ -62,7 +62,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, f.request.LogicalBytes)
+	root, err := computer.NewGenerationRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

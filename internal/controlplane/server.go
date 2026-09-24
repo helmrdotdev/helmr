@@ -624,8 +624,6 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/computer-source", s.workerComputerSource)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/certify", s.workerCertifyInitialComputerObject)
-				r.Post("/run/runtime-instances/initialization/register", s.workerRegisterComputerInitialization)
-				r.Post("/run/runtime-instances/initialization/publish", s.workerPublishComputerInitialization)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
 				r.Post("/run/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/run/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)

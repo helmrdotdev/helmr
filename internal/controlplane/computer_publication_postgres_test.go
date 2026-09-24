@@ -27,7 +27,7 @@ func generationPublicationFixture(t *testing.T) (initialPublicationFixture, comp
 		t.Fatal(err)
 	}
 	writer := blockformat.Writer{Source: store, Sink: store, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
-	locator, err := writer.Empty(t.Context(), f.request.LogicalBytes, 64)
+	locator, err := writer.Empty(t.Context(), f.logicalBytes, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func generationPublicationFixture(t *testing.T) (initialPublicationFixture, comp
 	if err = recordInitialComputerObject(t.Context(), f.Pool, fence, evidence, nil); err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, f.request.LogicalBytes)
+	root, err := computer.NewGenerationRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

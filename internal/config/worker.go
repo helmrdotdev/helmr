@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -12,6 +13,8 @@ import (
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
+		ComputerDevices:              strings.Fields(envText("WORKER_COMPUTER_DEVICES")),
+		ComputerStagingMiB:           65536,
 		ControlPlaneURL:              envText("CONTROL_PLANE_URL"),
 		WorkerResourceID:             envText("WORKER_RESOURCE_ID"),
 		WorkerPoolName:               os.Getenv("WORKER_POOL_NAME"),
@@ -52,6 +55,12 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("WORKER_ENROLLMENT_TOKEN_FILE is required")
 	}
 	var err error
+	if cfg.ComputerStagingMiB, err = envInt64("WORKER_COMPUTER_STAGING_MIB", cfg.ComputerStagingMiB); err != nil {
+		return cfg, err
+	}
+	if cfg.ComputerStagingMiB <= 0 || cfg.ComputerStagingMiB > math.MaxInt64/(1<<20) {
+		return cfg, errors.New("WORKER_COMPUTER_STAGING_MIB must be positive and fit bytes")
+	}
 	cfg.NetworkBlockedIPv4CIDRs, err = parseCanonicalBlockedIPv4Prefixes(
 		envText("WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
 	)

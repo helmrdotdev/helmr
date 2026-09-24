@@ -27,7 +27,7 @@ func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (worker
 	source.LogicalBytes = row.ReservedGuestEphemeralDiskBytes
 	switch row.ComputerVersionStatus.String {
 	case "initializing":
-		if row.RestoreCheckpointID.Valid || row.WorkspaceContentDigest.Valid ||
+		if len(row.ComputerGenerationLocator) != 0 || row.RestoreCheckpointID.Valid || row.WorkspaceContentDigest.Valid ||
 			!row.WorkspaceLogicalSizeBytes.Valid || row.WorkspaceLogicalSizeBytes.Int64 != 0 ||
 			row.WorkspaceArtifactDigest != "" || row.WorkspaceArtifactSizeBytes != 0 || row.WorkspaceArtifactMediaType != "" ||
 			len(row.ComputerInitialConfig) != 0 {
@@ -49,12 +49,12 @@ func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (worker
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		}}
 	case "committed", "private":
-		object := cas.Descriptor{Digest: row.WorkspaceArtifactDigest, SizeBytes: row.WorkspaceArtifactSizeBytes, MediaType: row.WorkspaceArtifactMediaType}
-		if !row.WorkspaceLogicalSizeBytes.Valid || !row.WorkspaceContentDigest.Valid || row.WorkspaceContentDigest.String != object.Digest {
-			return source, errors.New("computer version disk identity is incomplete")
+		root, err := computer.ParseGenerationRoot(row.ComputerGenerationLocator, source.LogicalBytes)
+		if err != nil {
+			return source, fmt.Errorf("project computer generation: %w", err)
 		}
-		if err := (computer.DiskArtifact{Object: object, LogicalBytes: row.WorkspaceLogicalSizeBytes.Int64}).Validate(source.LogicalBytes); err != nil {
-			return source, fmt.Errorf("project computer disk: %w", err)
+		if !row.WorkspaceLogicalSizeBytes.Valid || row.WorkspaceLogicalSizeBytes.Int64 != source.LogicalBytes || !row.WorkspaceContentDigest.Valid || row.WorkspaceContentDigest.String != root.Pack.Digest {
+			return source, errors.New("computer generation identity is incomplete")
 		}
 		// The original configuration belongs to the Computer, not the current
 		// deployment. A new deployment must not silently change its user or env.
@@ -70,7 +70,6 @@ func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (worker
 		if err := decoder.Decode(new(any)); err != io.EOF {
 			return source, errors.New("computer initial configuration has trailing data")
 		}
-		source.Disk = &workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 	default:
 		return source, errors.New("computer version is not available for preparation")
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -40,9 +41,11 @@ type PreparedRuntimeInstanceClient interface {
 	MarkRuntimeInstanceFailed(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error)
 }
 
-type ComputerInitializationClient interface {
-	RegisterComputerInitialization(context.Context, workerapi.ComputerInitializationRequest) (workerapi.ComputerInitializationResponse, error)
-	PublishComputerInitialization(context.Context, workerapi.ComputerInitializationRequest) (workerapi.ComputerInitializationResponse, error)
+type ComputerPreparationClient interface {
+	InitialGenerationClient
+	InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error)
+	PublishInitialComputerGeneration(context.Context, workerapi.InitialComputerGenerationRequest) (workerapi.InitialComputerGenerationResponse, error)
+	ComputerSource(context.Context, workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error)
 }
 
 type RuntimeReconcileClient interface {
@@ -56,25 +59,30 @@ type runtimeReconcileResult struct {
 }
 
 type PreparedRuntimePool struct {
-	Connector               vm.Cleaner
-	CAS                     cas.Store
-	ComputerObjects         cas.ImmutableStore
-	ComputerInitializations ComputerInitializationClient
-	TempDir                 string
-	ArtifactCacheDir        string
-	ArtifactCacheMaxBytes   int64
-	Substrates              RuntimeSubstrateResolver
-	RuntimeSubstrates       RuntimeSubstrateRegistrar
-	CheckpointEncryptor     *checkpoint.Encryptor
-	Size                    int
-	RuntimeInstances        PreparedRuntimeInstanceClient
-	Log                     *slog.Logger
-	AdmitRuntimeStart       func(context.Context) error
-	Capacity                *capacity.Ledger
-	PlatformStore           cas.Reader
-	RuntimeArchitecture     deployment.RuntimeArchitecture
-	VerifierCgroupRoot      string
+	Connector             vm.Cleaner
+	CAS                   cas.Store
+	ComputerObjects       cas.ImmutableStore
+	ComputerPreparation   ComputerPreparationClient
+	ComputerRanges        blockformat.RangeSource
+	ComputerHelper        string
+	ComputerDevices       []string
+	ComputerStagingBytes  int64
+	TempDir               string
+	ArtifactCacheDir      string
+	ArtifactCacheMaxBytes int64
+	Substrates            RuntimeSubstrateResolver
+	RuntimeSubstrates     RuntimeSubstrateRegistrar
+	CheckpointEncryptor   *checkpoint.Encryptor
+	Size                  int
+	RuntimeInstances      PreparedRuntimeInstanceClient
+	Log                   *slog.Logger
+	AdmitRuntimeStart     func(context.Context) error
+	Capacity              *capacity.Ledger
+	PlatformStore         cas.Reader
+	RuntimeArchitecture   deployment.RuntimeArchitecture
+	VerifierCgroupRoot    string
 
+	computerDevices   map[preparedRuntimeRef]vm.ComputerDevice
 	mu                sync.Mutex
 	closeMu           sync.Mutex
 	entries           map[string][]preparedRuntimeEntry
@@ -692,6 +700,10 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		defer cancelState()
 		proofMethod := ""
 		if !materializeAttempted {
+			if closeErr := p.releaseComputerDevice(runtimeInstanceID, runtimeEpoch); closeErr != nil {
+				failure := errors.Join(err, closeErr)
+				return errors.Join(failure, p.reportRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, failure, ""))
+			}
 			proofMethod = workerapi.RuntimeCleanupNotMaterialized
 		}
 		if markErr := p.reportRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
@@ -727,20 +739,14 @@ func (p *PreparedRuntimePool) prepareAndStore(
 	if err := os.MkdirAll(tempDir, 0700); err != nil {
 		return failInstance(err)
 	}
-	disk, closeDisk, err := p.prepareComputerDisk(ctx, target)
+	device, err := p.prepareComputerDevice(ctx, target)
 	if err != nil {
 		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
 			return err
 		}
 		return failInstance(err)
 	}
-	diskOpen := true
-	defer func() {
-		if diskOpen {
-			retErr = errors.Join(retErr, closeDisk())
-		}
-	}()
-	topology.Computer.File = disk
+	topology.Computer.Device = device
 	config := target.Source.Computer.Config
 	mountedImageConfig := &workspacev0.RuntimeImageConfig{Env: config.Env, WorkingDir: config.WorkingDir, User: config.User, Entrypoint: config.Entrypoint, Cmd: config.Cmd}
 	readOnlyDrives, closeProgram, err := p.prepareProgram(
@@ -785,8 +791,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		p.logInfo(phaseLogMessage, "runtime_instance_id", runtimeInstanceID,
 			"phase", phase.Name, "duration_ms", phase.DurationMs, "error_class", phase.ErrorClass)
 	}
-	closeProgramErr := errors.Join(closeProgram(), closeDisk())
-	diskOpen = false
+	closeProgramErr := closeProgram()
 	programArtifactsOpen = false
 	err = errors.Join(materializeErr, closeProgramErr)
 	if err != nil && session != nil {
@@ -1530,6 +1535,9 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 }
 
 func (p *PreparedRuntimePool) releaseRuntimeCapacity(runtimeInstanceID string, runtimeEpoch int64) error {
+	if err := p.releaseComputerDevice(runtimeInstanceID, runtimeEpoch); err != nil {
+		return err
+	}
 	if p == nil || p.Capacity == nil {
 		return nil
 	}
@@ -1547,7 +1555,13 @@ func (p *PreparedRuntimePool) releaseRuntimeCapacity(runtimeInstanceID string, r
 	if err := p.Capacity.Release(restoreStagingKey(runtimeInstanceID, runtimeEpoch)); err != nil {
 		return err
 	}
-	return p.Capacity.Release(runtimeCapacityKey(runtimeInstanceID, runtimeEpoch))
+	if err := p.Capacity.Release(runtimeCapacityKey(runtimeInstanceID, runtimeEpoch)); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	delete(p.computerDevices, preparedRuntimeRef{id: runtimeInstanceID, epoch: runtimeEpoch})
+	p.mu.Unlock()
+	return nil
 }
 
 func (p *PreparedRuntimePool) releaseRuntimeAfterPhysicalCleanup(runtimeInstanceID string, runtimeEpoch int64) error {

@@ -675,22 +675,6 @@ func (c *Client) ResumeRunSession(ctx context.Context, request workerapi.ResumeS
 	return response, nil
 }
 
-func (c *Client) RegisterComputerInitialization(ctx context.Context, request workerapi.ComputerInitializationRequest) (workerapi.ComputerInitializationResponse, error) {
-	var response workerapi.ComputerInitializationResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/register", request, &response); err != nil {
-		return workerapi.ComputerInitializationResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) PublishComputerInitialization(ctx context.Context, request workerapi.ComputerInitializationRequest) (workerapi.ComputerInitializationResponse, error) {
-	var response workerapi.ComputerInitializationResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/publish", request, &response); err != nil {
-		return workerapi.ComputerInitializationResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) RegisterInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
 	return c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/objects/register", request, &struct{}{})
 }

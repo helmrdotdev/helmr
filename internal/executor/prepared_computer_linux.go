@@ -4,7 +4,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,131 +11,116 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/nbd"
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// prepareComputerDisk runs under the runtime's working-disk reservation. It
-// returns no bootable file until the exact initial ciphertext is committed, or
-// the reserved continuation disk is completely authenticated and decoded.
-func (p *PreparedRuntimePool) prepareComputerDisk(ctx context.Context, target workerapi.RuntimeReconcileTarget) (_ *os.File, cleanup func() error, retErr error) {
-	if err := validateComputerPreparationSource(target); err != nil {
-		return nil, nil, err
+// Preparation has one storage format: a retained authenticated generation.
+// The seed is decoded only for initial publication and never used for recovery.
+func (p *PreparedRuntimePool) prepareComputerDevice(ctx context.Context, target workerapi.RuntimeReconcileTarget) (vm.ComputerDevice, error) {
+	if !filepath.IsAbs(p.ComputerHelper) || len(p.ComputerDevices) == 0 {
+		return nil, errors.New("computer helper and explicit device allowlist required")
 	}
-	if p.CAS == nil || p.CheckpointEncryptor == nil || p.Capacity == nil {
-		return nil, nil, errors.New("computer preparation storage, encryption and capacity are required")
-	}
-	source := target.Source.Computer
-	store := computer.DiskStore{CAS: p.CAS, Cipher: p.CheckpointEncryptor}
-	stagingKey := computerStagingKey(target.ID, target.WorkerEpoch)
-	if source.Seed != nil {
-		if p.ComputerObjects == nil || p.ComputerInitializations == nil {
-			return nil, nil, errors.New("computer initial publication dependencies are required")
-		}
-		limit, err := store.CaptureSizeLimit(source.LogicalBytes)
-		if err != nil {
-			return nil, nil, err
-		}
-		created, err := p.Capacity.Reserve(stagingKey, capacity.Vector{GuestEphemeralDiskBytes: limit})
-		if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil && !created {
-			return nil, nil, errPreparedRuntimeCapacityBusy
-		}
-		if err != nil {
-			return nil, nil, err
-		}
+	generation, err := p.prepareComputerGeneration(ctx, target)
+	if err != nil {
+		return nil, err
 	}
 	dir := p.computerPreparationDirectory(target.ID, target.WorkerEpoch)
-	// Exclusive runtime-owned directory. An interrupted previous preparation
-	// must be reclaimed, never silently replaced and reencrypted under its fence.
-	if err := os.Mkdir(dir, 0700); err != nil {
-		if source.Seed != nil {
-			err = errors.Join(err, p.Capacity.Release(stagingKey))
-		}
-		return nil, nil, err
+	device, err := computer.AttachDevice(ctx, generation, nbd.Config{Helper: p.ComputerHelper, Devices: p.ComputerDevices, Arena: dir, Socket: filepath.Join(dir, "nbd.sock"), Size: target.Source.Computer.LogicalBytes})
+	if device != nil {
+		p.retainComputerDevice(target.ID, target.WorkerEpoch, device)
 	}
-	defer func() {
-		if retErr != nil {
-			removeErr := os.RemoveAll(dir)
-			retErr = errors.Join(retErr, removeErr)
-			if removeErr == nil && source.Seed != nil {
-				retErr = errors.Join(retErr, p.Capacity.Release(stagingKey))
-			}
-		}
-	}()
-	path := filepath.Join(dir, "computer.raw")
-	if source.Seed != nil {
-		candidate, err := store.Initialize(ctx, target.Source.WorkspaceID, computer.Seed{
-			Artifact: computer.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}, Config: source.Config,
-		}, path, dir, source.LogicalBytes)
-		if err != nil {
-			return nil, nil, err
-		}
-		defer func() { retErr = errors.Join(retErr, candidate.Disk.Close()) }()
-		artifact := candidate.Disk.Artifact()
-		config, err := json.Marshal(candidate.Config)
-		if err != nil {
-			return nil, nil, err
-		}
-		request := workerapi.ComputerInitializationRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion,
-			Disk:         workerapi.CASObject{Digest: artifact.Object.Digest, SizeBytes: artifact.Object.SizeBytes, MediaType: artifact.Object.MediaType},
-			LogicalBytes: artifact.LogicalBytes, InitialConfig: config}
-		registered, err := p.ComputerInitializations.RegisterComputerInitialization(ctx, request)
-		if err != nil {
-			return nil, nil, fmt.Errorf("register initial computer disk: %w", err)
-		}
-		if err := validateComputerInitializationReceipt(target, registered); err != nil {
-			return nil, nil, err
-		}
-		if registered.Status == "registered" {
-			if err := candidate.Disk.Upload(ctx, p.ComputerObjects); err != nil {
-				return nil, nil, fmt.Errorf("upload initial computer disk: %w", err)
-			}
-			published, err := p.ComputerInitializations.PublishComputerInitialization(ctx, request)
-			if err != nil {
-				return nil, nil, fmt.Errorf("publish initial computer disk: %w", err)
-			}
-			if err := validateComputerInitializationReceipt(target, published); err != nil {
-				return nil, nil, err
-			}
-			if published.Status != "consumed" || published.ID != registered.ID {
-				return nil, nil, errors.New("initial computer publication has no matching committed receipt")
-			}
-		}
-		if err := candidate.Disk.Close(); err != nil {
-			return nil, nil, err
-		}
-		if err := p.Capacity.Release(stagingKey); err != nil {
-			return nil, nil, err
-		}
-	} else {
-		if err := store.Restore(ctx, target.Source.WorkspaceID, computer.DiskArtifact{Object: computerObject(*source.Disk), LogicalBytes: source.LogicalBytes}, path, source.LogicalBytes); err != nil {
-			return nil, nil, err
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	file, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	return file, func() error { return errors.Join(file.Close(), os.RemoveAll(dir)) }, nil
+	return device, err
 }
 
-func validateComputerInitializationReceipt(target workerapi.RuntimeReconcileTarget, receipt workerapi.ComputerInitializationResponse) error {
-	if receipt.ID == "" || receipt.ComputerID != target.Source.WorkspaceID || receipt.VersionID != target.Source.Computer.VersionID {
-		return errors.New("initial computer receipt identity mismatch")
+func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, target workerapi.RuntimeReconcileTarget) (*computer.LocalGeneration, error) {
+	if err := validateComputerPreparationSource(target); err != nil {
+		return nil, err
 	}
-	switch receipt.Status {
-	case "registered":
-		if receipt.ArtifactID != "" {
-			return errors.New("uncommitted computer receipt has an artifact")
+	if p.CAS == nil || p.ComputerRanges == nil || p.ComputerPreparation == nil || p.Capacity == nil || p.ComputerStagingBytes <= 0 {
+		return nil, errors.New("computer preparation requires storage, source authority and bounded staging admission")
+	}
+	created, err := p.Capacity.Reserve(computerStagingKey(target.ID, target.WorkerEpoch), capacity.Vector{GuestEphemeralDiskBytes: p.ComputerStagingBytes})
+	if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil && !created {
+		return nil, errPreparedRuntimeCapacityBusy
+	}
+	if err != nil {
+		return nil, err
+	}
+	dir := p.computerPreparationDirectory(target.ID, target.WorkerEpoch)
+	// Cleanup belongs to the Runtime, including partially created device evidence.
+	if err := os.Mkdir(dir, 0700); err != nil {
+		return nil, err
+	}
+	source := target.Source.Computer
+	if source.Seed != nil {
+		if err := p.publishComputerSeed(ctx, target, dir); err != nil {
+			return nil, err
 		}
-	case "consumed":
-		if receipt.ArtifactID == "" {
-			return errors.New("committed computer receipt has no artifact")
+	}
+	material, err := p.ComputerPreparation.ComputerSource(ctx, workerapi.ComputerSourceRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
+	if err != nil {
+		return nil, err
+	}
+	defer material.Clear()
+	if material.VersionID != source.VersionID || material.Root.LogicalBytes != source.LogicalBytes || len(material.Keys) == 0 {
+		return nil, errors.New("computer source differs from runtime reservation")
+	}
+	keys := make(map[string][]byte, len(material.Keys))
+	scope := material.Keys[0].Scope
+	for _, key := range material.Keys {
+		if key.Scope != scope {
+			return nil, errors.New("computer source key scope mismatch")
 		}
-	default:
-		return errors.New("initial computer candidate is not publishable")
+		keys[key.ID] = key.Key
+	}
+	return computer.CreateLocalGeneration(ctx, computer.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
+}
+
+func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target workerapi.RuntimeReconcileTarget, dir string) (retErr error) {
+	if p.ComputerObjects == nil {
+		return errors.New("computer object publication required")
+	}
+	source := target.Source.Computer
+	path := filepath.Join(dir, "seed.raw")
+	if err := (computer.SeedStore{CAS: p.CAS}).Decode(ctx, computer.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}, path, source.LogicalBytes); err != nil {
+		return err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, file.Close(), os.Remove(path)) }()
+	key, err := p.ComputerPreparation.InitialComputerKey(ctx, workerapi.InitialComputerKeyRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
+	if err != nil {
+		return err
+	}
+	defer clear(key.Key)
+	candidate, err := computer.CaptureInitialGeneration(ctx, computer.GenerationCapture{Disk: file, Capacity: source.LogicalBytes, StagingParent: dir, Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: p.ComputerStagingBytes, MaxObjects: 1 << 20})
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, candidate.Close()) }()
+	publisher, err := NewInitialGenerationPublisher(p.ComputerPreparation, p.ComputerObjects, target.ID, target.DesiredVersion)
+	if err != nil {
+		return err
+	}
+	locator, err := candidate.Publish(ctx, publisher)
+	if err != nil {
+		return err
+	}
+	root, err := computer.NewGenerationRoot(locator, source.LogicalBytes)
+	if err != nil {
+		return err
+	}
+	published, err := p.ComputerPreparation.PublishInitialComputerGeneration(ctx, workerapi.InitialComputerGenerationRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
+	if err != nil {
+		return fmt.Errorf("publish initial computer generation: %w", err)
+	}
+	if published.ComputerID != target.Source.WorkspaceID || published.VersionID != source.VersionID {
+		return errors.New("published computer generation identity mismatch")
 	}
 	return nil
 }

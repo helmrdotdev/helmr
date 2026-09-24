@@ -35,10 +35,10 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	env := pgvalue.UUID(f.EnvironmentID)
 	q := db.New(f.Pool)
 	digest := dbtest.Digest("generation-root-pack")
-	root := computer.GenerationRoot{FormatVersion: 1, LogicalBytes: f.request.LogicalBytes, Offset: 128,
+	root := computer.GenerationRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes, Offset: 128,
 		Pack: computer.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
 		Page: computer.GenerationPage{Digest: dbtest.Digest("generation-root-page"), Salt: strings.Repeat("aa", 32), KeyID: key.ID, Kind: 3, Count: 1, SizeBytes: 64}}
-	if err = root.Validate(f.request.LogicalBytes); err != nil {
+	if err = root.Validate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
 	encode := func(r computer.GenerationRoot) []byte {
@@ -118,7 +118,7 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := computer.ParseGenerationRoot(raw, f.request.LogicalBytes); err != nil || got != root {
+	if got, err := computer.ParseGenerationRoot(raw, f.logicalBytes); err != nil || got != root {
 		t.Fatalf("stored full locator changed: %v", err)
 	}
 	if _, err := q.GetRuntimeComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {

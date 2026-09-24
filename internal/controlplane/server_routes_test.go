@@ -227,8 +227,6 @@ POST /worker/v1/run/runtime-instances/initialization/generation
 POST /worker/v1/run/runtime-instances/initialization/key
 POST /worker/v1/run/runtime-instances/initialization/objects/certify
 POST /worker/v1/run/runtime-instances/initialization/objects/register
-POST /worker/v1/run/runtime-instances/initialization/publish
-POST /worker/v1/run/runtime-instances/initialization/register
 POST /worker/v1/run/runtime-instances/ready
 POST /worker/v1/run/runtime-instances/reconcile
 POST /worker/v1/run/runtime-substrates/register

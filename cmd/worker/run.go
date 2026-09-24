@@ -35,6 +35,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if len(cfg.ComputerDevices) == 0 {
+		return errors.New("WORKER_COMPUTER_DEVICES requires an operator-owned NBD allowlist")
+	}
 	physicalMemoryMiB, err := physicalWorkerMemoryMiB()
 	if err != nil {
 		return fmt.Errorf("inspect worker host memory: %w", err)
@@ -244,7 +247,14 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.RuntimeSubstrates = controlPlaneClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
 		preparedRuntimePool.ComputerObjects = store
-		preparedRuntimePool.ComputerInitializations = controlPlaneClient
+		preparedRuntimePool.ComputerPreparation = controlPlaneClient
+		preparedRuntimePool.ComputerRanges = store
+		preparedRuntimePool.ComputerDevices = cfg.ComputerDevices
+		preparedRuntimePool.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)
+		preparedRuntimePool.ComputerHelper, err = os.Executable()
+		if err != nil {
+			return err
+		}
 		preparedRuntimePool.RuntimeInstances = controlPlaneClient
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.PlatformStore = platformStore

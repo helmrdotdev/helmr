@@ -10,6 +10,13 @@ import (
 )
 
 func main() {
+	if handled, err := runComputerHelper(os.Args); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
 		fmt.Println(version.String())
 		return

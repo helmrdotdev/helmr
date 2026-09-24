@@ -1,7 +1,10 @@
 package controlplane
 
 import (
+	"bytes"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"testing"
 	"uuid"
 
@@ -35,8 +38,25 @@ func initializingComputerSourceRow(t *testing.T) db.ListRuntimeReconcileTargetsR
 func committedComputerSourceRow(t *testing.T) db.ListRuntimeReconcileTargetsRow {
 	r := initializingComputerSourceRow(t)
 	r.ComputerVersionStatus = pgvalue.Text("committed")
-	r.WorkspaceArtifactDigest, r.WorkspaceArtifactSizeBytes, r.WorkspaceArtifactMediaType = validDigest('b'), 2048, computer.DiskMediaType
-	r.WorkspaceContentDigest = pgvalue.Text(r.WorkspaceArtifactDigest)
+	store, err := cas.NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := uuid.NewV7().String()
+	writer := blockformat.Writer{Source: store, Sink: store, Scope: "fixture", ActiveKey: key, Keys: map[string][]byte{key: bytes.Repeat([]byte{1}, 32)}, PackLimit: blockformat.MinPackLimit}
+	locator, err := writer.Empty(t.Context(), computer.SeedCapacity, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := computer.NewGenerationRoot(locator, computer.SeedCapacity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.ComputerGenerationLocator, err = json.Marshal(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.WorkspaceContentDigest = pgvalue.Text(root.Pack.Digest)
 	r.WorkspaceLogicalSizeBytes.Int64 = computer.SeedCapacity
 	r.ComputerInitialConfig = []byte(`{"User":"original","Env":["ORIGINAL=yes"]}`)
 	return r
@@ -61,7 +81,7 @@ func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if source.Seed != nil || source.Disk == nil || source.Disk.Digest != r.WorkspaceArtifactDigest || source.Config.User != "original" {
+		if source.Seed != nil || source.Disk != nil || source.Config.User != "original" {
 			t.Fatalf("continuation source: %+v", source)
 		}
 	}
@@ -85,9 +105,9 @@ func TestRuntimeComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T)
 		{"initial-restore", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7()) }},
 		{"initial-config", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`{}`) }},
 		{"initial-disk", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceArtifactDigest = validDigest('b') }},
-		{"missing-disk", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceArtifactDigest = "" }},
+		{"missing-generation", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = nil }},
 		{"disk-conflict", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceContentDigest = pgvalue.Text(validDigest('c')) }},
-		{"disk-format", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceArtifactMediaType = computer.SeedMediaType }},
+		{"generation-format", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
 		{"disk-capacity", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceLogicalSizeBytes.Int64 /= 2 }},
 		{"missing-config", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = nil }},
 		{"null-config", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`null`) }},
