@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/dev/computer-block-proof/internal/generation"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -19,7 +20,7 @@ const inspectionBytes = 16 << 20
 
 func digestString(d [32]byte) string { return hex.EncodeToString(d[:]) }
 func inspectedDescriptor(o generation.InspectedObject) object {
-	return object{digestString(o.Digest), o.Kind, o.Rank, o.Size}
+	return object{digestString(o.Digest), o.Kind, o.Rank, o.Size, o.Keys}
 }
 func inspectedManifest(i generation.Inspection) (manifest, error) {
 	raw, err := json.Marshal(i.Root)
@@ -60,9 +61,21 @@ func (s store) publishLocal(ctx context.Context, p publication, m manifest, c *g
 	if receipt != "" {
 		return receipt, nil
 	}
-	// This fixture uses one already-provisioned version. It does not silently map
-	// other codec scopes/versions onto the SQL fixture's fixed key_version=1.
-	if c.Scope != p.Env || c.ActiveKey != "1" || len(c.Keys) != 1 || len(c.Keys["1"]) != 32 {
+	// Caller keys remain pre-provisioned fixture inputs, but their scope and
+	// active writer must match the durable publication owner.
+	var org string
+	if err := s.pool.QueryRow(ctx, `SELECT org_id FROM environments WHERE id=$1`, p.Env).Scan(&org); err != nil {
+		return "", err
+	}
+	scope, err := computer.EncryptionScope(org, p.Env, p.Computer)
+	if err != nil {
+		return "", err
+	}
+	var writeKey string
+	if err := s.pool.QueryRow(ctx, `SELECT write_key_id FROM computer_publications WHERE environment_id=$1 AND id=$2`, p.Env, p.ID).Scan(&writeKey); err != nil {
+		return "", err
+	}
+	if c.Scope != scope || c.ActiveKey != writeKey {
 		return "", errConflict
 	}
 
@@ -107,7 +120,11 @@ type encryptedFixture struct {
 func encrypted(t *testing.T) *encryptedFixture {
 	t.Helper()
 	key := bytes.Repeat([]byte{0x37}, 32)
-	c, err := generation.NewCodec("env", "1", map[string][]byte{"1": key})
+	scope, err := computer.EncryptionScope("org", "env", "computer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := generation.NewCodec(scope, "1", map[string][]byte{"1": key})
 	if err != nil {
 		t.Fatal(err)
 	}

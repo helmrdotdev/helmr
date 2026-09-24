@@ -52,7 +52,8 @@ func newFixture(t *testing.T, db dbtest.Database, n int) *fixture {
 	})
 	f := &fixture{store{pool}, ctx, t}
 	f.sql(schema)
-	f.sql(`INSERT INTO environments VALUES('env','org','project'),('env2','org','project'),('env3','org2','project2'); INSERT INTO computers VALUES('env','computer',1,NULL),('env2','computer',1,NULL),('env3','computer',1,NULL)`)
+	f.sql(`INSERT INTO environments VALUES('env','org','project'),('env2','org','project'),('env3','org2','project2'); INSERT INTO computers(environment_id,id,epoch,head_id) VALUES('env','computer',1,NULL),('env2','computer',1,NULL),('env3','computer',1,NULL)`)
+	f.sql(`INSERT INTO computer_keys(environment_id,computer_id,id,wrapped_key) SELECT environment_id,id,'1',decode('01','hex') FROM computers; UPDATE computers SET write_key_id='1'`)
 	f.seed("env")
 	return f
 }
@@ -81,7 +82,7 @@ func (f *fixture) assertCount(want int, q string, args ...any) {
 }
 func (f *fixture) seed(env string) {
 	p := publication{Env: env, ID: "seed", Computer: "computer", Epoch: 1}
-	o := object{"seed-root", "root", 1, 128}
+	o := object{"seed-root", "root", 1, 128, []string{"1"}}
 	m := manifest{"seed-manifest", o.Digest, 0, 4096}
 	f.ok(f.begin(f.ctx, p))
 	f.ok(f.admit(f.ctx, p, o))
@@ -96,7 +97,7 @@ func (f *fixture) candidate(id string) (publication, manifest) {
 	return p, manifest{id + "-manifest", id + "-root", 0, 4096}
 }
 func (f *fixture) ready(p publication, m manifest, children ...string) {
-	o := object{m.Root, "root", 2, 128}
+	o := object{m.Root, "root", 2, 128, []string{"1"}}
 	f.ok(f.admit(f.ctx, p, o))
 	f.ok(f.certify(f.ctx, p, o, children))
 	f.ok(f.seal(f.ctx, p, m))
@@ -175,10 +176,11 @@ func TestAuthorityPostgres(t *testing.T) {
 		t.Run(name, func(t *testing.T) { n++; fn(newFixture(t, db, n)) })
 	}
 	generationCases(test)
+	computerKeyCases(test)
 
 	test("registration does not grant possession and tombstones cannot revive", func(f *fixture) {
 		p, _ := f.candidate("candidate")
-		o := object{"data", "segment", 0, 64}
+		o := object{"data", "segment", 0, 64, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, o))
 		f.assertCount(0, `SELECT count(*) FROM cas_objects WHERE digest='data'`)
 		f.ok(f.abandon(f.ctx, p))
@@ -190,7 +192,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("registration wins concurrent retirement", func(f *fixture) {
 		p, _ := f.candidate("candidate")
-		o := object{"data", "segment", 0, 64}
+		o := object{"data", "segment", 0, 64, []string{"1"}}
 		f.sql(`INSERT INTO cas_object_lifetimes(digest) VALUES('data')`)
 		tx := f.hold(`SELECT 1`)
 		f.ok(admit(f.ctx, tx, p, o))
@@ -205,7 +207,7 @@ func TestAuthorityPostgres(t *testing.T) {
 		p, _ := f.candidate("candidate")
 		f.sql(`INSERT INTO cas_object_lifetimes(digest) VALUES('data')`)
 		tx := f.hold(`UPDATE cas_object_lifetimes SET retired_at=now() WHERE digest='data'`)
-		done := runAsync(func() error { return f.admit(f.ctx, p, object{"data", "segment", 0, 64}) })
+		done := runAsync(func() error { return f.admit(f.ctx, p, object{"data", "segment", 0, 64, []string{"1"}}) })
 		f.waitBlocked(tx)
 		f.ok(tx.Commit(f.ctx))
 		requireState(f.t, <-done, "23503")
@@ -230,7 +232,7 @@ func TestAuthorityPostgres(t *testing.T) {
 		tx := f.hold(`DELETE FROM computer_version_roots WHERE version_id='version-seed'`)
 		done := runAsync(func() error {
 			return f.transaction(f.ctx, func(tx pgx.Tx) error {
-				return exec(f.ctx, tx, `INSERT INTO attempts(environment_id,id,base_version) VALUES('env','reader','version-seed')`)
+				return exec(f.ctx, tx, `INSERT INTO attempts(environment_id,computer_id,id,base_version) VALUES('env','computer','reader','version-seed')`)
 			})
 		})
 		f.waitBlocked(tx)
@@ -239,8 +241,8 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("certification is serialized complete and immutable", func(f *fixture) {
 		p, m := f.candidate("candidate")
-		child := object{"data", "segment", 0, 64}
-		parent := object{m.Root, "root", 2, 128}
+		child := object{"data", "segment", 0, 64, []string{"1"}}
+		parent := object{m.Root, "root", 2, 128, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, child))
 		f.ok(f.admit(f.ctx, p, parent))
 		if err := f.certify(f.ctx, p, parent, []string{"data"}); err == nil {
@@ -269,7 +271,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("org descriptor conflict rolls back certification", func(f *fixture) {
 		p, _ := f.candidate("candidate")
-		o := object{"data", "segment", 0, 64}
+		o := object{"data", "segment", 0, 64, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, o))
 		f.sql(`INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES('org','data',65,'application/proof')`)
 		if err := f.certify(f.ctx, p, o, nil); !errors.Is(err, errConflict) {
@@ -279,7 +281,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("abandon defeats blocked certifier", func(f *fixture) {
 		p, _ := f.candidate("candidate")
-		o := object{"data", "segment", 0, 64}
+		o := object{"data", "segment", 0, 64, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, o))
 		tx := f.hold(`SELECT * FROM computer_publications WHERE environment_id='env' AND id='candidate' FOR UPDATE`)
 		done := runAsync(func() error { return f.certify(f.ctx, p, o, nil) })
@@ -339,7 +341,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("supersession transfers pins without a collection gap", func(f *fixture) {
 		p, _ := f.candidate("old")
-		o := object{"data", "segment", 0, 64}
+		o := object{"data", "segment", 0, 64, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, o))
 		f.ok(f.certify(f.ctx, p, o, nil))
 		next := p
@@ -372,7 +374,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("artifact insertion wins concurrent cascade collection", func(f *fixture) {
 		p, _ := f.candidate("candidate")
-		o := object{"data", "segment", 0, 64}
+		o := object{"data", "segment", 0, 64, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, o))
 		f.ok(f.certify(f.ctx, p, o, nil))
 		f.ok(f.abandon(f.ctx, p))
@@ -386,12 +388,12 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("scope and uncertified root constraints reject unsafe owners", func(f *fixture) {
 		p, m := f.candidate("candidate")
-		f.ok(f.admit(f.ctx, p, object{m.Root, "root", 2, 128}))
+		f.ok(f.admit(f.ctx, p, object{m.Root, "root", 2, 128, []string{"1"}}))
 		f.ok(f.seal(f.ctx, p, m))
 		_, err := f.publish(f.ctx, p, m)
 		requireState(f.t, err, "23503")
 		f.assertCount(0, `SELECT count(*) FROM computer_versions WHERE id='version-candidate'`)
-		_, err = f.pool.Exec(f.ctx, `INSERT INTO computer_publication_objects VALUES('env2','candidate',$1)`, m.Root)
+		_, err = f.pool.Exec(f.ctx, `INSERT INTO computer_publication_objects VALUES('env2','computer','candidate',$1)`, m.Root)
 		requireState(f.t, err, "23503")
 		f.assertCount(1, `SELECT count(*) FROM computers WHERE environment_id='env' AND head_id='version-seed'`)
 	})
@@ -402,7 +404,7 @@ func TestAuthorityPostgres(t *testing.T) {
 		pm := manifest{"private-manifest", "private-root", 0, 4096}
 		f.ok(f.begin(f.ctx, private))
 		head, hm := f.candidate("head")
-		shared := object{"shared", "segment", 0, 64}
+		shared := object{"shared", "segment", 0, 64, []string{"1"}}
 		for _, p := range []publication{private, head} {
 			f.ok(f.admit(f.ctx, p, shared))
 			f.ok(f.certify(f.ctx, p, shared, nil))
@@ -429,7 +431,7 @@ func TestAuthorityPostgres(t *testing.T) {
 		f.ready(p, m)
 		_, err := f.publish(f.ctx, p, m)
 		f.ok(err)
-		f.sql(`INSERT INTO attempts(environment_id,id,base_version) VALUES('env','attempt','version-seed'); INSERT INTO waits(environment_id,id,base_version,resume_version) VALUES('env','wait','version-seed','version-next')`)
+		f.sql(`INSERT INTO attempts(environment_id,computer_id,id,base_version) VALUES('env','computer','attempt','version-seed'); INSERT INTO waits(environment_id,computer_id,id,base_version,resume_version) VALUES('env','computer','wait','version-seed','version-next')`)
 		f.sql(`UPDATE attempts SET retry_needed=false`)
 		_, err = f.pool.Exec(f.ctx, `DELETE FROM computer_version_roots WHERE version_id='version-seed'`)
 		requireState(f.t, err, "23503")
@@ -437,7 +439,7 @@ func TestAuthorityPostgres(t *testing.T) {
 		_, err = f.pool.Exec(f.ctx, `DELETE FROM computer_version_roots WHERE version_id='version-seed'`)
 		requireState(f.t, err, "23503")
 		f.ok(f.transaction(f.ctx, func(tx pgx.Tx) error {
-			if err := exec(f.ctx, tx, `INSERT INTO attempts(environment_id,id,base_version) VALUES('env','resumed','version-next')`); err != nil {
+			if err := exec(f.ctx, tx, `INSERT INTO attempts(environment_id,computer_id,id,base_version) VALUES('env','computer','resumed','version-next')`); err != nil {
 				return err
 			}
 			return exec(f.ctx, tx, `UPDATE waits SET transferred=true`)
@@ -456,7 +458,7 @@ func TestAuthorityPostgres(t *testing.T) {
 			}
 			p := publication{Env: env, ID: "candidate", Computer: "computer", Epoch: 1, Source: source}
 			f.ok(f.begin(f.ctx, p))
-			o := object{"shared", "segment", 0, 64}
+			o := object{"shared", "segment", 0, 64, []string{"1"}}
 			f.ok(f.admit(f.ctx, p, o))
 			f.ok(f.certify(f.ctx, p, o, nil))
 			candidates = append(candidates, p)
@@ -477,7 +479,7 @@ func TestAuthorityPostgres(t *testing.T) {
 	})
 	test("rollback and terminated backend leave reclaimable graph", func(f *fixture) {
 		p, m := f.candidate("candidate")
-		child := object{"data", "segment", 0, 64}
+		child := object{"data", "segment", 0, 64, []string{"1"}}
 		f.ok(f.admit(f.ctx, p, child))
 		f.ok(f.certify(f.ctx, p, child, nil))
 		f.ready(p, m, "data")
@@ -539,7 +541,7 @@ func TestAuthorityPostgres(t *testing.T) {
 		}
 		test(name, func(f *fixture) {
 			p, _ := f.candidate("candidate")
-			o := object{"data", "segment", 0, 64}
+			o := object{"data", "segment", 0, 64, []string{"1"}}
 			f.ok(f.admit(f.ctx, p, o))
 			f.ok(f.certify(f.ctx, p, o, nil))
 			f.ok(f.abandon(f.ctx, p))

@@ -703,6 +703,35 @@ nix develop .#default -c env -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_T
 
 This narrows the earlier model's trusted-byte/geometry premise only for the local
 bridge. Caller authorization, immutable retention during inspection, already
-provisioned single-version keys, and the four non-Computer checkpoint artifacts
+provisioned key material, and the four non-Computer checkpoint artifacts
 remain test premises. No production permissions, cross-environment reuse, remote
 object lifecycle, VM exclusion, performance or retention policy is established.
+
+## Computer scope and key retention
+
+Graph objects, edges, versions, retained roots and owner FKs are Computer-scoped,
+including multiple Computers in one environment. The bridge uses the Computer-owned
+canonical encryption context (`internal/computer.EncryptionScope`), built from
+server-owned org/environment/Computer identities, without changing codec framing.
+Labels and guest input are not authorization. A second Computer cannot decrypt the
+first's ciphertext even when the test deliberately supplies identical key bytes.
+
+The SQL model also represents the current write-key pointer, a publication's pinned
+write key before its first upload, and all per-object key dependencies. Inspection
+extracts the complete sorted key set from authenticated pages, including obsolete
+pages in a pack, and from data segments. Registration and certification compare exact
+sets. Rotation changes new admissions while already-admitted publications keep their
+key. Key retirement clears fixture wrapped material only after current-pointer,
+candidate and object dependencies release; identity remains as a tombstone.
+
+Tests cover scope constraints, independent same-environment reclamation, delayed
+first upload, rotation, old/new encrypted generations, multiple keys in one pack,
+retirement racing abandonment, key-set mismatch and retired identifier reuse.
+These are local relational/byte-contract checks, not a production migration or key
+broker. Wrapped bytes in SQL are dummy data; codec keys are provisioned by fixtures.
+The recursive source-key query is a correctness oracle, not the incremental hot path.
+Actual runtime/preparation writer pins, four runtime-artifact key dependencies,
+fenced fetch/unwrap/revalidation, provider adapters, irreversible operations against
+arbitrary SQL writers, remote upload and VM integration remain outside this proof.
+A trusted writer still owns using the pinned key for fresh encryption; a symmetric
+read key cannot cryptographically prevent encrypting new bytes.

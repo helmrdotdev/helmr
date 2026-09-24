@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"slices"
 	"sort"
 )
 
@@ -15,6 +16,7 @@ type InspectedObject struct {
 	Kind     string
 	Rank     int
 	Children [][32]byte
+	Keys     []string
 }
 
 // Inspection binds a selected root and its geometry to the entire physical graph.
@@ -40,7 +42,7 @@ func Inspect(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 	out := Inspection{Root: root, Capacity: shape.Capacity}
 	objects := map[[32]byte]InspectedObject{}
 	add := func(o InspectedObject) error {
-		if old, ok := objects[o.Digest]; ok && (old.Size != o.Size || old.Kind != o.Kind || old.Rank != o.Rank) {
+		if old, ok := objects[o.Digest]; ok && (old.Size != o.Size || old.Kind != o.Kind || old.Rank != o.Rank || !slices.Equal(old.Keys, o.Keys)) {
 			return errors.New("conflicting physical descriptor")
 		}
 		objects[o.Digest] = o
@@ -69,13 +71,16 @@ func Inspect(c *Codec, data, packs *Store, root Locator, maxObjects, maxBytes in
 		}
 		o := InspectedObject{Digest: p.Digest, Size: p.Size, Kind: "index", Rank: p.Rank}
 		for _, page := range dir.Pages {
+			o.Keys = append(o.Keys, page.Key)
 			if page.Kind == rootKind {
 				o.Kind = "root"
 			}
 		}
+		slices.Sort(o.Keys)
+		o.Keys = slices.Compact(o.Keys)
 		edges := map[[32]byte]bool{}
 		for _, s := range segments {
-			if err = add(InspectedObject{Digest: s.Digest, Size: s.Size, Kind: "segment"}); err != nil {
+			if err = add(InspectedObject{Digest: s.Digest, Size: s.Size, Kind: "segment", Keys: []string{s.Key}}); err != nil {
 				return err
 			}
 			edges[s.Digest] = true

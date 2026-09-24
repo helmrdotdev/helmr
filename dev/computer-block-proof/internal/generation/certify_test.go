@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -146,7 +147,12 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 	var pages []stagedPage
 	var refs []Ref
 	var segments []Ref
+	oldKey := c.ActiveKey
 	for i := 0; i < 2; i++ {
+		if i == 1 {
+			c.ActiveKey = "rotated"
+			c.Keys["rotated"] = bytes.Repeat([]byte{0x71}, 32)
+		}
 		seg, raw, e := c.seal(segmentKind, [][]byte{bytes.Repeat([]byte{byte(i + 1)}, BlockSize)})
 		if e != nil {
 			t.Fatal(e)
@@ -183,6 +189,11 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 	edges := map[[32]byte]bool{}
 	for _, o := range inspected.Objects {
 		if o.Digest == loc.Pack.Digest {
+			expected := []string{oldKey, "rotated"}
+			slices.Sort(expected)
+			if !slices.Equal(o.Keys, expected) {
+				t.Fatalf("mixed pack lost key dependencies: %v", o.Keys)
+			}
 			for _, d := range o.Children {
 				edges[d] = true
 			}

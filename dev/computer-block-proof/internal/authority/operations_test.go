@@ -32,6 +32,7 @@ type object struct {
 	Digest, Kind string
 	Rank         int
 	Size         int64
+	Keys         []string
 }
 type store struct{ pool *pgxpool.Pool }
 
@@ -121,7 +122,7 @@ func begin(ctx context.Context, tx pgx.Tx, p publication) error {
 			return errConflict
 		}
 	}
-	return exec(ctx, tx, `INSERT INTO computer_publications(environment_id,id,computer_id,epoch,predecessor_id,source_pin,checkpoint_id,capture_id,status) VALUES($1,$2,$3,$4,nullif($5,''),nullif($5,''),nullif($6,''),nullif($7,''),'constructing')`, p.Env, p.ID, p.Computer, p.Epoch, p.Source, p.Checkpoint, p.Capture)
+	return exec(ctx, tx, `INSERT INTO computer_publications(environment_id,id,computer_id,epoch,predecessor_id,source_pin,checkpoint_id,capture_id,status,write_key_id) SELECT $1,$2,$3,$4,nullif($5,''),nullif($5,''),nullif($6,''),nullif($7,''),'constructing',write_key_id FROM computers WHERE environment_id=$1 AND id=$3`, p.Env, p.ID, p.Computer, p.Epoch, p.Source, p.Checkpoint, p.Capture)
 }
 func (s store) admit(ctx context.Context, p publication, o object) error {
 	return s.transaction(ctx, func(tx pgx.Tx) error { return admit(ctx, tx, p, o) })
@@ -134,22 +135,61 @@ func admit(ctx context.Context, tx pgx.Tx, p publication, o object) error {
 	if status != "constructing" {
 		return errConflict
 	}
+	if len(o.Keys) == 0 || !slices.IsSorted(o.Keys) || len(slices.Compact(slices.Clone(o.Keys))) != len(o.Keys) {
+		return errConflict
+	}
+	// Admission may retain the pinned writer key or an existing source object's
+	// authenticated key dependency. Key presence alone never grants write authority.
+	for _, key := range o.Keys {
+		var allowed bool
+		err = tx.QueryRow(ctx, `WITH RECURSIVE source(digest) AS (
+    SELECT r.digest FROM computer_version_roots r JOIN computer_publications p
+      ON p.environment_id=r.environment_id AND p.computer_id=r.computer_id AND p.source_pin=r.version_id
+      WHERE p.environment_id=$1 AND p.id=$2
+    UNION SELECT e.child_digest FROM computer_object_edges e JOIN source s ON e.parent_digest=s.digest
+      WHERE e.environment_id=$1 AND e.computer_id=$3
+   ) SELECT p.write_key_id=$4 OR EXISTS(SELECT 1 FROM source s JOIN computer_object_keys k ON k.digest=s.digest
+      WHERE k.environment_id=$1 AND k.computer_id=$3 AND k.key_id=$4)
+   FROM computer_publications p WHERE p.environment_id=$1 AND p.id=$2`, p.Env, p.ID, p.Computer, key).Scan(&allowed)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return errConflict
+		}
+	}
 	if err = exec(ctx, tx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1) ON CONFLICT DO NOTHING`, o.Digest); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO computer_objects(environment_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,key_version) SELECT id,$2,org_id,project_id,$3,'application/proof',$4,$5,1 FROM environments WHERE id=$1 ON CONFLICT DO NOTHING`, p.Env, o.Digest, o.Size, o.Kind, o.Rank)
+	_, err = tx.Exec(ctx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank) SELECT id,$6,$2,org_id,project_id,$3,'application/proof',$4,$5 FROM environments WHERE id=$1 ON CONFLICT DO NOTHING`, p.Env, o.Digest, o.Size, o.Kind, o.Rank, p.Computer)
 	if err != nil {
 		return err
 	}
 	var matches bool
-	err = tx.QueryRow(ctx, `SELECT size_bytes=$3 AND kind=$4 AND rank=$5 AND key_version=1 AND media_type='application/proof' FROM computer_objects WHERE environment_id=$1 AND digest=$2`, p.Env, o.Digest, o.Size, o.Kind, o.Rank).Scan(&matches)
+	err = tx.QueryRow(ctx, `SELECT size_bytes=$3 AND kind=$4 AND rank=$5 AND media_type='application/proof' FROM computer_objects WHERE environment_id=$1 AND computer_id=$6 AND digest=$2 FOR UPDATE`, p.Env, o.Digest, o.Size, o.Kind, o.Rank, p.Computer).Scan(&matches)
 	if err != nil {
 		return err
 	}
 	if !matches {
 		return errConflict
 	}
-	return exec(ctx, tx, `INSERT INTO computer_publication_objects VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, p.Env, p.ID, o.Digest)
+	rows, err := tx.Query(ctx, `SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND computer_id=$2 AND digest=$3 ORDER BY key_id`, p.Env, p.Computer, o.Digest)
+	if err != nil {
+		return err
+	}
+	keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	if len(keys) > 0 && !slices.Equal(keys, o.Keys) {
+		return errConflict
+	}
+	for _, key := range o.Keys {
+		if err = exec(ctx, tx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, p.Env, p.Computer, o.Digest, key); err != nil {
+			return err
+		}
+	}
+	return exec(ctx, tx, `INSERT INTO computer_publication_objects VALUES($1,$4,$2,$3) ON CONFLICT DO NOTHING`, p.Env, p.ID, o.Digest, p.Computer)
 }
 func (s store) seal(ctx context.Context, p publication, m manifest) error {
 	return s.transaction(ctx, func(tx pgx.Tx) error {
@@ -202,11 +242,22 @@ func (s store) certify(ctx context.Context, p publication, o object, children []
 		var rank int
 		var size int64
 		var kind string
-		err = tx.QueryRow(ctx, `SELECT o.certified,o.org_id,o.rank,o.size_bytes,o.kind,EXISTS(SELECT 1 FROM computer_publication_objects p WHERE p.environment_id=o.environment_id AND p.digest=o.digest AND p.publication_id=$3) FROM computer_objects o WHERE environment_id=$1 AND digest=$2 FOR UPDATE`, p.Env, o.Digest, p.ID).Scan(&certified, &org, &rank, &size, &kind, &member)
+		err = tx.QueryRow(ctx, `SELECT o.certified,o.org_id,o.rank,o.size_bytes,o.kind,EXISTS(SELECT 1 FROM computer_publication_objects p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest AND p.publication_id=$3) FROM computer_objects o WHERE environment_id=$1 AND computer_id=$4 AND digest=$2 FOR UPDATE`, p.Env, o.Digest, p.ID, p.Computer).Scan(&certified, &org, &rank, &size, &kind, &member)
 		if err != nil {
 			return err
 		}
 		if !member || rank != o.Rank || size != o.Size || kind != o.Kind {
+			return errConflict
+		}
+		rows, err := tx.Query(ctx, `SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND computer_id=$2 AND digest=$3 ORDER BY key_id`, p.Env, p.Computer, o.Digest)
+		if err != nil {
+			return err
+		}
+		keys, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(keys, o.Keys) {
 			return errConflict
 		}
 		children = slices.Clone(children)
@@ -215,7 +266,7 @@ func (s store) certify(ctx context.Context, p publication, o object, children []
 			return errConflict
 		}
 		if certified {
-			rows, err := tx.Query(ctx, `SELECT child_digest FROM computer_object_edges WHERE environment_id=$1 AND parent_digest=$2 ORDER BY child_digest`, p.Env, o.Digest)
+			rows, err := tx.Query(ctx, `SELECT child_digest FROM computer_object_edges WHERE environment_id=$1 AND computer_id=$3 AND parent_digest=$2 ORDER BY child_digest`, p.Env, o.Digest, p.Computer)
 			if err != nil {
 				return err
 			}
@@ -238,15 +289,15 @@ func (s store) certify(ctx context.Context, p publication, o object, children []
 		}
 		for _, child := range children {
 			var childRank int
-			err = tx.QueryRow(ctx, `SELECT o.rank FROM computer_objects o JOIN computer_publication_objects p USING(environment_id,digest) WHERE o.environment_id=$1 AND o.digest=$2 AND o.certified AND p.publication_id=$3`, p.Env, child, p.ID).Scan(&childRank)
+			err = tx.QueryRow(ctx, `SELECT o.rank FROM computer_objects o JOIN computer_publication_objects p USING(environment_id,computer_id,digest) WHERE o.environment_id=$1 AND o.digest=$2 AND o.certified AND p.publication_id=$3 AND o.computer_id=$4`, p.Env, child, p.ID, p.Computer).Scan(&childRank)
 			if err != nil {
 				return err
 			}
-			if err = exec(ctx, tx, `INSERT INTO computer_object_edges(environment_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,$4,$5)`, p.Env, o.Digest, child, rank, childRank); err != nil {
+			if err = exec(ctx, tx, `INSERT INTO computer_object_edges(environment_id,computer_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$6,$2,$3,$4,$5)`, p.Env, o.Digest, child, rank, childRank, p.Computer); err != nil {
 				return err
 			}
 		}
-		return exec(ctx, tx, `UPDATE computer_objects SET certified_at=clock_timestamp() WHERE environment_id=$1 AND digest=$2`, p.Env, o.Digest)
+		return exec(ctx, tx, `UPDATE computer_objects SET certified_at=clock_timestamp() WHERE environment_id=$1 AND computer_id=$3 AND digest=$2`, p.Env, o.Digest, p.Computer)
 	})
 }
 func (s store) publish(ctx context.Context, p publication, m manifest) (string, error) {
@@ -285,10 +336,10 @@ func (s store) publish(ctx context.Context, p publication, m manifest) (string, 
 		}
 		// The authenticated caller and trusted verified root locator are fixture premises.
 		receipt = "version-" + p.ID
-		if err = exec(ctx, tx, `INSERT INTO computer_versions VALUES($1,$2,nullif($3,''))`, p.Env, receipt, p.Source); err != nil {
+		if err = exec(ctx, tx, `INSERT INTO computer_versions VALUES($1,$4,$2,nullif($3,''))`, p.Env, receipt, p.Source, p.Computer); err != nil {
 			return err
 		}
-		if err = exec(ctx, tx, `INSERT INTO computer_version_roots(environment_id,version_id,digest,page_offset,capacity) VALUES($1,$2,$3,$4,$5)`, p.Env, receipt, m.Root, m.Offset, m.Capacity); err != nil {
+		if err = exec(ctx, tx, `INSERT INTO computer_version_roots(environment_id,computer_id,version_id,digest,page_offset,capacity) VALUES($1,$6,$2,$3,$4,$5)`, p.Env, receipt, m.Root, m.Offset, m.Capacity, p.Computer); err != nil {
 			return err
 		}
 		if p.Checkpoint == "" {
@@ -352,7 +403,7 @@ func (s store) supersede(ctx context.Context, old, next publication) error {
 		if err = begin(ctx, tx, next); err != nil {
 			return err
 		}
-		if err = exec(ctx, tx, `INSERT INTO computer_publication_objects SELECT environment_id,$3,digest FROM computer_publication_objects WHERE environment_id=$1 AND publication_id=$2 ON CONFLICT DO NOTHING`, old.Env, old.ID, next.ID); err != nil {
+		if err = exec(ctx, tx, `INSERT INTO computer_publication_objects SELECT environment_id,computer_id,$3,digest FROM computer_publication_objects WHERE environment_id=$1 AND publication_id=$2 ON CONFLICT DO NOTHING`, old.Env, old.ID, next.ID); err != nil {
 			return err
 		}
 		return abandon(ctx, tx, old)
@@ -364,9 +415,9 @@ func (s store) supersede(ctx context.Context, old, next publication) error {
 func (s store) collect(ctx context.Context, digest string, afterGraph func(pgx.Tx) error) error {
 	return s.transaction(ctx, func(tx pgx.Tx) error {
 		if err := exec(ctx, tx, `DELETE FROM computer_objects o WHERE digest=$1
-    AND NOT EXISTS(SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.digest=o.digest)
-    AND NOT EXISTS(SELECT 1 FROM computer_publication_objects p WHERE p.environment_id=o.environment_id AND p.digest=o.digest)
-    AND NOT EXISTS(SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.child_digest=o.digest)`, digest); err != nil {
+    AND NOT EXISTS(SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.digest=o.digest)
+    AND NOT EXISTS(SELECT 1 FROM computer_publication_objects p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+    AND NOT EXISTS(SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)`, digest); err != nil {
 			return err
 		}
 		if afterGraph != nil {
@@ -401,5 +452,17 @@ func (s store) collect(ctx context.Context, digest string, afterGraph func(pgx.T
 		return exec(ctx, tx, `UPDATE cas_object_lifetimes l SET retired_at=clock_timestamp() WHERE digest=$1
    AND NOT EXISTS(SELECT 1 FROM computer_objects o WHERE o.digest=l.digest)
    AND NOT EXISTS(SELECT 1 FROM cas_objects c WHERE c.digest=l.digest)`, digest)
+	})
+}
+
+// A key tombstone remains discoverable; only wrapped material is reclaimed.
+// FK barriers serialize retirement against new ownership, including before upload.
+func (s store) retireKey(ctx context.Context, env, computer, key string) error {
+	return s.transaction(ctx, func(tx pgx.Tx) error {
+		return exec(ctx, tx, `UPDATE computer_keys k SET retired_at=clock_timestamp(),wrapped_key=NULL
+   WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND available
+   AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.environment_id=k.environment_id AND c.id=k.computer_id AND c.write_key_id=k.id)
+   AND NOT EXISTS(SELECT 1 FROM computer_publications p WHERE p.environment_id=k.environment_id AND p.computer_id=k.computer_id AND p.retained_write_key=k.id)
+   AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.environment_id=k.environment_id AND o.computer_id=k.computer_id AND o.key_id=k.id)`, env, computer, key)
 	})
 }
