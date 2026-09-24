@@ -146,7 +146,7 @@ func TestDirectMeasurement(t *testing.T) {
 			legacy := packedClosure(t, cc, converted, cr)
 			before := packs.Metrics
 			beforeData := data.Metrics
-			selected := uint64(maxBlocks)
+			selected := uint64(blockformat.MaxBlocks)
 			for b := range changes {
 				if b < selected {
 					selected = b

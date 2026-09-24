@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
-func certifyRoot(t *testing.T, c *Codec, packs *Store, shape packedRoot) blockformat.Locator {
+func certifyRoot(t *testing.T, c *Codec, packs *Store, shape blockformat.Root) blockformat.Locator {
 	t.Helper()
 	plain, e := json.Marshal(shape)
 	if e != nil {
@@ -163,7 +163,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 			t.Fatal(e)
 		}
 		segments = append(segments, seg)
-		n := packedNode{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
+		n := blockformat.Node{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []blockformat.Entry{{Slot: 0}}}
 		plain, e := json.Marshal(n)
 		if e != nil {
 			t.Fatal(e)
@@ -179,7 +179,7 @@ func TestCertificationChecksObsoletePages(t *testing.T) {
 		t.Fatal(e)
 	}
 	loc := p.converted[refs[0]]
-	root := certifyRoot(t, c, packs, packedRoot{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Index: &loc})
+	root := certifyRoot(t, c, packs, blockformat.Root{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Index: &loc})
 	if proof, e := Certify(c, data, packs, root, 100, 8<<20); e != nil || proof.Segments != 2 {
 		t.Fatal("physical dependencies", e)
 	}
@@ -229,7 +229,7 @@ func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {
 	if e = data.put(seg, raw); e != nil {
 		t.Fatal(e)
 	}
-	n := packedNode{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []packedEntry{{Slot: 0}}}
+	n := blockformat.Node{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Segments: []blockformat.Ref{seg}, Entries: []blockformat.Entry{{Slot: 0}}}
 	plain, e := json.Marshal(n)
 	if e != nil {
 		t.Fatal(e)
@@ -243,7 +243,7 @@ func TestCertificationAuthenticatesUnusedRecord(t *testing.T) {
 		t.Fatal(e)
 	}
 	loc := p.converted[ref]
-	root := certifyRoot(t, c, packs, packedRoot{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Index: &loc})
+	root := certifyRoot(t, c, packs, blockformat.Root{Capacity: 64 * blockformat.BlockSize, Fanout: 64, Index: &loc})
 	if got, e := ReadPacked(c, data, packs, root, 0); e != nil || got[0] != 1 {
 		t.Fatal("selected record", e)
 	}

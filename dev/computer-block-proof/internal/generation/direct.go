@@ -10,7 +10,7 @@ import (
 )
 
 type directNode struct {
-	node     packedNode
+	node     blockformat.Node
 	children map[int]*directNode
 	ref      blockformat.Ref
 }
@@ -84,7 +84,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 	levels := make([][]*directNode, shape.Level+1)
 	var update func(*blockformat.Locator, int, uint64, []uint64) (*directNode, error)
 	update = func(old *blockformat.Locator, level int, start uint64, changed []uint64) (*directNode, error) {
-		n := packedNode{Capacity: shape.Capacity, Fanout: shape.Fanout, Level: level, Start: start}
+		n := blockformat.Node{Capacity: shape.Capacity, Fanout: shape.Fanout, Level: level, Start: start}
 		if old != nil {
 			var e error
 			n, e = loadPacked(c, packs, *old, shape, level, start)
@@ -93,7 +93,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 			}
 		}
 		out := &directNode{node: n, children: map[int]*directNode{}}
-		entries := map[int]packedEntry{}
+		entries := map[int]blockformat.Entry{}
 		for _, e := range n.Entries {
 			entries[e.Slot] = e
 		}
@@ -124,7 +124,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 					table[v.Segment] = idx
 					out.node.Segments = append(out.node.Segments, v.Segment)
 				}
-				out.node.Entries = append(out.node.Entries, packedEntry{Slot: slot, Segment: idx, Record: v.Record})
+				out.node.Entries = append(out.node.Entries, blockformat.Entry{Slot: slot, Segment: idx, Record: v.Record})
 			}
 		} else {
 			groups := map[int][]uint64{}
@@ -145,7 +145,7 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 					delete(entries, slot)
 				} else {
 					out.children[slot] = child
-					entries[slot] = packedEntry{Slot: slot}
+					entries[slot] = blockformat.Entry{Slot: slot}
 				}
 			}
 			out.node.Entries = nil
@@ -238,14 +238,14 @@ func CapturePacked(c *Codec, data, packs *Store, base blockformat.Locator, chang
 
 // NewPacked creates an empty packed generation without an intermediate index.
 func NewPacked(c *Codec, packs *Store, capacity int64, fanout, limit int) (blockformat.Locator, error) {
-	if capacity <= 0 || capacity%blockformat.BlockSize != 0 || capacity/blockformat.BlockSize > maxBlocks || (fanout != 64 && fanout != 256) {
+	if capacity <= 0 || capacity%blockformat.BlockSize != 0 || capacity/blockformat.BlockSize > blockformat.MaxBlocks || (fanout != 64 && fanout != 256) {
 		return blockformat.Locator{}, errors.New("unsupported geometry")
 	}
 	p, err := NewPacker(c, nil, packs, limit, true)
 	if err != nil {
 		return blockformat.Locator{}, err
 	}
-	shape := packedRoot{Capacity: capacity, Fanout: fanout}
+	shape := blockformat.Root{Capacity: capacity, Fanout: fanout}
 	for span := int64(fanout); span < capacity/blockformat.BlockSize; span *= int64(fanout) {
 		shape.Level++
 	}

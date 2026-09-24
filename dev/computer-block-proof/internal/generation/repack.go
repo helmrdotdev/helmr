@@ -13,7 +13,7 @@ import (
 // maxLive bounds the work accepted by this experiment, not disk capacity.
 func Repack(c *Codec, data, packs *Store, current blockformat.Locator, limit int, internal bool, maxLive uint64) (blockformat.Locator, Metrics, error) {
 	var none blockformat.Locator
-	if maxLive == 0 || maxLive > maxBlocks {
+	if maxLive == 0 || maxLive > blockformat.MaxBlocks {
 		return none, Metrics{}, errors.New("invalid repack work bound")
 	}
 	staging := NewStore()

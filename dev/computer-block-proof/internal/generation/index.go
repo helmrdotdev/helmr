@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
-const maxBlocks = 1 << 28 // finite experimental geometry, up to 1 TiB
 const maxDirty = 16384
 const maxRequestBytes = 8 << 20 // bounds scratch allocation in atomic read/write calls
 
@@ -50,7 +49,7 @@ type Disk struct {
 }
 
 func New(c *Codec, s *Store, capacity int64, fanout int) (*Disk, error) {
-	if capacity <= 0 || capacity%blockformat.BlockSize != 0 || capacity/blockformat.BlockSize > maxBlocks || (fanout != 64 && fanout != 256) {
+	if capacity <= 0 || capacity%blockformat.BlockSize != 0 || capacity/blockformat.BlockSize > blockformat.MaxBlocks || (fanout != 64 && fanout != 256) {
 		return nil, errors.New("unsupported geometry")
 	}
 	level := 0
@@ -88,7 +87,7 @@ func loadRoot(c *Codec, s *Store, r blockformat.Ref) (root, error) {
 	if err = decode(b, &out); err != nil {
 		return out, err
 	}
-	if out.Capacity <= 0 || out.Capacity%blockformat.BlockSize != 0 || out.Capacity/blockformat.BlockSize > maxBlocks || (out.Fanout != 64 && out.Fanout != 256) {
+	if out.Capacity <= 0 || out.Capacity%blockformat.BlockSize != 0 || out.Capacity/blockformat.BlockSize > blockformat.MaxBlocks || (out.Fanout != 64 && out.Fanout != 256) {
 		return out, errors.New("root geometry")
 	}
 	level := 0
@@ -414,7 +413,7 @@ func (c *Codec) Children(s *Store, r blockformat.Ref) ([]blockformat.Ref, error)
 		if err = decode(p, &n); err != nil {
 			return nil, err
 		}
-		if n.Capacity <= 0 || n.Capacity%blockformat.BlockSize != 0 || n.Capacity/blockformat.BlockSize > maxBlocks || (n.Fanout != 64 && n.Fanout != 256) || n.Level < 0 || n.Level > 4 {
+		if n.Capacity <= 0 || n.Capacity%blockformat.BlockSize != 0 || n.Capacity/blockformat.BlockSize > blockformat.MaxBlocks || (n.Fanout != 64 && n.Fanout != 256) || n.Level < 0 || n.Level > 4 {
 			return nil, errors.New("node geometry")
 		}
 		maxLevel := 0

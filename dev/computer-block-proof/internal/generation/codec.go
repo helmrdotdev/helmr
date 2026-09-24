@@ -133,3 +133,20 @@ func (s storeRanges) GetRange(ctx context.Context, digest string, size, offset, 
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
+
+// The proof stores data and packs separately. Select the known object namespace
+// before reading; a failed read is never retried against the other store.
+type treeRanges struct{ data, packs *Store }
+
+func (s treeRanges) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+	raw, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+	if err != nil || len(raw) != 32 {
+		return nil, errors.New("invalid range digest")
+	}
+	var hash [32]byte
+	copy(hash[:], raw)
+	if _, ok := s.packs.objects[hash]; ok {
+		return (storeRanges{s.packs}).GetRange(ctx, digest, size, offset, length)
+	}
+	return (storeRanges{s.data}).GetRange(ctx, digest, size, offset, length)
+}

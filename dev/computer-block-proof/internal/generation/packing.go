@@ -12,24 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 )
 
-type packedEntry struct {
-	Slot    int
-	Child   *blockformat.Locator `json:",omitempty"`
-	Segment int                  `json:",omitempty"`
-	Record  uint32               `json:",omitempty"`
-}
-type packedNode struct {
-	Capacity      int64
-	Fanout, Level int
-	Start         uint64
-	Segments      []blockformat.Ref `json:",omitempty"`
-	Entries       []packedEntry
-}
-type packedRoot struct {
-	Capacity      int64
-	Fanout, Level int
-	Index         *blockformat.Locator
-}
 type directory struct {
 	Rank  int
 	Pages []blockformat.Ref
@@ -152,9 +134,9 @@ func (p *Packer) Convert(input blockformat.Ref) (blockformat.Locator, error) {
 		batchSize := len(base)
 		for _, ref := range refs {
 			n := nodes[ref]
-			out := packedNode{Capacity: n.Capacity, Fanout: n.Fanout, Level: n.Level, Start: n.Start, Segments: n.Segments}
+			out := blockformat.Node{Capacity: n.Capacity, Fanout: n.Fanout, Level: n.Level, Start: n.Start, Segments: n.Segments}
 			for _, e := range n.Entries {
-				pe := packedEntry{Slot: e.Slot, Segment: e.Segment, Record: e.Record}
+				pe := blockformat.Entry{Slot: e.Slot, Segment: e.Segment, Record: e.Record}
 				if e.Child != nil {
 					loc, ok := p.converted[*e.Child]
 					if !ok {
@@ -199,7 +181,7 @@ func (p *Packer) Convert(input blockformat.Ref) (blockformat.Locator, error) {
 			return blockformat.Locator{}, err
 		}
 	}
-	out := packedRoot{Capacity: shape.Capacity, Fanout: shape.Fanout, Level: shape.Level}
+	out := blockformat.Root{Capacity: shape.Capacity, Fanout: shape.Fanout, Level: shape.Level}
 	if shape.Index != nil {
 		loc := p.converted[*shape.Index]
 		out.Index = &loc
@@ -220,94 +202,20 @@ func (p *Packer) Convert(input blockformat.Ref) (blockformat.Locator, error) {
 func pageBytes(c *Codec, s *Store, l blockformat.Locator) ([]byte, error) {
 	return blockformat.ReadPage(context.Background(), storeRanges{s}, c.Scope, c.Keys[l.Page.Key], l)
 }
-func openPacked(c *Codec, s *Store, l blockformat.Locator) (packedRoot, error) {
-	var out packedRoot
-	if l.Page.Kind != blockformat.RootKind {
-		return out, errors.New("packed root required")
-	}
-	b, err := pageBytes(c, s, l)
-	if err != nil {
-		return out, err
-	}
-	if err = decode(b, &out); err != nil {
-		return out, err
-	}
-	if out.Capacity <= 0 || out.Capacity%blockformat.BlockSize != 0 || out.Capacity/blockformat.BlockSize > maxBlocks || (out.Fanout != 64 && out.Fanout != 256) {
-		return out, errors.New("packed root geometry")
-	}
-	level := 0
-	for span := int64(out.Fanout); span < out.Capacity/blockformat.BlockSize; span *= int64(out.Fanout) {
-		level++
-	}
-	if out.Level != level || l.Pack.Rank != level+2 {
-		return out, errors.New("packed root rank")
-	}
-	return out, nil
+func openPacked(c *Codec, s *Store, l blockformat.Locator) (blockformat.Root, error) {
+	return blockformat.ReadRoot(context.Background(), storeRanges{s}, c.Scope, c.Keys, l)
 }
-func loadPacked(c *Codec, s *Store, l blockformat.Locator, shape packedRoot, level int, start uint64) (packedNode, error) {
-	var out packedNode
-	if l.Page.Kind != blockformat.NodeKind || l.Pack.Rank != level+1 {
-		return out, errors.New("packed node rank")
-	}
-	b, err := pageBytes(c, s, l)
-	if err != nil {
-		return out, err
-	}
-	if err = decode(b, &out); err != nil {
-		return out, err
-	}
-	n := node{Capacity: out.Capacity, Fanout: out.Fanout, Level: out.Level, Start: out.Start, Segments: out.Segments}
-	for _, e := range out.Entries {
-		plain := entry{Slot: e.Slot, Segment: e.Segment, Record: e.Record}
-		if e.Child != nil {
-			if e.Child.Pack.Rank != level {
-				return out, errors.New("child pack rank")
-			}
-			ref := e.Child.Page
-			plain.Child = &ref
-		}
-		n.Entries = append(n.Entries, plain)
-	}
-	d := &Disk{shape: root{Capacity: shape.Capacity, Fanout: shape.Fanout}}
-	_, err = d.validateNode(n, level, start)
-	return out, err
+func loadPacked(c *Codec, s *Store, l blockformat.Locator, shape blockformat.Root, level int, start uint64) (blockformat.Node, error) {
+	return blockformat.ReadNode(context.Background(), storeRanges{s}, c.Scope, c.Keys, l, shape, level, start)
 }
-
-// ReadPacked reads one logical block without the converter's placement map.
 func ReadPacked(c *Codec, data, packs *Store, root blockformat.Locator, block uint64) ([]byte, error) {
-	shape, err := openPacked(c, packs, root)
+	tree, err := blockformat.OpenTree(context.Background(), treeRanges{data, packs}, c.Scope, c.Keys, root)
 	if err != nil {
 		return nil, err
 	}
-	if block >= uint64(shape.Capacity/blockformat.BlockSize) {
-		return nil, errors.New("block bounds")
-	}
-	ref := shape.Index
-	start := uint64(0)
-	d := &Disk{shape: rootShape(shape)}
-	for level := shape.Level; level >= 0; level-- {
-		if ref == nil {
-			return make([]byte, blockformat.BlockSize), nil
-		}
-		n, err := loadPacked(c, packs, *ref, shape, level, start)
-		if err != nil {
-			return nil, err
-		}
-		slot := int((block - start) / d.stride(level))
-		i := sort.Search(len(n.Entries), func(i int) bool { return n.Entries[i].Slot >= slot })
-		if i == len(n.Entries) || n.Entries[i].Slot != slot {
-			return make([]byte, blockformat.BlockSize), nil
-		}
-		e := n.Entries[i]
-		if level == 0 {
-			return c.block(data, n.Segments[e.Segment], e.Record)
-		}
-		ref = e.Child
-		start += uint64(slot) * d.stride(level)
-	}
-	return nil, errors.New("invalid tree")
+	return tree.ReadBlock(context.Background(), block)
 }
-func rootShape(r packedRoot) root {
+func rootShape(r blockformat.Root) root {
 	return root{Capacity: r.Capacity, Fanout: r.Fanout, Level: r.Level}
 }
 
@@ -363,15 +271,15 @@ func PackChildren(c *Codec, s *Store, ref blockformat.PackRef) ([]blockformat.Pa
 				packSet[r.Index.Pack] = true
 			}
 		} else {
-			var n packedNode
+			var n blockformat.Node
 			if err = decode(b, &n); err != nil {
 				return nil, nil, err
 			}
 			if n.Level < 0 || n.Level > 4 {
 				return nil, nil, errors.New("node level")
 			}
-			shape := packedRoot{Capacity: n.Capacity, Fanout: n.Fanout}
-			if shape.Capacity <= 0 || shape.Capacity%blockformat.BlockSize != 0 || shape.Capacity/blockformat.BlockSize > maxBlocks || (shape.Fanout != 64 && shape.Fanout != 256) {
+			shape := blockformat.Root{Capacity: n.Capacity, Fanout: n.Fanout}
+			if shape.Capacity <= 0 || shape.Capacity%blockformat.BlockSize != 0 || shape.Capacity/blockformat.BlockSize > blockformat.MaxBlocks || (shape.Fanout != 64 && shape.Fanout != 256) {
 				return nil, nil, errors.New("node geometry")
 			}
 			maxLevel := 0
@@ -381,6 +289,7 @@ func PackChildren(c *Codec, s *Store, ref blockformat.PackRef) ([]blockformat.Pa
 			if n.Level > maxLevel || n.Start >= uint64(shape.Capacity/blockformat.BlockSize) {
 				return nil, nil, errors.New("node rank or range")
 			}
+			shape.Level = maxLevel
 			n, err = loadPacked(c, s, loc, shape, n.Level, n.Start)
 			if err != nil {
 				return nil, nil, err

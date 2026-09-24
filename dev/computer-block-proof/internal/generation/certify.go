@@ -64,8 +64,8 @@ func Certify(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects,
 		return nil
 	}
 	var visit func(blockformat.PackRef) error
-	var child func(blockformat.Locator, packedRoot, int, uint64) error
-	child = func(l blockformat.Locator, shape packedRoot, level int, start uint64) error {
+	var child func(blockformat.Locator, blockformat.Root, int, uint64) error
+	child = func(l blockformat.Locator, shape blockformat.Root, level int, start uint64) error {
 		if l.Pack.Rank != level+1 {
 			return errors.New("child rank mismatch")
 		}
@@ -137,11 +137,14 @@ func Certify(c *Codec, data, packs *Store, root blockformat.Locator, maxObjects,
 			if e != nil {
 				return e
 			}
-			var node packedNode
+			var node blockformat.Node
 			if e = decode(raw, &node); e != nil {
 				return e
 			}
-			shape := packedRoot{Capacity: node.Capacity, Fanout: node.Fanout}
+			shape := blockformat.Root{Capacity: node.Capacity, Fanout: node.Fanout}
+			for span := int64(shape.Fanout); span < shape.Capacity/blockformat.BlockSize; span *= int64(shape.Fanout) {
+				shape.Level++
+			}
 			d := &Disk{shape: rootShape(shape)}
 			for _, entry := range node.Entries {
 				if entry.Child != nil {

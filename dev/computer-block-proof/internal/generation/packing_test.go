@@ -418,7 +418,7 @@ func BenchmarkPacking(b *testing.B) {
 }
 
 func TestPackRejectsOutOfGeometryNode(t *testing.T) {
-	for _, n := range []packedNode{{Capacity: 4096, Fanout: 64, Level: 1}, {Capacity: 4096, Fanout: 64, Start: 64}} {
+	for _, n := range []blockformat.Node{{Capacity: 4096, Fanout: 64, Level: 1}, {Capacity: 4096, Fanout: 64, Start: 64}} {
 		c, source := fixture(t)
 		packs := NewStore()
 		p, _ := NewPacker(c, source, packs, 64<<10, true)

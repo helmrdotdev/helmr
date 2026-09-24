@@ -169,7 +169,7 @@ func TestRepackBoundsZeroAndFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, bound := range []uint64{0, 1024, maxBlocks + 1} {
+	for _, bound := range []uint64{0, 1024, blockformat.MaxBlocks + 1} {
 		out, _, e := Repack(c, data, packs, old, 64<<10, true, bound)
 		if e == nil || out != (blockformat.Locator{}) {
 			t.Fatal("work bound")
