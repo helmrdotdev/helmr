@@ -31,6 +31,7 @@ func secondWorkerControlActor(t *testing.T, first *actorCheckpointFixture) *acto
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
 	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.workspaceID)
+	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.workspaceID, f.rootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +180,7 @@ func TestWorkerSessionControlLocksChildBeforeWorkerGroupPostgres(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), setup, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), setup, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, ws, a.EnvironmentID, a.WorkspaceDefinitionID, version)
 	dbtest.InsertCommittedComputerRoot(t, t.Context(), setup, version, a.EnvironmentID, ws)
+	dbtest.InsertComputerGeneration(t, t.Context(), setup, a.EnvironmentID, ws, version)
 	if err = setup.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -334,6 +336,7 @@ func workerControlChild(t *testing.T, parent *actorCheckpointFixture, detached b
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
 	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.workspaceID)
+	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.workspaceID, f.rootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

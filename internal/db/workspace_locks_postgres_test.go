@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace(t *testing.T) {
+func TestComputerMountTargetAuthorityProjectsPrivateVersionWithinExactWorkspace(t *testing.T) {
 	ctx := t.Context()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now())
@@ -58,7 +58,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	`, privateVersionID, fixture.environmentID, workspaceID, baseWorkspaceVersionID,
 		artifactID, digest, workspaceLeaseID, ownershipGeneration, writerGeneration)
 
-	row, err := fixture.queries.GetWorkspaceResetTargetAuthority(ctx, GetWorkspaceResetTargetAuthorityParams{
+	row, err := fixture.queries.GetComputerVersionAuthority(ctx, GetComputerVersionAuthorityParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(workspaceID),
 		VersionID: pgvalue.UUID(privateVersionID),
@@ -66,8 +66,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pgvalue.MustUUIDValue(row.VersionID) != privateVersionID ||
-		!row.ArtifactDigest.Valid || row.ArtifactDigest.String != digest {
+	if pgvalue.MustUUIDValue(row.VersionID) != privateVersionID || row.ParentVersionID != pgvalue.UUID(baseWorkspaceVersionID) {
 		t.Fatalf("private reset target authority = %+v", row)
 	}
 
@@ -76,7 +75,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, other.runID).Scan(&otherWorkspaceID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fixture.queries.GetWorkspaceResetTargetAuthority(ctx, GetWorkspaceResetTargetAuthorityParams{
+	_, err = fixture.queries.GetComputerVersionAuthority(ctx, GetComputerVersionAuthorityParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(otherWorkspaceID),
 		VersionID: pgvalue.UUID(privateVersionID),

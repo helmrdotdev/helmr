@@ -280,7 +280,7 @@ func validateRestoredActorBase(
 	ctx context.Context,
 	store db.Querier,
 	authority runLeaseClaimAuthority,
-	base db.GetWorkspaceResetTargetAuthorityRow,
+	base db.GetComputerVersionAuthorityRow,
 ) (db.RunCheckpoint, error) {
 	if !authority.runtime.RestoreCheckpointID.Valid ||
 		!base.SourceWorkspaceLeaseID.Valid ||
@@ -440,7 +440,7 @@ func validateRestoredActorBase(
 }
 
 func validActorCompletionVersionSource(
-	version db.GetWorkspaceResetTargetAuthorityRow,
+	version db.GetComputerVersionAuthorityRow,
 	source db.WorkspaceLease,
 	expectedParent pgtype.UUID,
 	expectedOwnership int64,
@@ -657,8 +657,8 @@ func getActorWorkspaceVersion(
 	store db.Querier,
 	authority runLeaseClaimAuthority,
 	versionID pgtype.UUID,
-) (db.GetWorkspaceResetTargetAuthorityRow, error) {
-	return store.GetWorkspaceResetTargetAuthority(ctx, db.GetWorkspaceResetTargetAuthorityParams{
+) (db.GetComputerVersionAuthorityRow, error) {
+	return store.GetComputerVersionAuthority(ctx, db.GetComputerVersionAuthorityParams{
 		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID, VersionID: versionID,
 	})

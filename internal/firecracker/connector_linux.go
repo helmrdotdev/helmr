@@ -1073,7 +1073,8 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 			return nil, err
 		}
 		copy := *topology.Computer
-		copy.Path, copy.File, copy.Device = computerDiskPath, nil, nil
+		// Keep the live publication owner; cloneRuntimeComputer strips it from persisted snapshots.
+		copy.Path, copy.File = computerDiskPath, nil
 		topology.Computer = &copy
 	}
 	readOnlyDrivePaths := map[string]string(nil)
@@ -2180,7 +2181,8 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		phases = append(phases, vm.RuntimePhase{Name: name, DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	}
 	started := time.Now()
-	if _, err := s.PauseComputer(ctx); err != nil {
+	capturedComputer, err := s.PauseComputer(ctx)
+	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
 	recordPhase("pause_and_sync_disks", started)
@@ -2262,7 +2264,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	}
 	cleanupRawSnapshot = false
 	return vm.SnapshotArtifact{
-		Computer:            cloneRuntimeComputer(s.topology.Computer),
+		Computer:            capturedComputer,
 		RuntimeBackend:      "firecracker",
 		RuntimeArch:         workerArchitecture,
 		VMRuntimeContract:   runtimeIdentity.Contract,

@@ -33,7 +33,6 @@ INSERT INTO computer_versions (
     environment_id,
     workspace_id,
     parent_version_id,
-    artifact_id,
     content_digest,
     size_bytes,
     entry_count,
@@ -48,7 +47,6 @@ SELECT
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
     sqlc.arg(parent_version_id),
-    sqlc.arg(artifact_id),
     sqlc.arg(content_digest),
     sqlc.arg(size_bytes),
     sqlc.arg(entry_count),
@@ -57,10 +55,6 @@ SELECT
     sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation),
     sqlc.arg(published_at)
-  FROM artifacts
- WHERE artifacts.environment_id = sqlc.arg(environment_id)
-   AND artifacts.id = sqlc.arg(artifact_id)
-   AND artifacts.kind = 'workspace_version'
 RETURNING *;
 
 -- name: UpdateTaskWorkspaceMountFrontier :one

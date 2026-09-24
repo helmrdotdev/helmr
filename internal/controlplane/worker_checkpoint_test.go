@@ -23,7 +23,7 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
 		parsed.requestVersion != request.RequestVersion ||
-		parsed.computer.Artifact.Digest != request.Manifest.RuntimeState.Computer.Artifact.Digest ||
+		parsed.computer.Root.Pack.Digest != request.Manifest.RuntimeState.Computer.Root.Pack.Digest ||
 		parsed.artifacts.runtimeConfig.artifact.Digest != request.Manifest.RuntimeState.ConfigArtifact.Digest ||
 		parsed.artifacts.vmState.artifact.Digest != request.Manifest.RuntimeState.VMStateArtifact.Digest ||
 		parsed.artifacts.memory.artifact.Digest != request.Manifest.RuntimeState.MemoryArtifacts[0].Digest ||
@@ -37,7 +37,7 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 
 	changed := request
 	disk := *changed.Manifest.RuntimeState.Computer
-	disk.Artifact.Digest = digestWith("9")
+	disk.Root.Pack.Digest = digestWith("9")
 	changed.Manifest.RuntimeState.Computer = &disk
 	changedParsed, _, err := parseCheckpointReadyRequest(changed)
 	if err != nil {
@@ -143,7 +143,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 				},
 			},
 			RuntimeState: workerapi.CheckpointRuntimeState{
-				Computer:            &workerapi.CheckpointComputer{ComputerID: lease.WorkspaceID, LogicalBytes: computer.SeedCapacity, Artifact: workerapi.CheckpointArtifact{Digest: digestWith("2"), SizeBytes: 1024, MediaType: computer.DiskMediaType}},
+				Computer:            &workerapi.CheckpointComputer{ComputerID: lease.WorkspaceID, LogicalBytes: computer.SeedCapacity, Root: testGenerationRoot(computer.SeedCapacity)},
 				ConfigArtifact:      workerapi.CheckpointArtifact{Digest: digestWith("a"), SizeBytes: 100, MediaType: cas.CheckpointRuntimeConfigMediaType},
 				VMStateArtifact:     workerapi.CheckpointArtifact{Digest: digestWith("b"), SizeBytes: 100, MediaType: cas.CheckpointVMStateMediaType},
 				ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: digestWith("c"), SizeBytes: 100, MediaType: cas.CheckpointScratchDiskMediaType},

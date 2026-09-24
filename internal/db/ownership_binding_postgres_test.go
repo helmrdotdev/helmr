@@ -153,12 +153,11 @@ func TestOwnershipScheduleWholeBatchGateIncludesExistingFallback(t *testing.T) {
 func ownershipVersionParams(t *testing.T, f runLeaseClaimFixture, work runLeaseWork) CreatePrivateCheckpointWorkspaceVersionParams {
 	t.Helper()
 	ctx := t.Context()
-	p := CreatePrivateCheckpointWorkspaceVersionParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), ArtifactID: pgvalue.UUID(uuid.NewV7()), ContentDigest: pgvalue.Text(dbtest.Digest("ownership-version")), SizeBytes: 1, EntryCount: 1}
+	p := CreatePrivateCheckpointWorkspaceVersionParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), ContentDigest: pgvalue.Text(dbtest.Digest("ownership-version")), SizeBytes: 1, EntryCount: 1}
 	if err := f.pool.QueryRow(ctx, "SELECT workspace_id,base_workspace_version_id,id,ownership_generation,writer_generation FROM workspace_leases WHERE owner_run_lease_id=$1", work.leaseID).Scan(&p.WorkspaceID, &p.ParentVersionID, &p.SourceWorkspaceLeaseID, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, f.pool, "WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')", f.orgID, p.ContentDigest)
-	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')", p.ArtifactID, f.orgID, f.projectID, f.environmentID, p.ContentDigest)
+
 	return p
 }
 
@@ -173,38 +172,19 @@ func TestOwnershipDerivedVersionInsertionGates(t *testing.T) {
 			f := newRunLeaseClaimFixture(t, ctx)
 			work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 			p := ownershipVersionParams(t, f, work)
-			wrong := pgvalue.UUID(uuid.NewV7())
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) SELECT $1,org_id,project_id,environment_id,digest,'deployment_program',size_bytes,media_type FROM artifacts WHERE id=$2", wrong, p.ArtifactID)
+
 			insert := func(q *Queries, p CreatePrivateCheckpointWorkspaceVersionParams) (ComputerVersion, error) {
 				if !publish {
 					return q.CreatePrivateCheckpointWorkspaceVersion(ctx, p)
 				}
-				return q.PublishTaskWorkspaceVersion(ctx, PublishTaskWorkspaceVersionParams{ID: p.ID, EnvironmentID: p.EnvironmentID, WorkspaceID: p.WorkspaceID, ParentVersionID: p.ParentVersionID, ArtifactID: p.ArtifactID, ContentDigest: p.ContentDigest, SizeBytes: p.SizeBytes, EntryCount: p.EntryCount, SourceWorkspaceLeaseID: p.SourceWorkspaceLeaseID, OwnershipGeneration: p.OwnershipGeneration, WriterGeneration: p.WriterGeneration, PublishedAt: pgvalue.Timestamptz(time.Now())})
+				return q.PublishTaskWorkspaceVersion(ctx, PublishTaskWorkspaceVersionParams{ID: p.ID, EnvironmentID: p.EnvironmentID, WorkspaceID: p.WorkspaceID, ParentVersionID: p.ParentVersionID, ContentDigest: p.ContentDigest, SizeBytes: p.SizeBytes, EntryCount: p.EntryCount, SourceWorkspaceLeaseID: p.SourceWorkspaceLeaseID, OwnershipGeneration: p.OwnershipGeneration, WriterGeneration: p.WriterGeneration, PublishedAt: pgvalue.Timestamptz(time.Now())})
 			}
-			crossScope := ownershipCrossScopeArtifact(t, f, p.ArtifactID)
-			for _, id := range []pgtype.UUID{{}, wrong, pgvalue.UUID(uuid.NewV7()), crossScope} {
-				bad := p
-				bad.ArtifactID = id
-				tx, err := f.pool.Begin(ctx)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := insert(New(tx), bad); !errors.Is(err, pgx.ErrNoRows) {
-					t.Fatalf("invalid artifact=%v err=%v", id, err)
-				}
-				if err := tx.Commit(ctx); err != nil {
-					t.Fatal(err)
-				}
-				var exists bool
-				if err := f.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM computer_versions WHERE id=$1)", p.ID).Scan(&exists); err != nil || exists {
-					t.Fatalf("invalid gate inserted row: %v %v", exists, err)
-				}
-			}
+
 			good, err := insert(f.queries, p)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if good.ArtifactID != p.ArtifactID || good.ParentVersionID != p.ParentVersionID {
+			if good.ArtifactID.Valid || good.ParentVersionID != p.ParentVersionID {
 				t.Fatalf("version=%+v", good)
 			}
 			tx, err := f.pool.Begin(ctx)

@@ -715,14 +715,10 @@ type RunCheckpointObject struct {
 }
 
 type RunFinalizationObject struct {
-	RunLeaseID           pgtype.UUID `json:"run_lease_id"`
-	OperationID          pgtype.UUID `json:"operation_id"`
-	Digest               string      `json:"digest"`
-	SizeBytes            int64       `json:"size_bytes"`
-	MediaType            string      `json:"media_type"`
-	LogicalBytes         int64       `json:"logical_bytes"`
-	LeaseStatus          string      `json:"lease_status"`
-	AvailabilityRequired pgtype.Bool `json:"availability_required"`
+	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
+	OperationID pgtype.UUID `json:"operation_id"`
+	Root        []byte      `json:"root"`
+	LeaseStatus string      `json:"lease_status"`
 }
 
 type RunLease struct {

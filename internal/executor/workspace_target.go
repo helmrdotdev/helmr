@@ -2,37 +2,17 @@ package executor
 
 import (
 	"errors"
-	"strings"
-
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
+	"strings"
 )
 
-func workspaceTargetFromWorker(target workerapi.WorkspaceResetTarget) (workspace.ResetTarget, error) {
-	tree := workspace.TreeIdentity{
-		Digest: strings.TrimSpace(target.Tree.Digest), SizeBytes: target.Tree.SizeBytes,
-		EntryCount: int(target.Tree.EntryCount),
+func validateComputerMountTarget(target workerapi.ComputerMountTarget) error {
+	if strings.TrimSpace(target.BaseWorkspaceVersionID) == "" {
+		return errors.New("computer mount version is required")
 	}
-	switch {
-	case target.Empty != nil && target.Artifact == nil:
-		return workspace.EmptyResetTarget(target.BaseWorkspaceVersionID, tree)
-	case target.Empty == nil && target.Artifact != nil:
-		artifact := target.Artifact
-		return workspace.ArtifactResetTarget(target.BaseWorkspaceVersionID, tree, workspace.ArtifactIdentity{
-			Digest: strings.TrimSpace(artifact.Digest), MediaType: artifact.MediaType,
-			Encoding: artifact.Encoding, SizeBytes: artifact.SizeBytes,
-			EntryCount: int(artifact.EntryCount),
-		})
-	default:
-		return workspace.ResetTarget{}, errors.New("workspace target must contain exactly one source")
-	}
+	return nil
 }
-
-func workspaceResetTargetProto(target workerapi.WorkspaceResetTarget) *workspacev0.WorkspaceResetTarget {
-	projected, err := workspaceTargetFromWorker(target)
-	if err != nil {
-		return nil
-	}
-	return workspace.ResetTargetProto(projected)
+func computerMountTargetProto(target workerapi.ComputerMountTarget) *workspacev0.ComputerMountTarget {
+	return &workspacev0.ComputerMountTarget{BaseWorkspaceVersionId: target.BaseWorkspaceVersionID}
 }

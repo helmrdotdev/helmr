@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -196,14 +195,13 @@ func validatePreparedRuntimeRestore(
 
 func validateCheckpointComputerSource(source workerapi.RuntimeSource, captured *workerapi.CheckpointComputer) error {
 	reserved := source.Computer
-	if reserved == nil || reserved.Seed != nil || reserved.Disk == nil || captured == nil {
-		return errors.New("checkpoint restore requires a paired computer disk")
+	if reserved == nil || reserved.Seed != nil || reserved.Root == nil || captured == nil {
+		return errors.New("checkpoint restore requires a paired Computer generation")
 	}
-	if captured.ComputerID != source.WorkspaceID || captured.LogicalBytes != reserved.LogicalBytes ||
-		captured.Artifact.Digest != reserved.Disk.Digest || captured.Artifact.SizeBytes != reserved.Disk.SizeBytes || captured.Artifact.MediaType != reserved.Disk.MediaType {
-		return errors.New("checkpoint computer disk does not match the reserved computer")
+	if captured.ComputerID != source.WorkspaceID || captured.LogicalBytes != reserved.LogicalBytes || captured.Root != *reserved.Root {
+		return errors.New("checkpoint generation differs from retained Computer source")
 	}
-	return (computer.DiskArtifact{Object: computerObject(*reserved.Disk), LogicalBytes: captured.LogicalBytes}).Validate(reserved.LogicalBytes)
+	return captured.Root.Validate(reserved.LogicalBytes)
 }
 
 func restoreStagingKey(id string, epoch int64) capacity.Key {

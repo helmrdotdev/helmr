@@ -681,3 +681,25 @@ func (c *Client) RegisterInitialComputerObject(ctx context.Context, request work
 func (c *Client) CertifyInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
 	return c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/objects/certify", request, &struct{}{})
 }
+
+func (c *Client) RegisterRunComputerObject(ctx context.Context, request workerapi.RunComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-objects/register", request, &struct{}{})
+}
+func (c *Client) CertifyRunComputerObject(ctx context.Context, request workerapi.RunComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-objects/certify", request, &struct{}{})
+}
+func (c *Client) ReuseRunComputerObject(ctx context.Context, request workerapi.RunComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-objects/reuse", request, &struct{}{})
+}
+
+func (c *Client) RegisterExecComputerObject(ctx context.Context, request workerapi.ExecComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/computer-objects/register", request, &struct{}{})
+}
+
+func (c *Client) CertifyExecComputerObject(ctx context.Context, request workerapi.ExecComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/computer-objects/certify", request, &struct{}{})
+}
+
+func (c *Client) ReuseExecComputerObject(ctx context.Context, request workerapi.ExecComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/computer-objects/reuse", request, &struct{}{})
+}

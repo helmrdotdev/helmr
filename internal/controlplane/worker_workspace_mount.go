@@ -131,105 +131,53 @@ func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.
 
 func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WorkspaceMountCaptureRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid workspace capture JSON: %w", err)))
-		return
-	}
-	tree, err := parseTaskWorkspaceTree("tree", request.Tree)
-	if err != nil {
+	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := validateTaskWorkspaceArtifact("artifact", request.Artifact); err != nil {
-		writeError(w, badRequest(err))
+	if request.Computer.ComputerID == "" || request.Computer.LogicalBytes != request.Computer.Root.LogicalBytes || request.Computer.Root.Validate(request.Computer.LogicalBytes) != nil {
+		writeError(w, badRequest(errors.New("invalid Computer generation")))
 		return
 	}
-	if tree.EntryCount != int(request.Artifact.EntryCount) {
-		writeError(w, badRequest(errors.New("workspace capture tree and artifact entry counts differ")))
-		return
-	}
-	params, err := s.workspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	verified, err := s.verifyWorkspaceTreeCapture(r.Context(), parsedWorkspaceTreeCapture{
-		tree: tree, artifact: request.Artifact,
-	})
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
+	worker := workerFromContext(r.Context())
 	var versionID pgtype.UUID
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		existing, err := work.q.GetStagedWorkspaceExecCapture(
-			r.Context(),
-			db.GetStagedWorkspaceExecCaptureParams{
-				WorkspaceMountID: params.mount.ID,
-				WorkerInstanceID: params.workerID,
-				WorkerEpoch:      params.epoch,
-			},
-		)
-		if err == nil {
-			if existing.ContentDigest.String != verified.tree.Digest ||
-				existing.SizeBytes != verified.tree.SizeBytes ||
-				existing.EntryCount != int32(verified.tree.EntryCount) {
-				return conflict(errors.New("workspace capture replay differs"))
+	err := s.withExecComputerPublication(r.Context(), worker, request.OrgID, request.WorkspaceMountID, func(tx pgx.Tx, q db.Querier, a db.LockWorkspaceExecWorkerAuthorityRow) error {
+		if request.Computer.ComputerID != pgvalue.UUIDString(a.WorkspaceProcess.WorkspaceID) {
+			return conflict(errors.New("captured Computer differs from exec"))
+		}
+		if err := requireRuntimeComputerRoot(r.Context(), q, a.RuntimeInstance, a.WorkspaceProcess.EnvironmentID, a.WorkspaceProcess.WorkspaceID, request.Computer.Root); err != nil {
+			return fmt.Errorf("require exec root: %w", err)
+		}
+		raw, err := json.Marshal(request.Computer.Root)
+		if err != nil {
+			return err
+		}
+		if a.WorkspaceMount.StagedVersionID.Valid {
+			var matches bool
+			if err = tx.QueryRow(r.Context(), `SELECT locator=$4::jsonb FROM computer_version_roots WHERE environment_id=$1 AND computer_id=$2 AND version_id=$3`, a.WorkspaceProcess.EnvironmentID, a.WorkspaceProcess.WorkspaceID, a.WorkspaceMount.StagedVersionID, raw).Scan(&matches); err != nil {
+				return err
 			}
-			versionID = existing.ID
-			return nil
+			if !matches {
+				return conflict(errors.New("Computer capture replay differs"))
+			}
+			versionID = a.WorkspaceMount.StagedVersionID
+		} else {
+			staged, err := q.StageWorkspaceExecCapture(r.Context(), db.StageWorkspaceExecCaptureParams{WorkspaceMountID: a.WorkspaceMount.ID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch, WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), SizeBytes: request.Computer.LogicalBytes, ContentDigest: pgvalue.Text(request.Computer.Root.Pack.Digest)})
+			if err != nil {
+				return fmt.Errorf("stage exec root: %w", err)
+			}
+			if err = q.CreateComputerVersionRoot(r.Context(), db.CreateComputerVersionRootParams{EnvironmentID: a.WorkspaceProcess.EnvironmentID, ComputerID: a.WorkspaceProcess.WorkspaceID, VersionID: staged.ID, Locator: raw}); err != nil {
+				return err
+			}
+			versionID = staged.ID
 		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID: params.orgID, Digest: verified.artifact.Digest,
-			SizeBytes: verified.artifact.SizeBytes,
-			MediaType: verified.artifact.MediaType,
-		}); err != nil {
-			return err
-		}
-		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
-			ID: pgvalue.UUID(uuid.NewV7()), OrgID: params.orgID,
-			ProjectID: params.mount.ProjectID, EnvironmentID: params.mount.EnvironmentID,
-			Digest: verified.artifact.Digest,
-			Kind:   db.ArtifactKindWorkspaceVersion, SizeBytes: verified.artifact.SizeBytes,
-			MediaType:                 verified.artifact.MediaType,
-			CreatedByWorkerInstanceID: params.workerID,
-		})
-		if err != nil {
-			return err
-		}
-		staged, err := work.q.StageWorkspaceExecCapture(
-			r.Context(),
-			db.StageWorkspaceExecCaptureParams{
-				WorkspaceMountID:   params.mount.ID,
-				WorkerInstanceID:   params.workerID,
-				WorkerEpoch:        params.epoch,
-				WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
-				ArtifactID:         artifact.ID,
-				ContentDigest:      pgvalue.Text(verified.tree.Digest),
-				SizeBytes:          verified.tree.SizeBytes,
-				EntryCount:         int32(verified.tree.EntryCount),
-			},
-		)
-		if err != nil {
-			return err
-		}
-		versionID = staged.ID
 		return nil
 	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("workspace capture is stale")))
-		return
-	}
 	if err != nil {
-		writeError(w, err)
+		s.writeRunComputerObjectError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, workerapi.WorkspaceMountCaptureResponse{
-		VersionID: pgvalue.MustUUIDValue(versionID).String(),
-	})
+	writeJSON(w, http.StatusOK, workerapi.WorkspaceMountCaptureResponse{VersionID: pgvalue.UUIDString(versionID)})
 }
 
 func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +200,11 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 		writeError(w, err)
 		return
 	}
+	if params.mount.Status == "unmounted" {
+		writeJSON(w, http.StatusOK, workspaceMountResponse(params.mount))
+		return
+	}
+	var finalAuthority *db.LockWorkspaceExecWorkerAuthorityRow
 	var stopped db.WorkspaceMount
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		locator, locatorErr := work.q.GetWorkspaceExecLocatorForMount(
@@ -291,6 +244,7 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 			if err != nil {
 				return err
 			}
+			finalAuthority = &authority
 			if err := s.finalizeWorkspaceExec(
 				r.Context(),
 				work,
@@ -314,6 +268,9 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 			return err
 		}
 		stopped = db.WorkspaceMount(row)
+		if finalAuthority != nil {
+			return checkExecPublicationDeadline(r.Context(), work.q, *finalAuthority)
+		}
 		return nil
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -733,22 +690,7 @@ func pgTime(value pgtype.Timestamptz) *time.Time {
 }
 
 func projectWorkerWorkspaceMount(row db.ClaimWorkspaceMountRow) *workerapi.WorkspaceMount {
-	target := workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: pgvalue.MustUUIDValue(row.MaterializedVersionID).String(),
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: row.WorkspaceContentDigest.String, SizeBytes: row.WorkspaceLogicalSizeBytes,
-			EntryCount: row.WorkspaceEntryCount,
-		},
-	}
-	if row.WorkspaceArtifactDigest == "" {
-		target.Empty = &workerapi.EmptyWorkspace{}
-	} else {
-		target.Artifact = &workerapi.WorkspaceArtifact{
-			Digest: row.WorkspaceArtifactDigest, MediaType: row.WorkspaceArtifactMediaType,
-			Encoding: workspace.ArtifactEncoding, SizeBytes: row.WorkspaceArtifactSizeBytes,
-			EntryCount: row.WorkspaceEntryCount,
-		}
-	}
+	target := workerapi.ComputerMountTarget{BaseWorkspaceVersionID: pgvalue.MustUUIDValue(row.MaterializedVersionID).String()}
 	return &workerapi.WorkspaceMount{
 		ID:                     pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:                  pgvalue.MustUUIDValue(row.OrgID).String(),

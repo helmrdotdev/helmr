@@ -382,12 +382,18 @@ func detachRuntimeLease(t *testing.T, fixture runtest.Fixture, work runtest.RunL
 
 func resetRuntimeAllocated(t *testing.T, fixture runtest.Fixture, runtimeID uuid.UUID) {
 	t.Helper()
+	var computerID, versionID uuid.UUID
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.id,w.head_version_id FROM runtime_instances r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, runtimeID).Scan(&computerID, &versionID); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.InsertComputerGeneration(t, t.Context(), fixture.Pool, fixture.EnvironmentID, computerID, versionID)
+
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE runtime_instances
    SET observed_state = 'allocated', observed_version = 0, observed_desired_version = 0,
        ready_at = NULL, runtime_substrate_id = NULL,
        reserved_run_id = w.owner_run_id, reserved_attempt_number = 1,
-       reserved_workspace_version_id = w.head_version_id
+       reserved_workspace_version_id = w.head_version_id, computer_source_version_id = w.head_version_id
   FROM computers w
  WHERE runtime_instances.id = $1 AND w.id=runtime_instances.workspace_id`, runtimeID)
 }

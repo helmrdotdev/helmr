@@ -104,7 +104,7 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) 
 		}
 	}
 	if len(decoded.Workspace) != 2 || decoded.Workspace["write_capability"] == nil ||
-		decoded.Workspace["reset_target"] == nil {
+		decoded.Workspace["target"] == nil {
 		t.Fatalf("workspace attachment = %s", raw)
 	}
 }
@@ -212,7 +212,7 @@ func validRunLeaseClaimResponse(
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition:  definition,
-		resetTarget: validWorkspaceResetTargetAuthority(physical),
+		resetTarget: validComputerMountTargetAuthority(physical),
 	}
 	return runLeaseClaimResponseAuthority{
 		mode:           runLeaseClaimFresh,

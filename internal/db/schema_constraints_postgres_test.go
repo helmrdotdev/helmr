@@ -111,7 +111,7 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 		FROM workspace_leases WHERE owner_run_lease_id=$4
 	`, versionID, artifactID, digest, work.leaseID)
 	for _, set := range []string{
-		"parent_version_id=NULL", "artifact_id=NULL",
+		"parent_version_id=NULL",
 		"source_workspace_lease_id=NULL",
 	} {
 		t.Run(set, func(t *testing.T) {

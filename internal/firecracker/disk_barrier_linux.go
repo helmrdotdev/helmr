@@ -14,19 +14,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 // PauseComputer establishes a fresh API dispatch hold, even for a restored VM.
 // The owner must stop the source on any error or ambiguous response.
-func (s *guestSession) PauseComputer(ctx context.Context) (*vm.RuntimeComputer, error) {
+func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	if err := s.machine.PauseVM(ctx); err != nil {
 		return nil, fmt.Errorf("pause Firecracker vm: %w", err)
 	}
 	if err := s.syncPausedDisks(ctx); err != nil {
 		return nil, err
 	}
-	return cloneRuntimeComputer(s.topology.Computer), nil
+	if s.topology.Computer.Device == nil {
+		return nil, errors.New("owned generation device required for capture")
+	}
+	root, err := s.topology.Computer.Device.Flush(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &vm.ComputerSnapshot{ComputerID: s.topology.Computer.ComputerID, Root: root}, nil
 }
 
 // syncPausedDisks requires an acknowledged API Pause, whose dispatch hold must
@@ -166,4 +174,11 @@ func closeRuntimeDiskFiles(files map[string]*os.File) error {
 		}
 	}
 	return result
+}
+
+func (s *guestSession) PublishComputer(ctx context.Context, root computer.GenerationRoot, publisher computer.ContinuationPublication) error {
+	if s.topology.Computer == nil || s.topology.Computer.Device == nil {
+		return errors.New("computer publication owner unavailable")
+	}
+	return s.topology.Computer.Device.Publish(ctx, root, publisher)
 }

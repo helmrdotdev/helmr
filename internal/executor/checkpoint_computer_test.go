@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -17,7 +16,7 @@ func TestCheckpointComputerRequiresExactCapturedDisk(t *testing.T) {
 	for _, change := range []string{"none", "missing-capture", "missing-source", "seed", "computer", "digest", "size", "media", "capacity"} {
 		t.Run(change, func(t *testing.T) {
 			source := retryableWarmTarget().Source
-			captured := &workerapi.CheckpointComputer{ComputerID: source.WorkspaceID, LogicalBytes: source.Computer.LogicalBytes, Artifact: workerapi.CheckpointArtifact(*source.Computer.Disk)}
+			captured := &workerapi.CheckpointComputer{ComputerID: source.WorkspaceID, LogicalBytes: source.Computer.LogicalBytes, Root: *source.Computer.Root}
 			switch change {
 			case "missing-capture":
 				captured = nil
@@ -28,11 +27,11 @@ func TestCheckpointComputerRequiresExactCapturedDisk(t *testing.T) {
 			case "computer":
 				captured.ComputerID = "01950000-0000-7000-8000-000000000007"
 			case "digest":
-				source.Computer.Disk.Digest = sha256sum.DigestBytes([]byte("newer disk with old RAM"))
+				source.Computer.Root.Pack.Digest = sha256sum.DigestBytes([]byte("newer disk with old RAM"))
 			case "size":
-				captured.Artifact.SizeBytes++
+				captured.Root.Pack.SizeBytes++
 			case "media":
-				captured.Artifact.MediaType = computer.SeedMediaType
+				captured.Root.Page.KeyID = "invalid"
 			case "capacity":
 				captured.LogicalBytes /= 2
 			}
@@ -63,7 +62,7 @@ func TestWarmRuntimeRejectsUnpairedCheckpointBeforeAdmission(t *testing.T) {
 	admitted := false
 	pool.AdmitRuntimeStart = func(context.Context) error { admitted = true; return nil }
 	err = pool.warmRuntimeTarget(t.Context(), &typedRuntimeClient{}, target, func() { t.Fatal("unpaired checkpoint started preparation") })
-	if err == nil || !strings.Contains(err.Error(), "paired computer disk") || admitted {
+	if err == nil || !strings.Contains(err.Error(), "paired Computer generation") || admitted {
 		t.Fatalf("unsafe restore reached admission: admitted=%v err=%v", admitted, err)
 	}
 }

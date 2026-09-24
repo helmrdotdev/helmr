@@ -14,7 +14,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
@@ -166,7 +165,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		server.workerTokenSigningKey = bytes.Repeat([]byte{2}, auth.RootKeySize)
 		server.workerTokenTTL = time.Hour
 		server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
-		server.cas = &completionDrainCAS{Store: server.cas, drain: func(ctx context.Context) error {
+		drain := func(ctx context.Context) error {
 			if transition == "group" {
 				_, err := base.Pool.Exec(ctx, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, runtest.WorkerGroupID)
 				return err
@@ -179,7 +178,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 				_, err = base.Pool.Exec(ctx, `UPDATE worker_instance_credentials SET revoked_at=now() WHERE id=$1`, credentialID)
 			}
 			return err
-		}}
+		}
 		var requestMu sync.Mutex
 		var tokenRequests int
 		var receiptBodies [][]byte
@@ -200,6 +199,13 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 			}
 			receiptBodies = append(receiptBodies, body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
+			// Invalidate the issued Worker token before the first authenticated completion.
+			if len(statuses) == 0 {
+				if err := drain(r.Context()); err != nil {
+					http.Error(w, err.Error(), 500)
+					return
+				}
+			}
 			response := httptest.NewRecorder()
 			complete.ServeHTTP(response, r)
 			statuses = append(statuses, response.Code)
@@ -263,21 +269,4 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	if err != nil || !excluded {
 		t.Fatalf("completed child blocks parent interruption: %v %v", excluded, err)
 	}
-}
-
-// The descriptor check occurs after authentication and before the completion
-// transaction. Inject revocation at that actual boundary, before authority is locked.
-type completionDrainCAS struct {
-	cas.Store
-	once  sync.Once
-	drain func(context.Context) error
-	err   error
-}
-
-func (c *completionDrainCAS) Stat(ctx context.Context, digest string) (cas.Object, error) {
-	c.once.Do(func() { c.err = c.drain(ctx) })
-	if c.err != nil {
-		return cas.Object{}, c.err
-	}
-	return c.Store.Stat(ctx, digest)
 }

@@ -210,6 +210,9 @@ POST /worker/v1/run/actors/start
 POST /worker/v1/run/checkpoints/failed
 POST /worker/v1/run/checkpoints/ready
 POST /worker/v1/run/checkpoints/register
+POST /worker/v1/run/computer-objects/certify
+POST /worker/v1/run/computer-objects/register
+POST /worker/v1/run/computer-objects/reuse
 POST /worker/v1/run/finalization/begin
 POST /worker/v1/run/finalization/register
 POST /worker/v1/run/leases/claim
@@ -262,6 +265,9 @@ POST /worker/v1/run/workspace-execs/claim
 POST /worker/v1/run/workspace-execs/complete
 POST /worker/v1/run/workspace-mounts/capture
 POST /worker/v1/run/workspace-mounts/claim
+POST /worker/v1/run/workspace-mounts/computer-objects/certify
+POST /worker/v1/run/workspace-mounts/computer-objects/register
+POST /worker/v1/run/workspace-mounts/computer-objects/reuse
 POST /worker/v1/run/workspace-mounts/fail
 POST /worker/v1/run/workspace-mounts/mounted
 POST /worker/v1/run/workspace-mounts/renew

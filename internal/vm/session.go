@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -49,6 +50,7 @@ type CheckpointableSession interface {
 	Session
 	SnapshotLimits() (SnapshotLimits, error)
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
+	PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error
 }
 
 // ComputerCaptureSession holds customer execution and device dispatch until
@@ -56,7 +58,8 @@ type CheckpointableSession interface {
 type ComputerCaptureSession interface {
 	Session
 	SnapshotLimits() (SnapshotLimits, error)
-	PauseComputer(context.Context) (*RuntimeComputer, error)
+	PauseComputer(context.Context) (*ComputerSnapshot, error)
+	PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error
 }
 
 type ConnectRequest struct {
@@ -112,6 +115,8 @@ type RuntimeComputer struct {
 // Wait must return when its context is canceled. A rejected bind leaves ownership
 // with the caller; successful binding retains ownership even if launch fails.
 type ComputerDevice interface {
+	Flush(context.Context) (computer.GenerationRoot, error)
+	Publish(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
 	Wait(context.Context) error
@@ -141,8 +146,13 @@ type SnapshotRequest struct {
 	ID string
 }
 
+type ComputerSnapshot struct {
+	ComputerID string
+	Root       computer.GenerationRoot
+}
+
 type SnapshotArtifact struct {
-	Computer            *RuntimeComputer
+	Computer            *ComputerSnapshot
 	RuntimeBackend      string
 	RuntimeArch         string
 	VMRuntimeContract   string

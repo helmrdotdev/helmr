@@ -23,7 +23,8 @@ import (
 func checkpointPublicationFixture(t *testing.T) (*actorCheckpointFixture, workerapi.RegisterCheckpointRequest, func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.Computer.Artifact, &req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
+	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
+	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
 	for i, a := range artifacts {
 		data[i] = req.CheckpointID + a.MediaType
@@ -59,7 +60,7 @@ func checkpointReadyStatus(t *testing.T, f *actorCheckpointFixture, req workerap
 func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	f, req, upload := checkpointPublicationFixture(t)
 	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		upload(i)
 	}
 	ready := readyFromRegistration(req)
@@ -72,8 +73,8 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	}
 	var status, digest, media string
 	var logical, entries int64
-	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.content_digest,v.size_bytes,v.entry_count,a.media_type FROM computer_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &entries, &media)
-	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Artifact.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || entries != 0 || media != req.Manifest.RuntimeState.Computer.Artifact.MediaType {
+	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.content_digest,v.size_bytes,v.entry_count,a.media_type FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id JOIN computer_objects a ON a.digest=r.root_digest AND a.computer_id=r.computer_id AND a.environment_id=r.environment_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &entries, &media)
+	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Root.Pack.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || entries != 0 || media != "application/octet-stream" {
 		t.Fatalf("version %s %s %d %d %s: %v", status, digest, logical, entries, media, err)
 	}
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
@@ -89,7 +90,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		}
 	}
 	var memberships int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects c JOIN run_checkpoint_objects o ON o.digest=c.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&memberships); err != nil || memberships != 5 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects c JOIN run_checkpoint_objects o ON o.digest=c.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&memberships); err != nil || memberships != 4 {
 		t.Fatalf("memberships=%d %v", memberships, err)
 	}
 	var replay workerapi.CheckpointResponse
@@ -106,8 +107,8 @@ func TestCheckpointPublicationRejectsIncompleteOrChangedCandidate(t *testing.T) 
 			if scenario != "missing_registration" {
 				f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
 			}
-			for i := 0; i < 5; i++ {
-				if scenario != "missing_object" || i != 4 {
+			for i := 0; i < 4; i++ {
+				if scenario != "missing_object" || i != 3 {
 					upload(i)
 				}
 			}
@@ -139,7 +140,7 @@ func TestCheckpointPublicationRejectsIncompleteOrChangedCandidate(t *testing.T) 
 func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T) {
 	f, req, upload := checkpointPublicationFixture(t)
 	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		upload(i)
 	}
 	// Fail after inserting the Computer version and some runtime memberships.
@@ -177,7 +178,7 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
 	f, req, upload := checkpointPublicationFixture(t)
 	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		upload(i)
 	}
 	ready := readyFromRegistration(req)
@@ -199,7 +200,7 @@ func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
 func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 	f, req, upload := checkpointPublicationFixture(t)
 	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 4; i++ {
 		upload(i)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)

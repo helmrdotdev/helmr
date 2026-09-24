@@ -174,3 +174,7 @@ func (d *Device) Close(ctx context.Context) error {
 	d.closed = true
 	return nil
 }
+
+func (d *Device) Publish(ctx context.Context, root GenerationRoot, publisher ContinuationPublication) error {
+	return d.disk.Publish(ctx, root, publisher, 1<<20)
+}

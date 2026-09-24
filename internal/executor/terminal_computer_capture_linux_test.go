@@ -11,10 +11,11 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -22,14 +23,18 @@ import (
 
 type terminalCaptureSession struct {
 	*checkpointSession
-	pauseErr  error
-	limitsErr error
-	pauses    int
+	disk                            *computer.LocalGeneration
+	pauseErr, limitsErr, publishErr error
+	pauses                          int
 }
 
-func (s *terminalCaptureSession) PauseComputer(context.Context) (*vm.RuntimeComputer, error) {
+func (s *terminalCaptureSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	s.pauses++
-	return s.artifact.Computer, s.pauseErr
+	if s.pauseErr != nil {
+		return nil, s.pauseErr
+	}
+	root, err := s.disk.Flush(ctx)
+	return &vm.ComputerSnapshot{ComputerID: s.artifact.Computer.ComputerID, Root: root}, err
 }
 func (s *terminalCaptureSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	if s.limitsErr != nil {
@@ -37,123 +42,155 @@ func (s *terminalCaptureSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	}
 	return s.checkpointSession.SnapshotLimits()
 }
-func newTerminalCaptureTest(t *testing.T) (terminalComputerCapturer, workerapi.RunLeaseAssignment, *terminalCaptureSession, *captureStore) {
-	t.Helper()
-	session := &terminalCaptureSession{checkpointSession: &checkpointSession{stream: newCheckpointStream(t, nil, "wait", "checkpoint"), artifact: checkpointArtifact(t)}}
-	store := &captureStore{}
-	c := terminalComputerCapturer{session: session, objects: store, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
-	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
-	lease.WorkspaceID = session.artifact.Computer.ComputerID
-	return c, lease, session, store
+func (s *terminalCaptureSession) PublishComputer(ctx context.Context, r computer.GenerationRoot, p computer.ContinuationPublication) error {
+	if s.publishErr != nil {
+		return s.publishErr
+	}
+	return s.disk.Publish(ctx, r, p, 1000)
+}
+func (s *terminalCaptureSession) Close(ctx context.Context) error {
+	err := s.checkpointSession.Close(ctx)
+	if err != nil {
+		return err
+	}
+	return s.disk.Close()
 }
 
-func TestTerminalComputerCaptureRegistersAndRetriesOneDisk(t *testing.T) {
-	c, lease, session, store := newTerminalCaptureTest(t)
-	source := bytes.Repeat([]byte{0x5a}, 4096)
-	copy(source, []byte("post-task filesystem bytes"))
-	if err := os.WriteFile(session.artifact.Computer.Path, source, 0600); err != nil {
-		t.Fatal(err)
+type terminalPublicationFixture struct {
+	*cas.File
+	registered bool
+	uploads    int
+	retry      bool
+}
+
+func (p *terminalPublicationFixture) Register(context.Context, blockformat.ObjectInspection) error {
+	if !p.registered {
+		return errors.New("object before candidate registration")
 	}
-	var registered workerapi.RegisterRunFinalizationRequest
-	var registrations, uploads int
-	var ciphertext []byte
-	register := func(_ context.Context, req workerapi.RegisterRunFinalizationRequest) error {
-		registrations++
-		if uploads != 0 {
-			t.Fatal("upload before registration completed")
-		}
-		if registrations == 1 {
-			registered = req
-			return retryableCaptureError{}
-		}
-		if registered != req {
-			t.Fatal("registration retry changed candidate")
-		}
-		return nil
+	return nil
+}
+func (p *terminalPublicationFixture) Certify(context.Context, blockformat.ObjectInspection) error {
+	return nil
+}
+func (p *terminalPublicationFixture) Reuse(context.Context, blockformat.ObjectInspection) error {
+	return nil
+}
+func (p *terminalPublicationFixture) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (o cas.Object, err error) {
+	return runComputerPublisher{objects: p}.Upload(ctx, d, f)
+}
+func (p *terminalPublicationFixture) Publish(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
+	p.uploads++
+	o, err := p.File.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
+	if err == nil && p.retry {
+		p.retry = false
+		return o, retryableCaptureError{}
 	}
-	store.publish = func(d cas.Descriptor, file *os.File) error {
-		uploads++
-		if registrations != 2 || registered.Disk.Artifact.Digest != d.Digest {
-			t.Fatal("unregistered upload")
-		}
-		if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes == 0 {
-			t.Fatal("unreserved capture")
-		}
-		body, err := io.ReadAll(io.NewSectionReader(file, 0, d.SizeBytes))
-		if err != nil {
-			return err
-		}
-		if uploads == 1 {
-			ciphertext = body
-			return retryableCaptureError{}
-		}
-		if !bytes.Equal(ciphertext, body) {
-			t.Fatal("upload retry reencrypted disk")
-		}
-		return nil
-	}
-	disk, err := c.capture(t.Context(), lease, "operation", register)
+	return o, err
+}
+func newTerminalCaptureTest(t *testing.T) (terminalComputerCapturer, workerapi.RunLeaseAssignment, *terminalCaptureSession, *terminalPublicationFixture, computer.LocalGenerationConfig) {
+	t.Helper()
+	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disk != registered.Disk || uploads != 2 || len(store.puts) != 1 || session.pauses != 1 || session.closeCount != 1 || len(session.snapshotRequests) != 0 {
-		t.Fatalf("capture=%+v uploads=%d pauses=%d closes=%d snapshots=%d", disk, uploads, session.pauses, session.closeCount, len(session.snapshotRequests))
-	}
-	if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
-		t.Fatal("reservation leaked")
-	}
-	target := filepath.Join(t.TempDir(), "restored.disk")
-	artifact := computer.DiskArtifact{Object: cas.Descriptor{Digest: disk.Artifact.Digest, SizeBytes: disk.Artifact.SizeBytes, MediaType: disk.Artifact.MediaType}, LogicalBytes: disk.LogicalBytes}
-	if err := (computer.DiskStore{CAS: store, Cipher: c.encryptor}).Restore(t.Context(), disk.ComputerID, artifact, target, disk.LogicalBytes); err != nil {
+	keyID := uuid.NewV7().String()
+	keys := map[string][]byte{keyID: bytes.Repeat([]byte{7}, 32)}
+	writer := blockformat.Writer{Source: store, Sink: store, Scope: "terminal-fixture", ActiveKey: keyID, Keys: keys, PackLimit: blockformat.MinPackLimit}
+	locator, err := writer.Empty(t.Context(), 4096, 64)
+	if err != nil {
 		t.Fatal(err)
 	}
-	restored, err := os.ReadFile(target)
-	if err != nil || !bytes.Equal(source, restored) {
-		t.Fatalf("terminal disk roundtrip failed: %v", err)
+	root, err := computer.NewGenerationRoot(locator, 4096)
+	if err != nil {
+		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(c.tempDir)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("staging remains: %v %v", entries, err)
+	cfg := computer.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "generation"), Base: root, BaseSource: store, Scope: writer.Scope, ActiveKey: keyID, Keys: keys, DirtyBlocks: 2, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
+	disk, err := computer.CreateLocalGeneration(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = disk.Close() })
+	session := &terminalCaptureSession{disk: disk, checkpointSession: &checkpointSession{stream: newCheckpointStream(t, nil, "wait", "checkpoint"), artifact: checkpointArtifact(t)}}
+	publisher := &terminalPublicationFixture{File: store}
+	c := terminalComputerCapturer{session: session, publication: func(workerapi.RunLeaseAssignment, string) computer.ContinuationPublication { return publisher }}
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
+	lease.WorkspaceID = session.artifact.Computer.ComputerID
+	return c, lease, session, publisher, cfg
+}
+func TestTerminalComputerCaptureRegistersAndRestoresGeneration(t *testing.T) {
+	c, lease, session, p, cfg := newTerminalCaptureTest(t)
+	data := bytes.Repeat([]byte{42}, 4096)
+	if _, err := session.disk.WriteAt(t.Context(), data, 0); err != nil {
+		t.Fatal(err)
+	}
+	var candidate workerapi.RegisterRunFinalizationRequest
+	registrations := 0
+	p.retry = true
+	got, err := c.capture(t.Context(), lease, "operation", func(_ context.Context, r workerapi.RegisterRunFinalizationRequest) error {
+		registrations++
+		if registrations == 1 {
+			candidate = r
+			return retryableCaptureError{}
+		}
+		if candidate != r {
+			t.Fatal("retry changed frozen candidate")
+		}
+		p.registered = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != candidate.Disk || session.pauses != 1 || session.closeCount != 1 || registrations != 2 || p.uploads < 2 {
+		t.Fatalf("capture/stop/retry mismatch: %+v", got)
+	}
+	// Reopen from only remotely published bytes after the source Runtime ended.
+	cfg.Directory = filepath.Join(t.TempDir(), "restored")
+	cfg.Base = got.Root
+	restored, err := computer.CreateLocalGeneration(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	read := make([]byte, len(data))
+	if _, err = restored.ReadAt(t.Context(), read, 0); err != nil || !bytes.Equal(data, read) {
+		t.Fatalf("restored bytes: %v", err)
 	}
 }
-
 func TestTerminalComputerCaptureFailureAlwaysStopsSource(t *testing.T) {
-	for _, stage := range []string{"dependencies", "limits", "capacity", "pause", "identity", "registration", "upload", "stop"} {
+	for _, stage := range []string{"dependencies", "limits", "pause", "identity", "registration", "upload", "stop"} {
 		t.Run(stage, func(t *testing.T) {
-			c, lease, session, store := newTerminalCaptureTest(t)
+			c, lease, s, p, _ := newTerminalCaptureTest(t)
+			p.registered = true
 			failure := errors.New("injected capture failure")
 			register := func(context.Context, workerapi.RegisterRunFinalizationRequest) error { return nil }
 			switch stage {
 			case "dependencies":
-				c.encryptor = nil
+				c.publication = nil
 			case "limits":
-				session.limitsErr = failure
-			case "capacity":
-				c.capacity, _ = capacity.New(capacity.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: 1})
+				s.limitsErr = failure
 			case "pause":
-				session.pauseErr = failure
+				s.pauseErr = failure
 			case "identity":
-				lease.WorkspaceID = "different"
+				lease.WorkspaceID = "other"
 			case "registration":
 				register = func(context.Context, workerapi.RegisterRunFinalizationRequest) error {
 					return &httpclient.Error{StatusCode: 409, Status: "409 Conflict"}
 				}
 			case "upload":
-				store.publish = func(cas.Descriptor, *os.File) error { return failure }
+				s.publishErr = failure
 			case "stop":
-				session.closeErr = failure
+				s.closeErr = failure
 			}
 			_, err := c.capture(t.Context(), lease, "operation", register)
-			if err == nil || session.closeCount != 1 || len(session.snapshotRequests) != 0 {
-				t.Fatalf("error=%v close=%d snapshots=%d", err, session.closeCount, len(session.snapshotRequests))
+			if err == nil || s.closeCount != 1 {
+				t.Fatalf("error=%v stops=%d", err, s.closeCount)
 			}
 			if stage == "stop" {
-				if !errors.Is(err, failure) {
-					t.Fatal("unproved stop lost cause")
+				var release *checkpointSourceReleaseError
+				if !errors.As(err, &release) || !errors.Is(err, failure) {
+					t.Fatal("stop proof failure lost")
 				}
-			}
-			if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
-				t.Fatal("reservation leaked after proved stop")
 			}
 		})
 	}

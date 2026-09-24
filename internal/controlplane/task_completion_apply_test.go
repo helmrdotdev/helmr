@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -12,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -197,7 +195,7 @@ func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	}
 }
 
-func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T) {
+func TestRecordTaskWorkspaceVersionRecordsGenerationIdentity(t *testing.T) {
 	authority := runLeaseClaimAuthority{
 		run: db.Run{
 			OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
@@ -217,26 +215,17 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 	}
 	versionID := pgvalue.UUID(uuid.NewV7())
 	store := &taskWorkspaceVersionFixture{versionID: versionID}
-	capture := parsedWorkspaceTreeCapture{
-		tree: workspace.TreeIdentity{
-			Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 12, EntryCount: 2,
-		},
-		artifact: workerapi.WorkspaceArtifact{
-			Digest: "sha256:" + strings.Repeat("a", 64), MediaType: workspace.ArtifactMediaType,
-			Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: 2,
-		},
-	}
+	capture := workspaceVersionCapture{root: testGenerationRoot(4096)}
 	got, err := recordTaskWorkspaceVersion(
 		context.Background(), store, workerActor{WorkerInstanceID: uuid.NewV7()},
-		authority, capture.version(), pgvalue.Timestamptz(time.Now()),
+		authority, capture, pgvalue.Timestamptz(time.Now()),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != versionID || store.publish.ContentDigest.String != capture.tree.Digest ||
-		store.publish.SizeBytes != capture.tree.SizeBytes || store.publish.EntryCount != int32(capture.tree.EntryCount) ||
-		store.artifact.Digest != capture.artifact.Digest || store.artifact.SizeBytes != capture.artifact.SizeBytes {
-		t.Fatalf("published version = %+v, Artifact = %+v", store.publish, store.artifact)
+	if got != versionID || store.publish.ContentDigest.String != capture.root.Pack.Digest ||
+		store.publish.SizeBytes != capture.root.LogicalBytes || store.publish.EntryCount != 0 {
+		t.Fatalf("published version = %+v", store.publish)
 	}
 }
 
@@ -300,4 +289,8 @@ func (fixture *taskCompletionReplayFixture) GetTaskCompletionReplay(
 ) (pgtype.Text, error) {
 	fixture.last = params
 	return fixture.fingerprint, fixture.err
+}
+
+func (f *taskWorkspaceVersionFixture) CreateComputerVersionRoot(context.Context, db.CreateComputerVersionRootParams) error {
+	return nil
 }

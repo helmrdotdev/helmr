@@ -13,8 +13,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -34,6 +32,7 @@ func finalizingActorRequest(t *testing.T) (*actorCheckpointFixture, workerapi.Co
 	capture := validTaskWorkspaceCapture(t, assignment)
 	capture.Receipt.OperationID = began.OperationID
 	capture.Disk.LogicalBytes = a.runtime.ReservedGuestEphemeralDiskBytes
+	capture.Disk.Root = testGenerationRoot(capture.Disk.LogicalBytes)
 	setCaptureFingerprint(t, capture)
 	return f, workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: a.actor.RunGeneration, Failed: &workerapi.TaskFailure{Message: "failed after writes"}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
 }
@@ -57,9 +56,9 @@ func TestRunFinalizationRegistrationPostgres(t *testing.T) {
 			changed := registration
 			switch mode {
 			case "digest":
-				changed.Disk.Artifact.Digest = "sha256:" + strings.Repeat("b", 64)
+				changed.Disk.Root.Pack.Digest = "sha256:" + strings.Repeat("b", 64)
 			case "size":
-				changed.Disk.Artifact.SizeBytes++
+				changed.Disk.Root.Pack.SizeBytes++
 			case "operation":
 				changed.OperationID = uuid.NewV7().String()
 			case "computer":
@@ -74,15 +73,7 @@ func TestRunFinalizationRegistrationPostgres(t *testing.T) {
 			}
 		})
 	}
-	// Direct retirement cannot bypass the live candidate pin.
-	if _, err := f.Pool.Exec(t.Context(), `UPDATE cas_object_lifetimes SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp() WHERE digest=$1`, registration.Disk.Artifact.Digest); err == nil {
-		t.Fatal("retired live registered disk")
-	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='lost',terminal_at=clock_timestamp(),terminal_reason_code='worker_lost' WHERE id=$1`, f.claim.runLease.ID)
-	q := db.New(f.Pool)
-	if n, err := q.RetireAbandonedCasObject(t.Context(), registration.Disk.Artifact.Digest); err != nil || n != 1 {
-		t.Fatalf("abandoned retirement=%d %v", n, err)
-	}
 	if err := f.server.registerRunFinalization(t.Context(), f.worker, registration); err == nil {
 		t.Fatal("lost owner registered retired candidate")
 	}
@@ -90,11 +81,7 @@ func TestRunFinalizationRegistrationPostgres(t *testing.T) {
 
 func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) {
 	f, req := finalizingActorRequest(t)
-	obj, err := f.server.cas.Put(t.Context(), computer.DiskMediaType, strings.NewReader("opaque disk publication fixture"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Workspace.Captured.Disk.Artifact = workerapi.CheckpointArtifact{Digest: obj.Digest, SizeBytes: obj.SizeBytes, MediaType: obj.MediaType}
+	req.Workspace.Captured.Disk.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
 	parsed, err := parseActorCompletionRequest(req)
 	if err != nil {
 		t.Fatal(err)
@@ -112,11 +99,7 @@ func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) 
 	}
 	changed := req
 	changed.Workspace.Captured = cloneTaskWorkspaceCapture(req.Workspace.Captured)
-	other, err := f.server.cas.Put(t.Context(), computer.DiskMediaType, strings.NewReader("different finalization disk"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed.Workspace.Captured.Disk.Artifact = workerapi.CheckpointArtifact{Digest: other.Digest, SizeBytes: other.SizeBytes, MediaType: other.MediaType}
+	changed.Workspace.Captured.Disk.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID))
 	if status := finalizationActorStatus(t, f, changed); status != http.StatusConflict {
 		t.Fatalf("changed candidate status=%d", status)
 	}
@@ -127,14 +110,14 @@ func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) 
 	}
 	assertRetainedActorCapture(t, f, req.Workspace.Captured, f.rootID)
 	var status string
-	var pin *bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT lease_status,availability_required FROM run_finalization_objects WHERE run_lease_id=$1`, f.claim.runLease.ID).Scan(&status, &pin); err != nil || status != "failed" || pin != nil {
-		t.Fatalf("registration release=%s %v %v", status, pin, err)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT lease_status FROM run_finalization_objects WHERE run_lease_id=$1`, f.claim.runLease.ID).Scan(&status); err != nil || status != "failed" {
+		t.Fatalf("registration status=%s: %v", status, err)
 	}
-	// The lease pin is released, but committed CAS membership still forbids deletion.
-	if _, err := db.New(f.Pool).RetireAbandonedCasObject(t.Context(), obj.Digest); err == nil {
-		t.Fatal("retired committed result disk")
+	// Certified generation membership survives the terminal lease transition.
+	if _, err := f.Pool.Exec(t.Context(), `DELETE FROM computer_objects WHERE digest=$1`, req.Workspace.Captured.Disk.Root.Pack.Digest); err == nil {
+		t.Fatal("deleted published root")
 	}
+
 }
 
 func TestRunFinalizationRegistrationRejectsExpiredAuthorityPostgres(t *testing.T) {
@@ -173,7 +156,7 @@ func TestRunFinalizationPublicationExpiresDuringMembershipWritePostgres(t *testi
 		t.Fatal(err)
 	}
 	defer locker.Rollback(context.Background())
-	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_object_lifetimes WHERE digest=$1 FOR UPDATE`, req.Workspace.Captured.Disk.Artifact.Digest)
+	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM computer_objects WHERE digest=$1 FOR UPDATE`, req.Workspace.Captured.Disk.Root.Pack.Digest)
 	var expiry time.Time
 	if err := f.Pool.QueryRow(ctx, `UPDATE run_leases SET start_deadline_at=created_at,expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1 RETURNING expires_at`, f.claim.runLease.ID).Scan(&expiry); err != nil {
 		t.Fatal(err)
@@ -218,10 +201,10 @@ func TestRunFinalizationPublicationExpiresDuringMembershipWritePostgres(t *testi
 	var head uuid.UUID
 	var status string
 	var memberships int
-	if err := f.Pool.QueryRow(ctx, `SELECT w.head_version_id,l.status,(SELECT count(*) FROM cas_objects WHERE digest=$3) FROM computers w JOIN run_leases l ON l.id=$2 WHERE w.id=$1`, f.workspaceID, f.claim.runLease.ID, req.Workspace.Captured.Disk.Artifact.Digest).Scan(&head, &status, &memberships); err != nil {
+	if err := f.Pool.QueryRow(ctx, `SELECT w.head_version_id,l.status,(SELECT count(*) FROM cas_objects WHERE digest=$3) FROM computers w JOIN run_leases l ON l.id=$2 WHERE w.id=$1`, f.workspaceID, f.claim.runLease.ID, req.Workspace.Captured.Disk.Root.Pack.Digest).Scan(&head, &status, &memberships); err != nil {
 		t.Fatal(err)
 	}
-	if head != f.rootID || status != "finalizing" || memberships != 0 {
+	if head != f.rootID || status != "finalizing" || memberships != 1 {
 		t.Fatalf("partial publication head=%s status=%s memberships=%d", head, status, memberships)
 	}
 }
@@ -230,11 +213,7 @@ func TestTaskFinalizationRejectsUnregisteredDiskPostgres(t *testing.T) {
 	f := newSameWorkspaceCompletionPostgresFixture(t, false)
 	changed := f.request
 	changed.Workspace.Captured = cloneTaskWorkspaceCapture(f.request.Workspace.Captured)
-	other, err := f.server.cas.Put(t.Context(), computer.DiskMediaType, strings.NewReader("unregistered task disk"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	changed.Workspace.Captured.Disk.Artifact = workerapi.CheckpointArtifact{Digest: other.Digest, SizeBytes: other.SizeBytes, MediaType: other.MediaType}
+	changed.Workspace.Captured.Disk.Root.Pack.Digest = "sha256:" + strings.Repeat("f", 64)
 	body, err := json.Marshal(changed)
 	if err != nil {
 		t.Fatal(err)

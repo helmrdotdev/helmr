@@ -9,7 +9,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -43,7 +42,7 @@ func checkpointRegistrationFixture(t *testing.T) (*actorCheckpointFixture, worke
 	rt.VMVCPUCount = 1
 	rt.CPUConfigDigest = f.CPUConfigDigest
 	rt.Substrate = &workerapi.CheckpointRuntimeSubstrate{Digest: dbtest.Digest("frontier-substrate"), Format: "squashfs", Contract: "builder-v0", SizeBytes: 1}
-	m.RuntimeState.Computer = &workerapi.CheckpointComputer{ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes, Artifact: workerapi.CheckpointArtifact{Digest: dbtest.Digest("candidate-disk"), SizeBytes: 1024, MediaType: computer.DiskMediaType}}
+	m.RuntimeState.Computer = &workerapi.CheckpointComputer{ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes, Root: testGenerationRoot(f.claim.runtime.ReservedGuestEphemeralDiskBytes)}
 	return f, workerapi.RegisterCheckpointRequest{Lease: f.fence(), RequestVersion: wait.CheckpointRequestVersion, RunWaitID: waitID.String(), CheckpointID: m.RecoveryPoint.ID, Manifest: m}
 }
 
@@ -54,9 +53,9 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 	if response.CheckpointID != req.CheckpointID || response.WorkspaceVersionID != "" {
 		t.Fatalf("registration published a version: %+v", response)
 	}
-	// Nothing was uploaded. All five immutable descriptors are owned first.
+	// Nothing was uploaded. All four runtime descriptors are owned first.
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
-	if err != nil || len(rows) != 5 {
+	if err != nil || len(rows) != 4 {
 		t.Fatalf("objects=%d %v", len(rows), err)
 	}
 	for _, row := range rows {
@@ -77,7 +76,7 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 	// Use the actual failed receipt path, not a test-only unpin operation.
 	f.workerCall(t, f.server.workerMarkCheckpointFailed, workerapi.CheckpointFailedRequest{Lease: req.Lease, RequestVersion: req.RequestVersion, RunWaitID: req.RunWaitID, CheckpointID: req.CheckpointID, Error: "upload failed"}, nil)
 	collectible, err := f.server.db.ListAbandonedCasObjects(t.Context(), 100)
-	if err != nil || len(collectible) != 5 {
+	if err != nil || len(collectible) != 4 {
 		t.Fatalf("collector cannot discover failed set: %v %v", collectible, err)
 	}
 	for _, row := range rows {
@@ -163,7 +162,7 @@ func TestCheckpointRegistrationConcurrentIdentity(t *testing.T) {
 				t.Fatalf("conflicts=%d want %d", failures, want)
 			}
 			rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
-			if err != nil || len(rows) != 5 {
+			if err != nil || len(rows) != 4 {
 				t.Fatalf("partial set: %d %v", len(rows), err)
 			}
 		})
@@ -174,7 +173,7 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	digest := req.Manifest.RuntimeState.Computer.Artifact.Digest
+	digest := req.Manifest.RuntimeState.ConfigArtifact.Digest
 	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
 	locker, err := f.Pool.Begin(ctx)
 	if err != nil {
@@ -237,7 +236,7 @@ func TestCheckpointRegistrationCannotBypassPairedPublication(t *testing.T) {
 		t.Fatal("accepted checkpoint without paired Computer disk")
 	}
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(registered.CheckpointID)))
-	if err != nil || len(rows) != 5 {
+	if err != nil || len(rows) != 4 {
 		t.Fatal("publication rejection lost candidate")
 	}
 	for _, row := range rows {

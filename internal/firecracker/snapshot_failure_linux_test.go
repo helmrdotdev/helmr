@@ -38,7 +38,7 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			}
 			serveSnapshotAPI(t, root, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/vm/config" {
-					_, _ = w.Write([]byte(`{"drives":[{"drive_id":"computer","io_engine":"Sync","is_read_only":false,"path_on_host":"/computer.ext4"},{"drive_id":"scratch","io_engine":"Sync","is_read_only":false,"path_on_host":"/scratch.ext4"}]}`))
+					_, _ = w.Write([]byte(`{"drives":[{"drive_id":"computer","io_engine":"Sync","cache_type":"Writeback","is_read_only":false,"path_on_host":"/computer.ext4"},{"drive_id":"scratch","io_engine":"Sync","cache_type":"Writeback","is_read_only":false,"path_on_host":"/scratch.ext4"}]}`))
 					return
 				}
 				api.snapshots++
@@ -96,7 +96,7 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 				}
 			}
 
-			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4")}
+			session.topology.Computer = &vm.RuntimeComputer{ComputerID: "test-computer", SizeBytes: 4096, Path: filepath.Join(root, "computer.ext4"), Device: &ownedComputerFixture{}}
 			session.cfg.MemoryMiB = 4
 			session.cfg.ScratchDiskMiB = 4
 			session.cfg.JailerUID, session.cfg.JailerGID = os.Getuid(), os.Getgid()

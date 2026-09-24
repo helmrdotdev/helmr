@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
@@ -145,17 +146,18 @@ func (e *checkpointSourceReleaseError) Error() string {
 func (e *checkpointSourceReleaseError) Unwrap() error { return e.err }
 
 type runtimeCheckpointer struct {
-	capacity   *capacity.Ledger
-	objects    cas.ImmutableStore
-	protocol   *programProtocol
-	session    vm.CheckpointableSession
-	encryptor  *checkpoint.Encryptor
-	tempDir    string
-	stream     io.ReadWriteCloser
-	workspace  workerapi.CheckpointWorkspaceBase
-	runEvent   func(context.Context, *programv0.RunEvent) error
-	freezeGate *sync.Mutex
-	onFrozen   func()
+	publication func(CheckpointRequest) computer.ContinuationPublication
+	capacity    *capacity.Ledger
+	objects     cas.ImmutableStore
+	protocol    *programProtocol
+	session     vm.CheckpointableSession
+	encryptor   *checkpoint.Encryptor
+	tempDir     string
+	stream      io.ReadWriteCloser
+	workspace   workerapi.CheckpointWorkspaceBase
+	runEvent    func(context.Context, *programv0.RunEvent) error
+	freezeGate  *sync.Mutex
+	onFrozen    func()
 }
 
 func (c runtimeCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {

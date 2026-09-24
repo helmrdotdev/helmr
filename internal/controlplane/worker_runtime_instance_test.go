@@ -134,10 +134,8 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontier(t *testing.T) {
 	capturedVersionID := pgvalue.UUID(uuid.NewV7())
 	manifest, err := json.Marshal(workerapi.CheckpointManifest{
 		WorkspaceState: workerapi.CheckpointWorkspaceState{Base: workerapi.CheckpointWorkspaceBase{
-			ArtifactDigest: validDigest('e'), ArtifactSizeBytes: 512,
-			ArtifactMediaType: workspace.ArtifactMediaType,
-			ArtifactEncoding:  workspace.ArtifactEncoding,
-			MountPath:         "/workspace",
+
+			MountPath: "/workspace",
 		}},
 	})
 	if err != nil {
@@ -158,14 +156,8 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontier(t *testing.T) {
 			ScratchDiskDigest: validDigest('d'), ScratchDiskSizeBytes: 4, ScratchDiskMediaType: "application/example",
 		},
 	}
-	targetArtifact := workerapi.WorkspaceArtifact{
-		Digest: validDigest('9'), SizeBytes: 1024,
-		MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
-	}
-	source := workerapi.RuntimeSource{WorkspaceTarget: &workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: pgvalue.UUIDString(capturedVersionID),
-		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: validDigest('8'), SizeBytes: 2048, EntryCount: 2},
-		Artifact:               &targetArtifact,
+	source := workerapi.RuntimeSource{Computer: &workerapi.RuntimeComputerSource{
+		VersionID: pgvalue.UUIDString(capturedVersionID),
 	}}
 	row := db.ListRuntimeReconcileTargetsRow{
 		RestoreCheckpointID:   checkpointID,
@@ -175,9 +167,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontier(t *testing.T) {
 	if err := populateRuntimeRestoreSource(context.Background(), store, &source, row); err != nil {
 		t.Fatal(err)
 	}
-	if source.WorkspaceTarget.BaseWorkspaceVersionID != pgvalue.UUIDString(capturedVersionID) ||
-		source.WorkspaceTarget.Artifact == nil ||
-		source.WorkspaceTarget.Artifact.Digest != validDigest('9') {
+	if source.Computer.VersionID != pgvalue.UUIDString(capturedVersionID) {
 		t.Fatalf("captured frontier was rewritten: %+v", source)
 	}
 	if source.Restore == nil {

@@ -360,10 +360,7 @@ func (p *LocalGeneration) Close() error {
 // retained while newer writes and flushes proceed. Close joins publication before
 // clearing keys. The caller must keep remote source/key ownership until the
 // generation has been committed by the Control Plane; this does not commit it.
-func (p *LocalGeneration) Publish(ctx context.Context, root GenerationRoot, publisher interface {
-	GenerationPublication
-	GenerationReuse
-}, maxObjects int) error {
+func (p *LocalGeneration) Publish(ctx context.Context, root GenerationRoot, publisher ContinuationPublication, maxObjects int) error {
 	p.life.RLock()
 	defer p.life.RUnlock()
 	if p.closed {

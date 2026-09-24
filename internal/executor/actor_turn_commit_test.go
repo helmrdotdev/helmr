@@ -15,7 +15,6 @@ import (
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -52,16 +51,12 @@ func TestTurnSettlementNeedsNoCaptureOrFrontierChange(t *testing.T) {
 	for _, disposition := range []string{"completed", "failed"} {
 		t.Run(disposition, func(t *testing.T) {
 			claim := testFreshProgramClaim(t)
-			target, err := workspace.EmptyResetTarget("version-1", workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest})
-			if err != nil {
-				t.Fatal(err)
-			}
 			host, guest := net.Pipe()
 			defer host.Close()
 			defer guest.Close()
 			_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
 			cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}}
-			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease, resetTarget: target}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease}
 			requested := &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: disposition}
 			if disposition == "completed" {
 				requested.ResultJson = new(`{"answer":42}`)
@@ -92,7 +87,7 @@ func TestTurnSettlementNeedsNoCaptureOrFrontierChange(t *testing.T) {
 			if len(payload) != 0 {
 				t.Fatalf("payload=%v", payload)
 			}
-			if task.resetTarget != target || task.lease != claim.Lease || cp.request.Disposition != disposition {
+			if task.lease != claim.Lease || cp.request.Disposition != disposition {
 				t.Fatal("settlement changed physical authority")
 			}
 		})

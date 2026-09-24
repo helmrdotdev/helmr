@@ -29,7 +29,6 @@ func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (worker
 	case "initializing":
 		if len(row.ComputerGenerationLocator) != 0 || row.RestoreCheckpointID.Valid || row.WorkspaceContentDigest.Valid ||
 			!row.WorkspaceLogicalSizeBytes.Valid || row.WorkspaceLogicalSizeBytes.Int64 != 0 ||
-			row.WorkspaceArtifactDigest != "" || row.WorkspaceArtifactSizeBytes != 0 || row.WorkspaceArtifactMediaType != "" ||
 			len(row.ComputerInitialConfig) != 0 {
 			return source, errors.New("initializing computer has persisted disk or continuation state")
 		}
@@ -56,6 +55,7 @@ func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (worker
 		if !row.WorkspaceLogicalSizeBytes.Valid || row.WorkspaceLogicalSizeBytes.Int64 != source.LogicalBytes || !row.WorkspaceContentDigest.Valid || row.WorkspaceContentDigest.String != root.Pack.Digest {
 			return source, errors.New("computer generation identity is incomplete")
 		}
+		source.Root = &root
 		// The original configuration belongs to the Computer, not the current
 		// deployment. A new deployment must not silently change its user or env.
 		raw := bytes.TrimSpace(row.ComputerInitialConfig)

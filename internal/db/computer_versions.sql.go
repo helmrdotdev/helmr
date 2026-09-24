@@ -11,37 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getWorkspaceResetTargetAuthority = `-- name: GetWorkspaceResetTargetAuthority :one
+const getComputerVersionAuthority = `-- name: GetComputerVersionAuthority :one
 SELECT computer_versions.id AS version_id,
        computer_versions.parent_version_id,
-       computer_versions.artifact_id,
-       computer_versions.content_digest,
-       computer_versions.size_bytes AS logical_size_bytes,
-       computer_versions.entry_count,
        computer_versions.source_workspace_lease_id,
        computer_versions.ownership_generation,
-       computer_versions.writer_generation,
-       artifacts.kind AS artifact_row_kind,
-       artifacts.digest AS artifact_digest,
-       artifacts.size_bytes AS artifact_size_bytes,
-       artifacts.media_type AS artifact_media_type
+       computer_versions.writer_generation
   FROM computer_versions
   JOIN computers
     ON computers.environment_id = computer_versions.environment_id
    AND computers.id = computer_versions.workspace_id
   JOIN environments ON environments.id = computers.environment_id
-  LEFT JOIN artifacts ON artifacts.environment_id = computer_versions.environment_id
-                     AND artifacts.id = computer_versions.artifact_id
  WHERE environments.org_id = $1
    AND environments.project_id = $2
    AND computer_versions.environment_id = $3
    AND computer_versions.workspace_id = $4
    AND computer_versions.id = $5
    AND computer_versions.status IN ('committed', 'private')
-   AND (computer_versions.parent_version_id IS NULL OR artifacts.kind = 'workspace_version')
 `
 
-type GetWorkspaceResetTargetAuthorityParams struct {
+type GetComputerVersionAuthorityParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
@@ -49,45 +38,29 @@ type GetWorkspaceResetTargetAuthorityParams struct {
 	VersionID     pgtype.UUID `json:"version_id"`
 }
 
-type GetWorkspaceResetTargetAuthorityRow struct {
-	VersionID              pgtype.UUID      `json:"version_id"`
-	ParentVersionID        pgtype.UUID      `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID      `json:"artifact_id"`
-	ContentDigest          pgtype.Text      `json:"content_digest"`
-	LogicalSizeBytes       int64            `json:"logical_size_bytes"`
-	EntryCount             int32            `json:"entry_count"`
-	SourceWorkspaceLeaseID pgtype.UUID      `json:"source_workspace_lease_id"`
-	OwnershipGeneration    int64            `json:"ownership_generation"`
-	WriterGeneration       int64            `json:"writer_generation"`
-	ArtifactRowKind        NullArtifactKind `json:"artifact_row_kind"`
-	ArtifactDigest         pgtype.Text      `json:"artifact_digest"`
-	ArtifactSizeBytes      pgtype.Int8      `json:"artifact_size_bytes"`
-	ArtifactMediaType      pgtype.Text      `json:"artifact_media_type"`
+type GetComputerVersionAuthorityRow struct {
+	VersionID              pgtype.UUID `json:"version_id"`
+	ParentVersionID        pgtype.UUID `json:"parent_version_id"`
+	SourceWorkspaceLeaseID pgtype.UUID `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64       `json:"ownership_generation"`
+	WriterGeneration       int64       `json:"writer_generation"`
 }
 
-func (q *Queries) GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceResetTargetAuthority,
+func (q *Queries) GetComputerVersionAuthority(ctx context.Context, arg GetComputerVersionAuthorityParams) (GetComputerVersionAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getComputerVersionAuthority,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.VersionID,
 	)
-	var i GetWorkspaceResetTargetAuthorityRow
+	var i GetComputerVersionAuthorityRow
 	err := row.Scan(
 		&i.VersionID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.LogicalSizeBytes,
-		&i.EntryCount,
 		&i.SourceWorkspaceLeaseID,
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.ArtifactRowKind,
-		&i.ArtifactDigest,
-		&i.ArtifactSizeBytes,
-		&i.ArtifactMediaType,
 	)
 	return i, err
 }

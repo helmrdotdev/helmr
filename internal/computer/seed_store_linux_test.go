@@ -12,16 +12,11 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
 )
 
 func TestSeedTransferAndComputerSeparation(t *testing.T) {
 	dir := t.TempDir()
 	objects, err := cas.NewFile(filepath.Join(dir, "cas"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	cipher, err := checkpoint.New(bytes.Repeat([]byte{4}, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +38,7 @@ func TestSeedTransferAndComputerSeparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	publisher := diskTestPublisher{objects}
+	publisher := seedTestPublisher{objects}
 	if _, err := publisher.Publish(t.Context(), artifact.Object, file); err != nil {
 		t.Fatal(err)
 	}
@@ -83,29 +78,6 @@ func TestSeedTransferAndComputerSeparation(t *testing.T) {
 			}
 		})
 	}
-	// Even relabeling the outer media type cannot make a seed into a Computer disk.
-	forged := DiskArtifact{Object: artifact.Object, LogicalBytes: size}
-	forged.Object.MediaType = DiskMediaType
-	out := filepath.Join(dir, "as-computer")
-	if err := (DiskStore{CAS: objects, Cipher: cipher}).Restore(t.Context(), diskTestComputer, forged, out, size); err == nil {
-		t.Fatal("seed accepted as Computer disk")
-	}
-	if _, err := os.Lstat(out); !os.IsNotExist(err) {
-		t.Fatal("failed Computer restore exposed disk")
-	}
-	computer, err := (DiskStore{Cipher: cipher}).Capture(t.Context(), diskTestComputer, source, dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer computer.Close()
-	if err := computer.Upload(t.Context(), publisher); err != nil {
-		t.Fatal(err)
-	}
-	reverse := SeedArtifact{Object: computer.Artifact().Object, LogicalBytes: size}
-	reverse.Object.MediaType = SeedMediaType
-	if err := store.Decode(t.Context(), reverse, filepath.Join(dir, "as-seed"), size); err == nil {
-		t.Fatal("Computer disk accepted as seed")
-	}
 	// Malformed content must remove decoded output even with a matching digest.
 	body, err := objects.Get(t.Context(), artifact.Object.Digest)
 	if err != nil {
@@ -122,7 +94,7 @@ func TestSeedTransferAndComputerSeparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := SeedArtifact{Object: cas.Descriptor{Digest: corrupt.Digest, SizeBytes: corrupt.SizeBytes, MediaType: corrupt.MediaType}, LogicalBytes: size}
-	out = filepath.Join(dir, "corrupt")
+	out := filepath.Join(dir, "corrupt")
 	if err := store.Decode(t.Context(), bad, out, size); err == nil {
 		t.Fatal("corrupt seed accepted")
 	}
@@ -135,7 +107,7 @@ func TestSeedTransferAndComputerSeparation(t *testing.T) {
 		t.Fatal("capacity accepted")
 	}
 	wrong := artifact
-	wrong.Object.MediaType = DiskMediaType
+	wrong.Object.MediaType = "application/octet-stream"
 	if err := rejecting.Decode(t.Context(), wrong, filepath.Join(dir, "format"), size); err == nil {
 		t.Fatal("format accepted")
 	}

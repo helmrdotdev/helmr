@@ -7,7 +7,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
@@ -106,7 +105,7 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 
 		}},
 		{name: "noncanonical digest", mutate: func(r *workerapi.CompleteTaskRequest) {
-			r.Workspace.Captured.Disk.Artifact.Digest = "SHA256:" + strings.Repeat("a", 64)
+			r.Workspace.Captured.Disk.Root.Pack.Digest = "SHA256:" + strings.Repeat("a", 64)
 		}},
 	}
 	for _, test := range tests {
@@ -140,9 +139,7 @@ func validTaskWorkspaceCapture(t *testing.T, lease workerapi.RunLeaseAssignment)
 		Receipt: validWorkspaceFinalizationReceipt(lease),
 		Disk: workerapi.CheckpointComputer{
 			ComputerID: lease.WorkspaceID, LogicalBytes: 4096,
-			Artifact: workerapi.CheckpointArtifact{
-				Digest: "sha256:" + strings.Repeat("a", 64), MediaType: computer.DiskMediaType, SizeBytes: 1024,
-			},
+			Root: testGenerationRoot(4096),
 		},
 	}
 	setCaptureFingerprint(t, capture)

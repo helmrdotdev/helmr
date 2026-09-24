@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -28,6 +29,7 @@ var (
 )
 
 type RunLeaseControlPlane interface {
+	RunComputerPublicationClient
 	ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error)
 	AcknowledgeRunStart(context.Context, workerapi.RunStartRequest) (workerapi.RunStartResponse, error)
 	AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error
@@ -96,7 +98,6 @@ type guestRunLeaseTask struct {
 	mounts          WorkspaceMountSessionRegistry
 	store           cas.Store
 	controlPlane    RunLeaseControlPlane
-	resetTarget     workspace.ResetTarget
 	waits           *ControlPlaneRunWaits
 	checkpointer    Checkpointer
 	terminalCapture *terminalComputerCapturer
@@ -149,7 +150,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 	if r.CAS == nil {
 		return nil, errors.New("run lease task CAS is required")
 	}
-	target, err := runLeaseResetTarget(claim)
+	target, err := runLeaseMountTarget(claim)
 	if err != nil {
 		return nil, err
 	}
@@ -178,18 +179,19 @@ func (r ProgramRunner) StartRunLeaseTask(
 		mounts:       r.WorkspaceMounts,
 		store:        r.CAS,
 		controlPlane: controlPlane,
-		resetTarget:  target,
 		lease:        program.lease,
 		authority:    authority,
 		orgID:        program.mount.OrgID,
 		waitWorkspace: waitWorkspaceForRun(
 			program.mount,
 			claim.Lease,
-			claim.Workspace.ResetTarget,
+			claim.Workspace.Target,
 		),
 	}
 	if session, ok := program.session.(vm.ComputerCaptureSession); ok {
-		task.terminalCapture = &terminalComputerCapturer{session: session, objects: r.CheckpointObjects, capacity: r.Capacity, encryptor: r.CheckpointEncryptor, tempDir: r.tempDir()}
+		task.terminalCapture = &terminalComputerCapturer{session: session, publication: func(lease workerapi.RunLeaseAssignment, op string) computer.ContinuationPublication {
+			return runComputerPublisher{client: controlPlane, objects: r.CheckpointObjects, request: workerapi.RunComputerObjectRequest{Lease: lease.Fence(), OperationID: op}}
+		}}
 	}
 	task.program.protocol = newProgramProtocol(program.session.Stream())
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
@@ -197,6 +199,9 @@ func (r ProgramRunner) StartRunLeaseTask(
 	}
 	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
 		task.checkpointer = &runtimeCheckpointer{
+			publication: func(req CheckpointRequest) computer.ContinuationPublication {
+				return runComputerPublisher{client: controlPlane, objects: r.CheckpointObjects, request: workerapi.RunComputerObjectRequest{Lease: program.lease.Fence(), Checkpoint: &workerapi.ComputerCheckpointPublication{ID: req.CheckpointID, RunWaitID: req.RunWaitID, RequestVersion: req.CheckpointRequestVersion}}}
+			},
 			objects: r.CheckpointObjects, capacity: r.Capacity,
 			session:    checkpointable,
 			encryptor:  r.CheckpointEncryptor,
@@ -215,7 +220,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 func waitWorkspaceForRun(
 	mount workerapi.WorkspaceMount,
 	lease workerapi.RunLeaseAssignment,
-	target workerapi.WorkspaceResetTarget,
+	target workerapi.ComputerMountTarget,
 ) workerapi.Workspace {
 	return workerapi.Workspace{
 		ID:                     mount.WorkspaceID,
@@ -223,7 +228,6 @@ func waitWorkspaceForRun(
 		FencingGeneration:      lease.MountFencingGeneration,
 		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
 		MountPath:              mount.WorkspaceMountPath,
-		Artifact:               target.Artifact,
 	}
 }
 
@@ -804,51 +808,22 @@ func validateRunLeaseExpiryAdvance(
 	return nil
 }
 
-func runLeaseResetTarget(
-	claim *workerapi.RunLeaseClaimResponse,
-) (workspace.ResetTarget, error) {
+func runLeaseMountTarget(claim *workerapi.RunLeaseClaimResponse) (workerapi.ComputerMountTarget, error) {
 	if claim == nil {
-		return workspace.ResetTarget{}, errors.New("run lease claim is required")
+		return workerapi.ComputerMountTarget{}, errors.New("run lease claim is required")
 	}
-	target := claim.Workspace.ResetTarget
+	target := claim.Workspace.Target
 	if target.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID {
-		return workspace.ResetTarget{}, errors.New("run lease workspace reset target does not match its base version")
+		return workerapi.ComputerMountTarget{}, errors.New("computer mount target does not match lease base")
 	}
-	tree := workspace.TreeIdentity{
-		Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
-		EntryCount: int(target.Tree.EntryCount),
-	}
-	switch {
-	case target.Empty != nil && target.Artifact == nil:
-		return workspace.EmptyResetTarget(target.BaseWorkspaceVersionID, tree)
-	case target.Empty == nil && target.Artifact != nil:
-		return workspace.ArtifactResetTarget(
-			target.BaseWorkspaceVersionID,
-			tree,
-			workspace.ArtifactIdentity{
-				Digest: target.Artifact.Digest, MediaType: target.Artifact.MediaType,
-				Encoding: target.Artifact.Encoding, SizeBytes: target.Artifact.SizeBytes,
-				EntryCount: int(target.Artifact.EntryCount),
-			},
-		)
-	default:
-		return workspace.ResetTarget{}, errors.New("run lease workspace reset target is invalid")
-	}
+	return target, validateComputerMountTarget(target)
 }
 
-func checkpointWorkspaceBase(target workspace.ResetTarget) (workerapi.CheckpointWorkspaceBase, error) {
-	if err := workspace.ValidateResetTarget(target); err != nil {
-		return workerapi.CheckpointWorkspaceBase{}, fmt.Errorf("validate checkpoint workspace base: %w", err)
+func checkpointWorkspaceBase(target workerapi.ComputerMountTarget) (workerapi.CheckpointWorkspaceBase, error) {
+	if err := validateComputerMountTarget(target); err != nil {
+		return workerapi.CheckpointWorkspaceBase{}, err
 	}
-	base := workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}
-	if target.Artifact == nil {
-		return base, nil
-	}
-	base.ArtifactDigest = target.Artifact.Digest
-	base.ArtifactSizeBytes = target.Artifact.SizeBytes
-	base.ArtifactMediaType = target.Artifact.MediaType
-	base.ArtifactEncoding = target.Artifact.Encoding
-	return base, nil
+	return workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}, nil
 }
 
 func workerTaskOutcome(outcome *programv0.TaskOutcome) (workerapi.TaskOutcome, error) {
@@ -895,26 +870,6 @@ func workerWorkspaceFinalizationReceipt(
 			BaseWorkspaceVersionID: fence.GetBaseWorkspaceVersionId(),
 		},
 	}
-}
-
-func workerWorkspaceResetTarget(target workspace.ResetTarget) workerapi.WorkspaceResetTarget {
-	result := workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
-			EntryCount: int32(target.Tree.EntryCount),
-		},
-	}
-	if target.Kind == workspace.ResetTargetEmpty {
-		result.Empty = &workerapi.EmptyWorkspace{}
-	} else {
-		result.Artifact = &workerapi.WorkspaceArtifact{
-			Digest: target.Artifact.Digest, MediaType: target.Artifact.MediaType,
-			Encoding: target.Artifact.Encoding, SizeBytes: target.Artifact.SizeBytes,
-			EntryCount: int32(target.Artifact.EntryCount),
-		}
-	}
-	return result
 }
 
 func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure {

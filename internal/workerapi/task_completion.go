@@ -84,23 +84,16 @@ func (value *TaskWorkspaceProof) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-func (value *WorkspaceResetTarget) UnmarshalJSON(raw []byte) error {
-	type target WorkspaceResetTarget
+func (value *ComputerMountTarget) UnmarshalJSON(raw []byte) error {
+	type target ComputerMountTarget
 	var decoded target
 	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
-		return fmt.Errorf("decode workspace reset target: %w", err)
+		return fmt.Errorf("decode computer mount target: %w", err)
 	}
-	variants := 0
-	if decoded.Empty != nil {
-		variants++
+	if decoded.BaseWorkspaceVersionID == "" {
+		return errors.New("computer mount version is required")
 	}
-	if decoded.Artifact != nil {
-		variants++
-	}
-	if variants != 1 {
-		return errors.New("workspace reset target must contain exactly one source")
-	}
-	*value = WorkspaceResetTarget(decoded)
+	*value = ComputerMountTarget(decoded)
 	return nil
 }
 

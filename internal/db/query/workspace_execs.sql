@@ -384,6 +384,7 @@ UPDATE runtime_instances
 SELECT sqlc.embed(workspace_processes),
        sqlc.embed(workspace_mounts),
        sqlc.embed(workspace_leases),
+       sqlc.embed(runtime_instances),
        idempotency_claims.request_fingerprint
   FROM workspace_processes
   JOIN workspace_mounts
@@ -732,20 +733,16 @@ WITH authority AS (
 ), created AS (
     INSERT INTO computer_versions (
         id, environment_id, workspace_id,
-        parent_version_id, artifact_id, content_digest,
-        size_bytes, entry_count, status, source_workspace_lease_id,
+        parent_version_id, content_digest, size_bytes, status, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT sqlc.arg(workspace_version_id),
            authority.environment_id, authority.workspace_id, authority.base_workspace_version_id,
-           sqlc.arg(artifact_id),
-           sqlc.arg(content_digest), sqlc.arg(size_bytes), sqlc.arg(entry_count),
+           sqlc.arg(content_digest), sqlc.arg(size_bytes),
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
       FROM authority
-      JOIN artifacts ON artifacts.environment_id = authority.environment_id
-                    AND artifacts.id = sqlc.arg(artifact_id)
-                    AND artifacts.kind = 'workspace_version'
+
     RETURNING computer_versions.*
 ), staged AS (
     UPDATE workspace_mounts
@@ -759,18 +756,6 @@ SELECT created.*
   FROM created
   JOIN staged ON true;
 
--- name: GetStagedWorkspaceExecCapture :one
-SELECT computer_versions.*
-  FROM workspace_mounts
-  JOIN computer_versions
-    ON computer_versions.workspace_id = workspace_mounts.workspace_id
-   AND computer_versions.id = workspace_mounts.staged_version_id
- WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
-   AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-   AND workspace_mounts.status = 'unmounting'
-   AND workspace_mounts.finalization_kind = 'capture';
-
 -- name: CommitStagedWorkspaceExecVersion :one
 UPDATE computer_versions
    SET status = 'committed',
@@ -778,6 +763,9 @@ UPDATE computer_versions
  WHERE id = sqlc.arg(version_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND status = 'private'
+   AND EXISTS (SELECT 1 FROM computer_version_roots r
+       WHERE r.environment_id=computer_versions.environment_id
+       AND r.computer_id=computer_versions.workspace_id AND r.version_id=computer_versions.id)
 RETURNING *;
 
 -- name: FinalizeWorkspaceExecWorkspace :one
@@ -787,10 +775,15 @@ UPDATE computers
        dirty_state = 'clean',
        revision = revision + 1,
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(workspace_id)
-   AND head_version_id = sqlc.arg(base_workspace_version_id)
-   AND ownership_generation = sqlc.arg(ownership_generation)
-   AND writer_generation = sqlc.arg(writer_generation)
+ WHERE computers.id = sqlc.arg(workspace_id)
+   AND computers.head_version_id = sqlc.arg(base_workspace_version_id)
+   AND computers.ownership_generation = sqlc.arg(ownership_generation)
+   AND computers.writer_generation = sqlc.arg(writer_generation)
+   AND (sqlc.narg(version_id)::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM computer_versions v JOIN computer_version_roots r
+       ON r.environment_id=v.environment_id AND r.computer_id=v.workspace_id AND r.version_id=v.id
+       WHERE v.id=sqlc.narg(version_id) AND v.workspace_id=computers.id
+       AND v.status='committed' AND v.parent_version_id=computers.head_version_id))
 RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: MarkWorkspaceExecRecoveryRequired :one

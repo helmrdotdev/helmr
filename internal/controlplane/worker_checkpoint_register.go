@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -69,8 +67,7 @@ func (s *Server) registerCheckpoint(ctx context.Context, worker workerActor, req
 	if err != nil {
 		return workerapi.CheckpointResponse{}, badRequest(err)
 	}
-	descriptor := computer.DiskArtifact{Object: cas.Descriptor{Digest: disk.Artifact.Digest, SizeBytes: disk.Artifact.SizeBytes, MediaType: disk.Artifact.MediaType}, LogicalBytes: disk.LogicalBytes}
-	if err := descriptor.Validate(disk.LogicalBytes); err != nil {
+	if err := disk.Root.Validate(disk.LogicalBytes); err != nil {
 		return workerapi.CheckpointResponse{}, badRequest(err)
 	}
 	// Timings are observations, not candidate identity; uploads have not happened.
@@ -79,7 +76,7 @@ func (s *Server) registerCheckpoint(ctx context.Context, worker workerActor, req
 	if err != nil {
 		return workerapi.CheckpointResponse{}, badRequest(err)
 	}
-	objects := []checkpointArtifactProof{{role: "computer", artifact: disk.Artifact}}
+	var objects []checkpointArtifactProof
 	for _, proof := range proofs.all() {
 		objects = append(objects, proof)
 	}
@@ -99,7 +96,7 @@ func (s *Server) registerCheckpoint(ctx context.Context, worker workerActor, req
 		if source.authority.workspace.ID != pgvalue.UUID(computerID) {
 			return errStaleRunLeaseClaim
 		}
-		if err := descriptor.Validate(source.authority.runtime.ReservedGuestEphemeralDiskBytes); err != nil {
+		if err := disk.Root.Validate(source.authority.runtime.ReservedGuestEphemeralDiskBytes); err != nil {
 			return errStaleRunLeaseClaim
 		}
 		n, err := work.q.RegisterCheckpointManifest(ctx, db.RegisterCheckpointManifestParams{ID: pgvalue.UUID(checkpointID), Manifest: encoded})

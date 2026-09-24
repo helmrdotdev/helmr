@@ -42,3 +42,9 @@ FROM runtime_instances r
 JOIN computer_version_roots v ON v.environment_id=r.environment_id
  AND v.computer_id=r.workspace_id AND v.version_id=r.retained_computer_source_version_id
 WHERE r.id=sqlc.arg(runtime_instance_id);
+
+-- name: RequireRuntimeComputerObjectPin :one
+SELECT digest FROM runtime_computer_object_pins
+ WHERE runtime_instance_id=sqlc.arg(runtime_instance_id)
+ AND runtime_desired_version=sqlc.arg(runtime_desired_version)
+ AND digest=sqlc.arg(digest);

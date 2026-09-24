@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 )
 
@@ -169,7 +170,6 @@ type RuntimeSource struct {
 	CPUConfigDigest        string                 `json:"cpu_config_digest"`
 	WorkspaceImage         CASObject              `json:"workspace_image"`
 	WorkspaceArchitecture  string                 `json:"workspace_architecture"`
-	WorkspaceTarget        *WorkspaceResetTarget  `json:"workspace_target,omitempty"`
 	RootfsDigest           string                 `json:"rootfs_digest"`
 	ReservedCPUMillis      int32                  `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32                  `json:"reserved_memory_mib"`
@@ -682,14 +682,9 @@ type WorkspaceTreeIdentity struct {
 	EntryCount int32  `json:"entry_count"`
 }
 
-type WorkspaceResetTarget struct {
-	BaseWorkspaceVersionID string                `json:"base_workspace_version_id"`
-	Tree                   WorkspaceTreeIdentity `json:"tree"`
-	Empty                  *EmptyWorkspace       `json:"empty,omitempty"`
-	Artifact               *WorkspaceArtifact    `json:"artifact,omitempty"`
-}
-
-type EmptyWorkspace struct {
+// ComputerMountTarget binds guest authority to an already prepared Computer.
+type ComputerMountTarget struct {
+	BaseWorkspaceVersionID string `json:"base_workspace_version_id"`
 }
 
 type RunLeaseFence struct {
@@ -733,8 +728,8 @@ func (assignment RunLeaseAssignment) Fence() RunLeaseFence {
 }
 
 type WorkspaceAttachment struct {
-	WriteCapability string               `json:"write_capability"`
-	ResetTarget     WorkspaceResetTarget `json:"reset_target"`
+	WriteCapability string              `json:"write_capability"`
+	Target          ComputerMountTarget `json:"target"`
 }
 
 type SecretDelivery struct {
@@ -1048,12 +1043,11 @@ type CheckpointRuntimeSubstrate struct {
 }
 
 // CheckpointComputer binds the writable disk captured with the VM state and RAM.
-// The artifact is a Computer disk, encrypted for ComputerID, not a checkpoint-only
-// encoding: the same bytes can also serve as a cold Computer continuation.
+// Its exact authenticated generation also serves as a cold continuation.
 type CheckpointComputer struct {
-	ComputerID   string             `json:"computer_id"`
-	LogicalBytes int64              `json:"logical_bytes"`
-	Artifact     CheckpointArtifact `json:"artifact"`
+	ComputerID   string                  `json:"computer_id"`
+	LogicalBytes int64                   `json:"logical_bytes"`
+	Root         computer.GenerationRoot `json:"root"`
 }
 
 type CheckpointRuntimeState struct {
@@ -1070,20 +1064,10 @@ type CheckpointWorkspaceState struct {
 }
 
 type CheckpointWorkspaceBase struct {
-	ArtifactDigest    string `json:"artifact_digest"`
-	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`
-	ArtifactMediaType string `json:"artifact_media_type"`
-	ArtifactEncoding  string `json:"artifact_encoding"`
-	MountPath         string `json:"mount_path"`
+	MountPath string `json:"mount_path"`
 }
 
-func CheckpointWorkspaceBaseEqual(left, right CheckpointWorkspaceBase) bool {
-	return left.ArtifactDigest == right.ArtifactDigest &&
-		left.ArtifactSizeBytes == right.ArtifactSizeBytes &&
-		left.ArtifactMediaType == right.ArtifactMediaType &&
-		left.ArtifactEncoding == right.ArtifactEncoding &&
-		left.MountPath == right.MountPath
-}
+func CheckpointWorkspaceBaseEqual(left, right CheckpointWorkspaceBase) bool { return left == right }
 
 type CheckpointArtifact struct {
 	Digest    string `json:"digest"`

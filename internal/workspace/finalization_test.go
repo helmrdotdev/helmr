@@ -24,9 +24,3 @@ func TestFinalizationFingerprintBindsOperationAndFence(t *testing.T) {
 		t.Fatal("authority expiry did not change finalization fingerprint")
 	}
 }
-
-func TestEmptyResetTargetRejectsNonemptyTree(t *testing.T) {
-	if _, err := EmptyResetTarget("version-1", TreeIdentity{Digest: CanonicalEmptyTreeDigest, EntryCount: 1}); err == nil {
-		t.Fatal("nonempty tree was accepted as an empty Reset target")
-	}
-}

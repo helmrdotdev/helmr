@@ -65,6 +65,9 @@ func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, tar
 		return nil, err
 	}
 	defer material.Clear()
+	if source.Seed == nil && (source.Root == nil || material.Root != *source.Root) {
+		return nil, errors.New("computer generation differs from runtime reservation")
+	}
 	if material.VersionID != source.VersionID || material.Root.LogicalBytes != source.LogicalBytes || len(material.Keys) == 0 {
 		return nil, errors.New("computer source differs from runtime reservation")
 	}

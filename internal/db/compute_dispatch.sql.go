@@ -596,15 +596,12 @@ WITH candidate_scopes AS (
                                     OR EXISTS (
                                         SELECT 1
                                           FROM computer_versions AS retry_version
-                                          JOIN artifacts AS retry_artifact ON retry_artifact.id = retry_version.artifact_id
+                                          JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
                                           JOIN run_finalization_objects AS retry_capture
                                             ON retry_capture.run_lease_id = prior_child_lease.id
                                            AND retry_capture.operation_id = prior_child_lease.finalization_operation_id
                                            AND retry_capture.lease_status = 'failed'
-                                           AND retry_capture.digest = retry_artifact.digest
-                                           AND retry_capture.size_bytes = retry_artifact.size_bytes
-                                           AND retry_capture.media_type = retry_artifact.media_type
-                                           AND retry_capture.logical_bytes = retry_version.size_bytes
+                                           AND retry_capture.root = retry_root.locator
                                          WHERE retry_version.id = runs.base_workspace_version_id
                                            AND retry_version.workspace_id = runs.workspace_id
                                            AND retry_version.status = 'private'
@@ -1248,15 +1245,12 @@ SELECT runs.org_id,
                                 OR EXISTS (
                                     SELECT 1
                                       FROM computer_versions AS retry_version
-                                      JOIN artifacts AS retry_artifact ON retry_artifact.id = retry_version.artifact_id
+                                      JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
                                       JOIN run_finalization_objects AS retry_capture
                                         ON retry_capture.run_lease_id = prior_child_lease.id
                                        AND retry_capture.operation_id = prior_child_lease.finalization_operation_id
                                        AND retry_capture.lease_status = 'failed'
-                                       AND retry_capture.digest = retry_artifact.digest
-                                       AND retry_capture.size_bytes = retry_artifact.size_bytes
-                                       AND retry_capture.media_type = retry_artifact.media_type
-                                       AND retry_capture.logical_bytes = retry_version.size_bytes
+                                       AND retry_capture.root = retry_root.locator
                                      WHERE retry_version.id = runs.base_workspace_version_id
                                        AND retry_version.workspace_id = runs.workspace_id
                                        AND retry_version.status = 'private'

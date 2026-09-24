@@ -20,12 +20,12 @@ type InitialGenerationClient interface {
 // It cannot publish a continuation or advance the Computer head.
 type InitialGenerationPublisher struct {
 	client         InitialGenerationClient
-	objects        computer.DiskPublisher
+	objects        generationObjectPublisher
 	runtimeID      string
 	desiredVersion int64
 }
 
-func NewInitialGenerationPublisher(client InitialGenerationClient, objects computer.DiskPublisher, runtimeID string, desiredVersion int64) (*InitialGenerationPublisher, error) {
+func NewInitialGenerationPublisher(client InitialGenerationClient, objects generationObjectPublisher, runtimeID string, desiredVersion int64) (*InitialGenerationPublisher, error) {
 	if client == nil || objects == nil || runtimeID == "" || desiredVersion <= 0 {
 		return nil, errors.New("initial generation publication dependencies and Runtime identity required")
 	}
@@ -42,3 +42,7 @@ func (p InitialGenerationPublisher) Certify(ctx context.Context, e blockformat.O
 }
 
 var _ computer.GenerationPublication = InitialGenerationPublisher{}
+
+type generationObjectPublisher interface {
+	Publish(context.Context, cas.Descriptor, *os.File) (cas.Object, error)
+}

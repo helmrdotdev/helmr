@@ -111,10 +111,10 @@ SELECT runs.status,
 	}
 	var digest string
 	var parent uuid.UUID
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT a.digest,v.parent_version_id FROM computer_versions v JOIN artifacts a ON a.id=v.artifact_id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT r.root_digest,v.parent_version_id FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
 		t.Fatal(err)
 	}
-	if digest != fixture.request.Workspace.Captured.Disk.Artifact.Digest || parent != fixture.privateVersionID {
+	if digest != fixture.request.Workspace.Captured.Disk.Root.Pack.Digest || parent != fixture.privateVersionID {
 		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
 	}
 	var countBefore, countAfter int

@@ -60,7 +60,7 @@ func restoreTestFixture(t *testing.T) (*PreparedRuntimePool, workerapi.RuntimeRe
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{ID: "checkpoint", RunID: "run", AttemptNumber: 2, RunWaitID: "wait", CorrelationID: "correlation",
 			Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: string(deployment.ArchitectureX8664), Contract: "abi", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config", VMVCPUCount: 1, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu"))}},
 		RuntimeState: workerapi.CheckpointRuntimeState{
-			Computer:       &workerapi.CheckpointComputer{ComputerID: "01950000-0000-7000-8000-000000000001", LogicalBytes: computer.SeedCapacity, Artifact: workerapi.CheckpointArtifact{Digest: sha256sum.DigestBytes([]byte("disk")), SizeBytes: 4096, MediaType: computer.DiskMediaType}},
+			Computer:       &workerapi.CheckpointComputer{ComputerID: "01950000-0000-7000-8000-000000000001", LogicalBytes: computer.SeedCapacity, Root: testGenerationRoot(computer.SeedCapacity)},
 			ConfigArtifact: put("manifest", cas.CheckpointRuntimeConfigMediaType), VMStateArtifact: put("vmstate", cas.CheckpointVMStateMediaType), MemoryArtifacts: []workerapi.CheckpointArtifact{put("memory", cas.CheckpointMemoryMediaType)}, ScratchDiskArtifact: put("scratch-disk", cas.CheckpointScratchDiskMediaType),
 		},
 	}
@@ -71,7 +71,7 @@ func restoreTestFixture(t *testing.T) (*PreparedRuntimePool, workerapi.RuntimeRe
 	target := workerapi.RuntimeReconcileTarget{ID: "01950000-0000-7000-8000-000000000003", WorkerEpoch: 1, Source: workerapi.RuntimeSource{
 		WorkspaceID: cp.RuntimeState.Computer.ComputerID, VMVCPUCount: 1, CPUConfigDigest: cp.RecoveryPoint.Runtime.CPUConfigDigest,
 		ReservedCPUMillis: 1000, ReservedMemoryMiB: 16, ReservedDiskMiB: computer.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
-		Computer: &workerapi.RuntimeComputerSource{VersionID: "01950000-0000-7000-8000-000000000002", LogicalBytes: computer.SeedCapacity, Disk: &workerapi.CASObject{Digest: cp.RuntimeState.Computer.Artifact.Digest, SizeBytes: 4096, MediaType: computer.DiskMediaType}},
+		Computer: &workerapi.RuntimeComputerSource{VersionID: "01950000-0000-7000-8000-000000000002", LogicalBytes: computer.SeedCapacity, Root: ptrGenerationRoot(computer.SeedCapacity)},
 		Restore:  &workerapi.RuntimeRestore{CheckpointID: "checkpoint", RunID: "run", AttemptNumber: 2, RunWaitID: "wait", Manifest: manifest},
 	}}
 	for _, member := range []struct {

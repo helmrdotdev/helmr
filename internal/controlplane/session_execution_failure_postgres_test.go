@@ -312,10 +312,10 @@ func assertRetainedActorCapture(t *testing.T, f *actorCheckpointFixture, capture
 	t.Helper()
 	var head uuid.UUID
 	var digest string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id, a.digest FROM computers w JOIN computer_versions v ON v.id=w.head_version_id JOIN artifacts a ON a.id=v.artifact_id WHERE w.id=$1`, f.workspaceID).Scan(&head, &digest); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT w.head_version_id, r.root_digest FROM computers w JOIN computer_versions v ON v.id=w.head_version_id JOIN computer_version_roots r ON r.version_id=v.id WHERE w.id=$1`, f.workspaceID).Scan(&head, &digest); err != nil {
 		t.Fatal(err)
 	}
-	if head == previous || digest != capture.Disk.Artifact.Digest {
+	if head == previous || digest != capture.Disk.Root.Pack.Digest {
 		t.Fatalf("failure capture not retained: head=%s digest=%s", head, digest)
 	}
 	return head

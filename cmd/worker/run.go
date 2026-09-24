@@ -281,6 +281,7 @@ func run(log *slog.Logger) error {
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
 		worker.WithMaterializer(executor.WorkspaceMaterializer{
+			ComputerObjects:       platformStore,
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),

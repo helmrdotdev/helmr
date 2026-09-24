@@ -168,3 +168,9 @@ func publishGeneration(ctx context.Context, local *cas.File, source blockformat.
 	}
 	return root, nil
 }
+
+// ContinuationPublication binds new and reused objects to one live publication owner.
+type ContinuationPublication interface {
+	GenerationPublication
+	GenerationReuse
+}

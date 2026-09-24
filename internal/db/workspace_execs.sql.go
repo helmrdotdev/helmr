@@ -335,6 +335,9 @@ UPDATE computer_versions
  WHERE id = $1
    AND workspace_id = $2
    AND status = 'private'
+   AND EXISTS (SELECT 1 FROM computer_version_roots r
+       WHERE r.environment_id=computer_versions.environment_id
+       AND r.computer_id=computer_versions.workspace_id AND r.version_id=computer_versions.id)
 RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
@@ -1072,10 +1075,15 @@ UPDATE computers
        dirty_state = 'clean',
        revision = revision + 1,
        updated_at = transaction_timestamp()
- WHERE id = $3
-   AND head_version_id = $4
-   AND ownership_generation = $5
-   AND writer_generation = $6
+ WHERE computers.id = $3
+   AND computers.head_version_id = $4
+   AND computers.ownership_generation = $5
+   AND computers.writer_generation = $6
+   AND ($1::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM computer_versions v JOIN computer_version_roots r
+       ON r.environment_id=v.environment_id AND r.computer_id=v.workspace_id AND r.version_id=v.id
+       WHERE v.id=$1 AND v.workspace_id=computers.id
+       AND v.status='committed' AND v.parent_version_id=computers.head_version_id))
 RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
@@ -1140,51 +1148,6 @@ func (q *Queries) FinalizeWorkspaceExecWorkspace(ctx context.Context, arg Finali
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const getStagedWorkspaceExecCapture = `-- name: GetStagedWorkspaceExecCapture :one
-SELECT computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.publisher_runtime_instance_id, computer_versions.publisher_desired_version, computer_versions.publication_request_fingerprint, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
-  FROM workspace_mounts
-  JOIN computer_versions
-    ON computer_versions.workspace_id = workspace_mounts.workspace_id
-   AND computer_versions.id = workspace_mounts.staged_version_id
- WHERE workspace_mounts.id = $1
-   AND workspace_mounts.worker_instance_id = $2
-   AND workspace_mounts.worker_epoch = $3
-   AND workspace_mounts.status = 'unmounting'
-   AND workspace_mounts.finalization_kind = 'capture'
-`
-
-type GetStagedWorkspaceExecCaptureParams struct {
-	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-}
-
-func (q *Queries) GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStagedWorkspaceExecCaptureParams) (ComputerVersion, error) {
-	row := q.db.QueryRow(ctx, getStagedWorkspaceExecCapture, arg.WorkspaceMountID, arg.WorkerInstanceID, arg.WorkerEpoch)
-	var i ComputerVersion
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.WorkspaceID,
-		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
-		&i.Status,
-		&i.SourceWorkspaceLeaseID,
-		&i.PublisherRuntimeInstanceID,
-		&i.PublisherDesiredVersion,
-		&i.PublicationRequestFingerprint,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.CreatedAt,
-		&i.PublishedAt,
-		&i.DiscardedAt,
 	)
 	return i, err
 }
@@ -2169,6 +2132,7 @@ const lockWorkspaceExecWorkerAuthority = `-- name: LockWorkspaceExecWorkerAuthor
 SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.base_workspace_version_id, workspace_processes.restore_desired_state, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.status, workspace_processes.revision, workspace_processes.request, workspace_processes.stdin, workspace_processes.stdout, workspace_processes.stderr, workspace_processes.claim_id, workspace_processes.exit_code, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.error, workspace_processes.updated_at,
        workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at,
        workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.status, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_workspace_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
+       runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.computer_source_version_id, runtime_instances.retained_computer_source_version_id, runtime_instances.computer_write_key_id, runtime_instances.retained_computer_write_key_id, runtime_instances.computer_key_available, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at,
        idempotency_claims.request_fingerprint
   FROM workspace_processes
   JOIN workspace_mounts
@@ -2269,6 +2233,7 @@ type LockWorkspaceExecWorkerAuthorityRow struct {
 	WorkspaceProcess   WorkspaceProcess `json:"workspace_process"`
 	WorkspaceMount     WorkspaceMount   `json:"workspace_mount"`
 	WorkspaceLease     WorkspaceLease   `json:"workspace_lease"`
+	RuntimeInstance    RuntimeInstance  `json:"runtime_instance"`
 	RequestFingerprint []byte           `json:"request_fingerprint"`
 }
 
@@ -2371,6 +2336,53 @@ func (q *Queries) LockWorkspaceExecWorkerAuthority(ctx context.Context, arg Lock
 		&i.WorkspaceLease.TerminalAt,
 		&i.WorkspaceLease.TerminalReasonCode,
 		&i.WorkspaceLease.TerminalError,
+		&i.RuntimeInstance.ID,
+		&i.RuntimeInstance.OrgID,
+		&i.RuntimeInstance.WorkerGroupID,
+		&i.RuntimeInstance.ProjectID,
+		&i.RuntimeInstance.EnvironmentID,
+		&i.RuntimeInstance.RegionID,
+		&i.RuntimeInstance.WorkerInstanceID,
+		&i.RuntimeInstance.RuntimeIdentityID,
+		&i.RuntimeInstance.DeploymentDefinitionID,
+		&i.RuntimeInstance.RuntimeSubstrateID,
+		&i.RuntimeInstance.WorkerEpoch,
+		&i.RuntimeInstance.VMVCPUCount,
+		&i.RuntimeInstance.CPUConfigDigest,
+		&i.RuntimeInstance.ReservedCPUMillis,
+		&i.RuntimeInstance.ReservedMemoryBytes,
+		&i.RuntimeInstance.ReservedGuestEphemeralDiskBytes,
+		&i.RuntimeInstance.ReservedExecutionSlots,
+		&i.RuntimeInstance.WorkspaceID,
+		&i.RuntimeInstance.ProgramDeploymentID,
+		&i.RuntimeInstance.RestoreCheckpointID,
+		&i.RuntimeInstance.ReservedRunID,
+		&i.RuntimeInstance.ReservedAttemptNumber,
+		&i.RuntimeInstance.ReservedProcessID,
+		&i.RuntimeInstance.ReservedWorkspaceVersionID,
+		&i.RuntimeInstance.ComputerSourceVersionID,
+		&i.RuntimeInstance.RetainedComputerSourceVersionID,
+		&i.RuntimeInstance.ComputerWriteKeyID,
+		&i.RuntimeInstance.RetainedComputerWriteKeyID,
+		&i.RuntimeInstance.ComputerKeyAvailable,
+		&i.RuntimeInstance.PreparationExpiresAt,
+		&i.RuntimeInstance.ReservationExpiresAt,
+		&i.RuntimeInstance.DesiredState,
+		&i.RuntimeInstance.DesiredVersion,
+		&i.RuntimeInstance.DesiredAt,
+		&i.RuntimeInstance.DesiredReason,
+		&i.RuntimeInstance.ObservedState,
+		&i.RuntimeInstance.ObservedVersion,
+		&i.RuntimeInstance.ObservedDesiredVersion,
+		&i.RuntimeInstance.ObservedAt,
+		&i.RuntimeInstance.AllocatedAt,
+		&i.RuntimeInstance.ReadyAt,
+		&i.RuntimeInstance.TerminalAt,
+		&i.RuntimeInstance.ReclaimedAt,
+		&i.RuntimeInstance.ReclaimEvidence,
+		&i.RuntimeInstance.TerminalReasonCode,
+		&i.RuntimeInstance.TerminalError,
+		&i.RuntimeInstance.UpdatedAt,
 		&i.RequestFingerprint,
 	)
 	return i, err
@@ -2904,20 +2916,16 @@ WITH authority AS (
 ), created AS (
     INSERT INTO computer_versions (
         id, environment_id, workspace_id,
-        parent_version_id, artifact_id, content_digest,
-        size_bytes, entry_count, status, source_workspace_lease_id,
+        parent_version_id, content_digest, size_bytes, status, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT $4,
            authority.environment_id, authority.workspace_id, authority.base_workspace_version_id,
-           $5,
-           $6, $7, $8,
+           $5, $6,
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
       FROM authority
-      JOIN artifacts ON artifacts.environment_id = authority.environment_id
-                    AND artifacts.id = $5
-                    AND artifacts.kind = 'workspace_version'
+
     RETURNING computer_versions.id, computer_versions.environment_id, computer_versions.workspace_id, computer_versions.parent_version_id, computer_versions.artifact_id, computer_versions.content_digest, computer_versions.size_bytes, computer_versions.entry_count, computer_versions.status, computer_versions.source_workspace_lease_id, computer_versions.publisher_runtime_instance_id, computer_versions.publisher_desired_version, computer_versions.publication_request_fingerprint, computer_versions.ownership_generation, computer_versions.writer_generation, computer_versions.created_at, computer_versions.published_at, computer_versions.discarded_at
 ), staged AS (
     UPDATE workspace_mounts
@@ -2937,10 +2945,8 @@ type StageWorkspaceExecCaptureParams struct {
 	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch        int64       `json:"worker_epoch"`
 	WorkspaceVersionID pgtype.UUID `json:"workspace_version_id"`
-	ArtifactID         pgtype.UUID `json:"artifact_id"`
 	ContentDigest      pgtype.Text `json:"content_digest"`
 	SizeBytes          int64       `json:"size_bytes"`
-	EntryCount         int32       `json:"entry_count"`
 }
 
 type StageWorkspaceExecCaptureRow struct {
@@ -2970,10 +2976,8 @@ func (q *Queries) StageWorkspaceExecCapture(ctx context.Context, arg StageWorksp
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkspaceVersionID,
-		arg.ArtifactID,
 		arg.ContentDigest,
 		arg.SizeBytes,
-		arg.EntryCount,
 	)
 	var i StageWorkspaceExecCaptureRow
 	err := row.Scan(

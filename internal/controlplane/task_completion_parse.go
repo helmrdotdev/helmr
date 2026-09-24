@@ -10,8 +10,6 @@ import (
 	"unicode/utf8"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -40,12 +38,6 @@ type parsedTaskCompletion struct {
 	errorObject json.RawMessage
 	capture     *parsedTaskComputerCapture
 	fingerprint string
-}
-
-type parsedWorkspaceTreeCapture struct {
-	receipt  workspace.FinalizationRequest
-	tree     workspace.TreeIdentity
-	artifact workerapi.WorkspaceArtifact
 }
 
 func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTaskCompletion, error) {
@@ -116,8 +108,7 @@ func parseTaskWorkspaceCapture(capture workerapi.TaskWorkspaceCapture) (parsedTa
 	if _, err := parseCanonicalUUID("workspace.captured.disk.computer_id", capture.Disk.ComputerID); err != nil {
 		return parsedTaskComputerCapture{}, capture, err
 	}
-	descriptor := computer.DiskArtifact{Object: cas.Descriptor{Digest: capture.Disk.Artifact.Digest, SizeBytes: capture.Disk.Artifact.SizeBytes, MediaType: capture.Disk.Artifact.MediaType}, LogicalBytes: capture.Disk.LogicalBytes}
-	if err := descriptor.Validate(descriptor.LogicalBytes); err != nil {
+	if err := capture.Disk.Root.Validate(capture.Disk.LogicalBytes); err != nil {
 		return parsedTaskComputerCapture{}, capture, err
 	}
 	receipt, normalized, err := parseWorkspaceFinalizationReceipt("workspace.captured.receipt", workspace.FinalizationCaptureKind, capture.Receipt, nil)
@@ -216,15 +207,6 @@ func finalizationFenceMatchesLease(fence workspace.FinalizationFence, lease work
 		fence.BaseWorkspaceVersionID == lease.BaseWorkspaceVersionID
 }
 
-func parseTaskWorkspaceTree(label string, tree workerapi.WorkspaceTreeIdentity) (workspace.TreeIdentity, error) {
-	if !taskWorkspaceDigestPattern.MatchString(tree.Digest) || tree.SizeBytes < 0 ||
-		tree.SizeBytes > workspace.MaxArtifactExtractedBytes || tree.EntryCount < 0 ||
-		int64(tree.EntryCount) > int64(workspace.MaxArtifactEntries) {
-		return workspace.TreeIdentity{}, fmt.Errorf("%s is invalid", label)
-	}
-	return workspace.TreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int(tree.EntryCount)}, nil
-}
-
 func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.RawMessage, *workerapi.TaskFailure, error) {
 	if failure.Message == "" || failure.Message != strings.TrimSpace(failure.Message) ||
 		!utf8.ValidString(failure.Message) || len(failure.Message) > maxTaskCompletionMessageBytes {
@@ -262,25 +244,6 @@ func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.Ra
 		return nil, nil, fmt.Errorf("%s exceeds %d bytes", label, maxTaskCompletionErrorBytes)
 	}
 	return errorObject, &workerapi.TaskFailure{Message: failure.Message, Details: details}, nil
-}
-
-func validateTaskWorkspaceArtifact(label string, artifact workerapi.WorkspaceArtifact) error {
-	if !taskWorkspaceDigestPattern.MatchString(artifact.Digest) {
-		return fmt.Errorf("%s.digest must be a SHA-256 digest", label)
-	}
-	if artifact.MediaType != workspace.ArtifactMediaType {
-		return fmt.Errorf("%s.media_type is unsupported", label)
-	}
-	if artifact.Encoding != workspace.ArtifactEncoding {
-		return fmt.Errorf("%s.encoding is unsupported", label)
-	}
-	if artifact.SizeBytes <= 0 || artifact.SizeBytes > workspace.MaxArtifactArchiveBytes {
-		return fmt.Errorf("%s.size_bytes must be between 1 and %d", label, workspace.MaxArtifactArchiveBytes)
-	}
-	if artifact.EntryCount < 0 || artifact.EntryCount > workspace.MaxArtifactEntries {
-		return fmt.Errorf("%s.entry_count must be between 0 and %d", label, workspace.MaxArtifactEntries)
-	}
-	return nil
 }
 
 func parseCanonicalUUID(name, value string) (uuid.UUID, error) {

@@ -5,6 +5,7 @@ package firecracker
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"os"
 	"path/filepath"
 	"sync"
@@ -184,4 +185,11 @@ func TestComputerCleanupWaitsForStartupBeforeDeviceBinding(t *testing.T) {
 	if device.closes != 1 {
 		t.Fatal("cleanup missed late device registration")
 	}
+}
+
+func (*ownedComputerFixture) Flush(context.Context) (computer.GenerationRoot, error) {
+	return computer.GenerationRoot{}, nil
+}
+func (*ownedComputerFixture) Publish(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error {
+	return nil
 }

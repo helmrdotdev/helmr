@@ -41,14 +41,10 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *checkpoint.Encryptor
 	if err != nil {
 		return checkpointStagingLimits{}, err
 	}
-	disk, err := (computer.DiskStore{Cipher: cipher}).CaptureSizeLimit(shape.ComputerBytes)
-	if err != nil {
-		return checkpointStagingLimits{}, err
-	}
 	limits := checkpointStagingLimits{memory: memory, scratch: scratch, state: shape.StateBytes, config: shape.ConfigBytes}
 	// Working Computer and scratch are already charged to the runtime. Raw RAM,
 	// raw state, packed intermediates and all ciphertexts may coexist here.
-	sizes := []int64{shape.MemoryBytes, shape.StateBytes, memory, scratch, disk}
+	sizes := []int64{shape.MemoryBytes, shape.StateBytes, memory, scratch}
 	for _, n := range []int64{memory, scratch, shape.StateBytes, shape.ConfigBytes} {
 		encoded, err := cipher.EncryptedSize(n)
 		if err != nil {
@@ -74,7 +70,6 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	var otherOwner bool
 	var directory string
 	var artifact vm.SnapshotArtifact
-	var disk *computer.DiskCandidate
 	var candidates []*checkpointCandidate
 	defer func() {
 		if otherOwner {
@@ -92,9 +87,6 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		// All encoders and uploads have joined. These ciphertext files have no VMM
 		// writer, so close and reclaim them even when source shutdown is uncertain.
 		var cleanupErr error
-		if disk != nil {
-			cleanupErr = errors.Join(cleanupErr, disk.Close())
-		}
 		for _, candidate := range candidates {
 			cleanupErr = errors.Join(cleanupErr, candidate.close())
 		}
@@ -117,7 +109,7 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		}
 	}()
 
-	if c.capacity == nil || c.objects == nil || c.encryptor == nil || c.stream == nil || request.Register == nil {
+	if c.capacity == nil || c.objects == nil || c.encryptor == nil || c.stream == nil || request.Register == nil || c.publication == nil {
 		return result, errors.New("checkpoint capacity, immutable storage, encryption, stream and registration are required")
 	}
 	shape, err := c.session.SnapshotLimits()
@@ -158,21 +150,10 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	if err != nil {
 		return result, err
 	}
-	if artifact.Computer == nil || artifact.Computer.ComputerID == "" || artifact.Computer.SizeBytes != shape.ComputerBytes || len(artifact.Memory) != 1 || artifact.VMVCPUCount <= 0 || !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
+	if artifact.Computer == nil || artifact.Computer.ComputerID == "" || artifact.Computer.Root.LogicalBytes != shape.ComputerBytes || len(artifact.Memory) != 1 || artifact.VMVCPUCount <= 0 || !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
 		return result, errors.New("incomplete or changed paired checkpoint snapshot")
 	}
-	source, err := os.Stat(artifact.Computer.Path)
-	if err != nil {
-		return result, err
-	}
-	if !source.Mode().IsRegular() || source.Size() != shape.ComputerBytes {
-		return result, errors.New("checkpoint Computer source size changed")
-	}
-	disk, err = (computer.DiskStore{Cipher: c.encryptor}).Capture(ctx, artifact.Computer.ComputerID, artifact.Computer.Path, directory)
-	if err != nil {
-		return result, err
-	}
-	if err := disk.Artifact().Validate(shape.ComputerBytes); err != nil {
+	if err := artifact.Computer.Root.Validate(shape.ComputerBytes); err != nil {
 		return result, err
 	}
 	inputs := []struct {
@@ -207,13 +188,13 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 			return result, stageErr
 		}
 	}
-	result.Manifest = c.checkpointManifest(request, artifact, disk.Artifact(), candidates)
+	result.Manifest = c.checkpointManifest(request, artifact, artifact.Computer.Root, candidates)
 	result.Manifest.Phases = append(workerCheckpointPhases(artifact.Phases), workerapi.CheckpointPhase{Name: "capture_checkpoint", DurationMs: durationMilliseconds(time.Since(started))})
 	// The registered descriptors stay fixed through uncertain replies and retries.
 	if err := request.Register(ctx, result.Manifest); err != nil {
 		return result, err
 	}
-	if err := retryCheckpointUpload(ctx, func() error { return disk.Upload(ctx, c.objects) }); err != nil {
+	if err := c.session.PublishComputer(ctx, artifact.Computer.Root, c.publication(request)); err != nil {
 		return result, err
 	}
 	for _, candidate := range candidates {
@@ -330,7 +311,7 @@ func removeCheckpointSnapshot(artifact vm.SnapshotArtifact) error {
 func checkpointDescriptor(d cas.Descriptor) workerapi.CheckpointArtifact {
 	return workerapi.CheckpointArtifact{Digest: d.Digest, SizeBytes: d.SizeBytes, MediaType: d.MediaType}
 }
-func (c runtimeCheckpointer) checkpointManifest(request CheckpointRequest, artifact vm.SnapshotArtifact, disk computer.DiskArtifact, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
+func (c runtimeCheckpointer) checkpointManifest(request CheckpointRequest, artifact vm.SnapshotArtifact, root computer.GenerationRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
 	return workerapi.CheckpointManifest{
 		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 			ID:            request.CheckpointID,
@@ -353,7 +334,7 @@ func (c runtimeCheckpointer) checkpointManifest(request CheckpointRequest, artif
 			},
 		},
 		RuntimeState: workerapi.CheckpointRuntimeState{
-			Computer:            &workerapi.CheckpointComputer{ComputerID: artifact.Computer.ComputerID, LogicalBytes: disk.LogicalBytes, Artifact: checkpointDescriptor(disk.Object)},
+			Computer:            &workerapi.CheckpointComputer{ComputerID: artifact.Computer.ComputerID, LogicalBytes: root.LogicalBytes, Root: root},
 			ConfigArtifact:      checkpointDescriptor(candidates[0].descriptor),
 			VMStateArtifact:     checkpointDescriptor(candidates[1].descriptor),
 			ScratchDiskArtifact: checkpointDescriptor(candidates[2].descriptor),

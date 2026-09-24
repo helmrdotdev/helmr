@@ -8,8 +8,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"io"
 	"os"
 	"os/exec"
@@ -17,11 +17,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"golang.org/x/sys/unix"
 )
 
-// This opt-in proof exercises the existing filepack codec against a real offline
+// This opt-in proof exercises the authenticated generation codec against a real offline
 // ext4 filesystem through encrypted local CAS. It does not exercise guest mounts,
 // remote upload, live writer exclusion, memory restore, or fenced publication.
 func TestComputerDiskProof(t *testing.T) {
@@ -99,13 +100,23 @@ func TestComputerDiskProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := checkpoint.New(bytes.Repeat([]byte{7}, 32))
+	keyID := uuid.NewV7().String()
+	key := bytes.Repeat([]byte{7}, 32)
+	file, err := os.Open(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	disks := computer.DiskStore{CAS: storage, Cipher: cipher}
-	const computerID = "019c10d5-a6f7-7af1-8f5f-000000000501"
-	artifact, err := disks.Save(t.Context(), computerID, source)
+	candidate, err := computer.CaptureInitialGeneration(t.Context(), computer.GenerationCapture{Disk: file, Capacity: logicalSize, StagingParent: root, Scope: "filesystem-proof", KeyID: keyID, Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
+	file.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer candidate.Close()
+	locator, err := candidate.Publish(t.Context(), filesystemPublication{storage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation, err := computer.NewGenerationRoot(locator, logicalSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +130,24 @@ func TestComputerDiskProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	start = time.Now()
-	if err := disks.Restore(t.Context(), computerID, artifact, restored, logicalSize); err != nil {
+	tree, err := computer.OpenGeneration(t.Context(), storage, "filesystem-proof", map[string][]byte{keyID: key}, generation, logicalSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := os.Create(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for off := int64(0); off < logicalSize; off += 1 << 20 {
+		data, err := tree.ReadRange(t.Context(), off, int(min(1<<20, logicalSize-off)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := target.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := target.Close(); err != nil {
 		t.Fatal(err)
 	}
 	restoreTime := time.Since(start)
@@ -154,7 +182,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if got := computerProofCommand(t, "debugfs", "-R", "cat /opt/agent/cache", restored); got != string(payload) {
 		t.Fatal("cache content differs")
 	}
-	t.Logf("logical_bytes=%d encrypted_artifact_bytes=%d save=%s restore=%s", logicalSize, artifact.Object.SizeBytes, packTime, restoreTime)
+	t.Logf("logical_bytes=%d root_pack_bytes=%d save=%s restore=%s", logicalSize, generation.Pack.SizeBytes, packTime, restoreTime)
 }
 
 func computerProofCommand(t *testing.T, name string, args ...string) string {
@@ -183,4 +211,14 @@ func computerProofDigest(t *testing.T, path string) [32]byte {
 		t.Fatal(err)
 	}
 	return [32]byte(hash.Sum(nil))
+}
+
+type filesystemPublication struct{ *cas.File }
+
+func (filesystemPublication) Register(context.Context, blockformat.ObjectInspection) error {
+	return nil
+}
+func (filesystemPublication) Certify(context.Context, blockformat.ObjectInspection) error { return nil }
+func (p filesystemPublication) Upload(ctx context.Context, d cas.Descriptor, f *os.File) (cas.Object, error) {
+	return p.Put(ctx, d.MediaType, io.NewSectionReader(f, 0, d.SizeBytes))
 }

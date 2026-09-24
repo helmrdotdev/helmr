@@ -762,7 +762,7 @@ func TestClaimCheckpointRestoreRejectsDifferentRuntimeProvenance(t *testing.T) {
 
 func TestClaimCheckpointRestoreRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
 	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(true)
-	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetWorkspaceResetTargetAuthorityRow{
+	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetComputerVersionAuthorityRow{
 		VersionID:              authority.checkpoint.PrivateWorkspaceVersionID,
 		ParentVersionID:        authority.workspace.HeadVersionID,
 		SourceWorkspaceLeaseID: authority.sourceWorkspaceLease.ID,
@@ -853,7 +853,7 @@ func TestClaimCheckpointRestoreRunLeaseInTxAcceptsCommittedActorTurns(t *testing
 	authority.actor.CommittedInputSequence = 2
 	authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	authority.runWait.ActorSpeculativeInputSequence = authority.checkpoint.ActorSpeculativeInputSequence
-	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetWorkspaceResetTargetAuthorityRow{
+	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetComputerVersionAuthorityRow{
 		VersionID:              authority.checkpoint.PrivateWorkspaceVersionID,
 		ParentVersionID:        authority.workspace.HeadVersionID,
 		SourceWorkspaceLeaseID: authority.sourceWorkspaceLease.ID,
@@ -1138,9 +1138,9 @@ type runLeaseClaimStore struct {
 	secretVersion        db.SecretVersion
 	program              db.GetDeploymentProgramAuthorityRow
 	definition           db.DeploymentDefinition
-	resetTarget          db.GetWorkspaceResetTargetAuthorityRow
-	resetTargets         map[pgtype.UUID]db.GetWorkspaceResetTargetAuthorityRow
-	resetTargetParams    db.GetWorkspaceResetTargetAuthorityParams
+	resetTarget          db.GetComputerVersionAuthorityRow
+	resetTargets         map[pgtype.UUID]db.GetComputerVersionAuthorityRow
+	resetTargetParams    db.GetComputerVersionAuthorityParams
 	readyCheckpoint      db.RunCheckpoint
 	runWait              db.RunWait
 	workspaceLeases      map[pgtype.UUID]db.WorkspaceLease
@@ -1236,14 +1236,14 @@ func (s *runLeaseClaimStore) GetDeploymentDefinition(
 	return s.definition, nil
 }
 
-func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
+func (s *runLeaseClaimStore) GetComputerVersionAuthority(
 	_ context.Context,
-	params db.GetWorkspaceResetTargetAuthorityParams,
-) (db.GetWorkspaceResetTargetAuthorityRow, error) {
-	s.calls = append(s.calls, "reset_target")
+	params db.GetComputerVersionAuthorityParams,
+) (db.GetComputerVersionAuthorityRow, error) {
+	s.calls = append(s.calls, "computer_version")
 	s.resetTargetParams = params
 	if s.projectionErr != nil {
-		return db.GetWorkspaceResetTargetAuthorityRow{}, s.projectionErr
+		return db.GetComputerVersionAuthorityRow{}, s.projectionErr
 	}
 	if target, ok := s.resetTargets[params.VersionID]; ok {
 		return target, nil

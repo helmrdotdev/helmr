@@ -12,99 +12,57 @@ import (
 )
 
 const registerRunFinalizationObject = `-- name: RegisterRunFinalizationObject :one
-WITH lifetime AS (
-    INSERT INTO cas_object_lifetimes (digest) VALUES ($1)
-    ON CONFLICT DO NOTHING
-)
-INSERT INTO run_finalization_objects (
-    run_lease_id, operation_id, digest, size_bytes, media_type, logical_bytes, lease_status
-)
-SELECT id, finalization_operation_id, $1, $2,
-       $3, $4, status
-  FROM run_leases
- WHERE id=$5 AND status='finalizing'
-   AND finalization_operation_id=$6
+INSERT INTO run_finalization_objects (run_lease_id, operation_id, root, lease_status)
+SELECT id, finalization_operation_id, $1, status FROM run_leases
+ WHERE id=$2 AND status='finalizing'
+   AND finalization_operation_id=$3
 ON CONFLICT (run_lease_id) DO UPDATE SET run_lease_id=run_finalization_objects.run_lease_id
  WHERE run_finalization_objects.operation_id=EXCLUDED.operation_id
-   AND run_finalization_objects.digest=EXCLUDED.digest
-   AND run_finalization_objects.size_bytes=EXCLUDED.size_bytes
-   AND run_finalization_objects.media_type=EXCLUDED.media_type
-   AND run_finalization_objects.logical_bytes=EXCLUDED.logical_bytes
+   AND run_finalization_objects.root=EXCLUDED.root
    AND run_finalization_objects.lease_status='finalizing'
-RETURNING run_lease_id, operation_id, digest, size_bytes, media_type, logical_bytes, lease_status, availability_required
+RETURNING run_lease_id, operation_id, root, lease_status
 `
 
 type RegisterRunFinalizationObjectParams struct {
-	Digest       string      `json:"digest"`
-	SizeBytes    int64       `json:"size_bytes"`
-	MediaType    string      `json:"media_type"`
-	LogicalBytes int64       `json:"logical_bytes"`
-	RunLeaseID   pgtype.UUID `json:"run_lease_id"`
-	OperationID  pgtype.UUID `json:"operation_id"`
+	Root        []byte      `json:"root"`
+	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
+	OperationID pgtype.UUID `json:"operation_id"`
 }
 
-// The caller locks current finalization authority before registering immutable
-// bytes. The lease transition releases the availability pin atomically with
-// outcome publication, or makes an uncommitted upload eligible for reclamation.
+// Register the immutable generation identity before its objects are uploaded.
+// Runtime object pins retain the candidate until publication or reclamation.
 func (q *Queries) RegisterRunFinalizationObject(ctx context.Context, arg RegisterRunFinalizationObjectParams) (RunFinalizationObject, error) {
-	row := q.db.QueryRow(ctx, registerRunFinalizationObject,
-		arg.Digest,
-		arg.SizeBytes,
-		arg.MediaType,
-		arg.LogicalBytes,
-		arg.RunLeaseID,
-		arg.OperationID,
-	)
+	row := q.db.QueryRow(ctx, registerRunFinalizationObject, arg.Root, arg.RunLeaseID, arg.OperationID)
 	var i RunFinalizationObject
 	err := row.Scan(
 		&i.RunLeaseID,
 		&i.OperationID,
-		&i.Digest,
-		&i.SizeBytes,
-		&i.MediaType,
-		&i.LogicalBytes,
+		&i.Root,
 		&i.LeaseStatus,
-		&i.AvailabilityRequired,
 	)
 	return i, err
 }
 
 const requireRunFinalizationObject = `-- name: RequireRunFinalizationObject :one
-SELECT run_lease_id, operation_id, digest, size_bytes, media_type, logical_bytes, lease_status, availability_required FROM run_finalization_objects
+SELECT run_lease_id, operation_id, root, lease_status FROM run_finalization_objects
  WHERE run_lease_id=$1 AND operation_id=$2
-   AND digest=$3 AND size_bytes=$4
-   AND media_type=$5 AND logical_bytes=$6
-   AND lease_status='finalizing'
+   AND root=$3 AND lease_status='finalizing'
 `
 
 type RequireRunFinalizationObjectParams struct {
-	RunLeaseID   pgtype.UUID `json:"run_lease_id"`
-	OperationID  pgtype.UUID `json:"operation_id"`
-	Digest       string      `json:"digest"`
-	SizeBytes    int64       `json:"size_bytes"`
-	MediaType    string      `json:"media_type"`
-	LogicalBytes int64       `json:"logical_bytes"`
+	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
+	OperationID pgtype.UUID `json:"operation_id"`
+	Root        []byte      `json:"root"`
 }
 
 func (q *Queries) RequireRunFinalizationObject(ctx context.Context, arg RequireRunFinalizationObjectParams) (RunFinalizationObject, error) {
-	row := q.db.QueryRow(ctx, requireRunFinalizationObject,
-		arg.RunLeaseID,
-		arg.OperationID,
-		arg.Digest,
-		arg.SizeBytes,
-		arg.MediaType,
-		arg.LogicalBytes,
-	)
+	row := q.db.QueryRow(ctx, requireRunFinalizationObject, arg.RunLeaseID, arg.OperationID, arg.Root)
 	var i RunFinalizationObject
 	err := row.Scan(
 		&i.RunLeaseID,
 		&i.OperationID,
-		&i.Digest,
-		&i.SizeBytes,
-		&i.MediaType,
-		&i.LogicalBytes,
+		&i.Root,
 		&i.LeaseStatus,
-		&i.AvailabilityRequired,
 	)
 	return i, err
 }

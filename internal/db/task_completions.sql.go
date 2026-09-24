@@ -793,7 +793,6 @@ INSERT INTO computer_versions (
     environment_id,
     workspace_id,
     parent_version_id,
-    artifact_id,
     content_digest,
     size_bytes,
     entry_count,
@@ -811,16 +810,11 @@ SELECT
     $5,
     $6,
     $7,
-    $8,
     'committed',
+    $8,
     $9,
     $10,
-    $11,
-    $12
-  FROM artifacts
- WHERE artifacts.environment_id = $2
-   AND artifacts.id = $5
-   AND artifacts.kind = 'workspace_version'
+    $11
 RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at
 `
 
@@ -829,7 +823,6 @@ type PublishTaskWorkspaceVersionParams struct {
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID             pgtype.UUID        `json:"artifact_id"`
 	ContentDigest          pgtype.Text        `json:"content_digest"`
 	SizeBytes              int64              `json:"size_bytes"`
 	EntryCount             int32              `json:"entry_count"`
@@ -845,7 +838,6 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
-		arg.ArtifactID,
 		arg.ContentDigest,
 		arg.SizeBytes,
 		arg.EntryCount,

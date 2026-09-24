@@ -138,7 +138,7 @@ func newWorkerRunLeaseClaimHTTPFixture(
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition: definition,
-		resetTarget: validWorkspaceResetTargetAuthority(runLeaseProjectionAuthority{
+		resetTarget: validComputerMountTargetAuthority(runLeaseProjectionAuthority{
 			workspaceLease: authority.workspaceLease,
 		}),
 	}

@@ -27,8 +27,8 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 		Source: workerapi.RuntimeSource{
 			WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000801",
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000802",
-			WorkspaceTarget: &workerapi.WorkspaceResetTarget{
-				BaseWorkspaceVersionID: "019c10d5-a6f7-7af1-8f5f-000000000803",
+			Computer: &workerapi.RuntimeComputerSource{
+				VersionID: "019c10d5-a6f7-7af1-8f5f-000000000803",
 			},
 			WorkspaceImage: fixture.WorkspaceImage,
 			Restore:        &workerapi.RuntimeRestore{CheckpointID: "checkpoint-1"},
@@ -53,7 +53,7 @@ func TestPreparedRuntimeRestoreRebuildsAndRegistersSubstrateWithoutSubstrateCAS(
 		},
 	}
 	pool := &PreparedRuntimePool{Substrates: resolver}
-	mount := workerapi.WorkspaceMount{WorkspaceImage: target.Source.WorkspaceImage, Target: *target.Source.WorkspaceTarget}
+	mount := workerapi.WorkspaceMount{WorkspaceImage: target.Source.WorkspaceImage, Target: workerapi.ComputerMountTarget{BaseWorkspaceVersionID: target.Source.Computer.VersionID}}
 	_, cleanup, topology, err := pool.restoreWorkspaceImageAndRuntimeSubstrate(
 		context.Background(),
 		WorkspaceMaterializer{CAS: store},

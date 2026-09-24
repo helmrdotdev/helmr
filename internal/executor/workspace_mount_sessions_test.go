@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"io"
 	"net"
 	"sync/atomic"
@@ -134,7 +135,7 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",
 		FencingGeneration: 3,
-		Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
+		Target:            workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
 	}, parent, "channel-1")
 	request := &workspacev0.RenewWorkspaceAuthorityRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{
@@ -201,7 +202,7 @@ func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 3, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
+		FencingGeneration: 3, Target: workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
 	}, parent, "channel-1")
 	request := &workspacev0.BeginWorkspaceFinalizationRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{
@@ -257,7 +258,7 @@ func TestFinalizationSessionSeparatesPhysicalIdentityFromLogicalFence(t *testing
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 3, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
+		FencingGeneration: 3, Target: workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}}, "channel-1")
 	envelope := &workspacev0.WorkspaceFinalizationEnvelope{
 		Authority: &workspacev0.WorkspaceRunAuthority{
@@ -289,7 +290,7 @@ func TestRenewWorkspaceAuthorityCancellationPreservesMountedSession(t *testing.T
 		WorkspaceID:       "workspace-1",
 		RuntimeInstanceID: "runtime-1",
 		FencingGeneration: 4,
-		Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
+		Target:            workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
 	}, parent, "channel-1")
 	request := &workspacev0.RenewWorkspaceAuthorityRequest{
 		Previous: &workspacev0.WorkspaceRunAuthority{
@@ -413,4 +414,12 @@ func (s *countingReadWriteCloser) Close() error {
 
 func (s *borrowedParentSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
+}
+
+func (*borrowedParentSession) PublishComputer(context.Context, computer.GenerationRoot, computer.ContinuationPublication) error {
+	return nil
+}
+
+func (s *borrowedParentSession) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	return s.artifact.Computer, nil
 }

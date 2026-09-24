@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type inspectedObject struct {
@@ -122,21 +123,39 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	if !pinned {
 		return errors.New("initial writer key is not pinned")
 	}
+	if err = recordComputerObjectLocked(ctx, tx, owner, fence.RuntimeID, fence.DesiredVersion, inspection, uploaded, false, map[string]bool{pgvalue.UUIDString(key.ID): true}); err != nil {
+		return err
+	}
+	if err = owner.CheckDeadlines(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// The caller owns current preparation or checkpoint/finalization authority and
+// rechecks deadlines after this operation. No remote I/O occurs under its locks.
+func recordComputerObjectLocked(ctx context.Context, tx pgx.Tx, owner dispatch.ComputerPreparation, runtimeID pgtype.UUID, desiredVersion int64, inspection blockformat.ObjectInspection, uploaded *cas.Object, reuse bool, allowedKeys map[string]bool) error {
+	object, err := describeComputerObject(inspection)
+	if err != nil {
+		return err
+	}
+	if uploaded != nil && (uploaded.Digest != object.digest || uploaded.SizeBytes != object.size || uploaded.MediaType != "application/octet-stream") {
+		return computerObjectConflict("uploaded object descriptor mismatch")
+	}
 	if inspection.Pack != nil {
 		for _, page := range inspection.Pack.Pages {
 			if page.Shape.Capacity != owner.LogicalBytes {
-				return errors.New("object capacity differs from preparation")
+				return computerObjectConflict("object capacity differs from Computer")
 			}
 		}
 	}
 	for _, id := range object.keys {
-		if id != pgvalue.UUIDString(key.ID) {
-			return errors.New("object write key differs from pinned initialization key")
+		if !allowedKeys[id] {
+			return computerObjectConflict("computer object key is not retained by Runtime")
 		}
 	}
-	// All initial objects use the single pinned writer. Historical/mixed-key
-	// objects need the separate continuation/source authorization path.
-	if uploaded == nil {
+	q := db.New(tx)
+	if uploaded == nil && !reuse {
 		if _, err = tx.Exec(ctx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1) ON CONFLICT DO NOTHING`, object.digest); err != nil {
 			return err
 		}
@@ -154,19 +173,26 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	}
 	// JSONB normalizes representation, so compare decoded typed facts.
 	if row.SizeBytes != object.size || row.Rank != int32(object.rank) || row.Kind != object.kind || row.MediaType != "application/octet-stream" || !reflect.DeepEqual(stored, inspection) {
-		return errors.New("object differs from registered inspection")
+		return computerObjectConflict("object differs from registered inspection")
+	}
+	if reuse && !row.Certified.Bool {
+		return computerObjectConflict("referenced computer object is not certified")
 	}
 	if uploaded == nil {
-		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, fence.RuntimeID, object.digest, owner.EnvironmentID, owner.ComputerID, fence.DesiredVersion); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version) VALUES($1,$2,$3,$4,$5)
+ ON CONFLICT(runtime_instance_id,digest) DO UPDATE SET runtime_desired_version=EXCLUDED.runtime_desired_version
+ WHERE runtime_computer_object_pins.environment_id=EXCLUDED.environment_id
+ AND runtime_computer_object_pins.computer_id=EXCLUDED.computer_id
+ AND runtime_computer_object_pins.runtime_desired_version<=EXCLUDED.runtime_desired_version`, runtimeID, object.digest, owner.EnvironmentID, owner.ComputerID, desiredVersion); err != nil {
 			return err
 		}
 	}
 	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3)`, fence.RuntimeID, object.digest, fence.DesiredVersion).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3)`, runtimeID, object.digest, desiredVersion).Scan(&retained); err != nil {
 		return err
 	}
 	if !retained {
-		return errors.New("computer object candidate is not retained by Runtime")
+		return computerObjectConflict("computer object candidate is not retained by Runtime")
 	}
 	if !row.Certified.Bool {
 		// Missing dependencies fail before certification; all physical references,
@@ -183,7 +209,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 				return err
 			}
 			if evidence.Pack == nil {
-				return errors.New("child pack inspection missing")
+				return computerObjectConflict("child pack inspection missing")
 			}
 			for _, child := range children {
 				if err = evidence.Pack.CheckNode(child); err != nil {
@@ -204,7 +230,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 				return err
 			}
 			if evidence.Segment == nil || *evidence.Segment != child {
-				return errors.New("child segment descriptor mismatch")
+				return computerObjectConflict("child segment descriptor mismatch")
 			}
 			if err = insertInspectedComputerEdge(ctx, tx, owner, object, objectDigest(child.Digest), 0); err != nil {
 				return err
@@ -225,14 +251,28 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 				return err
 			}
 			if n != 1 {
-				return errors.New("object certification did not commit")
+				return computerObjectConflict("object certification did not commit")
 			}
 		}
 	}
-	if err = owner.CheckDeadlines(ctx, tx); err != nil {
+	rows, err := tx.Query(ctx, `SELECT key_id FROM computer_object_keys WHERE environment_id=$1 AND computer_id=$2 AND digest=$3`, owner.EnvironmentID, owner.ComputerID, object.digest)
+	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	defer rows.Close()
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		if !allowedKeys[pgvalue.UUIDString(id)] {
+			return conflict(errors.New("computer object depends on a key not retained by Runtime"))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func loadInspectedComputerChild(ctx context.Context, tx pgx.Tx, owner dispatch.ComputerPreparation, digest string, size int64, rank int) (blockformat.ObjectInspection, error) {
@@ -252,3 +292,5 @@ func insertInspectedComputerEdge(ctx context.Context, tx pgx.Tx, owner dispatch.
 	_, err := tx.Exec(ctx, `INSERT INTO computer_object_edges(environment_id,computer_id,parent_digest,child_digest,parent_rank,child_rank) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, owner.EnvironmentID, owner.ComputerID, parent.digest, digest, parent.rank, rank)
 	return err
 }
+
+func computerObjectConflict(message string) error { return conflict(errors.New(message)) }

@@ -14,15 +14,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -555,7 +554,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	workspaceMountID := strings.TrimSpace(envelope.WorkspaceMountId)
 	workspaceID := strings.TrimSpace(envelope.WorkspaceId)
 	if strings.TrimSpace(request.GetRestoredCheckpointId()) != "" {
-		phases, err := registry.materializeRestoredWorkspaceMount(conn, &request, waits)
+		phases, err := registry.materializeRestoredWorkspaceMount(&request, waits)
 		if err != nil {
 			phases = appendWorkspaceMountFailurePhase(phases, "guest_restore_rebind", totalStarted, err)
 			writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{Status: "failed", Phases: phases})
@@ -569,10 +568,10 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 			"duration_ms", time.Since(totalStarted).Milliseconds())
 		return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
 			Status: "running", GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
-			Phases: phases, Target: proto.Clone(request.GetTarget()).(*workspacev0.WorkspaceResetTarget),
+			Phases: phases, Target: proto.Clone(request.GetTarget()).(*workspacev0.ComputerMountTarget),
 		})
 	}
-	entry, phases, err := restoreWorkspaceMount(conn, &request, logger, registry)
+	entry, phases, err := restoreWorkspaceMount(&request, registry)
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_materialize", totalStarted, err)
 		writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
@@ -595,12 +594,11 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 		Status:                 "running",
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
 		Phases:                 phases,
-		Target:                 proto.Clone(request.GetTarget()).(*workspacev0.WorkspaceResetTarget),
+		Target:                 proto.Clone(request.GetTarget()).(*workspacev0.ComputerMountTarget),
 	})
 }
 
 func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
-	reader io.Reader,
 	request *workspacev0.MaterializeWorkspaceRequest,
 	waits *waitingRunRegistry,
 ) ([]*workspacev0.WorkspaceMountPhase, error) {
@@ -610,7 +608,7 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	}
 	checkpointID := strings.TrimSpace(request.GetRestoredCheckpointId())
 	sourceVersionID := strings.TrimSpace(request.GetRestoreSourceVersionId())
-	target, err := workspace.ResetTargetFromProto(request.GetTarget())
+	target, err := computerMountTargetFromProto(request.GetTarget())
 	if err != nil {
 		return nil, fmt.Errorf("restored workspace target: %w", err)
 	}
@@ -652,12 +650,9 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	currentGeneration := entry.currentFencingGeneration()
 	if envelope.GetFencingGeneration() == currentGeneration && entry.workspaceMountID == newMountID &&
 		entry.channelToken == channelToken && entry.runtimeInstanceID == runtimeInstanceID &&
-		entry.baseWorkspaceVersionID == target.BaseWorkspaceVersionID && r.entries[newMountID] == entry {
-		if err := entry.materializeRestoredWorkspace(reader, workspaceID, checkpointID, sourceVersionID, target); err != nil {
-			return nil, err
-		}
+		entry.baseWorkspaceVersionID == target.GetBaseWorkspaceVersionId() && r.entries[newMountID] == entry {
 		return []*workspacev0.WorkspaceMountPhase{
-			workspaceMountPhase("guest_restore_materialize_replay", started, uint64(workspaceRestoreArtifactSize(target)), uint32(target.Tree.EntryCount), nil),
+			workspaceMountPhase("guest_restore_materialize_replay", started, 0, 0, nil),
 		}, nil
 	}
 	if envelope.GetFencingGeneration() <= currentGeneration {
@@ -668,9 +663,6 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	}
 	if entry.baseWorkspaceVersionID != sourceVersionID {
 		return nil, errors.New("restored workspace source version does not match the frozen mounted runtime")
-	}
-	if err := entry.materializeRestoredWorkspace(reader, workspaceID, checkpointID, sourceVersionID, target); err != nil {
-		return nil, err
 	}
 	for id, current := range r.entries {
 		if current == entry {
@@ -684,19 +676,12 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	entry.workspaceMountID = newMountID
 	entry.channelToken = channelToken
 	entry.runtimeInstanceID = runtimeInstanceID
-	entry.baseWorkspaceVersionID = target.BaseWorkspaceVersionID
+	entry.baseWorkspaceVersionID = target.GetBaseWorkspaceVersionId()
 	entry.setFencingGeneration(envelope.GetFencingGeneration())
 	r.entries[newMountID] = entry
 	return []*workspacev0.WorkspaceMountPhase{
-		workspaceMountPhase("guest_restore_materialize", started, uint64(workspaceRestoreArtifactSize(target)), uint32(target.Tree.EntryCount), nil),
+		workspaceMountPhase("guest_restore_materialize", started, 0, 0, nil),
 	}, nil
-}
-
-func workspaceRestoreArtifactSize(target workspace.ResetTarget) int64 {
-	if target.Artifact == nil {
-		return 0
-	}
-	return target.Artifact.SizeBytes
 }
 
 func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry) error {
@@ -800,12 +785,11 @@ func restorePreparedWorkspaceRuntime(conn io.Reader, request *workspacev0.Prepar
 	}, phases, nil
 }
 
-func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest, logger *slog.Logger, registry *workspaceOperationRegistry) (*workspaceMountEntry, []*workspacev0.WorkspaceMountPhase, error) {
+func restoreWorkspaceMount(request *workspacev0.MaterializeWorkspaceRequest, registry *workspaceOperationRegistry) (*workspaceMountEntry, []*workspacev0.WorkspaceMountPhase, error) {
 	entry := &workspaceMountEntry{}
 	var phases []*workspacev0.WorkspaceMountPhase
 	envelope := request.GetEnvelope()
 	workspaceMountID := strings.TrimSpace(envelope.GetWorkspaceMountId())
-	workspaceID := strings.TrimSpace(envelope.GetWorkspaceId())
 	runtimeInstanceID := strings.TrimSpace(request.GetRuntimeInstanceId())
 	if runtimeInstanceID == "" {
 		return nil, phases, errors.New("workspace materialize runtime_instance_id is required")
@@ -816,32 +800,11 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, phases, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
 	}
-	target, err := workspace.ResetTargetFromProto(request.GetTarget())
+	target, err := computerMountTargetFromProto(request.GetTarget())
 	if err != nil {
 		return nil, phases, fmt.Errorf("workspace materialize target: %w", err)
 	}
-	entry.baseWorkspaceVersionID = target.BaseWorkspaceVersionID
-	artifact := request.GetTarget().GetArtifact()
-	if artifact != nil {
-		if strings.TrimSpace(artifact.GetDigest()) == "" {
-			return nil, phases, errors.New("workspace materialize base_artifact digest is required")
-		}
-		if strings.TrimSpace(artifact.GetMediaType()) != workspace.ArtifactMediaType {
-			return nil, phases, fmt.Errorf("workspace materialize base_artifact media_type %q is not supported", artifact.GetMediaType())
-		}
-		if strings.TrimSpace(artifact.GetEncoding()) != workspace.ArtifactEncoding {
-			return nil, phases, fmt.Errorf("workspace materialize base_artifact encoding %q is not supported", artifact.GetEncoding())
-		}
-		if artifact.GetSizeBytes() == 0 {
-			return nil, phases, errors.New("workspace materialize base_artifact size_bytes is required")
-		}
-		if artifact.GetSizeBytes() > uint64(workspace.MaxArtifactArchiveBytes) {
-			return nil, phases, fmt.Errorf("workspace materialize base_artifact size_bytes %d exceeds max %d", artifact.GetSizeBytes(), workspace.MaxArtifactArchiveBytes)
-		}
-		if artifact.GetEntryCount() > uint32(workspace.MaxArtifactEntries) {
-			return nil, phases, fmt.Errorf("workspace materialize base_artifact entry_count %d exceeds max %d", artifact.GetEntryCount(), workspace.MaxArtifactEntries)
-		}
-	}
+	entry.baseWorkspaceVersionID = target.GetBaseWorkspaceVersionId()
 	workspaceImage := request.GetWorkspaceImage()
 	if workspaceImage == nil {
 		return nil, phases, errors.New("workspace materialize workspace_image is required")
@@ -858,54 +821,16 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	if workspaceImage.GetSizeBytes() == 0 {
 		return nil, phases, errors.New("workspace materialize workspace_image size_bytes is required")
 	}
-	if request.GetUsePreparedRuntime() {
-		phaseStarted := time.Now()
-		prepared, ok := registry.takePreparedRuntime(request.GetRuntimeInstanceId(), workspaceImage.GetDigest(), mountPath)
-		var err error
-		if !ok {
-			err = errors.New("prepared workspace runtime is not available")
-		}
-		phases = append(phases, workspaceMountPhase("guest_prepared_runtime_checkout", phaseStarted, 0, 0, err))
-		if err != nil {
-			return nil, phases, err
-		}
-		entry.imageRoot = prepared.imageRoot
-		entry.imageConfig = prepared.imageConfig
-		entry.runtimeUser = prepared.runtimeUser
-		entry.workspaceMount = prepared.workspaceMount
-		entry.workspaceRoot = prepared.workspaceRoot
-		entry.cleanup = prepared.cleanup
-	} else {
-		phaseStarted := time.Now()
-		image, cleanupImage, err := restoreWorkspaceMountWorkspaceImage(conn, request)
-		phases = append(phases, workspaceMountPhase("guest_workspace_image_restore", phaseStarted, workspaceImage.GetSizeBytes(), 0, err))
-		logger.Info("workspace materialize workspace image restored", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceImage.GetSizeBytes(), "error", errorText(err))
-		if err != nil {
-			return nil, phases, err
-		}
-		entry.imageRoot = image.RootfsDir
-		entry.imageConfig = image.Config
-		entry.workspaceMount = mountPath
-		entry.cleanup = cleanupImage
-		phaseStarted = time.Now()
-		runtimeUser, err := resolveRuntimeUser(entry.imageRoot, entry.imageConfig.User)
-		phases = append(phases, workspaceMountPhase("guest_runtime_user_resolve", phaseStarted, 0, 0, err))
-		logger.Info("workspace materialize runtime user resolved", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorText(err))
-		if err != nil {
-			entry.cleanup()
-			return nil, phases, fmt.Errorf("resolve workspace runtime user: %w", err)
-		}
-		entry.runtimeUser = runtimeUser
-		phaseStarted = time.Now()
-		workspaceRoot, err := workspaceRootForImage(entry.imageRoot, mountPath)
-		phases = append(phases, workspaceMountPhase("guest_workspace_root_resolve", phaseStarted, 0, 0, err))
-		logger.Info("workspace materialize workspace root resolved", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorText(err))
-		if err != nil {
-			entry.cleanup()
-			return nil, phases, fmt.Errorf("resolve workspace mount: %w", err)
-		}
-		entry.workspaceRoot = workspaceRoot
+	if !request.GetUsePreparedRuntime() {
+		return nil, phases, errors.New("computer mount requires a prepared runtime")
 	}
+	prepared, ok := registry.takePreparedRuntime(runtimeInstanceID, workspaceImage.GetDigest(), mountPath)
+	if !ok {
+		return nil, phases, errors.New("prepared computer runtime is not available")
+	}
+	entry.imageRoot, entry.imageConfig = prepared.imageRoot, prepared.imageConfig
+	entry.runtimeUser, entry.workspaceMount = prepared.runtimeUser, prepared.workspaceMount
+	entry.workspaceRoot, entry.cleanup = prepared.workspaceRoot, prepared.cleanup
 	finalizationRoot, err := os.MkdirTemp(filepath.Dir(entry.imageRoot), ".helmr-workspace-state-*")
 	if err != nil {
 		entry.cleanup()
@@ -917,159 +842,14 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 		cleanupMount()
 		_ = os.RemoveAll(finalizationRoot)
 	}
-	if artifact == nil {
-		phaseStarted := time.Now()
-		err := initializeEmptyWorkspaceRoot(entry.workspaceRoot)
-		phases = append(phases, workspaceMountPhase("guest_workspace_empty_root_init", phaseStarted, 0, 0, err))
-		logger.Info("workspace materialize empty workspace root initialized", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorText(err))
-		if err != nil {
-			entry.cleanup()
-			return nil, phases, err
-		}
-		if err := verifyRestoredWorkspaceTree(entry.workspaceRoot, target.Tree); err != nil {
-			entry.cleanup()
-			return nil, phases, fmt.Errorf("verify empty workspace target: %w", err)
-		}
-		return entry, phases, nil
-	}
-	phaseStarted := time.Now()
-	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, 0, 0, err))
-		return nil, phases, fmt.Errorf("read workspace artifact stream header: %w", err)
-	}
-	if header.Type != wire.StreamTypeWorkspaceArtifact {
-		drainStreamBody(conn, bodyLen)
-		entry.cleanup()
-		err := fmt.Errorf("unsupported workspace materialize input type %q", header.Type)
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, err))
-		return nil, phases, err
-	}
-	if header.WorkspaceID != strings.TrimSpace(request.GetEnvelope().GetWorkspaceId()) {
-		drainStreamBody(conn, bodyLen)
-		entry.cleanup()
-		err := fmt.Errorf("workspace artifact workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, err))
-		return nil, phases, err
-	}
-	frameDigest := ""
-	if header.BodyDigest != nil {
-		frameDigest = strings.TrimSpace(*header.BodyDigest)
-	}
-	if frameDigest != "" && frameDigest != strings.TrimSpace(artifact.GetDigest()) {
-		drainStreamBody(conn, bodyLen)
-		entry.cleanup()
-		err := fmt.Errorf("workspace artifact digest %q does not match frame digest %q", artifact.GetDigest(), frameDigest)
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, err))
-		return nil, phases, err
-	}
-	if artifact.GetSizeBytes() != bodyLen {
-		drainStreamBody(conn, bodyLen)
-		entry.cleanup()
-		err := fmt.Errorf("workspace artifact size_bytes %d does not match frame size %d", artifact.GetSizeBytes(), bodyLen)
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, err))
-		return nil, phases, err
-	}
-	workspaceParent := filepath.Dir(entry.workspaceRoot)
-	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
-		drainStreamBody(conn, bodyLen)
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, err))
-		return nil, phases, fmt.Errorf("create workspace mount parent: %w", err)
-	}
-	stagingRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-restore-*")
-	if err != nil {
-		drainStreamBody(conn, bodyLen)
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, err))
-		return nil, phases, fmt.Errorf("create workspace restore staging dir: %w", err)
-	}
-	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	hashedBody := newDigestingReader(body)
-	stats, err := archive.ExtractTarWithStats(hashedBody, stagingRoot, archive.ExtractOptions{
-		MaxBytes:   workspace.MaxArtifactExtractedBytes,
-		MaxEntries: workspace.MaxArtifactEntries,
-	})
-	if err != nil {
-		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
-			cleanupStaging()
-			entry.cleanup()
-			joined := errors.Join(fmt.Errorf("extract workspace artifact: %w", err), fmt.Errorf("drain workspace artifact: %w", drainErr))
-			phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, joined))
-			return nil, phases, joined
-		}
-		cleanupStaging()
-		entry.cleanup()
-		wrapped := fmt.Errorf("extract workspace artifact: %w", err)
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, 0, wrapped))
-		return nil, phases, wrapped
-	}
-	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
-		cleanupStaging()
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
-		return nil, phases, fmt.Errorf("drain workspace artifact: %w", err)
-	}
-	if digest := hashedBody.Digest(); digest != strings.TrimSpace(artifact.GetDigest()) {
-		cleanupStaging()
-		entry.cleanup()
-		err := fmt.Errorf("workspace artifact body digest %q does not match declared digest %q", digest, artifact.GetDigest())
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
-		return nil, phases, err
-	}
-	if stats.EntryCount != int(artifact.GetEntryCount()) {
-		cleanupStaging()
-		entry.cleanup()
-		err := fmt.Errorf("workspace artifact entry_count %d does not match declared entry_count %d", stats.EntryCount, artifact.GetEntryCount())
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
-		return nil, phases, err
-	}
-	if err := os.RemoveAll(entry.workspaceRoot); err != nil {
-		cleanupStaging()
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
-		return nil, phases, fmt.Errorf("replace workspace mount: remove existing mount: %w", err)
-	}
-	if err := os.Rename(stagingRoot, entry.workspaceRoot); err != nil {
-		cleanupStaging()
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
-		return nil, phases, fmt.Errorf("replace workspace mount: %w", err)
-	}
-	if err := verifyRestoredWorkspaceTree(entry.workspaceRoot, target.Tree); err != nil {
-		entry.cleanup()
-		phases = append(phases, workspaceMountPhase("guest_workspace_target_verify", phaseStarted, bodyLen, uint32(stats.EntryCount), err))
-		return nil, phases, fmt.Errorf("verify workspace materialize target: %w", err)
-	}
-	logger.Info("workspace materialize workspace artifact restored", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", bodyLen, "entry_count", stats.EntryCount)
-	phases = append(phases, workspaceMountPhase("guest_workspace_artifact_restore", phaseStarted, bodyLen, uint32(stats.EntryCount), nil))
 	return entry, phases, nil
 }
 
-func initializeEmptyWorkspaceRoot(workspaceRoot string) error {
-	workspaceParent := filepath.Dir(workspaceRoot)
-	if err := os.MkdirAll(workspaceParent, 0o755); err != nil {
-		return fmt.Errorf("create empty workspace mount parent: %w", err)
+func computerMountTargetFromProto(target *workspacev0.ComputerMountTarget) (*workspacev0.ComputerMountTarget, error) {
+	if target == nil || strings.TrimSpace(target.GetBaseWorkspaceVersionId()) == "" {
+		return nil, errors.New("computer mount version is required")
 	}
-	stagingRoot, err := os.MkdirTemp(workspaceParent, ".helmr-workspace-empty-*")
-	if err != nil {
-		return fmt.Errorf("create empty workspace staging dir: %w", err)
-	}
-	cleanupStaging := func() { _ = os.RemoveAll(stagingRoot) }
-	// The image directory can belong to OverlayFS's lower layer, which cannot
-	// be renamed aside. This mount has not been exposed to user processes;
-	// discard its image contents just as in artifact materialization.
-	if err := os.RemoveAll(workspaceRoot); err != nil {
-		cleanupStaging()
-		return fmt.Errorf("initialize empty workspace mount: remove image directory: %w", err)
-	}
-	if err := os.Rename(stagingRoot, workspaceRoot); err != nil {
-		cleanupStaging()
-		return fmt.Errorf("initialize empty workspace mount: install empty directory: %w", err)
-	}
-	return nil
+	return target, nil
 }
 
 func workspaceMountPhase(name string, started time.Time, sizeBytes uint64, entryCount uint32, err error) *workspacev0.WorkspaceMountPhase {
@@ -1092,66 +872,6 @@ func appendWorkspaceMountFailurePhase(phases []*workspacev0.WorkspaceMountPhase,
 		}
 	}
 	return append(phases, workspaceMountPhase(name, started, 0, 0, err))
-}
-
-func restoreWorkspaceMountWorkspaceImage(conn io.Reader, request *workspacev0.MaterializeWorkspaceRequest) (ociImage, func(), error) {
-	cleanup := func() {}
-	header, bodyLen, err := wire.ReadStreamFrameHeader(conn)
-	if err != nil {
-		return ociImage{}, cleanup, fmt.Errorf("read workspace image stream header: %w", err)
-	}
-	if header.Type != wire.StreamTypeRunImage {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("unsupported workspace materialize workspace image input type %q", header.Type)
-	}
-	if header.WorkspaceID != strings.TrimSpace(request.GetEnvelope().GetWorkspaceId()) {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("workspace image workspace_id %q does not match materialize workspace_id %q", header.WorkspaceID, request.GetEnvelope().GetWorkspaceId())
-	}
-	workspaceImage := request.GetWorkspaceImage()
-	if workspaceImage.GetSizeBytes() != bodyLen {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("workspace image size_bytes %d does not match frame size %d", workspaceImage.GetSizeBytes(), bodyLen)
-	}
-	frameDigest := ""
-	if header.BodyDigest != nil {
-		frameDigest = strings.TrimSpace(*header.BodyDigest)
-	}
-	if frameDigest != "" && frameDigest != strings.TrimSpace(workspaceImage.GetDigest()) {
-		drainStreamBody(conn, bodyLen)
-		return ociImage{}, cleanup, fmt.Errorf("workspace image digest %q does not match frame digest %q", workspaceImage.GetDigest(), frameDigest)
-	}
-	body := &io.LimitedReader{R: conn, N: int64(bodyLen)}
-	hashedBody := newDigestingReader(body)
-	var image ociImage
-	if substrateRoot := guestdSubstrateRoot(); substrateRoot != "" {
-		image, cleanup, err = imageFromMountedSubstrate(hashedBody, substrateRoot)
-	} else {
-		imageRoot, imageRootErr := mkdirGuestdTemp("helmr-workspace-image-*")
-		if imageRootErr != nil {
-			drainStreamBody(conn, bodyLen)
-			return ociImage{}, cleanup, fmt.Errorf("create workspace image root: %w", imageRootErr)
-		}
-		cleanup = func() { _ = os.RemoveAll(imageRoot) }
-		image, err = unpackOCIImage(hashedBody, imageRoot)
-	}
-	if err != nil {
-		if _, drainErr := io.Copy(io.Discard, hashedBody); drainErr != nil {
-			cleanup()
-			return ociImage{}, func() {}, errors.Join(fmt.Errorf("extract workspace image: %w", err), fmt.Errorf("drain workspace image: %w", drainErr))
-		}
-		cleanup()
-		return ociImage{}, func() {}, fmt.Errorf("extract workspace image: %w", err)
-	}
-	if _, err := io.Copy(io.Discard, hashedBody); err != nil {
-		cleanup()
-		return ociImage{}, func() {}, fmt.Errorf("drain workspace image: %w", err)
-	}
-	if digest := hashedBody.Digest(); digest != strings.TrimSpace(workspaceImage.GetDigest()) {
-		cleanup()
-		return ociImage{}, func() {}, fmt.Errorf("workspace image body digest %q does not match declared digest %q", digest, workspaceImage.GetDigest())
-	}
-	return image, cleanup, nil
 }
 
 func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareWorkspaceRuntimeRequest) (ociImage, func(), error) {
@@ -1277,60 +997,14 @@ func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *work
 	if activeExecs != 0 || hasProgram {
 		return errors.New("workspace stop requires no active exec")
 	}
-	finalize := request.GetFinalizeStop() || !request.GetCaptureBeforeStop()
-	if request.GetCaptureBeforeStop() && finalize {
-		return errors.New("workspace stop capture and finalize must be separate requests")
-	}
-	// Stop is distinct from a committed Run finalization, which permits succession.
 	entry.stopping = true
-	// Keep admission fenced across capture, CP promotion and the later finalize request.
 	entry.processesMu.Lock()
 	entry.authorityState = workspaceAuthorityFinalizing
 	entry.processesMu.Unlock()
-	response := &workspacev0.StopWorkspaceResponse{Status: "stopped"}
-	var artifact workspace.WorkspaceArtifact
-	var cleanupArtifact func()
-	if request.GetCaptureBeforeStop() {
-		tempDir, err := mkdirGuestdTemp("helmr-workspace-stop-*")
-		if err != nil {
-			return fmt.Errorf("create workspace stop temp dir: %w", err)
-		}
-		defer os.RemoveAll(tempDir)
-		var tree workspace.TreeIdentity
-		artifact, tree, cleanupArtifact, err = workspace.CaptureWorkspaceArtifactContext(ctx, entry.workspaceRoot, tempDir, filepath.Dir(entry.workspaceRoot), nil)
-		if err != nil {
-			return fmt.Errorf("capture workspace stop artifact: %w", err)
-		}
-		defer cleanupArtifact()
-		response.CapturedTree = &workspacev0.WorkspaceTreeIdentity{
-			Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: uint32(tree.EntryCount),
-		}
-		response.CapturedArtifact = &workspacev0.WorkspaceArtifact{
-			Digest:     artifact.Digest,
-			MediaType:  artifact.MediaType,
-			Encoding:   artifact.Encoding,
-			SizeBytes:  uint64(artifact.SizeBytes),
-			EntryCount: uint32(artifact.EntryCount),
-		}
-		response.Status = "captured"
-	}
-	if err := frameio.WriteProtoFrame(conn, response); err != nil {
-		return fmt.Errorf("write workspace stop response: %w", err)
-	}
-	if request.GetCaptureBeforeStop() {
-		entryCount := artifact.EntryCount
-		if err := wire.WriteFileFrameWithMetadata(conn, wire.StreamHeader{
-			Type:        wire.StreamTypeWorkspaceArtifact,
-			WorkspaceID: envelope.WorkspaceId,
-			EntryCount:  &entryCount,
-		}, artifact.Path, artifact.Digest, artifact.SizeBytes); err != nil {
-			return fmt.Errorf("write workspace stop artifact: %w", err)
-		}
-	}
-	if finalize {
-		registry.retireLocked(envelope.WorkspaceMountId, entry)
-	}
-	return nil
+	// Cooperative guest writeback precedes the host's disk-only pause. Physical
+	// exclusion and publication remain host-owned, not a guest receipt.
+	syscall.Sync()
+	return frameio.WriteProtoFrame(conn, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
 }
 
 func workspaceStopErrorJSON(err error) string {

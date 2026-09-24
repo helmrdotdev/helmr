@@ -16,7 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
@@ -38,100 +37,41 @@ func TestWorkspaceMaterializerUsesStartupTimeout(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMaterializerRenewsWhileMaterializing(t *testing.T) {
-	store, mount := testWorkspaceMountArtifacts(t)
-	mount.ID = "mount-renewing-during-materialization"
-	mount.OrgID = "org-1"
-	started := make(chan struct{})
-	release := make(chan struct{})
-	renewed := make(chan struct{})
-	blockingStore := &workspaceMaterializerBlockingCAS{
-		Store: store, started: started, release: release,
-	}
-	client := &workspaceMaterializerTestClient{renewed: renewed}
-	materializer := WorkspaceMaterializer{
-		CAS:         blockingStore,
-		TempDir:     t.TempDir(),
-		Heartbeat:   time.Millisecond,
-		RuntimePool: workspacePreparedRuntimePool(t, mount, &workspaceMaterializerTestSession{}),
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("materialization did not reach CAS restore")
-	}
-	select {
-	case <-renewed:
-	case <-time.After(time.Second):
-		t.Fatal("mount was not renewed while materialization was blocked")
-	}
-	cancel()
-	close(release)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("materializer did not stop after cancellation")
-	}
-}
-
-func TestWorkspaceMaterializerRenewalFailureCancelsMaterialization(t *testing.T) {
-	store, mount := testWorkspaceMountArtifacts(t)
-	mount.ID = "mount-renewal-fails-during-materialization"
-	mount.OrgID = "org-1"
-	started := make(chan struct{})
-	blockingStore := &workspaceMaterializerBlockingCAS{
-		Store: store, started: started, release: make(chan struct{}),
-	}
-	client := &workspaceMaterializerTestClient{
-		renewErrors: []error{errors.New("renew failed")},
-	}
-	materializer := WorkspaceMaterializer{
-		CAS:         blockingStore,
-		TempDir:     t.TempDir(),
-		Heartbeat:   10 * time.Millisecond,
-		RuntimePool: workspacePreparedRuntimePool(t, mount, &workspaceMaterializerTestSession{}),
-	}
-	ctx := context.Background()
-	done := make(chan error, 1)
-	go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("materialization did not reach CAS restore")
-	}
-	select {
-	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "renew workspace mount") {
-			t.Fatalf("materializer err = %v, want renewal failure", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("materializer did not stop after renewal failure")
-	}
-	if err := ctx.Err(); err != nil {
-		t.Fatalf("parent context = %v, want active", err)
-	}
-	if len(client.failures) != 1 {
-		t.Fatalf("failures = %+v, want one", client.failures)
-	}
-}
-
-type workspaceMaterializerBlockingCAS struct {
-	cas.Store
-	started chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func (s *workspaceMaterializerBlockingCAS) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
-	s.once.Do(func() { close(s.started) })
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-s.release:
-		return s.Store.Get(ctx, digest)
+func TestWorkspaceMaterializerRenewsWhileAwaitingPreparedRuntime(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			store, mount := testWorkspaceMountArtifacts(t)
+			mount.ID, mount.OrgID = "mount-await-ready", "org-1"
+			pool := workspacePreparedRuntimePool(t, mount, &workspaceMaterializerTestSession{})
+			key := runtimeInstanceIDFromWorkspaceMount(mount)
+			pool.entries[key][0].ready = newPreparedRuntimeSignal()
+			renewed := make(chan struct{})
+			client := &workspaceMaterializerTestClient{renewed: renewed}
+			if fail {
+				client.renewErrors = []error{errors.New("renew failed")}
+			}
+			materializer := WorkspaceMaterializer{CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
+			if !fail {
+				select {
+				case <-renewed:
+				case <-time.After(time.Second):
+					t.Fatal("pending runtime admission did not renew")
+				}
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if fail && (err == nil || !strings.Contains(err.Error(), "renew workspace mount")) {
+					t.Fatalf("renew failure=%v", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("pending runtime admission did not cancel")
+			}
+		})
 	}
 }
 
@@ -151,7 +91,7 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, workerapi.WorkspaceMou
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspaceObject, err := store.Put(context.Background(), workspaceArtifact.MediaType, file)
+	_, err = store.Put(context.Background(), workspaceArtifact.MediaType, file)
 	closeErr := file.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -167,16 +107,8 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, workerapi.WorkspaceMou
 			Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType,
 		},
 		RootfsDigest: "sha256:runtime-rootfs",
-		Target: workerapi.WorkspaceResetTarget{
+		Target: workerapi.ComputerMountTarget{
 			BaseWorkspaceVersionID: "version-1",
-			Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-			Artifact: &workerapi.WorkspaceArtifact{
-				Digest:     workspaceObject.Digest,
-				MediaType:  workspaceObject.MediaType,
-				Encoding:   workspace.ArtifactEncoding,
-				SizeBytes:  workspaceObject.SizeBytes,
-				EntryCount: int32(workspaceArtifact.EntryCount),
-			},
 		},
 		WorkspaceMountPath: "/workspace",
 	}
@@ -185,6 +117,8 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, workerapi.WorkspaceMou
 func workspacePreparedRuntimePool(t *testing.T, mount workerapi.WorkspaceMount, session vm.Session) *PreparedRuntimePool {
 	t.Helper()
 	target := runtimeCapacityTarget(mount.RuntimeInstanceID, mount.RuntimeEpoch)
+	target.Source.WorkspaceID = mount.WorkspaceID
+	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseWorkspaceVersionID}
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
@@ -313,16 +247,12 @@ func TestWorkspaceMaterializerChecksOutPreparedRuntime(t *testing.T) {
 		RuntimePool: pool,
 	}
 
-	session, workspacePath, cleanup, runtimeInstanceID, err := materializer.materializeSession(context.Background(), &workspaceMount)
-	defer cleanup()
+	session, runtimeInstanceID, err := materializer.materializeSession(context.Background(), &workspaceMount)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if session != wantSession {
 		t.Fatalf("session = %T %p, want %T %p", session, session, wantSession, wantSession)
-	}
-	if strings.TrimSpace(workspacePath) == "" {
-		t.Fatal("workspace artifact path is empty")
 	}
 	if runtimeInstanceID != workspaceMount.RuntimeInstanceID {
 		t.Fatalf("runtime instance id = %q, want %q", runtimeInstanceID, workspaceMount.RuntimeInstanceID)
@@ -333,8 +263,8 @@ func TestWorkspaceMaterializerChecksOutPreparedRuntime(t *testing.T) {
 	if got := store.getCalls[workspaceMount.WorkspaceImage.Digest]; got != 0 {
 		t.Fatalf("workspace image CAS gets = %d, want 0", got)
 	}
-	if got := store.getCalls[workspaceMount.Target.Artifact.Digest]; got != 1 {
-		t.Fatalf("workspace artifact CAS gets = %d, want 1", got)
+	if len(store.getCalls) != 0 {
+		t.Fatalf("prepared computer unexpectedly read CAS: %+v", store.getCalls)
 	}
 	if err := pool.ReleaseCheckout(workspaceMount.RuntimeInstanceID, workspaceMount.RuntimeEpoch); err != nil {
 		t.Fatal(err)
@@ -370,8 +300,7 @@ func TestWorkspaceMaterializerReleasesCheckoutOnRestoreProvenanceFailure(t *test
 			}
 			materializer := WorkspaceMaterializer{CAS: store, RuntimePool: pool}
 
-			_, _, cleanup, _, err := materializer.materializeSession(context.Background(), &mount)
-			defer cleanup()
+			_, _, err := materializer.materializeSession(context.Background(), &mount)
 			var failure workspaceMountFailure
 			if !errors.As(err, &failure) || failure.code != test.wantCode {
 				t.Fatalf("materialize error = %v, want %s", err, test.wantCode)
@@ -430,17 +359,15 @@ func TestWorkspaceMaterializerFailsWhenPreparedRuntimeIsMissing(t *testing.T) {
 	if got := store.getCalls[workspaceMount.WorkspaceImage.Digest]; got != 0 {
 		t.Fatalf("workspace image CAS gets = %d, want 0", got)
 	}
-	if got := store.getCalls[workspaceMount.Target.Artifact.Digest]; got != 0 {
-		t.Fatalf("workspace artifact CAS gets = %d, want 0", got)
+	if len(store.getCalls) != 0 {
+		t.Fatalf("prepared computer unexpectedly read CAS: %+v", store.getCalls)
 	}
 }
 
-func TestWorkspaceMaterializerCanonicalEmptyRootSkipsWorkspaceCAS(t *testing.T) {
+func TestWorkspaceMaterializerPreparedComputerSkipsWorkspaceCAS(t *testing.T) {
 	store, mount := testWorkspaceMountArtifacts(t)
-	mount.Target = workerapi.WorkspaceResetTarget{
+	mount.Target = workerapi.ComputerMountTarget{
 		BaseWorkspaceVersionID: mount.Target.BaseWorkspaceVersionID,
-		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		Empty:                  &workerapi.EmptyWorkspace{},
 	}
 	session := &workspaceMaterializerTestSession{}
 	pool := workspacePreparedRuntimePool(t, mount, session)
@@ -449,16 +376,12 @@ func TestWorkspaceMaterializerCanonicalEmptyRootSkipsWorkspaceCAS(t *testing.T) 
 		RuntimePool: pool,
 	}
 
-	gotSession, workspacePath, cleanup, _, err := materializer.materializeSession(context.Background(), &mount)
-	defer cleanup()
+	gotSession, _, err := materializer.materializeSession(context.Background(), &mount)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if gotSession != session {
 		t.Fatalf("session = %v, want prepared session", gotSession)
-	}
-	if workspacePath != "" {
-		t.Fatalf("empty root workspace path = %q, want empty", workspacePath)
 	}
 	if got := store.getCalls[mount.WorkspaceImage.Digest]; got != 0 {
 		t.Fatalf("workspace image CAS gets = %d, want 0", got)
@@ -637,477 +560,6 @@ func TestWorkspaceMaterializerCompletionRetriesServerError(t *testing.T) {
 	}
 }
 
-func TestWorkspaceMaterializerStopWorkspaceGuestStoresCapturedArtifact(t *testing.T) {
-	client, server := net.Pipe()
-	defer server.Close()
-	store := &fakeCAS{objects: map[string][]byte{}}
-	body := []byte("captured workspace")
-	object := store.put(workspace.ArtifactMediaType, body)
-	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{client}}
-	workspaceMount := workerapi.WorkspaceMount{
-		ID:                     "mat-1",
-		WorkspaceID:            "workspace-1",
-		GuestdChannelToken:     "channel-token",
-		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
-		FencingGeneration:      7,
-	}
-	done := make(chan error, 1)
-	go func() {
-		header, _, err := wire.ReadStreamFrameHeader(server)
-		if err != nil {
-			done <- err
-			return
-		}
-		if header.Type != wire.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
-			done <- fmt.Errorf("stop header = %+v", header)
-			return
-		}
-		var request workspacev0.StopWorkspaceRequest
-		if err := frameio.ReadProtoFrame(server, &request); err != nil {
-			done <- err
-			return
-		}
-		if !request.GetCaptureBeforeStop() || request.GetFinalizeStop() || request.GetEnvelope().GetChannelToken() != "channel-token" || request.GetEnvelope().GetFencingGeneration() != 7 {
-			done <- fmt.Errorf("stop request = %+v", &request)
-			return
-		}
-		if err := frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
-			Status: "captured",
-			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
-				Digest: sha256sum.DigestBytes([]byte("captured tree")), SizeBytes: 18, EntryCount: 3,
-			},
-			CapturedArtifact: &workspacev0.WorkspaceArtifact{
-				Digest:     object.Digest,
-				MediaType:  object.MediaType,
-				Encoding:   workspace.ArtifactEncoding,
-				SizeBytes:  uint64(object.SizeBytes),
-				EntryCount: 3,
-			},
-		}); err != nil {
-			done <- err
-			return
-		}
-		entryCount := 3
-		if err := wire.WriteStreamFrameHeader(server, wire.StreamHeader{
-			Type:        wire.StreamTypeWorkspaceArtifact,
-			WorkspaceID: "workspace-1",
-			BodyDigest:  &object.Digest,
-			EntryCount:  &entryCount,
-		}, uint64(len(body))); err != nil {
-			done <- err
-			return
-		}
-		_, err = server.Write(body)
-		done <- err
-	}()
-	capture, err := (WorkspaceMaterializer{CAS: store}).stopWorkspaceGuest(context.Background(), session, workspaceMount, workspaceMount.FencingGeneration, true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if capture.Artifact.Digest != object.Digest || capture.Artifact.SizeBytes != object.SizeBytes || capture.Artifact.EntryCount != 3 {
-		t.Fatalf("captured artifact = %+v, want digest=%s size=%d entries=3", capture.Artifact, object.Digest, object.SizeBytes)
-	}
-	if capture.Tree.Digest != sha256sum.DigestBytes([]byte("captured tree")) || capture.Tree.SizeBytes != 18 || capture.Tree.EntryCount != 3 {
-		t.Fatalf("captured tree = %+v", capture.Tree)
-	}
-}
-
-func TestWorkspaceMaterializerStopWorkspaceGuestRejectsInvalidTreeReceipts(t *testing.T) {
-	digest := sha256sum.DigestBytes([]byte("workspace artifact"))
-	tests := []struct {
-		name string
-		tree *workspacev0.WorkspaceTreeIdentity
-		want string
-	}{
-		{name: "missing", want: "workspace tree identity is required"},
-		{name: "invalid", tree: &workspacev0.WorkspaceTreeIdentity{Digest: "invalid", EntryCount: 1}, want: "workspace tree identity is invalid"},
-		{name: "entry count mismatch", tree: &workspacev0.WorkspaceTreeIdentity{Digest: digest, EntryCount: 2}, want: "tree and artifact entry counts differ"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			client, server := net.Pipe()
-			defer server.Close()
-			go func() {
-				_, _, _ = wire.ReadStreamFrameHeader(server)
-				var request workspacev0.StopWorkspaceRequest
-				_ = frameio.ReadProtoFrame(server, &request)
-				_ = frameio.WriteProtoFrame(server, &workspacev0.StopWorkspaceResponse{
-					Status: "captured", CapturedTree: test.tree,
-					CapturedArtifact: &workspacev0.WorkspaceArtifact{
-						Digest: digest, MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
-						SizeBytes: 1, EntryCount: 1,
-					},
-				})
-			}()
-			_, err := (WorkspaceMaterializer{CAS: &fakeCAS{objects: map[string][]byte{}}}).stopWorkspaceGuest(
-				context.Background(), &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{client}},
-				workerapi.WorkspaceMount{WorkspaceID: "workspace-1", GuestdChannelToken: "token", FencingGeneration: 1},
-				1, true, false,
-			)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("stop error = %v, want %q", err, test.want)
-			}
-		})
-	}
-}
-
-func TestWorkspaceMaterializerExplicitDiscardIgnoresDirtyGeneration(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
-	store, workspaceMount := testWorkspaceMountArtifacts(t)
-	workspaceMount.ID = "mat-1"
-	workspaceMount.OrgID = "org-1"
-	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.GuestdChannelToken = "channel-token"
-	workspaceMount.FencingGeneration = 7
-	done := make(chan error, 1)
-	go func() {
-		header, _, err := wire.ReadStreamFrameHeader(serverConn)
-		if err != nil {
-			done <- err
-			return
-		}
-		if header.Type != wire.StreamTypeWorkspaceStop || header.WorkspaceID != "workspace-1" {
-			done <- fmt.Errorf("stop header = %+v", header)
-			return
-		}
-		var request workspacev0.StopWorkspaceRequest
-		if err := frameio.ReadProtoFrame(serverConn, &request); err != nil {
-			done <- err
-			return
-		}
-		if got := request.GetEnvelope().GetFencingGeneration(); got != 9 {
-			done <- fmt.Errorf("stop fencing_generation = %d, want 9", got)
-			return
-		}
-		if request.GetCaptureBeforeStop() || !request.GetFinalizeStop() {
-			done <- fmt.Errorf("stop request = %+v", &request)
-			return
-		}
-		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
-	}()
-	client := &workspaceMaterializerTestClient{}
-	session := &workspaceMaterializerTestSession{
-		streams: []io.ReadWriteCloser{clientConn},
-	}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{
-		Status:            "unmounting",
-		FencingGeneration: 9,
-		DirtyGeneration:   7,
-		FinalizationKind:  "discard",
-	}, client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if client.stops != 1 {
-		t.Fatalf("stops = %d, want 1", client.stops)
-	}
-	if closed := session.closeCount(); closed != 1 {
-		t.Fatalf("session closes = %d, want 1 before reporting the mount stopped", closed)
-	}
-}
-
-func TestWorkspaceMaterializerDoesNotReportStoppedWhenRuntimeCloseFails(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	defer serverConn.Close()
-	store, workspaceMount := testWorkspaceMountArtifacts(t)
-	workspaceMount.ID = "mat-1"
-	workspaceMount.OrgID = "org-1"
-	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.GuestdChannelToken = "channel-token"
-	done := make(chan error, 1)
-	go func() {
-		if _, _, err := wire.ReadStreamFrameHeader(serverConn); err != nil {
-			done <- err
-			return
-		}
-		var request workspacev0.StopWorkspaceRequest
-		if err := frameio.ReadProtoFrame(serverConn, &request); err != nil {
-			done <- err
-			return
-		}
-		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
-	}()
-	client := &workspaceMaterializerTestClient{}
-	session := &workspaceMaterializerTestSession{
-		streams:  []io.ReadWriteCloser{clientConn},
-		closeErr: errors.New("runtime cleanup failed"),
-	}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting"}, client)
-	if err == nil {
-		t.Fatal("expected runtime close failure")
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if client.stops != 0 {
-		t.Fatalf("stops = %d, want 0", client.stops)
-	}
-	if len(client.failures) != 1 || !strings.Contains(string(client.failures[0].Error), "workspace_mount_runtime_close_failed") {
-		t.Fatalf("failures = %+v", client.failures)
-	}
-}
-
-func TestWorkspaceMaterializerControlledCleanStopFailureFailsWorkspaceMount(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	_ = serverConn.Close()
-	store, workspaceMount := testWorkspaceMountArtifacts(t)
-	workspaceMount.ID = "mat-1"
-	workspaceMount.OrgID = "org-1"
-	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.GuestdChannelToken = "channel-token"
-	client := &workspaceMaterializerTestClient{}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
-		streams: []io.ReadWriteCloser{clientConn},
-	}, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting", FencingGeneration: 9}, client)
-	if err == nil {
-		t.Fatal("expected stop failure")
-	}
-	if client.stops != 0 {
-		t.Fatalf("stops = %d, want 0", client.stops)
-	}
-	if len(client.failures) != 1 {
-		t.Fatalf("failures = %+v", client.failures)
-	}
-	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_mount_stop_failed") {
-		t.Fatalf("failure error = %s", got)
-	}
-}
-
-func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testing.T) {
-	captureClient, captureServer := net.Pipe()
-	defer captureServer.Close()
-	finalClient, finalServer := net.Pipe()
-	defer finalServer.Close()
-	store := &fakeCAS{objects: map[string][]byte{}}
-	body := []byte("dirty workspace")
-	object := store.put(workspace.ArtifactMediaType, body)
-	workspaceMount := workerapi.WorkspaceMount{
-		ID:                     "mat-1",
-		OrgID:                  "org-1",
-		ProjectID:              "project-1",
-		EnvironmentID:          "environment-1",
-		WorkspaceID:            "workspace-1",
-		GuestdChannelToken:     "channel-token",
-		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
-		FencingGeneration:      7,
-	}
-	done := make(chan error, 2)
-	go func() {
-		if _, _, err := wire.ReadStreamFrameHeader(captureServer); err != nil {
-			done <- err
-			return
-		}
-		var request workspacev0.StopWorkspaceRequest
-		if err := frameio.ReadProtoFrame(captureServer, &request); err != nil {
-			done <- err
-			return
-		}
-		if !request.GetCaptureBeforeStop() || request.GetFinalizeStop() {
-			done <- fmt.Errorf("capture stop request = %+v", &request)
-			return
-		}
-		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
-			Status: "captured",
-			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
-				Digest: sha256sum.DigestBytes([]byte("dirty tree")), SizeBytes: 15, EntryCount: 2,
-			},
-			CapturedArtifact: &workspacev0.WorkspaceArtifact{
-				Digest:     object.Digest,
-				MediaType:  object.MediaType,
-				Encoding:   workspace.ArtifactEncoding,
-				SizeBytes:  uint64(object.SizeBytes),
-				EntryCount: 2,
-			},
-		}); err != nil {
-			done <- err
-			return
-		}
-		entryCount := 2
-		if err := wire.WriteStreamFrameHeader(captureServer, wire.StreamHeader{
-			Type:        wire.StreamTypeWorkspaceArtifact,
-			WorkspaceID: "workspace-1",
-			BodyDigest:  &object.Digest,
-			EntryCount:  &entryCount,
-		}, uint64(len(body))); err != nil {
-			done <- err
-			return
-		}
-		_, err := captureServer.Write(body)
-		done <- err
-	}()
-	go func() {
-		if _, _, err := wire.ReadStreamFrameHeader(finalServer); err != nil {
-			done <- err
-			return
-		}
-		var request workspacev0.StopWorkspaceRequest
-		if err := frameio.ReadProtoFrame(finalServer, &request); err != nil {
-			done <- err
-			return
-		}
-		if request.GetCaptureBeforeStop() || !request.GetFinalizeStop() {
-			done <- fmt.Errorf("final stop request = %+v", &request)
-			return
-		}
-		done <- frameio.WriteProtoFrame(finalServer, &workspacev0.StopWorkspaceResponse{Status: "stopped"})
-	}()
-	client := &workspaceMaterializerTestClient{}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
-		streams: []io.ReadWriteCloser{captureClient, finalClient},
-	}, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if err := <-done; err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(client.captures) != 1 {
-		t.Fatalf("captures = %d, want 1", len(client.captures))
-	}
-	capture := client.captures[0]
-	if capture.OrgID != workspaceMount.OrgID || capture.WorkspaceMountID != workspaceMount.ID {
-		t.Fatalf("capture authority = %+v", capture)
-	}
-	if capture.Tree.Digest != sha256sum.DigestBytes([]byte("dirty tree")) || capture.Tree.SizeBytes != 15 || capture.Tree.EntryCount != 2 {
-		t.Fatalf("capture tree = %+v", capture.Tree)
-	}
-	if capture.Artifact.Digest != object.Digest || capture.Artifact.SizeBytes != object.SizeBytes || capture.Artifact.EntryCount != 2 {
-		t.Fatalf("capture artifact = %+v", capture.Artifact)
-	}
-	if client.stops != 1 {
-		t.Fatalf("stops = %d, want 1", client.stops)
-	}
-	if len(client.failures) != 0 {
-		t.Fatalf("failures = %+v", client.failures)
-	}
-}
-
-func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMount(t *testing.T) {
-	captureClient, captureServer := net.Pipe()
-	defer captureServer.Close()
-	finalClient, finalServer := net.Pipe()
-	_ = finalServer.Close()
-	store := &fakeCAS{objects: map[string][]byte{}}
-	body := []byte("dirty workspace")
-	object := store.put(workspace.ArtifactMediaType, body)
-	workspaceMount := workerapi.WorkspaceMount{
-		ID:                     "mat-1",
-		OrgID:                  "org-1",
-		ProjectID:              "project-1",
-		EnvironmentID:          "environment-1",
-		WorkspaceID:            "workspace-1",
-		GuestdChannelToken:     "channel-token",
-		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
-		FencingGeneration:      7,
-	}
-	done := make(chan error, 1)
-	go func() {
-		if _, _, err := wire.ReadStreamFrameHeader(captureServer); err != nil {
-			done <- err
-			return
-		}
-		var request workspacev0.StopWorkspaceRequest
-		if err := frameio.ReadProtoFrame(captureServer, &request); err != nil {
-			done <- err
-			return
-		}
-		if !request.GetCaptureBeforeStop() || request.GetFinalizeStop() {
-			done <- fmt.Errorf("capture stop request = %+v", &request)
-			return
-		}
-		if err := frameio.WriteProtoFrame(captureServer, &workspacev0.StopWorkspaceResponse{
-			Status: "captured",
-			CapturedTree: &workspacev0.WorkspaceTreeIdentity{
-				Digest: sha256sum.DigestBytes([]byte("dirty tree")), SizeBytes: 15, EntryCount: 2,
-			},
-			CapturedArtifact: &workspacev0.WorkspaceArtifact{
-				Digest:     object.Digest,
-				MediaType:  object.MediaType,
-				Encoding:   workspace.ArtifactEncoding,
-				SizeBytes:  uint64(object.SizeBytes),
-				EntryCount: 2,
-			},
-		}); err != nil {
-			done <- err
-			return
-		}
-		entryCount := 2
-		if err := wire.WriteStreamFrameHeader(captureServer, wire.StreamHeader{
-			Type:        wire.StreamTypeWorkspaceArtifact,
-			WorkspaceID: "workspace-1",
-			BodyDigest:  &object.Digest,
-			EntryCount:  &entryCount,
-		}, uint64(len(body))); err != nil {
-			done <- err
-			return
-		}
-		_, err := captureServer.Write(body)
-		done <- err
-	}()
-	client := &workspaceMaterializerTestClient{}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
-		streams: []io.ReadWriteCloser{captureClient, finalClient},
-	}, workspaceMount, workerapi.WorkspaceMountResponse{Status: "unmounting", FencingGeneration: 9, DirtyGeneration: 3}, client)
-	if err == nil {
-		t.Fatal("expected finalize failure")
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	if len(client.captures) != 1 {
-		t.Fatalf("captures = %d, want 1", len(client.captures))
-	}
-	if client.stops != 0 {
-		t.Fatalf("stops = %d, want 0", client.stops)
-	}
-	if len(client.failures) != 1 {
-		t.Fatalf("failures = %+v", client.failures)
-	}
-	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_mount_stop_failed") {
-		t.Fatalf("failure error = %s", got)
-	}
-}
-
-func TestWorkspaceMaterializerCleansPartialArtifactsOnMaterializeFailure(t *testing.T) {
-	ctx := context.Background()
-	store, workspaceMount := testWorkspaceMountArtifacts(t)
-	workspaceMount.ID = "mat-1"
-	workspaceMount.OrgID = "org-1"
-	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.Target.Artifact.SizeBytes++
-	tempDir := t.TempDir()
-	client := &workspaceMaterializerTestClient{}
-	pool := workspacePreparedRuntimePool(t, workspaceMount, &workspaceMaterializerTestSession{})
-	materializer := WorkspaceMaterializer{
-		CAS:         store,
-		TempDir:     tempDir,
-		RuntimePool: pool,
-	}
-	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
-	if err == nil {
-		t.Fatal("expected workspaceMount failure")
-	}
-	if len(client.failures) != 1 {
-		t.Fatalf("failures = %+v", client.failures)
-	}
-	entries, readErr := os.ReadDir(tempDir)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("partial workspaceMount temp files were not cleaned up: %+v", entries)
-	}
-}
-
 func TestWorkspaceMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T) {
 	ctx := context.Background()
 	preparedClient, preparedServer := net.Pipe()
@@ -1210,6 +662,8 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	target := runtimeCapacityTarget(workspaceMount.RuntimeInstanceID, workspaceMount.RuntimeEpoch)
+	target.Source.WorkspaceID = workspaceMount.WorkspaceID
+	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: workspaceMount.Target.BaseWorkspaceVersionID}
 	closeFailure := errors.New("prepared runtime cleanup failed")
 	session := &workspaceMaterializerTestSession{
 		streams:   []io.ReadWriteCloser{preparedClient},
@@ -1435,16 +889,12 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 	ctx := context.Background()
 	preparedClient, preparedServer := net.Pipe()
 	defer preparedServer.Close()
-	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	_, workspaceMount := testWorkspaceMountArtifacts(t)
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
-	workspacePath := filepath.Join(t.TempDir(), "workspace.tar")
-	if err := os.WriteFile(workspacePath, store.objects[workspaceMount.Target.Artifact.Digest], 0o600); err != nil {
-		t.Fatal(err)
-	}
 	session := &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{preparedClient},
 	}
@@ -1454,7 +904,7 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 		acknowledgePreparedWorkspaceMount(t, preparedServer, workspaceMount, "runtime-key")
 	}()
 
-	err := (WorkspaceMaterializer{}).registerWorkspaceMount(ctx, session, workspaceMount, workspacePath, "runtime-key")
+	err := (WorkspaceMaterializer{}).registerWorkspaceMount(ctx, session, workspaceMount, "runtime-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1466,16 +916,12 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 }
 
 func TestWorkspaceMaterializerValidatesSuccessReceiptsOnlyAfterRunningState(t *testing.T) {
-	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	_, workspaceMount := testWorkspaceMountArtifacts(t)
 	workspaceMount.ID = "mat-receipt"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
-	workspacePath := filepath.Join(t.TempDir(), "workspace.tar")
-	if err := os.WriteFile(workspacePath, store.objects[workspaceMount.Target.Artifact.Digest], 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	tests := []struct {
 		name     string
@@ -1526,7 +972,7 @@ func TestWorkspaceMaterializerValidatesSuccessReceiptsOnlyAfterRunningState(t *t
 			go respondToPreparedWorkspaceMountWithRequest(t, preparedServer, test.response)
 			err := (WorkspaceMaterializer{}).registerWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 				streams: []io.ReadWriteCloser{preparedClient},
-			}, workspaceMount, workspacePath, "runtime-key")
+			}, workspaceMount, "runtime-key")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("register error = %v, want %q", err, test.want)
 			}
@@ -1551,15 +997,6 @@ func respondToPreparedWorkspaceMountWithRequest(t *testing.T, stream io.ReadWrit
 	var request workspacev0.MaterializeWorkspaceRequest
 	if err := frameio.ReadProtoFrame(stream, &request); err != nil {
 		t.Errorf("read materialize request: %v", err)
-		return
-	}
-	artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(stream)
-	if err != nil || artifactHeader.Type != wire.StreamTypeWorkspaceArtifact {
-		t.Errorf("read workspace artifact header: header=%+v err=%v", artifactHeader, err)
-		return
-	}
-	if _, err := io.Copy(io.Discard, &io.LimitedReader{R: stream, N: int64(artifactSize)}); err != nil {
-		t.Errorf("drain workspace artifact: %v", err)
 		return
 	}
 	if err := frameio.WriteProtoFrame(stream, response(&request)); err != nil {
@@ -1980,6 +1417,8 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
 	pool.Connector = connector
 	target := runtimeCapacityTarget(mount.RuntimeInstanceID, mount.RuntimeEpoch)
+	target.Source.WorkspaceID = mount.WorkspaceID
+	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseWorkspaceVersionID}
 	control := &typedRuntimeClient{}
 	if err := pool.ReclaimFailedRuntimeTarget(ctx, control, target); err == nil {
 		t.Fatal("unproved host cleanup succeeded")
@@ -1997,4 +1436,33 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	if len(control.failed) != 1 || control.failed[0].CleanupProof == nil || raw.closeCount() != 1 {
 		t.Fatal("reclaim did not publish host proof independently of cached Close")
 	}
+}
+
+func TestPreparedComputerCheckoutRejectsChangedIdentityWithoutConsuming(t *testing.T) {
+	_, mount := testWorkspaceMountArtifacts(t)
+	mount.WorkspaceID = "computer-1"
+	session := &workspaceMaterializerTestSession{}
+	pool := workspacePreparedRuntimePool(t, mount, session)
+	for _, change := range []func(*workerapi.WorkspaceMount){func(m *workerapi.WorkspaceMount) { m.WorkspaceID = "computer-2" }, func(m *workerapi.WorkspaceMount) { m.Target.BaseWorkspaceVersionID = "other-version" }} {
+		wrong := mount
+		change(&wrong)
+		if _, _, ok := pool.Checkout(t.Context(), wrong); ok {
+			t.Fatal("changed Computer source accepted")
+		}
+	}
+	if got, _, ok := pool.Checkout(t.Context(), mount); !ok || got != session {
+		t.Fatal("valid source was consumed by mismatch")
+	}
+}
+
+func (*workspaceMaterializerTestClient) RegisterExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+	return nil
+}
+
+func (*workspaceMaterializerTestClient) CertifyExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+	return nil
+}
+
+func (*workspaceMaterializerTestClient) ReuseExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+	return nil
 }

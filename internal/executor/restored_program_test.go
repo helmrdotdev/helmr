@@ -34,7 +34,7 @@ func TestStartRestoredProgramOrdersGrantStartProofAndRelease(t *testing.T) {
 		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
 			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
-			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			Target:            workerapi.ComputerMountTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
 		}, parent, "restored-channel",
 	)
@@ -79,7 +79,7 @@ func TestStartRestoredProgramRenewsAuthorityUntilRelease(t *testing.T) {
 		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
 			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
-			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			Target:            workerapi.ComputerMountTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
 		}, parent, "restored-channel",
 	)
@@ -141,7 +141,7 @@ func TestStartRestoredProgramStopsBlockedStartAtStartDeadline(t *testing.T) {
 		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
 			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
-			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			Target:            workerapi.ComputerMountTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
 		}, parent, "restored-channel",
 	)
@@ -185,7 +185,7 @@ func TestStartRestoredProgramCancellationClosesBlockedAttach(t *testing.T) {
 		workerapi.WorkspaceMount{
 			ID: claim.Lease.WorkspaceMountID, WorkspaceID: claim.Lease.WorkspaceID,
 			RuntimeInstanceID: claim.Lease.RuntimeInstanceID,
-			Target:            workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
+			Target:            workerapi.ComputerMountTarget{BaseWorkspaceVersionID: claim.Lease.BaseWorkspaceVersionID},
 			FencingGeneration: claim.Lease.MountFencingGeneration, RestoreCheckpointID: "checkpoint-1",
 		}, parent, "restored-channel",
 	)
@@ -323,15 +323,15 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 				VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest},
 		},
 		RuntimeState: workerapi.CheckpointRuntimeState{
-			Computer:            &workerapi.CheckpointComputer{ComputerID: "01950000-0000-7000-8000-000000000001", LogicalBytes: computer.SeedCapacity, Artifact: artifact(sha256sum.DigestBytes([]byte("paired disk")), computer.DiskMediaType, 4096)},
+			Computer:            &workerapi.CheckpointComputer{ComputerID: "01950000-0000-7000-8000-000000000001", LogicalBytes: computer.SeedCapacity, Root: testGenerationRoot(computer.SeedCapacity)},
 			ConfigArtifact:      artifact("config-object", cas.CheckpointRuntimeConfigMediaType, 10),
 			VMStateArtifact:     artifact("state-object", cas.CheckpointVMStateMediaType, 20),
 			MemoryArtifacts:     []workerapi.CheckpointArtifact{artifact("memory-object", cas.CheckpointMemoryMediaType, 30)},
 			ScratchDiskArtifact: artifact("scratch-object", cas.CheckpointScratchDiskMediaType, 40),
 		},
 		WorkspaceState: workerapi.CheckpointWorkspaceState{Base: workerapi.CheckpointWorkspaceBase{
-			ArtifactDigest: "workspace-object", ArtifactSizeBytes: 50,
-			ArtifactMediaType: "workspace-media", ArtifactEncoding: "workspace-encoding", MountPath: "/workspace",
+
+			MountPath: "/workspace",
 		}},
 	}
 	manifest, err := json.Marshal(checkpoint)
@@ -344,7 +344,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	target := workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
 		VMVCPUCount: 2, CPUConfigDigest: cpuConfigDigest,
 		WorkspaceID: checkpoint.RuntimeState.Computer.ComputerID,
-		Computer:    &workerapi.RuntimeComputerSource{VersionID: "01950000-0000-7000-8000-000000000002", LogicalBytes: computer.SeedCapacity, Disk: &workerapi.CASObject{Digest: checkpoint.RuntimeState.Computer.Artifact.Digest, SizeBytes: 4096, MediaType: computer.DiskMediaType}},
+		Computer:    &workerapi.RuntimeComputerSource{VersionID: "01950000-0000-7000-8000-000000000002", LogicalBytes: computer.SeedCapacity, Root: ptrGenerationRoot(computer.SeedCapacity)},
 		Restore: &workerapi.RuntimeRestore{
 			CheckpointID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1",
 			Manifest: manifest,
@@ -602,5 +602,17 @@ func (c *restoredProgramControlPlane) RegisterCheckpoint(context.Context, worker
 }
 
 func (*restoredProgramControlPlane) RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error {
+	return nil
+}
+
+func (*restoredProgramControlPlane) RegisterRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func (*restoredProgramControlPlane) CertifyRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func (*restoredProgramControlPlane) ReuseRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
 	return nil
 }

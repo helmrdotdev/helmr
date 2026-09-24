@@ -6,7 +6,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -28,7 +27,7 @@ func registerPreparationCandidate(t *testing.T, f runPlacementFixture) db.Comput
 	p := db.RegisterComputerInitializationParams{
 		ID: pgvalue.UUID(uuid.NewV7()), RuntimeInstanceID: placement.RuntimeInstanceID,
 		Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, LogicalBytes: 4096,
-		MediaType: computer.DiskMediaType, InitialConfig: []byte(`{"User":"root"}`),
+		MediaType: "application/vnd.helmr.computer.disk.v0+filepack+aesgcm", InitialConfig: []byte(`{"User":"root"}`),
 	}
 	if err := f.pool.QueryRow(f.ctx, `
 SELECT r.environment_id, r.workspace_id, r.reserved_workspace_version_id,

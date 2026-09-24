@@ -7,7 +7,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,7 +24,7 @@ func initializationParams(t *testing.T, f runtest.Fixture) db.RegisterComputerIn
 	p := db.RegisterComputerInitializationParams{
 		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
 		Digest: dbtest.Digest(uuid.NewV7().String()), SizeBytes: 1024, LogicalBytes: 4096,
-		MediaType: computer.DiskMediaType, InitialConfig: []byte(`{"Env":["A=one"],"User":"root"}`),
+		MediaType: "application/vnd.helmr.computer.disk.v0+filepack+aesgcm", InitialConfig: []byte(`{"Env":["A=one"],"User":"root"}`),
 	}
 	if err := f.Pool.QueryRow(t.Context(), `
 SELECT r.id, r.desired_version, w.id, w.head_version_id, w.ownership_generation, w.writer_generation

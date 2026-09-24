@@ -226,7 +226,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 4, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
+		FencingGeneration: 4, Target: workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}, "channel-1")
 	authority := &workspacev0.WorkspaceRunAuthority{
 		Fence: &workspacev0.WorkspaceAuthorityFence{
@@ -762,5 +762,17 @@ func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) 
 }
 
 func (*testRunLeaseControlPlane) RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error {
+	return nil
+}
+
+func (*testRunLeaseControlPlane) RegisterRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func (*testRunLeaseControlPlane) CertifyRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func (*testRunLeaseControlPlane) ReuseRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
 	return nil
 }

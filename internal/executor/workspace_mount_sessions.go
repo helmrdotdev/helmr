@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -421,17 +422,33 @@ func (s *borrowedRunSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return c.SnapshotLimits()
 }
 
-func (s *managedWorkspaceMountSession) PauseComputer(ctx context.Context) (*vm.RuntimeComputer, error) {
+func (s *managedWorkspaceMountSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	capture, ok := s.session.(vm.ComputerCaptureSession)
 	if !ok {
 		return nil, errors.New("mounted session cannot capture a Computer")
 	}
 	return capture.PauseComputer(ctx)
 }
-func (s *borrowedRunSession) PauseComputer(ctx context.Context) (*vm.RuntimeComputer, error) {
+func (s *borrowedRunSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	capture, ok := s.parent.(vm.ComputerCaptureSession)
 	if !ok {
 		return nil, errors.New("mounted session cannot capture a Computer")
 	}
 	return capture.PauseComputer(ctx)
+}
+
+func (s *managedWorkspaceMountSession) PublishComputer(ctx context.Context, root computer.GenerationRoot, publisher computer.ContinuationPublication) error {
+	capture, ok := s.session.(vm.ComputerCaptureSession)
+	if !ok {
+		return errors.New("mounted session cannot publish a Computer")
+	}
+	return capture.PublishComputer(ctx, root, publisher)
+}
+
+func (s *borrowedRunSession) PublishComputer(ctx context.Context, root computer.GenerationRoot, publisher computer.ContinuationPublication) error {
+	capture, ok := s.parent.(vm.ComputerCaptureSession)
+	if !ok {
+		return errors.New("mounted session cannot publish a Computer")
+	}
+	return capture.PublishComputer(ctx, root, publisher)
 }

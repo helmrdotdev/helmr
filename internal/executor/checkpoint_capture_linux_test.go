@@ -40,7 +40,7 @@ func newCaptureTest(t *testing.T) (runtimeCheckpointer, CheckpointRequest, *chec
 	stream := newCheckpointStream(t, nil, "wait", "checkpoint")
 	session := &checkpointSession{stream: stream, artifact: checkpointArtifact(t)}
 	store := &captureStore{}
-	c := runtimeCheckpointer{session: session, stream: stream, objects: store, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
+	c := runtimeCheckpointer{publication: testCheckpointPublication, session: session, stream: stream, objects: store, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
 	request := CheckpointRequest{RunWaitID: "wait", CheckpointID: "checkpoint", CheckpointRequestVersion: 1, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }}
 	return c, request, session, store
 }
@@ -90,7 +90,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(result.Manifest, registered) || len(attempts) != 6 || len(store.puts) != 5 {
+	if !reflect.DeepEqual(result.Manifest, registered) || len(attempts) != 5 || len(store.puts) != 4 {
 		t.Fatalf("registration/uploads mismatch: attempts=%d objects=%d", len(attempts), len(store.puts))
 	}
 	if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes != 0 {
@@ -99,9 +99,7 @@ func TestCheckpointRegistersAllMembersBeforeRetryingExactCiphertext(t *testing.T
 	if session.closeCount != 0 {
 		t.Fatal("successful source stopped before ready")
 	}
-	if _, err := os.Stat(session.artifact.Computer.Path); err != nil {
-		t.Fatalf("working Computer removed: %v", err)
-	}
+
 	entries, err := os.ReadDir(c.tempDir)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("staging survived: %v %v", entries, err)
@@ -161,7 +159,7 @@ func TestCheckpointStopFailureRetainsChargeAndRawSnapshot(t *testing.T) {
 func TestCheckpointCleanupFailureAfterUploadStopsSourceAndRetainsCharge(t *testing.T) {
 	c, request, session, store := newCaptureTest(t)
 	store.publish = func(d cas.Descriptor, f *os.File) error {
-		if len(store.puts) == 4 {
+		if len(store.puts) == 3 {
 			// Replace a completed raw snapshot with a nonempty directory. This creates
 			// a real unlink failure after all uploads, without mocking the cleanup path.
 			p := session.artifact.VMState.Path
@@ -177,7 +175,7 @@ func TestCheckpointCleanupFailureAfterUploadStopsSourceAndRetainsCharge(t *testi
 	}
 	_, err := c.CreateCheckpoint(t.Context(), request)
 	var cleanup *checkpointSourceReleaseError
-	if !errors.As(err, &cleanup) || session.closeCount != 1 || len(store.puts) != 5 {
+	if !errors.As(err, &cleanup) || session.closeCount != 1 || len(store.puts) != 4 {
 		t.Fatalf("err=%v closes=%d uploads=%d", err, session.closeCount, len(store.puts))
 	}
 	if c.capacity.Snapshot().Used.GuestEphemeralDiskBytes == 0 {

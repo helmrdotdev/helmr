@@ -326,9 +326,6 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
 	   reserved_computer_versions.content_digest AS workspace_content_digest,
 	   reserved_computer_versions.size_bytes AS workspace_logical_size_bytes,
        reserved_computer_versions.entry_count AS workspace_entry_count,
-       COALESCE(reserved_workspace_artifacts.digest, '') AS workspace_artifact_digest,
-       COALESCE(reserved_workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
-       COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
        program_deployments.runtime_artifact_digest AS program_runtime_digest,
@@ -363,9 +360,6 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
     ON computer_root.environment_id=reserved_computer_versions.environment_id
    AND computer_root.computer_id=reserved_computer_versions.workspace_id
    AND computer_root.version_id=reserved_computer_versions.id
-  LEFT JOIN artifacts AS reserved_workspace_artifacts
-    ON reserved_workspace_artifacts.environment_id = reserved_computer_versions.environment_id
-   AND reserved_workspace_artifacts.id = reserved_computer_versions.artifact_id
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
@@ -469,9 +463,6 @@ type ListRuntimeReconcileTargetsRow struct {
 	WorkspaceContentDigest          pgtype.Text        `json:"workspace_content_digest"`
 	WorkspaceLogicalSizeBytes       pgtype.Int8        `json:"workspace_logical_size_bytes"`
 	WorkspaceEntryCount             pgtype.Int4        `json:"workspace_entry_count"`
-	WorkspaceArtifactDigest         string             `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes      int64              `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType      string             `json:"workspace_artifact_media_type"`
 	WorkspaceArchitecture           string             `json:"workspace_architecture"`
 	ProgramDeploymentAuthorityID    pgtype.UUID        `json:"program_deployment_authority_id"`
 	ProgramRuntimeDigest            pgtype.Text        `json:"program_runtime_digest"`
@@ -559,9 +550,6 @@ func (q *Queries) ListRuntimeReconcileTargets(ctx context.Context, arg ListRunti
 			&i.WorkspaceContentDigest,
 			&i.WorkspaceLogicalSizeBytes,
 			&i.WorkspaceEntryCount,
-			&i.WorkspaceArtifactDigest,
-			&i.WorkspaceArtifactSizeBytes,
-			&i.WorkspaceArtifactMediaType,
 			&i.WorkspaceArchitecture,
 			&i.ProgramDeploymentAuthorityID,
 			&i.ProgramRuntimeDigest,
@@ -1171,11 +1159,15 @@ UPDATE runtime_instances
    AND runtime_instances.preparation_expires_at > ready_decision.decided_at
    AND EXISTS (
        SELECT 1 FROM computer_versions AS persistent_version
+         JOIN computer_version_roots AS retained_root
+           ON retained_root.environment_id = persistent_version.environment_id
+          AND retained_root.computer_id = persistent_version.workspace_id
+          AND retained_root.version_id = persistent_version.id
         WHERE persistent_version.environment_id = runtime_instances.environment_id
           AND persistent_version.workspace_id = runtime_instances.workspace_id
           AND persistent_version.id = runtime_instances.reserved_workspace_version_id
           AND persistent_version.status IN ('committed', 'private')
-          AND persistent_version.artifact_id IS NOT NULL
+          AND runtime_instances.retained_computer_source_version_id = persistent_version.id
    )
    AND runtime_instances.vm_vcpu_count = $8
    AND runtime_instances.cpu_config_digest = $9

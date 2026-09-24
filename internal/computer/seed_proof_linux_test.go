@@ -3,10 +3,8 @@
 package computer
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -15,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -59,11 +56,6 @@ func TestComputerSeedProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cipher, err := checkpoint.New(bytes.Repeat([]byte{7}, 32))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := DiskStore{CAS: objects, Cipher: cipher}
 	config, err := oci.ReadVerifiedConfig(t.Context(), imagePath, sha256sum.DigestBytes(image), int64(len(image)))
 	if err != nil {
 		t.Fatal(err)
@@ -74,35 +66,11 @@ func TestComputerSeedProof(t *testing.T) {
 	if err := os.Remove(imagePath); err != nil {
 		t.Fatal(err)
 	}
-	initial, err := store.Initialize(t.Context(), diskTestComputer, seedSource, disk, dir, 128<<20)
-	if err != nil {
+	if err := seeds.Decode(t.Context(), seedSource.Artifact, disk, 128<<20); err != nil {
 		t.Fatal(err)
 	}
-	defer initial.Disk.Close()
-	if err := initial.Disk.Upload(t.Context(), diskTestPublisher{objects}); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate serialization of the exact publication payload, not a DB commit.
-	record, err := json.Marshal(InitialDisk{Artifact: initial.Disk.Artifact(), Config: initial.Config})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var published InitialDisk
-	if err := json.Unmarshal(record, &published); err != nil {
-		t.Fatal(err)
-	}
-	restored := filepath.Join(dir, "restored.ext4")
-	if err := store.Restore(t.Context(), diskTestComputer, published.Artifact, restored, 128<<20); err != nil {
-		t.Fatal(err)
-	}
-	if computerProofDigest(t, restored) != computerProofDigest(t, disk) {
-		t.Fatal("initial publication bytes differ")
-	}
-	if published.Config.User != "1000:1000" || published.Config.WorkingDir != "/workspace" || len(published.Config.Env) != 3 {
-		t.Fatalf("lost seed configuration: %+v", published.Config)
-	}
-	if err := os.Remove(restored); err != nil {
-		t.Fatal(err)
+	if seedSource.Config.User != "1000:1000" || seedSource.Config.WorkingDir != "/workspace" || len(seedSource.Config.Env) != 3 {
+		t.Fatal("lost seed configuration")
 	}
 	computerProofCommand(t, "e2fsck", "-fn", disk)
 	if got := computerProofCommand(t, "debugfs", "-R", "cat /sandbox-state", disk); got != "initial environment" {
@@ -159,17 +127,7 @@ func TestComputerSeedProof(t *testing.T) {
 	if computerProofDigest(t, filepath.Clean(unclean)) != original {
 		t.Fatal("equal-size seed contents changed")
 	}
-	// Later wake needs neither the OCI image nor the ext4 seed.
-	if err := os.Remove(seed); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Restore(t.Context(), diskTestComputer, published.Artifact, restored, 128<<20); err != nil {
-		t.Fatal(err)
-	}
-	computerProofCommand(t, "e2fsck", "-fn", restored)
-	if got := computerProofCommand(t, "debugfs", "-R", "cat /sandbox-state", restored); got != "initial environment" {
-		t.Fatal("restored seed state differs")
-	}
+
 	t.Log("independent writable seed, exact capacity, immutable source, exclusive creation, and failed candidate removal passed")
 }
 
@@ -199,4 +157,28 @@ func computerProofDigest(t *testing.T, path string) [32]byte {
 	var result [32]byte
 	copy(result[:], h.Sum(nil))
 	return result
+}
+
+// Simulates admitted client artifacts, not a durable publication transaction.
+func publishTestSeed(t *testing.T, objects cas.Store, source, staging string, config oci.RuntimeConfig) Seed {
+	t.Helper()
+	path := filepath.Join(staging, "seed.filepack")
+	artifact, err := EncodeSeed(t.Context(), source, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	object, err := objects.Put(t.Context(), SeedMediaType, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.Digest != artifact.Object.Digest || object.SizeBytes != artifact.Object.SizeBytes {
+		t.Fatal("uploaded seed differs")
+	}
+	return Seed{Artifact: artifact, Config: config}
 }

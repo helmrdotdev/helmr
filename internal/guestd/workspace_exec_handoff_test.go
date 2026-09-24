@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,72 +247,6 @@ func TestWorkspaceBasicExecReplayBindsAuthorityAndAllowsRenewal(t *testing.T) {
 	}
 }
 
-func TestWorkspaceStopSerializesAdmissionAndRetirement(t *testing.T) {
-	entry := &workspaceMountEntry{}
-	registry := testWorkspaceBasicExecRegistry(entry)
-	req := testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64))
-	server, client := net.Pipe()
-	defer server.Close()
-	defer client.Close()
-	stopped := make(chan error, 1)
-	go func() { stopped <- handleWorkspaceStop(t.Context(), server, registry) }()
-	if err := frameio.WriteProtoFrame(client, &workspacev0.StopWorkspaceRequest{Envelope: req.GetEnvelope(), FinalizeStop: true}); err != nil {
-		t.Fatal(err)
-	}
-	// Reading only the first response byte proves stop owns the transition and is
-	// blocked writing the rest; admission/retirement now race against a real stop.
-	var prefix [1]byte
-	if _, err := client.Read(prefix[:]); err != nil {
-		t.Fatal(err)
-	}
-	admission := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
-	go func() { admission <- registry.runWorkspaceBasicExec(t.Context(), entry, req) }()
-	retired := make(chan struct{})
-	go func() { registry.retire("mount-1", entry); close(retired) }()
-	select {
-	case <-admission:
-		t.Fatal("admission crossed stop")
-	case <-retired:
-		t.Fatal("retirement crossed stop")
-	case <-time.After(20 * time.Millisecond):
-	}
-	if err := client.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-stopped; err == nil {
-		t.Fatal("closed response unexpectedly succeeded")
-	}
-	if result := <-admission; result.GetOutcome() == "exited" {
-		t.Fatal(result)
-	}
-	<-retired
-	if entry.basicExec != nil {
-		t.Fatal("stop admitted a process")
-	}
-}
-
-func TestWorkspaceBasicExecDoneAllowsImmediateStop(t *testing.T) {
-	entry := &workspaceMountEntry{basicExecRun: func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult {
-		return &workspacev0.WorkspaceBasicExecResult{Outcome: "exited"}
-	}}
-	registry := testWorkspaceBasicExecRegistry(entry)
-	req := testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64))
-	if result := framedBasicExec(t, t.Context(), registry, req); result.GetOutcome() != "exited" {
-		t.Fatal(result)
-	}
-	var stream bytes.Buffer
-	if err := frameio.WriteProtoFrame(&stream, &workspacev0.StopWorkspaceRequest{Envelope: req.GetEnvelope(), FinalizeStop: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := handleWorkspaceStop(t.Context(), &stream, registry); err != nil {
-		t.Fatal(err)
-	}
-	if _, release, ok := registry.acquireExact("mount-1", "workspace-1", "channel-token", 1); ok {
-		release()
-		t.Fatal("stopped mount retained")
-	}
-}
-
 func TestWorkspaceBasicExecRejectsActiveProgramAndFreshMismatch(t *testing.T) {
 	entry, registry, authority := testWorkspaceFinalizationMountUnadmitted(t)
 	req := successorExec(authority)
@@ -375,7 +307,7 @@ func TestWorkspaceBasicExecAndProgramAdmissionAreExclusive(t *testing.T) {
 	}
 }
 
-func TestWorkspaceBasicExecActiveStopAndDisconnectedRetirement(t *testing.T) {
+func TestWorkspaceBasicExecDisconnectedRetirement(t *testing.T) {
 	started, finish := make(chan struct{}), make(chan struct{})
 	cleaned := make(chan struct{})
 	entry := &workspaceMountEntry{cleanup: func() { close(cleaned) }, basicExecRun: func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult {
@@ -390,13 +322,6 @@ func TestWorkspaceBasicExecActiveStopAndDisconnectedRetirement(t *testing.T) {
 	result := make(chan *workspacev0.WorkspaceBasicExecResult, 1)
 	go func() { result <- registry.runWorkspaceBasicExec(ctx, entry, request) }()
 	<-started
-	var stream bytes.Buffer
-	if err := frameio.WriteProtoFrame(&stream, &workspacev0.StopWorkspaceRequest{Envelope: request.Envelope, FinalizeStop: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := handleWorkspaceStop(t.Context(), &stream, registry); err == nil {
-		t.Fatal("stop accepted active exec")
-	}
 	cancel()
 	if response := <-result; response.GetOutcome() != "workspace_exec_result_uncertain" {
 		t.Fatal(response)
@@ -412,132 +337,5 @@ func TestWorkspaceBasicExecActiveStopAndDisconnectedRetirement(t *testing.T) {
 	case <-cleaned:
 	case <-time.After(time.Second):
 		t.Fatal("completed exec retained image")
-	}
-}
-
-func TestWorkspaceStopRejectsNewOwnersUntilRetirement(t *testing.T) {
-	for _, committed := range []bool{false, true} {
-		for _, failedResponse := range []bool{false, true} {
-			t.Run(fmt.Sprintf("committed=%v/failed-response=%v", committed, failedResponse), func(t *testing.T) {
-				entry, registry, authority := testWorkspaceFinalizationMountUnadmitted(t)
-				if committed {
-					release, err := registry.admitProgram(entry, authority, time.Now())
-					if err != nil {
-						t.Fatal(err)
-					}
-					release()
-					runWorkspaceCapture(t, registry, testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111"))
-				}
-				envelope := &workspacev0.WorkspaceOperationEnvelope{WorkspaceMountId: entry.workspaceMountID, WorkspaceId: entry.workspaceID, ChannelToken: entry.channelToken, FencingGeneration: entry.currentFencingGeneration()}
-				stop := &workspacev0.StopWorkspaceRequest{Envelope: envelope, CaptureBeforeStop: true}
-				if failedResponse {
-					server, client := net.Pipe()
-					defer server.Close()
-					done := make(chan error, 1)
-					go func() { done <- handleWorkspaceStop(t.Context(), server, registry) }()
-					if err := frameio.WriteProtoFrame(client, stop); err != nil {
-						t.Fatal(err)
-					}
-					if err := client.Close(); err != nil {
-						t.Fatal(err)
-					}
-					if err := <-done; err == nil {
-						t.Fatal("closed stop transport did not fail")
-					}
-				} else {
-					var stream bytes.Buffer
-					if err := frameio.WriteProtoFrame(&stream, stop); err != nil {
-						t.Fatal(err)
-					}
-					if err := handleWorkspaceStop(t.Context(), &stream, registry); err != nil {
-						t.Fatal(err)
-					}
-					var response workspacev0.StopWorkspaceResponse
-					if err := frameio.ReadProtoFrame(&stream, &response); err != nil {
-						t.Fatal(err)
-					}
-					if response.GetStatus() != "captured" {
-						t.Fatal(&response)
-					}
-				}
-				next := proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
-				exec := successorExec(authority)
-				if committed {
-					next.Fence.BaseWorkspaceVersionId = exec.GetBaseWorkspaceVersionId()
-					next.Fence.OwnershipGeneration++
-					next.Fence.WriterGeneration++
-					next.Fence.MountFencingGeneration++
-				} else {
-					exec.BaseWorkspaceVersionId = entry.baseWorkspaceVersionID
-					exec.Envelope.FencingGeneration = entry.currentFencingGeneration()
-				}
-				if release, err := registry.admitProgram(entry, next, time.Now()); err == nil {
-					release()
-					t.Fatal("stopping mount admitted Program")
-				} else if !strings.Contains(err.Error(), "stopping") {
-					t.Fatalf("rejected for another reason: %v", err)
-				}
-				if result := framedBasicExec(t, t.Context(), registry, exec); result.GetOutcome() != "workspace_exec_unavailable" {
-					t.Fatalf("stopping mount exec result: %v", result)
-				}
-				if entry.basicExec != nil || entry.currentFencingGeneration() != envelope.GetFencingGeneration() {
-					t.Fatal("rejected owner mutated mount")
-				}
-				// Failure stays closed, but the native final-stop request must still retire it.
-				var final bytes.Buffer
-				if err := frameio.WriteProtoFrame(&final, &workspacev0.StopWorkspaceRequest{Envelope: envelope, FinalizeStop: true}); err != nil {
-					t.Fatal(err)
-				}
-				if err := handleWorkspaceStop(t.Context(), &final, registry); err != nil {
-					t.Fatal(err)
-				}
-				if _, release, ok := registry.acquireExact(entry.workspaceMountID, entry.workspaceID, entry.channelToken, envelope.GetFencingGeneration()); ok {
-					release()
-					t.Fatal("final stop did not retire")
-				}
-			})
-		}
-	}
-}
-
-func TestWorkspaceStopPreservesExistingExecResultReplay(t *testing.T) {
-	entry := &workspaceMountEntry{workspaceRoot: t.TempDir(), basicExecRun: func(*workspacev0.WorkspaceBasicExecRequest) *workspacev0.WorkspaceBasicExecResult {
-		return &workspacev0.WorkspaceBasicExecResult{Outcome: "exited", Stdout: []byte("retained")}
-	}}
-	registry := testWorkspaceBasicExecRegistry(entry)
-	request := testWorkspaceBasicExecRequest("process-1", strings.Repeat("a", 64))
-	first := framedBasicExec(t, t.Context(), registry, request)
-	if first.GetOutcome() != "exited" {
-		t.Fatal(first)
-	}
-	var stream bytes.Buffer
-	if err := frameio.WriteProtoFrame(&stream, &workspacev0.StopWorkspaceRequest{Envelope: request.Envelope, CaptureBeforeStop: true}); err != nil {
-		t.Fatal(err)
-	}
-	if err := handleWorkspaceStop(t.Context(), &stream, registry); err != nil {
-		t.Fatal(err)
-	}
-	if replay := framedBasicExec(t, t.Context(), registry, request); !proto.Equal(first, replay) {
-		t.Fatalf("stopping changed existing result: %v", replay)
-	}
-}
-
-func TestWorkspaceStopRejectsActiveProgramWithoutStartingStop(t *testing.T) {
-	entry, registry, authority := testWorkspaceFinalizationMountUnadmitted(t)
-	release, err := registry.admitProgram(entry, authority, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	var stream bytes.Buffer
-	request := &workspacev0.StopWorkspaceRequest{Envelope: &workspacev0.WorkspaceOperationEnvelope{WorkspaceMountId: entry.workspaceMountID, WorkspaceId: entry.workspaceID, ChannelToken: entry.channelToken, FencingGeneration: entry.currentFencingGeneration()}, CaptureBeforeStop: true}
-	if err := frameio.WriteProtoFrame(&stream, request); err != nil {
-		t.Fatal(err)
-	}
-	if err := handleWorkspaceStop(t.Context(), &stream, registry); err == nil {
-		t.Fatal("stop admitted while Program active")
-	}
-	if entry.stopping {
-		t.Fatal("rejected stop fenced active Program")
 	}
 }

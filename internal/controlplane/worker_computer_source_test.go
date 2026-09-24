@@ -68,7 +68,7 @@ func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Seed == nil || source.Disk != nil || source.Config.User != "1000" || source.VersionID != pgvalue.UUIDString(initial.BaseWorkspaceVersionID) {
+	if source.Seed == nil || source.Root != nil || source.Config.User != "1000" || source.VersionID != pgvalue.UUIDString(initial.BaseWorkspaceVersionID) {
 		t.Fatalf("initial source: %+v", source)
 	}
 	for _, status := range []string{"committed", "private"} {
@@ -81,7 +81,7 @@ func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if source.Seed != nil || source.Disk != nil || source.Config.User != "original" {
+		if source.Seed != nil || source.Root == nil || source.Config.User != "original" {
 			t.Fatalf("continuation source: %+v", source)
 		}
 	}
@@ -104,7 +104,7 @@ func TestRuntimeComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T)
 		}},
 		{"initial-restore", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7()) }},
 		{"initial-config", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`{}`) }},
-		{"initial-disk", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceArtifactDigest = validDigest('b') }},
+		{"initial-disk", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
 		{"missing-generation", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = nil }},
 		{"disk-conflict", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceContentDigest = pgvalue.Text(validDigest('c')) }},
 		{"generation-format", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},

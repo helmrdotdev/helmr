@@ -39,6 +39,11 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.New(f.pool).MarkRuntimeInstanceReady(f.ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("whole-file publication passed generation gate: %v", err)
+	}
+	// The fixture already has a generation root. Pin it as the generation publisher does.
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE runtime_instances SET computer_source_version_id=reserved_workspace_version_id WHERE id=$1`, candidate.RuntimeInstanceID)
 	// Publication does not itself start user code; readiness and mount are still required.
 	var leases int
 	if err := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM run_leases WHERE run_id=$1`, f.runID).Scan(&leases); err != nil || leases != 0 {

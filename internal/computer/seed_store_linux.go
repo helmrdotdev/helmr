@@ -38,7 +38,7 @@ func EncodeSeed(ctx context.Context, source, target string) (_ SeedArtifact, ret
 	if !info.Mode().IsRegular() {
 		return SeedArtifact{}, errors.New("seed must be a regular file")
 	}
-	limit, err := diskArtifactLimit(info.Size())
+	limit, err := seedArtifactLimit(info.Size())
 	if err != nil {
 		return SeedArtifact{}, err
 	}
@@ -110,4 +110,30 @@ func (s SeedStore) Decode(ctx context.Context, artifact SeedArtifact, target str
 		return err
 	}
 	return os.Link(restored, target)
+}
+
+type boundedWriter struct {
+	writer    io.Writer
+	remaining int64
+}
+
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > w.remaining {
+		return 0, errors.New("computer disk artifact exceeds its encoding bound")
+	}
+	n, err := w.writer.Write(p)
+	w.remaining -= int64(n)
+	return n, err
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }

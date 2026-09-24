@@ -72,15 +72,12 @@ WITH same_workspace_child_authority AS MATERIALIZED (
                  OR EXISTS (
                      SELECT 1
                        FROM computer_versions AS retry_version
-                       JOIN artifacts AS retry_artifact ON retry_artifact.id = retry_version.artifact_id
+                       JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
                        JOIN run_finalization_objects AS retry_capture
                          ON retry_capture.run_lease_id = child_lease.id
                         AND retry_capture.operation_id = child_lease.finalization_operation_id
                         AND retry_capture.lease_status = 'failed'
-                        AND retry_capture.digest = retry_artifact.digest
-                        AND retry_capture.size_bytes = retry_artifact.size_bytes
-                        AND retry_capture.media_type = retry_artifact.media_type
-                        AND retry_capture.logical_bytes = retry_version.size_bytes
+                        AND retry_capture.root = retry_root.locator
                       WHERE retry_version.id = child.base_workspace_version_id
                         AND retry_version.workspace_id = child.workspace_id
                         AND retry_version.status = 'private'
@@ -282,14 +279,7 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
        image_artifacts.id AS image_artifact_id,
        image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
-       image_artifacts.media_type AS image_artifact_media_type,
-       computer_versions.artifact_id AS workspace_artifact_id,
-       COALESCE(workspace_artifacts.digest, '') AS workspace_artifact_digest,
-       COALESCE(workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
-       COALESCE(workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
-	   computer_versions.content_digest AS workspace_content_digest,
-	   computer_versions.size_bytes AS workspace_logical_size_bytes,
-       computer_versions.entry_count AS workspace_entry_count
+       image_artifacts.media_type AS image_artifact_media_type
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
@@ -305,9 +295,6 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
   JOIN computer_versions
     ON computer_versions.workspace_id = claimed.workspace_id
    AND computer_versions.id = claimed.materialized_version_id
-  LEFT JOIN artifacts AS workspace_artifacts
-    ON workspace_artifacts.environment_id = computer_versions.environment_id
-   AND workspace_artifacts.id = computer_versions.artifact_id
   JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id;

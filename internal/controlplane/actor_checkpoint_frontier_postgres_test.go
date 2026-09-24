@@ -17,7 +17,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -61,6 +60,7 @@ func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *ac
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.server.workspaceFencingKey = key
 	f.placement, err = dispatch.NewRunAuthority(b.Pool, key)
 	if err != nil {
 		t.Fatal(err)
@@ -81,6 +81,7 @@ func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *ac
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,$3,'test-workspace',$4,$5)`, f.workspaceID, b.EnvironmentID, runtest.Region, b.WorkspaceDefinitionID, f.rootID)
 	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, b.EnvironmentID, f.workspaceID)
+	dbtest.InsertComputerGeneration(t, t.Context(), tx, b.EnvironmentID, f.workspaceID, f.rootID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +169,7 @@ func (f *actorCheckpointFixture) placeAndClaim(t *testing.T) {
 	var rt db.RuntimeInstance
 	// Report physical preparation through the same DB transition as the Worker.
 	if err := f.Pool.QueryRow(ctx, `SELECT desired_version,observed_version,vm_vcpu_count,cpu_config_digest FROM runtime_instances WHERE id=$1`, reserved.RuntimeInstanceID).Scan(&rt.DesiredVersion, &rt.ObservedVersion, &rt.VMVCPUCount, &rt.CPUConfigDigest); err != nil {
-		t.Fatal(err)
+		t.Fatalf("reserved runtime %+v: %v", reserved, err)
 	}
 	var substrate uuid.UUID
 	if err := f.Pool.QueryRow(ctx, `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,$6,'squashfs','builder-v0',1) ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO UPDATE SET substrate_digest=EXCLUDED.substrate_digest RETURNING id`, uuid.NewV7(), f.OrgID, f.ProjectID, f.EnvironmentID, f.WorkspaceDefinitionID, dbtest.Digest("frontier-substrate")).Scan(&substrate); err != nil {
@@ -176,7 +177,7 @@ func (f *actorCheckpointFixture) placeAndClaim(t *testing.T) {
 	}
 	_, err = q.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300, ID: reserved.RuntimeInstanceID, WorkerInstanceID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: rt.DesiredVersion, ExpectedObservedVersion: rt.ObservedVersion, RuntimeSubstrateID: pgvalue.UUID(substrate), VMVCPUCount: rt.VMVCPUCount, CPUConfigDigest: rt.CPUConfigDigest})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("ready runtime %+v: %v", reserved, err)
 	}
 	_, err = f.placement.PlaceReadyRun(ctx, candidate)
 	if err != nil {
@@ -339,9 +340,9 @@ func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid
 	// tree capture still used by the separate turn-completion test helper.
 	req.Manifest.RuntimeState.Computer = &workerapi.CheckpointComputer{
 		ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes,
-		Artifact: workerapi.CheckpointArtifact{MediaType: computer.DiskMediaType},
+		Root: retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID)),
 	}
-	for _, a := range []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.Computer.Artifact, &req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.ScratchDiskArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0]} {
+	for _, a := range []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.ScratchDiskArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0]} {
 		obj, err := f.server.cas.Put(t.Context(), a.MediaType, strings.NewReader(req.CheckpointID+capture.Artifact.Digest+a.MediaType))
 		if err != nil {
 			t.Fatal(err)
@@ -523,7 +524,6 @@ func TestActorCheckpointFrontierRejectsInvalidRestorePostgres(t *testing.T) {
 		{name: "wrong private parent", sql: `UPDATE computer_versions SET parent_version_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "private generation rewritten", constraint: "computer_versions_source_writer_fence_fkey", sql: `UPDATE computer_versions SET writer_generation=2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID)}},
 		{name: "wrong source lease", constraint: "run_checkpoints_source_workspace_lease_fkey", sql: `UPDATE run_checkpoints SET source_workspace_lease_id=$2 WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID), f.claim.workspaceLease.ID}},
-		{name: "wrong private artifact", sql: `UPDATE computer_versions SET artifact_id=(SELECT program_artifact_id FROM deployments WHERE id=$2) WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.WorkspaceVersionID), f.DeploymentID}},
 		{name: "source still running", constraint: "runtime_instances_close_observation_check", sql: `UPDATE runtime_instances SET observed_state='ready' WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 		{name: "checkpoint invalid", sql: `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='test' WHERE id=$1`, args: []any{uuid.MustParse(checkpoint.CheckpointID)}},
 	} {

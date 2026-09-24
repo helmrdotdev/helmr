@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type typedRuntimeClient struct {
@@ -554,7 +553,7 @@ func TestPreparedRuntimeSourcePreservesComputerReservationAuthority(t *testing.T
 		Computer:               &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
 	}
 	mount := preparedRuntimeWorkspaceMountFromSource(source)
-	if mount.WorkspaceID != source.WorkspaceID || mount.Target.BaseWorkspaceVersionID != source.Computer.VersionID || mount.Target.Artifact != nil {
+	if mount.WorkspaceID != source.WorkspaceID || mount.Target.BaseWorkspaceVersionID != source.Computer.VersionID {
 		t.Fatalf("mount = %#v, want reserved Computer version without a tree artifact", mount)
 	}
 }
@@ -617,37 +616,6 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 		"sha256:"+strings.Repeat("b", 64),
 	); err == nil {
 		t.Fatal("mismatched Program index digest was accepted")
-	}
-}
-
-func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.T) {
-	store, mount := testWorkspaceMountArtifacts(t)
-	pool := NewPreparedRuntimePool(nil, store, 1, nil)
-	materializer := WorkspaceMaterializer{CAS: store}
-	if err := pool.verifyReservedWorkspaceVersion(
-		context.Background(),
-		materializer,
-		t.TempDir(),
-		mount,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.getCalls[mount.Target.Artifact.Digest]; got != 1 {
-		t.Fatalf("Workspace Artifact reads = %d, want 1", got)
-	}
-
-	mount.Target = workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: mount.Target.BaseWorkspaceVersionID,
-		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		Empty:                  &workerapi.EmptyWorkspace{},
-	}
-	if err := pool.verifyReservedWorkspaceVersion(
-		context.Background(),
-		materializer,
-		t.TempDir(),
-		mount,
-	); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -749,7 +717,7 @@ func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 			WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000702",
 			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
 			WorkspaceArchitecture:  "x86_64", ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: computer.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
-			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: computer.SeedCapacity, Disk: &workerapi.CASObject{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 4096, MediaType: computer.DiskMediaType}},
+			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: computer.SeedCapacity, Root: ptrGenerationRoot(computer.SeedCapacity)},
 		},
 	}
 }

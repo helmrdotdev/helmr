@@ -68,7 +68,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 		return source
 	}
 	initial := read()
-	if initial.Seed == nil || initial.Disk != nil || initial.Config.User != "1000" {
+	if initial.Seed == nil || initial.Root != nil || initial.Config.User != "1000" {
 		t.Fatalf("initial: %+v", initial)
 	}
 	published, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input)
@@ -76,12 +76,12 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	continued := read()
-	if continued.Seed != nil || continued.Disk != nil || continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != pgvalue.UUIDString(published.VersionID) {
+	if continued.Seed != nil || continued.Root == nil || continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != pgvalue.UUIDString(published.VersionID) {
 		t.Fatalf("published: %+v", continued)
 	}
 	// A later deployment cannot replace the Computer's initial configuration.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=jsonb_set(manifest,'{image,config}', '{"User":"changed"}') WHERE id=$1`, f.WorkspaceDefinitionID)
-	if source := read(); source.Config.User != "root" || source.Config.WorkingDir != "/workspace" || source.Disk != nil {
+	if source := read(); source.Config.User != "root" || source.Config.WorkingDir != "/workspace" || source.Root == nil {
 		t.Fatalf("continuation depended on receipt or new deployment: %+v", source)
 	}
 }

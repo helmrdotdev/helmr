@@ -19,7 +19,7 @@ func TestActorCompletionAuthorityAcceptsOrdinaryAndRestoredWorkspaceBases(t *tes
 		if err := validateActorCompletionAuthority(t.Context(), store, completion, authority); err != nil {
 			t.Fatal(err)
 		}
-		if slices.Contains(store.calls, "reset_target") {
+		if slices.Contains(store.calls, "computer_version") {
 			t.Fatal("ordinary completion loaded a restored Workspace base")
 		}
 	})
@@ -257,7 +257,7 @@ func validActorCompletionAuthority(
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := validWorkspaceResetTargetAuthority(projection)
+	base := validComputerMountTargetAuthority(projection)
 	store := &runLeaseClaimStore{
 		authority: authority, resetTarget: base,
 		finalizationClear: pgtype.Bool{Bool: true, Valid: true},
@@ -271,7 +271,7 @@ func validActorCompletionAuthority(
 		checkpointID := authority.runtime.RestoreCheckpointID
 		waitID := pgvalue.UUID(uuid.NewV7())
 		sourceRunLeaseID := pgvalue.UUID(uuid.NewV7())
-		store.resetTargets = map[pgtype.UUID]db.GetWorkspaceResetTargetAuthorityRow{
+		store.resetTargets = map[pgtype.UUID]db.GetComputerVersionAuthorityRow{
 			authority.workspaceLease.BaseWorkspaceVersionID: base,
 		}
 		store.readyCheckpoint = db.RunCheckpoint{

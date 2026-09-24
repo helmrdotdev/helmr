@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -53,8 +52,8 @@ func (s *Server) registerRunFinalization(ctx context.Context, worker workerActor
 	if err != nil {
 		return badRequest(err)
 	}
-	disk := computer.DiskArtifact{Object: cas.Descriptor{Digest: request.Disk.Artifact.Digest, SizeBytes: request.Disk.Artifact.SizeBytes, MediaType: request.Disk.Artifact.MediaType}, LogicalBytes: request.Disk.LogicalBytes}
-	if err := disk.Validate(disk.LogicalBytes); err != nil {
+	disk := request.Disk.Root
+	if err := disk.Validate(request.Disk.LogicalBytes); err != nil {
 		return badRequest(err)
 	}
 	return s.inTx(ctx, func(work *txWork) error {
@@ -81,7 +80,11 @@ func (s *Server) registerRunFinalization(ctx context.Context, worker workerActor
 		if err := disk.Validate(authority.runtime.ReservedGuestEphemeralDiskBytes); err != nil {
 			return errStaleRunFinalization
 		}
-		if _, err := work.q.RegisterRunFinalizationObject(ctx, db.RegisterRunFinalizationObjectParams{RunLeaseID: authority.runLease.ID, OperationID: pgvalue.UUID(operationID), Digest: disk.Object.Digest, SizeBytes: disk.Object.SizeBytes, MediaType: disk.Object.MediaType, LogicalBytes: disk.LogicalBytes}); err != nil {
+		rawRoot, err := json.Marshal(disk)
+		if err != nil {
+			return err
+		}
+		if _, err := work.q.RegisterRunFinalizationObject(ctx, db.RegisterRunFinalizationObjectParams{RunLeaseID: authority.runLease.ID, OperationID: pgvalue.UUID(operationID), Root: rawRoot}); err != nil {
 			return fmt.Errorf("register immutable finalization disk: %w", err)
 		}
 		now, err := work.q.GetRunLeaseRenewalTime(ctx)

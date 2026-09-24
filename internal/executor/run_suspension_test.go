@@ -524,7 +524,7 @@ func testRunCheckpointWaitManifest() workerapi.CheckpointManifest {
 			VMVCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("8", 64),
 		}},
 		RuntimeState: workerapi.CheckpointRuntimeState{
-			Computer:            &workerapi.CheckpointComputer{ComputerID: "01900000-0000-7000-8000-000000000903", LogicalBytes: computer.SeedCapacity, Artifact: workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("5", 64), SizeBytes: 1024, MediaType: computer.DiskMediaType}},
+			Computer:            &workerapi.CheckpointComputer{ComputerID: "01900000-0000-7000-8000-000000000903", LogicalBytes: computer.SeedCapacity, Root: testGenerationRoot(computer.SeedCapacity)},
 			ConfigArtifact:      workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("4", 64), MediaType: cas.CheckpointRuntimeConfigMediaType},
 			VMStateArtifact:     workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("1", 64), MediaType: cas.CheckpointVMStateMediaType},
 			ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: "sha256:" + strings.Repeat("3", 64), MediaType: cas.CheckpointScratchDiskMediaType},

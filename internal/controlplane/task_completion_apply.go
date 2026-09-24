@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -419,28 +418,11 @@ func recordTaskWorkspaceVersion(
 	capture workspaceVersionCapture,
 	completedAt pgtype.Timestamptz,
 ) (pgtype.UUID, error) {
-	artifact := capture.artifact
-	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID: authority.run.OrgID, Digest: artifact.Digest,
-		SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
-	}); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record task workspace CAS object: %w", err)
-	}
-	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion,
-		SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
-		CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
-	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record task workspace artifact: %w", err)
-	}
 	version, err := store.PublishTaskWorkspaceVersion(ctx, db.PublishTaskWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-		ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID, ArtifactID: artifactRow.ID,
-		ContentDigest: pgvalue.Text(capture.contentDigest), SizeBytes: capture.sizeBytes, EntryCount: capture.entryCount,
+		ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+		ContentDigest:   pgvalue.Text(capture.root.Pack.Digest), SizeBytes: capture.root.LogicalBytes, EntryCount: 0,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration, PublishedAt: completedAt,
@@ -451,12 +433,14 @@ func recordTaskWorkspaceVersion(
 	if err := updateTaskWorkspaceMountFrontier(ctx, store, authority, version.ID, completedAt); err != nil {
 		return pgtype.UUID{}, err
 	}
+	if err := recordComputerVersionRoot(ctx, store, authority, version.ID, capture.root); err != nil {
+		return pgtype.UUID{}, err
+	}
 	return version.ID, nil
 }
 
 type taskWorkspaceVersionStore interface {
-	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
-	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
+	CreateComputerVersionRoot(context.Context, db.CreateComputerVersionRootParams) error
 	PublishTaskWorkspaceVersion(context.Context, db.PublishTaskWorkspaceVersionParams) (db.ComputerVersion, error)
 	UpdateTaskWorkspaceMountFrontier(context.Context, db.UpdateTaskWorkspaceMountFrontierParams) (db.WorkspaceMount, error)
 }
@@ -832,33 +816,6 @@ func resolveParentOwnedChildWait(
 	return nil
 }
 
-func (s *Server) verifyWorkspaceTreeCapture(ctx context.Context, capture parsedWorkspaceTreeCapture) (parsedWorkspaceTreeCapture, error) {
-	if s.cas == nil {
-		return parsedWorkspaceTreeCapture{}, errors.New("workspace CAS is not configured")
-	}
-	artifact := capture.artifact
-	object, err := s.cas.Stat(ctx, artifact.Digest)
-	if err != nil {
-		return parsedWorkspaceTreeCapture{}, fmt.Errorf("task workspace artifact is missing from CAS: %w", err)
-	}
-	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes ||
-		object.MediaType != artifact.MediaType {
-		return parsedWorkspaceTreeCapture{}, errors.New("task workspace artifact does not match CAS authority")
-	}
-	body, err := s.cas.Get(ctx, artifact.Digest)
-	if err != nil {
-		return parsedWorkspaceTreeCapture{}, fmt.Errorf("open task workspace artifact: %w", err)
-	}
-	defer body.Close()
-	if err := workspace.VerifyArtifact(body, workspace.WorkspaceArtifact{
-		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
-		SizeBytes: artifact.SizeBytes, EntryCount: int(artifact.EntryCount),
-	}, capture.tree); err != nil {
-		return parsedWorkspaceTreeCapture{}, fmt.Errorf("verify task workspace artifact: %w", err)
-	}
-	return capture, nil
-}
-
 func staleTaskCompletion(err error) error {
 	if errors.Is(err, errStaleWorkerClaims) {
 		return err
@@ -876,32 +833,20 @@ func recordChildTaskWorkspaceVersion(
 	authority runLeaseClaimAuthority,
 	capture workspaceVersionCapture,
 ) (pgtype.UUID, error) {
-	artifact := capture.artifact
-	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID: authority.run.OrgID, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
-	}); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace CAS object: %w", err)
-	}
-	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion, SizeBytes: artifact.SizeBytes,
-		MediaType: artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
-	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace artifact: %w", err)
-	}
 	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		ArtifactID: artifactRow.ID, ContentDigest: pgvalue.Text(capture.contentDigest),
-		SizeBytes: capture.sizeBytes, EntryCount: capture.entryCount,
+		ContentDigest: pgvalue.Text(capture.root.Pack.Digest),
+		SizeBytes:     capture.root.LogicalBytes, EntryCount: 0,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 	})
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("record private checkpoint workspace version: %w", err)
+	}
+	if err := recordComputerVersionRoot(ctx, store, authority, version.ID, capture.root); err != nil {
+		return pgtype.UUID{}, err
 	}
 	return version.ID, nil
 }

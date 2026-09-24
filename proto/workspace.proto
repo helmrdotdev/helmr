@@ -129,7 +129,7 @@ message WorkspaceFinalizationReceipt {
 message MaterializeWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
   string mount_path = 2;
-  WorkspaceResetTarget target = 3;
+  ComputerMountTarget target = 3;
   WorkspaceArtifact workspace_image = 4;
   bool use_prepared_runtime = 5;
   string runtime_instance_id = 6;
@@ -149,7 +149,7 @@ message MaterializeWorkspaceResponse {
   string status = 1;
   string guestd_channel_token_hash = 2;
   repeated WorkspaceMountPhase phases = 3;
-  WorkspaceResetTarget target = 4;
+  ComputerMountTarget target = 4;
 }
 
 // OCI runtime settings verified by the worker for the mounted substrate.
@@ -197,30 +197,18 @@ message CaptureWorkspaceResponse {
   string error = 4;
 }
 
-message EmptyWorkspaceResetTarget {}
-
-message WorkspaceResetTarget {
+// The host has already materialized the retained Computer generation.
+message ComputerMountTarget {
   string base_workspace_version_id = 1;
-  WorkspaceTreeIdentity tree = 2;
-  oneof source {
-    EmptyWorkspaceResetTarget empty = 3;
-    WorkspaceArtifact artifact = 4;
-  }
 }
-
 
 
 message StopWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
-  bool capture_before_stop = 2;
-  bool finalize_stop = 3;
 }
-
 message StopWorkspaceResponse {
   string status = 1;
-  WorkspaceArtifact captured_artifact = 2;
-  string error_json = 3;
-  WorkspaceTreeIdentity captured_tree = 4;
+  string error_json = 2;
 }
 
 message WorkspaceBasicExecRequest {

@@ -88,7 +88,7 @@ type RegisterCheckpointObjectParams struct {
 
 // Caller locks the current checkpoint source and owns the enclosing transaction.
 // Registration never observes remote existence or grants guest execution. The
-// entire five-object set must succeed or roll back; exact replays preserve candidate identity.
+// entire four-object set must succeed or roll back; exact replays preserve candidate identity.
 func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error) {
 	row := q.db.QueryRow(ctx, registerCheckpointObject,
 		arg.Role,
@@ -114,7 +114,7 @@ const requireRegisteredCheckpointManifest = `-- name: RequireRegisteredCheckpoin
 SELECT id FROM run_checkpoints
  WHERE id=$1 AND status='creating'
    AND candidate_manifest=$2
-   AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=5
+   AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=4
 `
 
 type RequireRegisteredCheckpointManifestParams struct {

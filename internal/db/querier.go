@@ -223,6 +223,7 @@ type Querier interface {
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
 	GetComputerInitialization(ctx context.Context, arg GetComputerInitializationParams) (ComputerInitialization, error)
+	GetComputerVersionAuthority(ctx context.Context, arg GetComputerVersionAuthorityParams) (GetComputerVersionAuthorityRow, error)
 	GetComputerVersionRoot(ctx context.Context, arg GetComputerVersionRootParams) ([]byte, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error)
@@ -288,7 +289,6 @@ type Querier interface {
 	GetSessionTurn(ctx context.Context, arg GetSessionTurnParams) (SessionTurn, error)
 	GetSessionTurnAtSequenceForUpdate(ctx context.Context, arg GetSessionTurnAtSequenceForUpdateParams) (SessionTurn, error)
 	GetSessionTurnByIDForUpdate(ctx context.Context, arg GetSessionTurnByIDForUpdateParams) (SessionTurn, error)
-	GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStagedWorkspaceExecCaptureParams) (ComputerVersion, error)
 	GetTaskCompletionReplay(ctx context.Context, arg GetTaskCompletionReplayParams) (pgtype.Text, error)
 	GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz, error)
 	GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgtype.Interval) (GetTelemetryOutboxLifecycleRow, error)
@@ -325,7 +325,6 @@ type Querier interface {
 	GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error)
 	GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error)
 	GetWorkspaceMountForWorker(ctx context.Context, arg GetWorkspaceMountForWorkerParams) (WorkspaceMount, error)
-	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
 	GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspaceSecretCAPublicParams) (GetWorkspaceSecretCAPublicRow, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
 	HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error)
@@ -550,7 +549,7 @@ type Querier interface {
 	RegisterCheckpointManifest(ctx context.Context, arg RegisterCheckpointManifestParams) (int64, error)
 	// Caller locks the current checkpoint source and owns the enclosing transaction.
 	// Registration never observes remote existence or grants guest execution. The
-	// entire five-object set must succeed or roll back; exact replays preserve candidate identity.
+	// entire four-object set must succeed or roll back; exact replays preserve candidate identity.
 	RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error)
 	// These are transaction primitives. The publication owner must lock and validate
 	// current preparation authority before registration and publication. Publication
@@ -566,9 +565,8 @@ type Querier interface {
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
-	// The caller locks current finalization authority before registering immutable
-	// bytes. The lease transition releases the availability pin atomically with
-	// outcome publication, or makes an uncommitted upload eligible for reclamation.
+	// Register the immutable generation identity before its objects are uploaded.
+	// Runtime object pins retain the candidate until publication or reclamation.
 	RegisterRunFinalizationObject(ctx context.Context, arg RegisterRunFinalizationObjectParams) (RunFinalizationObject, error)
 	RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error)
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
@@ -599,6 +597,7 @@ type Querier interface {
 	RequireLostRunComputerRecovery(ctx context.Context, arg RequireLostRunComputerRecoveryParams) (int64, error)
 	RequireRegisteredCheckpointManifest(ctx context.Context, arg RequireRegisteredCheckpointManifestParams) (pgtype.UUID, error)
 	RequireRunFinalizationObject(ctx context.Context, arg RequireRunFinalizationObjectParams) (RunFinalizationObject, error)
+	RequireRuntimeComputerObjectPin(ctx context.Context, arg RequireRuntimeComputerObjectPinParams) (string, error)
 	ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error)
 	ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (ReserveWorkspaceForActorRow, error)
 	ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (ReserveWorkspaceForRunRow, error)

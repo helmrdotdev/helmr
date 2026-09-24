@@ -1943,7 +1943,6 @@ CREATE TABLE computer_versions (
         )
         OR (
             parent_version_id IS NOT NULL
-            AND artifact_id IS NOT NULL
             AND content_digest IS NOT NULL
             AND source_workspace_lease_id IS NOT NULL
             AND status <> 'initializing'
@@ -2572,22 +2571,15 @@ CREATE TABLE run_checkpoints (
 CREATE TABLE run_finalization_objects (
     run_lease_id UUID PRIMARY KEY,
     operation_id UUID NOT NULL,
-    digest TEXT NOT NULL UNIQUE REFERENCES cas_object_lifetimes(digest),
-    size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
-    media_type TEXT NOT NULL,
-    logical_bytes BIGINT NOT NULL CHECK (logical_bytes > 0 AND logical_bytes % 4096 = 0),
+    root JSONB NOT NULL CHECK (jsonb_typeof(root) = 'object'),
     lease_status TEXT NOT NULL,
-    availability_required BOOLEAN GENERATED ALWAYS AS (
-        CASE WHEN lease_status = 'finalizing' THEN true END
-    ) STORED,
     FOREIGN KEY (run_lease_id, lease_status) REFERENCES run_leases(id, status)
-        ON UPDATE CASCADE ON DELETE RESTRICT,
-    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available)
+        ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
 CREATE TABLE run_checkpoint_objects (
     checkpoint_id UUID NOT NULL,
-    role TEXT NOT NULL CHECK (role IN ('computer', 'runtime_config', 'vm_state', 'memory', 'scratch_disk')),
+    role TEXT NOT NULL CHECK (role IN ('runtime_config', 'vm_state', 'memory', 'scratch_disk')),
     digest TEXT NOT NULL UNIQUE REFERENCES cas_object_lifetimes(digest),
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
     media_type TEXT NOT NULL,

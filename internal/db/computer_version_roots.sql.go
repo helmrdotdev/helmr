@@ -152,3 +152,23 @@ func (q *Queries) PinRuntimeComputerSource(ctx context.Context, arg PinRuntimeCo
 	}
 	return result.RowsAffected(), nil
 }
+
+const requireRuntimeComputerObjectPin = `-- name: RequireRuntimeComputerObjectPin :one
+SELECT digest FROM runtime_computer_object_pins
+ WHERE runtime_instance_id=$1
+ AND runtime_desired_version=$2
+ AND digest=$3
+`
+
+type RequireRuntimeComputerObjectPinParams struct {
+	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	RuntimeDesiredVersion int64       `json:"runtime_desired_version"`
+	Digest                string      `json:"digest"`
+}
+
+func (q *Queries) RequireRuntimeComputerObjectPin(ctx context.Context, arg RequireRuntimeComputerObjectPinParams) (string, error) {
+	row := q.db.QueryRow(ctx, requireRuntimeComputerObjectPin, arg.RuntimeInstanceID, arg.RuntimeDesiredVersion, arg.Digest)
+	var digest string
+	err := row.Scan(&digest)
+	return digest, err
+}

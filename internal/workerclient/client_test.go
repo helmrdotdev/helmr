@@ -15,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestWorkerLifecycleClient(t *testing.T) {
@@ -180,12 +179,8 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(
 					workerapi.RunLeaseClaimResponse{
 						Lease: receipt,
-						Workspace: workerapi.WorkspaceAttachment{ResetTarget: workerapi.WorkspaceResetTarget{
+						Workspace: workerapi.WorkspaceAttachment{Target: workerapi.ComputerMountTarget{
 							BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
-							Tree: workerapi.WorkspaceTreeIdentity{
-								Digest: workspace.CanonicalEmptyTreeDigest,
-							},
-							Empty: &workerapi.EmptyWorkspace{},
 						}},
 						Execution: workerapi.RunLeaseExecution{
 							Fresh: &workerapi.RunLeaseFresh{
@@ -754,7 +749,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
 		WorkspaceState: workerapi.CheckpointWorkspaceState{
-			Base: workerapi.CheckpointWorkspaceBase{ArtifactDigest: "sha256:workspace", MountPath: "/workspace"},
+			Base: workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"},
 		},
 	}
 }

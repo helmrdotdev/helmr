@@ -1,6 +1,6 @@
 -- Caller locks the current checkpoint source and owns the enclosing transaction.
 -- Registration never observes remote existence or grants guest execution. The
--- entire five-object set must succeed or roll back; exact replays preserve candidate identity.
+-- entire four-object set must succeed or roll back; exact replays preserve candidate identity.
 -- name: RegisterCheckpointObject :one
 WITH lifetime AS (
     INSERT INTO cas_object_lifetimes (digest) VALUES (sqlc.arg(digest))
@@ -28,4 +28,4 @@ UPDATE run_checkpoints SET candidate_manifest=sqlc.arg(manifest)
 SELECT id FROM run_checkpoints
  WHERE id=sqlc.arg(id) AND status='creating'
    AND candidate_manifest=sqlc.arg(manifest)
-   AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=5;
+   AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=4;

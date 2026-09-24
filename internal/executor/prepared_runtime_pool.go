@@ -220,6 +220,12 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount workerapi.Work
 		return nil, key, false
 	}
 	entry := entries[index]
+	if entry.target.Source.Computer == nil || entry.target.Source.WorkspaceID != mount.WorkspaceID ||
+		entry.target.Source.Computer.VersionID != mount.Target.BaseWorkspaceVersionID || strings.TrimSpace(mount.Target.BaseWorkspaceVersionID) == "" {
+		p.mu.Unlock()
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "computer_source_mismatch")
+		return nil, key, false
+	}
 	if err, exited := entry.exit.finished(); exited {
 		p.mu.Unlock()
 		p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), true)
@@ -905,36 +911,6 @@ func runtimeTargetWorkloadBinding(target workerapi.RuntimeReconcileTarget) vm.Wo
 	}
 }
 
-func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
-	ctx context.Context,
-	materializer WorkspaceMaterializer,
-	tempDir string,
-	mount workerapi.WorkspaceMount,
-) error {
-	if strings.TrimSpace(mount.Target.BaseWorkspaceVersionID) == "" {
-		return errors.New("runtime reservation base workspace version is required")
-	}
-	if _, err := workspaceTargetFromWorker(mount.Target); err != nil {
-		return fmt.Errorf("runtime reservation workspace target: %w", err)
-	}
-	if mount.Target.Empty != nil {
-		return nil
-	}
-	artifact := mount.Target.Artifact
-	_, cleanup, err := materializer.restoreCASObject(
-		ctx,
-		tempDir,
-		"workspace-version",
-		workerapi.CASObject{
-			Digest:    artifact.Digest,
-			SizeBytes: artifact.SizeBytes,
-			MediaType: artifact.MediaType,
-		},
-	)
-	cleanup()
-	return err
-}
-
 func (p *PreparedRuntimePool) prepareProgram(
 	ctx context.Context,
 	tempDir string,
@@ -1360,7 +1336,7 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		ID:                      uuid.NewV7().String(),
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
-		Target:                  workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: source.Computer.VersionID},
+		Target:                  workerapi.ComputerMountTarget{BaseWorkspaceVersionID: source.Computer.VersionID},
 		RuntimeIdentityID:       strings.TrimSpace(source.RuntimeIdentityID),
 		WorkspaceImage:          source.WorkspaceImage,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),

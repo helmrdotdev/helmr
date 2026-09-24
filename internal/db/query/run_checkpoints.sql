@@ -109,21 +109,17 @@ SELECT *
 -- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO computer_versions (
     id, environment_id, workspace_id,
-    parent_version_id, artifact_id, content_digest,
+    parent_version_id, content_digest,
     size_bytes, entry_count, status, source_workspace_lease_id,
     ownership_generation, writer_generation
 )
 SELECT
     sqlc.arg(id), sqlc.arg(environment_id),
     sqlc.arg(workspace_id), sqlc.arg(parent_version_id),
-    sqlc.arg(artifact_id), sqlc.arg(content_digest),
+    sqlc.arg(content_digest),
     sqlc.arg(size_bytes), sqlc.arg(entry_count), 'private',
     sqlc.arg(source_workspace_lease_id), sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation)
-  FROM artifacts
- WHERE artifacts.environment_id = sqlc.arg(environment_id)
-   AND artifacts.id = sqlc.arg(artifact_id)
-   AND artifacts.kind = 'workspace_version'
 RETURNING *;
 
 -- name: CheckpointRunLease :one

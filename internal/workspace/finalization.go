@@ -13,11 +13,6 @@ import (
 const FinalizationFingerprintDomain = "helmr.workspace-finalization.v0\x00"
 const FinalizationCaptureKind = "capture"
 
-const (
-	ResetTargetEmpty    = "empty"
-	ResetTargetArtifact = "artifact"
-)
-
 type FinalizationFence struct {
 	WorkerInstanceID       string `json:"worker_instance_id"`
 	WorkerEpoch            int64  `json:"worker_epoch"`
@@ -43,75 +38,12 @@ type FinalizationRequest struct {
 	Target      any               `json:"target,omitempty"`
 }
 
-type ArtifactIdentity struct {
-	Digest     string `json:"digest"`
-	MediaType  string `json:"media_type"`
-	Encoding   string `json:"encoding"`
-	SizeBytes  int64  `json:"size_bytes"`
-	EntryCount int    `json:"entry_count"`
-}
-
-type ResetTarget struct {
-	Kind                   string            `json:"kind"`
-	BaseWorkspaceVersionID string            `json:"base_workspace_version_id"`
-	Tree                   TreeIdentity      `json:"tree"`
-	Artifact               *ArtifactIdentity `json:"artifact,omitempty"`
-}
-
-func EmptyResetTarget(baseWorkspaceVersionID string, tree TreeIdentity) (ResetTarget, error) {
-	target := ResetTarget{Kind: ResetTargetEmpty, BaseWorkspaceVersionID: strings.TrimSpace(baseWorkspaceVersionID), Tree: tree}
-	if err := ValidateResetTarget(target); err != nil {
-		return ResetTarget{}, err
-	}
-	return target, nil
-}
-
-func ArtifactResetTarget(baseWorkspaceVersionID string, tree TreeIdentity, artifact ArtifactIdentity) (ResetTarget, error) {
-	target := ResetTarget{Kind: ResetTargetArtifact, BaseWorkspaceVersionID: strings.TrimSpace(baseWorkspaceVersionID), Tree: tree, Artifact: &artifact}
-	if err := ValidateResetTarget(target); err != nil {
-		return ResetTarget{}, err
-	}
-	return target, nil
-}
-
-func ValidateResetTarget(target ResetTarget) error {
-	if strings.TrimSpace(target.BaseWorkspaceVersionID) == "" {
-		return errors.New("workspace reset base version ID is required")
-	}
-	if !sha256sum.ValidDigest(target.Tree.Digest) || target.Tree.SizeBytes < 0 || target.Tree.SizeBytes > MaxArtifactExtractedBytes || target.Tree.EntryCount < 0 || target.Tree.EntryCount > MaxArtifactEntries {
-		return errors.New("workspace reset tree identity is invalid")
-	}
-	switch target.Kind {
-	case ResetTargetEmpty:
-		if target.Artifact != nil || target.Tree.Digest != CanonicalEmptyTreeDigest || target.Tree.SizeBytes != 0 || target.Tree.EntryCount != 0 {
-			return errors.New("empty workspace reset target must be the canonical empty tree")
-		}
-	case ResetTargetArtifact:
-		if target.Artifact == nil || !sha256sum.ValidDigest(target.Artifact.Digest) || target.Artifact.MediaType != ArtifactMediaType || target.Artifact.Encoding != ArtifactEncoding || target.Artifact.SizeBytes <= 0 || target.Artifact.SizeBytes > MaxArtifactArchiveBytes || target.Artifact.EntryCount < 0 || target.Artifact.EntryCount > MaxArtifactEntries {
-			return errors.New("workspace reset artifact descriptor is invalid")
-		}
-	default:
-		return errors.New("workspace reset target kind is invalid")
-	}
-	return nil
-}
-
 func ValidateTreeIdentity(tree TreeIdentity) error {
 	if !sha256sum.ValidDigest(tree.Digest) || tree.SizeBytes < 0 || tree.SizeBytes > MaxArtifactExtractedBytes ||
 		tree.EntryCount < 0 || tree.EntryCount > MaxArtifactEntries {
 		return errors.New("workspace tree identity is invalid")
 	}
 	return nil
-}
-
-func ResetTargetsEqual(left, right ResetTarget) bool {
-	if left.Kind != right.Kind || left.BaseWorkspaceVersionID != right.BaseWorkspaceVersionID || left.Tree != right.Tree {
-		return false
-	}
-	if left.Artifact == nil || right.Artifact == nil {
-		return left.Artifact == nil && right.Artifact == nil
-	}
-	return *left.Artifact == *right.Artifact
 }
 
 func FinalizationFingerprint(kind string, request FinalizationRequest) (string, error) {
