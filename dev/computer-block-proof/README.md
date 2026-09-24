@@ -623,3 +623,51 @@ container is retained until its result is inspected. Linux overlayfs process exi
 is not proof of host ext4/XFS/Btrfs behavior, kernel crash, power loss or VM FLUSH.
 This cross-compiled binary has no race instrumentation; native race evidence is
 separate. No production runtime is activated by running this command.
+
+## PostgreSQL generation authority experiment
+
+`internal/authority` is a test-only relational model. Its embedded schema is not a
+Product migration, and no runtime imports these operations. It uses the existing
+PostgreSQL test harness with a disposable database/cluster and a separate schema
+per case. Identifiers, descriptors and verified manifests are small trusted
+fixtures; this is not an authorization or cryptographic verification service.
+
+Run against a fresh local PostgreSQL cluster with the pinned tools:
+
+```sh
+nix develop .#default -c env -u HELMR_TEST_DATABASE_URL -u HELMR_SKIP_POSTGRES_TESTS \
+  go test -race -count=1 -v ./dev/computer-block-proof/internal/authority
+```
+
+The tests refuse a missing PostgreSQL executable or the skip flag. The underlying
+harness can also create an isolated database through `HELMR_TEST_DATABASE_URL`;
+use only a deliberately selected test server. The command above ignores that
+variable and creates local resources, then stops/removes them on cleanup.
+
+The model separates version identity from retained payload, and exercises:
+
+- Source/work retention before manifest construction; admission without granting
+  uploaded-content possession; certification with complete fixture-derived edges.
+- Head publication with epoch/predecessor checks, matching receipt replay after
+  authority changes, and independent private checkpoint publication.
+- Candidate-to-version and candidate-to-successor ownership transfer; active
+  attempt/wait predicates retaining payload while audit identity remains.
+- Scoped graph dependencies, shared org/global object lifetimes, descriptor
+  conflicts, and unrelated artifact protection despite cascading CAS deletion.
+- Concurrent admission, retirement, certification, abandonment and publication.
+  Cases that require a blocked transaction observe PostgreSQL's actual blocker.
+- Atomic rollback and backend termination between graph deletion and retirement;
+  detached-object discovery, immutable tombstones and repeated deletion in an
+  in-memory object-store fixture after simulated late upload.
+- Real PostgreSQL deadlock victims, whole-transaction retry and observable budget
+  exhaustion through the actual collector with a competing lock-order fixture. This does not
+  demonstrate a particular
+  production certifier/collector deadlock schedule or workload throughput.
+
+Mutations are confined to the model's operations; this does not qualify permissions
+against arbitrary SQL writers. Root locators, page geometry, all checkpoint runtime
+artifacts and the caller's authority are trusted fixture inputs. The four runtime
+artifact strings demonstrate exact pairing, not their storage durability. The
+experiment does not test remote object services, key delivery, VM stop/restore,
+physical reader exclusion, power loss or public retention policy. It does not
+change SDK behavior or make ordinary Turn completion wait for disk publication.
