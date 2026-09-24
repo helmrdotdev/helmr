@@ -61,6 +61,8 @@ type Querier interface {
 	// TLS preparation is reservation-or-live, distinct from credential use.
 	// The root is persisted at Workspace creation; preparation only captures existing material.
 	CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error)
+	// The data-modifying CTE always runs in the same statement. Certification does
+	// not depend on its inserted row count: every inherited key may already be direct.
 	CertifyComputerObject(ctx context.Context, arg CertifyComputerObjectParams) (int64, error)
 	ChargeRunRuntimePreparationFailure(ctx context.Context, arg ChargeRunRuntimePreparationFailureParams) (Run, error)
 	CheckpointRunLease(ctx context.Context, arg CheckpointRunLeaseParams) (RunLease, error)
@@ -128,7 +130,7 @@ type Querier interface {
 	CreateAttemptSecretResolutions(ctx context.Context, arg CreateAttemptSecretResolutionsParams) (int64, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
-	CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerKey, error)
+	CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerDataKey, error)
 	// These operations run only under the owning Computer/Runtime fence. Locator
 	// framing, authenticated page membership and upload correspondence are prerequisites.
 	CreateComputerVersionRoot(ctx context.Context, arg CreateComputerVersionRootParams) error
@@ -237,7 +239,7 @@ type Querier interface {
 	GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyClaimParams) (IdempotencyClaim, error)
 	// The owning operation holds Computer and Runtime authority. No caller-provided
 	// key selection is accepted. Provider I/O happens only after committing these pins.
-	GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerKey, error)
+	GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerDataKey, error)
 	GetLiveRunLeaseLocators(ctx context.Context, arg GetLiveRunLeaseLocatorsParams) (GetLiveRunLeaseLocatorsRow, error)
 	GetOrgMemberForManagement(ctx context.Context, arg GetOrgMemberForManagementParams) (GetOrgMemberForManagementRow, error)
 	GetPendingActorInputRunWait(ctx context.Context, arg GetPendingActorInputRunWaitParams) (RunWait, error)
@@ -344,7 +346,7 @@ type Querier interface {
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
 	ListCheckpointObjects(ctx context.Context, checkpointID pgtype.UUID) ([]RunCheckpointObject, error)
 	// The root comes from the exact retained owner, never an arbitrary HTTP key list.
-	ListComputerObjectReadKeys(ctx context.Context, arg ListComputerObjectReadKeysParams) ([]ComputerKey, error)
+	ListComputerObjectReadKeys(ctx context.Context, arg ListComputerObjectReadKeysParams) ([]ComputerDataKey, error)
 	ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error)
 	ListDeploymentDefinitionsForDeployment(ctx context.Context, arg ListDeploymentDefinitionsForDeploymentParams) ([]DeploymentDefinition, error)
 	ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([]RunWait, error)
@@ -371,7 +373,7 @@ type Querier interface {
 	ListRunWorkerCapacityPressureCandidates(ctx context.Context, arg ListRunWorkerCapacityPressureCandidatesParams) ([]ListRunWorkerCapacityPressureCandidatesRow, error)
 	// Derive keys from the Runtime's pinned source, not from a caller-supplied root.
 	// The broker must revalidate its full live authority before/after provider I/O.
-	ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInstanceID pgtype.UUID) ([]ComputerKey, error)
+	ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInstanceID pgtype.UUID) ([]ComputerDataKey, error)
 	ListRuntimeReconcileTargets(ctx context.Context, arg ListRuntimeReconcileTargetsParams) ([]ListRuntimeReconcileTargetsRow, error)
 	ListSameWorkspaceAncestorRuns(ctx context.Context, arg ListSameWorkspaceAncestorRunsParams) ([]ListSameWorkspaceAncestorRunsRow, error)
 	ListScheduleSecrets(ctx context.Context, arg ListScheduleSecretsParams) ([]ScheduleSecret, error)

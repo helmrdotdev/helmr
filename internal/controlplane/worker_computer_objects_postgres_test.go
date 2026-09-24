@@ -224,7 +224,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	var expectedRetained int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runtime_computer_objects WHERE runtime_instance_id=$1`, f.runtime).Scan(&expectedRetained); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runtime_computer_object_pins WHERE runtime_instance_id=$1`, f.runtime).Scan(&expectedRetained); err != nil {
 		t.Fatal(err)
 	}
 	for range expectedRetained {

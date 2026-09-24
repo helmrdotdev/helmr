@@ -26,9 +26,9 @@ UPDATE runtime_instances r SET computer_source_version_id=sqlc.arg(version_id)
 SELECT k.* FROM runtime_instances r
  JOIN computer_version_roots v ON v.environment_id=r.environment_id AND v.computer_id=r.workspace_id
    AND v.version_id=r.retained_computer_source_version_id
- JOIN computer_object_read_keys dependency ON dependency.environment_id=v.environment_id
+ JOIN computer_object_keys dependency ON dependency.environment_id=v.environment_id
    AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_digest
- JOIN computer_keys k ON k.environment_id=dependency.environment_id
+ JOIN computer_data_keys k ON k.environment_id=dependency.environment_id
    AND k.computer_id=dependency.computer_id AND k.id=dependency.key_id
  WHERE r.id=sqlc.arg(runtime_instance_id) AND k.available
  ORDER BY k.id;

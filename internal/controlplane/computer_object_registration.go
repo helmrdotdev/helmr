@@ -157,12 +157,12 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 		return errors.New("object differs from registered inspection")
 	}
 	if uploaded == nil {
-		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_objects(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, fence.RuntimeID, object.digest, owner.EnvironmentID, owner.ComputerID, fence.DesiredVersion); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, fence.RuntimeID, object.digest, owner.EnvironmentID, owner.ComputerID, fence.DesiredVersion); err != nil {
 			return err
 		}
 	}
 	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_objects WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3)`, fence.RuntimeID, object.digest, fence.DesiredVersion).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3)`, fence.RuntimeID, object.digest, fence.DesiredVersion).Scan(&retained); err != nil {
 		return err
 	}
 	if !retained {
@@ -211,7 +211,7 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 			}
 		}
 		for _, id := range object.keys {
-			if _, err = tx.Exec(ctx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`, owner.EnvironmentID, owner.ComputerID, object.digest, id); err != nil {
+			if _, err = tx.Exec(ctx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true) ON CONFLICT DO NOTHING`, owner.EnvironmentID, owner.ComputerID, object.digest, id); err != nil {
 				return err
 			}
 		}

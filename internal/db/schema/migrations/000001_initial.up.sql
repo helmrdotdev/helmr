@@ -1785,7 +1785,7 @@ CREATE INDEX workspace_leases_worker_replay_idx
 
 -- Data-key identity survives retirement; wrapped material does not. This table
 -- never stores a plaintext data key or the wrapping provider's credentials.
-CREATE TABLE computer_keys (
+CREATE TABLE computer_data_keys (
     id UUID PRIMARY KEY,
     environment_id UUID NOT NULL,
     computer_id UUID NOT NULL,
@@ -1794,7 +1794,7 @@ CREATE TABLE computer_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     retired_at TIMESTAMPTZ,
     available BOOLEAN GENERATED ALWAYS AS (retired_at IS NULL) STORED,
-    CONSTRAINT computer_keys_material_check CHECK (
+    CONSTRAINT computer_data_keys_material_check CHECK (
         (retired_at IS NULL AND wrapped_key IS NOT NULL AND octet_length(wrapped_key) BETWEEN 1 AND 6144)
         OR (retired_at IS NOT NULL AND wrapped_key IS NULL)
     ),
@@ -1804,7 +1804,7 @@ CREATE TABLE computer_keys (
 );
 ALTER TABLE workspaces ADD CONSTRAINT workspaces_write_key_fkey
     FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
-    REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
+    REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
 
 -- Physical Computer storage ownership is independent of version audit lineage.
 -- Admission retains keys/lifetimes before upload; certification additionally pins
@@ -1844,12 +1844,14 @@ CREATE TABLE computer_object_keys (
     computer_id UUID NOT NULL,
     digest TEXT NOT NULL,
     key_id UUID NOT NULL,
+    is_direct BOOLEAN NOT NULL,
     availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     PRIMARY KEY (environment_id, computer_id, digest, key_id),
+    UNIQUE (environment_id, computer_id, digest, key_id, is_direct),
     FOREIGN KEY (environment_id, computer_id, digest)
         REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE CASCADE,
     FOREIGN KEY (environment_id, computer_id, key_id, availability_required)
-        REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT
+        REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT
 );
 
 CREATE INDEX computer_object_keys_key_idx ON computer_object_keys(environment_id, computer_id, key_id);
@@ -1871,23 +1873,6 @@ CREATE TABLE computer_object_edges (
 );
 CREATE INDEX computer_object_edges_child_idx
     ON computer_object_edges(environment_id, computer_id, child_digest);
-
--- Derived once at certification, from direct keys and immediate child summaries.
--- A key-version summary is not an independent grant or mutable publication head.
-CREATE TABLE computer_object_read_keys (
-    environment_id UUID NOT NULL,
-    computer_id UUID NOT NULL,
-    digest TEXT NOT NULL,
-    key_id UUID NOT NULL,
-    availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
-    PRIMARY KEY (environment_id, computer_id, digest, key_id),
-    FOREIGN KEY (environment_id, computer_id, digest)
-        REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE CASCADE,
-    FOREIGN KEY (environment_id, computer_id, key_id, availability_required)
-        REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT
-);
-
-CREATE INDEX computer_object_read_keys_key_idx ON computer_object_read_keys(environment_id, computer_id, key_id);
 
 CREATE TABLE workspace_versions (
     id UUID PRIMARY KEY,
@@ -1971,14 +1956,15 @@ CREATE TABLE computer_version_roots (
     root_size_bytes BIGINT GENERATED ALWAYS AS ((locator->'pack'->>'size_bytes')::bigint) STORED NOT NULL,
     root_rank INTEGER GENERATED ALWAYS AS ((locator->'pack'->>'rank')::integer) STORED NOT NULL,
     root_key_id UUID GENERATED ALWAYS AS ((locator->'page'->>'key_id')::uuid) STORED NOT NULL,
+    direct_key_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     PRIMARY KEY (environment_id, computer_id, version_id),
     FOREIGN KEY (environment_id, computer_id, version_id)
         REFERENCES workspace_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, root_digest, root_size_bytes, root_rank, certification_required)
         REFERENCES computer_objects(environment_id, computer_id, digest, size_bytes, rank, certified) ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, computer_id, root_digest, root_key_id)
-        REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id) ON DELETE RESTRICT
+    FOREIGN KEY (environment_id, computer_id, root_digest, root_key_id, direct_key_required)
+        REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id, is_direct) ON DELETE RESTRICT
 );
 CREATE INDEX computer_version_roots_object_idx ON computer_version_roots(environment_id, computer_id, root_digest);
 
@@ -3009,9 +2995,9 @@ CREATE TABLE runtime_instances (
     CONSTRAINT runtime_instances_retained_computer_source_fkey FOREIGN KEY (environment_id, workspace_id, retained_computer_source_version_id)
         REFERENCES computer_version_roots(environment_id, computer_id, version_id) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_computer_write_key_fkey FOREIGN KEY (environment_id, workspace_id, computer_write_key_id)
-        REFERENCES computer_keys(environment_id, computer_id, id) ON DELETE RESTRICT,
+        REFERENCES computer_data_keys(environment_id, computer_id, id) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_retained_computer_key_fkey FOREIGN KEY (environment_id, workspace_id, retained_computer_write_key_id, computer_key_available)
-        REFERENCES computer_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT,
+        REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_computer_identity_key UNIQUE (environment_id, workspace_id, id),
     CONSTRAINT runtime_instances_placement_identity_key UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id),
     FOREIGN KEY (org_id, project_id, environment_id)
@@ -3095,7 +3081,7 @@ CREATE TABLE runtime_instances (
 
 -- Physical Runtime ownership keeps staged generation objects alive until
 -- quiescence is proved. Releasing a candidate does not delete graph objects.
-CREATE TABLE runtime_computer_objects (
+CREATE TABLE runtime_computer_object_pins (
     runtime_instance_id UUID NOT NULL,
     digest TEXT NOT NULL,
     environment_id UUID NOT NULL,
@@ -3107,8 +3093,8 @@ CREATE TABLE runtime_computer_objects (
     FOREIGN KEY (environment_id, computer_id, digest)
         REFERENCES computer_objects(environment_id, computer_id, digest) ON DELETE RESTRICT
 );
-CREATE INDEX runtime_computer_objects_object_idx
-    ON runtime_computer_objects(environment_id, computer_id, digest);
+CREATE INDEX runtime_computer_object_pins_object_idx
+    ON runtime_computer_object_pins(environment_id, computer_id, digest);
 
 -- Initial disk uploads retain ownership independently of runtime termination.
 -- Registration is not evidence that the object exists or that a version is committed.

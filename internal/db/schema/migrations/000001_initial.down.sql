@@ -1,4 +1,4 @@
-DROP TABLE IF EXISTS runtime_computer_objects;
+DROP TABLE IF EXISTS runtime_computer_object_pins;
 DROP TABLE IF EXISTS run_finalization_objects;
 DROP TABLE IF EXISTS run_checkpoint_objects;
 DROP TABLE IF EXISTS computer_initializations;
@@ -34,11 +34,10 @@ DROP TABLE IF EXISTS runtime_instances;
 DROP TABLE IF EXISTS workspace_mounts;
 DROP TABLE IF EXISTS workspace_secrets;
 ALTER TABLE workspaces DROP CONSTRAINT IF EXISTS workspaces_write_key_fkey;
-DROP TABLE IF EXISTS computer_object_read_keys;
 DROP TABLE IF EXISTS computer_object_edges;
 DROP TABLE IF EXISTS computer_object_keys;
 DROP TABLE IF EXISTS computer_objects;
-DROP TABLE IF EXISTS computer_keys;
+DROP TABLE IF EXISTS computer_data_keys;
 DROP TABLE IF EXISTS workspaces CASCADE;
 DROP TABLE IF EXISTS auth_sessions;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_run_lease_id_fkey;

@@ -31,7 +31,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	}
 	key1 := pgvalue.UUID(uuid.MustParse(material.ID))
 	key2 := pgvalue.NewUUIDv7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, key2, env, computerID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, key2, env, computerID)
 	q := db.New(f.Pool)
 	object := func(label, kind string, rank int, key pgtype.UUID, uploaded bool) string {
 		t.Helper()
@@ -39,7 +39,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream',$6,$7,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID, kind, rank)
 		if key.Valid {
-			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, computerID, digest, key)
+			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, key)
 		}
 		if uploaded {
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,64,'application/octet-stream')`, f.OrgID, digest)
@@ -73,10 +73,22 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 		t.Fatalf("certify child: %d %v", n, err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, edgeSQL, env, computerID, parent, child)
+	// A directly used key can also be inherited. Certification inserts no new
+	// row in this case and must preserve its direct provenance.
+	overlap := object("overlap", "root", 2, key1, true)
+	dbtest.MustExec(t, t.Context(), f.Pool, edgeSQL, env, computerID, overlap, child)
+	if n, err := certify(overlap); err != nil || n != 1 {
+		t.Fatalf("overlapping key certification: %d %v", n, err)
+	}
+	if scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1`, overlap) != 1 ||
+		scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1 AND is_direct`, overlap) != 1 {
+		t.Fatal("overlap duplicated the key or lost direct provenance")
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_objects WHERE digest=$1`, overlap)
 	// Missing exact CAS membership rolls back both certification and derived keys.
 	_, err = certify(parent)
 	state(err, "23503")
-	if n := scalar(`SELECT count(*) FROM computer_object_read_keys WHERE digest=$1`, parent); n != 0 {
+	if n := scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1 AND NOT is_direct`, parent); n != 0 {
 		t.Fatal("failed certification leaked summary")
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,63,'application/octet-stream')`, f.OrgID, parent)
@@ -142,12 +154,16 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 			t.Fatal("unrelated key selected")
 		}
 	}
+	if scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1 AND is_direct`, parent) != 1 ||
+		scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1 AND NOT is_direct`, parent) != 1 {
+		t.Fatal("certification lost direct/inherited provenance")
+	}
 	// Child edges, certified CAS membership and summaries retain exact dependencies.
 	_, err = f.Pool.Exec(t.Context(), `DELETE FROM computer_objects WHERE digest=$1`, child)
 	state(err, "23503")
 	_, err = f.Pool.Exec(t.Context(), `DELETE FROM cas_objects WHERE digest=$1`, parent)
 	state(err, "23503")
-	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, key2)
+	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, key2)
 	state(err, "23503")
 	_, err = f.Pool.Exec(t.Context(), `UPDATE cas_object_lifetimes SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, parent)
 	state(err, "23503")
@@ -160,7 +176,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	foreign := dbtest.Digest("foreign-root")
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, foreign)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',2,'{}')`, env, sibling, foreign, f.OrgID, f.ProjectID)
-	_, err = f.Pool.Exec(t.Context(), `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, sibling, foreign, key2)
+	_, err = f.Pool.Exec(t.Context(), `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, sibling, foreign, key2)
 	state(err, "23503")
 	_, err = f.Pool.Exec(t.Context(), edgeSQL, env, sibling, foreign, child)
 	state(err, "23503")
@@ -170,13 +186,13 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	}
 	// Parent-first collection releases only its summary; child ownership survives.
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM computer_objects WHERE digest=$1`, parent)
-	if scalar(`SELECT count(*) FROM computer_object_read_keys WHERE digest=$1`, parent) != 0 {
+	if scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1`, parent) != 0 {
 		t.Fatal("summary survived parent deletion")
 	}
-	if scalar(`SELECT count(*) FROM computer_object_read_keys WHERE digest=$1`, child) != 1 {
+	if scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1`, child) != 1 {
 		t.Fatal("child summary lost with parent")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, key2)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, key2)
 }
 
 func TestComputerObjectCertificationRollback(t *testing.T) {
@@ -200,7 +216,7 @@ func TestComputerObjectCertificationRollback(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,64,'application/octet-stream')`, f.OrgID, digest)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',1,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, computerID, digest, material.ID)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, material.ID)
 	if n, err := db.New(tx).CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certification: %d %v", n, err)
 	}
@@ -208,7 +224,7 @@ func TestComputerObjectCertificationRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_read_keys WHERE digest=$1`, digest).Scan(&count); err != nil || count != 0 {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_keys WHERE digest=$1`, digest).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("rollback retained summary: %d %v", count, err)
 	}
 }

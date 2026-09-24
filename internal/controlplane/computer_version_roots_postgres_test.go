@@ -56,7 +56,7 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,512,'application/octet-stream')`, f.OrgID, digest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,512,'application/octet-stream','root',2,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id) VALUES($1,$2,$3,$4)`, env, computerID, digest, key.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, key.ID)
 	integrity(q.CreateComputerVersionRoot(t.Context(), params))
 	if n, err := q.CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certify root: %d %v", n, err)
@@ -67,6 +67,24 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 		p := params
 		p.Locator = encode(bad)
 		integrity(q.CreateComputerVersionRoot(t.Context(), p))
+	}
+	// Merely belonging to the transitive read-key set does not authorize a key
+	// as the root page's own encryption key. Roll back this isolated fixture.
+	inheritedTx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inheritedTx.Rollback(context.Background())
+	inheritedKey := pgvalue.NewUUIDv7()
+	dbtest.MustExec(t, t.Context(), inheritedTx, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, inheritedKey, env, computerID)
+	dbtest.MustExec(t, t.Context(), inheritedTx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,false)`, env, computerID, digest, inheritedKey)
+	inheritedRoot := root
+	inheritedRoot.Page.KeyID = pgvalue.UUIDString(inheritedKey)
+	inheritedParams := params
+	inheritedParams.Locator = encode(inheritedRoot)
+	integrity(db.New(inheritedTx).CreateComputerVersionRoot(t.Context(), inheritedParams))
+	if err = inheritedTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	if err = q.CreateComputerVersionRoot(t.Context(), params); err != nil {
 		t.Fatal(err)

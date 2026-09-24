@@ -69,7 +69,7 @@ func (b *computerKeyBroker) initial(ctx context.Context, f computerKeyFence) (co
 		if wrapErr != nil {
 			return computerKeyMaterial{}, errors.New("wrap computer key")
 		}
-		candidate := db.ComputerKey{ID: keyID, WrappingKeyID: envelope.WrappingKeyID, WrappedKey: envelope.Ciphertext}
+		candidate := db.ComputerDataKey{ID: keyID, WrappingKeyID: envelope.WrappingKeyID, WrappedKey: envelope.Ciphertext}
 		row, scope, err = b.pinInitial(ctx, f, &candidate, scope)
 		if err != nil {
 			return computerKeyMaterial{}, err
@@ -94,26 +94,26 @@ func (b *computerKeyBroker) initial(ctx context.Context, f computerKeyFence) (co
 // pinInitial serializes on the existing Computer/Runtime authority locks. A racing
 // first fetch uses the winner's persisted key. No plaintext or provider I/O occurs
 // inside the transaction, and lost replies retain the same runtime pin for retry.
-func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, candidate *db.ComputerKey, expectedScope string) (db.ComputerKey, string, error) {
+func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, candidate *db.ComputerDataKey, expectedScope string) (db.ComputerDataKey, string, error) {
 	tx, err := b.tx.Begin(ctx)
 	if err != nil {
-		return db.ComputerKey{}, "", err
+		return db.ComputerDataKey{}, "", err
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
 	authority, err := dispatch.LockComputerPreparation(ctx, tx, f.ComputerPreparationFence)
 	if err != nil {
-		return db.ComputerKey{}, "", errComputerKeyUnavailable
+		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	var claims bool
 	err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4
  FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id
  WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
 	if err != nil || !claims {
-		return db.ComputerKey{}, "", errComputerKeyUnavailable
+		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	scope, err := computer.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
 	if err != nil || (expectedScope != "" && expectedScope != scope) {
-		return db.ComputerKey{}, "", errComputerKeyUnavailable
+		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	q := db.New(tx)
 	row, err := q.GetInitialComputerWriteKey(ctx, db.GetInitialComputerWriteKeyParams{RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
@@ -122,43 +122,43 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 		// empty. Never replace an unavailable/corrupt persisted key with a fresh one.
 		var current, runtime pgtype.UUID
 		if err = tx.QueryRow(ctx, `SELECT c.write_key_id,r.computer_write_key_id FROM workspaces c JOIN runtime_instances r ON r.environment_id=c.environment_id AND r.workspace_id=c.id WHERE r.id=$1`, f.RuntimeID).Scan(&current, &runtime); err != nil {
-			return db.ComputerKey{}, "", err
+			return db.ComputerDataKey{}, "", err
 		}
 		if current.Valid || runtime.Valid {
-			return db.ComputerKey{}, "", errComputerKeyUnavailable
+			return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 		}
 		if candidate == nil {
 			if err = authority.CheckDeadlines(ctx, tx); err != nil {
-				return db.ComputerKey{}, "", errComputerKeyUnavailable
+				return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 			}
-			return db.ComputerKey{}, scope, pgx.ErrNoRows
+			return db.ComputerDataKey{}, scope, pgx.ErrNoRows
 		}
 		row, err = q.CreateComputerKey(ctx, db.CreateComputerKeyParams{ID: candidate.ID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID, WrappingKeyID: candidate.WrappingKeyID, WrappedKey: candidate.WrappedKey})
 		if err != nil {
-			return db.ComputerKey{}, "", err
+			return db.ComputerDataKey{}, "", err
 		}
 		n, err := q.InitializeComputerWriteKey(ctx, db.InitializeComputerWriteKeyParams{KeyID: row.ID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
 		if err != nil {
-			return db.ComputerKey{}, "", err
+			return db.ComputerDataKey{}, "", err
 		}
 		if n != 1 {
-			return db.ComputerKey{}, "", errComputerKeyUnavailable
+			return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 		}
 	} else if err != nil {
-		return db.ComputerKey{}, "", err
+		return db.ComputerDataKey{}, "", err
 	}
 	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: row.ID, RuntimeInstanceID: f.RuntimeID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
 	if err != nil {
-		return db.ComputerKey{}, "", err
+		return db.ComputerDataKey{}, "", err
 	}
 	if n != 1 {
-		return db.ComputerKey{}, "", errComputerKeyUnavailable
+		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	if err = authority.CheckDeadlines(ctx, tx); err != nil {
-		return db.ComputerKey{}, "", errComputerKeyUnavailable
+		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return db.ComputerKey{}, "", err
+		return db.ComputerDataKey{}, "", err
 	}
 	return row, scope, nil
 }

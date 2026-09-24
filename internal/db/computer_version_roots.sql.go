@@ -59,9 +59,9 @@ const listRuntimeComputerSourceKeys = `-- name: ListRuntimeComputerSourceKeys :m
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available FROM runtime_instances r
  JOIN computer_version_roots v ON v.environment_id=r.environment_id AND v.computer_id=r.workspace_id
    AND v.version_id=r.retained_computer_source_version_id
- JOIN computer_object_read_keys dependency ON dependency.environment_id=v.environment_id
+ JOIN computer_object_keys dependency ON dependency.environment_id=v.environment_id
    AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_digest
- JOIN computer_keys k ON k.environment_id=dependency.environment_id
+ JOIN computer_data_keys k ON k.environment_id=dependency.environment_id
    AND k.computer_id=dependency.computer_id AND k.id=dependency.key_id
  WHERE r.id=$1 AND k.available
  ORDER BY k.id
@@ -69,15 +69,15 @@ SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, 
 
 // Derive keys from the Runtime's pinned source, not from a caller-supplied root.
 // The broker must revalidate its full live authority before/after provider I/O.
-func (q *Queries) ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInstanceID pgtype.UUID) ([]ComputerKey, error) {
+func (q *Queries) ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInstanceID pgtype.UUID) ([]ComputerDataKey, error) {
 	rows, err := q.db.Query(ctx, listRuntimeComputerSourceKeys, runtimeInstanceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ComputerKey
+	var items []ComputerDataKey
 	for rows.Next() {
-		var i ComputerKey
+		var i ComputerDataKey
 		if err := rows.Scan(
 			&i.ID,
 			&i.EnvironmentID,

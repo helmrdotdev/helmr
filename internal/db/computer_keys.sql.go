@@ -12,7 +12,7 @@ import (
 )
 
 const createComputerKey = `-- name: CreateComputerKey :one
-INSERT INTO computer_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key)
+INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key)
 VALUES($1,$2,$3,$4,$5)
 RETURNING id, environment_id, computer_id, wrapping_key_id, wrapped_key, created_at, retired_at, available
 `
@@ -25,7 +25,7 @@ type CreateComputerKeyParams struct {
 	WrappedKey    []byte      `json:"wrapped_key"`
 }
 
-func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerKey, error) {
+func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerDataKey, error) {
 	row := q.db.QueryRow(ctx, createComputerKey,
 		arg.ID,
 		arg.EnvironmentID,
@@ -33,7 +33,7 @@ func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyPa
 		arg.WrappingKeyID,
 		arg.WrappedKey,
 	)
-	var i ComputerKey
+	var i ComputerDataKey
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -52,7 +52,7 @@ const getInitialComputerWriteKey = `-- name: GetInitialComputerWriteKey :one
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available
   FROM runtime_instances r
   JOIN workspaces c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
-  JOIN computer_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
+  JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
     AND k.id=COALESCE(r.computer_write_key_id,c.write_key_id) AND k.available
  WHERE r.id=$1 AND r.environment_id=$2
    AND r.workspace_id=$3 AND r.reclaimed_at IS NULL
@@ -66,9 +66,9 @@ type GetInitialComputerWriteKeyParams struct {
 
 // The owning operation holds Computer and Runtime authority. No caller-provided
 // key selection is accepted. Provider I/O happens only after committing these pins.
-func (q *Queries) GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerKey, error) {
+func (q *Queries) GetInitialComputerWriteKey(ctx context.Context, arg GetInitialComputerWriteKeyParams) (ComputerDataKey, error) {
 	row := q.db.QueryRow(ctx, getInitialComputerWriteKey, arg.RuntimeInstanceID, arg.EnvironmentID, arg.ComputerID)
-	var i ComputerKey
+	var i ComputerDataKey
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,

@@ -5,13 +5,13 @@
 SELECT k.*
   FROM runtime_instances r
   JOIN workspaces c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
-  JOIN computer_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
+  JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
     AND k.id=COALESCE(r.computer_write_key_id,c.write_key_id) AND k.available
  WHERE r.id=sqlc.arg(runtime_instance_id) AND r.environment_id=sqlc.arg(environment_id)
    AND r.workspace_id=sqlc.arg(computer_id) AND r.reclaimed_at IS NULL;
 
 -- name: CreateComputerKey :one
-INSERT INTO computer_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key)
+INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key)
 VALUES(sqlc.arg(id),sqlc.arg(environment_id),sqlc.arg(computer_id),sqlc.arg(wrapping_key_id),sqlc.arg(wrapped_key))
 RETURNING *;
 

@@ -305,6 +305,17 @@ type CasRetiredUpload struct {
 	NextReclaimAt pgtype.Timestamptz `json:"next_reclaim_at"`
 }
 
+type ComputerDataKey struct {
+	ID            pgtype.UUID        `json:"id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	ComputerID    pgtype.UUID        `json:"computer_id"`
+	WrappingKeyID string             `json:"wrapping_key_id"`
+	WrappedKey    []byte             `json:"wrapped_key"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RetiredAt     pgtype.Timestamptz `json:"retired_at"`
+	Available     pgtype.Bool        `json:"available"`
+}
+
 type ComputerInitialization struct {
 	ID                    pgtype.UUID        `json:"id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
@@ -325,17 +336,6 @@ type ComputerInitialization struct {
 	ConsumedAt            pgtype.Timestamptz `json:"consumed_at"`
 	AbandonedAt           pgtype.Timestamptz `json:"abandoned_at"`
 	AvailabilityRequired  pgtype.Bool        `json:"availability_required"`
-}
-
-type ComputerKey struct {
-	ID            pgtype.UUID        `json:"id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	ComputerID    pgtype.UUID        `json:"computer_id"`
-	WrappingKeyID string             `json:"wrapping_key_id"`
-	WrappedKey    []byte             `json:"wrapped_key"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	RetiredAt     pgtype.Timestamptz `json:"retired_at"`
-	Available     pgtype.Bool        `json:"available"`
 }
 
 type ComputerObject struct {
@@ -370,14 +370,7 @@ type ComputerObjectKey struct {
 	ComputerID           pgtype.UUID `json:"computer_id"`
 	Digest               string      `json:"digest"`
 	KeyID                pgtype.UUID `json:"key_id"`
-	AvailabilityRequired pgtype.Bool `json:"availability_required"`
-}
-
-type ComputerObjectReadKey struct {
-	EnvironmentID        pgtype.UUID `json:"environment_id"`
-	ComputerID           pgtype.UUID `json:"computer_id"`
-	Digest               string      `json:"digest"`
-	KeyID                pgtype.UUID `json:"key_id"`
+	IsDirect             bool        `json:"is_direct"`
 	AvailabilityRequired pgtype.Bool `json:"availability_required"`
 }
 
@@ -390,6 +383,7 @@ type ComputerVersionRoot struct {
 	RootSizeBytes         int64       `json:"root_size_bytes"`
 	RootRank              int32       `json:"root_rank"`
 	RootKeyID             pgtype.UUID `json:"root_key_id"`
+	DirectKeyRequired     pgtype.Bool `json:"direct_key_required"`
 	CertificationRequired pgtype.Bool `json:"certification_required"`
 }
 
@@ -778,7 +772,7 @@ type RunWait struct {
 	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
 }
 
-type RuntimeComputerObject struct {
+type RuntimeComputerObjectPin struct {
 	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
 	Digest                string      `json:"digest"`
 	EnvironmentID         pgtype.UUID `json:"environment_id"`
