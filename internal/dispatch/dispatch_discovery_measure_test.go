@@ -106,6 +106,9 @@ JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).
 		"id", "environment_id", "workspace_id", "content_digest", "artifact_id", "size_bytes", "status",
 		"ownership_generation", "writer_generation", "published_at",
 	}, versions)
+	for index := 1; index < rows; index++ {
+		insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, measurementUUID("workspace", index), measurementUUID("version", index))
+	}
 	copyRows(t, fixture.ctx, tx, "runs", []string{
 		"id", "org_id", "project_id", "environment_id", "deployment_id",
 		"deployment_definition_id", "entrypoint_kind", "entrypoint_declared_id", "cause_kind",

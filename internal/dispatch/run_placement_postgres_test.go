@@ -365,6 +365,7 @@ SELECT $1, environment_id, $2, content_digest, artifact_id,
   FROM computer_versions
  WHERE id = (SELECT head_version_id FROM computers WHERE id = $3)`,
 		secondVersionID, secondWorkspaceID, fixture.workspaceID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, secondWorkspaceID, secondVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,
@@ -1309,6 +1310,7 @@ INSERT INTO computer_versions (
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseWorkspaceVersionID,
 		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
 	)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, privateVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at, condition_status,
@@ -1410,13 +1412,17 @@ UPDATE workspace_leases SET base_workspace_version_id = $2 WHERE id = $1`,
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restoreCheckpointID, reservedVersionID pgtype.UUID
+	var restoreCheckpointID, reservedVersionID, sourceVersionID, retainedVersionID, headVersionID pgtype.UUID
 	err = fixture.pool.QueryRow(fixture.ctx, `
-SELECT restore_checkpoint_id, reserved_workspace_version_id
+SELECT restore_checkpoint_id, reserved_workspace_version_id, computer_source_version_id, retained_computer_source_version_id,
+       (SELECT head_version_id FROM computers WHERE id=runtime_instances.workspace_id)
   FROM runtime_instances
- WHERE id = $1`, restored.RuntimeInstanceID).Scan(&restoreCheckpointID, &reservedVersionID)
+ WHERE id = $1`, restored.RuntimeInstanceID).Scan(&restoreCheckpointID, &reservedVersionID, &sourceVersionID, &retainedVersionID, &headVersionID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if sourceVersionID != pgvalue.UUID(privateVersionID) || retainedVersionID != sourceVersionID || sourceVersionID == headVersionID {
+		t.Fatalf("restore did not retain exact private generation: source=%v retained=%v head=%v", sourceVersionID, retainedVersionID, headVersionID)
 	}
 	if restoreCheckpointID != pgvalue.UUID(checkpointID) || reservedVersionID != pgvalue.UUID(privateVersionID) {
 		t.Fatalf("restore reservation checkpoint=%s version=%s", pgvalue.UUIDString(restoreCheckpointID), pgvalue.UUIDString(reservedVersionID))
@@ -2089,6 +2095,7 @@ SELECT $1, computer_versions.environment_id, computer_versions.workspace_id,
   FROM computer_versions
   JOIN computers ON computers.id = computer_versions.workspace_id
  WHERE computer_versions.id = $3`, continuationFrontierID, workspaceLeaseID, frontierID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, continuationFrontierID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE workspace_mounts
    SET materialized_version_id = $2, updated_at = transaction_timestamp()
@@ -2272,6 +2279,7 @@ INSERT INTO computer_versions (
 ) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, $7, 1, 1)`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseWorkspaceVersionID, privateDigest,
 		sourceWorkspaceLeaseID, privateArtifactID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, privateVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, due_at, condition_status,
@@ -2642,6 +2650,7 @@ INSERT INTO computers (
 		versionID,
 	)
 	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.environmentID, fixture.workspaceID)
+	insertPlacementGeneration(t, ctx, tx, fixture.environmentID, fixture.workspaceID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,

@@ -280,6 +280,7 @@ WITH selected_shape AS MATERIALIZED (
         reserved_run_id,
         reserved_attempt_number,
         reserved_workspace_version_id,
+        computer_source_version_id,
         preparation_expires_at,
         desired_reason
     ) SELECT
@@ -305,9 +306,23 @@ WITH selected_shape AS MATERIALIZED (
         $19,
         $20,
         $21,
+        CASE WHEN source.status = 'initializing' THEN NULL
+             ELSE source.id END,
         transaction_timestamp() + $22::bigint * interval '1 second',
         'run_reservation'
       FROM selected_shape
+      JOIN computer_versions AS source
+        ON source.id = $21
+       AND source.environment_id = $10
+       AND source.workspace_id = $17
+       AND source.status IN ('initializing', 'committed', 'private')
+       AND (source.status = 'initializing' OR EXISTS (
+           SELECT 1 FROM computer_version_roots AS root
+            WHERE root.environment_id = source.environment_id
+              AND root.computer_id = source.workspace_id
+              AND root.version_id = source.id
+              AND root.logical_bytes = $15
+       ))
     RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
 )
 SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.computer_source_version_id, created_runtime.retained_computer_source_version_id, created_runtime.computer_write_key_id, created_runtime.retained_computer_write_key_id, created_runtime.computer_key_available, created_runtime.preparation_expires_at, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.ready_at, created_runtime.terminal_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.updated_at

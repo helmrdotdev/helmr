@@ -359,6 +359,7 @@ SELECT (jsonb_populate_record(
   JOIN computer_versions source_version
     ON source_version.id = source_mount.materialized_version_id
  WHERE source_mount.id = $1`, sourceMountID, versionID, workspaceID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, workspaceID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs
 SELECT (jsonb_populate_record(
@@ -404,6 +405,7 @@ SELECT (jsonb_populate_record(
         'workspace_id', $3::text,
         'reserved_run_id', $4::text,
         'reserved_workspace_version_id', $5::text,
+        'computer_source_version_id', $5::text,
         'reservation_expires_at', transaction_timestamp() + interval '10 minutes',
         'updated_at', transaction_timestamp()
     )

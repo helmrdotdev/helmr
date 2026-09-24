@@ -49,6 +49,7 @@ WITH selected_shape AS MATERIALIZED (
         reserved_run_id,
         reserved_attempt_number,
         reserved_workspace_version_id,
+        computer_source_version_id,
         preparation_expires_at,
         desired_reason
     ) SELECT
@@ -74,9 +75,23 @@ WITH selected_shape AS MATERIALIZED (
         sqlc.arg(run_id),
         sqlc.arg(attempt_number),
         sqlc.arg(base_workspace_version_id),
+        CASE WHEN source.status = 'initializing' THEN NULL
+             ELSE source.id END,
         transaction_timestamp() + sqlc.arg(preparation_seconds)::bigint * interval '1 second',
         'run_reservation'
       FROM selected_shape
+      JOIN computer_versions AS source
+        ON source.id = sqlc.arg(base_workspace_version_id)
+       AND source.environment_id = sqlc.arg(environment_id)
+       AND source.workspace_id = sqlc.arg(workspace_id)
+       AND source.status IN ('initializing', 'committed', 'private')
+       AND (source.status = 'initializing' OR EXISTS (
+           SELECT 1 FROM computer_version_roots AS root
+            WHERE root.environment_id = source.environment_id
+              AND root.computer_id = source.workspace_id
+              AND root.version_id = source.id
+              AND root.logical_bytes = sqlc.arg(reserved_guest_ephemeral_disk_bytes)
+       ))
     RETURNING *
 )
 SELECT created_runtime.*

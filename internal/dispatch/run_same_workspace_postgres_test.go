@@ -82,6 +82,7 @@ INSERT INTO computer_versions (
     'private', $7, 1, 1
 )`, bVersionID, fixture.environmentID, fixture.workspaceID, aVersionID,
 		bArtifactID, bDigest, parentWorkspaceLeaseID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, bVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id,
@@ -345,6 +346,7 @@ INSERT INTO computer_versions (
     'private', $7, 1, 2
 )`, nestedBaseWorkspaceVersionID, fixture.environmentID, fixture.workspaceID, bVersionID,
 		nestedBaseArtifactID, nestedBaseDigest, childWorkspaceLeaseID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, nestedBaseWorkspaceVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash, request_fingerprint, accepted_at
@@ -494,6 +496,7 @@ INSERT INTO computer_versions (
     'private', $7, 1, 3
 )`, nestedResultVersionID, fixture.environmentID, fixture.workspaceID, nestedBaseWorkspaceVersionID,
 		nestedResultArtifactID, nestedResultDigest, grandchildWorkspaceLeaseID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, nestedResultVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_entered_at = transaction_timestamp(), terminal_outcome = 'succeeded',
@@ -750,6 +753,7 @@ INSERT INTO computer_versions (
     'private', $7, 1, 5
 )`, cVersionID, fixture.environmentID, fixture.workspaceID, nestedResultVersionID,
 		cArtifactID, cDigest, childWorkspaceLeaseID)
+	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, cVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
    SET entrypoint_entered_at = transaction_timestamp(), terminal_outcome = 'succeeded',
