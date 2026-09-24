@@ -82,3 +82,31 @@ func (c *File) StoreObject(ctx context.Context, digest [32]byte, raw []byte) err
 	err = errors.Join(directory.Sync(), directory.Close(), ctx.Err())
 	return err
 }
+
+// OpenImmutable opens a locally staged object read-only for exact-byte upload.
+// The owning private staging directory must remain stable until the file closes.
+// The publisher still verifies the digest; this method checks file shape only.
+func (c *File) OpenImmutable(ctx context.Context, expected Descriptor) (*os.File, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := ValidateDescriptor(expected); err != nil {
+		return nil, err
+	}
+	path, _, err := c.path(expected.Digest)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err == nil && (!info.Mode().IsRegular() || info.Size() != expected.SizeBytes || info.Mode().Perm() != 0400) {
+		err = errors.New("immutable stage shape mismatch")
+	}
+	if err = errors.Join(err, ctx.Err()); err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
+}
