@@ -60,6 +60,7 @@ func (s localGenerationSource) GetRange(ctx context.Context, digest string, size
 type LocalGeneration struct {
 	life      sync.RWMutex
 	commit    sync.Mutex
+	store     *cas.File
 	disk      *WritableGeneration
 	directory string
 	head      localGenerationHead
@@ -247,7 +248,7 @@ func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os
 	if err != nil {
 		return nil, err
 	}
-	return &LocalGeneration{disk: disk, directory: cfg.Directory, head: head, lock: lock}, nil
+	return &LocalGeneration{store: store, disk: disk, directory: cfg.Directory, head: head, lock: lock}, nil
 }
 
 func (p *LocalGeneration) step(phase string) error {
@@ -353,4 +354,31 @@ func (p *LocalGeneration) Close() error {
 	}
 	p.closed = true
 	return errors.Join(p.disk.Close(), p.lock.Close())
+}
+
+// Publish exports the root returned by a prior successful Flush. Local bytes stay
+// retained while newer writes and flushes proceed. Close joins publication before
+// clearing keys. The caller must keep remote source/key ownership until the
+// generation has been committed by the Control Plane; this does not commit it.
+func (p *LocalGeneration) Publish(ctx context.Context, root GenerationRoot, publisher interface {
+	GenerationPublication
+	GenerationReuse
+}, maxObjects int) error {
+	p.life.RLock()
+	defer p.life.RUnlock()
+	if p.closed {
+		return os.ErrClosed
+	}
+	p.commit.Lock()
+	capacity := p.head.Base.LogicalBytes
+	p.commit.Unlock()
+	if root.LogicalBytes != capacity {
+		return errors.New("publication capacity differs from admitted Computer")
+	}
+	locator, err := root.Locator(root.LogicalBytes)
+	if err != nil {
+		return err
+	}
+	_, err = publishGeneration(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, root.LogicalBytes, maxObjects, publisher, publisher)
+	return err
 }

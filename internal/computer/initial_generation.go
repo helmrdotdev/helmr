@@ -10,7 +10,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 // GenerationCapture describes a host-owned, quiescent initial disk. The caller
@@ -164,107 +163,5 @@ func (c *InitialGeneration) Publish(ctx context.Context, publisher GenerationPub
 	if publisher == nil {
 		return fail, errors.New("generation publisher required")
 	}
-	keys := map[string][]byte{c.keyID: c.key}
-	packs := make(map[blockformat.PackRef]bool)
-	segments := make(map[blockformat.Ref]bool)
-	remaining := c.maxObjects
-	charge := func() error {
-		remaining--
-		if remaining < 0 {
-			return errors.New("generation publication object budget exceeded")
-		}
-		return ctx.Err()
-	}
-	publish := func(e blockformat.ObjectInspection, digest [32]byte, size int64) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := publisher.Register(ctx, e); err != nil {
-			return err
-		}
-		descriptor := cas.Descriptor{Digest: sha256sum.FormatDigest(digest[:]), SizeBytes: size, MediaType: "application/octet-stream"}
-		file, err := c.store.OpenImmutable(ctx, descriptor)
-		if err != nil {
-			return err
-		}
-		object, uploadErr := publisher.Upload(ctx, descriptor, file)
-		err = errors.Join(uploadErr, file.Close())
-		if err != nil {
-			return err
-		}
-		if object.Digest != descriptor.Digest || object.SizeBytes != descriptor.SizeBytes || object.MediaType != descriptor.MediaType {
-			return errors.New("uploaded generation object differs from candidate")
-		}
-		if err = ctx.Err(); err != nil {
-			return err
-		}
-		return publisher.Certify(ctx, e)
-	}
-	var visit func(blockformat.PackRef, []blockformat.NodeReference) error
-	visit = func(ref blockformat.PackRef, expected []blockformat.NodeReference) error {
-		// Authenticate each incoming position even for an already published pack.
-		inspected, err := blockformat.InspectPack(ctx, c.store, c.scope, keys, ref)
-		if err != nil {
-			return err
-		}
-		if expected != nil {
-			for _, link := range expected {
-				if err = inspected.CheckNode(link); err != nil {
-					return err
-				}
-			}
-		} else {
-			if err = inspected.CheckRoot(c.root, c.capacity); err != nil {
-				return err
-			}
-		}
-		if packs[ref] {
-			return nil
-		}
-		if err = charge(); err != nil {
-			return err
-		}
-		children := make(map[blockformat.PackRef][]blockformat.NodeReference)
-		for _, page := range inspected.Pages {
-			for _, segment := range page.Segments {
-				if segments[segment] {
-					continue
-				}
-				if err = charge(); err != nil {
-					return err
-				}
-				if err = blockformat.InspectSegment(ctx, c.store, c.scope, c.key, segment); err != nil {
-					return err
-				}
-				if err = publish(blockformat.ObjectInspection{Segment: &segment}, segment.Digest, segment.Size); err != nil {
-					return err
-				}
-				segments[segment] = true
-			}
-			for _, child := range page.Children {
-				if child.Locator.Pack.Rank >= ref.Rank {
-					return errors.New("invalid generation dependency rank")
-				}
-				children[child.Locator.Pack] = append(children[child.Locator.Pack], child)
-			}
-		}
-		for child, links := range children {
-			if err = visit(child, links); err != nil {
-				return err
-			}
-		}
-
-		if err = publish(blockformat.ObjectInspection{Pack: &inspected}, ref.Digest, ref.Size); err != nil {
-			return err
-		}
-		packs[ref] = true
-		return nil
-	}
-	if err := visit(c.root.Pack, nil); err != nil {
-		return fail, err
-	}
-	if err := ctx.Err(); err != nil {
-		return fail, err
-	}
-	return c.root, nil
+	return publishGeneration(ctx, c.store, c.store, c.scope, map[string][]byte{c.keyID: c.key}, c.root, c.capacity, c.maxObjects, publisher, nil)
 }
