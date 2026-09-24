@@ -735,3 +735,39 @@ fenced fetch/unwrap/revalidation, provider adapters, irreversible operations aga
 arbitrary SQL writers, remote upload and VM integration remain outside this proof.
 A trusted writer still owns using the pinned key for fresh encryption; a symmetric
 read key cannot cryptographically prevent encrypting new bytes.
+
+### Encrypted generation backend qualification
+
+`cmd/generation-proof` runs the real `computer.LocalGeneration` and NBD server
+against **synthetic data only**. It uses a fixed public fixture key; never point it
+at customer data. The existing `nbd-qualify` uses a 256-block dirty budget and can
+qualify this backend without changing device ownership or teardown requirements.
+The same disposable-host prerequisites, allowlist, private native Linux arena,
+container limits, network isolation and failure evidence rules above apply.
+
+Build both binaries for the disposable Linux host architecture:
+
+```sh
+nix develop .#default -c env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/helmr-generation-proof ./dev/computer-block-proof/cmd/generation-proof
+nix develop .#default -c env GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/helmr-nbd-qualify ./dev/computer-block-proof/cmd/nbd-qualify
+```
+
+In the owned-device container invocation above, mount the generation binary as
+`/generation-proof` instead of `/block-proof`. Run the following within the same
+bounded container, with `HELMR_DISPOSABLE_NBD_PROOF=1`:
+
+```sh
+/nbd-qualify /generation-proof /tmp/owned-arena &&
+/generation-proof -verify -dir /tmp/owned-arena/store &&
+/generation-proof -verify -dir /tmp/owned-arena-helper-death/store
+```
+
+This checks unprivileged jail I/O, FLUSH, device exclusion, backend/helper death,
+consumer reaping and device inactivity, then authenticates committed data from the
+reopened generation after process death. The fixture's source manifest is setup
+metadata, not a qualified production durability protocol. It does not establish
+VM boot/restore, host reboot/power-loss, remote persistence or production admission.
+Preserve each arena's `config.json` and `claim.json` individually: copying the whole
+arena to macOS attempts to recreate a block-device node and can fail. Preserve logs
+and binary hashes, verify inactive devices and absent owned processes, then remove
+only the task-owned stopped container. Never clear devices by name.

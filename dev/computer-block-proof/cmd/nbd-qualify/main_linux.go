@@ -74,7 +74,7 @@ func qualify(backend, arena string, crash bool) error {
 	if err != nil {
 		return err
 	}
-	server := exec.Command(backend, "-create", "-dir", filepath.Join(arena, "store"), "-socket", filepath.Join(arena, "backend.sock"), "-size", "16777216", "-limit", "4096")
+	server := exec.Command(backend, "-create", "-dir", filepath.Join(arena, "store"), "-socket", filepath.Join(arena, "backend.sock"), "-size", "16777216", "-limit", "256")
 	server.Stdout = os.Stdout
 	server.Stderr = os.Stderr
 	if err = server.Start(); err != nil {
@@ -276,7 +276,7 @@ func rejectSecond(ctx context.Context, exe, backend, arena, device string) error
 	if err = os.Mkdir(collisionArena, 0700); err != nil {
 		return err
 	}
-	second := exec.Command(backend, "-create", "-dir", filepath.Join(collisionArena, "store"), "-socket", filepath.Join(collisionArena, "backend.sock"), "-size", "16777216", "-limit", "4096")
+	second := exec.Command(backend, "-create", "-dir", filepath.Join(collisionArena, "store"), "-socket", filepath.Join(collisionArena, "backend.sock"), "-size", "16777216", "-limit", "256")
 	second.Stderr = os.Stderr
 	if err = second.Start(); err != nil {
 		return err
