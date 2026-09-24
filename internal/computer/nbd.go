@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/nbd"
@@ -72,4 +73,14 @@ func (d generationDevice) Trim(ctx context.Context, off int64, n int) error {
 func (d generationDevice) Flush(ctx context.Context) error {
 	_, err := d.LocalGeneration.Flush(ctx)
 	return generationDeviceError(err)
+}
+
+// ServeNBD owns a private listener for one exclusive device connection, including
+// negotiation and cancellation. It returns after all connection I/O has stopped;
+// the caller remains responsible for device/consumer exclusion before disk Close.
+func (p *LocalGeneration) ServeNBD(ctx context.Context, listener net.Listener) error {
+	p.life.RLock()
+	size := p.head.Root.LogicalBytes
+	p.life.RUnlock()
+	return nbd.ServeOnce(ctx, listener, generationDevice{p}, size)
 }
