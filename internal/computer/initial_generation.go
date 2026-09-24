@@ -14,7 +14,8 @@ import (
 )
 
 // GenerationCapture describes a host-owned, quiescent initial disk. The caller
-// reserves MaxStagedBytes before capture and keeps Disk unchanged until it returns.
+// reserves MaxStagedBytes before capture and exclusively owns the unchanged Disk
+// until it returns. Capture uses its seek position to skip filesystem holes.
 // This is initialization only, not a running disk snapshot or a continuation.
 type GenerationCapture struct {
 	Disk              *os.File
@@ -103,14 +104,10 @@ func CaptureInitialGeneration(ctx context.Context, request GenerationCapture) (_
 	const batchBytes = blockformat.MaxChangedBlocks * blockformat.BlockSize
 	buffer := make([]byte, batchBytes)
 	zero := make([]byte, blockformat.BlockSize)
-	for offset := int64(0); offset < request.Capacity; {
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
-		size := min(int64(len(buffer)), request.Capacity-offset)
+	err = walkInitialDiskData(ctx, request.Disk, request.Capacity, func(offset, size int64) error {
 		chunk := buffer[:size]
 		if _, err = io.ReadFull(io.NewSectionReader(request.Disk, offset, size), chunk); err != nil {
-			return nil, err
+			return err
 		}
 		changes := make(map[uint64][]byte)
 		for i := 0; i < len(chunk); i += blockformat.BlockSize {
@@ -122,10 +119,13 @@ func CaptureInitialGeneration(ctx context.Context, request GenerationCapture) (_
 		if len(changes) > 0 {
 			candidate.root, err = writer.Capture(ctx, candidate.root, request.Capacity, changes)
 			if err != nil {
-				return nil, err
+				return err
 			}
 		}
-		offset += size
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	after, err := request.Disk.Stat()
 	if err != nil {
