@@ -2922,7 +2922,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 						machine.Cfg.Drives[i].PathOnHost = firecracker.String(filepath.Base(rootfsPath))
 					}
 				}
-				if err := linkWritableDiskIntoJail(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if err := linkWritableDiskIntoJail(scratchDiskPath, root, scratchDiskName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link scratch disk into jail: %w", err)
 				}
 				for i := range machine.Cfg.Drives {
@@ -2942,7 +2942,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 					}
 				}
 				if computerDiskPath != "" {
-					if err := linkWritableDiskIntoJail(computerDiskPath, root, "computer.ext4", *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+					if err := linkWritableDiskIntoJail(computerDiskPath, root, "computer.ext4", *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, true); err != nil {
 						return fmt.Errorf("link Computer into restore jail: %w", err)
 					}
 					for i := range machine.Cfg.Drives {
@@ -2951,10 +2951,10 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 						}
 					}
 				}
-				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if err := linkWritableDiskIntoJail(memoryPath, root, filepath.Base(memoryPath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link snapshot memory into jail: %w", err)
 				}
-				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
+				if err := linkWritableDiskIntoJail(statePath, root, filepath.Base(statePath), *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID, false); err != nil {
 					return fmt.Errorf("link snapshot state into jail: %w", err)
 				}
 				machine.Cfg.Snapshot.MemFilePath = path.Join("/", filepath.Base(memoryPath))
@@ -2967,7 +2967,7 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 
 // Writable disks must retain one inode: capture reads the instance path while
 // the VMM writes its jailed link. A clone or copy would split those histories.
-func linkWritableDiskIntoJail(source, root, name string, uid, gid int) error {
+func linkWritableDiskIntoJail(source, root, name string, uid, gid int, allowBlock bool) error {
 	if name != filepath.Base(name) || name == "." || name == ".." {
 		return errors.New("writable disk jail name must be a basename")
 	}
@@ -2975,8 +2975,8 @@ func linkWritableDiskIntoJail(source, root, name string, uid, gid int) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() {
-		return errors.New("writable disk source must be a regular file")
+	if !info.Mode().IsRegular() && (!allowBlock || !validComputerBacking(info)) {
+		return errors.New("invalid writable backing type")
 	}
 	target := filepath.Join(root, name)
 	created := false
@@ -2984,7 +2984,7 @@ func linkWritableDiskIntoJail(source, root, name string, uid, gid int) error {
 		// The SDK's sealed-drive handler may already have linked ordinary drives.
 		// Accept only that exact inode; never replace an unrelated existing target.
 		linked, statErr := os.Lstat(target)
-		if !errors.Is(err, os.ErrExist) || statErr != nil || !linked.Mode().IsRegular() || !os.SameFile(info, linked) {
+		if !errors.Is(err, os.ErrExist) || statErr != nil || !os.SameFile(info, linked) {
 			return fmt.Errorf("link writable disk without copying: %w", err)
 		}
 	} else {

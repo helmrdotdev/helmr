@@ -91,7 +91,9 @@ type RuntimeTopology struct {
 }
 
 // RuntimeComputer transfers an exclusively owned working disk to the VM owner.
-// File is valid through Materialize; the connector retains its own inode link.
+// File is a private backing inode, valid through Materialize; the connector
+// retains its own inode link. For a block device the Runtime must also retain its
+// attachment and export until the VMM and all device users are proven absent.
 // VersionID identifies the published source, not subsequent guest writes.
 type RuntimeComputer struct {
 	ComputerID string

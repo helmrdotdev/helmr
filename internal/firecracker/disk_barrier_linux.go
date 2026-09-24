@@ -117,8 +117,8 @@ func syncPausedBacking(file *os.File, source, backing string) error {
 		return errors.New("retained backing descriptor is missing")
 	}
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return errors.Join(errors.New("paused backing file must be regular"), err)
+	if err != nil || !validComputerBacking(info) {
+		return errors.Join(errors.New("paused backing must be a regular file or block device"), err)
 	}
 	for _, path := range []string{source, backing} {
 		linked, err := os.Stat(path)
@@ -146,8 +146,11 @@ func openRuntimeDiskFiles(scratch, computer string) (files map[string]*os.File, 
 		}
 		files[disk.id] = file
 		info, err := file.Stat()
-		if err != nil || !info.Mode().IsRegular() {
-			return files, errors.Join(errors.New("runtime backing file must be regular"), err)
+		if err != nil {
+			return files, err
+		}
+		if disk.id == "computer" && !validComputerBacking(info) || disk.id != "computer" && !info.Mode().IsRegular() {
+			return files, errors.New("invalid runtime backing type")
 		}
 	}
 	return files, nil

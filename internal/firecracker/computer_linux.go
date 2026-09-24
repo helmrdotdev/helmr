@@ -6,7 +6,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"unsafe"
 
 	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -26,14 +28,19 @@ func validateComputerDisk(disk *vm.RuntimeComputer) error {
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() || info.Size() != disk.SizeBytes {
-		return errors.New("computer working disk size or file type changed")
+	size, err := computerBackingSize(disk.File, info)
+	if err != nil {
+		return err
+	}
+	if size != disk.SizeBytes {
+		return errors.New("computer working disk size changed")
 	}
 	return nil
 }
 
 // Link the exact host-owned inode, not a caller-controlled pathname or a shared
-// cache object. The source is a fresh authenticated working copy for this runtime.
+// cache object or global device node. The Runtime owns this backing inode and,
+// for block devices, its exclusive attachment and export through VMM exit.
 func attachComputerDisk(ctx context.Context, disk *vm.RuntimeComputer, directory string, uid, gid int) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -66,4 +73,28 @@ func runtimeDrivesWithComputer(root, scratch, substrate, computer string, drives
 		result[2].CacheType = firecracker.String(writableBlockCache)
 	}
 	return result
+}
+
+// A block node's stat size is zero; query the retained descriptor, never a device
+// name. The Runtime owns the attachment for the complete VMM lifetime.
+func computerBackingSize(file *os.File, info os.FileInfo) (int64, error) {
+	if info.Mode().IsRegular() {
+		return info.Size(), nil
+	}
+	if info.Mode()&os.ModeDevice == 0 || info.Mode()&os.ModeCharDevice != 0 {
+		return 0, errors.New("computer backing must be a regular file or block device")
+	}
+	var size uint64
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, file.Fd(), unix.BLKGETSIZE64, uintptr(unsafe.Pointer(&size)))
+	if errno != 0 {
+		return 0, errno
+	}
+	if size == 0 || size > uint64(^uint64(0)>>1) {
+		return 0, errors.New("invalid block device capacity")
+	}
+	return int64(size), nil
+}
+
+func validComputerBacking(info os.FileInfo) bool {
+	return info.Mode().IsRegular() || info.Mode()&os.ModeDevice != 0 && info.Mode()&os.ModeCharDevice == 0
 }
