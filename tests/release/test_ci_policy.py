@@ -9,7 +9,7 @@ import textwrap
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/release'))
-from ci_policy import ALL_CHECKS, REPO_CHECKS, SOURCE_JOBS, check_jobs, classify, pr_checks, repo_matrix
+from ci_policy import ALL_CHECKS, PR_CHECKS, REPO_CHECKS, SOURCE_JOBS, check_jobs, classify, full_checks, pr_checks, repo_matrix
 
 
 class Groups(unittest.TestCase):
@@ -57,7 +57,7 @@ class Groups(unittest.TestCase):
             self.assertIn(check, selected['source_checks'])
         self.assertNotIn('release-contracts', selected['source_checks'])
 
-    def test_sensitive_and_unknown_paths_require_full_checks(self):
+    def test_sensitive_and_unknown_paths_require_broad_source_only(self):
         for path in ('go.mod', 'go.sum', 'flake.lock', 'bun.lock', 'package.json',
                      'packages/console/package.json', 'scripts/release/ci_policy.py',
                      '.github/workflows/ci.yaml', 'nix/packages/worker.nix',
@@ -72,15 +72,15 @@ class Groups(unittest.TestCase):
                      'packages/web/src/content/docs/new.sh',
                      'packages/console/src/new.unknown', 'packages/console/src/../../package.json'):
             with self.subTest(path=path):
-                self.assert_selection(['README.md', path], ALL_CHECKS, True, True)
-        self.assert_selection([], ALL_CHECKS, True, True)
+                self.assert_selection(['README.md', path], PR_CHECKS)
+        self.assert_selection([], PR_CHECKS)
 
-    def test_packaging_and_builder_are_selected_independently(self):
+    def test_packaging_edits_do_not_automatically_build_distribution(self):
         for path in ('internal/console/console_embed.go', 'packages/console/vite.config.ts',
                      'scripts/build-controlplane-image.sh'):
             with self.subTest(path=path):
-                self.assert_selection(['README.md', path], ALL_CHECKS, True, False)
-        self.assert_selection(['packages/console/src/App.tsx', 'go.sum'], ALL_CHECKS, True, True)
+                self.assert_selection(['README.md', path], PR_CHECKS)
+        self.assert_selection(['packages/console/src/App.tsx', 'go.sum'], PR_CHECKS)
 
 
 class GitDiff(unittest.TestCase):
@@ -119,15 +119,16 @@ class GitDiff(unittest.TestCase):
         repo = Path(__file__).resolve().parents[2]
         workflow = (repo / '.github/workflows/ci.yaml').read_text()
         script = textwrap.dedent(workflow.split("python3 - <<'PYTHON'\n", 1)[1].split('          PYTHON', 1)[0])
-        for path in ('README.md', 'packages/console/src/App.tsx', 'internal/db/query/runs.sql',
-                     'internal/builder/new.go'):
+        for path, labels in (('README.md', ()), ('packages/console/src/App.tsx', ()),
+                             ('internal/db/query/runs.sql', ()), ('internal/builder/new.go', ()),
+                             ('README.md', ('ci:full',))):
             self.git('reset', '--hard', self.base)
             self.write(path, 'changed')
             head = self.commit()
             with tempfile.TemporaryDirectory() as temporary:
                 event_file = Path(temporary) / 'event.json'
                 output_file = Path(temporary) / 'outputs'
-                event_file.write_text(json.dumps(self.event(head)))
+                event_file.write_text(json.dumps(self.event(head, labels)))
                 env = dict(os.environ, PYTHONPATH=str(repo / 'scripts/release'),
                            SOURCE_COMMIT=head, PR_NUMBER='123', GITHUB_RUN_ID='456',
                            GITHUB_WORKFLOW_SHA=head, GITHUB_REF='refs/pull/123/merge',
@@ -135,7 +136,7 @@ class GitDiff(unittest.TestCase):
                            GITHUB_OUTPUT=str(output_file))
                 subprocess.run([sys.executable, '-c', script], cwd=self.root, env=env, check=True)
                 outputs = dict(line.split('=', 1) for line in output_file.read_text().splitlines())
-            selected = classify([path])
+            selected = full_checks() if labels else classify([path])
             self.assertEqual(json.loads(outputs['source_checks']), selected['source_checks'])
             self.assertEqual(json.loads(outputs['repo_matrix']), repo_matrix(selected['source_checks']))
             self.assertEqual(outputs['skip_artifacts'], 'false' if selected['artifacts'] else 'true')
@@ -146,7 +147,7 @@ class GitDiff(unittest.TestCase):
         self.write('runtime/old.ts', 'critical')
         self.commit()
         self.write('README.md', 'docs afterward')
-        self.assertTrue(pr_checks(self.root, self.event(self.commit()))['artifacts'])
+        self.assertEqual(pr_checks(self.root, self.event(self.commit())), classify([]))
 
     def test_behind_main_uses_merge_base(self):
         self.write('packages/console/src/App.tsx', 'ui')
@@ -160,13 +161,13 @@ class GitDiff(unittest.TestCase):
     def test_rename_out_of_critical_path_keeps_deleted_name(self):
         (self.root / 'packages/console/src').mkdir(parents=True)
         self.git('mv', 'runtime/old.ts', 'packages/console/src/old.ts')
-        self.assertTrue(pr_checks(self.root, self.event(self.commit()))['bundle_builder'])
+        self.assertEqual(pr_checks(self.root, self.event(self.commit())), classify([]))
 
     def test_deleted_critical_input_is_selected(self):
         (self.root / 'runtime/old.ts').unlink()
-        self.assertTrue(pr_checks(self.root, self.event(self.commit()))['artifacts'])
+        self.assertEqual(pr_checks(self.root, self.event(self.commit())), classify([]))
 
-    def test_missing_invalid_and_empty_comparison_are_full(self):
+    def test_missing_invalid_and_empty_comparison_are_broad_source_only(self):
         for base in ('f' * 40, '--bad-ref', self.base):
             event = self.event(self.base)
             event['pull_request']['base']['sha'] = base

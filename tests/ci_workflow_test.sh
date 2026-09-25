@@ -58,7 +58,7 @@ for job in ('nix-flake', 'postgres', 'browser', 'release-contracts'):
     expected = "    needs: artifact-selection\n    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), '" + job + "')\n"
     assert block.startswith(expected), job + ' must use the source selection'
 assert 'matrix: ${{ fromJSON(needs.artifact-selection.outputs.repo_matrix) }}' in workflow
-assert "checks = classify([])" in workflow, 'main must default to complete source checks'
+assert "checks = full_checks()" in workflow, 'main must default to complete source checks'
 assert "output.write('source_checks='+json.dumps(checks['source_checks'])" in workflow
 assert "output.write('repo_matrix='+json.dumps(repo_matrix(checks['source_checks']))" in workflow
 build = (root / '.github/workflows/build-artifacts.yaml').read_text()

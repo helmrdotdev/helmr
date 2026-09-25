@@ -43,7 +43,7 @@ source, so a relevant change followed by docs cannot disappear.
 
 Pull requests retain **ci complete**, which requires **source-ci-complete** and
 all work selected for the exact PR head. PRs run the source checks affected by
-their changes; ordinary backend/Console changes do not create the full distribution.
+their changes; default PR CI never creates the full distribution.
 Release publication for PRs and human tags still builds the complete set once
 under trusted orchestration; a lightweight PR result never substitutes for it.
 
@@ -53,7 +53,8 @@ under trusted orchestration; a lightweight PR result never substitutes for it.
 Source checks use GitHub's native merge result; selected distribution artifacts
 use the exact head. Renames include both names. Missing ancestry, empty diffs,
 unknown paths, shared dependencies, locks, build/release/CI wiring and
-CLI/SDK/proto/compiler/runtime/Worker changes select full work. Main keeps complete
+CLI/SDK/proto/compiler/runtime/Worker changes select every normal PR source check,
+but do not enable release validation. Main keeps complete
 source validation and builds every artifact-relevant change, including ordinary
 application edits. Its documentation-only skip policy above is unchanged.
 
@@ -63,26 +64,26 @@ application edits. Its documentation-only skip policy above is unchanged.
 | Website docs (`packages/web/src/content/docs/**.md`, `.mdx`), website source (`.ts`, `.astro`, `.css`) and public SVG/PNG/ICO/webmanifest assets | Skip / skip | Repository policy and TypeScript checks, including website typecheck, messaging tests and real website build |
 | `packages/console/src/**` (`.ts`, `.tsx`, `.css`) | Skip / skip | Repository policy, TypeScript tests/typecheck, generated output, embedded-Console Go build and browser acceptance |
 | `internal/controlplane/**.go`, `internal/email/**.go`, `internal/db/**` (`.go`, `.sql`, including generated queries and schema migrations) | Skip / skip | Repository policy, generated output/SQL, Go build/lint/race, Linux test compilation/lint, real ClickHouse/PostgreSQL and browser acceptance |
-| Existing Console embedding Go files, Console Vite config/index, Control Plane image build/verify scripts | Full / skip | All source checks and complete distribution/consumer |
-| Shared runtime/client packages, CLI/SDK/proto/compiler/Worker, build/release/CI wiring, locks, unknown paths/types | Full / full | All source checks and complete distribution/consumer |
+| Packaging, shared runtime/client packages, CLI/SDK/proto/compiler/Worker, build/release/CI wiring, locks, unknown paths/types | Skip / skip | All normal PR source checks |
+| Any PR with `ci:full` | Full / full | Complete source and release validation |
 
-Mixed ordinary changes run the union of their source checks. Any full-risk path
-selects all source checks; the packaging-only exceptions above still omit builder
-E2E unless another path needs it. Missing ancestry or an empty diff selects full CI.
+Mixed changes run the union of their source checks. Any unclassified path, missing
+ancestry or empty diff selects all normal PR source checks. Release validation is
+opt-in through `ci:full`, regardless of the paths changed.
 
 The backend group deliberately includes API handlers, SQL and migration changes:
 these need actual server/database tests, not the builder's package-manager,
 native-library and build-isolation fixtures, which do not run the Control Plane
 or its queries. Shared packages such as `internal/run`, `internal/schedule` and
-`internal/api` remain full-risk. SQL can also change types consumed by other Go
+`internal/api` select all normal PR source checks. SQL can also change types consumed by other Go
 commands, so backend PRs retain all-command build, Go race tests and Linux test
 compilation rather than testing only the edited package.
 
 Console source changes retain the real embedded Go build and browser tests; Go
 lint/race and independent database suites do not validate new Console behavior.
-Nix package/smoke checks, boot reproducibility, version-cohort builds, infrastructure
-and the Firecracker binary probe are omitted for ordinary changes that do not
-change their contracts. Generated-code checking still verifies Go formatting and
+Nix package/smoke checks, boot reproducibility and version-cohort builds run on main
+and `ci:full` PRs. Infrastructure checks and the Firecracker binary probe remain
+in the normal PR inventory and run when their source scope is selected. Generated-code checking still verifies Go formatting and
 SQL/proto generation where needed. The existing TypeScript check remains a single
 small job; no separate website/Console test framework is introduced. Repository
 policy/contracts remain the small common baseline for every PR.
@@ -101,12 +102,12 @@ main runs do not.
 Both aggregates reject failed/cancelled/missing selected jobs, failed selection,
 invalid selection outputs and unexpectedly skipped mandatory jobs. Only an explicit
 selection permits `skipped` for optional work. Full packaging cannot accompany
-a reduced source selection, and the repo matrix always includes repository policy. A distribution-only defect in an
-ordinary source edit can first be discovered on main, where complete build and
+a reduced source selection, and the repo matrix always includes repository policy. A release or builder defect in any
+default PR can first be discovered on main, where complete build and
 consumer success are still required before publication. Use `ci:full` for earlier
 package-level proof when a change warrants it.
 
-Ordinary PRs upload no distribution set. When a selected full PR build needs
+Default PRs upload no distribution set. When a selected full PR build needs
 frozen artifacts for its consumer/retry, those transfers last **one day**. Main,
 stable tags and manual PR preview builds retain the existing **seven-day** handoff
 window. Browser failure evidence keeps its separate retention. No new test
@@ -128,8 +129,8 @@ requires an open same-repository PR to main whose current head equals the full S
 successful native PR CI associated with that head, and exact native source validation.
 Normal PR CI keeps its
 merge-result checkout. Native CI run `head_sha` identifies the PR head; it does not
-mean every merge-result test used that checkout. `build-artifacts` additionally
-builds the exact head. The main-owned manual graph repeats exact-source builds,
+mean every merge-result test used that checkout. On `ci:full` PRs, `build-artifacts`
+additionally builds the exact head. The main-owned manual graph repeats exact-source builds,
 selected Go checks, generated-runtime checks and the real consumer fixture under
 trusted orchestration. Candidate source has no publication credentials. Privileged
 jobs check out only the admitted workflow commit and parse candidate outputs as
@@ -139,9 +140,9 @@ GitHub remains authoritative if main moves after a check; these read checks are
 not an atomic lock on main. Automatic main previews and formal tag admission keep
 their existing semantics.
 
-The mechanism PR's uncredentialed artifact build is the first integration gate.
-It needs neither published builder digests nor the separate infrastructure behavior
-prerequisite on main. The fixture derives the builder digest from actual OCI
+The opt-in uncredentialed artifact build needs neither published builder digests
+nor the separate infrastructure behavior prerequisite on main. Its consumer
+fixture derives the builder digest from actual OCI
 manifest bytes, transfers that image to a loopback registry, and uses the same CLI
 constructor with that local digest reference. Subsequent Product infrastructure
 prerequisites with workflows matching current main can be published and

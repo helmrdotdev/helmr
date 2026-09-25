@@ -213,12 +213,12 @@ jobs:
           sys.path.insert(0, 'scripts/release')
           from api import GitHub
           from admission import artifact_build_needed
-          from ci_policy import classify, pr_checks, repo_matrix
+          from ci_policy import full_checks, pr_checks, repo_matrix
           from contract import preview_version
           source = os.environ['SOURCE_COMMIT']
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == source
           number = int(os.environ['PR_NUMBER']) if os.environ['PR_NUMBER'] else None
-          checks = classify([])
+          checks = full_checks()
           skip, builder = False, True
           if number is not None:
               checks = pr_checks('.', json.load(open(os.environ['GITHUB_EVENT_PATH'])))

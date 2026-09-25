@@ -1,4 +1,4 @@
-"""Conservative PR work selection; main release relevance stays in admission.py."""
+"""Fast PR source feedback; full distribution acceptance belongs to main."""
 import json
 import os
 from pathlib import PurePosixPath
@@ -24,6 +24,7 @@ REPO_CHECKS = {
 }
 SOURCE_JOBS = ('nix-flake', 'postgres', 'browser', 'release-contracts')
 ALL_CHECKS = frozenset(REPO_CHECKS) | frozenset(SOURCE_JOBS)
+PR_CHECKS = frozenset(REPO_CHECKS) | {'postgres', 'browser'}
 WEB_CHECKS = frozenset(('ci-policy', 'ci-typescript'))
 CONSOLE_CHECKS = WEB_CHECKS | frozenset(('ci-generated', 'ci-go-build', 'browser'))
 BACKEND_CHECKS = frozenset((
@@ -33,11 +34,11 @@ BACKEND_CHECKS = frozenset((
 
 
 def path_checks(path):
-    """Return retained source checks, or None for a full-risk input.
+    """Return affected source checks, or None for broad PR source coverage.
 
     Backend logic/SQL is exercised by Go, real databases and browser acceptance.
     Builder fixtures do not run a Control Plane or query its database. Shared
-    runtime/client packages, build wiring and new file types remain full-risk.
+    runtime/client packages, build wiring and new file types keep broad source tests.
     """
     parts = PurePosixPath(path).parts
     if not parts or path.startswith('/') or '..' in parts:
@@ -60,27 +61,21 @@ def path_checks(path):
     return None
 
 
+def full_checks():
+    """Main and the explicit PR override keep all deep and packaging checks."""
+    return dict(artifacts=True, bundle_builder=True, source_checks=sorted(ALL_CHECKS))
+
+
 def classify(paths):
-    # Both names of renames are retained. Empty/unavailable comparisons, unknown
-    # paths and sensitive inputs select full work, even mixed with ordinary edits.
+    # Unknown/missing inputs broaden source coverage, never silently opt a PR
+    # into release construction. Main proves distribution and deep E2E behavior.
     checks = set()
-    artifacts, builder = not paths, not paths
-    packaging_only = {
-        'internal/console/console.go', 'internal/console/console_embed.go',
-        'packages/console/vite.config.ts', 'packages/console/index.html',
-        'scripts/build-controlplane-image.sh', 'scripts/verify-controlplane-image-build.sh',
-    }
     for path in paths:
         selected = path_checks(path)
-        if selected is None:
-            artifacts = True
-            builder |= path not in packaging_only
-            checks.update(ALL_CHECKS)
-        else:
-            checks.update(selected)
+        checks.update(PR_CHECKS if selected is None else selected)
     if not paths:
-        checks.update(ALL_CHECKS)
-    return dict(artifacts=artifacts, bundle_builder=builder, source_checks=sorted(checks))
+        checks.update(PR_CHECKS)
+    return dict(artifacts=False, bundle_builder=False, source_checks=sorted(checks))
 
 
 def repo_matrix(checks):
@@ -90,7 +85,7 @@ def repo_matrix(checks):
 def pr_checks(root, event):
     pr = event['pull_request']
     if any(label['name'] == 'ci:full' for label in pr['labels']):
-        return classify([])
+        return full_checks()
     base, head = pr['base']['sha'], pr['head']['sha']
     if not all(re.fullmatch(r'[0-9a-f]{40}', sha) for sha in (base, head)):
         return classify([])
