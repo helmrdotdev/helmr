@@ -93,6 +93,14 @@ run "execution_worker_is_immutable_and_launch_gated" {
 
   assert {
     condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), "EnvironmentFile=/etc/helmr/worker.env\nExecStart=/usr/local/bin/helmr-asg-lifecycle watch") &&
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "load_worker_env")
+    )
+    error_message = "lifecycle commands must inherit systemd-parsed environment values, including space-separated device paths"
+  }
+
+  assert {
+    condition = (
       strcontains(aws_iam_role_policy.worker.policy, "${var.platform_store_bucket_arn}/objects/sha256/*") &&
       strcontains(aws_iam_role_policy.worker.policy, var.platform_store_kms_key_arn) &&
       !strcontains(aws_iam_role_policy.worker.policy, "CreatePlatformObjects") &&
