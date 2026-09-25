@@ -1163,7 +1163,7 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 	return i, err
 }
 
-const requestSameWorkspaceChildAttemptRuntimeDiscard = `-- name: RequestSameWorkspaceChildAttemptRuntimeDiscard :one
+const requestCompletedAttemptRuntimeDiscard = `-- name: RequestCompletedAttemptRuntimeDiscard :one
 WITH authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
            workspace_mounts.id AS workspace_mount_id
@@ -1191,7 +1191,7 @@ WITH authority AS MATERIALIZED (
        AND runtime_instances.reclaimed_at IS NULL
        AND (runtime_instances.desired_state = 'ready'
             OR (runtime_instances.desired_state = 'closed'
-                AND runtime_instances.desired_reason = 'same_workspace_child_attempt_finished'))
+                AND runtime_instances.desired_reason = 'attempt_finished'))
        AND runtime_instances.observed_state = 'ready'
       JOIN workspace_mounts
         ON workspace_mounts.id = workspace_leases.workspace_mount_id
@@ -1207,7 +1207,7 @@ WITH authority AS MATERIALIZED (
        AND (workspace_mounts.status = 'mounted'
             OR (workspace_mounts.status = 'unmounting'
                 AND workspace_mounts.finalization_action = 'discard'
-                AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
+                AND workspace_mounts.finalization_reason_code = 'attempt_finished'
                 AND workspace_mounts.finalization_error IS NULL))
      WHERE run_leases.id = $15
        AND run_leases.run_id = $16
@@ -1217,7 +1217,7 @@ WITH authority AS MATERIALIZED (
        AND run_leases.worker_instance_id = $13
        AND run_leases.worker_epoch = $14
        AND run_leases.runtime_instance_id = runtime_instances.id
-       AND run_leases.status IN ('completed', 'failed')
+       AND run_leases.status IN ('completed', 'failed', 'cancelled')
      FOR UPDATE OF runtime_instances, workspace_mounts
 ), closing_runtime AS (
     UPDATE runtime_instances
@@ -1228,7 +1228,7 @@ WITH authority AS MATERIALIZED (
                ELSE runtime_instances.desired_version + 1
            END,
            desired_at = $1,
-           desired_reason = 'same_workspace_child_attempt_finished',
+           desired_reason = 'attempt_finished',
            updated_at = $1
       FROM authority
      WHERE runtime_instances.id = authority.runtime_instance_id
@@ -1238,7 +1238,7 @@ WITH authority AS MATERIALIZED (
 UPDATE workspace_mounts
    SET status = 'unmounting',
        finalization_action = 'discard',
-       finalization_reason_code = 'same_workspace_child_attempt_finished',
+       finalization_reason_code = 'attempt_finished',
        finalization_error = NULL,
        stopped_at = COALESCE(workspace_mounts.stopped_at, $1),
        updated_at = $1
@@ -1248,12 +1248,12 @@ UPDATE workspace_mounts
    AND (workspace_mounts.status = 'mounted'
         OR (workspace_mounts.status = 'unmounting'
             AND workspace_mounts.finalization_action = 'discard'
-            AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
+            AND workspace_mounts.finalization_reason_code = 'attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
 RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
-type RequestSameWorkspaceChildAttemptRuntimeDiscardParams struct {
+type RequestCompletedAttemptRuntimeDiscardParams struct {
 	CompletedAt            pgtype.Timestamptz `json:"completed_at"`
 	WorkspaceLeaseID       pgtype.UUID        `json:"workspace_lease_id"`
 	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
@@ -1273,8 +1273,8 @@ type RequestSameWorkspaceChildAttemptRuntimeDiscardParams struct {
 	AttemptNumber          int32              `json:"attempt_number"`
 }
 
-func (q *Queries) RequestSameWorkspaceChildAttemptRuntimeDiscard(ctx context.Context, arg RequestSameWorkspaceChildAttemptRuntimeDiscardParams) (WorkspaceMount, error) {
-	row := q.db.QueryRow(ctx, requestSameWorkspaceChildAttemptRuntimeDiscard,
+func (q *Queries) RequestCompletedAttemptRuntimeDiscard(ctx context.Context, arg RequestCompletedAttemptRuntimeDiscardParams) (WorkspaceMount, error) {
+	row := q.db.QueryRow(ctx, requestCompletedAttemptRuntimeDiscard,
 		arg.CompletedAt,
 		arg.WorkspaceLeaseID,
 		arg.WorkspaceMountID,

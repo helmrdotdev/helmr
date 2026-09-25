@@ -23,6 +23,8 @@ func TestRestoredActorCompletionPreservesLeaseBaseAndAdvancesSavedHead(t *testin
 		t.Fatal(err)
 	}
 
+	assertTerminalRuntimeCleanup(t, fixture.server, fixture.pool, fixture.worker, fixture.leaseID.String())
+
 	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus string
 	var headVersionID, mountVersionID, publishedParentID, leaseBaseID uuid.UUID
 	var committedInput, terminalInput int64
@@ -74,6 +76,8 @@ func TestRestoredActorFailureRetainsCapturedFrontier(t *testing.T) {
 	if err := fixture.server.completeActor(t.Context(), fixture.worker, fixture.request, completion); err != nil {
 		t.Fatal(err)
 	}
+
+	assertTerminalRuntimeCleanup(t, fixture.server, fixture.pool, fixture.worker, fixture.leaseID.String())
 
 	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus string
 	var holdReason *string

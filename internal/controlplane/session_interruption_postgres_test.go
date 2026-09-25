@@ -104,7 +104,7 @@ func TestSessionCooperativeInterruptionPostgres(t *testing.T) {
 			if reason != "interrupted" || hold == stopped.HoldID || current != nil || active != nil || cursor != 1 || head == f.rootID || turnState != "interrupted" || runState != "cancelled" || queuedState != "queued" || terminals != 1 {
 				t.Fatalf("bad interrupted state: %s %s %v %v %d %s %s %s %s %d", hold, reason, current, active, cursor, head, turnState, runState, queuedState, terminals)
 			}
-			f.reportRuntimeClosed(t)
+			assertTerminalRuntimeCleanup(t, f.server, f.Pool, f.worker, f.fence().ID)
 			resumed, err := f.server.applySessionResume(t.Context(), session.ResumeRequest{ControlRequest: session.ControlRequest{Target: target, IdempotencyKey: "resume"}, HoldID: hold})
 			if err != nil || resumed.Code != "" {
 				t.Fatalf("resume: %+v %v", resumed, err)

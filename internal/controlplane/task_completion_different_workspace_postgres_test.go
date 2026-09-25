@@ -315,6 +315,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		point, _ := staleAuthorityPointOf(err)
 		t.Fatalf("complete task at %s: %v", point, err)
 	}
+	assertTerminalRuntimeCleanup(t, server, base.Pool, worker, child.LeaseID.String())
 	if owned != uuid.Nil() {
 		var status string
 		if err := base.Pool.QueryRow(ctx, `SELECT status FROM runs WHERE id=$1`, owned).Scan(&status); err != nil {

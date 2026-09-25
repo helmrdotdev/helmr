@@ -96,7 +96,7 @@ UPDATE workspace_leases
    AND expires_at > sqlc.arg(completed_at)
 RETURNING *;
 
--- name: RequestSameWorkspaceChildAttemptRuntimeDiscard :one
+-- name: RequestCompletedAttemptRuntimeDiscard :one
 WITH authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
            workspace_mounts.id AS workspace_mount_id
@@ -124,7 +124,7 @@ WITH authority AS MATERIALIZED (
        AND runtime_instances.reclaimed_at IS NULL
        AND (runtime_instances.desired_state = 'ready'
             OR (runtime_instances.desired_state = 'closed'
-                AND runtime_instances.desired_reason = 'same_workspace_child_attempt_finished'))
+                AND runtime_instances.desired_reason = 'attempt_finished'))
        AND runtime_instances.observed_state = 'ready'
       JOIN workspace_mounts
         ON workspace_mounts.id = workspace_leases.workspace_mount_id
@@ -140,7 +140,7 @@ WITH authority AS MATERIALIZED (
        AND (workspace_mounts.status = 'mounted'
             OR (workspace_mounts.status = 'unmounting'
                 AND workspace_mounts.finalization_action = 'discard'
-                AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
+                AND workspace_mounts.finalization_reason_code = 'attempt_finished'
                 AND workspace_mounts.finalization_error IS NULL))
      WHERE run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.run_id = sqlc.arg(run_id)
@@ -150,7 +150,7 @@ WITH authority AS MATERIALIZED (
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
        AND run_leases.runtime_instance_id = runtime_instances.id
-       AND run_leases.status IN ('completed', 'failed')
+       AND run_leases.status IN ('completed', 'failed', 'cancelled')
      FOR UPDATE OF runtime_instances, workspace_mounts
 ), closing_runtime AS (
     UPDATE runtime_instances
@@ -161,7 +161,7 @@ WITH authority AS MATERIALIZED (
                ELSE runtime_instances.desired_version + 1
            END,
            desired_at = sqlc.arg(completed_at),
-           desired_reason = 'same_workspace_child_attempt_finished',
+           desired_reason = 'attempt_finished',
            updated_at = sqlc.arg(completed_at)
       FROM authority
      WHERE runtime_instances.id = authority.runtime_instance_id
@@ -171,7 +171,7 @@ WITH authority AS MATERIALIZED (
 UPDATE workspace_mounts
    SET status = 'unmounting',
        finalization_action = 'discard',
-       finalization_reason_code = 'same_workspace_child_attempt_finished',
+       finalization_reason_code = 'attempt_finished',
        finalization_error = NULL,
        stopped_at = COALESCE(workspace_mounts.stopped_at, sqlc.arg(completed_at)),
        updated_at = sqlc.arg(completed_at)
@@ -181,7 +181,7 @@ UPDATE workspace_mounts
    AND (workspace_mounts.status = 'mounted'
         OR (workspace_mounts.status = 'unmounting'
             AND workspace_mounts.finalization_action = 'discard'
-            AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
+            AND workspace_mounts.finalization_reason_code = 'attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
 RETURNING workspace_mounts.*;
 

@@ -438,6 +438,7 @@ UPDATE runtime_instances
 RETURNING runtime_instances.*;
 
 -- name: MarkRuntimeInstanceClosed :one
+WITH closed_runtime AS (
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = now(),
@@ -452,7 +453,21 @@ UPDATE runtime_instances
    AND runtime_instances.desired_state = 'closed' AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND observed_version = sqlc.arg(expected_observed_version)
    AND observed_state IN ('allocated','ready')
-RETURNING runtime_instances.*;
+RETURNING runtime_instances.*
+), stopped_mounts AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
+           terminal_reason_code = 'runtime_closed', terminal_error = NULL, updated_at = now()
+      FROM closed_runtime
+     WHERE workspace_mounts.runtime_instance_id = closed_runtime.id
+       AND workspace_mounts.org_id = closed_runtime.org_id
+       AND workspace_mounts.worker_instance_id = closed_runtime.worker_instance_id
+       AND workspace_mounts.worker_epoch = closed_runtime.worker_epoch
+       AND workspace_mounts.status = 'unmounting'
+       AND workspace_mounts.finalization_action = 'discard'
+    RETURNING workspace_mounts.id
+)
+SELECT closed_runtime.* FROM closed_runtime;
 
 -- name: MarkRuntimeInstanceFailed :one
 UPDATE runtime_instances

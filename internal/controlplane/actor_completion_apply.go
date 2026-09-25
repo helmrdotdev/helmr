@@ -145,10 +145,8 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		}); err != nil {
 			return staleActorCompletion(err)
 		}
-		if failed || completion.kind == actorCompletionInterrupted {
-			if err := work.q.CloseRunRuntimes(ctx, db.CloseRunRuntimesParams{RunID: authority.run.ID, RunLeaseID: authority.runLease.ID, ReasonCode: decision.runReason.String}); err != nil {
-				return err
-			}
+		if err := requestCompletedAttemptRuntimeDiscard(ctx, work.q, authority, completedAt); err != nil {
+			return staleActorCompletion(err)
 		}
 		if err := finishActorRun(ctx, work.q, authority, secrets, completion, decision, completedAt); err != nil {
 			return err

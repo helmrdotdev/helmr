@@ -798,7 +798,7 @@ UPDATE workspace_mounts
 	if err != nil {
 		t.Fatal(err)
 	}
-	discardParams := db.RequestSameWorkspaceChildAttemptRuntimeDiscardParams{
+	discardParams := db.RequestCompletedAttemptRuntimeDiscardParams{
 		CompletedAt: completedAt, WorkspaceLeaseID: childWorkspaceLeaseID,
 		WorkspaceMountID: childMount, RuntimeInstanceID: childRuntime,
 		OwnershipGeneration: 1, WriterGeneration: childWriter,
@@ -809,10 +809,10 @@ UPDATE workspace_mounts
 		RunID: pgvalue.UUID(childID), AttemptNumber: 1,
 		RunLeaseID: childLease.ID,
 	}
-	if _, err := txq.RequestSameWorkspaceChildAttemptRuntimeDiscard(fixture.ctx, discardParams); err != nil {
+	if _, err := txq.RequestCompletedAttemptRuntimeDiscard(fixture.ctx, discardParams); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := txq.RequestSameWorkspaceChildAttemptRuntimeDiscard(fixture.ctx, discardParams); err != nil {
+	if _, err := txq.RequestCompletedAttemptRuntimeDiscard(fixture.ctx, discardParams); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -867,7 +867,7 @@ SELECT runtime_instances.desired_state, workspace_mounts.status
 	if _, err := db.New(fixture.pool).StopWorkspaceMount(
 		fixture.ctx,
 		db.StopWorkspaceMountParams{
-			ReasonCode: pgvalue.Text("same_workspace_child_attempt_finished"),
+			ReasonCode: pgvalue.Text("attempt_finished"),
 			OrgID:      pgvalue.UUID(fixture.orgID), ID: childMount,
 			WorkerInstanceID: childLease.WorkerInstanceID, WorkerEpoch: childLease.WorkerEpoch,
 			RuntimeInstanceID: childRuntime, FencingGeneration: childMountGeneration - 1,
@@ -879,7 +879,7 @@ SELECT runtime_instances.desired_state, workspace_mounts.status
 	if _, err := db.New(fixture.pool).StopWorkspaceMount(
 		fixture.ctx,
 		db.StopWorkspaceMountParams{
-			ReasonCode: pgvalue.Text("same_workspace_child_attempt_finished"),
+			ReasonCode: pgvalue.Text("attempt_finished"),
 			OrgID:      pgvalue.UUID(fixture.orgID), ID: childMount,
 			WorkerInstanceID: childLease.WorkerInstanceID, WorkerEpoch: childLease.WorkerEpoch,
 			RuntimeInstanceID: childRuntime, FencingGeneration: childMountGeneration,
