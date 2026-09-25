@@ -41,7 +41,6 @@ func checkpointRegistrationFixture(t *testing.T) (*actorCheckpointFixture, worke
 	rt.RootfsDigest = dbtest.Digest("run-lease-rootfs")
 	rt.VMVCPUCount = 1
 	rt.CPUConfigDigest = f.CPUConfigDigest
-	rt.Substrate = &workerapi.CheckpointRuntimeSubstrate{Digest: dbtest.Digest("frontier-substrate"), Format: "squashfs", Contract: "builder-v0", SizeBytes: 1}
 	m.RuntimeState.Computer = &workerapi.CheckpointComputer{ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes, Root: testGenerationRoot(f.claim.runtime.ReservedGuestEphemeralDiskBytes)}
 	return f, workerapi.RegisterCheckpointRequest{Lease: f.fence(), RequestVersion: wait.CheckpointRequestVersion, RunWaitID: waitID.String(), CheckpointID: m.RecoveryPoint.ID, Manifest: m}
 }
