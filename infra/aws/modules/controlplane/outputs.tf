@@ -136,7 +136,8 @@ output "secret_arns" {
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },
     var.deployment_mode == "self-hosted" ? {
-      setup_token = aws_secretsmanager_secret.setup_token[0].arn
+      setup_token           = aws_secretsmanager_secret.setup_token[0].arn
+      computer_wrapping_key = aws_secretsmanager_secret.computer_wrapping_key[0].arn
     } : {},
     var.email_provider == "resend" ? {
       resend_api_key = aws_secretsmanager_secret.resend_api_key[0].arn

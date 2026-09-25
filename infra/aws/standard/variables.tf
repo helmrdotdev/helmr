@@ -784,3 +784,10 @@ variable "worker_computer_devices" {
   description = "Exclusive Worker NBD device allowlist."
   type        = list(string)
 }
+
+variable "computer_wrapping_key_id" {
+  description = "Stable self-hosted Computer root key identity. Preserve with the root key value and database backups."
+  type        = string
+  default     = "computer-root-v1"
+  nullable    = false
+}

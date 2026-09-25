@@ -80,6 +80,10 @@ put_secret encryption_key "$(random_base64_32)"
 put_secret workspace_fencing_key "$(random_base64_32)"
 put_secret token_credential_key "$(random_base64_32)"
 put_secret checkpoint_encryption_key "$(random_base64_32)"
+computer_wrapping_key_secret_arn="$(secret_arn_optional computer_wrapping_key)"
+if [ -n "$computer_wrapping_key_secret_arn" ]; then
+  put_secret_arn computer_wrapping_key "$computer_wrapping_key_secret_arn" "$(random_base64_32)"
+fi
 setup_token_secret_arn="$(secret_arn_optional setup_token)"
 if [ -n "$setup_token_secret_arn" ]; then
   put_secret_arn setup_token "$setup_token_secret_arn" "$(openssl rand -hex 32)"

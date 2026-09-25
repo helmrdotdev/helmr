@@ -119,7 +119,13 @@ image and the signed Platform release.
 `scripts/aws-bootstrap-helmr-secrets.sh` populates the empty Secrets Manager
 containers emitted by generic self-host AWS compositions. It writes values
 directly so Terraform state contains only secret ARNs. It initializes missing
-values only and never replaces an existing value.
+values only and never replaces an existing value. Self-hosted AWS uses a dedicated
+Computer wrapping key container whose random 32-byte value stays outside Terraform
+state. The module input `computer_wrapping_key_id` identifies the root key independently
+of its storage container (default: `computer-root-v1`). Preserve this logical ID and
+key value with database backups, including when restoring into a new container.
+Changing either does not rewrap existing Computer keys. Managed Cloud instead uses the existing KMS key directly, with
+Computer context restrictions on the Control Plane task role.
 
 ## Testing an unreleased SDK locally
 
