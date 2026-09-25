@@ -605,7 +605,7 @@ WITH selected_target AS MATERIALIZED (
       JOIN computer_versions
         ON computer_versions.computer_id = computers.id
        AND computer_versions.id = $3
-       AND computer_versions.status = 'committed'
+       AND computer_versions.status IN ('initializing', 'committed')
       LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = $4
@@ -911,7 +911,7 @@ WITH selected_target AS MATERIALIZED (
       JOIN computer_versions
         ON computer_versions.computer_id = computers.id
        AND computer_versions.id = $3
-       AND computer_versions.status = 'committed'
+       AND computer_versions.status IN ('initializing', 'committed')
      WHERE environments.id = $4
        AND environments.org_id = $5
        AND environments.project_id = $6

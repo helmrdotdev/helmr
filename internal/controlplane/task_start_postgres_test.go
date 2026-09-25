@@ -16,6 +16,66 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+func createFreshTaskWorkspace(t *testing.T, fixture actorStartPostgresFixture) uuid.UUID {
+	t.Helper()
+	created, err := fixture.server.createWorkspace(t.Context(), workspaceCreateRequest{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+		Declaration: workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted},
+		DeclaredID:  "workspace.v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT v.status FROM computers c JOIN computer_versions v ON v.id = c.head_version_id
+		WHERE c.id = $1
+	`, created.WorkspaceID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "initializing" {
+		t.Fatalf("fresh version = %s", status)
+	}
+	return created.WorkspaceID
+}
+
+func TestTaskStartPostgresFreshComputer(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 0)
+	workspaceID := createFreshTaskWorkspace(t, fixture)
+	request := taskStartRequest{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+		TaskDeclaredID: "resize-image", PayloadPresent: true,
+		Payload: json.RawMessage(`{"imageId":"fresh"}`), WorkspaceID: workspaceID,
+		IdempotencyKey: "fresh-task",
+	}
+	started, err := fixture.server.startTask(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := fixture.server.startTask(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.Replayed || replayed.RunID != started.RunID {
+		t.Fatalf("replay = %+v", replayed)
+	}
+	var status, versionStatus string
+	var owner uuid.UUID
+	var attempts int
+	if err := fixture.pool.QueryRow(t.Context(), `
+		SELECT r.status, v.status, c.owner_run_id,
+		       (SELECT count(*) FROM run_attempts a WHERE a.run_id = r.id AND a.base_workspace_version_id = v.id)
+		FROM runs r JOIN computers c ON c.id = r.workspace_id
+		JOIN computer_versions v ON v.id = r.base_workspace_version_id
+		WHERE r.id = $1
+	`, started.RunID).Scan(&status, &versionStatus, &owner, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" || versionStatus != "initializing" || owner != started.RunID || attempts != 1 {
+		t.Fatalf("status=%s version=%s owner=%s attempts=%d", status, versionStatus, owner, attempts)
+	}
+}
+
 func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
 	workspaceID := fixture.workspaceIDs[0]
@@ -139,78 +199,85 @@ func TestTaskStartPostgresConcurrentClaimsDoNotDeadlockDeploymentAuthority(t *te
 }
 
 func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
-	fixture := newActorStartPostgresFixture(t, 2)
-	parentWorkspaceID := fixture.workspaceIDs[0]
-	parent, err := fixture.server.startTask(t.Context(), taskStartRequest{
-		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		TaskDeclaredID: "resize-image", PayloadPresent: true,
-		Payload:     json.RawMessage(`{"imageId":"parent"}`),
-		WorkspaceID: parentWorkspaceID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, fresh := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fresh=%t", fresh), func(t *testing.T) {
+			fixture := newActorStartPostgresFixture(t, 2)
+			if fresh {
+				fixture.workspaceIDs[1] = createFreshTaskWorkspace(t, fixture)
+			}
+			parentWorkspaceID := fixture.workspaceIDs[0]
+			parent, err := fixture.server.startTask(t.Context(), taskStartRequest{
+				OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+				TaskDeclaredID: "resize-image", PayloadPresent: true,
+				Payload:     json.RawMessage(`{"imageId":"parent"}`),
+				WorkspaceID: parentWorkspaceID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	var targetVersionID uuid.UUID
-	if err := fixture.pool.QueryRow(t.Context(), `
+			var targetVersionID uuid.UUID
+			if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT head_version_id
 		  FROM computers
 		 WHERE id = $1
 	`, fixture.workspaceIDs[1]).Scan(&targetVersionID); err != nil {
-		t.Fatal(err)
-	}
-	runID := uuid.NewV7()
-	rootSpanID, err := tracing.NewSpanID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	queries := db.New(fixture.pool)
-	child, err := queries.CreateChildRunFromParentDeployment(
-		t.Context(),
-		db.CreateChildRunFromParentDeploymentParams{
-			EntrypointDeclaredID:   "resize-image",
-			WorkspaceID:            pgvalue.UUID(fixture.workspaceIDs[1]),
-			BaseWorkspaceVersionID: pgvalue.UUID(targetVersionID),
-			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
-			ParentRunID:            pgvalue.UUID(parent.RunID),
-			ID:                     pgvalue.UUID(runID),
-			ParentOwnsLifecycle:    pgtype.Bool{Bool: false, Valid: true},
-			Payload:                json.RawMessage(`{"imageId":"child"}`),
-			Metadata:               json.RawMessage(`{"source":"parent"}`),
-			Tags:                   []string{"child"},
-			QueueName:              "default",
-			QueueOriginAt:          pgvalue.Timestamptz(now),
-			QueueScoreAt:           pgvalue.Timestamptz(now),
-			MaxActiveDurationMs:    300_000,
-			RetryPolicy:            json.RawMessage(`{"enabled":false}`),
-			RootSpanID:             rootSpanID,
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if child.ID != pgvalue.UUID(runID) ||
-		child.CauseKind != "child" ||
-		child.ParentRunID != pgvalue.UUID(parent.RunID) ||
-		!child.ParentOwnsLifecycle.Valid ||
-		child.ParentOwnsLifecycle.Bool ||
-		child.ClaimID.Valid ||
-		child.WorkspaceID != pgvalue.UUID(fixture.workspaceIDs[1]) ||
-		child.Status != db.RunStatusQueued {
-		t.Fatalf("child = %+v", child)
-	}
-	var attempts int
-	if err := fixture.pool.QueryRow(t.Context(), `
+				t.Fatal(err)
+			}
+			runID := uuid.NewV7()
+			rootSpanID, err := tracing.NewSpanID()
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC()
+			queries := db.New(fixture.pool)
+			child, err := queries.CreateChildRunFromParentDeployment(
+				t.Context(),
+				db.CreateChildRunFromParentDeploymentParams{
+					EntrypointDeclaredID:   "resize-image",
+					WorkspaceID:            pgvalue.UUID(fixture.workspaceIDs[1]),
+					BaseWorkspaceVersionID: pgvalue.UUID(targetVersionID),
+					EnvironmentID:          pgvalue.UUID(fixture.environmentID),
+					ParentRunID:            pgvalue.UUID(parent.RunID),
+					ID:                     pgvalue.UUID(runID),
+					ParentOwnsLifecycle:    pgtype.Bool{Bool: false, Valid: true},
+					Payload:                json.RawMessage(`{"imageId":"child"}`),
+					Metadata:               json.RawMessage(`{"source":"parent"}`),
+					Tags:                   []string{"child"},
+					QueueName:              "default",
+					QueueOriginAt:          pgvalue.Timestamptz(now),
+					QueueScoreAt:           pgvalue.Timestamptz(now),
+					MaxActiveDurationMs:    300_000,
+					RetryPolicy:            json.RawMessage(`{"enabled":false}`),
+					RootSpanID:             rootSpanID,
+				},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if child.ID != pgvalue.UUID(runID) ||
+				child.CauseKind != "child" ||
+				child.ParentRunID != pgvalue.UUID(parent.RunID) ||
+				!child.ParentOwnsLifecycle.Valid ||
+				child.ParentOwnsLifecycle.Bool ||
+				child.ClaimID.Valid ||
+				child.WorkspaceID != pgvalue.UUID(fixture.workspaceIDs[1]) ||
+				child.Status != db.RunStatusQueued {
+				t.Fatalf("child = %+v", child)
+			}
+			var attempts int
+			if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT count(*)
 		  FROM run_attempts
 		 WHERE run_id = $1
 		   AND number = 1
 		   AND workspace_id = $2
 	`, runID, fixture.workspaceIDs[1]).Scan(&attempts); err != nil {
-		t.Fatal(err)
-	}
-	if attempts != 1 {
-		t.Fatalf("attempts = %d", attempts)
+				t.Fatal(err)
+			}
+			if attempts != 1 {
+				t.Fatalf("attempts = %d", attempts)
+			}
+		})
 	}
 }
