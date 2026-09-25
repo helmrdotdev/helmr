@@ -72,6 +72,18 @@ variable "deployment_mode" {
   }
 }
 
+variable "computer_wrapping_key_id" {
+  description = "Stable logical identity of the self-hosted Computer root key. Preserve this ID and the root key value with database backups; changing either does not rewrap existing keys."
+  type        = string
+  default     = "computer-root-v1"
+  nullable    = false
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._:/-]*$", var.computer_wrapping_key_id)) && length(var.computer_wrapping_key_id) <= 2048
+    error_message = "computer_wrapping_key_id must be 1–2048 ASCII letters, digits, dots, underscores, colons, slashes or hyphens, starting with a letter or digit."
+  }
+}
+
 variable "bootstrap_enabled" {
   description = "Create the initial Region and Worker Group when they do not exist."
   type        = bool

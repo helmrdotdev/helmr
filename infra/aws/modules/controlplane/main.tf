@@ -118,6 +118,10 @@ locals {
     API_ORIGIN                         = coalesce(var.api_origin, local.controlplane_url)
     REDIS_URL                          = local.redis_url
     GITHUB_OAUTH_CLIENT_ID             = var.github_oauth_client_id
+    }, var.deployment_mode == "managed-cloud" ? {
+    COMPUTER_KMS_KEY_ARN = aws_kms_key.helmr.arn
+    } : {
+    COMPUTER_WRAPPING_KEY_ID = var.computer_wrapping_key_id
   }, local.bootstrap_environment, local.clickhouse_reader_environment, local.email_environment)
 
   controlplane_secret_defaults = merge({
@@ -130,7 +134,8 @@ locals {
     GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     var.deployment_mode == "self-hosted" ? {
-      SETUP_TOKEN = aws_secretsmanager_secret.setup_token[0].arn
+      SETUP_TOKEN           = aws_secretsmanager_secret.setup_token[0].arn
+      COMPUTER_WRAPPING_KEY = aws_secretsmanager_secret.computer_wrapping_key[0].arn
     } : {},
     var.bootstrap_enabled ? {
       BOOTSTRAP_WORKER_TOKEN = aws_secretsmanager_secret.worker_enrollment[0].arn
@@ -143,6 +148,9 @@ locals {
   )
 
   reserved_optional_controlplane_keys = toset([
+    "COMPUTER_KMS_KEY_ARN",
+    "COMPUTER_WRAPPING_KEY_ID",
+    "COMPUTER_WRAPPING_KEY",
     "EMAIL_PROVIDER",
     "EMAIL_FROM",
     "RESEND_API_KEY",
@@ -959,7 +967,26 @@ resource "aws_iam_role_policy" "controlplane_task" {
           }
         }
       },
-    ])
+      ], var.deployment_mode == "managed-cloud" ? [{
+        Sid      = "WrapComputerKeys"
+        Effect   = "Allow"
+        Action   = ["kms:Encrypt", "kms:Decrypt"]
+        Resource = aws_kms_key.helmr.arn
+        Condition = {
+          StringEquals = {
+            "kms:EncryptionContext:purpose" = "helmr.computer-key.v1"
+            "kms:EncryptionAlgorithm"       = "SYMMETRIC_DEFAULT"
+          }
+          StringLike = {
+            "kms:EncryptionContext:computer_scope" = "?*"
+            "kms:EncryptionContext:key_id"         = "?*"
+          }
+          "ForAllValues:StringEquals" = {
+            "kms:EncryptionContextKeys" = ["purpose", "computer_scope", "key_id"]
+          }
+          Null = { "kms:ViaService" = "true" }
+        }
+    }] : [])
   })
 }
 
@@ -1267,6 +1294,14 @@ resource "aws_secretsmanager_secret" "auth_key" {
 resource "aws_secretsmanager_secret" "setup_token" {
   count                   = var.deployment_mode == "self-hosted" ? 1 : 0
   name                    = "${local.name}/controlplane/setup-token"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "computer_wrapping_key" {
+  count                   = var.deployment_mode == "self-hosted" ? 1 : 0
+  name                    = "${local.name}/controlplane/computer-wrapping-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

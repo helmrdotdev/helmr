@@ -169,6 +169,7 @@ module "controlplane" {
   public_url                                 = var.public_url
   api_origin                                 = var.api_origin
   deployment_mode                            = var.deployment_mode
+  computer_wrapping_key_id                   = var.computer_wrapping_key_id
   bootstrap_worker_group_name                = var.worker_group_name
   bootstrap_region_id                        = var.region_id
   clickhouse_url                             = var.clickhouse_url

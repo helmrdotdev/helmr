@@ -19,7 +19,7 @@ case "$*" in
       workspace_fencing_key:"arn:workspace-fencing-key",
       token_credential_key:"arn:token-credential-key",
       checkpoint_encryption_key:"arn:checkpoint-encryption-key"
-    } + if $setup == "1" then {setup_token:"arn:setup-token"} else {} end'
+    } + if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end'
     ;;
   'output -raw worker_enrollment_secret_arn') printf 'arn:worker-enrollment-token\n' ;;
   *) exit 90 ;;
@@ -63,10 +63,21 @@ run_helper present
 
 : >"${tmp}/puts"
 run_helper missing
-[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 8 ] || {
-  printf 'expected all eight missing secret values to be initialized\n' >&2
+[ "$(wc -l <"${tmp}/puts" | tr -d ' ')" = 9 ] || {
+  printf 'expected all nine missing secret values to be initialized\n' >&2
   exit 1
 }
+
+python3 - "${tmp}/puts" <<'PYTEST'
+import base64, pathlib, shlex, sys
+lines=pathlib.Path(sys.argv[1]).read_text().splitlines()
+values={}
+for line in lines:
+    args=shlex.split(line)
+    values[args[args.index('--secret-id')+1]]=args[args.index('--secret-string')+1]
+assert len(base64.b64decode(values['arn:computer-wrapping-key'],validate=True))==32
+assert values['arn:computer-wrapping-key']!=values['arn:encryption-key']
+PYTEST
 
 : >"${tmp}/puts"
 MOCK_SETUP_TOKEN_PRESENT=0 run_helper missing

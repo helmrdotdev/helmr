@@ -322,3 +322,56 @@ run "reject_bootstrap_without_admin" {
   variables { clickhouse_access_mode = "bootstrap" }
   expect_failures = [terraform_data.clickhouse_access_preconditions]
 }
+
+run "self_hosted_computer_root_is_separate_secret" {
+  command = apply
+  variables { computer_wrapping_key_id = "restored-root-v1" }
+  assert {
+    condition = (
+      { for x in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : x.name => x.value }.COMPUTER_WRAPPING_KEY_ID == "restored-root-v1" &&
+      { for x in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].secrets : x.name => x.valueFrom }.COMPUTER_WRAPPING_KEY == output.secret_arns.computer_wrapping_key &&
+      aws_secretsmanager_secret.computer_wrapping_key[0].name != aws_secretsmanager_secret.encryption_key.name &&
+      !strcontains(aws_iam_role_policy.controlplane_task.policy, "WrapComputerKeys") &&
+      !contains([for x in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : x.name], "COMPUTER_WRAPPING_KEY")
+    )
+    error_message = "Self-hosted Computer keys must use a dedicated out-of-band root secret only in Control Plane."
+  }
+}
+
+run "managed_computer_root_is_context_bound_kms" {
+  command = apply
+  variables { deployment_mode = "managed-cloud" }
+  assert {
+    condition = (
+      { for x in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : x.name => x.value }.COMPUTER_KMS_KEY_ARN == aws_kms_key.helmr.arn &&
+      !contains(keys(output.secret_arns), "computer_wrapping_key") &&
+      !contains([for x in jsondecode(aws_ecs_task_definition.controlplane.container_definitions)[0].environment : x.name], "COMPUTER_WRAPPING_KEY_ID")
+    )
+    error_message = "Managed Control Plane must select the existing KMS key without a local wrapping key."
+  }
+  assert {
+    condition = one([for s in jsondecode(aws_iam_role_policy.controlplane_task.policy).Statement : s if try(s.Sid, "") == "WrapComputerKeys"]) == {
+      Sid      = "WrapComputerKeys"
+      Effect   = "Allow"
+      Action   = ["kms:Encrypt", "kms:Decrypt"]
+      Resource = aws_kms_key.helmr.arn
+      Condition = {
+        StringEquals                = { "kms:EncryptionContext:purpose" = "helmr.computer-key.v1", "kms:EncryptionAlgorithm" = "SYMMETRIC_DEFAULT" }
+        StringLike                  = { "kms:EncryptionContext:computer_scope" = "?*", "kms:EncryptionContext:key_id" = "?*" }
+        "ForAllValues:StringEquals" = { "kms:EncryptionContextKeys" = ["purpose", "computer_scope", "key_id"] }
+        Null                        = { "kms:ViaService" = "true" }
+      }
+    }
+    error_message = "Only exact-key, exact-context Encrypt/Decrypt may be added for Computer wrapping."
+  }
+  assert {
+    condition     = alltrue([for policy in [aws_iam_role_policy.migration_execution.policy, aws_iam_role_policy.controlplane_execution.policy, aws_iam_role_policy.dispatcher_execution.policy] : !strcontains(policy, "helmr.computer-key.v1")])
+    error_message = "Other roles must not gain direct Computer root authority."
+  }
+}
+
+run "reject_computer_root_override" {
+  command = plan
+  variables { controlplane_environment = { COMPUTER_KMS_KEY_ARN = "other" } }
+  expect_failures = [terraform_data.bootstrap_preconditions]
+}
