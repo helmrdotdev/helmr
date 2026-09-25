@@ -83,7 +83,6 @@ const API_KEY_SCOPE_OPTIONS: {
   },
   { value: "sessions:interrupt", label: "Interrupt turns", description: "Request interruption of an exact Turn while retaining queued work." },
   { value: "sessions:resume", label: "Resume sessions", description: "Resume queued work after an exact hold converges." },
-  { value: "sessions:recover", label: "Recover sessions", description: "Reconcile uncertain execution. Requires an owner or admin role." },
   {
     value: "sessions:close",
     label: "Close sessions",

@@ -14,7 +14,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
        AND edge.condition_status = 'pending'
        AND edge.suspension_status = 'parked'
        AND EXISTS (SELECT 1 FROM run_attempts origin
-           WHERE origin.run_id = child.id AND origin.number = 1
+           WHERE origin.run_id = child.id AND origin.number <= child.current_attempt_number
              AND origin.workspace_id = edge.workspace_id
              AND origin.base_workspace_version_id = edge.base_workspace_version_id)
        AND edge.ownership_generation IS NOT NULL

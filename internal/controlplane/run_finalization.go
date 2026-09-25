@@ -92,13 +92,14 @@ func (s *Server) beginRunFinalization(
 		); err != nil {
 			return fmt.Errorf("lock run finalization secret authority: %w", err)
 		}
-		authority, err := lockLiveRunFinalizationAuthority(
+		authority, err := lockRunPublicationAuthority(
 			ctx,
 			work.q,
 			worker,
 			pgvalue.UUID(parsed.lease.leaseID),
 			request.Lease.LeaseSequence,
 			locators,
+			db.RunStatusRunning,
 		)
 		if err != nil {
 			return staleRunFinalization(err)
@@ -264,13 +265,14 @@ func lockRunFinalizationOwner(
 	return owner, nil
 }
 
-func lockLiveRunFinalizationAuthority(
+func lockRunPublicationAuthority(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
 	leaseID pgtype.UUID,
 	leaseSequence int64,
 	locators db.GetLiveRunLeaseLocatorsRow,
+	allowedStatuses ...db.RunStatus,
 ) (runLeaseClaimAuthority, error) {
 	var authority runLeaseClaimAuthority
 	var lineage []db.ListSameWorkspaceAncestorRunsRow
@@ -360,7 +362,7 @@ func lockLiveRunFinalizationAuthority(
 		return authority, staleRunFinalization(err)
 	}
 	if err := validateLockedRunLeaseRun(
-		authority.run, leaseID, locators, db.RunStatusRunning,
+		authority.run, leaseID, locators, allowedStatuses...,
 	); err != nil {
 		return authority, staleRunFinalization(err)
 	}

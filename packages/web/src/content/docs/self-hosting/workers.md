@@ -48,6 +48,15 @@ Runtime (default: 65536 MiB). This host reservation is additional to guest disk
 capacity; admission waits when the local ledger cannot reserve it. It does not
 change the Computer's logical disk size or make local writes externally durable.
 
+`WORKER_COMPUTER_SAVE_EVERY` is required and must be a positive Go duration.
+It controls background disk preservation while an execution is running. Choose
+it using the workload's write rate, staging capacity, and acceptable loss window;
+there is no built-in default. An in-flight save coalesces ticks. This is not a
+maximum recovery-point age: upload latency and failures can extend that age.
+Turn completion does not wait for this interval or a disk upload. Managed waiting
+and `idleTimeout` govern execution suspension separately; they do not change the
+preservation cadence. Successful adoption allows bounded local staging cleanup.
+
 The Worker binary runs its own NBD helper. Keep the Computer preparation arena
 and VMM state on the same filesystem. If the Worker dies while a helper owns a
 device, retain the arena and reconcile the exact owner before reusing the device;

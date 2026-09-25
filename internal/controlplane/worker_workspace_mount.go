@@ -152,15 +152,15 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return err
 		}
-		if a.WorkspaceMount.StagedVersionID.Valid {
+		if a.WorkspaceProcess.StagedVersionID.Valid {
 			var matches bool
-			if err = tx.QueryRow(r.Context(), `SELECT locator=$4::jsonb FROM computer_version_roots WHERE environment_id=$1 AND computer_id=$2 AND version_id=$3`, a.WorkspaceProcess.EnvironmentID, a.WorkspaceProcess.WorkspaceID, a.WorkspaceMount.StagedVersionID, raw).Scan(&matches); err != nil {
+			if err = tx.QueryRow(r.Context(), `SELECT locator=$4::jsonb FROM computer_version_roots WHERE environment_id=$1 AND computer_id=$2 AND version_id=$3`, a.WorkspaceProcess.EnvironmentID, a.WorkspaceProcess.WorkspaceID, a.WorkspaceProcess.StagedVersionID, raw).Scan(&matches); err != nil {
 				return err
 			}
 			if !matches {
 				return conflict(errors.New("Computer capture replay differs"))
 			}
-			versionID = a.WorkspaceMount.StagedVersionID
+			versionID = a.WorkspaceProcess.StagedVersionID
 		} else {
 			staged, err := q.StageWorkspaceExecCapture(r.Context(), db.StageWorkspaceExecCaptureParams{WorkspaceMountID: a.WorkspaceMount.ID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch, WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), SizeBytes: request.Computer.LogicalBytes, ContentDigest: pgvalue.Text(request.Computer.Root.Pack.Digest)})
 			if err != nil {
@@ -298,26 +298,26 @@ func (s *Server) finalizeWorkspaceExec(
 	reasonCode := mount.FinalizationReasonCode
 	errorJSON := mount.FinalizationError
 	if mount.FinalizationKind.String == "capture" {
-		if !mount.StagedVersionID.Valid {
+		if !process.StagedVersionID.Valid {
 			return errors.New("workspace exec capture is not staged")
 		}
 		if secretsValid {
 			if _, err := work.q.CommitStagedWorkspaceExecVersion(
 				ctx,
 				db.CommitStagedWorkspaceExecVersionParams{
-					VersionID:   mount.StagedVersionID,
+					VersionID:   process.StagedVersionID,
 					WorkspaceID: mount.WorkspaceID,
 				},
 			); err != nil {
 				return err
 			}
-			versionID = mount.StagedVersionID
+			versionID = process.StagedVersionID
 			finalState = db.WorkspaceProcessStatusExited
 		} else {
 			affected, err := work.q.DiscardStagedWorkspaceExecVersion(
 				ctx,
 				db.DiscardStagedWorkspaceExecVersionParams{
-					VersionID:   mount.StagedVersionID,
+					VersionID:   process.StagedVersionID,
 					WorkspaceID: mount.WorkspaceID,
 				},
 			)
@@ -538,11 +538,11 @@ func (s *Server) failWorkspaceExec(
 	process := authority.WorkspaceProcess
 	mount := authority.WorkspaceMount
 	lease := authority.WorkspaceLease
-	if mount.StagedVersionID.Valid {
+	if process.StagedVersionID.Valid {
 		affected, err := work.q.DiscardStagedWorkspaceExecVersion(
 			ctx,
 			db.DiscardStagedWorkspaceExecVersionParams{
-				VersionID:   mount.StagedVersionID,
+				VersionID:   process.StagedVersionID,
 				WorkspaceID: process.WorkspaceID,
 			},
 		)
@@ -556,6 +556,7 @@ func (s *Server) failWorkspaceExec(
 	if _, err := work.q.MarkWorkspaceExecRecoveryRequired(
 		ctx,
 		db.MarkWorkspaceExecRecoveryRequiredParams{
+			RecoveryID: pgvalue.UUID(uuid.NewV7()), RecoveryReason: pgvalue.Text(reasonCode),
 			WorkspaceID:           process.WorkspaceID,
 			ExpectedHeadVersionID: authority.SavedHeadVersionID,
 			OwnershipGeneration:   lease.OwnershipGeneration,

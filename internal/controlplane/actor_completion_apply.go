@@ -81,6 +81,11 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		if err := validateActorCompletionAuthority(ctx, work.q, completion, authority); err != nil {
 			return err
 		}
+		// Stop admission can win after the worker has frozen its completion receipt.
+		// Keep that receipt's fingerprint, but honor the matching stop authority.
+		if completion.kind != actorCompletionInterrupted && authority.actor.DispatchHoldID.Valid {
+			completion.kind = actorCompletionInterrupted
+		}
 		if completion.kind == actorCompletionInterrupted {
 			excluded, err := work.q.SessionOwnedExecutionsExcluded(ctx, authority.run.ID)
 			if err != nil {
@@ -104,9 +109,6 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		decision := decideActorRunTerminal(authority, completion)
 		failed := decision.runStatus == db.RunStatusFailed
 		if failed {
-			if _, err := run.HoldSessionExecution(ctx, work.q, authority.actor, authority.attempt.Number, "recovery_required"); err != nil {
-				return err
-			}
 			if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
 				return err
 			}
@@ -220,8 +222,16 @@ func validateActorCompletionAuthority(
 				return errStaleActorCompletion
 			}
 		}
-	} else if (actor.ActiveTurnID.Valid && completion.kind != actorCompletionFailed) || actor.DispatchHoldID.Valid {
-		return errStaleActorCompletion
+	} else {
+		if actor.ActiveTurnID.Valid && completion.kind != actorCompletionFailed {
+			return errStaleActorCompletion
+		}
+		if actor.DispatchHoldID.Valid && (actor.DispatchHoldReason.String != "interrupt_requested" ||
+			actor.DispatchHoldRunID != authority.run.ID ||
+			!actor.DispatchHoldAttemptNumber.Valid || actor.DispatchHoldAttemptNumber.Int32 != authority.attempt.Number ||
+			!actor.DispatchHoldRunGeneration.Valid || actor.DispatchHoldRunGeneration.Int64 != completion.runGeneration) {
+			return errStaleActorCompletion
+		}
 	}
 	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid || authority.run.SessionID != actor.ID ||
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
@@ -511,7 +521,9 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		decision.runReason = pgvalue.Text("actor_failed")
 		return decision
 	}
-	if authority.actor.NextInputSequence-1 > authority.actor.CommittedInputSequence &&
+	// Only work visible at admission can make a clean return a no-progress exit.
+	// Input arriving while the handler returns belongs to the next continuation.
+	if authority.run.SessionInputHighWatermark.Int64 > authority.run.SessionInputStartSequence.Int64 &&
 		authority.actor.CommittedInputSequence <= authority.run.SessionInputStartSequence.Int64 {
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("no_progress")
@@ -551,6 +563,18 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleActorCompletion(err)
+	}
+	if decision.runStatus == db.RunStatusFailed {
+		if err := session.FailExecution(ctx, store, authority.actor, failure, completion.fingerprint, completedAt); err != nil {
+			return err
+		}
+		if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
+			CompletedAt: completedAt, ID: authority.workspace.ID, EnvironmentID: authority.run.EnvironmentID,
+			SessionID: authority.actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			WriterGeneration: authority.workspace.WriterGeneration,
+		}); err != nil {
+			return staleActorCompletion(err)
+		}
 	}
 	if decision.runStatus == db.RunStatusSucceeded {
 		actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{

@@ -64,6 +64,27 @@ func TestDecideActorRunTerminal(t *testing.T) {
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
+			name: "input arriving after idle admission belongs to continuation",
+			authority: func() runLeaseClaimAuthority {
+				a := actorTerminalAuthority("open", 2, 2)
+				a.actor.NextInputSequence = 4
+				return a
+			}(),
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
+		},
+		{
+			name: "late close frontier does not make an idle return fail",
+			authority: func() runLeaseClaimAuthority {
+				a := actorTerminalAuthority("closing", 2, 2)
+				a.actor.NextInputSequence = 4
+				a.actor.CloseSequence = pgtype.Int8{Int64: 3, Valid: true}
+				return a
+			}(),
+			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
+		},
+		{
 			name: "admission backlog without progress fails before close",
 			authority: func() runLeaseClaimAuthority {
 				a := actorTerminalAuthority("closing", 2, 4)

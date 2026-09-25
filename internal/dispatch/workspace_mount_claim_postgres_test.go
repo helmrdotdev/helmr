@@ -345,7 +345,7 @@ SELECT (row).id, (row).environment_id, (row).region_id, (row).sandbox_declared_i
     (row).secret_ca_not_after
 FROM cloned`, sourceMountID, workspaceID, runID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO computer_versions
+WITH cloned AS (
 SELECT (jsonb_populate_record(
     NULL::computer_versions,
     to_jsonb(source_version) || jsonb_build_object(
@@ -354,14 +354,28 @@ SELECT (jsonb_populate_record(
         'created_at', transaction_timestamp(),
         'published_at', transaction_timestamp()
     )
-)).*
+)) AS row
   FROM workspace_mounts source_mount
   JOIN computer_versions source_version
     ON source_version.id = source_mount.materialized_version_id
- WHERE source_mount.id = $1`, sourceMountID, versionID, workspaceID)
+ WHERE source_mount.id = $1
+)
+INSERT INTO computer_versions (
+    id, environment_id, workspace_id, parent_version_id,
+    artifact_id, content_digest, size_bytes, entry_count,
+    status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence,
+    publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation,
+    created_at, published_at, discarded_at, payload_retired_at
+)
+SELECT (row).id, (row).environment_id, (row).workspace_id, (row).parent_version_id,
+    (row).artifact_id, (row).content_digest, (row).size_bytes, (row).entry_count,
+    (row).status, (row).source_workspace_lease_id, (row).publisher_runtime_instance_id, (row).publisher_save_sequence,
+    (row).publisher_desired_version, (row).publication_request_fingerprint, (row).ownership_generation, (row).writer_generation,
+    (row).created_at, (row).published_at, (row).discarded_at, (row).payload_retired_at
+FROM cloned`, sourceMountID, versionID, workspaceID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, workspaceID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO runs
+WITH cloned AS (
 SELECT (jsonb_populate_record(
     NULL::runs,
     to_jsonb(source_run) || jsonb_build_object(
@@ -372,14 +386,44 @@ SELECT (jsonb_populate_record(
         'created_at', transaction_timestamp(),
         'updated_at', transaction_timestamp()
     )
-)).*
+)) AS row
   FROM runtime_instances source_runtime
   JOIN runs source_run ON source_run.id = source_runtime.reserved_run_id
  WHERE source_runtime.id = (
     SELECT runtime_instance_id FROM workspace_mounts WHERE id = $1
- )`, sourceMountID, runID, workspaceID, versionID)
+ )
+)
+INSERT INTO runs (
+    id, org_id, project_id, environment_id,
+    deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id,
+    session_id, cause_kind, schedule_id, schedule_generation,
+    scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id,
+    parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence,
+    session_input_high_watermark, payload, output, failure,
+    status, revision, current_attempt_number, current_run_lease_id,
+    metadata, tags, queue_name, concurrency_key,
+    queue_concurrency_limit, priority, queue_origin_at, queue_score_at,
+    queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms,
+    active_started_at, trace_id, root_span_id, claim_id,
+    created_at, updated_at, first_lease_at, started_at,
+    retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+)
+SELECT (row).id, (row).org_id, (row).project_id, (row).environment_id,
+    (row).deployment_id, (row).deployment_definition_id, (row).entrypoint_kind, (row).entrypoint_declared_id,
+    (row).session_id, (row).cause_kind, (row).schedule_id, (row).schedule_generation,
+    (row).scheduled_at, (row).previous_scheduled_at, (row).schedule_timezone, (row).parent_run_id,
+    (row).parent_owns_lifecycle, (row).workspace_id, (row).base_workspace_version_id, (row).session_input_start_sequence,
+    (row).session_input_high_watermark, (row).payload, (row).output, (row).failure,
+    (row).status, (row).revision, (row).current_attempt_number, (row).current_run_lease_id,
+    (row).metadata, (row).tags, (row).queue_name, (row).concurrency_key,
+    (row).queue_concurrency_limit, (row).priority, (row).queue_origin_at, (row).queue_score_at,
+    (row).queued_expires_at, (row).max_active_duration_ms, (row).retry_policy, (row).active_elapsed_ms,
+    (row).active_started_at, (row).trace_id, (row).root_span_id, (row).claim_id,
+    (row).created_at, (row).updated_at, (row).first_lease_at, (row).started_at,
+    (row).retry_at, (row).runtime_preparation_count, (row).next_runtime_preparation_at, (row).terminal_at
+FROM cloned`, sourceMountID, runID, workspaceID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO run_attempts
+WITH cloned AS (
 SELECT (jsonb_populate_record(
     NULL::run_attempts,
     to_jsonb(source_attempt) || jsonb_build_object(
@@ -388,14 +432,26 @@ SELECT (jsonb_populate_record(
         'base_workspace_version_id', $4::text,
         'created_at', transaction_timestamp()
     )
-)).*
+)) AS row
   FROM runtime_instances source_runtime
   JOIN run_attempts source_attempt
     ON source_attempt.run_id = source_runtime.reserved_run_id
    AND source_attempt.number = source_runtime.reserved_attempt_number
  WHERE source_runtime.id = (
     SELECT runtime_instance_id FROM workspace_mounts WHERE id = $1
- )`, sourceMountID, runID, workspaceID, versionID)
+ )
+)
+INSERT INTO run_attempts (
+    run_id, number, entrypoint_kind, workspace_id,
+    entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence,
+    terminal_outcome, terminal_reason_code, terminal_error, created_at,
+    terminal_at
+)
+SELECT (row).run_id, (row).number, (row).entrypoint_kind, (row).workspace_id,
+    (row).entrypoint_entered_at, (row).session_input_start_sequence, (row).base_workspace_version_id, (row).terminal_session_input_sequence,
+    (row).terminal_outcome, (row).terminal_reason_code, (row).terminal_error, (row).created_at,
+    (row).terminal_at
+FROM cloned`, sourceMountID, runID, workspaceID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 WITH cloned AS (
 SELECT (jsonb_populate_record(

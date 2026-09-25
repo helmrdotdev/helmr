@@ -49,3 +49,26 @@ SELECT digest FROM runtime_computer_object_pins
  AND runtime_desired_version=sqlc.arg(runtime_desired_version)
  AND publication_key=sqlc.arg(publication_key)
  AND digest=sqlc.arg(digest);
+
+-- Native owners arbitrate retirement with restrictive availability FKs. This
+-- view only avoids repeatedly selecting retained roots in the bounded sweep.
+-- name: ListUnreferencedComputerVersionRoots :many
+SELECT r.environment_id,r.computer_id,r.version_id
+FROM computer_version_roots r
+WHERE NOT EXISTS(SELECT 1 FROM retained_computer_versions owner
+ WHERE owner.computer_id=r.computer_id AND owner.version_id=r.version_id)
+ORDER BY r.version_id LIMIT sqlc.arg(row_limit);
+
+-- name: DeleteUnreferencedComputerVersionRoot :execrows
+DELETE FROM computer_version_roots r
+WHERE r.environment_id=sqlc.arg(environment_id) AND r.computer_id=sqlc.arg(computer_id)
+ AND r.version_id=sqlc.arg(version_id)
+ AND NOT EXISTS(SELECT 1 FROM retained_computer_versions owner
+ WHERE owner.computer_id=r.computer_id AND owner.version_id=r.version_id);
+
+-- Called after deleting the exact root in the same transaction. A concurrent
+-- owner acquisition rejects this update and rolls root removal back as well.
+-- name: RetireComputerVersionPayload :execrows
+UPDATE computer_versions SET payload_retired_at=clock_timestamp()
+WHERE environment_id=sqlc.arg(environment_id) AND workspace_id=sqlc.arg(computer_id)
+ AND id=sqlc.arg(version_id) AND payload_available;

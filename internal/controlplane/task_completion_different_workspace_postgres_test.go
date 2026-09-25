@@ -46,6 +46,17 @@ func TestDifferentWorkspaceChildCompletionRefreshesGroupClaims(t *testing.T) {
 func TestDifferentWorkspaceChildCompletionRejectsRevokedCredentialAfterDrain(t *testing.T) {
 	testDifferentWorkspaceChildCompletion(t, "revoked")
 }
+func TestDifferentWorkspaceChildCompletesBetweenParentAttempts(t *testing.T) {
+	testDifferentWorkspaceChildCompletion(t, "parent retry")
+}
+
+func TestTaskCompletionCancelsSkippedOwnedChild(t *testing.T) {
+	testDifferentWorkspaceChildCompletion(t, "owned terminal")
+}
+func TestTaskRetryPreservesSkippedOwnedChild(t *testing.T) {
+	testDifferentWorkspaceChildCompletion(t, "owned retry")
+}
+
 func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	t.Helper()
 	base := runtest.New(t)
@@ -94,6 +105,27 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		t.Fatal(err)
 	}
 
+	if transition == "parent retry" {
+		tx, err := base.Pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dbtest.MustExec(t, ctx, tx, `UPDATE run_waits SET condition_status='failed',condition_reason_code='execution_lost',condition_error='{"code":"execution_lost"}',condition_terminal_at=now(),suspension_status='failed',suspension_reason_code='execution_lost',suspension_terminal_at=now() WHERE id=$1`, waitID)
+		dbtest.MustExec(t, ctx, tx, `UPDATE run_checkpoints SET status='invalid',invalidated_at=now(),invalidation_reason_code='execution_lost' WHERE id=$1`, checkpointID)
+		dbtest.MustExec(t, ctx, tx, `UPDATE run_attempts SET terminal_outcome='failed',terminal_reason_code='execution_lost',terminal_at=now() WHERE run_id=$1 AND number=1`, parent.RunID)
+		dbtest.MustExec(t, ctx, tx, `INSERT INTO run_attempts(run_id,number,entrypoint_kind,workspace_id,base_workspace_version_id) SELECT id,2,'task',workspace_id,base_workspace_version_id FROM runs WHERE id=$1`, parent.RunID)
+		dbtest.MustExec(t, ctx, tx, `UPDATE runs SET status='retry_delayed',current_attempt_number=2,retry_at=now()+interval '1 minute',revision=revision+1 WHERE id=$1`, parent.RunID)
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var owned uuid.UUID
+	if transition == "owned terminal" || transition == "owned retry" {
+		owned = base.AddRunLease(t, "starting", time.Now().Add(-time.Minute)).RunID
+		ownedClaim := uuid.NewV7()
+		dbtest.MustExec(t, ctx, base.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'task.child.invoke',decode(repeat('21',32),'hex'),decode(repeat('23',32),'hex'),now())`, ownedClaim, base.EnvironmentID)
+		dbtest.MustExec(t, ctx, base.Pool, `UPDATE runs SET parent_run_id=$2,parent_owns_lifecycle=true,cause_kind='child',claim_id=$3 WHERE id=$1`, owned, child.RunID, ownedClaim)
+	}
 	server := &Server{db: db.New(base.Pool), tx: base.Pool, cas: finalizationTestCAS(t)}
 	worker := workerActor{WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
 	assignment := workerapi.RunLeaseAssignment{ID: child.LeaseID.String(), RunID: child.RunID.String(), AttemptNumber: 1, LeaseSequence: 1, WorkerGroupID: runtest.WorkerGroup, WorkerInstanceID: base.WorkerID.String(), WorkerEpoch: 1, RuntimeInstanceID: runtimeID.String(), RuntimeIdentityID: base.RuntimeIdentityID, WorkspaceID: childWorkspace.String(), WorkspaceMountID: mountID.String(), WorkspaceLeaseID: workspaceLeaseID.String(), BaseWorkspaceVersionID: childVersion.String(), OwnershipGeneration: 1, WriterGeneration: 1, MountFencingGeneration: 2}
@@ -128,7 +160,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		}
 	}
 	request := workerapi.CompleteTaskRequest{Lease: assignment.Fence(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`{"ok":true}`)}}, Workspace: workerapi.TaskWorkspaceProof{Captured: capture}}
-	if transition == "saved retry" {
+	if transition == "saved retry" || transition == "owned retry" {
 		dbtest.MustExec(t, ctx, base.Pool, `UPDATE runs SET retry_policy='{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'::jsonb WHERE id=$1`, child.RunID)
 		request.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "retry me"}}
 	}
@@ -282,6 +314,30 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 	if err := server.completeTask(ctx, worker, request, completion); err != nil {
 		point, _ := staleAuthorityPointOf(err)
 		t.Fatalf("complete task at %s: %v", point, err)
+	}
+	if owned != uuid.Nil() {
+		var status string
+		if err := base.Pool.QueryRow(ctx, `SELECT status FROM runs WHERE id=$1`, owned).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		want := "cancelled"
+		if transition == "owned retry" {
+			want = "queued"
+		}
+		if status != want {
+			t.Fatalf("owned lifecycle on %s: %s", transition, status)
+		}
+		return
+	}
+	if transition == "parent retry" {
+		var childState, parentState, waitState string
+		if err := base.Pool.QueryRow(ctx, `SELECT c.status,p.status,w.condition_status FROM runs c JOIN runs p ON p.id=c.parent_run_id JOIN run_waits w ON w.id=$2 WHERE c.id=$1`, child.RunID, waitID).Scan(&childState, &parentState, &waitState); err != nil {
+			t.Fatal(err)
+		}
+		if childState != "succeeded" || parentState != "retry_delayed" || waitState != "failed" {
+			t.Fatalf("late completion woke old parent: %s/%s/%s", childState, parentState, waitState)
+		}
+		return
 	}
 	if transition == "saved" || transition == "saved retry" {
 		var origin, parent uuid.UUID

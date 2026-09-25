@@ -717,7 +717,7 @@ RETURNING requested.*;
 
 -- name: StageWorkspaceExecCapture :one
 WITH authority AS (
-    SELECT workspace_mounts.*, computers.head_version_id,
+    SELECT workspace_mounts.*, workspace_processes.id AS process_id, computers.head_version_id,
            workspace_leases.id AS source_workspace_lease_id,
            workspace_leases.ownership_generation,
            workspace_leases.writer_generation
@@ -740,7 +740,7 @@ WITH authority AS (
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.status = 'unmounting'
        AND workspace_mounts.finalization_kind = 'capture'
-       AND workspace_mounts.staged_version_id IS NULL
+       AND workspace_processes.staged_version_id IS NULL
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases, computers
 ), created AS (
     INSERT INTO computer_versions (
@@ -757,12 +757,12 @@ WITH authority AS (
 
     RETURNING computer_versions.*
 ), staged AS (
-    UPDATE workspace_mounts
+    UPDATE workspace_processes
        SET staged_version_id = created.id,
            updated_at = transaction_timestamp()
-      FROM created
-     WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
-    RETURNING workspace_mounts.id
+      FROM created, authority
+     WHERE workspace_processes.id = authority.process_id
+    RETURNING workspace_processes.id
 )
 SELECT created.*
   FROM created
@@ -801,11 +801,18 @@ RETURNING computers.id, computers.environment_id, computers.region_id, computers
 -- name: MarkWorkspaceExecRecoveryRequired :one
 UPDATE computers
    SET status = 'recovery_required',
+       recovery_id = sqlc.arg(recovery_id),
+       recovery_version_id = head_version_id,
+       recovery_reason = sqlc.arg(recovery_reason),
+       recovery_started_at = transaction_timestamp(),
+       recovery_preparation_count = 0, next_recovery_preparation_at = NULL,
+       recovery_runtime_id = NULL, recovery_completed_at = NULL,
        desired_state = 'stopped',
        dirty_state = 'dirty_state_lost',
        revision = revision + 1,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(workspace_id)
+   AND status = 'active'
    AND head_version_id = sqlc.arg(expected_head_version_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)

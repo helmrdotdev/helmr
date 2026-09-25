@@ -365,3 +365,42 @@ func TestLocalGenerationReclaimsCrashScratch(t *testing.T) {
 		}
 	}
 }
+
+func TestLocalGenerationSourceLossStopsAllDiskOperations(t *testing.T) {
+	for _, op := range []string{"read", "partial write", "partial trim", "flush"} {
+		t.Run(op, func(t *testing.T) {
+			cfg, base := localGenerationFixture(t)
+			p, err := CreateLocalGeneration(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			if op == "flush" {
+				if _, err = p.WriteAt(t.Context(), bytes.Repeat([]byte{2}, 4096), 0); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = os.Rename(base, base+".offline"); err != nil {
+				t.Fatal(err)
+			}
+			switch op {
+			case "read":
+				_, err = p.ReadAt(t.Context(), make([]byte, 1), 7)
+			case "partial write":
+				_, err = p.WriteAt(t.Context(), []byte{2}, 7)
+			case "partial trim":
+				err = p.Trim(t.Context(), 7, 1)
+			case "flush":
+				_, err = p.Flush(t.Context())
+			}
+			var fatal *DeviceFailure
+			var published *SourceFailure
+			if !errors.As(err, &fatal) || !errors.Is(err, fs.ErrNotExist) || errors.As(err, &published) {
+				t.Fatalf("unsafe source error: %v", err)
+			}
+			if err = os.Rename(base+".offline", base); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

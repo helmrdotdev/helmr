@@ -29,6 +29,8 @@ import (
 const workspaceStartupTimeout = 20 * time.Minute
 
 type WorkspaceMaterializer struct {
+	ComputerSaves         ComputerSaveClient
+	ComputerSaveEvery     time.Duration
 	CAS                   cas.Store
 	ComputerObjects       cas.ImmutableStore
 	Sessions              WorkspaceMountSessionRegistry
@@ -97,6 +99,29 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 		return err
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount guest registered", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	saveFailure := make(chan error, 1)
+	saveResults, err := session.saves.run(renewal.ctx, m.ComputerSaveEvery, m.ComputerSaves, m.ComputerObjects, func(ctx context.Context) (computerSaveCapture, error) {
+		return captureComputerSave(ctx, rawSession, mount.WorkspaceID)
+	}, func(err error) { saveFailure <- err; renewal.cancel() })
+	if err != nil {
+		return fmt.Errorf("start Computer preservation: %w", err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.failureTimeout())
+		defer cancel()
+		_ = session.saves.Quiesce(cleanupCtx)
+		select {
+		case failure := <-saveFailure:
+			cause := workspaceMountFailure{code: "computer_preservation_failed", err: fmt.Errorf("Computer preservation failed: %w", failure)}
+			if ctx.Err() == nil {
+				reportErr := m.failWorkspaceMount(client, mount, cause)
+				cause.reported = reportErr == nil
+				runErr = errors.Join(runErr, reportErr)
+			}
+			runErr = errors.Join(runErr, cause)
+		default:
+		}
+	}()
 	unregisterSession := func() {}
 	if m.Sessions != nil {
 		unregisterSession = m.Sessions.RegisterWorkspaceMountSession(mount, session, m.channelToken(mount))
@@ -125,7 +150,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 		return nil
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
-	return m.serveWorkspaceMount(ctx, renewal, session, mount, client)
+	return m.serveWorkspaceMount(ctx, renewal, session, mount, client, saveResults)
 }
 
 func (m WorkspaceMaterializer) serveWorkspaceMount(
@@ -134,6 +159,7 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 	session *managedWorkspaceMountSession,
 	mount workerapi.WorkspaceMount,
 	client workerapi.WorkspaceMaterializerControlPlaneClient,
+	saveResults <-chan error,
 ) error {
 	sessionExited := make(chan error, 1)
 	go func() {
@@ -146,8 +172,11 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 		return cause
 	}
 	stopAndReturn := func() error {
-		_ = renewal.stopAndWait()
-		return ctx.Err()
+		err := renewal.stopAndWait()
+		if ctx.Err() == nil && err != nil {
+			return failAndReturn(err)
+		}
+		return errors.Join(ctx.Err(), err)
 	}
 	pollEvery := m.PollEvery
 	if pollEvery <= 0 {
@@ -237,6 +266,22 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 			failure.reported = reportErr == nil
 			request.result <- errors.Join(closeErr, reportErr)
 			return failure
+		case err := <-saveResults:
+			session.saves.mu.Lock()
+			stopped := session.saves.stopped
+			session.saves.mu.Unlock()
+			if stopped {
+				saveResults = nil
+				continue
+			}
+			if renewal.ctx.Err() != nil {
+				return stopAndReturn()
+			}
+			if err == nil {
+				err = errors.New("Computer preservation stopped unexpectedly")
+			}
+			return fmt.Errorf("Computer preservation failed: %w", err)
+
 		case <-poll.C:
 			claimed, err := client.ClaimWorkspaceExec(renewal.ctx, workerapi.WorkspaceExecClaimRequest{
 				OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
@@ -249,12 +294,22 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 				poll.Reset(pollEvery)
 				continue
 			}
+			detach, err := session.saves.attach(mount.RuntimeInstanceID, mount.WorkspaceID, func() *workerapi.ComputerSaveBeginRequest {
+				if renewal.ctx.Err() != nil {
+					return nil
+				}
+				return &workerapi.ComputerSaveBeginRequest{OrgID: mount.OrgID, WorkspaceMountID: mount.ID}
+			})
+			if err != nil {
+				return failAndReturn(err)
+			}
 			completion, err := m.dispatchWorkspaceBasicExec(
 				renewal.ctx,
 				session,
 				mount,
 				*claimed.Exec,
 			)
+			detach()
 			if err != nil {
 				var protocolError *workspaceBasicExecProtocolError
 				if errors.As(err, &protocolError) {
@@ -262,6 +317,9 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 				}
 				poll.Reset(claimErrorBackoff)
 				continue
+			}
+			if err := session.saves.Quiesce(renewal.ctx); err != nil {
+				return failAndReturn(err)
 			}
 			update, err := m.completeWorkspaceBasicExec(renewal.ctx, client, completion)
 			if err != nil {

@@ -103,13 +103,13 @@ SELECT worker_instances.claim_version, worker_groups.claim_version
 		t.Fatal(err)
 	}
 	return fixture, work, workerapi.CheckpointFailedRequest{
-			Lease:          workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1},
-			RequestVersion: 1, RunWaitID: waitID.String(), CheckpointID: checkpointID.String(),
-			Error: "snapshot failed",
-		}, workerActor{
-			WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
-			WorkerEpoch: 1, ClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
-		}
+		Lease:          workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1},
+		RequestVersion: 1, RunWaitID: waitID.String(), CheckpointID: checkpointID.String(),
+		Error: "snapshot failed",
+	}, workerActor{
+		WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
+		WorkerEpoch: 1, ClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
+	}
 }
 
 func callCheckpointFailure(t *testing.T, fixture runtest.Fixture, receipt workerapi.CheckpointFailedRequest, worker workerActor) *httptest.ResponseRecorder {
@@ -126,8 +126,8 @@ func callCheckpointFailure(t *testing.T, fixture runtest.Fixture, receipt worker
 	return response
 }
 
-func TestWorkerCheckpointFailureRequiresComputerRecoveryRegardlessOfRetryPolicy(t *testing.T) {
-	for _, policy := range []string{`{"enabled":false}`, `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`, `{"enabled":true}`} {
+func TestWorkerCheckpointFailureHonorsTaskRetryPolicy(t *testing.T) {
+	for i, policy := range []string{`{"enabled":false}`, `{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`, `{"enabled":true}`} {
 		t.Run(policy, func(t *testing.T) {
 			fixture, work, receipt, worker := checkpointFailureFixture(t)
 			dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runs SET retry_policy=$2 WHERE id=$1`, work.RunID, policy)
@@ -144,13 +144,17 @@ func TestWorkerCheckpointFailureRequiresComputerRecoveryRegardlessOfRetryPolicy(
 			var status, computer, dirty, reason, message, head string
 			var attempts int
 			var noRetry, noOwner bool
-			err := fixture.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,w.dirty_state,r.failure->>'code',r.failure->>'message',w.head_version_id::text,
+			err := fixture.Pool.QueryRow(t.Context(), `SELECT r.status,w.status,w.dirty_state,coalesce(r.failure->>'code',(SELECT terminal_reason_code FROM run_attempts WHERE run_id=r.id AND number=1)),coalesce(r.failure->>'message',(SELECT terminal_error->>'message' FROM run_attempts WHERE run_id=r.id AND number=1)),w.head_version_id::text,
  (SELECT count(*) FROM run_attempts a WHERE a.run_id=r.id),r.retry_at IS NULL,w.owner_run_id IS NULL
  FROM runs r JOIN computers w ON w.id=r.workspace_id WHERE r.id=$1`, work.RunID).Scan(&status, &computer, &dirty, &reason, &message, &head, &attempts, &noRetry, &noOwner)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if status != "system_failed" || computer != "recovery_required" || dirty != "dirty_state_lost" || reason != "checkpoint_failed" || message != receipt.Error || head != originalHead || attempts != 1 || !noRetry || !noOwner {
+			wantStatus, wantAttempts, wantNoRetry := "system_failed", 1, true
+			if i == 1 {
+				wantStatus, wantAttempts, wantNoRetry = "retry_delayed", 2, false
+			}
+			if status != wantStatus || computer != "recovery_required" || dirty != "dirty_state_lost" || reason != "checkpoint_failed" || message != receipt.Error || head != originalHead || attempts != wantAttempts || noRetry != wantNoRetry || noOwner != wantNoRetry {
 				t.Fatalf("state=%s/%s/%s reason=%s message=%s head=%s attempts=%d noRetry=%t noOwner=%t", status, computer, dirty, reason, message, head, attempts, noRetry, noOwner)
 			}
 			var condition, suspension, writer string

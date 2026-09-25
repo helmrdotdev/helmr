@@ -52,3 +52,16 @@ output, model it as an Actor instead.
 Run defaults on the definition include queue, maximum duration, queued TTL,
 and retry policy. A start can supply queueing, retry, metadata, and tag options,
 but it cannot replace the deployed maximum execution duration.
+
+## Child calls during retry
+
+A retry executes the parent function from the beginning. Repeating a child call
+with the same idempotency key and matching request reconnects to the same logical
+child. Each parent Attempt has its own wait; a late child completion cannot resume
+a retired parent Attempt. A terminal failed or cancelled child is not replaced
+with a new child under that key.
+
+Reusing a successful child result proves its saved JSON output, not the existence
+of files named in that output. It does not restore or roll back the Computer.
+Use durable artifact references for file handoff, or explicitly regenerate files
+when your application needs them after environment loss.

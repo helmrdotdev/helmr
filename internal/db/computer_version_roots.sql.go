@@ -36,6 +36,28 @@ func (q *Queries) CreateComputerVersionRoot(ctx context.Context, arg CreateCompu
 	return err
 }
 
+const deleteUnreferencedComputerVersionRoot = `-- name: DeleteUnreferencedComputerVersionRoot :execrows
+DELETE FROM computer_version_roots r
+WHERE r.environment_id=$1 AND r.computer_id=$2
+ AND r.version_id=$3
+ AND NOT EXISTS(SELECT 1 FROM retained_computer_versions owner
+ WHERE owner.computer_id=r.computer_id AND owner.version_id=r.version_id)
+`
+
+type DeleteUnreferencedComputerVersionRootParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	VersionID     pgtype.UUID `json:"version_id"`
+}
+
+func (q *Queries) DeleteUnreferencedComputerVersionRoot(ctx context.Context, arg DeleteUnreferencedComputerVersionRootParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUnreferencedComputerVersionRoot, arg.EnvironmentID, arg.ComputerID, arg.VersionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getComputerVersionRoot = `-- name: GetComputerVersionRoot :one
 SELECT locator FROM computer_version_roots
  WHERE environment_id=$1 AND computer_id=$2
@@ -122,6 +144,42 @@ func (q *Queries) ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInst
 	return items, nil
 }
 
+const listUnreferencedComputerVersionRoots = `-- name: ListUnreferencedComputerVersionRoots :many
+SELECT r.environment_id,r.computer_id,r.version_id
+FROM computer_version_roots r
+WHERE NOT EXISTS(SELECT 1 FROM retained_computer_versions owner
+ WHERE owner.computer_id=r.computer_id AND owner.version_id=r.version_id)
+ORDER BY r.version_id LIMIT $1
+`
+
+type ListUnreferencedComputerVersionRootsRow struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	VersionID     pgtype.UUID `json:"version_id"`
+}
+
+// Native owners arbitrate retirement with restrictive availability FKs. This
+// view only avoids repeatedly selecting retained roots in the bounded sweep.
+func (q *Queries) ListUnreferencedComputerVersionRoots(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerVersionRootsRow, error) {
+	rows, err := q.db.Query(ctx, listUnreferencedComputerVersionRoots, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUnreferencedComputerVersionRootsRow
+	for rows.Next() {
+		var i ListUnreferencedComputerVersionRootsRow
+		if err := rows.Scan(&i.EnvironmentID, &i.ComputerID, &i.VersionID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pinRuntimeComputerSource = `-- name: PinRuntimeComputerSource :execrows
 UPDATE runtime_instances r SET computer_source_version_id=$1
  WHERE r.id=$2 AND r.environment_id=$3
@@ -178,4 +236,26 @@ func (q *Queries) RequireRuntimeComputerObjectPin(ctx context.Context, arg Requi
 	var digest string
 	err := row.Scan(&digest)
 	return digest, err
+}
+
+const retireComputerVersionPayload = `-- name: RetireComputerVersionPayload :execrows
+UPDATE computer_versions SET payload_retired_at=clock_timestamp()
+WHERE environment_id=$1 AND workspace_id=$2
+ AND id=$3 AND payload_available
+`
+
+type RetireComputerVersionPayloadParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
+	VersionID     pgtype.UUID `json:"version_id"`
+}
+
+// Called after deleting the exact root in the same transaction. A concurrent
+// owner acquisition rejects this update and rolls root removal back as well.
+func (q *Queries) RetireComputerVersionPayload(ctx context.Context, arg RetireComputerVersionPayloadParams) (int64, error) {
+	result, err := q.db.Exec(ctx, retireComputerVersionPayload, arg.EnvironmentID, arg.ComputerID, arg.VersionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

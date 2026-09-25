@@ -43,28 +43,6 @@ func TestSessionCommandEnvelopePreservesApplicationJSONAndRejectsAmbiguity(t *te
 	}
 }
 
-func TestSessionRecoveryRequiresExplicitNullableTarget(t *testing.T) {
-	hold, version := uuid.NewV7().String(), uuid.NewV7().String()
-	base := `"hold_id":"` + hold + `","workspace_version_id":"` + version + `","reconciliation_ref":"operator:ticket-42"`
-	for _, test := range []struct {
-		raw   string
-		valid bool
-	}{
-		{`{` + base + `}`, false},
-		{`{` + base + `,"turn_id":null}`, true},
-		{`{` + base + `,"turn_id":null,"disposition":"failed"}`, false},
-		{`{` + base + `,"turn_id":null,"disposition":null}`, false},
-		{`{` + base + `,"turn_id":null,"disposition":""}`, false},
-		{`{` + base + `,"turn_id":"` + uuid.NewV7().String() + `"}`, false},
-		{`{` + base + `,"turn_id":"` + uuid.NewV7().String() + `","disposition":"failed"}`, true},
-	} {
-		_, err := decodeRecoverSessionCommand(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.raw)))
-		if (err == nil) != test.valid {
-			t.Fatalf("body=%s error=%v", test.raw, err)
-		}
-	}
-}
-
 func TestSessionEventCursorValidatesClosedQueryAndSafeIntegers(t *testing.T) {
 	after, limit, err := parseSessionEventPageOptions("")
 	if err != nil || after != 0 || limit != 100 {
@@ -83,23 +61,6 @@ func TestSessionEventCursorValidatesClosedQueryAndSafeIntegers(t *testing.T) {
 	body := decodeHTTPError(t, recorder.Body.Bytes())
 	if recorder.Code != http.StatusGone || body.Code != "cursor_expired" || string(body.Details["retained_after"]) != "17" {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestSessionRecoveryAuthorizesBeforeResourceLookup(t *testing.T) {
-	for _, principal := range []auth.Actor{
-		{Kind: auth.ActorKindSession, Role: auth.RoleDeveloper},
-		{Kind: auth.ActorKindSession, Role: auth.RoleViewer},
-		{Kind: auth.ActorKindAPIKey, Role: auth.RoleAdmin, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String()},
-		{Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(), Permissions: []auth.Permission{auth.PermissionSessionsRecover}},
-	} {
-		raw := `{"hold_id":"` + uuid.NewV7().String() + `","turn_id":null,"workspace_version_id":"` + uuid.NewV7().String() + `","reconciliation_ref":"ticket:42"}`
-		r := sessionLifecycleRequest(raw, principal, "not-a-session", "")
-		recorder := httptest.NewRecorder()
-		(&Server{}).recoverSessionHTTP(recorder, r)
-		if recorder.Code != http.StatusForbidden || decodeHTTPError(t, recorder.Body.Bytes()).Code != "forbidden" {
-			t.Fatalf("principal=%+v status=%d body=%s", principal, recorder.Code, recorder.Body.String())
-		}
 	}
 }
 

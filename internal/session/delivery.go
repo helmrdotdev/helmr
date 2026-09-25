@@ -20,7 +20,7 @@ import (
 )
 
 type InputReconciler func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (bool, error)
-type CloseReconciler func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
+type LifecycleReconciler func(context.Context, uuid.UUID, uuid.UUID) (bool, error)
 
 const (
 	sessionDeliveryPollInterval = 250 * time.Millisecond
@@ -39,7 +39,7 @@ type DeliveryWorker struct {
 	log       *slog.Logger
 	store     DeliveryStore
 	reconcile InputReconciler
-	close     CloseReconciler
+	lifecycle LifecycleReconciler
 	workerID  string
 	interval  time.Duration
 	claimFor  time.Duration
@@ -51,7 +51,7 @@ func NewDeliveryWorker(
 	log *slog.Logger,
 	store DeliveryStore,
 	reconcile InputReconciler,
-	close CloseReconciler,
+	lifecycle LifecycleReconciler,
 ) (*DeliveryWorker, error) {
 	if store == nil {
 		return nil, errors.New("session input delivery store is required")
@@ -59,14 +59,14 @@ func NewDeliveryWorker(
 	if reconcile == nil {
 		return nil, errors.New("session input reconciler is required")
 	}
-	if close == nil {
-		return nil, errors.New("session close reconciler is required")
+	if lifecycle == nil {
+		return nil, errors.New("session lifecycle reconciler is required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
 	return &DeliveryWorker{
-		log: log, store: store, reconcile: reconcile, close: close,
+		log: log, store: store, reconcile: reconcile, lifecycle: lifecycle,
 		workerID: uuid.NewV7().String(), interval: sessionDeliveryPollInterval,
 		claimFor: sessionDeliveryClaimLease, claimSize: sessionDeliveryClaimLimit,
 		now: func() time.Time { return time.Now().UTC() },
@@ -95,7 +95,7 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
 		Topics: []string{
 			"session.input.reconcile",
-			"session.close.reconcile",
+			"session.lifecycle.reconcile",
 		}, RowLimit: w.claimSize,
 	})
 	if err != nil {
@@ -111,8 +111,8 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 }
 
 func (w *DeliveryWorker) process(ctx context.Context, message db.ControlOutbox) error {
-	if message.Topic == "session.close.reconcile" {
-		return w.processClose(ctx, message)
+	if message.Topic == "session.lifecycle.reconcile" {
+		return w.processLifecycle(ctx, message)
 	}
 	if message.Topic != "session.input.reconcile" {
 		return w.deadLetter(ctx, message, errors.New("unsupported session reconciliation topic"))
@@ -137,7 +137,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.ControlOutbox) 
 	return err
 }
 
-func (w *DeliveryWorker) processClose(
+func (w *DeliveryWorker) processLifecycle(
 	ctx context.Context,
 	message db.ControlOutbox,
 ) error {
@@ -145,7 +145,7 @@ func (w *DeliveryWorker) processClose(
 	if err != nil {
 		return w.deadLetter(ctx, message, err)
 	}
-	deferred, err := w.close(ctx, payload.environmentID, payload.sessionID)
+	deferred, err := w.lifecycle(ctx, payload.environmentID, payload.sessionID)
 	if err != nil {
 		return w.retry(ctx, message, err, outbox.RetryAfter(message.Attempts))
 	}

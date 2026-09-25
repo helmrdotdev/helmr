@@ -90,7 +90,7 @@ UPDATE run_waits
    AND run_waits.prior_run_lease_id = $12
    AND run_waits.suspend_checkpoint_id = $13
    AND run_waits.child_writer_generation = $14
-RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at, run_waits.computer_payload_required
 `
 
 type CompleteSameWorkspaceChildFailureParams struct {
@@ -182,6 +182,7 @@ func (q *Queries) CompleteSameWorkspaceChildFailure(ctx context.Context, arg Com
 		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -225,7 +226,7 @@ UPDATE run_waits
    AND run_waits.prior_run_lease_id = $11
    AND run_waits.suspend_checkpoint_id = $12
    AND run_waits.child_writer_generation = $13
-RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at
+RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at, run_waits.computer_payload_required
 `
 
 type CompleteSameWorkspaceChildSuccessParams struct {
@@ -315,6 +316,7 @@ func (q *Queries) CompleteSameWorkspaceChildSuccess(ctx context.Context, arg Com
 		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -331,7 +333,7 @@ UPDATE run_attempts
    AND entrypoint_kind = 'task'
    AND entrypoint_entered_at IS NOT NULL
    AND terminal_at IS NULL
-RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
 `
 
 type CompleteTaskAttemptParams struct {
@@ -369,6 +371,7 @@ func (q *Queries) CompleteTaskAttempt(ctx context.Context, arg CompleteTaskAttem
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -489,7 +492,7 @@ SELECT runs.id,
    AND runs.status = 'running'
    AND runs.current_attempt_number = $5
    AND runs.current_run_lease_id = $6
-RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
 `
 
 type CreateTaskRetryAttemptParams struct {
@@ -525,6 +528,7 @@ func (q *Queries) CreateTaskRetryAttempt(ctx context.Context, arg CreateTaskRetr
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -546,7 +550,7 @@ UPDATE runs
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type DelayTaskRunRetryParams struct {
@@ -625,6 +629,7 @@ func (q *Queries) DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryPa
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -647,7 +652,7 @@ UPDATE runs
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type FinishTaskRunParams struct {
@@ -726,6 +731,7 @@ func (q *Queries) FinishTaskRun(ctx context.Context, arg FinishTaskRunParams) (R
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -820,7 +826,7 @@ WHERE predecessor.id=$4
   AND predecessor.environment_id=$2
   AND predecessor.workspace_id=$3
   AND predecessor.status='committed'
-RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at
+RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_available
 `
 
 type PublishTaskWorkspaceVersionParams struct {
@@ -864,6 +870,7 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
+		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
@@ -871,6 +878,8 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
+		&i.PayloadRetiredAt,
+		&i.PayloadAvailable,
 	)
 	return i, err
 }
@@ -893,6 +902,12 @@ WITH candidates AS (
        AND runs.current_run_lease_id IS NULL
        AND run_attempts.terminal_outcome IS NULL
        AND run_attempts.terminal_at IS NULL
+       AND EXISTS (SELECT 1 FROM computers c WHERE c.id=runs.workspace_id AND c.status='active' AND c.recovery_failure IS NULL)
+       AND (NOT EXISTS(SELECT 1 FROM runs p WHERE p.id=runs.parent_run_id AND p.workspace_id=runs.workspace_id)
+         OR EXISTS(SELECT 1 FROM runs p JOIN run_waits w ON w.run_id=p.id AND w.attempt_number=p.current_attempt_number
+            WHERE p.id=runs.parent_run_id AND p.status='waiting' AND w.child_run_id=runs.id
+              AND w.condition_status='pending' AND w.suspension_status='parked'
+              ))
        AND NOT EXISTS (
             SELECT 1
               FROM run_leases
@@ -1242,7 +1257,7 @@ UPDATE workspace_mounts
             AND workspace_mounts.finalization_kind = 'discard'
             AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type RequestSameWorkspaceChildAttemptRuntimeDiscardParams struct {
@@ -1307,7 +1322,6 @@ func (q *Queries) RequestSameWorkspaceChildAttemptRuntimeDiscard(ctx context.Con
 		&i.FinalizationKind,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -1336,7 +1350,7 @@ UPDATE workspace_mounts
    AND materialized_version_id = $9
    AND fencing_generation = $10
    AND status = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type UpdateTaskWorkspaceMountFrontierParams struct {
@@ -1387,7 +1401,6 @@ func (q *Queries) UpdateTaskWorkspaceMountFrontier(ctx context.Context, arg Upda
 		&i.FinalizationKind,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,

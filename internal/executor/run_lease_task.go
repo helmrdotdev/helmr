@@ -71,6 +71,7 @@ type RunLeaseTaskRenewal struct {
 }
 
 type RunLeaseTask interface {
+	QuiesceComputerSaves(context.Context) error
 	Close()
 	Wait(context.Context) (RunLeaseTaskResult, error)
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
@@ -79,6 +80,9 @@ type RunLeaseTask interface {
 }
 
 func (task *guestRunLeaseTask) Close() {
+	if task.saveDetach != nil {
+		task.saveDetach()
+	}
 	if task.program.protocol != nil {
 		_ = task.program.protocol.Close()
 	}
@@ -92,6 +96,8 @@ type RunLeaseTaskRunner interface {
 }
 
 type guestRunLeaseTask struct {
+	saveDetach      func()
+	saveWaiting     int
 	stopMu          sync.Mutex
 	stopDeadline    time.Time
 	program         freshProgram
@@ -213,6 +219,18 @@ func (r ProgramRunner) StartRunLeaseTask(
 			freezeGate: &task.renewalGate,
 			onFrozen:   task.markCheckpointFrozen,
 		}
+	}
+	owner, ok := program.session.(interface {
+		AttachComputerSaveAuthority(string, string, func() *workerapi.ComputerSaveBeginRequest) (func(), error)
+	})
+	if !ok {
+		task.Close()
+		return nil, errors.New("Run physical mount save owner is missing")
+	}
+	task.saveDetach, err = owner.AttachComputerSaveAuthority(program.lease.RuntimeInstanceID, program.mount.WorkspaceID, task.computerSaveAuthority)
+	if err != nil {
+		task.Close()
+		return nil, err
 	}
 	return task, nil
 }
@@ -881,3 +899,21 @@ func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure
 }
 
 var _ RunLeaseTaskRunner = ProgramRunner{}
+
+func (task *guestRunLeaseTask) QuiesceComputerSaves(ctx context.Context) error {
+	owner, ok := task.program.session.(interface{ QuiesceComputerSaves(context.Context) error })
+	if !ok {
+		return errors.New("Run physical mount save owner is missing")
+	}
+	return owner.QuiesceComputerSaves(ctx)
+}
+
+func (task *guestRunLeaseTask) computerSaveAuthority() *workerapi.ComputerSaveBeginRequest {
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	if task.finished || task.checkpointFrozen || task.finalizingKind != "" || task.saveWaiting > 0 || !task.lease.ExpiresAt.After(time.Now()) {
+		return nil
+	}
+	fence := task.lease.Fence()
+	return &workerapi.ComputerSaveBeginRequest{Lease: &fence}
+}

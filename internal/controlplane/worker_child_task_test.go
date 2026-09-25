@@ -165,16 +165,14 @@ func TestDecodeChildTaskReceiptRequiresCanonicalAuthority(t *testing.T) {
 	}
 }
 
-func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
+func TestReplayBoundSameWorkspaceChildCallUsesAttemptAuthority(t *testing.T) {
 	environmentID := pgvalue.UUID(uuid.NewV7())
 	parentRunID := pgvalue.UUID(uuid.NewV7())
 	childRunID := uuid.NewV7()
 	workspaceID := pgvalue.UUID(uuid.NewV7())
 	waitID := uuid.NewV7()
-	baseID := uuid.NewV7()
 	claimID := pgvalue.UUID(uuid.NewV7())
 	resumeAttachID := pgvalue.UUID(uuid.NewV7())
-	const digest = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
 	store := &sameWorkspaceChildReplayStore{
 		wait: db.RunWait{
 			ID:                       pgvalue.UUID(waitID),
@@ -204,19 +202,17 @@ func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
 			RunWaitID:      waitID,
 			ResumeAttachID: pgvalue.MustUUIDValue(resumeAttachID),
 		},
-		runLeaseClaimAuthority{run: db.Run{
-			ID:            parentRunID,
-			EnvironmentID: environmentID,
-			WorkspaceID:   workspaceID,
+		runLeaseClaimAuthority{attempt: db.RunAttempt{Number: 1}, run: db.Run{
+			EntrypointKind: "task",
+			ID:             parentRunID,
+			EnvironmentID:  environmentID,
+			WorkspaceID:    workspaceID,
 		}},
 		db.IdempotencyClaim{ID: claimID},
 		"sha256:"+strings.Repeat("0", 64),
+		idempotency.TaskChildInvokeFingerprint{},
 		childTaskReceipt{
-			RunID:                  childRunID.String(),
-			RunWaitID:              waitID.String(),
-			ResumeAttachID:         pgvalue.MustUUIDValue(resumeAttachID).String(),
-			BaseWorkspaceVersionID: baseID.String(),
-			BaseWorkspaceDigest:    digest,
+			RunID: childRunID.String(),
 		},
 	)
 	if err != nil {
@@ -228,18 +224,16 @@ func TestReplayBoundSameWorkspaceChildCallUsesReceiptAuthority(t *testing.T) {
 		string(response.Resolution) != `{"ok":true,"output":7}` {
 		t.Fatalf("response = %+v", response)
 	}
-	if store.params.ID != pgvalue.UUID(waitID) ||
-		store.params.ChildRunID != pgvalue.UUID(childRunID) ||
-		store.params.BaseWorkspaceVersionID != pgvalue.UUID(baseID) ||
-		store.params.BaseWorkspaceContentDigest.String != digest {
+	if store.params.AttemptNumber != 1 || store.params.ID != pgvalue.UUID(waitID) ||
+		store.params.ChildRunID != pgvalue.UUID(childRunID) {
 		t.Fatalf("receipt authority query = %+v", store.params)
 	}
 }
 
-func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T) {
+func TestReplayBoundSameWorkspaceChildCallRejectsDifferentWaiter(t *testing.T) {
 	_, err := replayBoundSameWorkspaceChildCall(
 		t.Context(),
-		&sameWorkspaceChildReplayStore{err: pgx.ErrNoRows},
+		&sameWorkspaceChildReplayStore{wait: db.RunWait{ResumeAttachID: pgvalue.UUID(uuid.NewV7())}},
 		childTaskInvokeInput{
 			Request: workerapi.InvokeChildTaskRequest{
 				Lease: workerapi.RunLeaseFence{
@@ -253,18 +247,16 @@ func TestReplayBoundSameWorkspaceChildCallRejectsDifferentFrontier(t *testing.T)
 			ResumeAttachID: uuid.NewV7(),
 		},
 		runLeaseClaimAuthority{run: db.Run{
-			ID:            pgvalue.UUID(uuid.NewV7()),
-			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
-			WorkspaceID:   pgvalue.UUID(uuid.NewV7()),
+			EntrypointKind: "task",
+			ID:             pgvalue.UUID(uuid.NewV7()),
+			EnvironmentID:  pgvalue.UUID(uuid.NewV7()),
+			WorkspaceID:    pgvalue.UUID(uuid.NewV7()),
 		}},
 		db.IdempotencyClaim{ID: pgvalue.UUID(uuid.NewV7())},
 		"sha256:"+strings.Repeat("0", 64),
+		idempotency.TaskChildInvokeFingerprint{},
 		childTaskReceipt{
-			RunID:                  uuid.NewV7().String(),
-			RunWaitID:              uuid.NewV7().String(),
-			ResumeAttachID:         uuid.NewV7().String(),
-			BaseWorkspaceVersionID: uuid.NewV7().String(),
-			BaseWorkspaceDigest:    "sha256:" + strings.Repeat("0", 64),
+			RunID: uuid.NewV7().String(),
 		},
 	)
 	if !errors.Is(err, errWorkspaceFrontierConflict) {

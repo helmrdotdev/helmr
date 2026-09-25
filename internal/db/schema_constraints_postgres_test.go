@@ -134,11 +134,10 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT workspace_mount_id FROM workspace_leases WHERE owner_run_lease_id=$1`, work.leaseID).Scan(&mountID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounting', finalization_kind='capture', finalization_reason_code='workspace_exec_completed', staged_version_id=$2 WHERE id=$1`, mountID, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounting', finalization_kind='capture', finalization_reason_code='workspace_exec_completed' WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_reason_code=NULL WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL WHERE id=$1`, mountID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL WHERE id=$1`, mountID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET staged_version_id=NULL, finalization_kind='discard', finalization_reason_code='exec_failed' WHERE id=$1`, mountID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET finalization_kind='discard', finalization_reason_code='exec_failed' WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL, finalization_error='{}' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounted', unmounted_at=now(), terminal_at=now(), terminal_reason_code='exec_failed' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `SAVEPOINT private_version`)

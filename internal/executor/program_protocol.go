@@ -172,6 +172,11 @@ func (c hotWaitCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 // runHotWait lets bounded non-consuming operations proceed while the durable
 // wait is polled. Checkpoint work returns to this same reader owner before pause.
 func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitRequest, run func(context.Context, WaitRequest) error) error {
+	task.mu.Lock()
+	task.saveWaiting++
+	task.mu.Unlock()
+	defer func() { task.mu.Lock(); task.saveWaiting--; task.mu.Unlock() }()
+
 	if task.program.protocol == nil {
 		return run(ctx, request)
 	}

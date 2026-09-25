@@ -318,6 +318,15 @@ type Computer struct {
 	OwnershipGeneration          int64              `json:"ownership_generation"`
 	WriterGeneration             int64              `json:"writer_generation"`
 	HeadVersionID                pgtype.UUID        `json:"head_version_id"`
+	RecoveryID                   pgtype.UUID        `json:"recovery_id"`
+	RecoveryVersionID            pgtype.UUID        `json:"recovery_version_id"`
+	RecoveryReason               pgtype.Text        `json:"recovery_reason"`
+	RecoveryStartedAt            pgtype.Timestamptz `json:"recovery_started_at"`
+	RecoveryPreparationCount     int32              `json:"recovery_preparation_count"`
+	NextRecoveryPreparationAt    pgtype.Timestamptz `json:"next_recovery_preparation_at"`
+	RecoveryRuntimeID            pgtype.UUID        `json:"recovery_runtime_id"`
+	RecoveryCompletedAt          pgtype.Timestamptz `json:"recovery_completed_at"`
+	RecoveryFailure              []byte             `json:"recovery_failure"`
 	InitialConfig                []byte             `json:"initial_config"`
 	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
 	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
@@ -332,6 +341,8 @@ type Computer struct {
 	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
 	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
 	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
+	ComputerPayloadRequired      pgtype.Bool        `json:"computer_payload_required"`
+	RecoveryPayloadRequired      pgtype.Bool        `json:"recovery_payload_required"`
 }
 
 type ComputerDataKey struct {
@@ -393,6 +404,7 @@ type ComputerVersion struct {
 	Status                        string             `json:"status"`
 	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
 	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
+	PublisherSaveSequence         pgtype.Int8        `json:"publisher_save_sequence"`
 	PublisherDesiredVersion       pgtype.Int8        `json:"publisher_desired_version"`
 	PublicationRequestFingerprint []byte             `json:"publication_request_fingerprint"`
 	OwnershipGeneration           int64              `json:"ownership_generation"`
@@ -400,6 +412,8 @@ type ComputerVersion struct {
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
+	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
+	PayloadAvailable              pgtype.Bool        `json:"payload_available"`
 }
 
 type ComputerVersionRoot struct {
@@ -415,6 +429,7 @@ type ComputerVersionRoot struct {
 	RootKeyID             pgtype.UUID `json:"root_key_id"`
 	DirectKeyRequired     pgtype.Bool `json:"direct_key_required"`
 	CertificationRequired pgtype.Bool `json:"certification_required"`
+	PayloadRequired       pgtype.Bool `json:"payload_required"`
 }
 
 type ControlOutbox struct {
@@ -584,6 +599,11 @@ type Region struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RetainedComputerVersion struct {
+	ComputerID pgtype.UUID `json:"computer_id"`
+	VersionID  pgtype.UUID `json:"version_id"`
+}
+
 type Run struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
@@ -637,6 +657,7 @@ type Run struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type RunAttempt struct {
@@ -653,6 +674,7 @@ type RunAttempt struct {
 	TerminalError                []byte             `json:"terminal_error"`
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	TerminalAt                   pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired      pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type RunCheckpoint struct {
@@ -680,6 +702,7 @@ type RunCheckpoint struct {
 	ReadyAt                       pgtype.Timestamptz `json:"ready_at"`
 	InvalidatedAt                 pgtype.Timestamptz `json:"invalidated_at"`
 	InvalidationReasonCode        pgtype.Text        `json:"invalidation_reason_code"`
+	ComputerPayloadRequired       pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type RunCheckpointObject struct {
@@ -796,6 +819,7 @@ type RunWait struct {
 	SuspensionError                []byte             `json:"suspension_error"`
 	CreatedAt                      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                      pgtype.Timestamptz `json:"updated_at"`
+	ComputerPayloadRequired        pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type RuntimeComputerObjectPin struct {
@@ -851,6 +875,10 @@ type RuntimeInstance struct {
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
 	ComputerSourceVersionID         pgtype.UUID        `json:"computer_source_version_id"`
+	ComputerSaveSequence            int64              `json:"computer_save_sequence"`
+	ComputerSaveID                  pgtype.UUID        `json:"computer_save_id"`
+	ComputerSaveLeaseID             pgtype.UUID        `json:"computer_save_lease_id"`
+	ComputerSavePredecessorID       pgtype.UUID        `json:"computer_save_predecessor_id"`
 	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
 	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
 	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
@@ -873,6 +901,7 @@ type RuntimeInstance struct {
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type RuntimeSubstrate struct {
@@ -960,42 +989,43 @@ type SecretVersion struct {
 }
 
 type Session struct {
-	ID                        pgtype.UUID        `json:"id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	ActorDeclaredID           string             `json:"actor_declared_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	Key                       pgtype.Text        `json:"key"`
-	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
-	RunGeneration             int64              `json:"run_generation"`
-	Revision                  int64              `json:"revision"`
-	ActiveTurnID              pgtype.UUID        `json:"active_turn_id"`
-	DispatchHoldID            pgtype.UUID        `json:"dispatch_hold_id"`
-	DispatchHoldRunID         pgtype.UUID        `json:"dispatch_hold_run_id"`
-	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
-	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
-	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	Failure                   []byte             `json:"failure"`
-	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
-	NextInputSequence         int64              `json:"next_input_sequence"`
-	CommittedInputSequence    int64              `json:"committed_input_sequence"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
-	RunQueueName              string             `json:"run_queue_name"`
-	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
-	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
-	RunPriority               int32              `json:"run_priority"`
-	RunQueueTtlMs             pgtype.Int8        `json:"run_queue_ttl_ms"`
-	RunMaxActiveDurationMs    int64              `json:"run_max_active_duration_ms"`
-	RunRetryPolicy            []byte             `json:"run_retry_policy"`
-	RunMetadata               []byte             `json:"run_metadata"`
-	RunTags                   []string           `json:"run_tags"`
-	Status                    string             `json:"status"`
-	CloseSequence             pgtype.Int8        `json:"close_sequence"`
-	CancelRequestedAt         pgtype.Timestamptz `json:"cancel_requested_at"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
-	FailedAt                  pgtype.Timestamptz `json:"failed_at"`
+	ID                         pgtype.UUID        `json:"id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID            string             `json:"actor_declared_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	Key                        pgtype.Text        `json:"key"`
+	CurrentRunID               pgtype.UUID        `json:"current_run_id"`
+	ConsecutiveExecutionLosses int32              `json:"consecutive_execution_losses"`
+	RunGeneration              int64              `json:"run_generation"`
+	Revision                   int64              `json:"revision"`
+	ActiveTurnID               pgtype.UUID        `json:"active_turn_id"`
+	DispatchHoldID             pgtype.UUID        `json:"dispatch_hold_id"`
+	DispatchHoldRunID          pgtype.UUID        `json:"dispatch_hold_run_id"`
+	DispatchHoldAttemptNumber  pgtype.Int4        `json:"dispatch_hold_attempt_number"`
+	DispatchHoldRunGeneration  pgtype.Int8        `json:"dispatch_hold_run_generation"`
+	DispatchHoldReason         pgtype.Text        `json:"dispatch_hold_reason"`
+	Failure                    []byte             `json:"failure"`
+	FailureRunID               pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence          int64              `json:"next_input_sequence"`
+	CommittedInputSequence     int64              `json:"committed_input_sequence"`
+	NextEventSequence          int64              `json:"next_event_sequence"`
+	RunQueueName               string             `json:"run_queue_name"`
+	RunConcurrencyKey          pgtype.Text        `json:"run_concurrency_key"`
+	RunQueueConcurrencyLimit   pgtype.Int8        `json:"run_queue_concurrency_limit"`
+	RunPriority                int32              `json:"run_priority"`
+	RunQueueTtlMs              pgtype.Int8        `json:"run_queue_ttl_ms"`
+	RunMaxActiveDurationMs     int64              `json:"run_max_active_duration_ms"`
+	RunRetryPolicy             []byte             `json:"run_retry_policy"`
+	RunMetadata                []byte             `json:"run_metadata"`
+	RunTags                    []string           `json:"run_tags"`
+	Status                     string             `json:"status"`
+	CloseSequence              pgtype.Int8        `json:"close_sequence"`
+	CancelRequestedAt          pgtype.Timestamptz `json:"cancel_requested_at"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                   pgtype.Timestamptz `json:"closed_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
 }
 
 type SessionEvent struct {
@@ -1275,7 +1305,6 @@ type WorkspaceMount struct {
 	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -1289,36 +1318,38 @@ type WorkspaceMount struct {
 }
 
 type WorkspaceProcess struct {
-	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
-	RestoreDesiredState    string             `json:"restore_desired_state"`
-	RegionID               pgtype.Text        `json:"region_id"`
-	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
-	WorkerInstanceID       pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch            pgtype.Int8        `json:"worker_epoch"`
-	RuntimeInstanceID      pgtype.UUID        `json:"runtime_instance_id"`
-	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
-	Status                 string             `json:"status"`
-	Revision               int64              `json:"revision"`
-	Request                []byte             `json:"request"`
-	Stdin                  []byte             `json:"stdin"`
-	Stdout                 []byte             `json:"stdout"`
-	Stderr                 []byte             `json:"stderr"`
-	ClaimID                pgtype.UUID        `json:"claim_id"`
-	ExitCode               pgtype.Int4        `json:"exit_code"`
-	CreatedBySubjectType   string             `json:"created_by_subject_type"`
-	CreatedBySubjectID     string             `json:"created_by_subject_id"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	StartedAt              pgtype.Timestamptz `json:"started_at"`
-	ExitedAt               pgtype.Timestamptz `json:"exited_at"`
-	TerminalAt             pgtype.Timestamptz `json:"terminal_at"`
-	TerminalReasonCode     pgtype.Text        `json:"terminal_reason_code"`
-	Error                  []byte             `json:"error"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID  pgtype.UUID        `json:"base_workspace_version_id"`
+	StagedVersionID         pgtype.UUID        `json:"staged_version_id"`
+	RestoreDesiredState     string             `json:"restore_desired_state"`
+	RegionID                pgtype.Text        `json:"region_id"`
+	WorkerGroupID           pgtype.UUID        `json:"worker_group_id"`
+	WorkerInstanceID        pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch             pgtype.Int8        `json:"worker_epoch"`
+	RuntimeInstanceID       pgtype.UUID        `json:"runtime_instance_id"`
+	WorkspaceMountID        pgtype.UUID        `json:"workspace_mount_id"`
+	Status                  string             `json:"status"`
+	Revision                int64              `json:"revision"`
+	Request                 []byte             `json:"request"`
+	Stdin                   []byte             `json:"stdin"`
+	Stdout                  []byte             `json:"stdout"`
+	Stderr                  []byte             `json:"stderr"`
+	ClaimID                 pgtype.UUID        `json:"claim_id"`
+	ExitCode                pgtype.Int4        `json:"exit_code"`
+	CreatedBySubjectType    string             `json:"created_by_subject_type"`
+	CreatedBySubjectID      string             `json:"created_by_subject_id"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	ExitedAt                pgtype.Timestamptz `json:"exited_at"`
+	TerminalAt              pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode      pgtype.Text        `json:"terminal_reason_code"`
+	Error                   []byte             `json:"error"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	ComputerPayloadRequired pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type WorkspaceSecret struct {

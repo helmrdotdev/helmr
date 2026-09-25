@@ -49,7 +49,7 @@ export {
   parseSession,
   parseTurnState, parseTurnSource, parseSessionAdmissionReceipt, parseSessionMessageReceipt,
   parseSessionCloseReceipt, parseSessionCancelReceipt, parseTurnInterruptReceipt, parseSessionResumeReceipt,
-  parseSessionRecoveryReceipt, parseSessionEvent, parseSessionEventPage, parseOutputReceipt,
+  parseSessionEvent, parseSessionEventPage, parseOutputReceipt,
 } from "./internal/session"
 export { trimGoSpace } from "./internal/strings"
 export { timestampString } from "./internal/timestamp"

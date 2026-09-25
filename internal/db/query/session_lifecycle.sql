@@ -102,7 +102,7 @@ WHERE sessions.environment_id=sqlc.arg(environment_id) AND sessions.id=sqlc.arg(
 UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_reason=NULL,dispatch_hold_run_id=NULL,
  dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,revision=revision+1,updated_at=now()
 WHERE environment_id=$1 AND id=$2 AND dispatch_hold_id=$3 AND active_turn_id IS NULL
- AND current_run_id IS NULL AND dispatch_hold_reason IN ('interrupted','recovered') RETURNING *;
+ AND current_run_id IS NULL AND dispatch_hold_reason = 'interrupted' RETURNING *;
 
 -- name: SessionWriterExcluded :one
 SELECT NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_leases.workspace_id=sqlc.arg(workspace_id) AND status IN ('active','releasing'))
@@ -110,28 +110,6 @@ SELECT NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_leases.workspac
  AND NOT EXISTS(SELECT 1 FROM runtime_instances WHERE runtime_instances.workspace_id=sqlc.arg(workspace_id) AND reclaimed_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM run_waits w JOIN runs c ON c.id=w.child_run_id WHERE w.workspace_id=sqlc.arg(workspace_id)
   AND c.parent_owns_lifecycle AND c.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS excluded;
-
--- name: ReconcileSessionComputer :execrows
-UPDATE computers
-   SET status = 'active',
-       desired_state = 'active',
-       dirty_state = 'clean',
-       revision = revision + 1,
-       updated_at = transaction_timestamp()
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(workspace_id)
-   AND owner_session_id = sqlc.arg(session_id)
-   AND head_version_id = sqlc.arg(head_version_id)
-   AND status = 'recovery_required'
-   AND dirty_state = 'dirty_state_lost';
-
--- name: CompleteSessionRecovery :one
-UPDATE sessions SET active_turn_id=NULL,current_run_id=NULL,dispatch_hold_id=sqlc.arg(new_hold_id),
- dispatch_hold_reason='recovered',revision=revision+1,updated_at=now(),
- committed_input_sequence=coalesce(sqlc.narg(input_sequence),committed_input_sequence)
-WHERE sessions.environment_id=sqlc.arg(environment_id) AND sessions.id=sqlc.arg(session_id)
- AND dispatch_hold_id=sqlc.arg(hold_id) AND active_turn_id IS NOT DISTINCT FROM sqlc.narg(turn_id)
-RETURNING *;
 
 -- name: SettleHeldSessionTurn :one
 UPDATE session_turns SET status=sqlc.arg(status),ready_run_lease_id=NULL,
@@ -214,9 +192,7 @@ SELECT (NOT EXISTS(SELECT 1 FROM runs r JOIN owned o ON o.id=r.id
  AND NOT EXISTS(SELECT 1 FROM runtime_instances rt JOIN runtimes ON runtimes.id=rt.id
  WHERE rt.reclaimed_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM workspace_leases wl JOIN run_leases l ON l.id=wl.owner_run_lease_id JOIN owned o ON o.id=l.run_id
- WHERE wl.status IN ('active','releasing'))
- AND NOT EXISTS(SELECT 1 FROM workspace_mounts m JOIN runtimes rt ON rt.id=m.runtime_instance_id
- WHERE m.status IN ('mounting','mounted','unmounting')))::boolean AS excluded;
+ WHERE wl.status IN ('active','releasing')))::boolean AS excluded;
 
 -- name: ReadWorkerSessionControl :one
 SELECT s.dispatch_hold_id, s.dispatch_hold_reason, s.active_turn_id

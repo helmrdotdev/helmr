@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -95,5 +96,26 @@ func TestOwnershipDelayedChildBindingUsesLastEligibleWait(t *testing.T) {
 	}
 	if got.ChildRunID != p.ChildRunID || got.SuspensionStatus != RunWaitStatusParked {
 		t.Fatalf("binding=%+v", got)
+	}
+	// The child's handback can be distinct from every parent/checkpoint origin.
+	// Its active wait is then the sole payload owner until resume transfers it.
+	resultVersion := v
+	resultVersion.ID = pgvalue.UUID(uuid.NewV7())
+	if _, err := f.queries.CreatePrivateCheckpointWorkspaceVersion(ctx, resultVersion); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE run_waits SET condition_status='completed',condition_result='{}',condition_terminal_at=now(),suspension_status='resume_pending',child_writer_generation=parent_writer_generation+1,resume_workspace_version_id=$2 WHERE id=$1`, w.ID, resultVersion.ID)
+	retire := RetireComputerVersionPayloadParams{EnvironmentID: pgvalue.UUID(f.environmentID), ComputerID: v.WorkspaceID, VersionID: resultVersion.ID}
+	if _, err := f.queries.RetireComputerVersionPayload(ctx, retire); err == nil {
+		t.Fatal("collected pending child handback")
+	} else {
+		var constraint *pgconn.PgError
+		if !errors.As(err, &constraint) || constraint.Code != "23503" {
+			t.Fatal(err)
+		}
+	}
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE run_waits SET suspension_status='released',suspension_terminal_at=now() WHERE id=$1`, w.ID)
+	if n, err := f.queries.RetireComputerVersionPayload(ctx, retire); err != nil || n != 1 {
+		t.Fatalf("released handback: %d %v", n, err)
 	}
 }

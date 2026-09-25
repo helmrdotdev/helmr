@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"uuid"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -180,39 +179,6 @@ func (s *Server) resumeSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, api.SessionResumeReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status})
 }
 
-func (s *Server) recoverSessionHTTP(w http.ResponseWriter, r *http.Request) {
-	body, err := decodeRecoverSessionCommand(r)
-	if err != nil {
-		writeSessionRequestError(w, err)
-		return
-	}
-	command, err := s.sessionCommand(r, auth.PermissionSessionsRecover, body.IdempotencyKey)
-	if err != nil {
-		s.writeSessionOperationError(w, err)
-		return
-	}
-	request := session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: command, HoldID: uuid.MustParse(body.HoldID)}, WorkspaceVersionID: uuid.MustParse(body.WorkspaceVersionID), ReconciliationRef: body.ReconciliationRef, Disposition: body.Disposition}
-	if body.TurnID != nil {
-		id := uuid.MustParse(*body.TurnID)
-		request.TurnID = &id
-	}
-	receipt, err := s.applySessionRecovery(r.Context(), request)
-	if err != nil {
-		s.writeSessionOperationError(w, err)
-		return
-	}
-	if receipt.HoldID == nil {
-		s.writeSessionOperationError(w, errors.New("recovery receipt lacks hold identity"))
-		return
-	}
-	response := api.SessionRecoveryReceipt{ID: receipt.ID.String(), SessionID: receipt.SessionID.String(), HoldID: receipt.HoldID.String(), Status: receipt.Status}
-	if receipt.TurnID != nil {
-		id := receipt.TurnID.String()
-		response.TurnID = &id
-	}
-	writeJSON(w, http.StatusAccepted, response)
-}
-
 func (s *Server) sessionCommand(r *http.Request, permission auth.Permission, key string) (session.ControlRequest, error) {
 	target, err := s.sessionOperationTarget(r, permission)
 	if err != nil {
@@ -294,26 +260,6 @@ func decodeSessionCommand(r *http.Request, destination any, required ...string) 
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(destination)
-}
-
-func decodeRecoverSessionCommand(r *http.Request) (api.RecoverSessionRequest, error) {
-	var envelope struct {
-		api.RecoverSessionRequest
-		Disposition json.RawMessage `json:"disposition"`
-	}
-	if err := decodeSessionCommand(r, &envelope, "turn_id"); err != nil {
-		return api.RecoverSessionRequest{}, err
-	}
-	body := envelope.RecoverSessionRequest
-	if len(envelope.Disposition) > 0 {
-		if body.TurnID == nil {
-			return body, errors.New("null turn_id forbids disposition")
-		}
-		if err := json.Unmarshal(envelope.Disposition, &body.Disposition); err != nil {
-			return body, errors.New("disposition must be a string")
-		}
-	}
-	return body, api.ValidateRecoverSessionRequest(body)
 }
 
 func writeSessionRequestError(w http.ResponseWriter, err error) {

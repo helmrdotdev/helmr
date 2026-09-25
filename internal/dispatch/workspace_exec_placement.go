@@ -420,6 +420,9 @@ func (d *Authority) createWorkspaceExecRuntime(
 		}
 		return WorkspaceExecPlacement{}, fmt.Errorf("create workspace exec runtime reservation: %w", err)
 	}
+	if err := admitComputerRecoveryPreparation(ctx, tx, authority.workspaceID, runtime.ID, authority.baseWorkspaceVersionID); err != nil {
+		return WorkspaceExecPlacement{}, err
+	}
 	return WorkspaceExecPlacement{
 		WorkerInstanceID:  runtime.WorkerInstanceID,
 		WorkerEpoch:       runtime.WorkerEpoch,

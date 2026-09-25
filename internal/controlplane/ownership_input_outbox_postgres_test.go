@@ -75,7 +75,7 @@ func TestOwnershipQueuedTurnRetainsReceiptAndOutboxAcrossCheckpoint(t *testing.T
 			delivered.Add(1)
 		}
 		return deferred, err
-	}, reconciler.ReconcileClose)
+	}, reconciler.ReconcileLifecycle)
 	if err != nil {
 		t.Fatal(err)
 	}

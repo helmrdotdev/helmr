@@ -1,3 +1,4 @@
+DROP VIEW IF EXISTS retained_computer_versions;
 DROP TABLE IF EXISTS runtime_computer_object_pins;
 DROP TABLE IF EXISTS run_finalization_objects;
 DROP TABLE IF EXISTS run_checkpoint_objects;
@@ -26,6 +27,7 @@ DROP TABLE IF EXISTS computer_versions CASCADE;
 ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_owner_process_id_fkey;
 ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_reserved_process_id_workspace_id_fkey;
 DROP TABLE IF EXISTS workspace_processes;
+ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_computer_save_lease_fkey;
 DROP TABLE IF EXISTS workspace_leases;
 ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_runtime_instance_id_fkey;
 ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_runtime_instance_id_fkey;

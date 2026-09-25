@@ -259,7 +259,7 @@ WITH candidate_scopes AS (
                      AND edge.condition_status = 'pending'
                      AND edge.suspension_status = 'parked'
                      AND EXISTS (SELECT 1 FROM run_attempts origin
-                         WHERE origin.run_id = runs.id AND origin.number = 1
+                         WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
                            AND origin.workspace_id = edge.workspace_id
                            AND origin.base_workspace_version_id = edge.base_workspace_version_id)
                      AND edge.ownership_generation IS NOT NULL
@@ -849,7 +849,7 @@ SELECT runs.org_id,
                  AND edge.condition_status = 'pending'
                  AND edge.suspension_status = 'parked'
                  AND EXISTS (SELECT 1 FROM run_attempts origin
-                         WHERE origin.run_id = runs.id AND origin.number = 1
+                         WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
                            AND origin.workspace_id = edge.workspace_id
                            AND origin.base_workspace_version_id = edge.base_workspace_version_id)
                  AND edge.ownership_generation IS NOT NULL

@@ -72,23 +72,12 @@ receipt may report `closing` until that work settles. Existing holds remain in
 place and must be resolved before held work can drain; close does not interrupt
 the active Turn or clear a hold. Use `get` to observe the final Session state.
 
-## Reconcile uncertain execution
+## Observe automatic recovery
 
-Recovery is an owner/admin operation with the `sessions.recover` grant, separate
-from ordinary resume. Reconcile external effects and identify the Workspace
-version before submitting it:
-
-```text
-helmr actor recover SESSION_ID HOLD_ID \
-  --turn TURN_ID --disposition failed \
-  --workspace-version VERSION_ID --reconciliation-ref RECORD \
-  [--idempotency-key KEY] [--json]
-```
-
-Use `--outside-turn` instead of `--turn` and omit `--disposition` for execution
-outside a Turn. Turn dispositions are `failed` or `interrupted`; recovery cannot
-mark uncertain work successful. The CLI never selects a Workspace version or
-creates a reconciliation record on the operator's behalf.
+Helmr restores the saved environment after physical cleanup of lost execution.
+Use `get` and Session events to observe progress. Completed results remain;
+unpublished file changes and uncertain callbacks are not replayed. Ordinary
+interruption still requires `resume` with the exact hold.
 
 ## Cancel a Session
 
@@ -99,5 +88,5 @@ helmr actor get SESSION_ID --project PROJECT --env ENV
 
 `cancel` discards queued Turns with a `cancelled` outcome and stops active work.
 The response acknowledges acceptance. Wait for Session status `closed` before
-Workspace deletion; a hold requiring recovery remains visible until reconciled.
+Workspace deletion; automatic recovery waits for physical cleanup.
 Unlike `close`, cancellation does not drain queued work or start new customer code.

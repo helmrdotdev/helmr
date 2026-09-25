@@ -212,6 +212,7 @@ SELECT runs.id,
           AND parent.id = edge.run_id
           AND parent.workspace_id = edge.workspace_id
           AND parent.status = 'waiting'
+          AND parent.current_attempt_number = edge.attempt_number
           AND parent.current_run_lease_id IS NULL
          JOIN run_checkpoints AS checkpoint
            ON checkpoint.id = edge.suspend_checkpoint_id
@@ -358,7 +359,7 @@ SELECT runs.id,
           AND edge.suspension_status = 'parked'
           AND EXISTS (
               SELECT 1 FROM run_attempts origin
-               WHERE origin.run_id = runs.id AND origin.number = 1
+               WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
                  AND origin.workspace_id = edge.workspace_id
                  AND origin.base_workspace_version_id = edge.base_workspace_version_id
           )
@@ -777,7 +778,7 @@ SELECT source_lease.worker_group_id,
                   AND child.entrypoint_kind = 'task'
                   AND EXISTS (
                       SELECT 1 FROM run_attempts origin
-                       WHERE origin.run_id = child.id AND origin.number = 1
+                       WHERE origin.run_id = child.id AND origin.number <= child.current_attempt_number
                          AND origin.workspace_id = child.workspace_id
                          AND origin.base_workspace_version_id = run_checkpoints.private_workspace_version_id
                   )
@@ -955,11 +956,11 @@ WITH RECURSIVE owned(id) AS (
        AND parent.workspace_id = child.workspace_id
      WHERE parent.id = $1 AND child.id = $2 AND child.workspace_id = $3
        AND child.parent_owns_lifecycle AND child.entrypoint_kind = 'task'
-       -- Retry may advance the current base. The original attempt binds this
-       -- logical child to the parent's parked checkpoint throughout its lifetime.
+       -- A matching Attempt binds the logical child to this parent handoff;
+       -- subsequent retries may advance its execution base.
        AND EXISTS (
            SELECT 1 FROM run_attempts origin
-            WHERE origin.run_id = child.id AND origin.number = 1
+            WHERE origin.run_id = child.id AND origin.number <= child.current_attempt_number
               AND origin.workspace_id = $3 AND origin.base_workspace_version_id = $6
        )
        AND (($7 = 'cancelled' AND child.status = 'cancelled')

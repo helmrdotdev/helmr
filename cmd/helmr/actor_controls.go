@@ -31,7 +31,7 @@ func actorResumeCommand() *cobra.Command {
 					return errors.New("session has no hold to resume")
 				}
 				if session.Dispatch.Reason != nil && *session.Dispatch.Reason == "recovery_required" {
-					return errors.New("session requires reconciliation; use actor recover")
+					return errors.New("session is awaiting automatic recovery")
 				}
 				targetHold = *session.Dispatch.HoldID
 			}
@@ -52,60 +52,6 @@ func actorResumeCommand() *cobra.Command {
 	cmd.Flags().StringVar(&holdID, "hold", "", "Exact hold ID; defaults to the currently observed hold.")
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "Idempotency key for this resume; use --hold when retrying an uncertain request.")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	return cmd
-}
-
-func actorRecoverCommand() *cobra.Command {
-	var projectID, environmentID, key, turnID, workspaceVersion, reconciliation, disposition string
-	var outsideTurn, jsonOutput bool
-	cmd := &cobra.Command{
-		Use:   "recover SESSION_ID HOLD_ID",
-		Short: "Reconcile an uncertain execution using an exact hold and Workspace version.",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if (turnID != "") == outsideTurn {
-				return errors.New("exactly one of --turn or --outside-turn is required")
-			}
-			if workspaceVersion == "" || strings.TrimSpace(reconciliation) == "" {
-				return errors.New("--workspace-version and --reconciliation-ref are required")
-			}
-			input := api.RecoverSessionRequest{
-				HoldID: args[1], WorkspaceVersionID: workspaceVersion,
-				ReconciliationRef: reconciliation, Disposition: disposition, IdempotencyKey: strings.TrimSpace(key),
-			}
-			if !outsideTurn {
-				input.TurnID = &turnID
-			}
-			if err := api.ValidateRecoverSessionRequest(input); err != nil {
-				return err
-			}
-			controlPlane, scope, err := scopedActorClient(cmd, projectID, environmentID)
-			if err != nil {
-				return err
-			}
-			receipt, err := controlPlane.RecoverSession(cmd.Context(), args[0], input, scope)
-			if err != nil {
-				return err
-			}
-			if jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), receipt)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "id: %s\nsession_id: %s\nhold_id: %s\nstatus: %s\n", receipt.ID, receipt.SessionID, receipt.HoldID, receipt.Status)
-			if receipt.TurnID != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "turn_id: %s\n", *receipt.TurnID)
-			}
-			return nil
-		},
-	}
-	addScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().StringVar(&turnID, "turn", "", "Exact Turn being reconciled.")
-	cmd.Flags().BoolVar(&outsideTurn, "outside-turn", false, "Explicitly reconcile execution outside a Turn (turn_id null).")
-	cmd.Flags().StringVar(&workspaceVersion, "workspace-version", "", "Reconciled Workspace version ID (required).")
-	cmd.Flags().StringVar(&reconciliation, "reconciliation-ref", "", "Reference to the external-effect reconciliation record (required).")
-	cmd.Flags().StringVar(&disposition, "disposition", "", "Turn disposition: failed or interrupted; omit with --outside-turn.")
-	cmd.Flags().StringVar(&key, "idempotency-key", "", "Idempotency key for this recovery.")
-	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Emit one JSON object.")
-	cmd.MarkFlagsMutuallyExclusive("turn", "outside-turn")
 	return cmd
 }
 

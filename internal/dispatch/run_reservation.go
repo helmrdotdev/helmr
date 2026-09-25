@@ -170,6 +170,9 @@ func (d *Authority) prepareRunWorkspace(
 		}
 		return runWorkspaceMount{}, fmt.Errorf("create run runtime reservation: %w", err)
 	}
+	if err := admitComputerRecoveryPreparation(ctx, tx, authority.workspaceID, row.ID, authority.baseWorkspaceVersionID); err != nil {
+		return runWorkspaceMount{}, err
+	}
 	if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
 		return runWorkspaceMount{}, err
 	}

@@ -374,6 +374,30 @@ func (g OwnedFinalization) ChargeRuntimePreparationFailure(
 	if target.status != db.RunStatusQueued || target.currentRunLeaseID.Valid {
 		return false, cancellationAuthority("runtime preparation target is not queued", nil)
 	}
+	var computerRecoveryPending bool
+	var recoveryCount int32
+	var sourceFailure bool
+	if err := g.tx.QueryRow(ctx, `SELECT recovery_id IS NOT NULL AND recovery_completed_at IS NULL,recovery_preparation_count,recovery_failure IS NOT NULL
+        FROM computers WHERE id=$1`, pgvalue.UUID(target.workspaceID)).Scan(&computerRecoveryPending, &recoveryCount, &sourceFailure); err != nil {
+		return false, cancellationAuthority("load Computer preparation budget", err)
+	}
+	if sourceFailure {
+		return true, g.failCurrentForComputerSource(ctx)
+	}
+	if computerRecoveryPending {
+		// Recovery admission already consumed the Computer-owned attempt.
+		// A replacement Run must neither reset nor double-charge that budget.
+		if recoveryCount < 8 {
+			return false, nil
+		}
+		if _, err := g.tx.Exec(ctx, `UPDATE computers SET status='recovery_required',desired_state='stopped',dirty_state='dirty_state_lost',recovery_failure=coalesce(recovery_failure,'{"code":"computer_recovery_exhausted","message":"Computer preparation limit reached","details":{}}'::jsonb),revision=revision+1,updated_at=now() WHERE id=$1 AND recovery_completed_at IS NULL`, pgvalue.UUID(target.workspaceID)); err != nil {
+			return false, err
+		}
+		if err := g.failCurrentForRuntimePreparation(ctx); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	if target.runtimePreparationCount < 0 || target.runtimePreparationCount > 7 {
 		return false, cancellationAuthority("runtime preparation count is invalid", nil)
 	}
@@ -407,6 +431,16 @@ func (g OwnedFinalization) ChargeRuntimePreparationFailure(
 }
 
 func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context) error {
+	return g.failCurrentPreparation(ctx, runtimePreparationTermination)
+}
+func (g OwnedFinalization) failCurrentForComputerSource(ctx context.Context) error {
+	failure := runtimePreparationTermination
+	failure.reasonCode = "computer_source_unavailable"
+	failure.errorCode = failure.reasonCode
+	failure.errorMessage = "Published Computer source is unavailable"
+	return g.failCurrentPreparation(ctx, failure)
+}
+func (g OwnedFinalization) failCurrentPreparation(ctx context.Context, failure termination) error {
 	if _, err := g.CancelDescendants(ctx); err != nil {
 		return err
 	}
@@ -418,7 +452,7 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 		ctx,
 		g.tx,
 		target,
-		runtimePreparationTermination,
+		failure,
 	); err != nil {
 		return err
 	}
@@ -437,8 +471,8 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 	}
 	result, err := marshalChildFailureResult(
 		target.id,
-		"runtime_preparation_failed",
-		"Child Run runtime preparation failed",
+		failure.errorCode,
+		failure.errorMessage,
 	)
 	if err != nil {
 		return err
@@ -449,7 +483,11 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 	if !wait.baseWorkspaceVersionID.Valid {
 		return cancellationAuthority("runtime preparation same-workspace wait is inconsistent", nil)
 	}
-	reasonCode := "runtime_preparation_failed"
+	reasonCode := failure.reasonCode
+	conditionError, err := json.Marshal(map[string]any{"code": failure.errorCode, "message": failure.errorMessage, "retryable": false})
+	if err != nil {
+		return err
+	}
 	return resolveTerminalChildWait(
 		ctx,
 		g.tx,
@@ -458,7 +496,7 @@ func (g OwnedFinalization) failCurrentForRuntimePreparation(ctx context.Context)
 		terminalChildWaitResolution{
 			conditionStatus:          db.WaitStatusFailed,
 			reasonCode:               &reasonCode,
-			conditionError:           json.RawMessage(`{"code":"runtime_preparation_failed","message":"Child Run runtime preparation failed","retryable":false}`),
+			conditionError:           conditionError,
 			resumeWorkspaceVersionID: wait.baseWorkspaceVersionID,
 		},
 	)
@@ -1028,6 +1066,52 @@ func terminateLockedRun(
 			}
 		}
 	}
+	if err := retireRunAttempt(ctx, tx, run, termination, errorPayload); err != nil {
+		return err
+	}
+	affected, err := queries.TerminalizeRun(
+		ctx,
+		db.TerminalizeRunParams{
+			Status:           termination.runStatus,
+			Failure:          failure,
+			ID:               pgvalue.UUID(run.id),
+			ExpectedRevision: run.revision,
+		},
+	)
+	if err != nil || affected != 1 {
+		return cancellationAuthority("terminalize run", err)
+	}
+	if !run.actorID.Valid {
+		if err := queries.ReleaseTaskWorkspace(
+			ctx,
+			db.ReleaseTaskWorkspaceParams{
+				WorkspaceID: pgvalue.UUID(run.workspaceID),
+				RunID:       pgvalue.UUID(run.id),
+			},
+		); err != nil {
+			return cancellationAuthority("release terminal task workspace", err)
+		}
+	}
+
+	if err := queries.RecordRunTerminalEvent(
+		ctx,
+		db.RecordRunTerminalEventParams{
+			RunLeaseID: run.currentRunLeaseID,
+			Kind:       termination.eventKind,
+			Message:    termination.eventMessage,
+			ReasonCode: termination.reasonCode,
+			RunID:      pgvalue.UUID(run.id),
+		},
+	); err != nil {
+		return cancellationAuthority("record run terminal event", err)
+	}
+	return nil
+}
+
+// Retiring execution does not terminate the logical Run or release its Computer.
+// Retry and final termination share the same fencing and continuation invalidation.
+func retireRunExecution(ctx context.Context, tx pgx.Tx, run cancellationRun, termination termination, errorPayload []byte) error {
+	queries := db.New(tx)
 	if err := queries.TerminalizeRunSuspensions(
 		ctx,
 		db.TerminalizeRunSuspensionsParams{
@@ -1088,6 +1172,14 @@ func terminateLockedRun(
 	); err != nil {
 		return cancellationAuthority("request terminal run runtime cleanup", err)
 	}
+	return nil
+}
+
+func retireRunAttempt(ctx context.Context, tx pgx.Tx, run cancellationRun, termination termination, errorPayload []byte) error {
+	if err := retireRunExecution(ctx, tx, run, termination, errorPayload); err != nil {
+		return err
+	}
+	queries := db.New(tx)
 	affected, err := queries.TerminalizeRunAttempt(
 		ctx,
 		db.TerminalizeRunAttemptParams{
@@ -1100,42 +1192,6 @@ func terminateLockedRun(
 	)
 	if err != nil || affected != 1 {
 		return cancellationAuthority("terminalize current run attempt", err)
-	}
-	affected, err = queries.TerminalizeRun(
-		ctx,
-		db.TerminalizeRunParams{
-			Status:           termination.runStatus,
-			Failure:          failure,
-			ID:               pgvalue.UUID(run.id),
-			ExpectedRevision: run.revision,
-		},
-	)
-	if err != nil || affected != 1 {
-		return cancellationAuthority("terminalize run", err)
-	}
-	if !run.actorID.Valid {
-		if err := queries.ReleaseTaskWorkspace(
-			ctx,
-			db.ReleaseTaskWorkspaceParams{
-				WorkspaceID: pgvalue.UUID(run.workspaceID),
-				RunID:       pgvalue.UUID(run.id),
-			},
-		); err != nil {
-			return cancellationAuthority("release terminal task workspace", err)
-		}
-	}
-
-	if err := queries.RecordRunTerminalEvent(
-		ctx,
-		db.RecordRunTerminalEventParams{
-			RunLeaseID: run.currentRunLeaseID,
-			Kind:       termination.eventKind,
-			Message:    termination.eventMessage,
-			ReasonCode: termination.reasonCode,
-			RunID:      pgvalue.UUID(run.id),
-		},
-	); err != nil {
-		return cancellationAuthority("record run terminal event", err)
 	}
 	return nil
 }

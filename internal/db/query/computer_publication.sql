@@ -31,7 +31,7 @@ SELECT p.* FROM published p JOIN configured c ON c.id=p.workspace_id;
 -- name: GetWorkerInitialComputerVersion :one
 SELECT v.* FROM computer_versions v
  JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
- WHERE v.publisher_runtime_instance_id=sqlc.arg(runtime_instance_id)
+ WHERE v.publisher_save_sequence IS NULL AND v.publisher_runtime_instance_id=sqlc.arg(runtime_instance_id)
    AND v.publisher_desired_version=sqlc.arg(desired_version)
    AND r.worker_instance_id=sqlc.arg(worker_instance_id)
    AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch);

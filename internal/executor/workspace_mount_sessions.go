@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -214,11 +215,10 @@ func validateWorkspaceMountPhysicalAuthority(
 }
 
 type managedWorkspaceMountSession struct {
+	saves                        runtimeComputerSaves
 	session                      vm.Session
 	mu                           sync.RWMutex
-	closeStarted                 bool
-	closeDone                    chan struct{}
-	closeErr                     error
+	closeAttempt                 *workspaceSessionClose
 	releaseForCheckpointStarted  bool
 	releaseForCheckpointFinished bool
 	releaseForCheckpointErr      error
@@ -229,7 +229,6 @@ type managedWorkspaceMountSession struct {
 func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountSession {
 	return &managedWorkspaceMountSession{
 		session:                  session,
-		closeDone:                make(chan struct{}),
 		releaseForCheckpointDone: make(chan struct{}),
 		failureRequests:          make(chan workspaceMountFailureRequest, 1),
 	}
@@ -267,32 +266,51 @@ func (s *managedWorkspaceMountSession) Close(ctx context.Context) error {
 }
 
 func (s *managedWorkspaceMountSession) close(ctx context.Context) error {
+	// A failed handoff still requires physical exclusion. Keep its error visible
+	// so callers cannot mistake cleanup for a successfully settled save.
+	saveErr := s.saves.Quiesce(ctx)
+
 	s.mu.Lock()
-	if s.closeStarted {
-		done := s.closeDone
+	if attempt := s.closeAttempt; attempt != nil {
 		s.mu.Unlock()
 		select {
-		case <-done:
-			s.mu.RLock()
-			defer s.mu.RUnlock()
-			return s.closeErr
+		case <-attempt.done:
+			return attempt.err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	s.closeStarted = true
-	done := s.closeDone
+	attempt := &workspaceSessionClose{done: make(chan struct{})}
+	s.closeAttempt = attempt
 	s.mu.Unlock()
 
-	err := s.session.Close(ctx)
+	stopCtx := ctx
+	cancelStop := func() {}
+	if saveErr != nil {
+		// Reconciliation can consume the caller deadline. Physical exclusion
+		// still gets a bounded attempt, with the failed handoff reported below.
+		stopCtx, cancelStop = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	}
+	defer cancelStop()
+	stopErr := s.session.Close(stopCtx)
+	err := errors.Join(saveErr, stopErr)
 	s.mu.Lock()
-	s.closeErr = err
-	close(done)
+	attempt.err = err
+	if errors.Is(stopErr, context.DeadlineExceeded) || errors.Is(stopErr, context.Canceled) {
+		// Physical Close may time out joining capture before its once-only
+		// cleanup starts. Retain each waiter's result, but allow a later retry.
+		s.closeAttempt = nil
+	}
+	close(attempt.done)
 	s.mu.Unlock()
 	return err
 }
 
 func (s *managedWorkspaceMountSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+	if err := s.saves.Quiesce(ctx); err != nil {
+		return vm.SnapshotArtifact{}, err
+	}
+
 	checkpointable, ok := s.session.(vm.CheckpointableSession)
 	if !ok {
 		return vm.SnapshotArtifact{}, errors.New("workspace mount session does not support checkpoint snapshots")
@@ -422,6 +440,10 @@ func (s *borrowedRunSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 }
 
 func (s *managedWorkspaceMountSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+	if err := s.saves.Quiesce(ctx); err != nil {
+		return nil, err
+	}
+
 	capture, ok := s.session.(vm.ComputerCaptureSession)
 	if !ok {
 		return nil, errors.New("mounted session cannot capture a Computer")
@@ -434,4 +456,33 @@ func (s *borrowedRunSession) PauseComputer(ctx context.Context) (*vm.ComputerSna
 		return nil, errors.New("mounted session cannot capture a Computer")
 	}
 	return capture.PauseComputer(ctx)
+}
+
+func (s *managedWorkspaceMountSession) QuiesceComputerSaves(ctx context.Context) error {
+	return s.saves.Quiesce(ctx)
+}
+func (s *borrowedRunSession) QuiesceComputerSaves(ctx context.Context) error {
+	owner, ok := s.parent.(interface{ QuiesceComputerSaves(context.Context) error })
+	if !ok {
+		return errors.New("physical mount save owner is missing")
+	}
+	return owner.QuiesceComputerSaves(ctx)
+}
+
+type workspaceSessionClose struct {
+	done chan struct{}
+	err  error
+}
+
+func (s *managedWorkspaceMountSession) AttachComputerSaveAuthority(runtimeID, computerID string, current func() *workerapi.ComputerSaveBeginRequest) (func(), error) {
+	return s.saves.attach(runtimeID, computerID, current)
+}
+func (s *borrowedRunSession) AttachComputerSaveAuthority(runtimeID, computerID string, current func() *workerapi.ComputerSaveBeginRequest) (func(), error) {
+	owner, ok := s.parent.(interface {
+		AttachComputerSaveAuthority(string, string, func() *workerapi.ComputerSaveBeginRequest) (func(), error)
+	})
+	if !ok {
+		return nil, errors.New("physical mount save owner is missing")
+	}
+	return owner.AttachComputerSaveAuthority(runtimeID, computerID, current)
 }

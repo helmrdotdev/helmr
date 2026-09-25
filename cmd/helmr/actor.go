@@ -22,7 +22,6 @@ func actorCommand() *cobra.Command {
 		actorSendCommand(false),
 		actorSendCommand(true),
 		actorResumeCommand(),
-		actorRecoverCommand(),
 		actorTurnCommand(),
 		actorEventsCommand(),
 		actorCloseCommand(),

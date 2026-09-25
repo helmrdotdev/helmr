@@ -3,7 +3,10 @@ package s3
 import (
 	"bytes"
 	"context"
+	"errors"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
+	"io/fs"
 	"math"
 	"testing"
 
@@ -17,12 +20,13 @@ type rangeClient struct {
 	output *awss3.GetObjectOutput
 	input  *awss3.GetObjectInput
 	calls  int
+	err    error
 }
 
 func (c *rangeClient) GetObject(_ context.Context, in *awss3.GetObjectInput, _ ...func(*awss3.Options)) (*awss3.GetObjectOutput, error) {
 	c.calls++
 	c.input = in
-	return c.output, nil
+	return c.output, c.err
 }
 
 type rangeBody struct {
@@ -96,5 +100,17 @@ func TestGetRange(t *testing.T) {
 	cancel()
 	if _, err := store.GetRange(ctx, digest, 10, 0, 1); err == nil || client.calls != 0 {
 		t.Fatal("invalid or cancelled request performed IO")
+	}
+}
+
+func TestGetRangeMissingClassification(t *testing.T) {
+	for _, cause := range []error{&types.NoSuchKey{}, &types.NoSuchBucket{}, context.DeadlineExceeded, errors.New("access denied")} {
+		client := &rangeClient{err: cause}
+		store := &Store{client: client, bucket: "bucket", prefix: "cas"}
+		_, err := store.GetRange(t.Context(), sha256sum.DigestBytes([]byte("root")), 10, 0, 1)
+		_, missing := cause.(*types.NoSuchKey)
+		if errors.Is(err, fs.ErrNotExist) != missing || !errors.Is(err, cause) {
+			t.Fatalf("wrong classification: %v", err)
+		}
 	}
 }

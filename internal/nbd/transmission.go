@@ -53,6 +53,7 @@ func ServeTransmission(ctx context.Context, rw io.ReadWriter, d BlockDevice, siz
 				return err
 			}
 		}
+		var deviceErr error
 		var errno uint32
 		var result []byte
 		switch {
@@ -71,11 +72,13 @@ func ServeTransmission(ctx context.Context, rw io.ReadWriter, d BlockDevice, siz
 				result = make([]byte, int(n))
 				if count, err := d.ReadAt(ctx, result, int64(off)); err != nil || count != len(result) {
 					errno = 5
+					deviceErr = err
 					result = nil
 				}
 			case 1:
 				if count, err := d.WriteAt(ctx, payload, int64(off)); err != nil || count != len(payload) {
 					errno = 5
+					deviceErr = err
 					if errors.Is(err, syscall.ENOSPC) {
 						errno = 28
 					}
@@ -85,12 +88,14 @@ func ServeTransmission(ctx context.Context, rw io.ReadWriter, d BlockDevice, siz
 					errno = 22
 				} else {
 					if err := d.Flush(ctx); err != nil {
+						deviceErr = err
 						errno = 5
 					}
 				}
 			case 4:
 				if err := d.Trim(ctx, int64(off), int(n)); err != nil {
 					errno = 5
+					deviceErr = err
 					if errors.Is(err, syscall.ENOSPC) {
 						errno = 28
 					}
@@ -98,6 +103,12 @@ func ServeTransmission(ctx context.Context, rw io.ReadWriter, d BlockDevice, siz
 			default:
 				errno = 22
 			}
+		}
+		// Fatal storage faults must reach the host owner, which stops the VM.
+		// Ordinary guest I/O errors (including ENOSPC) retain NBD semantics.
+		var fatal interface{ FatalDeviceError() bool }
+		if errors.As(deviceErr, &fatal) && fatal.FatalDeviceError() {
+			return deviceErr
 		}
 		var reply [16]byte
 		binary.BigEndian.PutUint32(reply[:4], 0x67446698)

@@ -123,7 +123,7 @@ UPDATE run_attempts
    AND session_input_start_sequence IS NOT NULL
    AND entrypoint_entered_at IS NOT NULL
    AND terminal_at IS NULL
-RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
 `
 
 type CompleteActorAttemptParams struct {
@@ -163,6 +163,7 @@ func (q *Queries) CompleteActorAttempt(ctx context.Context, arg CompleteActorAtt
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -229,7 +230,7 @@ WITH created_run AS (
 	    WHERE session_id IS NOT NULL
 	      AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
 	DO NOTHING
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
         run_id, number, entrypoint_kind, workspace_id,
@@ -251,7 +252,7 @@ WITH created_run AS (
        AND created_attempt.run_id = created_run.id
     RETURNING sessions.id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN claimed_actor ON claimed_actor.id = created_run.session_id
 `
@@ -320,6 +321,7 @@ type CreateActorContinuationRunRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateActorContinuationRun(ctx context.Context, arg CreateActorContinuationRunParams) (CreateActorContinuationRunRow, error) {
@@ -387,6 +389,90 @@ func (q *Queries) CreateActorContinuationRun(ctx context.Context, arg CreateActo
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
+	)
+	return i, err
+}
+
+const failActorSession = `-- name: FailActorSession :one
+UPDATE sessions
+   SET status = 'failed',
+       failure = $1::jsonb,
+       failure_run_id = $2::uuid,
+       failed_at = $3::timestamptz,
+       current_run_id = NULL, active_turn_id = NULL,
+       dispatch_hold_id = NULL, dispatch_hold_reason = NULL,
+       dispatch_hold_run_id = NULL, dispatch_hold_attempt_number = NULL,
+       dispatch_hold_run_generation = NULL,
+       committed_input_sequence = coalesce($4, committed_input_sequence),
+       run_generation = run_generation + 1, revision = revision + 1,
+       updated_at = $3
+ WHERE environment_id = $5 AND id = $6
+   AND current_run_id = $2 AND run_generation = $7
+   AND status IN ('open', 'closing')
+   AND cancel_requested_at IS NULL
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+`
+
+type FailActorSessionParams struct {
+	Failure       []byte             `json:"failure"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+	InputSequence pgtype.Int8        `json:"input_sequence"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	SessionID     pgtype.UUID        `json:"session_id"`
+	RunGeneration int64              `json:"run_generation"`
+}
+
+func (q *Queries) FailActorSession(ctx context.Context, arg FailActorSessionParams) (Session, error) {
+	row := q.db.QueryRow(ctx, failActorSession,
+		arg.Failure,
+		arg.RunID,
+		arg.CompletedAt,
+		arg.InputSequence,
+		arg.EnvironmentID,
+		arg.SessionID,
+		arg.RunGeneration,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
+		&i.RunGeneration,
+		&i.Revision,
+		&i.ActiveTurnID,
+		&i.DispatchHoldID,
+		&i.DispatchHoldRunID,
+		&i.DispatchHoldAttemptNumber,
+		&i.DispatchHoldRunGeneration,
+		&i.DispatchHoldReason,
+		&i.Failure,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextEventSequence,
+		&i.RunQueueName,
+		&i.RunConcurrencyKey,
+		&i.RunQueueConcurrencyLimit,
+		&i.RunPriority,
+		&i.RunQueueTtlMs,
+		&i.RunMaxActiveDurationMs,
+		&i.RunRetryPolicy,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.Status,
+		&i.CloseSequence,
+		&i.CancelRequestedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.FailedAt,
 	)
 	return i, err
 }
@@ -412,7 +498,7 @@ UPDATE runs
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type FinishActorRunParams struct {
@@ -491,6 +577,7 @@ func (q *Queries) FinishActorRun(ctx context.Context, arg FinishActorRunParams) 
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -561,7 +648,7 @@ UPDATE sessions
    AND run_generation = $7
    AND status IN ('open', 'closing')
    AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type ReconcileActorTerminalRunParams struct {
@@ -593,6 +680,7 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -639,9 +727,9 @@ UPDATE computers
    AND computers.owner_run_id IS NULL
    AND computers.ownership_generation = $5
    AND computers.writer_generation = $6
-   AND computers.status = 'active'
-   AND computers.desired_state = 'active'
-   AND computers.dirty_state = 'clean'
+   AND ((computers.status = 'active' AND computers.desired_state = 'active' AND computers.dirty_state = 'clean')
+        OR (computers.status = 'recovery_required' AND computers.recovery_failure IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM runtime_instances r WHERE r.workspace_id=computers.id AND r.reclaimed_at IS NULL)))
    AND NOT EXISTS (
        SELECT 1 FROM workspace_leases
         WHERE workspace_leases.workspace_id = computers.id

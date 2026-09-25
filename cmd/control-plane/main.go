@@ -197,7 +197,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = controlplane.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
-	runRetryReady, err := run.NewRetryReadyWorker(log, queries)
+	runRetryReady, err := run.NewRetryReadyWorker(log, run.NewRetryReconciler(pool))
 	if err != nil {
 		return fmt.Errorf("configure run retry readiness: %w", err)
 	}

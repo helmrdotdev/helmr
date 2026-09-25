@@ -270,8 +270,9 @@ func testWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T, recoveryRequire
 	if recoveryRequired {
 		dbtest.MustExec(t, t.Context(), product.pool, `
 UPDATE computers
-   SET status = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost'
- WHERE id = $1`, workspaceID)
+   SET status = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost',
+       recovery_id=$2, recovery_version_id=head_version_id, recovery_reason='worker_lost', recovery_started_at=now()
+ WHERE id = $1`, workspaceID, uuid.NewV7())
 	}
 	var originalKey, originalDeclaredID string
 	if err := product.pool.QueryRow(t.Context(), `

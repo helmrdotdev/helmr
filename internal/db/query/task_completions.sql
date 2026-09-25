@@ -422,6 +422,12 @@ WITH candidates AS (
        AND runs.current_run_lease_id IS NULL
        AND run_attempts.terminal_outcome IS NULL
        AND run_attempts.terminal_at IS NULL
+       AND EXISTS (SELECT 1 FROM computers c WHERE c.id=runs.workspace_id AND c.status='active' AND c.recovery_failure IS NULL)
+       AND (NOT EXISTS(SELECT 1 FROM runs p WHERE p.id=runs.parent_run_id AND p.workspace_id=runs.workspace_id)
+         OR EXISTS(SELECT 1 FROM runs p JOIN run_waits w ON w.run_id=p.id AND w.attempt_number=p.current_attempt_number
+            WHERE p.id=runs.parent_run_id AND p.status='waiting' AND w.child_run_id=runs.id
+              AND w.condition_status='pending' AND w.suspension_status='parked'
+              ))
        AND NOT EXISTS (
             SELECT 1
               FROM run_leases

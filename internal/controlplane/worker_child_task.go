@@ -57,12 +57,8 @@ type childTaskOptions struct {
 }
 
 type childTaskReceipt struct {
-	RunID                  string `json:"runId"`
-	WorkspaceID            string `json:"workspaceId"`
-	RunWaitID              string `json:"runWaitId,omitempty"`
-	ResumeAttachID         string `json:"resumeAttachId,omitempty"`
-	BaseWorkspaceVersionID string `json:"baseWorkspaceVersionId,omitempty"`
-	BaseWorkspaceDigest    string `json:"baseWorkspaceDigest,omitempty"`
+	RunID       string `json:"runId"`
+	WorkspaceID string `json:"workspaceId"`
 }
 
 type childTaskInvokeInput struct {
@@ -361,14 +357,10 @@ func (s *Server) invokeChildTask(
 				RunID: uuid.MustParse(replay.RunID), Replayed: true,
 			}
 			if input.Request.Method == "call" {
-				if replay.RunWaitID != input.RunWaitID.String() ||
-					replay.ResumeAttachID != input.ResumeAttachID.String() {
-					return errTaskStartReceiptInvalid
-				}
 				if edgeClaim == nil {
 					return errTaskStartReceiptInvalid
 				}
-				opened, err := registerDifferentWorkspaceChildCall(
+				opened, err := registerChildCall(
 					ctx, work.q, input, authority, *edgeClaim, invocationFingerprint,
 					result.taskStartResult, targetWorkspaceID,
 				)
@@ -526,7 +518,7 @@ func (s *Server) invokeChildTask(
 			if edgeClaim == nil {
 				return errors.New("child task call claim is unavailable")
 			}
-			opened, err := registerDifferentWorkspaceChildCall(
+			opened, err := registerChildCall(
 				ctx, work.q, input, authority, *edgeClaim, invocationFingerprint,
 				result.taskStartResult, targetWorkspaceID,
 			)
@@ -539,10 +531,7 @@ func (s *Server) invokeChildTask(
 			receiptValue := childTaskReceipt{
 				RunID: runID.String(), WorkspaceID: targetWorkspaceID.String(),
 			}
-			if input.Request.Method == "call" {
-				receiptValue.RunWaitID = input.RunWaitID.String()
-				receiptValue.ResumeAttachID = input.ResumeAttachID.String()
-			}
+
 			receipt, err := json.Marshal(receiptValue)
 			if err != nil {
 				return err
@@ -635,6 +624,7 @@ func registerSameWorkspaceChildCall(
 			authority,
 			claim,
 			requestFingerprint,
+			fingerprint,
 			*replay,
 		)
 	}
@@ -733,21 +723,12 @@ func replayBoundSameWorkspaceChildCall(
 	authority runLeaseClaimAuthority,
 	claim db.IdempotencyClaim,
 	requestFingerprint string,
+	fingerprint idempotency.TaskChildInvokeFingerprint,
 	receipt childTaskReceipt,
 ) (workerapi.CreateRunWaitResponse, error) {
-	if receipt.RunWaitID == "" ||
-		receipt.ResumeAttachID == "" ||
-		receipt.BaseWorkspaceVersionID == "" ||
-		receipt.BaseWorkspaceDigest == "" {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
-	}
-	waitID := uuid.MustParse(receipt.RunWaitID)
-	resumeAttachID := uuid.MustParse(receipt.ResumeAttachID)
-	if waitID != input.RunWaitID || resumeAttachID != input.ResumeAttachID {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
-	}
+	waitID := input.RunWaitID
+	resumeAttachID := input.ResumeAttachID
 	childRunID := uuid.MustParse(receipt.RunID)
-	baseID := uuid.MustParse(receipt.BaseWorkspaceVersionID)
 	replayed, err := store.GetBoundSameWorkspaceChildCallReplay(
 		ctx,
 		db.GetBoundSameWorkspaceChildCallReplayParams{
@@ -759,18 +740,23 @@ func replayBoundSameWorkspaceChildCall(
 			ChildClaimID:                   claim.ID,
 			RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
 			ChildRunID:                     pgvalue.UUID(childRunID),
-			BaseWorkspaceVersionID:         pgvalue.UUID(baseID),
-			BaseWorkspaceContentDigest:     pgvalue.Text(receipt.BaseWorkspaceDigest),
+			AttemptNumber:                  authority.attempt.Number,
 		},
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
+		return registerChildCall(ctx, store, input, authority, claim, fingerprint, taskStartResult{RunID: childRunID, Replayed: true}, uuid.MustParse(receipt.WorkspaceID))
 	}
 	if err != nil {
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf(
 			"load bound same-workspace child task call: %w",
 			err,
 		)
+	}
+	if replayed.ResumeAttachID != pgvalue.UUID(input.ResumeAttachID) {
+		return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
+	}
+	if err := validateRunWaitActorCursor(authority, replayed); err != nil {
+		return workerapi.CreateRunWaitResponse{}, err
 	}
 	if replayed.SuspensionStatus != db.RunWaitStatusReleased ||
 		replayed.ConditionStatus != db.WaitStatusCompleted ||
@@ -809,7 +795,7 @@ func loadChildTaskInvokeLocators(
 	return locators, nil
 }
 
-func registerDifferentWorkspaceChildCall(
+func registerChildCall(
 	ctx context.Context,
 	store db.Querier,
 	input childTaskInvokeInput,
@@ -819,6 +805,13 @@ func registerDifferentWorkspaceChildCall(
 	child taskStartResult,
 	childWorkspaceID uuid.UUID,
 ) (workerapi.CreateRunWaitResponse, error) {
+	existing, waitErr := store.GetChildCallAttemptWait(ctx, db.GetChildCallAttemptWaitParams{EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, ChildClaimID: claim.ID})
+	if waitErr != nil && !errors.Is(waitErr, pgx.ErrNoRows) {
+		return workerapi.CreateRunWaitResponse{}, waitErr
+	}
+	if waitErr == nil && (existing.ID != pgvalue.UUID(input.RunWaitID) || existing.ResumeAttachID != pgvalue.UUID(input.ResumeAttachID)) {
+		return workerapi.CreateRunWaitResponse{}, errTaskStartReceiptInvalid
+	}
 	waitID := input.RunWaitID
 	resumeAttachID := input.ResumeAttachID
 	requestFingerprint := fmt.Sprintf("sha256:%x", claim.RequestFingerprint)
@@ -861,7 +854,6 @@ func registerDifferentWorkspaceChildCall(
 	if err != nil || childRun.ParentRunID != authority.run.ID ||
 		!childRun.ParentOwnsLifecycle.Valid || !childRun.ParentOwnsLifecycle.Bool ||
 		childRun.WorkspaceID != pgvalue.UUID(childWorkspaceID) ||
-		childRun.WorkspaceID == authority.run.WorkspaceID ||
 		childRun.ClaimID != claim.ID {
 		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
@@ -889,9 +881,9 @@ func registerDifferentWorkspaceChildCall(
 		if err != nil {
 			return workerapi.CreateRunWaitResponse{}, err
 		}
-		_, err = store.RegisterResolvedDifferentWorkspaceChildCall(
+		_, err = store.RegisterResolvedChildCall(
 			ctx,
-			db.RegisterResolvedDifferentWorkspaceChildCallParams{
+			db.RegisterResolvedChildCallParams{
 				ID: params.ID, EnvironmentID: params.EnvironmentID, RunID: params.RunID,
 				ChildRunID: params.ChildRunID, ChildTargetDeclaredID: params.ChildTargetDeclaredID,
 				ChildClaimID: params.ChildClaimID, ChildRequest: params.ChildRequest,
@@ -912,6 +904,12 @@ func registerDifferentWorkspaceChildCall(
 		response.ResolutionKind = "completed"
 		response.Resolution = resolution
 		return response, nil
+	}
+	if childRun.WorkspaceID == authority.run.WorkspaceID {
+		if childRun.Status != db.RunStatusRetryDelayed || childRun.CurrentRunLeaseID.Valid {
+			return workerapi.CreateRunWaitResponse{}, errWorkspaceFrontierConflict
+		}
+		return registerSameWorkspaceChildCall(ctx, store, input, authority, claim, fingerprint, nil)
 	}
 	if childRun.Status != db.RunStatusQueued && childRun.Status != db.RunStatusRunning &&
 		childRun.Status != db.RunStatusWaiting && childRun.Status != db.RunStatusRetryDelayed &&
@@ -1104,22 +1102,7 @@ func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {
 	if _, err := ids.Parse(receipt.WorkspaceID); err != nil {
 		return childTaskReceipt{}, errTaskStartReceiptInvalid
 	}
-	hasWait := receipt.RunWaitID != "" || receipt.ResumeAttachID != ""
-	if hasWait {
-		_, waitErr := ids.Parse(receipt.RunWaitID)
-		_, resumeAttachErr := ids.Parse(receipt.ResumeAttachID)
-		if waitErr != nil || resumeAttachErr != nil {
-			return childTaskReceipt{}, errTaskStartReceiptInvalid
-		}
-	}
-	hasWorkspaceFrontier := receipt.BaseWorkspaceVersionID != "" || receipt.BaseWorkspaceDigest != ""
-	if hasWorkspaceFrontier {
-		_, baseErr := ids.Parse(receipt.BaseWorkspaceVersionID)
-		if !hasWait || baseErr != nil ||
-			!taskWorkspaceDigestPattern.MatchString(receipt.BaseWorkspaceDigest) {
-			return childTaskReceipt{}, errTaskStartReceiptInvalid
-		}
-	}
+
 	return receipt, nil
 }
 

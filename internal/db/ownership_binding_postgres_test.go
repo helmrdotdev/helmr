@@ -228,7 +228,7 @@ func TestOwnershipChildBindingRejectsDetachedAndWrongParentBeforeMutation(t *tes
 				if !resolved {
 					return q.RegisterDifferentWorkspaceChildCall(ctx, p)
 				}
-				return q.RegisterResolvedDifferentWorkspaceChildCall(ctx, RegisterResolvedDifferentWorkspaceChildCallParams{ID: p.ID, ChildRunID: p.ChildRunID, ChildTargetDeclaredID: p.ChildTargetDeclaredID, ChildClaimID: p.ChildClaimID, ChildRequest: p.ChildRequest, RegistrationRequestFingerprint: p.RegistrationRequestFingerprint, AttemptNumber: p.AttemptNumber, CurrentRunLeaseID: p.CurrentRunLeaseID, ResumeAttachID: p.ResumeAttachID, EnvironmentID: p.EnvironmentID, RunID: p.RunID, ExpectedRunningRevision: p.ExpectedRunningRevision, ConditionResult: []byte("{}")})
+				return q.RegisterResolvedChildCall(ctx, RegisterResolvedChildCallParams{ID: p.ID, ChildRunID: p.ChildRunID, ChildTargetDeclaredID: p.ChildTargetDeclaredID, ChildClaimID: p.ChildClaimID, ChildRequest: p.ChildRequest, RegistrationRequestFingerprint: p.RegistrationRequestFingerprint, AttemptNumber: p.AttemptNumber, CurrentRunLeaseID: p.CurrentRunLeaseID, ResumeAttachID: p.ResumeAttachID, EnvironmentID: p.EnvironmentID, RunID: p.RunID, ExpectedRunningRevision: p.ExpectedRunningRevision, ConditionResult: []byte("{}")})
 			}
 			snapshot := func() []byte {
 				var b []byte
@@ -279,4 +279,40 @@ func ownershipCrossScopeArtifact(t *testing.T, f runLeaseClaimFixture, source pg
 	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO environments(id,org_id,project_id,slug,name,color_hex) VALUES($1,$2,$3,$4,'Other','#123456')", environment, f.orgID, f.projectID, "other-"+environment.String())
 	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) SELECT $1,org_id,project_id,$2,digest,kind,size_bytes,media_type FROM artifacts WHERE id=$3", id, environment, source)
 	return id
+}
+
+func TestResolvedSharedChildCallDoesNotRestoreComputer(t *testing.T) {
+	ctx := t.Context()
+	f := newRunLeaseClaimFixture(t, ctx)
+	parent := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	startTaskCompletionWork(t, ctx, f, parent)
+	claim := uuid.NewV7()
+	child := uuid.NewV7()
+	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'task.child.invoke',decode(repeat('bc',32),'hex'),decode(repeat('bd',32),'hex'),now())`, claim, f.environmentID)
+	// The fixture creates a completed logical child sharing the parent's Computer.
+	// There is deliberately no old child disk snapshot to restore for this result.
+	dbtest.MustExec(t, ctx, f.pool, `WITH child AS (INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,parent_run_id,parent_owns_lifecycle,workspace_id,base_workspace_version_id,status,output,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id,claim_id,terminal_at)
+SELECT $2,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,'child',id,true,workspace_id,base_workspace_version_id,'succeeded','{"reportPath":"/workspace/report.pdf"}',queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id,$3,now() FROM runs WHERE id=$1 RETURNING *) INSERT INTO run_attempts(run_id,number,entrypoint_kind,workspace_id,base_workspace_version_id,terminal_outcome,terminal_reason_code,terminal_at) SELECT id,1,entrypoint_kind,workspace_id,base_workspace_version_id,'succeeded','completed',now() FROM child`, parent.runID, child, claim)
+	var revision int64
+	var before, after []byte
+	if err := f.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id=$1`, parent.runID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(ctx, `SELECT to_jsonb(c) FROM computers c JOIN runs r ON r.workspace_id=c.id WHERE r.id=$1`, parent.runID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	p := RegisterResolvedChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildRunID: pgvalue.UUID(child), ChildClaimID: pgvalue.UUID(claim), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildRequest: []byte(`{}`), ConditionResult: []byte(`{"ok":true,"output":{"reportPath":"/workspace/report.pdf"}}`), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("shared-result")), ExpectedRunningRevision: revision, AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID), ResumeAttachID: pgvalue.UUID(uuid.NewV7())}
+	wait, err := f.queries.RegisterResolvedChildCall(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wait.SuspensionStatus != RunWaitStatusReleased || wait.ResumeWorkspaceVersionID.Valid || wait.BaseWorkspaceVersionID.Valid || wait.SuspendCheckpointID.Valid {
+		t.Fatalf("result imposed disk restoration: %+v", wait)
+	}
+	if err = f.pool.QueryRow(ctx, `SELECT to_jsonb(c) FROM computers c JOIN runs r ON r.workspace_id=c.id WHERE r.id=$1`, parent.runID).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("result reuse changed Computer authority")
+	}
 }

@@ -124,7 +124,7 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 		if _, err = secret.LockAttemptDelivery(ctx, q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
 			return err
 		}
-		authority, err = lockLiveRunFinalizationAuthority(ctx, q, worker, pgvalue.UUID(lease.leaseID), request.Lease.LeaseSequence, locators)
+		authority, err = lockRunPublicationAuthority(ctx, q, worker, pgvalue.UUID(lease.leaseID), request.Lease.LeaseSequence, locators, db.RunStatusRunning)
 		if err != nil {
 			return err
 		}

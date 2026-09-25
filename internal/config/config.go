@@ -91,6 +91,7 @@ type ClickHouse struct {
 }
 
 type Worker struct {
+	ComputerSaveEvery            time.Duration
 	ComputerDevices              []string
 	ComputerStagingMiB           int64
 	ControlPlaneURL              string

@@ -28,7 +28,7 @@ UPDATE workspace_mounts
    AND materialized_version_id = $12
    AND fencing_generation = $13
    AND status = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type AdvanceRunWorkspaceMountFenceParams struct {
@@ -85,7 +85,6 @@ func (q *Queries) AdvanceRunWorkspaceMountFence(ctx context.Context, arg Advance
 		&i.FinalizationKind,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -323,9 +322,9 @@ WITH selected_shape AS MATERIALIZED (
               AND root.version_id = source.id
               AND root.logical_bytes = $15
        ))
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, computer_save_sequence, computer_save_id, computer_save_lease_id, computer_save_predecessor_id, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_payload_required
 )
-SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.computer_source_version_id, created_runtime.retained_computer_source_version_id, created_runtime.computer_write_key_id, created_runtime.retained_computer_write_key_id, created_runtime.computer_key_available, created_runtime.preparation_expires_at, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.ready_at, created_runtime.terminal_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.updated_at
+SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.computer_source_version_id, created_runtime.computer_save_sequence, created_runtime.computer_save_id, created_runtime.computer_save_lease_id, created_runtime.computer_save_predecessor_id, created_runtime.retained_computer_source_version_id, created_runtime.computer_write_key_id, created_runtime.retained_computer_write_key_id, created_runtime.computer_key_available, created_runtime.preparation_expires_at, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.ready_at, created_runtime.terminal_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.updated_at, created_runtime.computer_payload_required
   FROM created_runtime
 `
 
@@ -380,6 +379,10 @@ type CreateRunRuntimeReservationRow struct {
 	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
 	ComputerSourceVersionID         pgtype.UUID        `json:"computer_source_version_id"`
+	ComputerSaveSequence            int64              `json:"computer_save_sequence"`
+	ComputerSaveID                  pgtype.UUID        `json:"computer_save_id"`
+	ComputerSaveLeaseID             pgtype.UUID        `json:"computer_save_lease_id"`
+	ComputerSavePredecessorID       pgtype.UUID        `json:"computer_save_predecessor_id"`
 	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
 	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
 	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
@@ -402,6 +405,7 @@ type CreateRunRuntimeReservationRow struct {
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateRunRuntimeReservation(ctx context.Context, arg CreateRunRuntimeReservationParams) (CreateRunRuntimeReservationRow, error) {
@@ -456,6 +460,10 @@ func (q *Queries) CreateRunRuntimeReservation(ctx context.Context, arg CreateRun
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
 		&i.ComputerSourceVersionID,
+		&i.ComputerSaveSequence,
+		&i.ComputerSaveID,
+		&i.ComputerSaveLeaseID,
+		&i.ComputerSavePredecessorID,
 		&i.RetainedComputerSourceVersionID,
 		&i.ComputerWriteKeyID,
 		&i.RetainedComputerWriteKeyID,
@@ -478,6 +486,7 @@ func (q *Queries) CreateRunRuntimeReservation(ctx context.Context, arg CreateRun
 		&i.TerminalReasonCode,
 		&i.TerminalError,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -796,7 +805,7 @@ UPDATE runs
           AND (parent_checkpoint.expires_at IS NULL
                OR parent_checkpoint.expires_at > clock_timestamp())
    ))
-RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required
 `
 
 type SetRunCurrentLeaseParams struct {
@@ -875,6 +884,7 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }

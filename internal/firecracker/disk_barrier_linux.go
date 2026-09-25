@@ -17,9 +17,96 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-// PauseComputer establishes a fresh API dispatch hold, even for a restored VM.
-// The owner must stop the source on any error or ambiguous response.
+// lockComputer serializes live disk cuts with irreversible checkpoint and close
+// holds. Waiting is cancellable; a timed-out Close can be retried.
+func (s *guestSession) lockComputer(ctx context.Context) (func(), error) {
+	s.mu.Lock()
+	if s.computerBarrier == nil {
+		s.computerBarrier = make(chan struct{}, 1)
+	}
+	gate := s.computerBarrier
+	s.mu.Unlock()
+	select {
+	case gate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-gate
+			return nil, err
+		}
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// captureContext lets Close cancel and join a disk operation before releasing
+// its device or backing descriptors. The caller owns computerBarrier.
+func (s *guestSession) captureContext(ctx context.Context) (context.Context, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, errors.New("Computer session is closed")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	s.computerCancel = cancel
+	return ctx, func() {
+		cancel()
+		s.mu.Lock()
+		s.computerCancel = nil
+		s.mu.Unlock()
+	}, nil
+}
+
+// PauseComputer establishes an irreversible dispatch hold for checkpoint or
+// terminal capture. On any error the owner must stop the source.
 func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+	unlock, err := s.lockComputer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	s.computerHeld = true
+	ctx, done, err := s.captureContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return s.capturePausedComputer(ctx)
+}
+
+// CaptureComputer briefly holds dispatch and resumes before returning the owned
+// disk cut. It captures no memory. Any error forbids further live captures and
+// requires the owner to stop the source, including an ambiguous resume reply.
+func (s *guestSession) CaptureComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
+	unlock, err := s.lockComputer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if s.computerHeld {
+		return nil, errors.New("Computer dispatch is held")
+	}
+	s.computerHeld = true
+	ctx, done, err := s.captureContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	cut, err := s.capturePausedComputer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Close cancels this operation and joins the barrier before stopping the
+	// machine. Even an in-flight resume cannot run after that physical stop.
+	err = s.machine.ResumeVM(ctx)
+	if err != nil {
+		cut.Capture.Release()
+		return nil, fmt.Errorf("resume captured Computer: %w", err)
+	}
+	s.computerHeld = false
+	return cut, nil
+}
+
+func (s *guestSession) capturePausedComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
 	if err := s.machine.PauseVM(ctx); err != nil {
 		return nil, fmt.Errorf("pause Firecracker vm: %w", err)
 	}

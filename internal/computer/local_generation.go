@@ -38,6 +38,7 @@ type localGenerationHead struct {
 	Scope         string         `json:"scope"`
 	Base          GenerationRoot `json:"base"`
 	Root          GenerationRoot `json:"root"`
+	Saved         GenerationRoot `json:"saved"`
 }
 
 type localGenerationSource struct {
@@ -60,6 +61,7 @@ func (s localGenerationSource) GetRange(ctx context.Context, digest string, size
 type LocalGeneration struct {
 	life          sync.RWMutex
 	commit        sync.Mutex
+	publication   sync.RWMutex // Joins local-file publishers before reachable eviction.
 	store         *cas.File
 	disk          *WritableGeneration
 	directory     string
@@ -127,7 +129,7 @@ func CreateLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *L
 	if err = syncGenerationDirectory(cfg.Directory); err != nil {
 		return nil, err
 	}
-	p, err := newLocalGeneration(ctx, cfg, lock, localGenerationHead{FormatVersion: 1, Scope: cfg.Scope, Base: cfg.Base, Root: cfg.Base})
+	p, err := newLocalGeneration(ctx, cfg, lock, localGenerationHead{FormatVersion: 1, Scope: cfg.Scope, Base: cfg.Base, Root: cfg.Base, Saved: cfg.Base})
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +172,7 @@ func OpenLocalGeneration(ctx context.Context, cfg LocalGenerationConfig) (_ *Loc
 	if err != nil {
 		return nil, err
 	}
-	if head.FormatVersion != 1 || head.Scope != cfg.Scope || head.Base != cfg.Base || head.Root.LogicalBytes != cfg.Base.LogicalBytes {
+	if head.FormatVersion != 1 || head.Scope != cfg.Scope || head.Base != cfg.Base || head.Root.LogicalBytes != cfg.Base.LogicalBytes || head.Saved.Validate(cfg.Base.LogicalBytes) != nil {
 		return nil, errors.New("local generation admission differs from recorded source")
 	}
 	return newLocalGeneration(ctx, cfg, lock, head)
@@ -306,7 +308,8 @@ func (p *LocalGeneration) ReadAt(ctx context.Context, b []byte, off int64) (int,
 	if p.closed {
 		return 0, os.ErrClosed
 	}
-	return p.disk.ReadAt(ctx, b, off)
+	n, err := p.disk.ReadAt(ctx, b, off)
+	return n, deviceFailure(err)
 }
 func (p *LocalGeneration) WriteAt(ctx context.Context, b []byte, off int64) (int, error) {
 	p.life.RLock()
@@ -314,7 +317,8 @@ func (p *LocalGeneration) WriteAt(ctx context.Context, b []byte, off int64) (int
 	if p.closed {
 		return 0, os.ErrClosed
 	}
-	return p.disk.WriteAt(ctx, b, off)
+	n, err := p.disk.WriteAt(ctx, b, off)
+	return n, deviceFailure(err)
 }
 func (p *LocalGeneration) Trim(ctx context.Context, off int64, n int) error {
 	p.life.RLock()
@@ -322,7 +326,7 @@ func (p *LocalGeneration) Trim(ctx context.Context, off int64, n int) error {
 	if p.closed {
 		return os.ErrClosed
 	}
-	return p.disk.Trim(ctx, off, n)
+	return deviceFailure(p.disk.Trim(ctx, off, n))
 }
 
 func (p *LocalGeneration) Flush(ctx context.Context) (GenerationRoot, error) {
@@ -333,7 +337,8 @@ func (p *LocalGeneration) Flush(ctx context.Context) (GenerationRoot, error) {
 	}
 	p.commit.Lock()
 	defer p.commit.Unlock()
-	return p.flushLocked(ctx)
+	root, err := p.flushLocked(ctx)
+	return root, deviceFailure(err)
 }
 
 func (p *LocalGeneration) flushLocked(ctx context.Context) (GenerationRoot, error) {

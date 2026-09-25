@@ -225,7 +225,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		log,
 		queries,
 		actorReconciler.ReconcileInput,
-		actorReconciler.ReconcileClose,
+		actorReconciler.ReconcileLifecycle,
 	)
 	if err != nil {
 		return fmt.Errorf("configure actor input reconciliation delivery: %w", err)

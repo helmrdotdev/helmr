@@ -21,10 +21,7 @@ export type {
   ActorStartRequest,
 } from "./client-actor"
 
-export type {
-  ClientSessionRef,
-  SessionListQuery,
-} from "./client-session"
+export type { SessionListQuery } from "./client-session"
 
 export type {
   SandboxInfo,
@@ -137,8 +134,6 @@ export type {
   TurnInterruptReceipt,
   SessionResumeRequest,
   SessionResumeReceipt,
-  SessionRecoverRequest,
-  SessionRecoveryReceipt,
   ActorStartOptions,
   ActorStartResult,
   WaitTimeoutError,

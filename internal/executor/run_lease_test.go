@@ -551,6 +551,7 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 }
 
 type testRunLeaseTask struct {
+	quiesceErr      error
 	waitErr         error
 	trace           *runLeaseTrace
 	result          RunLeaseTaskResult
@@ -560,7 +561,8 @@ type testRunLeaseTask struct {
 	captureFailures int
 }
 
-func (task *testRunLeaseTask) Close() {}
+func (task *testRunLeaseTask) Close()                                     {}
+func (task *testRunLeaseTask) QuiesceComputerSaves(context.Context) error { return task.quiesceErr }
 
 func (task *testRunLeaseTask) Wait(context.Context) (RunLeaseTaskResult, error) {
 	task.trace.add("wait")
@@ -775,4 +777,20 @@ func (*testRunLeaseControlPlane) CertifyRunComputerObject(context.Context, worke
 
 func (*testRunLeaseControlPlane) ReuseRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
 	return nil
+}
+
+func TestRunFinalizationWaitsForComputerSaveSettlement(t *testing.T) {
+	trace := &runLeaseTrace{}
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
+	failure := errors.New("save receipt unresolved")
+	task := &testRunLeaseTask{trace: trace, renewed: lease, quiesceErr: failure}
+	cp := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}, renewed: testRunLeaseRenewResponse(lease)}
+	executor := Executor{RunLeases: cp, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
+	err := executor.ExecuteRunLease(t.Context(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence})
+	if !errors.Is(err, failure) {
+		t.Fatalf("settlement error: %v", err)
+	}
+	if slices.Contains(trace.calls, "begin") {
+		t.Fatalf("revoked save authority before settlement: %v", trace.calls)
+	}
 }

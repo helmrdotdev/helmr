@@ -64,7 +64,7 @@ func (s *Server) registerRunFinalization(ctx context.Context, worker workerActor
 		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
 			return err
 		}
-		authority, err := lockLiveRunFinalizationAuthority(ctx, work.q, worker, pgvalue.UUID(lease.leaseID), request.Lease.LeaseSequence, locators)
+		authority, err := lockRunPublicationAuthority(ctx, work.q, worker, pgvalue.UUID(lease.leaseID), request.Lease.LeaseSequence, locators, db.RunStatusRunning)
 		if err != nil {
 			return staleRunFinalization(err)
 		}

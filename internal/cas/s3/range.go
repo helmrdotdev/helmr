@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"io"
+	"io/fs"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -28,6 +30,10 @@ func (c *Store) GetRange(ctx context.Context, digest string, size, offset, lengt
 	end := offset + length - 1
 	output, err := c.client.GetObject(ctx, &awss3.GetObjectInput{Bucket: aws.String(c.bucket), Key: aws.String(key), Range: aws.String(fmt.Sprintf("bytes=%d-%d", offset, end))})
 	if err != nil {
+		var missing *types.NoSuchKey
+		if errors.As(err, &missing) {
+			return nil, errors.Join(fs.ErrNotExist, err)
+		}
 		return nil, err
 	}
 	if output == nil {

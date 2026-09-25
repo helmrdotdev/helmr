@@ -424,13 +424,11 @@ SELECT *
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
    AND kind = 'child'
-   AND kind = 'child'
    AND child_target_declared_id = sqlc.arg(child_target_declared_id)
    AND child_claim_id = sqlc.arg(child_claim_id)
    AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
    AND child_run_id = sqlc.arg(child_run_id)
-   AND base_workspace_version_id = sqlc.arg(base_workspace_version_id)
-   AND base_workspace_content_digest = sqlc.arg(base_workspace_content_digest)
+   AND attempt_number = sqlc.arg(attempt_number)
    AND ownership_generation IS NOT NULL
    AND parent_writer_generation IS NOT NULL;
 
@@ -511,7 +509,7 @@ SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.workspace
   FROM moved_run
 RETURNING *;
 
--- name: RegisterResolvedDifferentWorkspaceChildCall :one
+-- name: RegisterResolvedChildCall :one
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
     condition_status, child_run_id,
@@ -536,7 +534,6 @@ SELECT sqlc.arg(id), parent.environment_id, parent.id, parent.workspace_id,
    AND child.parent_run_id = parent.id
    AND child.parent_owns_lifecycle IS TRUE
    AND child.id = sqlc.arg(child_run_id)
-   AND child.workspace_id <> parent.workspace_id
  WHERE parent.environment_id = sqlc.arg(environment_id)
    AND parent.id = sqlc.arg(run_id)
    AND parent.status = 'running'
@@ -1254,3 +1251,9 @@ UPDATE run_waits
   FROM moved_run, eligible_wait
  WHERE run_waits.id = eligible_wait.id
 RETURNING run_waits.*;
+
+-- name: GetChildCallAttemptWait :one
+SELECT * FROM run_waits
+WHERE environment_id=sqlc.arg(environment_id) AND run_id=sqlc.arg(run_id)
+AND attempt_number=sqlc.arg(attempt_number) AND child_claim_id=sqlc.arg(child_claim_id)
+AND kind='child';

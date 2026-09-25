@@ -101,27 +101,6 @@ func TestSessionSendPermissionRequiresWritableRole(t *testing.T) {
 	}
 }
 
-func TestSessionRecoveryRequiresPrivilegedRoleAndExplicitScopedKeyGrant(t *testing.T) {
-	scope := Scope{ProjectID: "project", EnvironmentID: "environment"}
-	for _, role := range []Role{RoleOwner, RoleAdmin, RoleDeveloper, RoleViewer} {
-		key := Actor{Kind: ActorKindAPIKey, Role: role, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID}
-		if key.HasPermission(PermissionSessionsRecover, scope) {
-			t.Fatalf("%s key recovered without an explicit grant", role)
-		}
-		key.Permissions = []Permission{PermissionSessionsRecover}
-		want := role == RoleOwner || role == RoleAdmin
-		if got := key.HasPermission(PermissionSessionsRecover, scope); got != want {
-			t.Fatalf("recovery role %s = %v, want %v", role, got, want)
-		}
-		if key.HasPermission(PermissionSessionsRecover, Scope{ProjectID: scope.ProjectID, EnvironmentID: "foreign"}) {
-			t.Fatalf("%s key recovered in another environment", role)
-		}
-	}
-	if permission, ok := ParseAPIKeyGrant(string(PermissionSessionsRecover)); !ok || permission != PermissionSessionsRecover {
-		t.Fatal("recovery must be an explicit grant")
-	}
-}
-
 func TestActorStartPermissionIsWritableButNotReadableRoleAuthority(t *testing.T) {
 	if !RoleAllows(RoleDeveloper, PermissionActorsStart) {
 		t.Fatal("developer should be allowed to start an Actor")

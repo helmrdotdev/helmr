@@ -50,13 +50,6 @@ func TestSessionMutations(t *testing.T) {
 		{"resume", "/resume", `{"hold_id":"` + testHoldID + `"}`, `{"id":"operation-1","session_id":"` + testSessionID + `","hold_id":"` + testHoldID + `","status":"ready"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
 			return c.ResumeSession(ctx, testSessionID, api.ResumeSessionRequest{HoldID: testHoldID, IdempotencyKey: key}, s)
 		}},
-		{"recover outside turn", "/recover", `{"hold_id":"` + testHoldID + `","turn_id":null,"workspace_version_id":"` + testWorkspaceVersionID + `","reconciliation_ref":"incident:1"}`, `{"id":"operation-1","session_id":"` + testSessionID + `","turn_id":null,"hold_id":"` + testHoldID + `","status":"held"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
-			return c.RecoverSession(ctx, testSessionID, api.RecoverSessionRequest{HoldID: testHoldID, WorkspaceVersionID: testWorkspaceVersionID, ReconciliationRef: "incident:1", IdempotencyKey: key}, s)
-		}},
-		{"recover turn", "/recover", `{"hold_id":"` + testHoldID + `","turn_id":"` + testTurnID + `","workspace_version_id":"` + testWorkspaceVersionID + `","reconciliation_ref":"incident:1","disposition":"interrupted"}`, `{"id":"operation-1","session_id":"` + testSessionID + `","turn_id":"` + testTurnID + `","hold_id":"` + testHoldID + `","status":"held"}`, func(c *Client, s EnvironmentScopeOptions, key string) (any, error) {
-			turnID := testTurnID
-			return c.RecoverSession(ctx, testSessionID, api.RecoverSessionRequest{HoldID: testHoldID, TurnID: &turnID, WorkspaceVersionID: testWorkspaceVersionID, ReconciliationRef: "incident:1", Disposition: "interrupted", IdempotencyKey: key}, s)
-		}},
 	}
 	for _, scoped := range []bool{false, true} {
 		for _, test := range tests {
@@ -290,10 +283,6 @@ func TestSessionClientsValidateBeforeTransport(t *testing.T) {
 		},
 		func() error {
 			_, err := c.ResumeSession(ctx, testSessionID, api.ResumeSessionRequest{}, scope)
-			return err
-		},
-		func() error {
-			_, err := c.RecoverSession(ctx, testSessionID, api.RecoverSessionRequest{HoldID: testHoldID, WorkspaceVersionID: testWorkspaceVersionID, ReconciliationRef: "incident", Disposition: "failed"}, scope)
 			return err
 		},
 		func() error {

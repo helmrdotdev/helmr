@@ -143,6 +143,11 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		return result, err
 	}
 	started := time.Now()
+	if owner, ok := c.session.(interface{ QuiesceComputerSaves(context.Context) error }); ok {
+		if err := owner.QuiesceComputerSaves(ctx); err != nil {
+			return result, err
+		}
+	}
 	if err := c.suspendGuestForCheckpoint(ctx, request); err != nil {
 		return result, err
 	}

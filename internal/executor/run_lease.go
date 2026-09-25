@@ -64,6 +64,10 @@ func (e Executor) ExecuteRunLease(
 		return fmt.Errorf("renew run lease before finalization: %w", err)
 	}
 
+	if err := task.QuiesceComputerSaves(ctx); err != nil {
+		return fmt.Errorf("settle Computer saves before run finalization: %w", err)
+	}
+
 	operationID := uuid.NewV7()
 	kind := workerapi.RunFinalizationCapture
 	beginRequest := workerapi.BeginRunFinalizationRequest{

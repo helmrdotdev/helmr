@@ -5,11 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -238,7 +236,7 @@ func TestSessionHTTPPostgresIdleCloseReleasesWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deferred, err := reconciler.ReconcileClose(t.Context(), f.environmentID, started.SessionID); err != nil || deferred {
+	if deferred, err := reconciler.ReconcileLifecycle(t.Context(), f.environmentID, started.SessionID); err != nil || deferred {
 		t.Fatalf("close reconciliation deferred=%v err=%v", deferred, err)
 	}
 	var status string
@@ -256,134 +254,5 @@ func TestSessionHTTPPostgresIdleCloseReleasesWorkspace(t *testing.T) {
 	f.server.listSessionsHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("list=%d %s", w.Code, w.Body.String())
-	}
-}
-
-func TestSessionRecoveryHTTPPostgresAuthenticatesKeyAndRepairsNullTurn(t *testing.T) {
-	f := newActorStartPostgresFixture(t, 2)
-	started, err := f.server.startActor(t.Context(), f.request(0, nil, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	other, err := f.server.startActor(t.Context(), f.request(1, nil, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleOwner, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
-	w := httptest.NewRecorder()
-	f.server.cancelRunHTTP(w, runCancellationRequest(t, started.BootRunID.String(), principal))
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("cancel=%d %s", w.Code, w.Body.String())
-	}
-	var stopped api.ActorRunCancellationReceipt
-	if err := json.Unmarshal(w.Body.Bytes(), &stopped); err != nil {
-		t.Fatal(err)
-	}
-	var version, otherVersion uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceIDs[0]).Scan(&version); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceIDs[1]).Scan(&otherVersion); err != nil {
-		t.Fatal(err)
-	}
-	userID := uuid.NewV7()
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO users(id,display_name) VALUES($1,'Recovery operator')`, userID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO org_members(org_id,user_id,role) VALUES($1,$2,'owner')`, f.orgID, userID); err != nil {
-		t.Fatal(err)
-	}
-	f.server.auth = dbAuthenticator{db: f.server.db}
-	router := chi.NewRouter()
-	router.Route("/v1", f.server.mountDeveloperRoutes)
-	key := func(role auth.Role, permissions []string) string {
-		t.Helper()
-		generated, err := auth.GenerateAPIKey()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := f.pool.Exec(t.Context(), `INSERT INTO api_keys(id,org_id,project_id,environment_id,created_by_user_id,role,permissions,name,key_prefix,token_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$10,$8,$9)`, uuid.NewV7(), f.orgID, f.projectID, f.environmentID, userID, string(role), permissions, generated.KeyPrefix, generated.TokenHash, "Recovery-"+uuid.NewV7().String()); err != nil {
-			t.Fatal(err)
-		}
-		return generated.Raw
-	}
-	call := func(token, sessionID, raw string) *httptest.ResponseRecorder {
-		t.Helper()
-		r := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+sessionID+"/recover", strings.NewReader(raw))
-		if token != "" {
-			r.Header.Set("Authorization", "Bearer "+token)
-		}
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, r)
-		return w
-	}
-	body := api.RecoverSessionRequest{HoldID: stopped.HoldID, TurnID: nil, WorkspaceVersionID: version.String(), ReconciliationRef: "test:verified-no-execution", IdempotencyKey: "repair-null"}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		token  string
-		status int
-	}{
-		{"", http.StatusUnauthorized},
-		{key(auth.RoleAdmin, []string{string(auth.PermissionSessionsRead)}), http.StatusForbidden},
-		{key(auth.RoleDeveloper, []string{string(auth.PermissionSessionsRecover)}), http.StatusForbidden},
-	} {
-		w := call(test.token, started.SessionID.String(), string(raw))
-		if w.Code != test.status {
-			t.Fatalf("auth=%d want=%d %s", w.Code, test.status, w.Body.String())
-		}
-	}
-	var claims int
-	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_claims WHERE operation='session.recover'`).Scan(&claims); err != nil || claims != 0 {
-		t.Fatalf("denied recovery claims=%d err=%v", claims, err)
-	}
-	admin := key(auth.RoleAdmin, []string{string(auth.PermissionSessionsRecover)})
-	bad := body
-	bad.WorkspaceVersionID = otherVersion.String()
-	bad.IdempotencyKey = "wrong-workspace"
-	badRaw, _ := json.Marshal(bad)
-	w = call(admin, started.SessionID.String(), string(badRaw))
-	if w.Code != http.StatusConflict {
-		t.Fatalf("cross Workspace=%d %s", w.Code, w.Body.String())
-	}
-	bad = body
-	turnID := uuid.NewV7().String()
-	bad.TurnID = &turnID
-	bad.Disposition = "failed"
-	bad.IdempotencyKey = "wrong-turn"
-	badRaw, _ = json.Marshal(bad)
-	w = call(admin, started.SessionID.String(), string(badRaw))
-	if w.Code != http.StatusConflict || decodeHTTPError(t, w.Body.Bytes()).Code != "turn_not_active" {
-		t.Fatalf("cross Turn=%d %s", w.Code, w.Body.String())
-	}
-	w = call(admin, other.SessionID.String(), string(raw))
-	if w.Code != http.StatusConflict {
-		t.Fatalf("cross Session=%d %s", w.Code, w.Body.String())
-	}
-	w = call(admin, started.SessionID.String(), string(raw))
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("repair=%d %s", w.Code, w.Body.String())
-	}
-	var receipt api.SessionRecoveryReceipt
-	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
-		t.Fatal(err)
-	}
-	if receipt.TurnID != nil || receipt.HoldID == stopped.HoldID || receipt.HoldID == "" || receipt.Status != "accepted" {
-		t.Fatalf("repair receipt=%+v", receipt)
-	}
-	replay := call(admin, started.SessionID.String(), string(raw))
-	if replay.Code != http.StatusAccepted || replay.Body.String() != w.Body.String() {
-		t.Fatalf("repair replay=%d %s", replay.Code, replay.Body.String())
-	}
-	var committed int64
-	var eventTurn *uuid.UUID
-	var currentRun *uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.committed_input_sequence,s.current_run_id,e.turn_id FROM sessions s JOIN session_events e ON e.session_id=s.id AND e.kind='session.recovered' WHERE s.id=$1`, started.SessionID).Scan(&committed, &currentRun, &eventTurn); err != nil {
-		t.Fatal(err)
-	}
-	if committed != 0 || currentRun != nil || eventTurn != nil {
-		t.Fatalf("null recovery advanced work: cursor=%d current=%v eventTurn=%v", committed, currentRun, eventTurn)
 	}
 }

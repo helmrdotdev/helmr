@@ -204,7 +204,7 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			writeError(w, badRequest(errors.New("runtime_substrate_id must be a canonical UUIDv7")))
 			return
 		}
-		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
+		row, err = s.markRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
 			ReservationSeconds: int64(runauthority.ReservationTTL / time.Second),
 			DesiredVersion:     request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:             worker.WorkerEpoch,
@@ -298,6 +298,7 @@ func (s *Server) markRuntimeInstanceFailed(
 	workerGroupID uuid.UUID,
 	params db.MarkRuntimeInstanceFailedParams,
 ) (db.RuntimeInstance, error) {
+	sourceFailure := params.ReasonCode.String == workerapi.RuntimeFailureComputerSource
 	workerFatal := params.ReasonCode.Valid &&
 		params.ReasonCode.String == workerapi.RuntimeFailureWorkerInvalid
 	authorityParams := db.GetRuntimePreparationFailureAuthorityParams{
@@ -319,7 +320,7 @@ func (s *Server) markRuntimeInstanceFailed(
 	if discovered.WorkerGroupID != pgvalue.UUID(workerGroupID) {
 		return db.RuntimeInstance{}, errors.New("runtime preparation Worker Group authority changed")
 	}
-	if !discovered.ReservedRunID.Valid && !workerFatal {
+	if !discovered.ReservedRunID.Valid && !workerFatal && !sourceFailure {
 		return s.db.MarkRuntimeInstanceFailed(ctx, params)
 	}
 	if discovered.ReservedRunID.Valid &&
@@ -389,8 +390,25 @@ func (s *Server) markRuntimeInstanceFailed(
 		if err != nil {
 			return db.RuntimeInstance{}, fmt.Errorf("lock runtime preparation run graph: %w", err)
 		}
-	} else if err := lockWorkerSupply(); err != nil {
-		return db.RuntimeInstance{}, err
+	} else {
+		if sourceFailure {
+			// Process placement locks its logical demand before the Computer and supply.
+			var computerID, processID pgtype.UUID
+			if err := tx.QueryRow(ctx, `SELECT workspace_id,reserved_process_id FROM runtime_instances WHERE id=$1`, params.ID).Scan(&computerID, &processID); err != nil {
+				return db.RuntimeInstance{}, err
+			}
+			if processID.Valid {
+				if _, err := tx.Exec(ctx, `SELECT id FROM workspace_processes WHERE id=$1 FOR UPDATE`, processID); err != nil {
+					return db.RuntimeInstance{}, err
+				}
+			}
+			if _, err := tx.Exec(ctx, `SELECT id FROM computers WHERE id=$1 FOR UPDATE`, computerID); err != nil {
+				return db.RuntimeInstance{}, err
+			}
+		}
+		if err := lockWorkerSupply(); err != nil {
+			return db.RuntimeInstance{}, err
+		}
 	}
 	locked, err := queries.LockRuntimePreparationFailureAuthority(
 		ctx,
@@ -409,6 +427,27 @@ func (s *Server) markRuntimeInstanceFailed(
 	}
 	if locked.ReservedRunID.Valid && !locked.RunAuthorityValid && !workerFatal {
 		return db.RuntimeInstance{}, errors.New("runtime preparation authority is stale")
+	}
+	if sourceFailure {
+		var preparing bool
+		if err := tx.QueryRow(ctx, `SELECT observed_state='allocated' FROM runtime_instances WHERE id=$1`, params.ID).Scan(&preparing); err != nil {
+			return db.RuntimeInstance{}, err
+		}
+		if !preparing {
+			return db.RuntimeInstance{}, errors.New("published source failure requires an unstarted Runtime")
+		}
+		// A private checkpoint or obsolete source failure cannot condemn the current
+		// published head. Only an exact, retained committed source can do so.
+		_, err := tx.Exec(ctx, `UPDATE computers c SET status='recovery_required',desired_state='stopped',dirty_state='dirty_state_lost',
+   recovery_id=CASE WHEN recovery_completed_at IS NULL THEN coalesce(recovery_id,$2) ELSE $2 END,
+   recovery_version_id=head_version_id,recovery_reason='computer_source_unavailable',recovery_started_at=CASE WHEN recovery_completed_at IS NULL THEN coalesce(recovery_started_at,now()) ELSE now() END,
+   recovery_preparation_count=0,next_recovery_preparation_at=NULL,recovery_runtime_id=NULL,recovery_completed_at=NULL,
+   recovery_failure=coalesce(recovery_failure,jsonb_build_object('code','computer_source_unavailable','message','Published Computer source is unavailable','details',$3::jsonb)),revision=revision+1,updated_at=now()
+   FROM runtime_instances r,computer_versions v WHERE r.id=$1 AND c.id=r.workspace_id
+   AND c.head_version_id=r.retained_computer_source_version_id AND v.id=c.head_version_id AND v.workspace_id=c.id AND v.status='committed'`, params.ID, pgvalue.UUID(uuid.NewV7()), params.Error)
+		if err != nil {
+			return db.RuntimeInstance{}, err
+		}
 	}
 	row, err := queries.MarkRuntimeInstanceFailed(ctx, params)
 	if err != nil {

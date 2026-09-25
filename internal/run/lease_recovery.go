@@ -153,12 +153,11 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	default:
 		return false, nil
 	}
-	// A started machine may contain unpublished files, including module-load
-	// and between-Turn effects. Losing its authority cannot authorize a cold
-	// retry against the last published disk, even when the Task has retries.
+	// Retain the committed source and require physical exclusion before cold retry.
 	if leaseStatus == db.RunLeaseStatusRunning || leaseStatus == db.RunLeaseStatusCheckpointing || leaseStatus == db.RunLeaseStatusFinalizing {
 		affected, err := q.RequireLostRunComputerRecovery(ctx, db.RequireLostRunComputerRecoveryParams{
 			WorkspaceID: authority.WorkspaceID, RunLeaseID: authority.RunLeaseID,
+			RecoveryID: pgvalue.UUID(uuid.NewV7()), RecoveryReason: pgvalue.Text(loss.reason),
 		})
 		if err != nil || affected != 1 {
 			return false, cancellationAuthority("require lost Computer recovery", err)
@@ -169,6 +168,12 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	if loss.kind == "active_deadline" {
 		status = db.RunStatusExpired
 		message = "Run maximum active duration was exceeded"
+	}
+	if status != db.RunStatusExpired {
+		retried, err := g.retryLostTaskTree(ctx, loss, message)
+		if err != nil || retried {
+			return retried, err
+		}
 	}
 	if err := g.failCurrentForLeaseLoss(ctx, request.RunID, loss, message, status); err != nil {
 		return false, err
@@ -196,7 +201,7 @@ func (g OwnedFinalization) FailCheckpointExecution(ctx context.Context, request 
 	if !a.ObservedAt.Valid || !a.ActiveStartedAt.Valid {
 		return cancellationAuthority("checkpoint failure active timestamps are missing", nil)
 	}
-	affected, err := q.RequireLostRunComputerRecovery(ctx, db.RequireLostRunComputerRecoveryParams{WorkspaceID: a.WorkspaceID, RunLeaseID: a.RunLeaseID})
+	affected, err := q.RequireLostRunComputerRecovery(ctx, db.RequireLostRunComputerRecoveryParams{WorkspaceID: a.WorkspaceID, RunLeaseID: a.RunLeaseID, RecoveryID: pgvalue.UUID(uuid.NewV7()), RecoveryReason: pgvalue.Text("checkpoint_failed")})
 	if err != nil || affected != 1 {
 		return cancellationAuthority("require unsaved Computer recovery", err)
 	}
@@ -205,6 +210,12 @@ func (g OwnedFinalization) FailCheckpointExecution(ctx context.Context, request 
 	if !a.ActiveStartedAt.Time.Add(time.Duration(a.MaxActiveDurationMs-a.ActiveElapsedMs) * time.Millisecond).After(a.ObservedAt.Time) {
 		loss.reason = "max_active_duration_exceeded"
 		status = db.RunStatusExpired
+	}
+	if status != db.RunStatusExpired {
+		retried, err := g.retryLostTaskTree(ctx, loss, message)
+		if err != nil || retried {
+			return err
+		}
 	}
 	return g.failCurrentForLeaseLoss(ctx, request.RunID, loss, message, status)
 }
@@ -426,6 +437,9 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	}
 	wait, found := g.waitsByChild[target.id]
 	if !found {
+		if parent.workspaceID != target.workspaceID {
+			return nil
+		}
 		return cancellationAuthority("lost child wait is missing", nil)
 	}
 	if parent.workspaceID != target.workspaceID {

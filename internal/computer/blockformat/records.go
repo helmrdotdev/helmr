@@ -98,40 +98,47 @@ func Seal(scope string, key []byte, r Ref, records [][]byte) (Ref, []byte, error
 }
 
 // OpenMetadata verifies the complete encrypted metadata identity before decryption.
-func OpenMetadata(scope string, key []byte, r Ref, b []byte) ([]byte, error) {
+func OpenMetadata(scope string, key []byte, r Ref, b []byte) (out []byte, err error) {
 	if r.Kind == SegmentKind {
-		return nil, errors.New("metadata required")
+		return nil, integrity(errors.New("metadata required"))
 	}
 	h, err := Header(scope, r)
 	if err != nil {
 		return nil, err
 	}
 	if r.Size < int64(len(h)+20) || r.Size > int64(len(h)+20+MaxMetadata) {
-		return nil, errors.New("metadata bounds")
+		return nil, integrity(errors.New("metadata bounds"))
 	}
 	if int64(len(b)) != r.Size {
-		return nil, errors.New("metadata response size mismatch")
+		return nil, integrity(errors.New("metadata response size mismatch"))
 	}
-	if sha256.Sum256(b) != r.Digest || !bytes.Equal(b[:len(h)], h) {
-		return nil, errors.New("metadata identity mismatch")
+	if sha256.Sum256(b) != r.Digest {
+		return nil, integrity(errors.New("metadata identity mismatch"))
+	}
+	if !bytes.Equal(b[:len(h)], h) {
+		return nil, errors.Join(ErrAuthentication, errors.New("metadata context mismatch"))
 	}
 	n := binary.BigEndian.Uint32(b[len(h):])
 	if int(n) != len(b)-len(h)-20 {
-		return nil, errors.New("metadata record size")
+		return nil, integrity(errors.New("metadata record size"))
 	}
 	a, err := recordAEAD(key, r, h)
 	if err != nil {
 		return nil, err
 	}
 	nonce, aad := recordContext(h, 0, n)
-	return a.Open(nil, nonce, b[len(h)+4:], aad)
+	out, err = a.Open(nil, nonce, b[len(h)+4:], aad)
+	if err != nil {
+		return nil, errors.Join(ErrAuthentication, err)
+	}
+	return out, nil
 }
 
 // OpenBlock authenticates one range against a trusted, retained segment descriptor.
 // It does not certify the digest of unrequested segment records.
-func OpenBlock(scope string, key []byte, r Ref, ordinal uint32, stored, b []byte) ([]byte, error) {
+func OpenBlock(scope string, key []byte, r Ref, ordinal uint32, stored, b []byte) (out []byte, err error) {
 	if r.Kind != SegmentKind || ordinal >= r.Count {
-		return nil, errors.New("invalid block reference")
+		return nil, integrity(errors.New("invalid block reference"))
 	}
 	h, err := Header(scope, r)
 	if err != nil {
@@ -139,13 +146,13 @@ func OpenBlock(scope string, key []byte, r Ref, ordinal uint32, stored, b []byte
 	}
 	const frame = BlockSize + 4 + 16
 	if r.Size != int64(len(h))+int64(r.Count)*frame {
-		return nil, errors.New("segment geometry mismatch")
+		return nil, integrity(errors.New("segment geometry mismatch"))
 	}
 	if !bytes.Equal(stored, h) {
-		return nil, errors.New("segment header mismatch")
+		return nil, errors.Join(ErrAuthentication, errors.New("segment header mismatch"))
 	}
 	if len(b) != frame || binary.BigEndian.Uint32(b) != BlockSize {
-		return nil, errors.New("range length mismatch")
+		return nil, integrity(errors.New("range length mismatch"))
 	}
 	a, err := recordAEAD(key, r, h)
 	if err != nil {
@@ -154,7 +161,7 @@ func OpenBlock(scope string, key []byte, r Ref, ordinal uint32, stored, b []byte
 	nonce, aad := recordContext(h, uint64(ordinal)+1, BlockSize)
 	p, err := a.Open(nil, nonce, b[4:], aad)
 	if err != nil {
-		return nil, fmt.Errorf("block authentication: %w", err)
+		return nil, errors.Join(ErrAuthentication, fmt.Errorf("block authentication: %w", err))
 	}
 	return p, nil
 }

@@ -199,3 +199,19 @@ func TestPageRangeReads(t *testing.T) {
 		}
 	}
 }
+
+func TestIntegrityDoesNotConflateKeysWithCorruptContent(t *testing.T) {
+	ref, raw, key := recordsFixture(t, RootKind, [][]byte{[]byte(`{"Capacity":4096}`)})
+	if _, err := OpenMetadata("scope", nil, ref, raw); err == nil || errors.Is(err, ErrIntegrity) {
+		t.Fatalf("missing key treated as data loss: %v", err)
+	}
+	wrong := bytes.Repeat([]byte{9}, 32)
+	if _, err := OpenMetadata("scope", wrong, ref, raw); !errors.Is(err, ErrAuthentication) || errors.Is(err, ErrIntegrity) {
+		t.Fatalf("wrong key classification: %v", err)
+	}
+	corrupt := bytes.Clone(raw)
+	corrupt[len(corrupt)-1] ^= 1
+	if _, err := OpenMetadata("scope", key, ref, corrupt); !errors.Is(err, ErrIntegrity) {
+		t.Fatalf("corrupt identity classification: %v", err)
+	}
+}

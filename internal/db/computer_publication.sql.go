@@ -12,9 +12,9 @@ import (
 )
 
 const getWorkerInitialComputerVersion = `-- name: GetWorkerInitialComputerVersion :one
-SELECT v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at FROM computer_versions v
+SELECT v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_available FROM computer_versions v
  JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
- WHERE v.publisher_runtime_instance_id=$1
+ WHERE v.publisher_save_sequence IS NULL AND v.publisher_runtime_instance_id=$1
    AND v.publisher_desired_version=$2
    AND r.worker_instance_id=$3
    AND r.worker_group_id=$4 AND r.worker_epoch=$5
@@ -51,6 +51,7 @@ func (q *Queries) GetWorkerInitialComputerVersion(ctx context.Context, arg GetWo
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
+		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
@@ -58,6 +59,8 @@ func (q *Queries) GetWorkerInitialComputerVersion(ctx context.Context, arg GetWo
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
+		&i.PayloadRetiredAt,
+		&i.PayloadAvailable,
 	)
 	return i, err
 }
@@ -75,7 +78,7 @@ WITH published AS (
        AND v.id=$8 AND v.status='initializing' AND v.parent_version_id IS NULL
        AND c.environment_id=v.environment_id AND c.id=v.workspace_id
        AND c.head_version_id=v.id AND c.initial_config IS NULL
-    RETURNING v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at
+    RETURNING v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_available
 ), retained AS (
     INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
     SELECT environment_id,workspace_id,id,$9 FROM published
@@ -86,7 +89,7 @@ WITH published AS (
      WHERE c.environment_id=p.environment_id AND c.id=p.workspace_id AND r.version_id=p.id
     RETURNING c.id
 )
-SELECT p.id, p.environment_id, p.workspace_id, p.parent_version_id, p.artifact_id, p.content_digest, p.size_bytes, p.entry_count, p.status, p.source_workspace_lease_id, p.publisher_runtime_instance_id, p.publisher_desired_version, p.publication_request_fingerprint, p.ownership_generation, p.writer_generation, p.created_at, p.published_at, p.discarded_at FROM published p JOIN configured c ON c.id=p.workspace_id
+SELECT p.id, p.environment_id, p.workspace_id, p.parent_version_id, p.artifact_id, p.content_digest, p.size_bytes, p.entry_count, p.status, p.source_workspace_lease_id, p.publisher_runtime_instance_id, p.publisher_save_sequence, p.publisher_desired_version, p.publication_request_fingerprint, p.ownership_generation, p.writer_generation, p.created_at, p.published_at, p.discarded_at, p.payload_retired_at, p.payload_available FROM published p JOIN configured c ON c.id=p.workspace_id
 `
 
 type PublishInitialComputerVersionParams struct {
@@ -114,6 +117,7 @@ type PublishInitialComputerVersionRow struct {
 	Status                        string             `json:"status"`
 	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
 	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
+	PublisherSaveSequence         pgtype.Int8        `json:"publisher_save_sequence"`
 	PublisherDesiredVersion       pgtype.Int8        `json:"publisher_desired_version"`
 	PublicationRequestFingerprint []byte             `json:"publication_request_fingerprint"`
 	OwnershipGeneration           int64              `json:"ownership_generation"`
@@ -121,6 +125,8 @@ type PublishInitialComputerVersionRow struct {
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
+	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
+	PayloadAvailable              pgtype.Bool        `json:"payload_available"`
 }
 
 // The owner validates the exact certified root page and holds the preparation
@@ -151,6 +157,7 @@ func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg Publish
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
+		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
 		&i.OwnershipGeneration,
@@ -158,6 +165,8 @@ func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg Publish
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
+		&i.PayloadRetiredAt,
+		&i.PayloadAvailable,
 	)
 	return i, err
 }

@@ -101,8 +101,11 @@ describe("runProgram", () => {
   test("does not release input on an exceptional protocol path", async () => {
     let closeCount = 0
     const start = taskStart("noPayload")
+    const wrong = releaseFor(start)
+    wrong.attemptNumber++
     const input = observedFrames([
       frameMessage(programProto.ProgramStartSchema, start),
+      frameMessage(programProto.EntrypointReleaseSchema, wrong),
     ], async () => {
       closeCount++
     })
@@ -1230,25 +1233,94 @@ describe("runProgram", () => {
     assert.equal(invoked, true)
   })
 
-  test("rejects a mismatched branded export before entrypoint ready", async () => {
+  test("reports a mismatched export as an application failure after release", async () => {
     let invoked = false
-    const definition = task({
-      id: "other",
-      run() {
-        invoked = true
-        return null
-      },
-    })
+    const definition = task({ id: "other", run() { invoked = true; return null } })
+    const start = taskStart("noPayload")
     const output: Uint8Array[] = []
-
-    await assert.rejects(runProgram(locatorURL, programIO({
-        input: frames(frameMessage(programProto.ProgramStartSchema, taskStart("noPayload"))),
-        definition,
-        output,
-      })), { message: /does not match/ })
-    assert.equal(output.length, 0)
+    await runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(programProto.ProgramStartSchema, start),
+        frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
+      ), definition, output,
+    }))
     assert.equal(invoked, false)
+    assert.deepEqual(output.map(value => readEvent(value).event.case), ["entrypointReady", "taskOutcome"])
+    const result = readEvent(output[1]!).event
+    assert.equal(result.case, "taskOutcome")
+    if (result.case === "taskOutcome" && result.value.outcome.case === "failed") {
+      assert.equal(result.value.outcome.value.detailsJson, '{"phase":"initialization"}')
+      assert.match(result.value.outcome.value.message, /does not match/)
+    } else assert.fail("expected initialization failure")
   })
+
+  for (const kind of ["task", "actor"] as const) {
+    test(`${kind} module import waits for release and reports initialization failure once`, async () => {
+      const start = taskStart("noPayload")
+      if (kind === "actor") {
+        start.entrypointDeclaredId = "worker"
+        start.entrypoint = { case: "actor", value: create(programProto.ActorStartSchema, {
+          sessionId: "session-1", runGeneration: 7n, startInputSequence: 0n, inputHighWatermark: 1n,
+        }) }
+      }
+      const gate = Promise.withResolvers<void>()
+      const ready = Promise.withResolvers<void>()
+      const output: Uint8Array[] = []
+      let imports = 0
+      const io = programIO({
+        input: gatedFrames(frameMessage(programProto.ProgramStartSchema, start), gate.promise,
+          frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))),
+        definition: undefined, output, onWrite: () => ready.resolve(),
+      })
+      const running = runProgram(locatorURL, { ...io, importModule: async () => {
+        imports++
+        throw new Error("customer module failed")
+      } })
+      await ready.promise
+      assert.equal(imports, 0)
+      gate.resolve()
+      await running
+      assert.equal(imports, 1)
+      assert.deepEqual(output.map(value => readEvent(value).event.case),
+        ["entrypointReady", kind === "task" ? "taskOutcome" : "actorOutcome"])
+      const result = readEvent(output[1]!).event
+      if ((result.case === "taskOutcome" || result.case === "actorOutcome") && result.value.outcome.case === "failed") {
+        assert.equal(result.value.outcome.value.message, "customer module failed")
+        if (result.case === "actorOutcome") assert.equal(result.value.runGeneration, 7n)
+      } else assert.fail("expected application failure")
+    })
+
+    test(`${kind} initialization outcome transport failure is not retried`, async () => {
+      const start = taskStart("noPayload")
+      if (kind === "actor") {
+        start.entrypointDeclaredId = "worker"
+        start.entrypoint = { case: "actor", value: create(programProto.ActorStartSchema, {
+          sessionId: "session-1", runGeneration: 7n, startInputSequence: 0n, inputHighWatermark: 1n,
+        }) }
+      }
+      const output: Uint8Array[] = []
+      let writes = 0
+      let closed = 0
+      const io = programIO({
+        input: observedFrames([
+          frameMessage(programProto.ProgramStartSchema, start),
+          frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start)),
+        ], async () => { closed++ }), definition: undefined, output,
+      })
+      await assert.rejects(runProgram(locatorURL, {
+        ...io,
+        importModule: async () => { throw new Error("module failure") },
+        write: async value => {
+          writes++
+          if (writes > 1) throw new Error("outcome transport lost")
+          await io.write(value)
+        },
+      }), /outcome transport lost/)
+      assert.equal(writes, 2)
+      assert.equal(closed, 0)
+      assert.deepEqual(output.map(value => readEvent(value).event.case), ["entrypointReady"])
+    })
+  }
 
   test("rejects malformed and oversized frames before declaration import", async () => {
     let imported = false
@@ -1274,6 +1346,7 @@ describe("runProgram", () => {
 
   test("rejects an identity-mismatched release without invoking the handler", async () => {
     let invoked = false
+    let imported = false
     const definition = task({
       id: "deploy",
       run() {
@@ -1288,15 +1361,16 @@ describe("runProgram", () => {
       entrypoint: taskIdentity("deploy"),
     })
 
-    await assert.rejects(runProgram(locatorURL, programIO({
+    await assert.rejects(runProgram(locatorURL, { ...programIO({
         input: frames(
           frameMessage(programProto.ProgramStartSchema, start),
           frameMessage(programProto.EntrypointReleaseSchema, wrong),
         ),
         definition,
         output: [],
-      })), { message: /does not match/ })
+      }), importModule: async () => { imported = true; return { definition } } }), { message: /does not match/ })
     assert.equal(invoked, false)
+    assert.equal(imported, false)
   })
 })
 

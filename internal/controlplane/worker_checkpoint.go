@@ -698,7 +698,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	)
 	if err != nil ||
 		claim.Operation != "task.child.invoke" ||
-		claim.Status != "pending" ||
+		(claim.Status != "pending" && claim.Status != "completed") ||
 		claim.RetiredAt.Valid {
 		return staleRunLeaseClaim(err)
 	}
@@ -718,50 +718,70 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			-time.Duration(request.Priority) * time.Second,
 		),
 	)
-	childRunID := uuid.NewV7()
-	rootSpanID, err := tracing.NewSpanID()
-	if err != nil {
-		return err
-	}
-	child, err := store.CreateSameWorkspaceChildRunFromParentDeployment(
-		ctx,
-		db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
-			RunWaitID:              wait.ID,
-			EntrypointDeclaredID:   wait.ChildTargetDeclaredID,
-			ClaimID:                wait.ChildClaimID,
-			ParentRunLeaseID:       authority.runLease.ID,
-			SuspendCheckpointID:    wait.SuspendCheckpointID,
-			BaseWorkspaceVersionID: baseWorkspaceVersionID,
-			EnvironmentID:          authority.run.EnvironmentID,
-			ParentRunID:            authority.run.ID,
-			ParentAttemptNumber:    authority.attempt.Number,
-			ID:                     pgvalue.UUID(childRunID),
-			Payload:                request.Payload,
-			Metadata:               request.Metadata,
-			Tags:                   request.Tags,
-			QueueName:              admission.QueueName,
-			ConcurrencyKey:         pgvalue.TextPtr(request.ConcurrencyKey),
-			QueueConcurrencyLimit:  int8Ptr(admission.QueueConcurrencyLimit),
-			Priority:               request.Priority,
-			QueueOriginAt:          authority.run.QueueOriginAt,
-			QueueScoreAt:           queueScoreAt,
-			QueuedExpiresAt:        queuedExpiresAt,
-			MaxActiveDurationMs:    admission.MaxActiveDurationMS,
-			RetryPolicy:            admission.RetryPolicy,
-			TraceID:                authority.run.TraceID,
-			RootSpanID:             rootSpanID,
-		},
-	)
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if err := secret.CreateAttemptResolutions(
-		ctx, store, authority.workspace.ID, child.ID, 1, workspaceSecretResolutions(bindings),
-	); err != nil {
-		return fmt.Errorf(
-			"record same-workspace child task secret resolutions: %w",
-			err,
+	var childID pgtype.UUID
+	if claim.Status == "completed" {
+		receipt, err := decodeChildTaskReceipt(claim.Receipt)
+		if err != nil {
+			return err
+		}
+		if receipt.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) {
+			return errStaleRunLeaseClaim
+		}
+		child, err := store.RebindSharedChildAttempt(ctx, db.RebindSharedChildAttemptParams{
+			ChildRunID: pgvalue.UUID(uuid.MustParse(receipt.RunID)), EnvironmentID: authority.run.EnvironmentID,
+			ParentRunID: authority.run.ID, WorkspaceID: authority.workspace.ID, ClaimID: claim.ID, BaseWorkspaceVersionID: baseWorkspaceVersionID,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		childID = child.ID
+	} else {
+		childRunID := uuid.NewV7()
+		rootSpanID, err := tracing.NewSpanID()
+		if err != nil {
+			return err
+		}
+		child, err := store.CreateSameWorkspaceChildRunFromParentDeployment(
+			ctx,
+			db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
+				RunWaitID:              wait.ID,
+				EntrypointDeclaredID:   wait.ChildTargetDeclaredID,
+				ClaimID:                wait.ChildClaimID,
+				ParentRunLeaseID:       authority.runLease.ID,
+				SuspendCheckpointID:    wait.SuspendCheckpointID,
+				BaseWorkspaceVersionID: baseWorkspaceVersionID,
+				EnvironmentID:          authority.run.EnvironmentID,
+				ParentRunID:            authority.run.ID,
+				ParentAttemptNumber:    authority.attempt.Number,
+				ID:                     pgvalue.UUID(childRunID),
+				Payload:                request.Payload,
+				Metadata:               request.Metadata,
+				Tags:                   request.Tags,
+				QueueName:              admission.QueueName,
+				ConcurrencyKey:         pgvalue.TextPtr(request.ConcurrencyKey),
+				QueueConcurrencyLimit:  int8Ptr(admission.QueueConcurrencyLimit),
+				Priority:               request.Priority,
+				QueueOriginAt:          authority.run.QueueOriginAt,
+				QueueScoreAt:           queueScoreAt,
+				QueuedExpiresAt:        queuedExpiresAt,
+				MaxActiveDurationMs:    admission.MaxActiveDurationMS,
+				RetryPolicy:            admission.RetryPolicy,
+				TraceID:                authority.run.TraceID,
+				RootSpanID:             rootSpanID,
+			},
 		)
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		childID = child.ID
+		if err := secret.CreateAttemptResolutions(
+			ctx, store, authority.workspace.ID, child.ID, 1, workspaceSecretResolutions(bindings),
+		); err != nil {
+			return fmt.Errorf(
+				"record same-workspace child task secret resolutions: %w",
+				err,
+			)
+		}
 	}
 	if _, err := store.CommitSameWorkspaceChildCheckpointReady(
 		ctx,
@@ -786,19 +806,18 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			ChildClaimID:        wait.ChildClaimID,
 			ParentRunLeaseID:    authority.runLease.ID,
 			SuspendCheckpointID: wait.SuspendCheckpointID,
-			ChildRunID:          child.ID,
+			ChildRunID:          childID,
 			ExpectedRunRevision: wait.ExpectedRunRevision,
 		},
 	); err != nil {
 		return staleRunLeaseClaim(err)
 	}
+	if claim.Status == "completed" {
+		return nil
+	}
 	receipt, err := json.Marshal(childTaskReceipt{
-		RunID:                  childRunID.String(),
-		WorkspaceID:            pgvalue.UUIDString(authority.workspace.ID),
-		RunWaitID:              pgvalue.UUIDString(wait.ID),
-		ResumeAttachID:         pgvalue.UUIDString(wait.ResumeAttachID),
-		BaseWorkspaceVersionID: pgvalue.UUIDString(baseWorkspaceVersionID),
-		BaseWorkspaceDigest:    baseWorkspaceContentDigest,
+		RunID:       pgvalue.UUIDString(childID),
+		WorkspaceID: pgvalue.UUIDString(authority.workspace.ID),
 	})
 	if err != nil {
 		return err

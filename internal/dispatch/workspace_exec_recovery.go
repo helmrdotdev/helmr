@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -114,7 +115,7 @@ func (d *Authority) RecoverWorkspaceExec(
 			authority,
 			claim,
 			db.WorkspaceProcessStatusExited,
-			authority.WorkspaceMount.StagedVersionID,
+			authority.WorkspaceProcess.StagedVersionID,
 			authority.WorkspaceMount.FinalizationReasonCode,
 			authority.WorkspaceMount.FinalizationError,
 		); err != nil {
@@ -171,7 +172,7 @@ func classifyWorkspaceExecRecovery(
 	}
 	switch authority.WorkspaceMount.FinalizationKind.String {
 	case "capture":
-		if authority.WorkspaceMount.StagedVersionID.Valid &&
+		if authority.WorkspaceProcess.StagedVersionID.Valid &&
 			len(authority.WorkspaceMount.FinalizationError) == 0 {
 			if !secretsValid {
 				return workspaceExecRecoveryRevoked
@@ -179,7 +180,7 @@ func classifyWorkspaceExecRecovery(
 			return workspaceExecRecoveryCapture
 		}
 	case "discard":
-		if !authority.WorkspaceMount.StagedVersionID.Valid {
+		if !authority.WorkspaceProcess.StagedVersionID.Valid {
 			return workspaceExecRecoveryDiscard
 		}
 	}
@@ -302,7 +303,7 @@ func failRevokedRecoveredWorkspaceExec(
 	affected, err := q.DiscardStagedWorkspaceExecVersion(
 		ctx,
 		db.DiscardStagedWorkspaceExecVersionParams{
-			VersionID:   authority.WorkspaceMount.StagedVersionID,
+			VersionID:   authority.WorkspaceProcess.StagedVersionID,
 			WorkspaceID: authority.WorkspaceProcess.WorkspaceID,
 		},
 	)
@@ -337,11 +338,11 @@ func failUncertainWorkspaceExec(
 	claim db.IdempotencyClaim,
 	reasonCode string,
 ) error {
-	if authority.WorkspaceMount.StagedVersionID.Valid {
+	if authority.WorkspaceProcess.StagedVersionID.Valid {
 		affected, err := q.DiscardStagedWorkspaceExecVersion(
 			ctx,
 			db.DiscardStagedWorkspaceExecVersionParams{
-				VersionID:   authority.WorkspaceMount.StagedVersionID,
+				VersionID:   authority.WorkspaceProcess.StagedVersionID,
 				WorkspaceID: authority.WorkspaceProcess.WorkspaceID,
 			},
 		)
@@ -355,6 +356,7 @@ func failUncertainWorkspaceExec(
 	if _, err := q.MarkWorkspaceExecRecoveryRequired(
 		ctx,
 		db.MarkWorkspaceExecRecoveryRequiredParams{
+			RecoveryID: pgvalue.UUID(uuid.NewV7()), RecoveryReason: pgvalue.Text(reasonCode),
 			WorkspaceID:           authority.WorkspaceProcess.WorkspaceID,
 			ExpectedHeadVersionID: authority.SavedHeadVersionID,
 			OwnershipGeneration:   authority.WorkspaceLease.OwnershipGeneration,

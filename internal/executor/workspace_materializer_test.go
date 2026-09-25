@@ -28,11 +28,11 @@ import (
 )
 
 func TestWorkspaceMaterializerUsesStartupTimeout(t *testing.T) {
-	if got := (WorkspaceMaterializer{}).startupTimeout(); got != workspaceStartupTimeout {
+	if got := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).startupTimeout(); got != workspaceStartupTimeout {
 		t.Fatalf("startup timeout = %s, want %s", got, workspaceStartupTimeout)
 	}
 	custom := time.Second
-	if got := (WorkspaceMaterializer{StartupTimeout: custom}).startupTimeout(); got != custom {
+	if got := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, StartupTimeout: custom}).startupTimeout(); got != custom {
 		t.Fatalf("custom startup timeout = %s, want %s", got, custom)
 	}
 }
@@ -50,7 +50,7 @@ func TestWorkspaceMaterializerRenewsWhileAwaitingPreparedRuntime(t *testing.T) {
 			if fail {
 				client.renewErrors = []error{errors.New("renew failed")}
 			}
-			materializer := WorkspaceMaterializer{CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
+			materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error, 1)
@@ -139,7 +139,7 @@ func TestWorkspaceMaterializerRestoreCASObjectUsesLocalCache(t *testing.T) {
 	store, workspaceMount := testWorkspaceMountArtifacts(t)
 	cacheDir := t.TempDir()
 	tempDir := t.TempDir()
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:              store,
 		ArtifactCacheDir: cacheDir,
 	}
@@ -180,7 +180,7 @@ func TestWorkspaceMaterializerRestoreCASObjectRefreshesInvalidLocalCache(t *test
 	if err := os.WriteFile(cachePath, []byte("bad image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:              store,
 		ArtifactCacheDir: cacheDir,
 	}
@@ -241,7 +241,7 @@ func TestWorkspaceMaterializerChecksOutPreparedRuntime(t *testing.T) {
 	store, workspaceMount := testWorkspaceMountArtifacts(t)
 	wantSession := &workspaceMaterializerTestSession{}
 	pool := workspacePreparedRuntimePool(t, workspaceMount, wantSession)
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		RuntimePool: pool,
@@ -298,7 +298,7 @@ func TestWorkspaceMaterializerReleasesCheckoutOnRestoreProvenanceFailure(t *test
 			pool.entries[key][0].target.Source.Restore = &workerapi.RuntimeRestore{
 				CheckpointID: "checkpoint-b", RunID: "run-b", AttemptNumber: 1,
 			}
-			materializer := WorkspaceMaterializer{CAS: store, RuntimePool: pool}
+			materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, RuntimePool: pool}
 
 			_, _, err := materializer.materializeSession(context.Background(), &mount)
 			var failure workspaceMountFailure
@@ -330,7 +330,7 @@ func TestWorkspaceMountPhaseErrorUsesLatestGuestError(t *testing.T) {
 
 func TestWorkspaceMaterializerFailsWhenPreparedRuntimeIsMissing(t *testing.T) {
 	store, workspaceMount := testWorkspaceMountArtifacts(t)
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		RuntimePool: NewPreparedRuntimePool(nil, nil, 1, nil),
 	}
@@ -371,7 +371,7 @@ func TestWorkspaceMaterializerPreparedComputerSkipsWorkspaceCAS(t *testing.T) {
 	}
 	session := &workspaceMaterializerTestSession{}
 	pool := workspacePreparedRuntimePool(t, mount, session)
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		RuntimePool: pool,
 	}
@@ -448,7 +448,7 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 			RequestFingerprint: exec.RequestFingerprint,
 		})
 	}()
-	completion, err := (WorkspaceMaterializer{}).dispatchWorkspaceBasicExec(
+	completion, err := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).dispatchWorkspaceBasicExec(
 		context.Background(),
 		session,
 		workerapi.WorkspaceMount{
@@ -480,7 +480,7 @@ func TestWorkspaceMaterializerDispatchesBasicExec(t *testing.T) {
 }
 
 func TestWorkspaceMaterializerRejectsMismatchedBasicExecClaim(t *testing.T) {
-	_, err := (WorkspaceMaterializer{}).dispatchWorkspaceBasicExec(
+	_, err := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).dispatchWorkspaceBasicExec(
 		context.Background(),
 		&workspaceMaterializerTestSession{},
 		workerapi.WorkspaceMount{
@@ -524,7 +524,7 @@ func TestWorkspaceMaterializerCompletionStopsOnNonRetryableError(t *testing.T) {
 	client := &workspaceMaterializerTestClient{
 		completeErrors: []error{workspaceMaterializerHTTPError(http.StatusBadRequest)},
 	}
-	_, err := (WorkspaceMaterializer{
+	_, err := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CompleteErrorBackoff: time.Nanosecond,
 	}).completeWorkspaceBasicExec(
 		context.Background(),
@@ -545,7 +545,7 @@ func TestWorkspaceMaterializerCompletionRetriesServerError(t *testing.T) {
 			workspaceMaterializerHTTPError(http.StatusServiceUnavailable),
 		},
 	}
-	_, err := (WorkspaceMaterializer{
+	_, err := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CompleteErrorBackoff: time.Nanosecond,
 	}).completeWorkspaceBasicExec(
 		context.Background(),
@@ -593,7 +593,7 @@ func TestWorkspaceMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T)
 		operation: discardReadWriteCloser{},
 	}
 	pool := workspacePreparedRuntimePool(t, workspaceMount, session)
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:            store,
 		TempDir:        t.TempDir(),
 		Heartbeat:      time.Hour,
@@ -631,7 +631,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountOnFatalHeartbeatError(t *testin
 		operation: discardReadWriteCloser{},
 	}
 	pool := workspacePreparedRuntimePool(t, workspaceMount, session)
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   10 * time.Millisecond,
@@ -687,7 +687,7 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	client := &workspaceMaterializerTestClient{
 		onMounted: cancel,
 	}
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   time.Hour,
@@ -732,7 +732,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 		exit:      exit,
 	}
 	pool := workspacePreparedRuntimePool(t, workspaceMount, session)
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   time.Hour,
@@ -775,7 +775,7 @@ func TestWorkspaceMaterializerOwnsProgramStartFailureCleanup(t *testing.T) {
 	sessions := NewWorkspaceMountSessions()
 	mounted := make(chan struct{})
 	client := &workspaceMaterializerTestClient{onMounted: func() { close(mounted) }}
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		Sessions:    sessions,
 		TempDir:     t.TempDir(),
@@ -844,7 +844,7 @@ func TestWorkspaceMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFa
 	sessions := NewWorkspaceMountSessions()
 	mounted := make(chan struct{})
 	client := &workspaceMaterializerTestClient{onMounted: func() { close(mounted) }}
-	materializer := WorkspaceMaterializer{
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		Sessions:    sessions,
 		TempDir:     t.TempDir(),
@@ -904,7 +904,7 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 		acknowledgePreparedWorkspaceMount(t, preparedServer, workspaceMount, "runtime-key")
 	}()
 
-	err := (WorkspaceMaterializer{}).registerWorkspaceMount(ctx, session, workspaceMount, "runtime-key")
+	err := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerWorkspaceMount(ctx, session, workspaceMount, "runtime-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -970,7 +970,7 @@ func TestWorkspaceMaterializerValidatesSuccessReceiptsOnlyAfterRunningState(t *t
 			preparedClient, preparedServer := net.Pipe()
 			defer preparedServer.Close()
 			go respondToPreparedWorkspaceMountWithRequest(t, preparedServer, test.response)
-			err := (WorkspaceMaterializer{}).registerWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
+			err := (WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}}).registerWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
 				streams: []io.ReadWriteCloser{preparedClient},
 			}, workspaceMount, "runtime-key")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -1258,7 +1258,7 @@ func TestArtifactCachePinSurvivesReplacementAndEviction(t *testing.T) {
 func TestArtifactCacheConcurrentRestoreAndEviction(t *testing.T) {
 	store, mount := testWorkspaceMountArtifacts(t)
 	cache, temp := t.TempDir(), t.TempDir()
-	materializer := WorkspaceMaterializer{CAS: store, ArtifactCacheDir: cache}
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, ArtifactCacheDir: cache}
 	var group sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		group.Go(func() {
@@ -1376,7 +1376,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	sessions := NewWorkspaceMountSessions()
 	mounted := make(chan struct{})
 	client := &workspaceMaterializerTestClient{onMounted: func() { close(mounted) }, failErrors: []error{reportErr}}
-	materializer := WorkspaceMaterializer{CAS: store, Sessions: sessions, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
+	materializer := WorkspaceMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Sessions: sessions, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
 	done := make(chan error, 1)
 	go func() { done <- materializer.RunWorkspaceMount(ctx, mount, client) }()
 	select {

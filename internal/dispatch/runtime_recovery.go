@@ -34,6 +34,9 @@ func (d *Authority) RecoverExpiredRuntimeReservations(ctx context.Context, limit
 			recovered++
 		}
 	}
+	if err := d.reconcileUnownedComputers(ctx, limit); err != nil {
+		failures = append(failures, err)
+	}
 	return recovered, errors.Join(failures...)
 }
 

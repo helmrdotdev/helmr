@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -1568,6 +1569,10 @@ func runtimeTargetStatusRequest(target workerapi.RuntimeReconcileTarget, failure
 	if failure != nil {
 		request.ReasonCode = workerapi.RuntimeFailureReconcile
 		message := failure.Error()
+		var sourceFailure *computer.SourceFailure
+		if errors.As(failure, &sourceFailure) {
+			request.ReasonCode = workerapi.RuntimeFailureComputerSource
+		}
 		var fatal interface{ FatalWorker() bool }
 		if errors.As(failure, &fatal) && fatal.FatalWorker() {
 			request.ReasonCode = workerapi.RuntimeFailureWorkerInvalid

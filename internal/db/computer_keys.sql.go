@@ -101,6 +101,37 @@ func (q *Queries) InitializeComputerWriteKey(ctx context.Context, arg Initialize
 	return result.RowsAffected(), nil
 }
 
+const listUnreferencedComputerKeys = `-- name: ListUnreferencedComputerKeys :many
+SELECT k.id FROM computer_data_keys k
+WHERE k.available
+ AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM runtime_instances r WHERE r.retained_computer_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
+ORDER BY k.id LIMIT $1
+`
+
+// A key remains available while any object, current writer or unreclaimed
+// Runtime needs it. Restrictive availability FKs arbitrate concurrent adoption.
+func (q *Queries) ListUnreferencedComputerKeys(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listUnreferencedComputerKeys, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pinRuntimeComputerKey = `-- name: PinRuntimeComputerKey :execrows
 UPDATE runtime_instances SET computer_write_key_id=$1
  WHERE id=$2 AND environment_id=$3
@@ -122,6 +153,23 @@ func (q *Queries) PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeCompu
 		arg.EnvironmentID,
 		arg.ComputerID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retireUnreferencedComputerKey = `-- name: RetireUnreferencedComputerKey :execrows
+UPDATE computer_data_keys k SET retired_at=clock_timestamp(), wrapped_key=NULL
+WHERE k.id=$1 AND k.available
+ AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM runtime_instances r WHERE r.retained_computer_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
+`
+
+// Erase wrapped material, preserving the irreversible key identity/audit row.
+func (q *Queries) RetireUnreferencedComputerKey(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, retireUnreferencedComputerKey, id)
 	if err != nil {
 		return 0, err
 	}

@@ -18,10 +18,11 @@ import (
 // Release only after the publication owner has settled or abandoned the operation
 // and joined every consumer. This is local retention, not remote durability.
 type LocalCapture struct {
-	mu       sync.Mutex
-	owner    *LocalGeneration
-	root     GenerationRoot
-	released bool
+	mu        sync.Mutex
+	owner     *LocalGeneration
+	root      GenerationRoot
+	released  bool
+	published bool
 }
 
 func (c *LocalCapture) Root() GenerationRoot { return c.root }
@@ -38,11 +39,16 @@ func (c *LocalCapture) Publish(ctx context.Context, publisher ContinuationPublic
 	if p.closed {
 		return os.ErrClosed
 	}
+	p.publication.RLock()
+	defer p.publication.RUnlock()
 	locator, err := c.root.Locator(c.root.LogicalBytes)
 	if err != nil {
 		return err
 	}
 	_, err = publishGeneration(ctx, p.store, p.disk.writer.Source, p.disk.writer.Scope, p.disk.writer.Keys, locator, c.root.LogicalBytes, 1<<20, publisher, publisher)
+	if err == nil {
+		c.published = true
+	}
 	return err
 }
 
@@ -77,8 +83,8 @@ func (p *LocalGeneration) Capture(ctx context.Context) (*LocalCapture, error) {
 	return c, nil
 }
 
-// Collect removes only unreachable local ciphertext. It never evicts reachable
-// unpublished bytes, releases remote ownership, or changes the admitted base.
+// Collect removes unreachable ciphertext and bytes covered by the durably adopted
+// remote source. It never releases remote ownership or changes the execution base.
 // Flush/capture is serialized; ordinary guest reads and writes may continue.
 // The finite object budget bounds traversal and directory work. Failure before
 // deletion leaves all bytes intact; partial deletion never returns space credit.
@@ -91,8 +97,30 @@ func (p *LocalGeneration) Collect(ctx context.Context, maxObjects int) (int64, e
 	if maxObjects <= 0 || maxObjects > 1<<20 {
 		return 0, errors.New("bounded local collection required")
 	}
+	// Unreachable collection need not wait for a stalled upload. Reachable
+	// eviction is opportunistic: it requires all local-file publishers to join.
+	evict := p.publication.TryLock()
+	if evict {
+		defer p.publication.Unlock()
+	}
+	p.commit.Lock()
+	saved, base := p.head.Saved, p.head.Base
+	p.commit.Unlock()
+	var remote map[string]bool
+	if evict && saved != base {
+		var err error
+		remote, err = p.remoteBacked(ctx, saved, maxObjects)
+		if err != nil {
+			return 0, err
+		}
+	}
 	p.commit.Lock()
 	defer p.commit.Unlock()
+	if p.head.Saved != saved {
+		// Another handoff superseded this evidence during remote I/O. Ordinary
+		// unreachable collection remains safe; defer eviction to the next pass.
+		remote = nil
+	}
 	// Capture may have succeeded before root-file fsync failed. Both the in-memory
 	// tree and the last acknowledged root are live until the next successful flush.
 	p.disk.mu.Lock()
@@ -132,7 +160,7 @@ func (p *LocalGeneration) Collect(ctx context.Context, maxObjects int) (int64, e
 			return ErrGenerationStagingFull
 		}
 		used += info.Size()
-		if !keep[digest] {
+		if !keep[digest] || remote[digest] {
 			garbage = append(garbage, entry{path, info.Size()})
 		}
 		return nil

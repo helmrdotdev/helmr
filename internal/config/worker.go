@@ -61,6 +61,12 @@ func LoadWorker() (Worker, error) {
 	if cfg.ComputerStagingMiB <= 0 || cfg.ComputerStagingMiB > math.MaxInt64/(1<<20) {
 		return cfg, errors.New("WORKER_COMPUTER_STAGING_MIB must be positive and fit bytes")
 	}
+	if cfg.ComputerSaveEvery, err = envDuration("WORKER_COMPUTER_SAVE_EVERY", 0); err != nil {
+		return cfg, err
+	}
+	if cfg.ComputerSaveEvery <= 0 {
+		return cfg, errors.New("WORKER_COMPUTER_SAVE_EVERY must be an explicit positive duration")
+	}
 	cfg.NetworkBlockedIPv4CIDRs, err = parseCanonicalBlockedIPv4Prefixes(
 		envText("WORKER_NETWORK_BLOCKED_IPV4_CIDRS"),
 	)

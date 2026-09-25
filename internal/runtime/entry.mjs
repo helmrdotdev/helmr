@@ -4164,8 +4164,7 @@ function parseDispatch(value) {
   if (v["state"] !== "held" || ![
     "interrupt_requested",
     "interrupted",
-    "recovery_required",
-    "recovered"
+    "recovery_required"
   ].includes(v["reason"]))
     throw new Error("Session.dispatch is invalid");
   return Object.freeze({
@@ -4327,7 +4326,7 @@ var eventKinds = [
   "session.failed",
   "session.held",
   "session.resumed",
-  "session.recovered"
+  "session.execution_lost"
 ];
 function parseSessionEvent(value) {
   const v = objectValue(value, "Session event");
@@ -4737,14 +4736,6 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   const declaration = located[0];
   const locator = declaration.locator;
   const moduleURL = resolveModuleURL(locatorURL, locator.sourcePath);
-  const imported = io.importModule === void 0 ? await (await import("../moduleexecution/loader.mjs")).importSourceExports(moduleURL) : await io.importModule(moduleURL);
-  const definition = inspectDefinition(imported[locator.exportName]);
-  if (definition === void 0 || definition.kind !== declaration.kind || definition.id !== declaration.declaredId || definition.kind !== "task" && definition.kind !== "actor") {
-    throw new Error(
-      `Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`
-    );
-  }
-  validateEntrypointContract(start, definition);
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId);
   await writeRunEvent(io, {
     case: "entrypointReady",
@@ -4759,6 +4750,26 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
     await reader.read()
   );
   validateEntrypointRelease(release, start, kind);
+  let definition;
+  try {
+    const imported = io.importModule === void 0 ? await (await import("../moduleexecution/loader.mjs")).importSourceExports(moduleURL) : await io.importModule(moduleURL);
+    const inspected = inspectDefinition(imported[locator.exportName]);
+    if (inspected === void 0 || inspected.kind !== declaration.kind || inspected.id !== declaration.declaredId || inspected.kind !== "task" && inspected.kind !== "actor") {
+      throw new Error(
+        `Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`
+      );
+    }
+    validateEntrypointContract(start, inspected);
+    definition = inspected;
+  } catch (error) {
+    if (kind === "task") {
+      await writeTaskFailure(io, "failed", errorMessage(error), { phase: "initialization" });
+    } else if (start.entrypoint.case === "actor") {
+      await writeActorFailure(io, start.entrypoint.value.runGeneration, errorMessage(error));
+    }
+    await reader.close();
+    return;
+  }
   const decisions = new ResumeDecisionRouter(reader);
   if (definition.kind === "task") {
     await runTask(start, definition, io, decisions);

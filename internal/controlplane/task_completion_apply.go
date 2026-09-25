@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -92,14 +93,16 @@ func (s *Server) completeTask(
 			return fmt.Errorf("lock task completion secret authority: %w", err)
 		}
 		failurePoint = taskCompletionPointAuthority
-		authority, err := lockLiveRunFinalizationAuthority(
-			ctx,
-			work.q,
-			worker,
-			pgvalue.UUID(completion.lease.leaseID),
-			request.Lease.LeaseSequence,
-			locators,
-		)
+		tx, ok := work.tx.(pgx.Tx)
+		if !ok {
+			return errors.New("task completion transaction does not expose PostgreSQL authority")
+		}
+		var authority runLeaseClaimAuthority
+		ownedGraph, err := run.LockOwnedFinalizationWithRuntimeFence(ctx, tx, run.OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(locators.OrgID), ProjectID: pgvalue.MustUUIDValue(locators.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(locators.EnvironmentID), RunID: pgvalue.MustUUIDValue(locators.RunID)}, func() error {
+			var err error
+			authority, err = lockRunPublicationAuthority(ctx, work.q, worker, pgvalue.UUID(completion.lease.leaseID), request.Lease.LeaseSequence, locators, db.RunStatusRunning)
+			return err
+		})
 		if err != nil {
 			return staleTaskCompletion(err)
 		}
@@ -149,6 +152,11 @@ func (s *Server) completeTask(
 		retryAt, retry, err := taskCompletionRetryAt(authority.run, authority.attempt, completion, completedAt.Time)
 		if err != nil {
 			return deterministicWorkerAdmission(err)
+		}
+		if !retry {
+			if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
+				return err
+			}
 		}
 		if err := requireFinalizationComputer(ctx, work.q, authority, *completion.capture); err != nil {
 			return staleTaskCompletion(err)

@@ -210,8 +210,9 @@ type RuntimeInstanceStateRequest struct {
 }
 
 const (
-	RuntimeFailureReconcile     = "runtime_reconcile_failed"
-	RuntimeFailureWorkerInvalid = "worker_runtime_invalid"
+	RuntimeFailureComputerSource = "computer_source_unavailable"
+	RuntimeFailureReconcile      = "runtime_reconcile_failed"
+	RuntimeFailureWorkerInvalid  = "worker_runtime_invalid"
 )
 
 type RuntimeCleanupProof struct {

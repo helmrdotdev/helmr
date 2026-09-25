@@ -79,6 +79,9 @@ func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, tar
 		}
 		keys[key.ID] = key.Key
 	}
+	if _, err := computer.OpenGeneration(ctx, p.ComputerRanges, scope, keys, material.Root, source.LogicalBytes); err != nil {
+		return nil, computer.PublishedSourceFailure(err)
+	}
 	return computer.CreateLocalGeneration(ctx, computer.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 }
 

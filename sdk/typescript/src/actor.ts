@@ -33,8 +33,6 @@ export type {
   TurnInterruptReceipt,
   SessionResumeRequest,
   SessionResumeReceipt,
-  SessionRecoverRequest,
-  SessionRecoveryReceipt,
   ActorStartOptions,
   ActorStartResult,
   WaitTimeoutError,

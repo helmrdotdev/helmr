@@ -265,13 +265,14 @@ func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *
 		{Run: lineageRun(parentID, middleID), Depth: 0},
 	}
 	store.calls = nil
-	authority, err := lockLiveRunFinalizationAuthority(
+	authority, err := lockRunPublicationAuthority(
 		context.Background(),
 		store,
 		worker,
 		pgvalue.UUID(uuid.MustParse(receipt.ID)),
 		receipt.LeaseSequence,
 		store.renewal,
+		db.RunStatusRunning,
 	)
 	if err != nil {
 		t.Fatal(err)

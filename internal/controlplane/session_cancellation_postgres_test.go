@@ -45,7 +45,7 @@ func TestSessionCancellationBeforeStartPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
 		t.Fatalf("close: pending=%v err=%v", pending, err)
 	}
 	for _, turnID := range queuedIDs {
@@ -83,7 +83,7 @@ func TestSessionCancellationWaitsForPhysicalStopPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
 		t.Fatalf("active close: %v %v", pending, err)
 	}
 	var hold uuid.UUID
@@ -102,11 +102,11 @@ func TestSessionCancellationWaitsForPhysicalStopPostgres(t *testing.T) {
 	if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
 		t.Fatalf("closed before physical cleanup: %v %v", pending, err)
 	}
 	f.reportRuntimeClosed(t)
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || pending {
 		t.Fatalf("settled close: %v %v", pending, err)
 	}
 	var status string
@@ -141,18 +141,8 @@ func TestSessionCancellationParkedRecoveryPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if waiting, err := closeReconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !waiting {
-		t.Fatalf("parked close=%v %v", waiting, err)
-	}
-	var hold, head uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,w.head_version_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&hold, &head); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: target, IdempotencyKey: "recover"}, HoldID: hold}, TurnID: &scope.TurnID, WorkspaceVersionID: head, ReconciliationRef: "test:parked-cleanup", Disposition: "interrupted"}); err != nil {
-		t.Fatal(err)
-	}
-	if waiting, err := closeReconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || waiting {
-		t.Fatalf("recovered close=%v %v", waiting, err)
+	if waiting, err := closeReconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || waiting {
+		t.Fatalf("parked cancel=%v %v", waiting, err)
 	}
 	var status string
 	var cursor int
@@ -195,7 +185,7 @@ func TestSessionCancellationRacingAdmissionPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
 		t.Fatalf("close=%v %v", pending, err)
 	}
 	var status string

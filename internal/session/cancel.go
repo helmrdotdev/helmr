@@ -87,7 +87,7 @@ func Cancel(ctx context.Context, q db.Querier, request ControlRequest, graph run
 			return receipt, err
 		}
 	}
-	err = q.CreateActorCloseReconcileOutbox(ctx, db.CreateActorCloseReconcileOutboxParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
+	err = q.CreateSessionLifecycleReconcileOutbox(ctx, db.CreateSessionLifecycleReconcileOutboxParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
 	if err != nil {
 		return receipt, err
 	}

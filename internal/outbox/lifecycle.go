@@ -20,7 +20,7 @@ const (
 
 var supportedTopics = []string{
 	"session.input.reconcile",
-	"session.close.reconcile",
+	"session.lifecycle.reconcile",
 	"token.reconcile",
 	"secret.revoked",
 }

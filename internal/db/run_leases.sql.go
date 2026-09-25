@@ -208,7 +208,7 @@ UPDATE runs
    AND $1::timestamptz >= active_started_at
    AND $1::timestamptz < active_started_at
        + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type CloseRunActiveIntervalForFinalizationParams struct {
@@ -289,6 +289,7 @@ func (q *Queries) CloseRunActiveIntervalForFinalization(ctx context.Context, arg
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1269,7 +1270,7 @@ func (q *Queries) LockLiveRunLease(ctx context.Context, arg LockLiveRunLeasePara
 }
 
 const lockReadyRunCheckpoint = `-- name: LockReadyRunCheckpoint :one
-SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, restore_manifest, candidate_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, restore_manifest, candidate_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required
   FROM run_checkpoints
  WHERE id = $1
    AND run_id = $2
@@ -1323,6 +1324,7 @@ func (q *Queries) LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCh
 		&i.ReadyAt,
 		&i.InvalidatedAt,
 		&i.InvalidationReasonCode,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1403,7 +1405,7 @@ func (q *Queries) LockRunEntrypointLease(ctx context.Context, arg LockRunEntrypo
 }
 
 const lockRunFinalizationParentRun = `-- name: LockRunFinalizationParentRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE id = $1
    AND org_id = $2
@@ -1480,12 +1482,13 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE id = $1
    AND workspace_id = $2
@@ -1508,6 +1511,7 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -1542,7 +1546,7 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 }
 
 const lockRunLeaseClaimAttempt = `-- name: LockRunLeaseClaimAttempt :one
-SELECT run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+SELECT run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
   FROM run_attempts
  WHERE run_id = $1
    AND number = $2
@@ -1573,6 +1577,7 @@ func (q *Queries) LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLease
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1654,7 +1659,7 @@ func (q *Queries) LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseCl
 }
 
 const lockRunLeaseClaimMount = `-- name: LockRunLeaseClaimMount :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
   FROM workspace_mounts
  WHERE id = $1
    AND org_id = $2
@@ -1717,7 +1722,6 @@ func (q *Queries) LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseCl
 		&i.FinalizationKind,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -1795,7 +1799,7 @@ func (q *Queries) LockRunLeaseClaimReadyWorker(ctx context.Context, arg LockRunL
 }
 
 const lockRunLeaseClaimRun = `-- name: LockRunLeaseClaimRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE id = $1
    AND org_id = $2
@@ -1875,12 +1879,13 @@ func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClai
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunLeaseClaimRuntime = `-- name: LockRunLeaseClaimRuntime :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, computer_save_sequence, computer_save_id, computer_save_lease_id, computer_save_predecessor_id, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_payload_required
   FROM runtime_instances
  WHERE id = $1
    AND org_id = $2
@@ -1945,6 +1950,10 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
 		&i.ComputerSourceVersionID,
+		&i.ComputerSaveSequence,
+		&i.ComputerSaveID,
+		&i.ComputerSaveLeaseID,
+		&i.ComputerSavePredecessorID,
 		&i.RetainedComputerSourceVersionID,
 		&i.ComputerWriteKeyID,
 		&i.RetainedComputerWriteKeyID,
@@ -1967,12 +1976,13 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.TerminalReasonCode,
 		&i.TerminalError,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunLeaseClaimWait = `-- name: LockRunLeaseClaimWait :one
-SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2056,6 +2066,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2393,7 +2404,7 @@ func (q *Queries) LockRunStartLease(ctx context.Context, arg LockRunStartLeasePa
 }
 
 const lockRunStartWait = `-- name: LockRunStartWait :one
-SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2471,6 +2482,7 @@ func (q *Queries) LockRunStartWait(ctx context.Context, arg LockRunStartWaitPara
 		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2483,7 +2495,7 @@ UPDATE run_attempts
    AND workspace_id = $3
    AND entrypoint_entered_at IS NULL
    AND terminal_at IS NULL
-RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
 `
 
 type MarkRunEntrypointEnteredParams struct {
@@ -2509,6 +2521,7 @@ func (q *Queries) MarkRunEntrypointEntered(ctx context.Context, arg MarkRunEntry
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2701,7 +2714,7 @@ UPDATE runs
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type MarkRunRunningParams struct {
@@ -2780,6 +2793,7 @@ func (q *Queries) MarkRunRunning(ctx context.Context, arg MarkRunRunningParams) 
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }

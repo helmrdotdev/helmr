@@ -54,22 +54,6 @@ func (s *Server) applySessionResume(ctx context.Context, request session.ResumeR
 	return receipt, err
 }
 
-func (s *Server) applySessionRecovery(ctx context.Context, request session.RecoverRequest) (session.ControlReceipt, error) {
-	var receipt session.ControlReceipt
-	err := s.inTx(ctx, func(work *txWork) error {
-		graph, err := lockSessionControlGraph(ctx, work, request.Target)
-		if err != nil {
-			return err
-		}
-		receipt, err = session.Recover(ctx, work.q, request, graph)
-		return err
-	})
-	if err == nil && receipt.Code != "" {
-		err = &session.OperationError{Code: receipt.Code}
-	}
-	return receipt, err
-}
-
 func (s *Server) applySessionCancel(ctx context.Context, request session.ControlRequest) (session.ControlReceipt, error) {
 	var receipt session.ControlReceipt
 	err := s.inTx(ctx, func(work *txWork) error {

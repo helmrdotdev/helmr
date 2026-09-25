@@ -112,32 +112,27 @@ if (state.status === "closed") {
 ```
 
 Cancellation can escalate a Session already closing. It cannot be undone with
-`resume()`. If execution or external effects are uncertain, the Session stays
-held and requires the existing privileged `recover()` operation. Closure never
-releases Workspace ownership until the old writer is excluded. Cancellation
-also works through a runtime Session reference inside an Actor or Task.
+`resume()`. Closure waits until the old execution and its owned work are physically
+excluded before releasing Workspace ownership. Cancellation also works through a
+runtime Session reference inside an Actor or Task.
 
 `session.close()` rejects new ordinary admission and drains accepted FIFO work.
-Existing holds survive closing, and exact interaction with active work may remain
-valid. Session statuses are `open`, `closing`, `closed`, and `failed`; a failed Turn
-does not by itself fail its Session.
+An explicit interruption still requires `resume({ holdId })`; resuming an empty
+Session leaves it idle until new input arrives. Session statuses are `open`,
+`closing`, `closed`, and `failed`.
 
-Only authenticated client references expose `recover`: owner/admin plus the
-recovery grant must supply an exact hold, Turn or explicit null, reconciled
-Workspace version and reconciliation reference. Recovery cannot declare uncertain
-work successful; it leaves a recovered hold for explicit resume.
-
-When the Computer requires recovery after execution loss, selecting its current
-committed version explicitly accepts that unpublished files may have been lost.
-Helmr verifies that the old writer and its runtime have been cleaned up before
-making that saved disk available again. Completed Turn results remain; old memory
-and unfinished code are not replayed. Recovery and the new hold are committed
-together. The `session.recovered` event records `computer_reconciled: true` when
-recovery cleared a lost Computer state. Runtime references have ordinary controls
-but no recovery privilege.
+Helmr automatically restores the last committed Computer version after execution
+loss, once the old writer is physically excluded. Unpublished files can be lost.
+Completed Turn results remain; the interrupted execution's active Turn fails and
+its memory and uncertain callbacks are not replayed. Never-started queued Turns
+retain their identity and order and can start in a new Actor Run. A
+`session.execution_lost` event records the loss and selected saved version.
+Repeated infrastructure loss or preparation exhaustion terminates the Session;
+known Actor application or initialization failure also terminates it. Restoring
+an environment does not prove whether an external API side effect happened.
 
 Message acceptance does not wait for handler registration. During a managed Token
 or child wait, messages remain pending until the original wait resumes; they do
 not unblock that wait. Settlement rejects new sends with `turn_settling` and emits
 rejections for accepted messages whose handlers never started. Acceptance is not
-proof of application or provider handling. Held Sessions still require explicit resume.
+proof of application or provider handling. Explicit interruption requires resume; infrastructure recovery is automatic.

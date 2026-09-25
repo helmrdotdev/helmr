@@ -28,7 +28,7 @@ func NewReconciler(database actorInputReconcileDB) (*Reconciler, error) {
 	return &Reconciler{db: database}, nil
 }
 
-func (r *Reconciler) ReconcileClose(
+func (r *Reconciler) ReconcileLifecycle(
 	ctx context.Context,
 	environmentID uuid.UUID,
 	actorID uuid.UUID,
@@ -43,12 +43,12 @@ func (r *Reconciler) ReconcileClose(
 	if err != nil {
 		return false, err
 	}
-	if locator.Status != "closing" {
+	if locator.Status != "closing" && locator.DispatchHoldReason.String != "recovery_required" && locator.DispatchHoldReason.String != "interrupt_requested" {
 		return false, nil
 	}
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin actor close reconciliation: %w", err)
+		return false, fmt.Errorf("begin session lifecycle reconciliation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
@@ -68,6 +68,20 @@ func (r *Reconciler) ReconcileClose(
 	}
 	if actor.WorkspaceID != locator.WorkspaceID {
 		return false, ErrAuthority
+	}
+	actor, deferred, err = reconcileStoppedExecution(ctx, tx, actor)
+	if err != nil {
+		return false, err
+	}
+	if deferred {
+		return true, tx.Commit(ctx)
+	}
+	actor, deferred, err = reconcileLostExecution(ctx, tx, actor, bindings)
+	if err != nil {
+		return false, err
+	}
+	if deferred {
+		return true, tx.Commit(ctx)
 	}
 	_, deferred, err = ReconcileClose(ctx, q, actor, bindings)
 	if err != nil {

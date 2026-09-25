@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -85,6 +86,11 @@ SELECT parent.status, edge.condition_status, edge.suspension_status
 				}
 				if parentStatus != "waiting" || waitCondition != "pending" || waitSuspension != "parked" {
 					t.Fatalf("retry changed parent edge = %s %s/%s", parentStatus, waitCondition, waitSuspension)
+				}
+				dbtest.MustExec(t, t.Context(), fixture.pool, `UPDATE runs SET retry_at=now()-interval '1 second' WHERE id=$1`, fixture.childRunID)
+				rows, err := db.New(fixture.pool).ReadyRunRetries(t.Context(), 10)
+				if err != nil || len(rows) != 1 || rows[0].ID != pgvalue.UUID(fixture.childRunID) {
+					t.Fatalf("ordinary shared retry blocked: %+v %v", rows, err)
 				}
 			} else if runStatus != "succeeded" || currentAttempt != 1 {
 				t.Fatalf("success state = %s attempt %d", runStatus, currentAttempt)

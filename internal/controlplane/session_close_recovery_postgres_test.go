@@ -16,7 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 )
 
-func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
+func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T) {
 	for _, queued := range []bool{false, true} {
 		name := "drained recovery closes without resume"
 		if queued {
@@ -28,7 +28,7 @@ func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleOwner, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsRecover, auth.PermissionSessionsResume}}
+			principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleOwner, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsResume}}
 			call := func(handler http.HandlerFunc, raw any, result any) {
 				t.Helper()
 				body, err := json.Marshal(raw)
@@ -65,7 +65,7 @@ func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			worker, err := session.NewDeliveryWorker(nil, db.New(f.pool), reconciler.ReconcileInput, reconciler.ReconcileClose)
+			worker, err := session.NewDeliveryWorker(nil, db.New(f.pool), reconciler.ReconcileInput, reconciler.ReconcileLifecycle)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -83,7 +83,7 @@ func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
 				deadline := time.Now().Add(10 * time.Second)
 				for {
 					var status string
-					if err := f.pool.QueryRow(ctx, `SELECT status FROM control_outbox WHERE id=$1 AND topic='session.close.reconcile'`, id).Scan(&status); err != nil {
+					if err := f.pool.QueryRow(ctx, `SELECT status FROM control_outbox WHERE id=$1 AND topic='session.lifecycle.reconcile'`, id).Scan(&status); err != nil {
 						t.Fatal(err)
 					}
 					if status == "delivered" {
@@ -105,30 +105,19 @@ func TestSessionCloseRecoveryDeliversFreshReconciliationPostgres(t *testing.T) {
 				}
 			}
 			read()
-			if status != "closing" || hold == nil || current == nil || owner == nil {
-				t.Fatalf("close discarded unresolved execution: %s hold=%v run=%v owner=%v", status, hold, current, owner)
-			}
-			var head uuid.UUID
-			if err := f.pool.QueryRow(ctx, `SELECT head_version_id FROM computers WHERE id=$1`, f.workspaceIDs[0]).Scan(&head); err != nil {
-				t.Fatal(err)
-			}
-			var recovered api.SessionRecoveryReceipt
-			call(f.server.recoverSessionHTTP, api.RecoverSessionRequest{HoldID: stopped.HoldID, WorkspaceVersionID: head.String(), ReconciliationRef: "test:no-execution", IdempotencyKey: "recover"}, &recovered)
-			waitDelivered(recovered.ID)
-			read()
 			if queued {
 				if status != "closing" || hold == nil || current != nil || owner == nil {
-					t.Fatalf("recovery dispatched held input: %s hold=%v run=%v owner=%v", status, hold, current, owner)
+					t.Fatalf("stopped execution dispatched held input: %s hold=%v run=%v owner=%v", status, hold, current, owner)
 				}
 				var resumed api.SessionResumeReceipt
-				call(f.server.resumeSessionHTTP, api.ResumeSessionRequest{HoldID: recovered.HoldID, IdempotencyKey: "resume"}, &resumed)
+				call(f.server.resumeSessionHTTP, api.ResumeSessionRequest{HoldID: hold.String(), IdempotencyKey: "resume"}, &resumed)
 				waitDelivered(resumed.ID)
 				read()
 				if status != "closing" || hold != nil || current == nil || *current == started.BootRunID || owner == nil {
 					t.Fatalf("resume lost continuation: %s hold=%v run=%v owner=%v", status, hold, current, owner)
 				}
 			} else if status != "closed" || hold != nil || current != nil || owner != nil {
-				t.Fatalf("drained recovery did not close: %s hold=%v run=%v owner=%v", status, hold, current, owner)
+				t.Fatalf("drained stop did not close: %s hold=%v run=%v owner=%v", status, hold, current, owner)
 			}
 		})
 	}

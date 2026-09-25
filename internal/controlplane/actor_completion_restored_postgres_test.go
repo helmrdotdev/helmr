@@ -75,7 +75,8 @@ func TestRestoredActorFailureRetainsCapturedFrontier(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus, holdReason string
+	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus string
+	var holdReason *string
 	var headVersionID, mountVersionID uuid.UUID
 	var committedInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -102,7 +103,7 @@ SELECT runs.status,
 		t.Fatal(err)
 	}
 	if runStatus != "failed" || leaseStatus != "failed" || attemptOutcome != "failed" ||
-		workspaceLeaseStatus != "released" || actorStatus != "open" || holdReason != "recovery_required" {
+		workspaceLeaseStatus != "released" || actorStatus != "failed" || holdReason != nil {
 		t.Fatalf("terminal state = run:%s lease:%s attempt:%s workspace lease:%s Actor:%s",
 			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus)
 	}

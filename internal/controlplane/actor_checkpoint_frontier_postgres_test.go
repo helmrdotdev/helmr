@@ -47,6 +47,12 @@ func newActorCheckpointFixture(t *testing.T) *actorCheckpointFixture {
 }
 
 func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *actorCheckpointFixture {
+	f := newQueuedActorCheckpointFixture(t, input)
+	f.placeAndStart(t)
+	return f
+}
+
+func newQueuedActorCheckpointFixture(t *testing.T, input json.RawMessage) *actorCheckpointFixture {
 	t.Helper()
 	b := runtest.New(t)
 	dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE worker_pools SET capacity_guest_ephemeral_disk_bytes=274877906944, per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, b.WorkerPoolID)
@@ -96,7 +102,6 @@ func newActorCheckpointFixtureWithInput(t *testing.T, input json.RawMessage) *ac
 			t.Fatal(err)
 		}
 	}
-	f.placeAndStart(t)
 	return f
 }
 
@@ -129,7 +134,6 @@ func (f *actorCheckpointFixture) placeAndStart(t *testing.T) {
 func (f *actorCheckpointFixture) placeAndClaim(t *testing.T) {
 	t.Helper()
 	ctx := t.Context()
-	q := f.server.db
 	// Admission is durable before its background wakeup. Drive that same owner
 	// explicitly before asking placement for a newly ready continuation.
 	reconciler, err := session.NewReconciler(f.Pool)
@@ -175,7 +179,7 @@ func (f *actorCheckpointFixture) placeAndClaim(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,$6,'squashfs','builder-v0',1) ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO UPDATE SET substrate_digest=EXCLUDED.substrate_digest RETURNING id`, uuid.NewV7(), f.OrgID, f.ProjectID, f.EnvironmentID, f.WorkspaceDefinitionID, dbtest.Digest("frontier-substrate")).Scan(&substrate); err != nil {
 		t.Fatal(err)
 	}
-	_, err = q.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300, ID: reserved.RuntimeInstanceID, WorkerInstanceID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: rt.DesiredVersion, ExpectedObservedVersion: rt.ObservedVersion, RuntimeSubstrateID: pgvalue.UUID(substrate), VMVCPUCount: rt.VMVCPUCount, CPUConfigDigest: rt.CPUConfigDigest})
+	_, err = f.server.markRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300, ID: reserved.RuntimeInstanceID, WorkerInstanceID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: rt.DesiredVersion, ExpectedObservedVersion: rt.ObservedVersion, RuntimeSubstrateID: pgvalue.UUID(substrate), VMVCPUCount: rt.VMVCPUCount, CPUConfigDigest: rt.CPUConfigDigest})
 	if err != nil {
 		t.Fatalf("ready runtime %+v: %v", reserved, err)
 	}
@@ -379,7 +383,7 @@ func (f *actorCheckpointFixture) close(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil {
+	if _, err = reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -789,7 +793,7 @@ func TestSettledTurnCannotResumeHistoricalCheckpointAfterHostLossPostgres(t *tes
 			if err := f.Pool.QueryRow(t.Context(), `SELECT w.status,r.status,s.committed_input_sequence,w.head_version_id,
     (SELECT count(*) FROM run_checkpoints WHERE run_id=r.id AND status='ready'),
     (SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.completed')
-    FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &runStatus, &cursor, &head, &ready, &results); err != nil {
+    FROM sessions s JOIN runs r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, f.runID).Scan(&status, &runStatus, &cursor, &head, &ready, &results); err != nil {
 				t.Fatal(err)
 			}
 			if status != "recovery_required" || runStatus != "system_failed" || cursor != 2 || head != f.rootID || ready != 0 || results != 2 {
@@ -800,7 +804,20 @@ func TestSettledTurnCannotResumeHistoricalCheckpointAfterHostLossPostgres(t *tes
 				t.Fatal(err)
 			}
 			f.workerCall(t, f.server.workerMarkRuntimeInstanceFailed, workerapi.RuntimeInstanceStateRequest{ID: pgvalue.UUIDString(f.claim.runtime.ID), WorkerEpoch: 1, DesiredVersion: desired, ExpectedObservedVersion: observed, CleanupProof: &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now()}}, nil)
-			assertSessionRecoveryCanResume(t, f)
+			assertSessionAutomaticallyReconciles(t, f)
+			// Settled inputs create no new demand; delivery of the next input starts a fresh Run.
+			admitted, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`{"prompt":"new work"}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			reconciler, err := session.NewReconciler(f.Pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if deferred, err := reconciler.ReconcileInput(t.Context(), f.EnvironmentID, f.sessionID, admitted.TurnID); err != nil || deferred {
+				t.Fatalf("new input delivery: %v %v", deferred, err)
+			}
+
 			var newBase uuid.UUID
 			if err := f.Pool.QueryRow(t.Context(), `SELECT r.base_workspace_version_id FROM sessions s JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&newBase); err != nil {
 				t.Fatal(err)

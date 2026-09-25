@@ -6,6 +6,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/helmrdotdev/helmr/internal/artifactgc"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -157,6 +160,16 @@ func TestGenerationCheckpointClaimProjectsVersionWithoutArtifact(t *testing.T) {
 	first := f.capture(t, "paired-computer")
 	f.turn(t, 1)
 	checkpoint := f.suspend(t, first)
+	// Newer background disk heads must not collect the earlier RAM/disk pair.
+	advanceActorSavedHead(t, f)
+	advanceActorSavedHead(t, f)
+	collector, err := artifactgc.New(f.Pool, &computerGraphReclaimStore{t: t, q: f.server.db}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = collector.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	f.close(t)
 	f.placeAndClaim(t)
 	var response workerapi.RunLeaseClaimResponse

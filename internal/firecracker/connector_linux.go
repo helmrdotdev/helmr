@@ -1966,6 +1966,9 @@ func healthProbeErrorBucket(err error) string {
 
 type guestSession struct {
 	mu              sync.Mutex
+	computerBarrier chan struct{}
+	computerCancel  context.CancelFunc
+	computerHeld    bool // protected by computerBarrier
 	stream          vm.Stream
 	opened          bool
 	closed          bool
@@ -2094,6 +2097,18 @@ func (s *guestSession) stopMachine(ctx context.Context) error {
 }
 
 func (s *guestSession) Close(ctx context.Context) error {
+	s.mu.Lock()
+	s.closed = true
+	if s.computerCancel != nil {
+		s.computerCancel()
+	}
+	s.mu.Unlock()
+	unlock, err := s.lockComputer(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	s.computerHeld = true
 	s.once.Do(func() {
 		s.mu.Lock()
 		s.closed = true

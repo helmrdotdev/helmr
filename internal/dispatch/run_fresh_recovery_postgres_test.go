@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -180,10 +181,10 @@ SELECT runs.status, runs.runtime_preparation_count,
 	}
 }
 
-func TestFreshRunningLeaseLossRequiresComputerRecoveryDespiteRetryPolicy(t *testing.T) {
+func TestFreshRunningLeaseLossRetriesAfterComputerRecovery(t *testing.T) {
 	for _, entrypointEntered := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before_entrypoint_ack", true: "after_entrypoint_ack"}[entrypointEntered], func(t *testing.T) {
-			fixture, leaseID, _ := prepareFreshRunLease(t)
+			fixture, leaseID, runtimeID := prepareFreshRunLease(t)
 			retryPolicy := `{"backoff":{"factor":1,"jitter":"none","maxMs":1,"minMs":1},"enabled":true,"maxAttempts":2}`
 			dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE run_leases
@@ -230,18 +231,41 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 			); err != nil {
 				t.Fatal(err)
 			}
-			if status != "system_failed" || currentAttempt != 1 || currentLease.Valid ||
-				retryAt.Valid || activeStarted.Valid || leaseStatus != "expired" ||
-				attemptOneOutcome != "failed" || attempts != 1 {
+			if status != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
+				!retryAt.Valid || activeStarted.Valid || leaseStatus != "expired" ||
+				attemptOneOutcome != "failed" || attempts != 2 {
 				t.Fatalf("retry state status=%s attempt=%d current=%v retry_at=%v active=%v lease=%s outcome=%s attempts=%d",
 					status, currentAttempt, currentLease, retryAt, activeStarted,
 					leaseStatus, attemptOneOutcome, attempts)
 			}
+			retries := run.NewRetryReconciler(fixture.pool)
+			if rows, err := retries.ReadyRunRetries(fixture.ctx, 10); err != nil || len(rows) != 0 {
+				t.Fatalf("retry before physical cleanup: %v %v", rows, err)
+			}
+			rt, err := runtimeDeadlineState(fixture, runtimeID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.New(fixture.pool).MarkRuntimeInstanceClosed(fixture.ctx, db.MarkRuntimeInstanceClosedParams{ID: rt.ID, WorkerInstanceID: rt.WorkerInstanceID, WorkerEpoch: rt.WorkerEpoch, DesiredVersion: rt.DesiredVersion, ExpectedObservedVersion: rt.ObservedVersion, ReasonCode: pgvalue.Text("execution_lost"), CleanupProof: []byte(`{"method":"host_reconciled"}`)}); err != nil {
+				t.Fatal(err)
+			}
+			rows, err := retries.ReadyRunRetries(fixture.ctx, 10)
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("retry after cleanup: %v %v", rows, err)
+			}
+			if rows, err := retries.ReadyRunRetries(fixture.ctx, 10); err != nil || len(rows) != 0 {
+				t.Fatalf("duplicate retry: %v %v", rows, err)
+			}
+			var exact bool
+			if err := fixture.pool.QueryRow(fixture.ctx, `SELECT r.current_attempt_number=2 AND r.status='queued' AND a.base_workspace_version_id=c.head_version_id AND c.status='active' AND c.owner_run_id=r.id FROM runs r JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number JOIN computers c ON c.id=r.workspace_id WHERE r.id=$1`, fixture.runID).Scan(&exact); err != nil || !exact {
+				t.Fatalf("retry authority: %v %v", exact, err)
+			}
+
 		})
 	}
 }
 
-func TestCheckpointingLeaseLossInvalidatesSuspensionWithoutColdRetry(t *testing.T) {
+func TestCheckpointingLeaseLossInvalidatesSuspensionBeforeRetry(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	waitID, checkpointID, resumeAttachID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
 	var workspaceLeaseID, baseWorkspaceVersionID pgtype.UUID
@@ -308,7 +332,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "system_failed" || currentAttempt != 1 || currentLease.Valid ||
+	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
 		leaseStatus != "expired" || waitCondition != "failed" || waitSuspension != "failed" ||
 		checkpointStatus != "invalid" || activeStarted.Valid {
 		t.Fatalf("checkpoint recovery run=%s attempt=%d current=%v lease=%s wait=%s/%s checkpoint=%s active=%v",
@@ -320,7 +344,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	}
 }
 
-func TestFinalizingLeaseLossPreservesReceiptWithoutColdRetry(t *testing.T) {
+func TestFinalizingLeaseLossPreservesReceiptBeforeRetry(t *testing.T) {
 	fixture, leaseID, _ := prepareFreshRunLease(t)
 	operationID := uuid.NewV7()
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
@@ -364,7 +388,7 @@ SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if runStatus != "system_failed" || currentAttempt != 1 || currentLease.Valid ||
+	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
 		leaseStatus != "expired" || retainedOperationID != pgvalue.UUID(operationID) ||
 		finalizationKind != "capture" || !finalizationStarted.Valid ||
 		fingerprint != "sha256:"+strings.Repeat("a", 64) {

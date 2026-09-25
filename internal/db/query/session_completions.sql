@@ -122,9 +122,9 @@ UPDATE computers
    AND computers.owner_run_id IS NULL
    AND computers.ownership_generation = sqlc.arg(ownership_generation)
    AND computers.writer_generation = sqlc.arg(writer_generation)
-   AND computers.status = 'active'
-   AND computers.desired_state = 'active'
-   AND computers.dirty_state = 'clean'
+   AND ((computers.status = 'active' AND computers.desired_state = 'active' AND computers.dirty_state = 'clean')
+        OR (computers.status = 'recovery_required' AND computers.recovery_failure IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM runtime_instances r WHERE r.workspace_id=computers.id AND r.reclaimed_at IS NULL)))
    AND NOT EXISTS (
        SELECT 1 FROM workspace_leases
         WHERE workspace_leases.workspace_id = computers.id
@@ -224,3 +224,22 @@ WITH created_run AS (
 SELECT created_run.*
   FROM created_run
   JOIN claimed_actor ON claimed_actor.id = created_run.session_id;
+
+-- name: FailActorSession :one
+UPDATE sessions
+   SET status = 'failed',
+       failure = sqlc.arg(failure)::jsonb,
+       failure_run_id = sqlc.arg(run_id)::uuid,
+       failed_at = sqlc.arg(completed_at)::timestamptz,
+       current_run_id = NULL, active_turn_id = NULL,
+       dispatch_hold_id = NULL, dispatch_hold_reason = NULL,
+       dispatch_hold_run_id = NULL, dispatch_hold_attempt_number = NULL,
+       dispatch_hold_run_generation = NULL,
+       committed_input_sequence = coalesce(sqlc.narg(input_sequence), committed_input_sequence),
+       run_generation = run_generation + 1, revision = revision + 1,
+       updated_at = sqlc.arg(completed_at)
+ WHERE environment_id = sqlc.arg(environment_id) AND id = sqlc.arg(session_id)
+   AND current_run_id = sqlc.arg(run_id) AND run_generation = sqlc.arg(run_generation)
+   AND status IN ('open', 'closing')
+   AND cancel_requested_at IS NULL
+RETURNING *;

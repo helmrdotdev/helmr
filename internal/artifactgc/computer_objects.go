@@ -50,3 +50,23 @@ func (r *Reclaimer) collectComputerObject(ctx context.Context, candidate db.List
 	}
 	return tx.Commit(ctx)
 }
+
+// Keys outlive every encrypted graph owner and physical writer. Retirement only
+// erases wrapped material; historical identities remain available for audit.
+func (r *Reclaimer) collectComputerKeys(ctx context.Context) error {
+	candidates, err := r.queries.ListUnreferencedComputerKeys(ctx, 100)
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, id := range candidates {
+		if _, err = r.queries.RetireUnreferencedComputerKey(ctx, id); err != nil {
+			var pe *pgconn.PgError
+			if errors.As(err, &pe) && pe.Code == "23503" {
+				continue
+			}
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}

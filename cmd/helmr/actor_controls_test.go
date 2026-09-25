@@ -23,8 +23,6 @@ func TestActorControlsPreserveExactTargetsAndReceipts(t *testing.T) {
 		{"message", []string{"turn", "send", testSessionID, turnID, "--data-json", `{"type":"answer","value":null}`, "--idempotency-key", "message-1"}, "POST", "/turns/" + turnID + "/messages", `{"id":"op-2","turn_id":"` + turnID + `","message_id":"message-1","status":"accepted"}`, map[string]any{"data": map[string]any{"type": "answer", "value": nil}, "idempotency_key": "message-1"}, []string{"status: accepted", "message_id: message-1"}},
 		{"interrupt", []string{"turn", "interrupt", testSessionID, turnID, "--idempotency-key", "stop-1"}, "POST", "/turns/" + turnID + "/interrupt", `{"id":"op-3","session_id":"` + testSessionID + `","turn_id":"` + turnID + `","hold_id":"` + holdID + `","status":"stopping"}`, map[string]any{"idempotency_key": "stop-1"}, []string{"status: stopping", "hold_id: " + holdID}},
 		{"resume", []string{"resume", testSessionID, "--hold", holdID, "--idempotency-key", "resume-1"}, "POST", "/resume", `{"id":"op-4","session_id":"` + testSessionID + `","hold_id":"` + holdID + `","status":"resumed"}`, map[string]any{"hold_id": holdID, "idempotency_key": "resume-1"}, []string{"status: resumed", "hold_id: " + holdID}},
-		{"recover turn", []string{"recover", testSessionID, holdID, "--turn", turnID, "--workspace-version", testWorkspaceID, "--reconciliation-ref", "incident:42", "--disposition", "interrupted", "--idempotency-key", "recover-1"}, "POST", "/recover", `{"id":"op-5","session_id":"` + testSessionID + `","turn_id":"` + turnID + `","hold_id":"` + holdID + `","status":"recovered"}`, map[string]any{"hold_id": holdID, "turn_id": turnID, "workspace_version_id": testWorkspaceID, "reconciliation_ref": "incident:42", "disposition": "interrupted", "idempotency_key": "recover-1"}, []string{"turn_id: " + turnID, "status: recovered"}},
-		{"recover outside turn", []string{"recover", testSessionID, holdID, "--outside-turn", "--workspace-version", testWorkspaceID, "--reconciliation-ref", "incident:43", "--idempotency-key", "recover-2", "--json"}, "POST", "/recover", `{"id":"op-6","session_id":"` + testSessionID + `","turn_id":null,"hold_id":"` + holdID + `","status":"recovered"}`, map[string]any{"hold_id": holdID, "turn_id": nil, "workspace_version_id": testWorkspaceID, "reconciliation_ref": "incident:43", "idempotency_key": "recover-2"}, []string{`"turn_id":null`}},
 		{"outcome", []string{"turn", "get", testSessionID, turnID}, "GET", "/turns/" + turnID, `{"id":"` + turnID + `","session_id":"` + testSessionID + `","status":"failed","accepts_messages":false,"interrupt_requested":false,"error":{"message":"tests failed"},"terminal_event_id":"event-1"}`, nil, []string{"status: failed", "accepts_messages: false", `error: {"message":"tests failed"}`, "terminal_event_id: event-1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,25 +65,6 @@ func TestActorControlsPreserveExactTargetsAndReceipts(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestActorRecoveryRequiresExplicitReconciliation(t *testing.T) {
-	const holdID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
-	for _, flags := range [][]string{
-		{},
-		{"--outside-turn"},
-		{"--outside-turn", "--workspace-version", testWorkspaceID, "--reconciliation-ref", "incident:1", "--disposition", "failed"},
-		{"--turn", testSessionID, "--workspace-version", testWorkspaceID, "--reconciliation-ref", "incident:1", "--disposition", "completed"},
-		{"--turn", testSessionID, "--workspace-version", testWorkspaceID, "--reconciliation-ref", "incident:1"},
-	} {
-		cmd := newRootCommand()
-		cmd.SetOut(&bytes.Buffer{})
-		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs(append([]string{"actor", "recover", testSessionID, holdID}, flags...))
-		if err := cmd.Execute(); err == nil {
-			t.Fatalf("accepted incomplete reconciliation: %v", flags)
-		}
 	}
 }
 

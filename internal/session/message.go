@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -120,7 +119,17 @@ func CompleteMessage(ctx context.Context, q db.Querier, scope TurnScope, leaseID
 		return message, err
 	}
 	if outcome.Status == "unknown" {
-		_, err = run.HoldSessionExecution(ctx, q, actor, scope.AttemptNumber, "recovery_required")
+		// A callback exception is an application failure, not evidence that the
+		// Computer was lost. Stop admitting Turn work while the runtime drains
+		// and publishes its captured failure. Keep any existing stop intent.
+		if !turn.InterruptRequestedAt.Valid {
+			if _, err = q.BeginSessionTurnSettlement(ctx, db.BeginSessionTurnSettlementParams{
+				EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: turn.ID,
+			}); err != nil {
+				return message, err
+			}
+		}
+		err = rejectQueuedMessages(ctx, q, actor, turn.ID, "handler_failed")
 	}
 	return message, err
 }
@@ -186,7 +195,7 @@ func jsonEqual(a, b []byte) bool {
 
 // Reconciliation never retries an admitted callback. After writer exclusion,
 // an unacknowledged delivery remains unknown and unstarted work is rejected.
-func finishRecoveredMessages(ctx context.Context, q db.Querier, actor db.Session, turnID pgtype.UUID) error {
+func finishUnsettledMessages(ctx context.Context, q db.Querier, actor db.Session, turnID pgtype.UUID, reason string) error {
 	messages, err := q.ListUnsettledSessionMessages(ctx, db.ListUnsettledSessionMessagesParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID})
 	if err != nil {
 		return err
@@ -194,7 +203,7 @@ func finishRecoveredMessages(ctx context.Context, q db.Querier, actor db.Session
 	for _, message := range messages {
 		outcome := MessageOutcome{Status: "rejected", Code: "turn_stopping"}
 		if message.Status == "handling" {
-			outcome = MessageOutcome{Status: "unknown", Code: "execution_lost"}
+			outcome = MessageOutcome{Status: "unknown", Code: reason}
 		}
 		raw, _ := json.Marshal(outcome)
 		if _, err = finishMessage(ctx, q, actor, message, outcome, raw); err != nil {

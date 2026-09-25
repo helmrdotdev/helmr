@@ -24,7 +24,7 @@ UPDATE runs
    AND current_attempt_number = $2
    AND runtime_preparation_count = $3
    AND runtime_preparation_count < 7
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type ChargeRunRuntimePreparationFailureParams struct {
@@ -89,6 +89,7 @@ func (q *Queries) ChargeRunRuntimePreparationFailure(ctx context.Context, arg Ch
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -105,7 +106,7 @@ UPDATE runs
    AND current_attempt_number = $4
    AND current_run_lease_id = $5
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type ClearFreshPrestartRunLeaseParams struct {
@@ -178,6 +179,7 @@ func (q *Queries) ClearFreshPrestartRunLease(ctx context.Context, arg ClearFresh
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -242,7 +244,7 @@ UPDATE runs
    AND current_run_lease_id IS NULL
    AND current_attempt_number = $2
    AND runtime_preparation_count = 7
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type ExhaustRunRuntimePreparationParams struct {
@@ -306,6 +308,7 @@ func (q *Queries) ExhaustRunRuntimePreparation(ctx context.Context, arg ExhaustR
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1269,14 +1272,20 @@ func (q *Queries) ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorks
 const requireLostRunComputerRecovery = `-- name: RequireLostRunComputerRecovery :execrows
 UPDATE computers
    SET status = 'recovery_required',
+       recovery_id = $1,
+       recovery_version_id = head_version_id,
+       recovery_reason = $2,
+       recovery_started_at = transaction_timestamp(),
+       recovery_preparation_count = 0, next_recovery_preparation_at = NULL,
+       recovery_runtime_id = NULL, recovery_completed_at = NULL,
        desired_state = 'stopped',
        dirty_state = 'dirty_state_lost',
        revision = revision + 1,
        updated_at = transaction_timestamp()
   FROM workspace_leases
- WHERE computers.id = $1
+ WHERE computers.id = $3
    AND workspace_leases.workspace_id = computers.id
-   AND workspace_leases.owner_run_lease_id = $2
+   AND workspace_leases.owner_run_lease_id = $4
    AND workspace_leases.ownership_generation = computers.ownership_generation
    AND workspace_leases.writer_generation = computers.writer_generation
    AND workspace_leases.status IN ('active', 'releasing')
@@ -1284,12 +1293,19 @@ UPDATE computers
 `
 
 type RequireLostRunComputerRecoveryParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
+	RecoveryID     pgtype.UUID `json:"recovery_id"`
+	RecoveryReason pgtype.Text `json:"recovery_reason"`
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	RunLeaseID     pgtype.UUID `json:"run_lease_id"`
 }
 
 func (q *Queries) RequireLostRunComputerRecovery(ctx context.Context, arg RequireLostRunComputerRecoveryParams) (int64, error) {
-	result, err := q.db.Exec(ctx, requireLostRunComputerRecovery, arg.WorkspaceID, arg.RunLeaseID)
+	result, err := q.db.Exec(ctx, requireLostRunComputerRecovery,
+		arg.RecoveryID,
+		arg.RecoveryReason,
+		arg.WorkspaceID,
+		arg.RunLeaseID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1497,7 +1513,7 @@ UPDATE runs
    AND current_run_lease_id = $6
    AND active_started_at IS NOT NULL
    AND $1::timestamptz >= active_started_at
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type StopLostRunActiveIntervalParams struct {
@@ -1572,6 +1588,7 @@ func (q *Queries) StopLostRunActiveInterval(ctx context.Context, arg StopLostRun
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }

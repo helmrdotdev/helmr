@@ -252,19 +252,19 @@ func TestWorkerSessionControlResumeSettledTargetPostgres(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var hold, head uuid.UUID
-			if err = b.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,w.head_version_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, b.sessionID).Scan(&hold, &head); err != nil {
-				t.Fatal(err)
+			lifecycle, _ := session.NewReconciler(b.Pool)
+			if deferred, err := lifecycle.ReconcileLifecycle(t.Context(), b.EnvironmentID, b.sessionID); err != nil || deferred {
+				t.Fatalf("stop reconciliation=%v %v", deferred, err)
 			}
-			recovered, err := b.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: b.EnvironmentID, SessionID: b.sessionID}}, HoldID: hold}, WorkspaceVersionID: head, ReconciliationRef: "parked execution excluded"})
-			if err != nil {
+			var hold uuid.UUID
+			if err := b.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, b.sessionID).Scan(&hold); err != nil {
 				t.Fatal(err)
 			}
 			if revoked {
 				dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=now(),revocation_generation=revocation_generation+1 WHERE id IN(SELECT secret_id FROM workspace_secrets WHERE workspace_id=$1)`, b.workspaceID)
 			}
 			var response workerapi.ResumeSessionResponse
-			a.workerCall(t, a.server.workerResumeSession, workerapi.ResumeSessionRequest{SessionReferenceRequest: workerapi.SessionReferenceRequest{Lease: a.fence(), CorrelationID: uuid.NewV7().String(), SessionID: b.sessionID.String()}, HoldID: recovered.HoldID.String()}, &response)
+			a.workerCall(t, a.server.workerResumeSession, workerapi.ResumeSessionRequest{SessionReferenceRequest: workerapi.SessionReferenceRequest{Lease: a.fence(), CorrelationID: uuid.NewV7().String(), SessionID: b.sessionID.String()}, HoldID: hold.String()}, &response)
 			if revoked {
 				if response.Failed == nil || response.Failed.Code != "not_settled" {
 					t.Fatalf("revoked=%+v", response)

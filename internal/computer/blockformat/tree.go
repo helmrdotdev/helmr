@@ -69,13 +69,13 @@ func ReadRoot(ctx context.Context, source RangeSource, scope string, keys map[st
 		return r, err
 	}
 	if err = decodeTree(b, &r); err != nil {
-		return Root{}, err
+		return Root{}, integrity(err)
 	}
 	if err = validateRoot(r); err != nil {
-		return Root{}, err
+		return Root{}, integrity(err)
 	}
 	if l.Pack.Rank != r.Level+2 {
-		return Root{}, errors.New("generation root rank mismatch")
+		return Root{}, integrity(errors.New("generation root rank mismatch"))
 	}
 	return r, nil
 }

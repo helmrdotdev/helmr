@@ -465,6 +465,7 @@ func setWorkerRuntimeEnv(t *testing.T) {
 }
 
 func setWorkerEnrollmentEnv(t *testing.T) {
+	t.Setenv("WORKER_COMPUTER_SAVE_EVERY", "1m")
 	t.Helper()
 	secretFile := t.TempDir() + "/worker-enrollment-token"
 	if err := os.WriteFile(secretFile, []byte("hlmr_wgt_AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"), 0o600); err != nil {
@@ -722,6 +723,18 @@ func TestComputerWrappingConfigIsRequiredByDeploymentMode(t *testing.T) {
 			t.Setenv(tc.missing, "")
 			if _, err := LoadControlPlane(); err == nil || !strings.Contains(err.Error(), tc.missing) {
 				t.Fatalf("expected missing %s, got %v", tc.missing, err)
+			}
+		})
+	}
+}
+
+func TestLoadWorkerRequiresExplicitComputerSaveInterval(t *testing.T) {
+	for _, value := range []string{"", "0s", "-1s", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			setValidWorkerEnv(t)
+			t.Setenv("WORKER_COMPUTER_SAVE_EVERY", value)
+			if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "WORKER_COMPUTER_SAVE_EVERY") {
+				t.Fatalf("interval %q: %v", value, err)
 			}
 		})
 	}

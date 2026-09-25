@@ -281,7 +281,7 @@ WITH locked_parent AS MATERIALIZED (
        AND child.base_workspace_version_id =
            sqlc.arg(base_workspace_version_id)
        AND child.claim_id = sqlc.arg(child_claim_id)
-       AND child.status = 'queued'
+       AND child.status IN ('queued', 'retry_delayed')
      FOR UPDATE OF child
 ), updated_run AS (
     UPDATE runs
@@ -561,7 +561,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
                      AND child.parent_owns_lifecycle AND child.entrypoint_kind = 'task'
                      AND EXISTS (
                          SELECT 1 FROM run_attempts origin
-                          WHERE origin.run_id = child.id AND origin.number = 1
+                          WHERE origin.run_id = child.id AND origin.number <= child.current_attempt_number
                             AND origin.workspace_id = child.workspace_id
                             AND origin.base_workspace_version_id = prior.private_workspace_version_id
                      )
@@ -633,7 +633,10 @@ SELECT EXISTS (
       AND child.base_workspace_version_id = sqlc.arg(base_workspace_version_id)
       AND child.entrypoint_kind = 'task' AND child.parent_owns_lifecycle
       AND child.status IN ('failed', 'cancelled', 'expired', 'system_failed') AND child.current_run_lease_id IS NULL
-      AND NOT EXISTS (SELECT 1 FROM run_leases lease WHERE lease.run_id = child.id)
+      AND NOT EXISTS (SELECT 1 FROM run_leases lease WHERE lease.run_id = child.id
+        AND (lease.attempt_number = child.current_attempt_number
+          OR EXISTS(SELECT 1 FROM runtime_instances runtime WHERE runtime.id=lease.runtime_instance_id AND runtime.reclaimed_at IS NULL)
+          OR EXISTS(SELECT 1 FROM workspace_leases writer WHERE writer.owner_run_lease_id=lease.id AND writer.status IN ('active','releasing'))))
       AND NOT EXISTS (
           SELECT 1 FROM runtime_instances runtime WHERE runtime.reserved_run_id = child.id
           AND (runtime.desired_state <> 'closed' OR runtime.observed_state <> 'closed'
@@ -641,3 +644,22 @@ SELECT EXISTS (
                    AND mount.status IN ('mounting', 'mounted', 'unmounting')))
       )
 );
+
+-- name: RebindSharedChildAttempt :one
+WITH child AS MATERIALIZED (
+ SELECT r.id,r.current_attempt_number FROM runs r
+ WHERE r.id=sqlc.arg(child_run_id) AND r.environment_id=sqlc.arg(environment_id)
+ AND r.parent_run_id=sqlc.arg(parent_run_id) AND r.parent_owns_lifecycle IS TRUE
+ AND r.workspace_id=sqlc.arg(workspace_id) AND r.claim_id=sqlc.arg(claim_id)
+ AND r.status='retry_delayed' AND r.current_run_lease_id IS NULL
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=r.id AND l.status IN ('assigned','starting','running','checkpointing','finalizing'))
+ FOR UPDATE OF r
+), rebound AS (
+ UPDATE run_attempts a SET base_workspace_version_id=sqlc.arg(base_workspace_version_id)
+ FROM child WHERE a.run_id=child.id AND a.number=child.current_attempt_number
+ AND a.entrypoint_entered_at IS NULL AND a.terminal_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=a.run_id AND l.attempt_number=a.number AND l.started_at IS NOT NULL)
+ RETURNING a.run_id
+)
+UPDATE runs r SET base_workspace_version_id=sqlc.arg(base_workspace_version_id),revision=r.revision+1,updated_at=now()
+FROM rebound WHERE r.id=rebound.run_id RETURNING r.*;

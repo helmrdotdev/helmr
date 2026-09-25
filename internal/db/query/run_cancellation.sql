@@ -679,6 +679,12 @@ SELECT org_id,
 -- name: RequireLostRunComputerRecovery :execrows
 UPDATE computers
    SET status = 'recovery_required',
+       recovery_id = sqlc.arg(recovery_id),
+       recovery_version_id = head_version_id,
+       recovery_reason = sqlc.arg(recovery_reason),
+       recovery_started_at = transaction_timestamp(),
+       recovery_preparation_count = 0, next_recovery_preparation_at = NULL,
+       recovery_runtime_id = NULL, recovery_completed_at = NULL,
        desired_state = 'stopped',
        dirty_state = 'dirty_state_lost',
        revision = revision + 1,
