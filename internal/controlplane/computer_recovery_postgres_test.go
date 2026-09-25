@@ -45,10 +45,7 @@ func TestRecoveryReadyPublicationRollsBackTogether(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT desired_version,observed_version,vm_vcpu_count,cpu_config_digest FROM runtime_instances WHERE id=$1`, reserved.RuntimeInstanceID).Scan(&p.DesiredVersion, &p.ExpectedObservedVersion, &p.VMVCPUCount, &p.CPUConfigDigest); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.Pool.QueryRow(t.Context(), `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes)
-		VALUES($1,$2,$3,$4,$5,$6,'squashfs','builder-v0',1) RETURNING id`, uuid.NewV7(), f.OrgID, f.ProjectID, f.EnvironmentID, f.WorkspaceDefinitionID, dbtest.Digest("recovery-ready")).Scan(&p.RuntimeSubstrateID); err != nil {
-		t.Fatal(err)
-	}
+
 	dbtest.MustExec(t, t.Context(), f.Pool, `CREATE FUNCTION reject_recovery_completion() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.recovery_completed_at IS NOT NULL THEN RAISE EXCEPTION 'injected failure'; END IF; RETURN NEW; END $$;
 		CREATE TRIGGER reject_recovery_completion BEFORE UPDATE ON computers FOR EACH ROW EXECUTE FUNCTION reject_recovery_completion()`)
 	if _, err = f.server.markRuntimeInstanceReady(t.Context(), p); err == nil {
@@ -199,9 +196,7 @@ func TestMountedActorPreparationExhaustionReleasesComputer(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT desired_version,observed_version,vm_vcpu_count,cpu_config_digest FROM runtime_instances WHERE id=$1`, ready.ID).Scan(&ready.DesiredVersion, &ready.ExpectedObservedVersion, &ready.VMVCPUCount, &ready.CPUConfigDigest); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.Pool.QueryRow(t.Context(), `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,$6,'squashfs','builder-v0',1) RETURNING id`, uuid.NewV7(), f.OrgID, f.ProjectID, f.EnvironmentID, f.WorkspaceDefinitionID, dbtest.Digest("mount-failure")).Scan(&ready.RuntimeSubstrateID); err != nil {
-		t.Fatal(err)
-	}
+
 	if _, err = f.server.markRuntimeInstanceReady(t.Context(), ready); err != nil {
 		t.Fatal(err)
 	}

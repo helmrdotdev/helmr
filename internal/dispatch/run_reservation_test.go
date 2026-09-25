@@ -37,13 +37,11 @@ func TestValidateRunRuntimeUsesCheckpointContractOnlyForRestore(t *testing.T) {
 
 	authority.restoreCheckpointID = pgvalue.UUID(uuid.NewV7())
 	authority.restoreRuntimeIdentityID = "sha256:source"
-	authority.restoreSubstrateID = pgvalue.UUID(uuid.NewV7())
 	if err := validateRunRuntime(authority, runtime); err == nil {
 		t.Fatal("restore accepted a runtime without the checkpoint identity")
 	}
 	runtime.restoreCheckpoint = authority.restoreCheckpointID
 	runtime.runtimeIdentityID = authority.restoreRuntimeIdentityID
-	runtime.runtimeSubstrateID = authority.restoreSubstrateID
 	if err := validateRunRuntime(authority, runtime); err != nil {
 		t.Fatalf("compatible restore runtime validation failed: %v", err)
 	}

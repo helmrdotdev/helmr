@@ -79,14 +79,11 @@ func TestRunWorkerCapacityPressureCandidatesPageByWorkerID(t *testing.T) {
 
 func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 	for _, test := range []struct {
-		name          string
-		cpuDigest     string
-		workerFormat  string
-		requestFormat string
+		name      string
+		cpuDigest string
 	}{
-		{name: "compatible", cpuDigest: dbtest.DefaultCPUConfigID, workerFormat: capacity.SubstrateFormatExt4, requestFormat: capacity.SubstrateFormatExt4},
-		{name: "cpu shape mismatch", cpuDigest: dbtest.Digest("wrong-cpu"), workerFormat: capacity.SubstrateFormatExt4, requestFormat: capacity.SubstrateFormatExt4},
-		{name: "substrate mismatch", cpuDigest: dbtest.DefaultCPUConfigID, workerFormat: capacity.SubstrateFormatExt4, requestFormat: "squashfs"},
+		{name: "compatible", cpuDigest: dbtest.DefaultCPUConfigID},
+		{name: "cpu shape mismatch", cpuDigest: dbtest.Digest("wrong-cpu")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -95,11 +92,9 @@ func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 			plannerCompatible := capacity.CanRestore(capacity.RestoreRequirements{
 				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
 				VCPUCount: 1, CPUConfigDigest: test.cpuDigest,
-				SubstrateFormat: test.requestFormat, SubstrateContract: capacity.SubstrateContractExt4,
 				Resources: capacity.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
 			}, capacity.Pool{
 				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
-				SubstrateFormat: test.workerFormat, SubstrateContract: capacity.SubstrateContractExt4,
 				PerVM:     capacity.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
 				CPUShapes: []runtimeid.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},
 			})
@@ -108,8 +103,6 @@ func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 			immediateParams.RequiredWorkerGroupID = dbtest.DefaultWorkerGroupID
 			immediateParams.RequiredVMVCPUCount = 1
 			immediateParams.RequiredCPUConfigDigest = test.cpuDigest
-			immediateParams.RequiredSubstrateFormat = test.requestFormat
-			immediateParams.RequiredSubstrateContract = capacity.SubstrateContractExt4
 			_, immediateErr := db.New(pool).SelectRunWorkerCapacity(ctx, immediateParams)
 
 			pressureParams := runCapacityPressureParams()
@@ -117,8 +110,6 @@ func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 			pressureParams.RequiredWorkerGroupID = immediateParams.RequiredWorkerGroupID
 			pressureParams.RequiredVMVCPUCount = immediateParams.RequiredVMVCPUCount
 			pressureParams.RequiredCPUConfigDigest = immediateParams.RequiredCPUConfigDigest
-			pressureParams.RequiredSubstrateFormat = immediateParams.RequiredSubstrateFormat
-			pressureParams.RequiredSubstrateContract = immediateParams.RequiredSubstrateContract
 			pressure, err := db.New(pool).ListRunWorkerCapacityPressureCandidates(ctx, pressureParams)
 			if err != nil {
 				t.Fatal(err)

@@ -199,17 +199,12 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			writeError(w, badRequest(errors.New("cpu_config_digest must be a canonical SHA-256 digest")))
 			return
 		}
-		runtimeSubstrateID, substrateErr := ids.Parse(request.RuntimeSubstrateID)
-		if substrateErr != nil {
-			writeError(w, badRequest(errors.New("runtime_substrate_id must be a canonical UUIDv7")))
-			return
-		}
 		row, err = s.markRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
 			ReservationSeconds: int64(runauthority.ReservationTTL / time.Second),
 			DesiredVersion:     request.DesiredVersion, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch:             worker.WorkerEpoch,
-			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: pgvalue.UUID(runtimeSubstrateID),
-			VMVCPUCount: request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,
+			ExpectedObservedVersion: request.ExpectedObservedVersion,
+			VMVCPUCount:             request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,
 		})
 	case "closed":
 		if request.CleanupProof == nil {

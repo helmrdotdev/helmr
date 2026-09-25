@@ -22,10 +22,8 @@ func TestRuntimeInstanceAllocatedReadyClosedPath(t *testing.T) {
 	runtime := loadRuntimeLease(t, fixture, work)
 	detachRuntimeLease(t, fixture, work, runtime.id)
 	resetRuntimeAllocated(t, fixture, runtime.id)
-	substrateID := seedRuntimeSubstrate(t, fixture, runtime.definitionID)
 
 	ready, err := queries.MarkRuntimeInstanceReady(ctx, MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
-		RuntimeSubstrateID:      pgvalue.UUID(substrateID),
 		DesiredVersion:          1,
 		ID:                      pgvalue.UUID(runtime.id),
 		WorkerInstanceID:        pgvalue.UUID(fixture.WorkerID),
@@ -134,9 +132,7 @@ func TestRuntimeInstanceStaleFencesAreRejected(t *testing.T) {
 	runtime := loadRuntimeLease(t, fixture, work)
 	detachRuntimeLease(t, fixture, work, runtime.id)
 	resetRuntimeAllocated(t, fixture, runtime.id)
-	substrateID := seedRuntimeSubstrate(t, fixture, runtime.definitionID)
 	params := MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
-		RuntimeSubstrateID:      pgvalue.UUID(substrateID),
 		DesiredVersion:          1,
 		ID:                      pgvalue.UUID(runtime.id),
 		WorkerInstanceID:        pgvalue.UUID(fixture.WorkerID),
@@ -396,19 +392,6 @@ UPDATE runtime_instances
        reserved_workspace_version_id = w.head_version_id, computer_source_version_id = w.head_version_id
   FROM computers w
  WHERE runtime_instances.id = $1 AND w.id=runtime_instances.workspace_id`, runtimeID)
-}
-
-func seedRuntimeSubstrate(t *testing.T, fixture runtest.Fixture, definitionID uuid.UUID) uuid.UUID {
-	t.Helper()
-	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `
-INSERT INTO runtime_substrates (
-    id, org_id, project_id, environment_id, deployment_definition_id,
-    substrate_digest, substrate_format, substrate_contract, substrate_size_bytes
-) VALUES ($1, $2, $3, $4, $5, $6, 'squashfs', 'builder-v0', 1)`,
-		id, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, definitionID,
-		dbtest.Digest("runtime-lifecycle-substrate-"+id.String()))
-	return id
 }
 
 func TestRuntimeInstanceStaleObservedCloseAndFail(t *testing.T) {

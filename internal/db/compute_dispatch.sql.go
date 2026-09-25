@@ -1043,9 +1043,7 @@ SELECT input_scopes.scope_ordinal,
        candidates.required_cpu_config_digest,
        candidates.required_cpu_millis,
        candidates.required_memory_bytes,
-       candidates.required_guest_ephemeral_disk_bytes,
-       candidates.required_substrate_format,
-       candidates.required_substrate_contract
+       candidates.required_guest_ephemeral_disk_bytes
   FROM input_scopes
  CROSS JOIN LATERAL (
 SELECT runs.org_id,
@@ -1061,8 +1059,6 @@ SELECT runs.org_id,
        COALESCE(capacity_restore.requested_cpu_millis, 0)::bigint AS required_cpu_millis,
        COALESCE(capacity_restore.requested_memory_bytes, 0)::bigint AS required_memory_bytes,
        COALESCE(capacity_restore.requested_guest_ephemeral_disk_bytes, 0)::bigint AS required_guest_ephemeral_disk_bytes,
-       COALESCE(capacity_restore.substrate_format, '') AS required_substrate_format,
-       COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract,
        runs.queue_score_at AS candidate_score_at
   FROM runs
   JOIN computers ON computers.environment_id = runs.environment_id
@@ -1078,9 +1074,7 @@ SELECT runs.org_id,
              source_lease.requested_guest_ephemeral_disk_bytes,
              source_runtime.runtime_identity_id,
              source_runtime.vm_vcpu_count,
-             source_runtime.cpu_config_digest,
-             runtime_substrates.substrate_format,
-             runtime_substrates.substrate_contract
+             source_runtime.cpu_config_digest
         FROM run_waits
         JOIN run_checkpoints
           ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -1100,12 +1094,6 @@ SELECT runs.org_id,
           ON source_runtime.id = source_lease.runtime_instance_id
          AND source_runtime.workspace_id = run_checkpoints.workspace_id
          AND source_runtime.runtime_identity_id = source_lease.runtime_identity_id
-        JOIN runtime_substrates
-          ON runtime_substrates.id = source_runtime.runtime_substrate_id
-         AND runtime_substrates.org_id = source_runtime.org_id
-         AND runtime_substrates.project_id = source_runtime.project_id
-         AND runtime_substrates.environment_id = source_runtime.environment_id
-         AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
        WHERE run_waits.run_id = runs.id
          AND run_waits.attempt_number = runs.current_attempt_number
          AND run_waits.workspace_id = runs.workspace_id
@@ -1428,8 +1416,6 @@ type ListQueuedRunPlanningCandidatesForScopesRow struct {
 	RequiredCPUMillis               int64       `json:"required_cpu_millis"`
 	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
 	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
-	RequiredSubstrateFormat         string      `json:"required_substrate_format"`
-	RequiredSubstrateContract       string      `json:"required_substrate_contract"`
 }
 
 func (q *Queries) ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, arg ListQueuedRunPlanningCandidatesForScopesParams) ([]ListQueuedRunPlanningCandidatesForScopesRow, error) {
@@ -1464,8 +1450,6 @@ func (q *Queries) ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, 
 			&i.RequiredCPUMillis,
 			&i.RequiredMemoryBytes,
 			&i.RequiredGuestEphemeralDiskBytes,
-			&i.RequiredSubstrateFormat,
-			&i.RequiredSubstrateContract,
 		); err != nil {
 			return nil, err
 		}

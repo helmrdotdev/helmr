@@ -101,7 +101,7 @@ func TestRuntimeReadyDeadlineAndReplay(t *testing.T) {
 	}
 	_, err = q.MarkRuntimeInstanceReady(fixture.ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
 		ID: ready.ID, WorkerInstanceID: ready.WorkerInstanceID, WorkerEpoch: ready.WorkerEpoch, DesiredVersion: ready.DesiredVersion,
-		ExpectedObservedVersion: ready.ObservedVersion, RuntimeSubstrateID: ready.RuntimeSubstrateID, VMVCPUCount: ready.VMVCPUCount, CPUConfigDigest: ready.CPUConfigDigest})
+		ExpectedObservedVersion: ready.ObservedVersion, VMVCPUCount: ready.VMVCPUCount, CPUConfigDigest: ready.CPUConfigDigest})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("duplicate ready=%v", err)
 	}

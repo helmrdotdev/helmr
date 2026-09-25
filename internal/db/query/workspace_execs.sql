@@ -425,12 +425,6 @@ SELECT computers.head_version_id AS saved_head_version_id,
    AND runtime_instances.workspace_id = workspace_processes.workspace_id
   JOIN runtime_identities
     ON runtime_identities.id = runtime_instances.runtime_identity_id
-  JOIN runtime_substrates
-    ON runtime_substrates.id = runtime_instances.runtime_substrate_id
-   AND runtime_substrates.org_id = runtime_instances.org_id
-   AND runtime_substrates.project_id = runtime_instances.project_id
-   AND runtime_substrates.environment_id = runtime_instances.environment_id
-   AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
   JOIN idempotency_claims
     ON idempotency_claims.environment_id = workspace_processes.environment_id
    AND idempotency_claims.id = workspace_processes.claim_id
@@ -466,9 +460,6 @@ SELECT computers.head_version_id AS saved_head_version_id,
            AND worker_instances.per_vm_memory_bytes >= runtime_instances.reserved_memory_bytes
            AND worker_instances.per_vm_guest_ephemeral_disk_bytes >=
                runtime_instances.reserved_guest_ephemeral_disk_bytes
-           AND runtime_instances.runtime_substrate_id IS NOT NULL
-           AND runtime_substrates.substrate_format = worker_instances.substrate_format
-           AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
        )
    )
  FOR UPDATE OF worker_groups, worker_instances,
