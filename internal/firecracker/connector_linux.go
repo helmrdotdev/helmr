@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/filepack"
 	"io"
 	"math"
 	"net"
@@ -27,6 +26,8 @@ import (
 	"syscall"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/filepack"
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/firecracker-microvm/firecracker-go-sdk"
@@ -694,7 +695,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		}
 	}
 	if request.Topology.Substrate != nil {
-		return nil, errors.New("Computer restore cannot contain a substrate")
+		return nil, errors.New("computer restore cannot contain a substrate")
 	}
 	if err := validateComputerDisk(request.Topology.Computer); err != nil {
 		return nil, err

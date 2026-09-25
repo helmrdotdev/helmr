@@ -88,14 +88,6 @@ func readResumeAck(ctx context.Context, session vm.Session) (*programv0.ResumeAc
 	return &ack, nil
 }
 
-func removeFiles(paths []string) {
-	for _, path := range paths {
-		if strings.TrimSpace(path) != "" {
-			_ = os.Remove(path)
-		}
-	}
-}
-
 func readProtoFrameContext(
 	ctx context.Context,
 	session vm.Session,

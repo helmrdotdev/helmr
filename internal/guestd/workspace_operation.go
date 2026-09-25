@@ -571,7 +571,8 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 			Phases: phases, Target: proto.Clone(request.GetTarget()).(*workspacev0.ComputerMountTarget),
 		})
 	}
-	entry, phases, err := restoreWorkspaceMount(&request, registry)
+	entry, err := restoreWorkspaceMount(&request, registry)
+	var phases []*workspacev0.WorkspaceMountPhase
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_materialize", totalStarted, err)
 		writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
@@ -588,7 +589,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	entry.setFencingGeneration(envelope.FencingGeneration)
 	registerStarted := time.Now()
 	registry.register(envelope.WorkspaceMountId, entry)
-	phases = append(phases, workspaceMountPhase("guest_register", registerStarted, 0, 0, nil))
+	phases = append(phases, workspaceMountPhase("guest_register", registerStarted, 0, nil))
 	logger.Info("workspace materialize registered", "workspace_id", workspaceID, "workspace_mount_id", workspaceMountID, "duration_ms", time.Since(totalStarted).Milliseconds())
 	return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
 		Status:                 "running",
@@ -652,7 +653,7 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 		entry.channelToken == channelToken && entry.runtimeInstanceID == runtimeInstanceID &&
 		entry.baseWorkspaceVersionID == target.GetBaseWorkspaceVersionId() && r.entries[newMountID] == entry {
 		return []*workspacev0.WorkspaceMountPhase{
-			workspaceMountPhase("guest_restore_materialize_replay", started, 0, 0, nil),
+			workspaceMountPhase("guest_restore_materialize_replay", started, 0, nil),
 		}, nil
 	}
 	if envelope.GetFencingGeneration() <= currentGeneration {
@@ -680,7 +681,7 @@ func (r *workspaceOperationRegistry) materializeRestoredWorkspaceMount(
 	entry.setFencingGeneration(envelope.GetFencingGeneration())
 	r.entries[newMountID] = entry
 	return []*workspacev0.WorkspaceMountPhase{
-		workspaceMountPhase("guest_restore_materialize", started, 0, 0, nil),
+		workspaceMountPhase("guest_restore_materialize", started, 0, nil),
 	}, nil
 }
 
@@ -753,7 +754,7 @@ func restorePreparedWorkspaceRuntime(conn io.Reader, request *workspacev0.Prepar
 	}
 	phaseStarted := time.Now()
 	image, cleanupImage, err := restorePreparedWorkspaceImage(conn, request)
-	phases = append(phases, workspaceMountPhase("guest_workspace_image_restore", phaseStarted, workspaceImage.GetSizeBytes(), 0, err))
+	phases = append(phases, workspaceMountPhase("guest_workspace_image_restore", phaseStarted, workspaceImage.GetSizeBytes(), err))
 	logger.Info("workspace runtime prepare workspace image restored", "runtime_instance_id_hash", runtimeInstanceLogID(runtimeInstanceID), "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceImage.GetSizeBytes(), "error", errorText(err))
 	if err != nil {
 		return nil, phases, err
@@ -761,14 +762,14 @@ func restorePreparedWorkspaceRuntime(conn io.Reader, request *workspacev0.Prepar
 	cleanup := cleanupImage
 	phaseStarted = time.Now()
 	runtimeUser, err := resolveRuntimeUser(image.RootfsDir, image.Config.User)
-	phases = append(phases, workspaceMountPhase("guest_runtime_user_resolve", phaseStarted, 0, 0, err))
+	phases = append(phases, workspaceMountPhase("guest_runtime_user_resolve", phaseStarted, 0, err))
 	if err != nil {
 		cleanup()
 		return nil, phases, fmt.Errorf("resolve prepared runtime user: %w", err)
 	}
 	phaseStarted = time.Now()
 	workspaceRoot, err := workspaceRootForImage(image.RootfsDir, mountPath)
-	phases = append(phases, workspaceMountPhase("guest_workspace_root_resolve", phaseStarted, 0, 0, err))
+	phases = append(phases, workspaceMountPhase("guest_workspace_root_resolve", phaseStarted, 0, err))
 	if err != nil {
 		cleanup()
 		return nil, phases, fmt.Errorf("resolve prepared runtime workspace mount: %w", err)
@@ -785,48 +786,47 @@ func restorePreparedWorkspaceRuntime(conn io.Reader, request *workspacev0.Prepar
 	}, phases, nil
 }
 
-func restoreWorkspaceMount(request *workspacev0.MaterializeWorkspaceRequest, registry *workspaceOperationRegistry) (*workspaceMountEntry, []*workspacev0.WorkspaceMountPhase, error) {
+func restoreWorkspaceMount(request *workspacev0.MaterializeWorkspaceRequest, registry *workspaceOperationRegistry) (*workspaceMountEntry, error) {
 	entry := &workspaceMountEntry{}
-	var phases []*workspacev0.WorkspaceMountPhase
 	envelope := request.GetEnvelope()
 	workspaceMountID := strings.TrimSpace(envelope.GetWorkspaceMountId())
 	runtimeInstanceID := strings.TrimSpace(request.GetRuntimeInstanceId())
 	if runtimeInstanceID == "" {
-		return nil, phases, errors.New("workspace materialize runtime_instance_id is required")
+		return nil, errors.New("workspace materialize runtime_instance_id is required")
 	}
 	entry.runtimeInstanceID = runtimeInstanceID
 	entry.workspaceMountID = workspaceMountID
 	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
-		return nil, phases, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
+		return nil, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
 	}
 	target, err := computerMountTargetFromProto(request.GetTarget())
 	if err != nil {
-		return nil, phases, fmt.Errorf("workspace materialize target: %w", err)
+		return nil, fmt.Errorf("workspace materialize target: %w", err)
 	}
 	entry.baseWorkspaceVersionID = target.GetBaseWorkspaceVersionId()
 	workspaceImage := request.GetWorkspaceImage()
 	if workspaceImage == nil {
-		return nil, phases, errors.New("workspace materialize workspace_image is required")
+		return nil, errors.New("workspace materialize workspace_image is required")
 	}
 	if strings.TrimSpace(workspaceImage.GetDigest()) == "" {
-		return nil, phases, errors.New("workspace materialize workspace_image digest is required")
+		return nil, errors.New("workspace materialize workspace_image digest is required")
 	}
 	if workspaceImage.GetMediaType() != workspaceImageMediaType {
-		return nil, phases, fmt.Errorf("workspace materialize workspace_image media_type %q is not supported", workspaceImage.GetMediaType())
+		return nil, fmt.Errorf("workspace materialize workspace_image media_type %q is not supported", workspaceImage.GetMediaType())
 	}
 	if workspaceImage.GetEncoding() != workspaceImageEncoding {
-		return nil, phases, fmt.Errorf("workspace materialize workspace_image encoding %q is not supported", workspaceImage.GetEncoding())
+		return nil, fmt.Errorf("workspace materialize workspace_image encoding %q is not supported", workspaceImage.GetEncoding())
 	}
 	if workspaceImage.GetSizeBytes() == 0 {
-		return nil, phases, errors.New("workspace materialize workspace_image size_bytes is required")
+		return nil, errors.New("workspace materialize workspace_image size_bytes is required")
 	}
 	if !request.GetUsePreparedRuntime() {
-		return nil, phases, errors.New("computer mount requires a prepared runtime")
+		return nil, errors.New("computer mount requires a prepared runtime")
 	}
 	prepared, ok := registry.takePreparedRuntime(runtimeInstanceID, workspaceImage.GetDigest(), mountPath)
 	if !ok {
-		return nil, phases, errors.New("prepared computer runtime is not available")
+		return nil, errors.New("prepared computer runtime is not available")
 	}
 	entry.imageRoot, entry.imageConfig = prepared.imageRoot, prepared.imageConfig
 	entry.runtimeUser, entry.workspaceMount = prepared.runtimeUser, prepared.workspaceMount
@@ -834,7 +834,7 @@ func restoreWorkspaceMount(request *workspacev0.MaterializeWorkspaceRequest, reg
 	finalizationRoot, err := os.MkdirTemp(filepath.Dir(entry.imageRoot), ".helmr-workspace-state-*")
 	if err != nil {
 		entry.cleanup()
-		return nil, phases, fmt.Errorf("create workspace finalization state: %w", err)
+		return nil, fmt.Errorf("create workspace finalization state: %w", err)
 	}
 	entry.finalizationRoot = finalizationRoot
 	cleanupMount := entry.cleanup
@@ -842,7 +842,7 @@ func restoreWorkspaceMount(request *workspacev0.MaterializeWorkspaceRequest, reg
 		cleanupMount()
 		_ = os.RemoveAll(finalizationRoot)
 	}
-	return entry, phases, nil
+	return entry, nil
 }
 
 func computerMountTargetFromProto(target *workspacev0.ComputerMountTarget) (*workspacev0.ComputerMountTarget, error) {
@@ -852,12 +852,11 @@ func computerMountTargetFromProto(target *workspacev0.ComputerMountTarget) (*wor
 	return target, nil
 }
 
-func workspaceMountPhase(name string, started time.Time, sizeBytes uint64, entryCount uint32, err error) *workspacev0.WorkspaceMountPhase {
+func workspaceMountPhase(name string, started time.Time, sizeBytes uint64, err error) *workspacev0.WorkspaceMountPhase {
 	return &workspacev0.WorkspaceMountPhase{
 		Name:       name,
 		DurationMs: uint64(time.Since(started).Milliseconds()),
 		SizeBytes:  sizeBytes,
-		EntryCount: entryCount,
 		Error:      errorText(err),
 	}
 }
@@ -871,7 +870,7 @@ func appendWorkspaceMountFailurePhase(phases []*workspacev0.WorkspaceMountPhase,
 			return phases
 		}
 	}
-	return append(phases, workspaceMountPhase(name, started, 0, 0, err))
+	return append(phases, workspaceMountPhase(name, started, 0, err))
 }
 
 func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareWorkspaceRuntimeRequest) (ociImage, func(), error) {
@@ -947,8 +946,8 @@ func restorePreparedWorkspaceImage(conn io.Reader, request *workspacev0.PrepareW
 	return image, cleanup, nil
 }
 
-func handleWorkspaceStopConnection(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
-	if err := handleWorkspaceStop(ctx, conn, registry); err != nil {
+func handleWorkspaceStopConnection(conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+	if err := handleWorkspaceStop(conn, registry); err != nil {
 		response := &workspacev0.StopWorkspaceResponse{
 			Status:    "failed",
 			ErrorJson: workspaceStopErrorJSON(err),
@@ -961,7 +960,7 @@ func handleWorkspaceStopConnection(ctx context.Context, conn io.ReadWriter, regi
 	return nil
 }
 
-func handleWorkspaceStop(ctx context.Context, conn io.ReadWriter, registry *workspaceOperationRegistry) error {
+func handleWorkspaceStop(conn io.ReadWriter, registry *workspaceOperationRegistry) error {
 	var request workspacev0.StopWorkspaceRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read workspace stop request: %w", err)

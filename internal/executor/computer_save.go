@@ -3,9 +3,10 @@ package executor
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"net/http"
 	"os"
+
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
@@ -64,7 +65,7 @@ type computerSave struct {
 // objects and capture dependencies until Quiesce has joined this operation.
 func startComputerSave(ctx context.Context, client ComputerSaveClient, objects generationObjectPublisher, request workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
 	if client == nil || objects == nil || capture == nil || ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 {
-		return nil, errors.New("Computer save dependencies and identities required")
+		return nil, errors.New("computer save dependencies and identities required")
 	}
 	// The request must remain stable even when the caller renews its lease value.
 	if request.Lease != nil {
@@ -88,7 +89,7 @@ func (s *computerSave) begin(ctx context.Context) error {
 		return err
 	}
 	if response.RuntimeInstanceID != s.runtimeID || response.SaveID != s.request.SaveID || response.Sequence != s.request.Sequence || ids.Validate(response.WorkspaceLeaseID) != nil || ids.Validate(response.PredecessorID) != nil || response.DesiredVersion <= 0 {
-		return errors.New("Computer save admission differs from operation")
+		return errors.New("computer save admission differs from operation")
 	}
 	s.admitted = true
 	return nil
@@ -108,7 +109,7 @@ func (s *computerSave) run(ctx context.Context, capture func(context.Context) (c
 	var err error
 	s.capture, err = capture(ctx)
 	if err != nil || s.capture == nil {
-		s.captureErr = errors.Join(errors.New("Computer save capture did not establish a resumable cut"), err)
+		s.captureErr = errors.Join(errors.New("computer save capture did not establish a resumable cut"), err)
 		return s.captureErr
 	}
 	if err = s.capture.Publish(ctx, computerSavePublisher{s.client, s.objects, s.request}); err != nil {
@@ -128,7 +129,7 @@ func (s *computerSave) finish(ctx context.Context) error {
 			return err
 		}
 		if response.ComputerID != s.computerID || response.VersionID != s.request.SaveID {
-			return errors.New("Computer save receipt differs from operation")
+			return errors.New("computer save receipt differs from operation")
 		}
 		s.committed = true
 	}

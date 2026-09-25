@@ -130,3 +130,14 @@ func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target wo
 	}
 	return nil
 }
+
+// Retain before attachment can fail. Close is safe both before binding and after
+// connector cleanup, but refuses release while a bound consumer may still live.
+func (p *PreparedRuntimePool) retainComputerDevice(id string, epoch int64, device vm.ComputerDevice) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.computerDevices == nil {
+		p.computerDevices = make(map[preparedRuntimeRef]vm.ComputerDevice)
+	}
+	p.computerDevices[preparedRuntimeRef{id: id, epoch: epoch}] = device
+}

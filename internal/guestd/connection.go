@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/proto/program/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
@@ -44,7 +44,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog
 	case wire.StreamTypeWorkspaceBasicExec:
 		return false, handleWorkspaceBasicExecConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceStop:
-		return false, handleWorkspaceStopConnection(ctx, conn, workspaceRegistry)
+		return false, handleWorkspaceStopConnection(conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceAuthorityRenew:
 		return false, handleWorkspaceAuthorityRenewConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeProgramResumeGrant:

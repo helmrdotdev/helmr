@@ -90,7 +90,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	if err := s.verifyCheckpointArtifacts(r.Context(), parsed.computer, parsed.artifacts); err != nil {
+	if err := s.verifyCheckpointArtifacts(r.Context(), parsed.artifacts); err != nil {
 		if response, replayed, replayErr := s.checkpointReadyReplay(r.Context(), parsed); replayErr == nil && replayed {
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -434,7 +434,7 @@ func validateCheckpointManifest(
 
 func (s *Server) verifyCheckpointArtifacts(
 	ctx context.Context,
-	disk workerapi.CheckpointComputer,
+
 	proofs checkpointArtifactProofs,
 ) error {
 	if s.cas == nil {
@@ -517,7 +517,7 @@ func (s *Server) commitCheckpointReady(
 		if _, err := work.q.RequireRegisteredCheckpointManifest(ctx, db.RequireRegisteredCheckpointManifestParams{ID: pgvalue.UUID(ready.checkpointID), Manifest: encoded}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		workspaceVersionID, err := recordCheckpointComputerVersion(ctx, work.q, worker, authority, pgvalue.UUID(ready.checkpointID), ready.computer)
+		workspaceVersionID, err := recordCheckpointComputerVersion(ctx, work.q, authority, pgvalue.UUID(ready.checkpointID), ready.computer)
 		if err != nil {
 			return err
 		}
@@ -893,7 +893,7 @@ func validateCheckpointRuntimeShapeAuthority(
 func recordCheckpointComputerVersion(
 	ctx context.Context,
 	store db.Querier,
-	worker workerActor,
+
 	authority runLeaseClaimAuthority,
 	publicationID pgtype.UUID,
 	disk workerapi.CheckpointComputer,
@@ -901,7 +901,7 @@ func recordCheckpointComputerVersion(
 	if err := requireCertifiedComputerRoot(ctx, store, authority, computerPublicationKey("checkpoint", publicationID, publicationID), disk.Root); err != nil {
 		return pgtype.UUID{}, err
 	}
-	return recordChildTaskWorkspaceVersion(ctx, store, worker, authority, workspaceVersionCapture{root: disk.Root})
+	return recordChildTaskWorkspaceVersion(ctx, store, authority, workspaceVersionCapture{root: disk.Root})
 }
 
 func recordCheckpointRuntimeArtifacts(

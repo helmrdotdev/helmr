@@ -225,7 +225,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 	})
 	if !ok {
 		task.Close()
-		return nil, errors.New("Run physical mount save owner is missing")
+		return nil, errors.New("run physical mount save owner is missing")
 	}
 	task.saveDetach, err = owner.AttachComputerSaveAuthority(program.lease.RuntimeInstanceID, program.mount.WorkspaceID, task.computerSaveAuthority)
 	if err != nil {
@@ -903,7 +903,7 @@ var _ RunLeaseTaskRunner = ProgramRunner{}
 func (task *guestRunLeaseTask) QuiesceComputerSaves(ctx context.Context) error {
 	owner, ok := task.program.session.(interface{ QuiesceComputerSaves(context.Context) error })
 	if !ok {
-		return errors.New("Run physical mount save owner is missing")
+		return errors.New("run physical mount save owner is missing")
 	}
 	return owner.QuiesceComputerSaves(ctx)
 }

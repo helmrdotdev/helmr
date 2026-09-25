@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/filepack"
 	"io"
 	"net"
 	"net/http"
@@ -26,6 +25,8 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/filepack"
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
@@ -2097,7 +2098,7 @@ func testConnector(t *testing.T, cfg Config) *Connector {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := &Connector{cfg: cfg, artifacts: artifacts, hostRuntime: newHostRuntimeEvidenceStore()}
+	connector := &Connector{cfg: cfg, artifacts: artifacts, hostRuntime: newHostRuntimeEvidenceStore(), computerDevices: &sync.Map{}}
 	if err := connector.hostRuntime.bind(testHostRuntimeEvidence(t, cfg.VCPUCount, artifacts), cfg.VCPUCount); err != nil {
 		t.Fatal(err)
 	}

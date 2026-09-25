@@ -27,14 +27,14 @@ func requireRuntimeComputerRoot(ctx context.Context, q db.Querier, runtime db.Ru
 		return err
 	}
 	if !object.Certified.Bool {
-		return errors.New("Computer root is not certified")
+		return errors.New("computer root is not certified")
 	}
 	var evidence blockformat.ObjectInspection
 	if err := json.Unmarshal(object.Inspection, &evidence); err != nil {
 		return err
 	}
 	if evidence.Pack == nil {
-		return errors.New("Computer root is not an inspected pack")
+		return errors.New("computer root is not an inspected pack")
 	}
 	if err := evidence.Pack.CheckRoot(locator, root.LogicalBytes); err != nil {
 		return err

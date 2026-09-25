@@ -105,8 +105,6 @@ func TestSuperviseProgramOrdersFreshEntrypointGates(t *testing.T) {
 			request,
 			process,
 			newWaitingRunRegistry(),
-			nil,
-			nil,
 		)
 	}()
 
@@ -187,8 +185,6 @@ func TestSuperviseProgramRejectsMismatchedStartRelease(t *testing.T) {
 			request,
 			process,
 			newWaitingRunRegistry(),
-			nil,
-			nil,
 		)
 	}()
 	var event programv0.RunEvent
@@ -228,8 +224,6 @@ func TestSuperviseProgramReportsProcessStartFailure(t *testing.T) {
 			request,
 			process,
 			newWaitingRunRegistry(),
-			nil,
-			nil,
 		)
 	}()
 
@@ -339,8 +333,6 @@ func TestSuperviseProgramRejectsWrongCommandArmBeforeStart(t *testing.T) {
 					request,
 					process,
 					newWaitingRunRegistry(),
-					nil,
-					nil,
 				)
 			}()
 			var event programv0.RunEvent
@@ -396,9 +388,7 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 		make(chan error, 2),
 		&outputDone,
 		newWaitingRunRegistry(),
-		nil,
 		&programOutputCoordinator{},
-		nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "control event") {
 		t.Fatalf("relayProgram() error = %v", err)
@@ -451,9 +441,7 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 			make(chan error, 2),
 			&outputDone,
 			newWaitingRunRegistry(),
-			nil,
 			&programOutputCoordinator{},
-			nil,
 		)
 	}()
 	var event programv0.RunEvent
@@ -526,9 +514,7 @@ func TestRelayProgramRoutesActorInputSendDecisionWithoutConsumingWaitAuthority(t
 			make(chan error, 2),
 			&outputDone,
 			newWaitingRunRegistry(),
-			nil,
 			&programOutputCoordinator{},
-			nil,
 		)
 	}()
 	correlationID := "00000000-0000-0000-0000-000000000111"
@@ -654,9 +640,7 @@ func TestRelayProgramDeliversStopWithOutputPendingAndRequiresConvergence(t *test
 			make(chan error, 2),
 			&outputDone,
 			newWaitingRunRegistry(),
-			nil,
 			&programOutputCoordinator{},
-			nil,
 		)
 	}()
 	correlationID := "00000000-0000-0000-0000-000000000112"
@@ -795,7 +779,7 @@ func TestRelayProgramRoutesChildTaskRequests(t *testing.T) {
 						Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}},
 					},
 					process, &programEventStream{conn: guest}, make(chan error, 2),
-					&outputDone, newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+					&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{},
 				)
 			}()
 			correlationID := "00000000-0000-0000-0000-000000000311"
@@ -913,8 +897,8 @@ func TestRelayProgramQuiescenceUsesPromotedResumeLease(t *testing.T) {
 				conn: guest, changed: make(chan struct{}), done: make(chan struct{}),
 				rebind: make(chan programConnection, 1),
 			},
-			make(chan error, 2), &outputDone, registry, nil,
-			&programOutputCoordinator{}, nil,
+			make(chan error, 2), &outputDone, registry,
+			&programOutputCoordinator{},
 		)
 	}()
 	child := &programv0.TaskChildInvokeRequested{
@@ -1157,7 +1141,7 @@ func TestRelayProgramRejectsConflictingChildTaskState(t *testing.T) {
 				t.Context(), guest, testProgramRunRequest(testProgramStartFrame(t)),
 				&programv0.EntrypointIdentity{Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}}},
 				process, &programEventStream{conn: guest}, make(chan error, 2), &outputDone,
-				newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+				newWaitingRunRegistry(), &programOutputCoordinator{},
 			)
 			if closeErr := releaseProcess.Close(); closeErr != nil {
 				t.Fatal(closeErr)
@@ -1237,7 +1221,7 @@ func TestRelayProgramRejectsMalformedChildTaskWaitIdentity(t *testing.T) {
 					Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}},
 				},
 				process, &programEventStream{conn: guest}, make(chan error, 2),
-				&outputDone, newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+				&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{},
 			)
 			if closeErr := releaseProcess.Close(); closeErr != nil {
 				t.Fatal(closeErr)
@@ -1292,7 +1276,7 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 				Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}},
 			},
 			process, &programEventStream{conn: guest}, make(chan error, 2),
-			&outputDone, newWaitingRunRegistry(), nil, &programOutputCoordinator{}, nil,
+			&outputDone, newWaitingRunRegistry(), &programOutputCoordinator{},
 		)
 	}()
 	writeRetrieve := func(correlationID string) {

@@ -35,10 +35,10 @@ func (s *runtimeComputerSaves) start(ctx context.Context, client ComputerSaveCli
 		return false, nil
 	}
 	if s.runtimeID != "" && (s.runtimeID != runtimeID || s.computerID != computerID) {
-		return false, errors.New("Computer save owner identity changed")
+		return false, errors.New("computer save owner identity changed")
 	}
 	if s.stopped {
-		return false, errors.New("Computer saves are quiescing")
+		return false, errors.New("computer saves are quiescing")
 	}
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -57,7 +57,7 @@ func (s *runtimeComputerSaves) start(ctx context.Context, client ComputerSaveCli
 		}
 	}
 	if s.sequence == math.MaxInt64 {
-		return false, errors.New("Computer save sequence exhausted")
+		return false, errors.New("computer save sequence exhausted")
 	}
 	authority.SaveID = uuid.NewV7().String()
 	authority.Sequence = s.sequence + 1
@@ -128,7 +128,7 @@ func (s *runtimeComputerSaves) settle(ctx context.Context) error {
 	s.mu.Lock()
 	if s.settling {
 		s.mu.Unlock()
-		return errors.New("Computer save settlement already active")
+		return errors.New("computer save settlement already active")
 	}
 	s.settling = true
 	pending := s.pending

@@ -186,7 +186,7 @@ func TestRecordTaskWorkspaceVersionRecordsGenerationIdentity(t *testing.T) {
 	store := &taskWorkspaceVersionFixture{versionID: versionID}
 	capture := workspaceVersionCapture{root: testGenerationRoot(4096)}
 	got, err := recordTaskWorkspaceVersion(
-		context.Background(), store, workerActor{WorkerInstanceID: uuid.NewV7()},
+		context.Background(), store,
 		authority, capture, pgvalue.Timestamptz(time.Now()),
 	)
 	if err != nil {

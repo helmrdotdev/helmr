@@ -6,12 +6,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/capacity"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
-	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -20,6 +14,13 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 type computerPreparationTransport struct {
@@ -137,6 +138,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 				continuation := target
 				source := *target.Source.Computer
 				source.Seed = nil
+				source.Root = &client.root
 				continuation.Source.Computer = &source
 				disk, err = pool.prepareComputerGeneration(t.Context(), continuation)
 				if err != nil {

@@ -338,6 +338,8 @@ type borrowedParentSession struct {
 	closeCount int
 }
 
+func (s *borrowedParentSession) QuiesceComputerSaves(context.Context) error { return nil }
+
 func (s *borrowedParentSession) Stream() vm.Stream {
 	return testVMStream(s.stream)
 }

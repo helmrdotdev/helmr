@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -41,7 +42,7 @@ func checkpointPublicationFixture(t *testing.T) (*actorCheckpointFixture, worker
 }
 
 func readyFromRegistration(req workerapi.RegisterCheckpointRequest) workerapi.CheckpointReadyRequest {
-	return workerapi.CheckpointReadyRequest{Lease: req.Lease, RequestVersion: req.RequestVersion, RunWaitID: req.RunWaitID, CheckpointID: req.CheckpointID, Manifest: req.Manifest}
+	return workerapi.CheckpointReadyRequest(req)
 }
 
 func checkpointReadyStatus(t *testing.T, f *actorCheckpointFixture, req workerapi.CheckpointReadyRequest) int {

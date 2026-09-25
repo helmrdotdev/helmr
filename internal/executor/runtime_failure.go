@@ -73,11 +73,3 @@ func runtimeOperationRetryable(code string) bool {
 		return false
 	}
 }
-
-func isRuntimeOperationRejection(err error) bool {
-	if err == nil {
-		return false
-	}
-	_, ok := runtimeOperationFailure(err, "", "")
-	return ok
-}

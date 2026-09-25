@@ -66,13 +66,6 @@ func runtimeSubstrateDigest(topology vm.RuntimeTopology) string {
 	return topology.Substrate.Digest
 }
 
-func runtimeSubstrateID(artifact *workerapi.RuntimeSubstrate) string {
-	if artifact == nil {
-		return ""
-	}
-	return artifact.ID
-}
-
 func registerRuntimeSubstrate(
 	ctx context.Context,
 	registrar RuntimeSubstrateRegistrar,

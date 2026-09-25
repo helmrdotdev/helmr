@@ -2,9 +2,10 @@ package guestd
 
 import (
 	"bytes"
+	"testing"
+
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"testing"
 )
 
 func TestWorkspaceStopFencesAdmissionBeforeHostCapture(t *testing.T) {
@@ -15,7 +16,7 @@ func TestWorkspaceStopFencesAdmissionBeforeHostCapture(t *testing.T) {
 	if err := frameio.WriteProtoFrame(&stream, &workspacev0.StopWorkspaceRequest{Envelope: request.Envelope}); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleWorkspaceStop(t.Context(), &stream, registry); err != nil {
+	if err := handleWorkspaceStop(&stream, registry); err != nil {
 		t.Fatal(err)
 	}
 	var response workspacev0.StopWorkspaceResponse
@@ -38,7 +39,7 @@ func TestWorkspaceStopRejectsActiveExec(t *testing.T) {
 	if err := frameio.WriteProtoFrame(&stream, &workspacev0.StopWorkspaceRequest{Envelope: request.Envelope}); err != nil {
 		t.Fatal(err)
 	}
-	if err := handleWorkspaceStop(t.Context(), &stream, registry); err == nil {
+	if err := handleWorkspaceStop(&stream, registry); err == nil {
 		t.Fatal("capture preparation accepted active exec")
 	}
 	if entry.stopping {

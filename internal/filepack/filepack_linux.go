@@ -5,6 +5,7 @@ package filepack
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -204,5 +205,25 @@ func readFullAt(file *os.File, data []byte, offset int64) error {
 	if errors.Is(err, io.EOF) {
 		return io.ErrUnexpectedEOF
 	}
+	return err
+}
+
+func writeFilepackHeader(w io.Writer, header filepackHeader) error {
+	payload, err := json.Marshal(header)
+	if err != nil {
+		return err
+	}
+	if len(payload) > maxFilepackHeader {
+		return errors.New("the Firecracker filepack header is too large")
+	}
+	if _, err := io.WriteString(w, filepackMagic); err != nil {
+		return err
+	}
+	var encoded [4]byte
+	binary.BigEndian.PutUint32(encoded[:], uint32(len(payload)))
+	if _, err := w.Write(encoded[:]); err != nil {
+		return err
+	}
+	_, err = w.Write(payload)
 	return err
 }

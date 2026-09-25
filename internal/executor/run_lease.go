@@ -340,31 +340,3 @@ func permanentRunLeaseRequestError(err error) bool {
 	}
 	return false
 }
-
-func retryRunLeaseOperation(
-	ctx context.Context,
-	operation func(context.Context) error,
-) error {
-	delay := runLeaseRetryEvery
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := operation(ctx); err == nil {
-			return nil
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-		if delay < time.Second {
-			delay *= 2
-			if delay > time.Second {
-				delay = time.Second
-			}
-		}
-	}
-}

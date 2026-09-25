@@ -27,7 +27,6 @@ import (
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 )
@@ -224,7 +223,7 @@ func handleProgramRunConnection(
 			"workspace_id", workspaceID,
 		)
 	}
-	return superviseProgram(ctx, programConn, &request, process, waitingRegistry, registry, entry)
+	return superviseProgram(ctx, programConn, &request, process, waitingRegistry)
 }
 
 func readProgramSecrets(
@@ -824,8 +823,7 @@ func superviseProgram(
 	request *programv0.ProgramRunRequest,
 	process *programProcess,
 	waits *waitingRunRegistry,
-	mounts *workspaceOperationRegistry,
-	workspaceEntry *workspaceMountEntry,
+
 ) error {
 	deadline := time.UnixMilli(request.GetStartDeadlineUnixMs())
 	if err := process.start(ctx, deadline); err != nil {
@@ -967,7 +965,7 @@ func superviseProgram(
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
-	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, waits, mounts, outputs, workspaceEntry)
+	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, waits, outputs)
 	completed = err == nil
 	return err
 }
@@ -982,9 +980,9 @@ func relayProgram(
 	outputErrors <-chan error,
 	outputDone *sync.WaitGroup,
 	waits *waitingRunRegistry,
-	mounts *workspaceOperationRegistry,
+
 	outputs *programOutputCoordinator,
-	workspaceEntry *workspaceMountEntry,
+
 ) error {
 	defer stream.closeCurrentConn()
 	events := make(chan *programv0.RunEvent)
@@ -1329,7 +1327,7 @@ func relayProgram(
 			if pendingTurnCommit != nil {
 				decision := control.decision
 				if decision == nil || decision.GetCorrelationId() != pendingTurnCommit.GetCorrelationId() || decision.GetKind() != "committed" {
-					return errors.New("Turn settlement decision does not match the pending request")
+					return errors.New("turn settlement decision does not match the pending request")
 				}
 				if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
 					return err
@@ -2378,68 +2376,11 @@ func readResumeDecision(
 	}
 }
 
-func workspaceSecretExcludes(
-	workspaceRoot string,
-	secretPaths []string,
-) []string {
-	workspaceRoot = filepath.Clean(workspaceRoot)
-	patterns := make([]string, 0, len(secretPaths)*2)
-	for _, secretPath := range secretPaths {
-		relative, err := filepath.Rel(
-			workspaceRoot,
-			filepath.Clean(secretPath),
-		)
-		if err != nil ||
-			relative == "." ||
-			relative == ".." ||
-			strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			continue
-		}
-		relative = filepath.ToSlash(relative)
-		patterns = append(patterns, relative, relative+"/**")
-	}
-	return patterns
-}
-
 func (stream *programEventStream) writeCheckpointPauseReady(runWaitID string, checkpointID string) error {
 	stream.mu.Lock()
 	defer stream.mu.Unlock()
 	return stream.writeLocked(func(conn programConnection) error {
 		return wire.WriteCheckpointPauseReady(conn, runWaitID, checkpointID)
-	})
-}
-
-func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot string, secretPaths []string) error {
-	if strings.TrimSpace(workspaceRoot) == "" {
-		return errors.New("program workspace root is required")
-	}
-	tempRoot, err := guestdTempRoot()
-	if err != nil {
-		return fmt.Errorf("prepare workspace capture staging: %w", err)
-	}
-	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
-		workspaceRoot,
-		tempRoot,
-		workspaceRoot,
-		workspaceSecretExcludes(workspaceRoot, secretPaths),
-	)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	return stream.writeWorkspaceArtifactFile(runID, artifact)
-}
-
-func (stream *programEventStream) writeWorkspaceArtifactFile(runID string, artifact workspace.WorkspaceArtifact) error {
-	entryCount := artifact.EntryCount
-	stream.mu.Lock()
-	defer stream.mu.Unlock()
-	return stream.writeLocked(func(conn programConnection) error {
-		return wire.WriteFileFrameWithMetadata(conn, wire.StreamHeader{
-			Type:       wire.StreamTypeWorkspaceArtifact,
-			RunID:      runID,
-			EntryCount: &entryCount,
-		}, artifact.Path, artifact.Digest, artifact.SizeBytes)
 	})
 }
 

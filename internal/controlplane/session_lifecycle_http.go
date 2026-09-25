@@ -227,7 +227,7 @@ func (s *Server) sessionOperationTarget(r *http.Request, permission auth.Permiss
 }
 
 // Fixed-envelope decoding rejects ambiguous JSON before an operation can claim a key.
-func decodeSessionCommand(r *http.Request, destination any, required ...string) error {
+func decodeSessionCommand(r *http.Request, destination any) error {
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {
 		return err
@@ -242,11 +242,6 @@ func decodeSessionCommand(r *http.Request, destination any, required ...string) 
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &members); err != nil || members == nil {
 		return errors.New("request must be a JSON object")
-	}
-	for _, name := range required {
-		if _, ok := members[name]; !ok {
-			return fmt.Errorf("%s is required", name)
-		}
 	}
 	if value, ok := members["idempotency_key"]; ok {
 		var key string

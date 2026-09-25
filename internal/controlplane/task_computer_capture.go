@@ -6,6 +6,7 @@ import (
 	"uuid"
 
 	"encoding/json"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -25,7 +26,7 @@ func (c parsedTaskComputerCapture) version() workspaceVersionCapture {
 	return workspaceVersionCapture{root: c.disk.Root}
 }
 
-func (s *Server) verifyTaskComputerCapture(ctx context.Context, capture parsedTaskComputerCapture) (parsedTaskComputerCapture, error) {
+func (s *Server) verifyTaskComputerCapture(capture parsedTaskComputerCapture) (parsedTaskComputerCapture, error) {
 	return capture, capture.disk.Root.Validate(capture.disk.LogicalBytes)
 }
 

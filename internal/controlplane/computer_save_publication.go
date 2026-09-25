@@ -79,7 +79,7 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 			return err
 		}
 		if s.cas == nil {
-			return errors.New("Computer storage unavailable")
+			return errors.New("computer storage unavailable")
 		}
 		stored, err := s.cas.Stat(ctx, descriptor.digest)
 		if err != nil {

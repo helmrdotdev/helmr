@@ -3,10 +3,11 @@ package executor
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"time"
 )
 
 type terminalComputerCapturer struct {
@@ -29,7 +30,7 @@ func (c terminalComputerCapturer) capture(ctx context.Context, lease workerapi.R
 		}
 	}()
 	if c.session == nil || c.publication == nil || register == nil {
-		return result, errors.New("Computer capture dependencies required")
+		return result, errors.New("computer capture dependencies required")
 	}
 	shape, err := c.session.SnapshotLimits()
 	if err != nil {

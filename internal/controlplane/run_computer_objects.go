@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"net/http"
 	"reflect"
+
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -158,7 +159,7 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 		return err
 	}
 	if !authority.runtime.ComputerWriteKeyID.Valid || authority.runtime.ComputerWriteKeyID != write.ID {
-		return conflict(errors.New("Runtime write key is not pinned"))
+		return conflict(errors.New("runtime write key is not pinned"))
 	}
 	allowed[pgvalue.UUIDString(write.ID)] = true
 	owner := dispatch.ComputerPreparation{OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID, ComputerID: authority.workspace.ID, LogicalBytes: authority.runtime.ReservedGuestEphemeralDiskBytes}
@@ -199,7 +200,7 @@ func (s *Server) writeRunComputerObjectError(w http.ResponseWriter, err error) {
 		return
 	}
 	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, errStaleRunFinalization) || isDeterministicWorkerAdmission(err) {
-		writeError(w, conflict(errors.New("Computer publication authority changed")))
+		writeError(w, conflict(errors.New("computer publication authority changed")))
 		return
 	}
 	if errorStatus(err) < 500 {
@@ -207,5 +208,5 @@ func (s *Server) writeRunComputerObjectError(w http.ResponseWriter, err error) {
 		return
 	}
 	s.log.Error("Computer object publication failed", "error", err)
-	writeError(w, errors.New("Computer object publication failed"))
+	writeError(w, errors.New("computer object publication failed"))
 }

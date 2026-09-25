@@ -1,7 +1,10 @@
 package controlplane
 
 import (
-	"encoding/json"
+	"strings"
+	"testing"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
@@ -10,9 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"strings"
-	"testing"
-	"uuid"
 )
 
 // Framing-only identity for tests that do not publish or read physical bytes.
@@ -20,11 +20,6 @@ func testGenerationRoot(capacity int64) computer.GenerationRoot {
 	return computer.GenerationRoot{FormatVersion: 1, LogicalBytes: capacity,
 		Pack: computer.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
 		Page: computer.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
-}
-
-func ptrGenerationRoot(capacity int64) *computer.GenerationRoot {
-	r := testGenerationRoot(capacity)
-	return &r
 }
 
 // Publish real authenticated bytes with a retained Runtime writer. Higher-level
@@ -86,15 +81,6 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, ru
 		t.Fatal(err)
 	}
 	return root
-}
-
-func rootJSON(t *testing.T, r computer.GenerationRoot) []byte {
-	t.Helper()
-	b, e := json.Marshal(r)
-	if e != nil {
-		t.Fatal(e)
-	}
-	return b
 }
 
 // This supplies certified database state for placement tests, not proof of pack

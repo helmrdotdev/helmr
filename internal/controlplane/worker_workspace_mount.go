@@ -158,7 +158,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 				return err
 			}
 			if !matches {
-				return conflict(errors.New("Computer capture replay differs"))
+				return conflict(errors.New("computer capture replay differs"))
 			}
 			versionID = a.WorkspaceProcess.StagedVersionID
 		} else {

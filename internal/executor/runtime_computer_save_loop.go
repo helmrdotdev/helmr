@@ -18,15 +18,15 @@ type computerSaveAuthority struct {
 
 func (s *runtimeComputerSaves) attach(runtimeID, computerID string, current func() *workerapi.ComputerSaveBeginRequest) (func(), error) {
 	if ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || current == nil {
-		return nil, errors.New("Computer save authority identity required")
+		return nil, errors.New("computer save authority identity required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped {
-		return nil, errors.New("Computer saves are quiescing")
+		return nil, errors.New("computer saves are quiescing")
 	}
 	if s.runtimeID != "" && (s.runtimeID != runtimeID || s.computerID != computerID) {
-		return nil, errors.New("Computer save authority belongs to another Runtime")
+		return nil, errors.New("computer save authority belongs to another Runtime")
 	}
 	s.runtimeID, s.computerID = runtimeID, computerID
 	authority := &computerSaveAuthority{current: current}
@@ -75,12 +75,12 @@ func (s *runtimeComputerSaves) authority() (*workerapi.ComputerSaveBeginRequest,
 // cleanup. Quiesce cancels and joins this loop before settling its pending save.
 func (s *runtimeComputerSaves) run(ctx context.Context, interval time.Duration, client ComputerSaveClient, objects generationObjectPublisher, capture func(context.Context) (computerSaveCapture, error), onFailure func(error)) (<-chan error, error) {
 	if interval <= 0 || client == nil || objects == nil || capture == nil || onFailure == nil {
-		return nil, errors.New("Computer save loop dependencies and positive interval required")
+		return nil, errors.New("computer save loop dependencies and positive interval required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stopped || s.loopDone != nil {
-		return nil, errors.New("Computer save loop already started or stopped")
+		return nil, errors.New("computer save loop already started or stopped")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	s.loopCancel = cancel

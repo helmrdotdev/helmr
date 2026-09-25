@@ -109,12 +109,7 @@ func (p *programProtocol) takePhysical(ctx context.Context, handle func(context.
 		}
 	}
 }
-func (p *programProtocol) releasePhysical() {
-	select {
-	case p.resume <- struct{}{}:
-	case <-p.done:
-	}
-}
+
 func (program *freshProgram) readEvent(ctx context.Context, event *programv0.RunEvent) error {
 	if program.protocol == nil {
 		return readProtoFrameBoundedContext(ctx, program.session, maxFreshOutcomeFrameBytes, event)

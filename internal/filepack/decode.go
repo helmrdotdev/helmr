@@ -129,26 +129,6 @@ func decodeFilepack(ctx context.Context, source io.Reader, target io.WriterAt, e
 	}
 }
 
-func writeFilepackHeader(w io.Writer, header filepackHeader) error {
-	payload, err := json.Marshal(header)
-	if err != nil {
-		return err
-	}
-	if len(payload) > maxFilepackHeader {
-		return errors.New("the Firecracker filepack header is too large")
-	}
-	if _, err := io.WriteString(w, filepackMagic); err != nil {
-		return err
-	}
-	var encoded [4]byte
-	binary.BigEndian.PutUint32(encoded[:], uint32(len(payload)))
-	if _, err := w.Write(encoded[:]); err != nil {
-		return err
-	}
-	_, err = w.Write(payload)
-	return err
-}
-
 func readFilepackHeader(r io.Reader) (filepackHeader, error) {
 	prefix := make([]byte, len(filepackMagic))
 	if _, err := io.ReadFull(r, prefix); err != nil {

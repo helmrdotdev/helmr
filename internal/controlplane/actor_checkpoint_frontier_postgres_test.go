@@ -353,7 +353,7 @@ func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid
 		}
 		a.Digest, a.SizeBytes = obj.Digest, obj.SizeBytes
 	}
-	f.workerCall(t, f.server.workerRegisterCheckpoint, workerapi.RegisterCheckpointRequest{Lease: req.Lease, RequestVersion: req.RequestVersion, RunWaitID: req.RunWaitID, CheckpointID: req.CheckpointID, Manifest: req.Manifest}, nil)
+	f.workerCall(t, f.server.workerRegisterCheckpoint, workerapi.RegisterCheckpointRequest(req), nil)
 	var out workerapi.CheckpointResponse
 	f.workerCall(t, f.server.workerMarkCheckpointReady, req, &out)
 	// A lost acknowledgement retries the same receipt before the source is closed.

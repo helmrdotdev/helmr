@@ -159,14 +159,3 @@ func debugfsInode(t *testing.T, output string) string {
 	}
 	return match[1]
 }
-
-func projectionLayer(t *testing.T, name string) []byte {
-	t.Helper()
-	var body bytes.Buffer
-	writer := tar.NewWriter(&body)
-	writeTarFile(t, writer, name, nil)
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return body.Bytes()
-}

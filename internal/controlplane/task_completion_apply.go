@@ -59,7 +59,7 @@ func (s *Server) completeTask(
 	if err != nil || replayed {
 		return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointReplay, err)
 	}
-	verified, err := s.verifyTaskComputerCapture(ctx, *completion.capture)
+	verified, err := s.verifyTaskComputerCapture(*completion.capture)
 	if err != nil {
 		return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 	}
@@ -165,7 +165,7 @@ func (s *Server) completeTask(
 		failurePoint = taskCompletionPointWorkspaceVersion
 		if sameWorkspaceChildFinalization(authority) {
 			versionID, err = recordChildTaskWorkspaceVersion(
-				ctx, work.q, worker, authority, completion.capture.version(),
+				ctx, work.q, authority, completion.capture.version(),
 			)
 			if err == nil {
 				err = updateTaskWorkspaceMountFrontier(
@@ -176,7 +176,6 @@ func (s *Server) completeTask(
 			versionID, err = recordTaskWorkspaceVersion(
 				ctx,
 				work.q,
-				worker,
 				authority,
 				completion.capture.version(),
 				completedAt,
@@ -419,7 +418,7 @@ func taskCompletionRetryAt(
 func recordTaskWorkspaceVersion(
 	ctx context.Context,
 	store taskWorkspaceVersionStore,
-	worker workerActor,
+
 	authority runLeaseClaimAuthority,
 	capture workspaceVersionCapture,
 	completedAt pgtype.Timestamptz,
@@ -835,7 +834,7 @@ func staleTaskCompletion(err error) error {
 func recordChildTaskWorkspaceVersion(
 	ctx context.Context,
 	store db.Querier,
-	worker workerActor,
+
 	authority runLeaseClaimAuthority,
 	capture workspaceVersionCapture,
 ) (pgtype.UUID, error) {

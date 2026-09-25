@@ -35,16 +35,16 @@ func (r *Reclaimer) collectComputerVersion(ctx context.Context, c db.ListUnrefer
 	}
 	defer tx.Rollback(context.WithoutCancel(ctx))
 	q := db.New(tx)
-	n, err := q.DeleteUnreferencedComputerVersionRoot(ctx, db.DeleteUnreferencedComputerVersionRootParams{EnvironmentID: c.EnvironmentID, ComputerID: c.ComputerID, VersionID: c.VersionID})
+	n, err := q.DeleteUnreferencedComputerVersionRoot(ctx, db.DeleteUnreferencedComputerVersionRootParams(c))
 	if err != nil || n == 0 {
 		return err
 	}
-	n, err = q.RetireComputerVersionPayload(ctx, db.RetireComputerVersionPayloadParams{EnvironmentID: c.EnvironmentID, ComputerID: c.ComputerID, VersionID: c.VersionID})
+	n, err = q.RetireComputerVersionPayload(ctx, db.RetireComputerVersionPayloadParams(c))
 	if err != nil {
 		return err
 	}
 	if n != 1 {
-		return errors.New("Computer payload retirement lost Version identity")
+		return errors.New("computer payload retirement lost Version identity")
 	}
 	return tx.Commit(ctx)
 }

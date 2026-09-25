@@ -92,12 +92,12 @@ func (s *Server) workerExecComputerObject(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if s.cas == nil {
-			writeError(w, unavailable(errors.New("Computer storage unavailable")))
+			writeError(w, unavailable(errors.New("computer storage unavailable")))
 			return
 		}
 		stored, e := s.cas.Stat(r.Context(), object.digest)
 		if e != nil {
-			writeError(w, unavailable(errors.New("Computer object unavailable")))
+			writeError(w, unavailable(errors.New("computer object unavailable")))
 			return
 		}
 		uploaded = &stored

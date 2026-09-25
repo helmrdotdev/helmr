@@ -155,9 +155,9 @@ func (s *Server) commitActorTurn(
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
-		response, err = projectActorTurnResponse(request, commit)
+		response = projectActorTurnResponse(request, commit)
 		response.EventID = pgvalue.UUIDString(event.ID)
-		return err
+		return nil
 	})
 	return response, err
 }
@@ -204,19 +204,19 @@ func replayActorTurnCommit(
 	if input.Status != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.RunID != authority.run.ID || input.AttemptNumber.Int32 != authority.attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
-	response, err := projectActorTurnResponse(request, commit)
+	response := projectActorTurnResponse(request, commit)
 	response.EventID = pgvalue.UUIDString(input.TerminalEventID)
-	return response, err == nil, err
+	return response, true, nil
 }
 
 func projectActorTurnResponse(
 	request workerapi.CommitActorTurnRequest,
 	commit parsedActorTurnCommit,
-) (workerapi.CommitActorTurnResponse, error) {
+) workerapi.CommitActorTurnResponse {
 	return workerapi.CommitActorTurnResponse{
 		Lease: request.Lease, CorrelationID: commit.correlationID.String(),
 		CommittedInputSequence: commit.targetInputSequence,
-	}, nil
+	}
 }
 
 func staleActorTurnCommit(err error) error {

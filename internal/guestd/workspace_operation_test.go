@@ -169,7 +169,7 @@ func TestWorkspaceImageContractIsExact(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("prepare error = %v, want %s rejection", err, tt.want)
 			}
-			_, _, err = restoreWorkspaceMount(&workspacev0.MaterializeWorkspaceRequest{
+			_, err = restoreWorkspaceMount(&workspacev0.MaterializeWorkspaceRequest{
 				Envelope:          &workspacev0.WorkspaceOperationEnvelope{},
 				MountPath:         "/workspace",
 				Target:            testComputerMountTarget("version-1"),
@@ -312,7 +312,7 @@ func TestPreparedComputerMountPreservesFilesAndSymlinks(t *testing.T) {
 	}
 	registry := newWorkspaceOperationRegistry()
 	registry.setPreparedRuntime(&preparedWorkspaceRuntime{runtimeInstanceID: "runtime", workspaceImageDigest: "image", workspaceMount: "/workspace", imageRoot: root, workspaceRoot: root, cleanup: func() {}})
-	entry, _, err := restoreWorkspaceMount(&workspacev0.MaterializeWorkspaceRequest{Envelope: &workspacev0.WorkspaceOperationEnvelope{WorkspaceMountId: "mount"}, MountPath: "/workspace", Target: testComputerMountTarget("version"), RuntimeInstanceId: "runtime", UsePreparedRuntime: true, WorkspaceImage: &workspacev0.WorkspaceArtifact{Digest: "image", MediaType: workspaceImageMediaType, Encoding: workspaceImageEncoding, SizeBytes: 1}}, registry)
+	entry, err := restoreWorkspaceMount(&workspacev0.MaterializeWorkspaceRequest{Envelope: &workspacev0.WorkspaceOperationEnvelope{WorkspaceMountId: "mount"}, MountPath: "/workspace", Target: testComputerMountTarget("version"), RuntimeInstanceId: "runtime", UsePreparedRuntime: true, WorkspaceImage: &workspacev0.WorkspaceArtifact{Digest: "image", MediaType: workspaceImageMediaType, Encoding: workspaceImageEncoding, SizeBytes: 1}}, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

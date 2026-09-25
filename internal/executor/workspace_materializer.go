@@ -112,7 +112,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount work
 		_ = session.saves.Quiesce(cleanupCtx)
 		select {
 		case failure := <-saveFailure:
-			cause := workspaceMountFailure{code: "computer_preservation_failed", err: fmt.Errorf("Computer preservation failed: %w", failure)}
+			cause := workspaceMountFailure{code: "computer_preservation_failed", err: fmt.Errorf("computer preservation failed: %w", failure)}
 			if ctx.Err() == nil {
 				reportErr := m.failWorkspaceMount(client, mount, cause)
 				cause.reported = reportErr == nil
@@ -278,9 +278,9 @@ func (m WorkspaceMaterializer) serveWorkspaceMount(
 				return stopAndReturn()
 			}
 			if err == nil {
-				err = errors.New("Computer preservation stopped unexpectedly")
+				err = errors.New("computer preservation stopped unexpectedly")
 			}
-			return fmt.Errorf("Computer preservation failed: %w", err)
+			return fmt.Errorf("computer preservation failed: %w", err)
 
 		case <-poll.C:
 			claimed, err := client.ClaimWorkspaceExec(renewal.ctx, workerapi.WorkspaceExecClaimRequest{
@@ -810,20 +810,6 @@ func copyCASObject(ctx context.Context, destination io.Writer, source io.Reader,
 	return written, nil
 }
 
-func workspaceArtifactIsEmpty(artifact workerapi.WorkspaceArtifact) bool {
-	return strings.TrimSpace(artifact.Digest) == "" && artifact.SizeBytes == 0 && artifact.EntryCount == 0
-}
-
-func validateWorkspaceArtifactShape(artifact workerapi.WorkspaceArtifact) error {
-	if workspaceArtifactIsEmpty(artifact) {
-		return nil
-	}
-	if strings.TrimSpace(artifact.Digest) == "" || artifact.SizeBytes <= 0 || artifact.EntryCount < 0 {
-		return errors.New("workspace artifact must be the canonical empty root or a complete artifact")
-	}
-	return nil
-}
-
 func (m WorkspaceMaterializer) restoreCASObjectWithCache(ctx context.Context, tempDir string, cacheDir string, label string, codeLabel string, artifact workerapi.CASObject) (string, func(), error) {
 	cachePath, err := artifactCachePath(cacheDir, artifact.Digest)
 	if err != nil {
@@ -1279,7 +1265,7 @@ func workspaceMountError(err error) json.RawMessage {
 
 func (m WorkspaceMaterializer) prepareExecComputerCapture(ctx context.Context, session vm.Session, mount workerapi.WorkspaceMount) error {
 	if m.channelToken(mount) == "" {
-		return errors.New("Computer capture channel token required")
+		return errors.New("computer capture channel token required")
 	}
 	stream, err := session.OpenStream(ctx)
 	if err != nil {

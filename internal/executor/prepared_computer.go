@@ -14,7 +14,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -63,16 +62,6 @@ func (p *PreparedRuntimePool) computerPreparationDirectory(id string, epoch int6
 	return filepath.Join(root, "computer-"+id+"-"+strconv.FormatInt(epoch, 10))
 }
 
-// Retain before attachment can fail. Close is safe both before binding and after
-// connector cleanup, but refuses release while a bound consumer may still live.
-func (p *PreparedRuntimePool) retainComputerDevice(id string, epoch int64, device vm.ComputerDevice) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.computerDevices == nil {
-		p.computerDevices = make(map[preparedRuntimeRef]vm.ComputerDevice)
-	}
-	p.computerDevices[preparedRuntimeRef{id: id, epoch: epoch}] = device
-}
 func (p *PreparedRuntimePool) releaseComputerDevice(id string, epoch int64) error {
 	if p == nil {
 		return nil

@@ -44,7 +44,7 @@ func (s *guestSession) captureContext(ctx context.Context) (context.Context, fun
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return nil, nil, errors.New("Computer session is closed")
+		return nil, nil, errors.New("computer session is closed")
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	s.computerCancel = cancel
@@ -83,7 +83,7 @@ func (s *guestSession) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 	}
 	defer unlock()
 	if s.computerHeld {
-		return nil, errors.New("Computer dispatch is held")
+		return nil, errors.New("computer dispatch is held")
 	}
 	s.computerHeld = true
 	ctx, done, err := s.captureContext(ctx)

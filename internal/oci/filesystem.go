@@ -44,8 +44,10 @@ func UnpackFilesystem(r io.Reader, scratch string) (Metadata, *Filesystem, error
 }
 
 func imagePath(name string) (string, error) {
-	clean := path.Clean(name)
-	if strings.ContainsRune(name, 0) || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+	// Layer names address the image root, never the host root. Strip the
+	// root marker before cleaning so /../ cannot escape the image namespace.
+	clean := path.Clean(strings.TrimLeft(name, "/"))
+	if strings.ContainsRune(name, 0) || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", fmt.Errorf("unsafe image path %q", name)
 	}
 	return clean, nil
@@ -66,7 +68,13 @@ func sourceHeader(h *tar.Header) (tar.Header, error) {
 			}
 		}
 	}
-	return tar.Header{Typeflag: h.Typeflag, Mode: h.Mode & 07777, Uid: h.Uid, Gid: h.Gid, Size: h.Size, Linkname: h.Linkname, ModTime: h.ModTime, Xattrs: maps.Clone(h.Xattrs), Format: tar.FormatPAX}, nil
+	xattrs := map[string]string{}
+	for key, value := range h.PAXRecords {
+		if strings.HasPrefix(key, "SCHILY.xattr.") {
+			xattrs[key] = value
+		}
+	}
+	return tar.Header{Typeflag: h.Typeflag, Mode: h.Mode & 07777, Uid: h.Uid, Gid: h.Gid, Size: h.Size, Linkname: h.Linkname, ModTime: h.ModTime, PAXRecords: xattrs, Format: tar.FormatPAX}, nil
 }
 
 func (fs *Filesystem) parents(name string) error {

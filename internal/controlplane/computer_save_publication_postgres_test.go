@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/workerclient"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -441,7 +442,7 @@ func computerSaveHTTPClient(t *testing.T, s *Server, worker workerActor) *worker
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer save-fixture" {
-			http.Error(w, "missing Worker token", 401)
+			http.Error(w, "missing Worker token", http.StatusUnauthorized)
 			return
 		}
 		for path, handler := range handlers {

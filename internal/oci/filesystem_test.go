@@ -69,7 +69,7 @@ func TestFilesystemPreservesAuthoredMetadataWithoutHostPrivileges(t *testing.T) 
 	fs := metadataFilesystem(t, metadataLayer(t,
 		tar.Header{Name: ".", Typeflag: tar.TypeDir, Mode: 02755, Uid: 1000, Gid: 1001, ModTime: stamp},
 		tar.Header{Name: "private", Typeflag: tar.TypeDir, Mode: 02700, Uid: 1000, Gid: 1001},
-		tar.Header{Name: "private/tool", Typeflag: tar.TypeReg, Mode: 04755, Uid: 1000, Gid: 1001, Size: 1, Xattrs: map[string]string{"user.test": "hello", "security.capability": string([]byte{0, 1, 0, 2})}},
+		tar.Header{Name: "private/tool", Typeflag: tar.TypeReg, Mode: 04755, Uid: 1000, Gid: 1001, Size: 1, PAXRecords: map[string]string{"SCHILY.xattr.user.test": "hello", "SCHILY.xattr.security.capability": string([]byte{0, 1, 0, 2})}},
 		tar.Header{Name: "private/unreadable", Typeflag: tar.TypeReg, Mode: 0, Uid: 2000, Gid: 2001, Size: 1},
 		tar.Header{Name: "tmp", Typeflag: tar.TypeDir, Mode: 01777},
 		tar.Header{Name: "link", Typeflag: tar.TypeSymlink, Mode: 0777, Uid: 3000, Gid: 3001, Linkname: "../../private/tool"},
@@ -78,7 +78,7 @@ func TestFilesystemPreservesAuthoredMetadataWithoutHostPrivileges(t *testing.T) 
 	if h := headers["."]; h.Uid != 1000 || h.Gid != 1001 || h.Mode != 02755 || !h.ModTime.Equal(stamp) {
 		t.Fatalf("root: %+v", h)
 	}
-	if h := headers["private/tool"]; h.Uid != 1000 || h.Gid != 1001 || h.Mode != 04755 || h.Xattrs["user.test"] != "hello" || h.Xattrs["security.capability"] != string([]byte{0, 1, 0, 2}) {
+	if h := headers["private/tool"]; h.Uid != 1000 || h.Gid != 1001 || h.Mode != 04755 || h.PAXRecords["SCHILY.xattr.user.test"] != "hello" || h.PAXRecords["SCHILY.xattr.security.capability"] != string([]byte{0, 1, 0, 2}) {
 		t.Fatalf("tool: %+v", h)
 	}
 	if headers["private/unreadable"].Mode != 0 || headers["tmp"].Mode != 01777 || headers["link"].Uid != 3000 {
@@ -152,6 +152,8 @@ func TestFilesystemRejectsInvalidMetadataAndParents(t *testing.T) {
 	}{
 		{"negative owner", []tar.Header{{Name: "file", Typeflag: tar.TypeReg, Uid: -1}}},
 		{"reserved owner", []tar.Header{{Name: "file", Typeflag: tar.TypeReg, Uid: 4294967295}}},
+		{"rooted traversal", []tar.Header{{Name: "/../escape", Typeflag: tar.TypeReg}}},
+		{"rooted symlink parent", []tar.Header{{Name: "/link", Typeflag: tar.TypeSymlink, Linkname: "/tmp"}, {Name: "/link/child", Typeflag: tar.TypeReg}}},
 		{"traversal", []tar.Header{{Name: "../escape", Typeflag: tar.TypeReg}}},
 		{"symlink parent", []tar.Header{{Name: "link", Typeflag: tar.TypeSymlink, Linkname: "/tmp"}, {Name: "link/child", Typeflag: tar.TypeReg}}},
 		{"unknown semantic metadata", []tar.Header{{Name: "file", Typeflag: tar.TypeReg, PAXRecords: map[string]string{"SCHILY.acl.access": "user::rwx"}}}},
@@ -190,5 +192,22 @@ func TestFilesystemUsesTarTypeAndPreservesUnixModeBits(t *testing.T) {
 	h := filesystemHeaders(t, fs)["file"]
 	if h.Typeflag != tar.TypeReg || h.Mode != 04755 {
 		t.Fatalf("file: %+v", h)
+	}
+}
+
+func TestFilesystemNormalizesRootedLayerNames(t *testing.T) {
+	fs := metadataFilesystem(t, metadataLayer(t,
+		tar.Header{Name: "/nix/", Typeflag: tar.TypeDir, Mode: 0755},
+		tar.Header{Name: "/nix/tool", Typeflag: tar.TypeReg, Size: 1, Mode: 0755},
+		tar.Header{Name: "/nix/alias", Typeflag: tar.TypeLink, Linkname: "/nix/tool"},
+	))
+	headers := filesystemHeaders(t, fs)
+	for name := range headers {
+		if path.IsAbs(name) {
+			t.Fatalf("rooted output path %q", name)
+		}
+	}
+	if fs.entries["nix/tool"] != fs.entries["nix/alias"] || headers["nix"].Typeflag != tar.TypeDir {
+		t.Fatal("image names or hardlinks changed")
 	}
 }

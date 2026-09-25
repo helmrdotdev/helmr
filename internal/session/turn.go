@@ -60,7 +60,7 @@ func ActivateTurn(ctx context.Context, q db.Querier, scope TurnScope) (db.Sessio
 		return result, turnError(err)
 	}
 	scope.RunGeneration = actor.RunGeneration
-	_, err = appendEvent(ctx, q, scope, "turn.started", []byte(`{}`), pgtype.UUID{})
+	_, err = appendEvent(ctx, q, scope, "turn.started", []byte(`{}`))
 	return result, err
 }
 
@@ -166,7 +166,7 @@ func InterruptTurn(ctx context.Context, q db.Querier, environmentID, sessionID, 
 	data, _ := json.Marshal(struct {
 		HoldID uuid.UUID `json:"hold_id"`
 	}{holdID})
-	event, err := appendEvent(ctx, q, scope, "turn.interrupt_requested", data, pgtype.UUID{})
+	event, err := appendEvent(ctx, q, scope, "turn.interrupt_requested", data)
 	if err != nil {
 		return InterruptReceipt{}, err
 	}
@@ -251,7 +251,7 @@ func AppendTurnOutput(ctx context.Context, q db.Querier, scope TurnScope, key st
 		receipt.Event = event
 		return receipt, err
 	}
-	event, err := appendEvent(ctx, q, scope, "output", data, pgtype.UUID{})
+	event, err := appendEvent(ctx, q, scope, "output", data)
 	if err != nil {
 		return receipt, err
 	}
@@ -294,7 +294,7 @@ func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status strin
 	if err != nil {
 		return db.SessionEvent{}, err
 	}
-	event, err := appendEvent(ctx, q, scope, "turn."+status, encoded, pgtype.UUID{})
+	event, err := appendEvent(ctx, q, scope, "turn."+status, encoded)
 	if err != nil {
 		return event, err
 	}
@@ -302,12 +302,12 @@ func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status strin
 	return event, turnError(err)
 }
 
-func appendEvent(ctx context.Context, q db.Querier, scope TurnScope, kind string, data []byte, workspaceVersion pgtype.UUID) (db.SessionEvent, error) {
+func appendEvent(ctx context.Context, q db.Querier, scope TurnScope, kind string, data []byte) (db.SessionEvent, error) {
 	turnID := pgtype.UUID{}
 	if scope.TurnID != uuid.Nil() {
 		turnID = pgvalue.UUID(scope.TurnID)
 	}
-	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), TurnID: turnID, Kind: kind, Data: data, ProducerRunID: pgvalue.UUID(scope.RunID), ProducerAttemptNumber: pgtype.Int4{Int32: scope.AttemptNumber, Valid: true}, RunGeneration: pgtype.Int8{Int64: scope.RunGeneration, Valid: true}, WorkspaceVersionID: workspaceVersion})
+	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), TurnID: turnID, Kind: kind, Data: data, ProducerRunID: pgvalue.UUID(scope.RunID), ProducerAttemptNumber: pgtype.Int4{Int32: scope.AttemptNumber, Valid: true}, RunGeneration: pgtype.Int8{Int64: scope.RunGeneration, Valid: true}})
 }
 func turnError(err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -32,7 +32,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 	if err != nil || replayed {
 		return err
 	}
-	verified, err := s.verifyTaskComputerCapture(ctx, *completion.capture)
+	verified, err := s.verifyTaskComputerCapture(*completion.capture)
 	if err != nil {
 		return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 	}
@@ -116,7 +116,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		if err := requireFinalizationComputer(ctx, work.q, authority, *completion.capture); err != nil {
 			return staleActorCompletion(err)
 		}
-		versionID, err := recordTaskWorkspaceVersion(ctx, work.q, worker, authority, completion.capture.version(), completedAt)
+		versionID, err := recordTaskWorkspaceVersion(ctx, work.q, authority, completion.capture.version(), completedAt)
 		if err != nil {
 			return err
 		}
