@@ -1,176 +1,130 @@
-"""Admission checks for exact native CI identity and PR head recheck."""
+"""Native source CI and real Git ancestry for explicitly requested checkpoints."""
 import copy
+import json
+from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/release'))
 import admission
-import publish
-from contract import REPOSITORY, signer
-from test_contract import assets, selection
+import preview_store
+from contract import REPOSITORY, preview_version
 
 
-class Fixture:
+class Checkpoint(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.counter = 0
-        self.git('init', '-q')
+        self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.email', 'fixture@example.invalid')
         self.git('config', 'user.name', 'fixture')
-        (self.root / '.github/workflows').mkdir(parents=True)
-        (self.root / '.github/workflows/ci.yaml').write_text('name: ci\n')
-        self.original = self.commit()
-        self.api = self.API(self.original)
-
-    def tearDown(self):
-        self.temp.cleanup()
+        (self.root/'sdk/typescript').mkdir(parents=True)
+        (self.root/'sdk/typescript/package.json').write_text('{"version":"0.1.0"}')
+        self.source = self.commit('first')
+        self.workflow = self.commit('second')
+        self.git('remote', 'add', 'origin', str(self.root))
+        self.env = dict(GITHUB_REPOSITORY=REPOSITORY, GITHUB_EVENT_NAME='workflow_dispatch',
+                        GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1',
+                        GITHUB_WORKFLOW_SHA=self.workflow, GITHUB_SHA=self.workflow)
+        self.event = dict(repository=dict(id=1), inputs=dict(commit=self.source))
+        self.run = dict(id=10, run_attempt=2, repository=dict(id=1), workflow_id=2,
+                        path='.github/workflows/ci.yaml', event='push', head_branch='main',
+                        head_sha=self.source, status='completed', conclusion='success')
+        self.jobs = [dict(name='ci complete', status='completed', conclusion='success')]
+        outer = self
+        class API:
+            def request(self, path, **kwargs):
+                if path == '': return dict(id=1)
+                if path == 'actions/workflows/ci.yaml': return dict(id=2, path='.github/workflows/ci.yaml')
+                if path.startswith('releases/tags/'): return None
+                raise AssertionError(path)
+            def pages(self, path, key):
+                if key == 'workflow_runs':
+                    outer.assertIn('event=push&head_sha='+outer.source, path)
+                    return [outer.run]
+                outer.assertEqual(path, 'actions/runs/10/attempts/2/jobs')
+                return outer.jobs
+        self.api = API()
 
     def git(self, *args):
         return subprocess.check_output(['git', '-C', str(self.root), *args], text=True).strip()
 
-    def commit(self):
-        self.counter += 1
-        (self.root / 'code.txt').write_text(f'change-{self.counter}')
+    def commit(self, text):
+        (self.root/'code').write_text(text)
         self.git('add', '-A')
-        self.git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture')
+        self.git('-c', 'commit.gpgsign=false', 'commit', '-qm', text)
         return self.git('rev-parse', 'HEAD')
 
-    class API:
-        def __init__(self, head, main=None):
-            self.head = head
-            self.main = main or head
-            self.calls = []
+    def admit(self):
+        return admission.admit(self.api, self.env, self.event, self.root)
 
-        def request(self, path, missing=False, destination=None):
-            self.calls.append(path)
-            if path == '':
-                return dict(id=1)
-            if path == 'actions/workflows/ci.yaml':
-                return dict(id=2, path='.github/workflows/ci.yaml')
-            if path == 'pulls/7':
-                return dict(number=7, state='open', base=dict(ref='main', repo=dict(id=1)),
-                            head=dict(sha=self.head, repo=dict(id=1)))
-            if path == 'git/ref/heads/main':
-                return dict(ref='refs/heads/main', object=dict(type='commit', sha=self.main))
-            raise AssertionError(path)
+    def test_checkpoint_owns_build_identity_even_after_main_advances(self):
+        selected = self.admit()
+        self.assertEqual(selected['sourceCommit'], self.source)
+        self.assertEqual(selected['version'], preview_version('0.1.0', self.source, '123'))
+        self.assertEqual(selected['build'], dict(runId='123', ciRun='10', workflowCommit=self.workflow,
+                                                workflowRef='refs/heads/main', pr=None, mode='main'))
+        self.commit('later main')
+        self.assertEqual(self.admit(), selected)
 
-        def pages(self, path, key=None):
-            if '/runs?' in path:
-                return [dict(id=10)]
-            raise AssertionError(path)
+    def test_non_main_source_is_rejected(self):
+        self.git('checkout', '-qb', 'unmerged', self.source)
+        self.event['inputs']['commit'] = self.commit('unmerged change')
+        with self.assertRaisesRegex(ValueError, 'main history'): self.admit()
 
+    def test_wrong_dispatch_ref_and_short_sha_are_rejected(self):
+        self.env['GITHUB_REF'] = 'refs/heads/feature'
+        with self.assertRaisesRegex(ValueError, 'execute main'): self.admit()
+        self.env['GITHUB_REF'] = 'refs/heads/main'
+        self.event['inputs']['commit'] = self.source[:8]
+        with self.assertRaisesRegex(ValueError, 'full input SHA'): self.admit()
 
-class Admission(Fixture, unittest.TestCase):
-    def test_behind_pr_and_main_movement_rechecked_without_mutating_selection(self):
-        (self.root / 'code.txt').write_text('PR change')
-        head = self.commit()
-        self.api.head = head
-        s = selection()
-        s['sourceCommit'] = head
-        s['build'].update(mode='pr', pr=7)
-        original = copy.deepcopy(s)
-        admission.recheck_pr(self.api, s)
-        self.git('reset', '--hard', self.original)
-        (self.root / '.github/workflows/ci.yaml').write_text('name: newer main\n')
-        self.api.main = self.commit()
-        self.api.head = head
-        admission.recheck_pr(self.api, s)
-        self.assertEqual(s, original)
+    def test_ci_must_bind_exact_main_run_and_attempt(self):
+        for key, value in [('head_sha', self.workflow), ('event', 'pull_request'), ('head_branch', 'other'),
+                           ('conclusion', 'failure'), ('workflow_id', 99), ('path', 'other.yaml')]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                admission.ci_success(self.api, dict(self.run, **{key:value}), 2, 1, self.source)
+        for result in ('failure', 'cancelled', 'skipped', None):
+            self.jobs[0]['conclusion'] = result
+            with self.assertRaises(ValueError): admission.ci_success(self.api, self.run, 2, 1, self.source)
+        self.jobs = []
+        with self.assertRaises(ValueError): admission.ci_success(self.api, self.run, 2, 1, self.source)
 
-    def test_manual_admission_accepts_workflow_differences(self):
-        (self.root / '.github/workflows/ci.yaml').write_text('name: changed\n')
-        self.api.head = self.commit()
-        env = dict(GITHUB_REPOSITORY=REPOSITORY, GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF='refs/heads/main',
-                   GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_WORKFLOW_SHA=self.original)
-        event = dict(repository=dict(id=1), inputs=dict(pr='7', commit=self.api.head))
-        with patch.object(self.api, 'pages', return_value=[dict(id=10)]), \
-             patch.object(admission, 'ci_success', return_value=(10, [])), \
-             patch.object(admission, 'git', return_value='{"version":"0.1.0"}'), \
-             patch.object(admission, 'subprocess', wraps=subprocess) as commands:
-            commands.run.return_value = subprocess.CompletedProcess([], 0)
-            selected, _ = admission.admit(self.api, env, event, self.root)
-        self.assertEqual(selected['sourceCommit'], self.api.head)
+    def test_old_automatic_release_event_is_rejected(self):
+        self.env['GITHUB_EVENT_NAME'] = 'workflow_run'
+        with self.assertRaisesRegex(ValueError, 'unsupported release event'): self.admit()
 
-    def test_normal_exact_head_manual_admission(self):
-        (self.root / 'code.txt').write_text('PR change')
-        self.api.head = self.commit()
-        env = dict(GITHUB_REPOSITORY=REPOSITORY, GITHUB_EVENT_NAME='workflow_dispatch', GITHUB_REF='refs/heads/main',
-                   GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_WORKFLOW_SHA=self.original)
-        event = dict(repository=dict(id=1), inputs=dict(pr='7', commit=self.api.head))
-        with patch.object(self.api, 'pages', return_value=[dict(id=10)]), patch.object(admission, 'ci_success', return_value=(10, [])), \
-             patch.object(admission, 'git', return_value='{"version":"0.1.0"}'), patch.object(admission, 'subprocess', wraps=subprocess) as commands:
-            commands.run.return_value = subprocess.CompletedProcess([], 0)
-            selected, _ = admission.admit(self.api, env, event, self.root)
-        self.assertEqual(selected['sourceCommit'], self.api.head)
-        self.assertEqual(selected['sourceRef'], 'refs/pull/7/head')
-        self.assertEqual(selected['build']['mode'], 'pr')
-        commands.run.assert_called_once_with(['git', '-C', str(self.root), 'fetch', '--no-tags', 'origin', self.api.head], check=True)
-
-    def test_pr_recheck_at_both_publication_boundaries(self):
-        s = selection()
-        s['sourceCommit'] = self.original
-        s['build'].update(mode='pr', pr=7)
-        (self.root / 'code.txt').write_text('stale head')
-        self.api.head = self.commit()
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            assets(directory)
-            with patch.object(publish, 'verify_files'), patch.object(publish, 'publish_images') as images:
-                with self.assertRaisesRegex(ValueError, 'current PR head'):
-                    publish.stage(self.api, s, directory)
-                images.assert_not_called()
-            with patch.object(publish, 'download_build') as download:
-                with self.assertRaisesRegex(ValueError, 'current PR head'):
-                    publish.finalize(self.api, s, directory, '1', 'sha256:' + '0' * 64)
-                download.assert_not_called()
-
-    def test_manual_preview_builds_even_when_pr_ci_omitted_packaging(self):
-        head = self.api.head
-        run = dict(id=10, run_attempt=2, repository=dict(id=1), workflow_id=2,
-                   path='.github/workflows/ci.yaml', event='pull_request', head_sha=head,
-                   status='completed', conclusion='success',
-                   pull_requests=[dict(number=7, head=dict(sha=head))])
-
-        def pages(path, key):
-            if key == 'workflow_runs':
-                return [run]
-            self.assertEqual(path, 'actions/runs/10/attempts/2/jobs')
-            return [dict(name='ci complete', status='completed', conclusion='success'),
-                    dict(name='build release artifacts / consumer', status='completed', conclusion='skipped')]
-
-        env = dict(GITHUB_REPOSITORY=REPOSITORY, GITHUB_EVENT_NAME='workflow_dispatch',
-                   GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1',
-                   GITHUB_WORKFLOW_SHA=self.original)
-        event = dict(repository=dict(id=1), inputs=dict(pr='7', commit=head))
-        with patch.object(self.api, 'pages', side_effect=pages), \
-             patch.object(admission, 'git', return_value='{"version":"0.1.0"}'), \
-             patch.object(admission.subprocess, 'run'):
-            selected, skip = admission.admit(self.api, env, event, self.root)
-        self.assertFalse(skip)
-        self.assertEqual(selected['build']['mode'], 'pr')
-        self.assertEqual(selected['build']['ciRun'], '10')
+    def test_tag_uses_source_ci_without_preview_artifacts(self):
+        self.env.update(GITHUB_EVENT_NAME='push', GITHUB_REF='refs/tags/v0.1.0', GITHUB_SHA=self.source)
+        selected = self.admit()
+        self.assertEqual(selected['build']['mode'], 'tag')
         self.assertEqual(selected['build']['runId'], '123')
+        self.env['GITHUB_RUN_ATTEMPT'] = '2'
+        with self.assertRaisesRegex(ValueError, 'single-attempt'): self.admit()
 
-    def test_main_and_stable_do_not_acquire_pr_restriction(self):
-        for mode in ('main', 'tag'):
-            s = selection()
-            s['build']['mode'] = mode
-            admission.recheck_pr(self.api, s)
-        self.assertEqual(self.api.calls, [])
+    def test_promotion_rejects_older_source_and_older_same_source_build(self):
+        def record(source, run):
+            return dict(sourceCommit=source, version=preview_version('0.1.0', source, str(run)))
+        current = record(self.workflow, 120)
+        self.assertFalse(preview_store.checkpoint_follows(self.root, record(self.source, 123), current))
+        self.assertFalse(preview_store.checkpoint_follows(self.root, record(self.workflow, 119), current))
+        self.assertTrue(preview_store.checkpoint_follows(self.root, record(self.workflow, 123), current))
+        self.assertTrue(preview_store.checkpoint_follows(self.root, current, current))
+        later = self.commit('later')
+        self.assertTrue(preview_store.checkpoint_follows(self.root, record(later, 124), current))
 
-    def test_human_tag_single_attempt_guard(self):
-        import main
-        with patch.dict('os.environ', {'GITHUB_EVENT_NAME': 'push', 'GITHUB_REF': 'refs/tags/v1.0.0',
-                                       'GITHUB_RUN_ATTEMPT': '2', 'RELEASE_SELECTION': '{}'}):
-            with patch.object(main, 'GitHub'), patch('sys.argv', ['release', 'precheck']):
-                with self.assertRaisesRegex(ValueError, 'single-attempt'):
-                    main.main()
-
-
-if __name__ == '__main__':
-    unittest.main()
+    def test_older_checkpoint_cannot_mutate_npm_or_images(self):
+        selected = dict(sourceCommit=self.source, version=preview_version('0.1.0', self.source, '123'))
+        current = dict(sourceCommit=self.workflow, version=preview_version('0.1.0', self.workflow, '120'))
+        with patch.object(preview_store, 'build_index', return_value={}), patch.object(preview_store, 'verify_files'), \
+             patch.object(preview_store, 'config', return_value=('url', 'bucket')), \
+             patch.object(preview_store, 'pointer_snapshot', return_value=(current, 'etag', b'')), \
+             patch.object(preview_store, 'checkpoint_follows', return_value=False), \
+             patch('publish.npm_publish') as npm, patch('publish.publish_images') as images:
+            with self.assertRaisesRegex(ValueError, 'precedes'): preview_store.stage(self.api, selected, self.root)
+            npm.assert_not_called()
+            images.assert_not_called()

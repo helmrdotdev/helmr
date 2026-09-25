@@ -4,66 +4,29 @@ Repository maintenance and Product artifact helpers live here. Reusable
 Product behavior belongs in Go packages, generated code, or image definitions;
 scripts only orchestrate those sources.
 
-## CI parity
+## Source checks and release validation
 
-Run the repository lane aggregate for the current platform with:
-
-```sh
-nix run .#ci-checks
-```
-
-On x86_64 Linux, also run the artifact and browser checks for full GitHub CI parity:
+Every PR and main push runs a fixed source set:
 
 ```sh
-nix flake check --show-trace
-nix run .#ci-bundle-builder
-nix run .#ci-version-cohort
-nix run .#ci-boot-artifacts-repro
-nix run .#ci-browser
+nix run .#ci-fast-policy
+nix run .#ci-fast-go
+nix run .#ci-fast-typescript
 ```
 
-Use the narrower `ci-*` Nix apps while iterating. Their runtime inputs are
-specific to each check; interactive shells retain the full development tools.
-`nix run .#ci-clickhouse` starts owned disposable servers with the pinned
-ClickHouse binary and runs uncached race tests for projections, binary log
-roundtrips, replay retention, and application access separation. It does not use
-Cloud credentials or a developer's running database.
-The boot reproducibility check requires a clean checkout. CI separates Nix app
-preparation from execution so step durations distinguish environment construction
-from validation. Go race tests use `-count=1` to execute tests even when compiled
-packages are cached. Browser failure screenshots and traces are retained as the
-`browser-failure` Actions artifact for seven days.
+`ci complete` requires all three checks. No path routing, label override or
+release artifact construction runs in source CI. Go tests skip the separate
+PostgreSQL suite explicitly; they compile the embedded Console once per Go job.
+TypeScript tests build required local workspace packages but do not pack or
+publish a distribution.
 
-All checks still run on every PR and main push. Pull requests require **ci
-complete**, which rejects failure, cancellation, or a skipped dependency in
-**source-ci-complete** or **build release artifacts**. Main push additionally
-reports **preview-ready** separately; publication requires both relevant source
-checks and successful artifact/consumer verification for the exact producer
-commit. Documentation-only main changes skip artifact generation with a truthful
-successful skip while **source-ci-complete** still runs. Release builds use their
-existing separate workflow and setup action. Version-cohort and boot-reproducibility
-checks run independently in the release-contract matrix; both must pass.
-
-The Nix flake job pilots a CI-only store cache keyed by OS, architecture,
-Nix/Go dependency inputs and commit. A job/OS/architecture prefix can reuse
-existing store paths after input changes; Nix still evaluates the current inputs.
-The bundle-builder job restores the same cache without saving or waiting for the
-current flake job. Both checks run regardless of cache hits. Pull-request caches remain isolated to their merge ref and are
-never restored by release builds. Current check outputs are GC roots, and
-`keep-outputs` preserves their build dependencies. The 2 GiB pre-save GC target
-only removes unrooted paths; the retained closure can exceed it. Measure cold, exact-hit and new-commit prefix-hit runs including
-restore and post-job save time before extending the cache to other jobs.
-
-The race job independently pilots a Go compilation/module cache under
-`/tmp/helmr-ci-go-{build,mod}` on the disposable Linux runner, keyed by OS,
-architecture, pinned toolchain/dependencies and commit. It still runs all race
-tests with `-count=1`; cache hits never skip the check. Only one job writes each
-cache family. Neither cache changes the repository's storage quota or eviction
-policy.
-
-The aggregate runs the
-Firecracker probe only on x86_64 Linux. Firecracker execution still requires a
-real KVM host and is not emulated in hosted CI.
+[Release checkpoints](release/README.md) run generated-source, PostgreSQL and
+browser validation and the real artifact consumer. For deeper targeted work,
+use `ci-go-race`, `ci-clickhouse`, `ci-infra-test`, `ci-bundle-builder`,
+`ci-version-cohort`, `ci-boot-artifacts-repro`, or `nix flake check`. These commands
+remain available without forcing every source edit through their setup costs.
+`ci-policy` is the comprehensive local repository/release-contract check;
+`ci-checks` remains the broad local source aggregate.
 
 ## Development console
 

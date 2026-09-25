@@ -167,22 +167,10 @@ class Readback(unittest.TestCase):
         class Empty:
             def pages(self, *_):
                 return []
-        for event in ('push', 'workflow_run', 'workflow_dispatch'):
+        for event in ('push', 'workflow_dispatch'):
             with patch.dict('os.environ', GITHUB_EVENT_NAME=event, GITHUB_RUN_ATTEMPT='2'):
                 self.assertFalse(transport.restore(Empty(), 'sdk', selection(), self.root / 'missing'))
 
-    def test_missing_pr_part_on_retry_requires_new_identity(self):
-        class Empty:
-            def pages(self, *_):
-                return []
-        for part in transport.PARTS:
-            destination = self.root / part
-            with patch.dict('os.environ', GITHUB_EVENT_NAME='pull_request', GITHUB_RUN_ATTEMPT='1'):
-                self.assertFalse(transport.restore(Empty(), part, selection(), destination))
-            with patch.dict('os.environ', GITHUB_EVENT_NAME='pull_request', GITHUB_RUN_ATTEMPT='2'):
-                with self.assertRaisesRegex(ValueError, 'start a new workflow run'):
-                    transport.restore(Empty(), part, selection(), destination)
-            self.assertFalse(destination.exists())
 
 
 class WorkflowBoundary(unittest.TestCase):
@@ -209,7 +197,7 @@ class WorkflowBoundary(unittest.TestCase):
         self.assertIn('environment: preview', publish_preview)
         self.assertNotIn('contents: write', publish_preview)
         self.assertIn('contents: read', publish_preview)
-        self.assertIn('pull-requests: read', publish_preview)
+        self.assertNotIn('pull-requests:', publish_preview)
         self.assertIn('environment: release', publish_tag)
         self.assertIn('contents: write', publish_tag)
         self.assertIn('contents: read', verifier)
@@ -228,7 +216,7 @@ class WorkflowBoundary(unittest.TestCase):
         self.assertIn('needs: [admission, publish-preview, publish-tag, verify]', complete_tag)
         self.assertIn('GH_TOKEN: ${{ github.token }}', complete_preview)
         self.assertIn('contents: read', complete_preview)
-        self.assertIn('pull-requests: read', complete_preview)
+        self.assertNotIn('pull-requests:', complete_preview)
         self.assertIn('Assume preview publisher role', complete_preview)
         self.assertIn('main.py finalize', complete_preview)
         complete_after_assume = complete_preview.split('- name: Assume preview publisher role', 1)[1]

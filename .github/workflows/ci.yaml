@@ -1,326 +1,47 @@
 name: ci
-
 on:
   pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
   push:
-    branches:
-      - main
-
+    branches: [main]
 permissions:
   contents: read
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  nix-flake:
-    needs: artifact-selection
-    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'nix-flake')
-    name: nix flake
+  checks:
+    name: ${{ matrix.check }}
     runs-on: ubuntu-24.04
-    env:
-      NIX_CONFIG: |
-        keep-derivations = true
-        keep-outputs = true
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      # PR caches are scoped to their merge ref; release never restores them.
-      - name: Cache Nix check dependencies
-        uses: nix-community/cache-nix-action@099b5eda36d156fcdd6477de3db9e7fa4caf800f
-        with:
-          primary-key: nix-flake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**', 'go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-prefixes-first-match: nix-flake-${{ runner.os }}-${{ runner.arch }}-
-          # GC target, not a hard archive-size limit.
-          gc-max-store-size: 2G
-
-      - run: nix flake check --show-trace --print-build-logs
-
-      - name: Retain current check dependencies for caching
-        run: |
-          nix config show keep-derivations
-          nix config show keep-outputs
-          # A path flake loses the Git revision and would root different derivations.
-          nix build --out-link "$RUNNER_TEMP/ci-check" --impure --expr \
-            'builtins.attrValues ((builtins.getFlake ("git+file://" + toString ./.)).checks.x86_64-linux)'
-
-
-  repo:
-    needs: artifact-selection
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-24.04
-    env:
-      CI_APP: ${{ matrix.app }}
-      GOCACHE: /tmp/helmr-ci-go-build
-      GOMODCACHE: /tmp/helmr-ci-go-mod
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.artifact-selection.outputs.repo_matrix) }}
+      matrix:
+        check: [policy, go, typescript]
+    env:
+      CI_CHECK: ${{ matrix.check }}
+      GOCACHE: /tmp/helmr-ci-go-build
+      GOMODCACHE: /tmp/helmr-ci-go-mod
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-
       - uses: ./.github/actions/setup-nix
-
       - name: Cache Go compilation and modules
-        if: matrix.app == 'ci-go-race'
+        if: matrix.check == 'go'
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ${{ env.GOCACHE }}
             ${{ env.GOMODCACHE }}
-          key: go-race-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-keys: go-race-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-
-
-      - name: Prepare check environment
-        run: >-
-          nix build --no-link --impure --expr
-          'let flake = builtins.getFlake ("git+file://" + toString ./.);
-          in builtins.dirOf (builtins.dirOf (builtins.getAttr (builtins.getEnv "CI_APP") flake.apps.x86_64-linux).program)'
-
-      - run: nix run ".#$CI_APP"
-
-  postgres:
-    needs: artifact-selection
-    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'postgres')
-    name: postgres
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      - name: Prepare check environment
-        run: >-
-          nix build --no-link --impure --expr
-          'let flake = builtins.getFlake ("git+file://" + toString ./.);
-          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-postgres.program)'
-
-      - run: nix run .#ci-postgres
-
-  browser:
-    needs: artifact-selection
-    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'browser')
-    name: browser
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      - name: Prepare check environment
-        run: >-
-          nix build --no-link --impure --expr
-          'let flake = builtins.getFlake ("git+file://" + toString ./.);
-          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-browser.program)'
-
-      - run: nix run .#ci-browser
-
-      - name: Upload browser failure evidence
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: browser-failure
-          path: test-results/
-          retention-days: 7
-          if-no-files-found: ignore
-
-  bundle-builder:
-    name: bundle builder
-    needs: artifact-selection
-    if: needs.artifact-selection.outputs.run_bundle_builder == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      - name: Restore shared Nix dependencies
-        uses: nix-community/cache-nix-action@099b5eda36d156fcdd6477de3db9e7fa4caf800f
-        with:
-          primary-key: nix-flake-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'flake.nix', 'nix/**', 'go.mod', 'go.sum') }}-${{ github.sha }}
-          restore-prefixes-first-match: nix-flake-${{ runner.os }}-${{ runner.arch }}-
-          save: false
-
-      - name: Prepare check environment
-        run: >-
-          nix build --no-link --impure --expr
-          'let flake = builtins.getFlake ("git+file://" + toString ./.);
-          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.ci-bundle-builder.program)'
-
-      - run: nix run .#ci-bundle-builder
-
-  release-contracts:
-    needs: artifact-selection
-    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'release-contracts')
-    name: release contracts (${{ matrix.app }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        app: [ci-version-cohort, ci-boot-artifacts-repro]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-
-      - uses: ./.github/actions/setup-nix
-
-      - name: Prepare check environment
-        run: >-
-          nix build --no-link --impure --expr
-          'let flake = builtins.getFlake ("git+file://" + toString ./.);
-          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.${{ matrix.app }}.program)'
-
-      - run: nix run .#${{ matrix.app }}
-
-  artifact-selection:
-    name: select artifact source
-    runs-on: ubuntu-24.04
-    outputs:
-      selection: ${{ steps.selection.outputs.selection }}
-      skip_artifacts: ${{ steps.selection.outputs.skip_artifacts }}
-      run_bundle_builder: ${{ steps.selection.outputs.run_bundle_builder }}
-      source_checks: ${{ steps.selection.outputs.source_checks }}
-      repo_matrix: ${{ steps.selection.outputs.repo_matrix }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - id: selection
-        env:
-          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PYTHON'
-          import json, os, subprocess, sys
-          sys.path.insert(0, 'scripts/release')
-          from api import GitHub
-          from admission import artifact_build_needed
-          from ci_policy import full_checks, pr_checks, repo_matrix
-          from contract import preview_version
-          source = os.environ['SOURCE_COMMIT']
-          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == source
-          number = int(os.environ['PR_NUMBER']) if os.environ['PR_NUMBER'] else None
-          checks = full_checks()
-          skip, builder = False, True
-          if number is not None:
-              checks = pr_checks('.', json.load(open(os.environ['GITHUB_EVENT_PATH'])))
-              skip, builder = not checks['artifacts'], checks['bundle_builder']
-          elif os.environ['GITHUB_EVENT_NAME'] == 'push':
-              skip = not artifact_build_needed(GitHub(), '.', source)
-          core = json.load(open('sdk/typescript/package.json'))['version'].split('-')[0]
-          selection = dict(version=preview_version(core, source, os.environ['GITHUB_RUN_ID']),
-              sourceCommit=source, sourceRef=f'refs/pull/{number}/head' if number else 'refs/heads/main',
-              build=dict(runId=os.environ['GITHUB_RUN_ID'],
-                  workflowCommit=os.environ['GITHUB_WORKFLOW_SHA'],workflowRef=os.environ['GITHUB_REF'],
-                  ciRun=os.environ['GITHUB_RUN_ID'],pr=number,mode='pr' if number else 'main'))
-          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
-              output.write('selection='+json.dumps(selection,separators=(',',':'))+'\n')
-              output.write('skip_artifacts='+('true' if skip else 'false')+'\n')
-              output.write('run_bundle_builder='+('true' if builder else 'false')+'\n')
-              output.write('source_checks='+json.dumps(checks['source_checks'])+'\n')
-              output.write('repo_matrix='+json.dumps(repo_matrix(checks['source_checks']))+'\n')
-          PYTHON
-  build-artifacts:
-    name: build release artifacts
-    needs: artifact-selection
-    if: needs.artifact-selection.outputs.skip_artifacts == 'false'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/build-artifacts.yaml
-    with:
-      selection: ${{ needs.artifact-selection.outputs.selection }}
-      tools_commit: ${{ github.workflow_sha }}
-
-  artifact-skip:
-    name: artifact build skipped
-    needs: artifact-selection
-    if: github.event_name == 'push' && needs.artifact-selection.outputs.skip_artifacts == 'true'
-    runs-on: ubuntu-24.04
-    steps:
-      - run: echo "documentation-only change; artifact build truthfully skipped"
-
-  source-ci-complete:
-    name: source-ci-complete
-    runs-on: ubuntu-24.04
-    needs:
-      - artifact-selection
-      - nix-flake
-      - repo
-      - postgres
-      - browser
-      - bundle-builder
-      - release-contracts
-    if: always()
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - name: Check required source CI jobs
-        env:
-          CI_NEEDS: ${{ toJSON(needs) }}
-        run: python3 scripts/release/ci_policy.py source
-
-  preview-ready:
-    name: preview-ready
-    runs-on: ubuntu-24.04
-    needs:
-      - source-ci-complete
-      - artifact-selection
-      - build-artifacts
-      - artifact-skip
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Check preview artifact readiness
-        run: |
-          if [ "${{ needs.source-ci-complete.result }}" != "success" ]; then
-            echo "source-ci-complete must succeed before preview-ready" >&2
-            exit 1
-          fi
-          if [ "${{ needs.artifact-selection.outputs.skip_artifacts }}" = "true" ]; then
-            if [ "${{ needs.artifact-skip.result }}" != "success" ]; then
-              echo "documentation-only skip must report success" >&2
-              exit 1
-            fi
-            echo "documentation-only change; preview-ready without artifact build"
-            exit 0
-          fi
-          if [ "${{ needs.build-artifacts.result }}" != "success" ]; then
-            echo "artifact build and consumer verification required for relevant main changes" >&2
-            exit 1
-          fi
-
+          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-${{ github.sha }}
+          restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'go.mod', 'go.sum') }}-
+      - run: nix run ".#ci-fast-$CI_CHECK"
   ci-complete:
     name: ci complete
+    if: always()
+    needs: checks
     runs-on: ubuntu-24.04
-    needs:
-      - source-ci-complete
-      - artifact-selection
-      - build-artifacts
-    if: always() && github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - name: Check required CI jobs
+      - name: Require all source checks
         env:
-          CI_NEEDS: ${{ toJSON(needs) }}
-        run: python3 scripts/release/ci_policy.py pr
+          CHECKS_RESULT: ${{ needs.checks.result }}
+        run: test "$CHECKS_RESULT" = success

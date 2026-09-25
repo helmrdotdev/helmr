@@ -9,7 +9,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from contract import DIGEST, ASSETS, REPOSITORY, ISSUER, canonical, descriptor, digest, read, require, signer, validate, verify_files, write
-from admission import git, recheck_pr, relevant
+from admission import git
 from preview_store import preview_mode
 
 
@@ -111,10 +111,6 @@ def npm_channel(selection):
     mode = selection['build']['mode']
     if mode == 'main':
         return 'preview'
-    if mode == 'pr':
-        number = selection['build']['pr']
-        require(type(number) is int and number > 0, 'PR number required for npm channel')
-        return f'pr-{number}'
     if mode == 'tag':
         return 'next' if '-' in selection['version'] else 'latest'
     raise ValueError('invalid release mode')
@@ -161,7 +157,6 @@ def stage(api, selection, directory):
     directory = Path(directory)
     index = dict(selection, schema='helmr.release.v0', assets={name: descriptor(directory / name) for name in sorted(ASSETS)})
     verify_files(index, directory)
-    recheck_pr(api, selection)
     release = find_release(api, index['version'])
     if release is not None:
         require(index['build']['mode'] != 'tag', 'human tag release already exists')
@@ -215,7 +210,6 @@ def finalize(api, selection, directory, release_id, build_digest):
     if preview_mode(selection):
         from preview_store import finalize as preview_finalize
         return preview_finalize(api, selection, directory, build_digest)
-    recheck_pr(api, selection)
     require(re.fullmatch(r'[1-9][0-9]*', str(release_id)), 'release ID required')
     require(re.fullmatch(DIGEST, build_digest or ''), 'build digest required')
     release = find_release(api, selection['version'])
