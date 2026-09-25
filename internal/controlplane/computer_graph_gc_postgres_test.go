@@ -112,7 +112,7 @@ func TestComputerGraphCollectionRetainsOtherOrganizationAndStorageRetry(t *testi
 				t.Fatalf("storage failure lost: %d %v", store.calls, err)
 			}
 			store.fail = false
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_object_lifetimes SET next_reclaim_at=now() WHERE digest=$1`, input.Root.Pack.Digest)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_blobs SET next_reclaim_at=now() WHERE digest=$1`, input.Root.Pack.Digest)
 			// The graph row is gone, but its durable tombstone still schedules retry.
 			if err = collector.Reconcile(t.Context()); err != nil || store.calls != 2 {
 				t.Fatalf("retry lost: %d %v", store.calls, err)

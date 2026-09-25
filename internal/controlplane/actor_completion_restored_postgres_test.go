@@ -290,7 +290,7 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
   FROM workspace_leases WHERE id = $1`, workspaceLeaseID, sourceWorkspaceLeaseID,
 		sourceRuntimeID, sourceMountID, sourceLeaseID, headVersionID)
 	dbtest.MustExec(t, ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, base.OrgID, checkpointDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO artifacts (
@@ -376,7 +376,7 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
   FROM workspace_leases WHERE id = $1`, workspaceLeaseID, childWorkspaceLeaseID,
 		sourceRuntimeID, sourceMountID, childLeaseID, checkpointVersionID)
 	dbtest.MustExec(t, ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, base.OrgID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO artifacts (

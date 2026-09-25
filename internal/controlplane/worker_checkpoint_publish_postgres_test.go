@@ -85,7 +85,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		if row.CheckpointStatus != "ready" || row.AvailabilityRequired.Valid {
 			t.Fatalf("candidate not committed: %+v", row)
 		}
-		if n, err := f.server.db.RetireAbandonedCasObject(t.Context(), row.Digest); err != nil || n != 0 {
+		if n, err := f.server.db.RetireAbandonedCasBlob(t.Context(), row.Digest); err != nil || n != 0 {
 			t.Fatalf("live member retired: %d %v", n, err)
 		}
 	}
@@ -210,7 +210,7 @@ func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer locker.Rollback(context.Background())
-	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_object_lifetimes WHERE digest=$1 FOR UPDATE`, req.Manifest.RuntimeState.MemoryArtifacts[0].Digest)
+	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_blobs WHERE digest=$1 FOR UPDATE`, req.Manifest.RuntimeState.MemoryArtifacts[0].Digest)
 	var expiry time.Time
 	if err := f.Pool.QueryRow(ctx, `UPDATE run_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
 		t.Fatal(err)

@@ -73,7 +73,7 @@ INSERT INTO idempotency_claims (
     decode(repeat('14', 32), 'hex'), transaction_timestamp()
 )`, claimID, fixture.environmentID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, fixture.orgID, bDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
@@ -347,7 +347,7 @@ SELECT id FROM workspace_leases WHERE owner_run_lease_id = $1`, childLease.ID).S
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 3, $3)`, fixture.orgID, nestedBaseDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
@@ -497,7 +497,7 @@ SELECT $1, org_id, worker_group_id, project_id, environment_id, region_id,
  WHERE id = $4`, grandchildWorkspaceLeaseID, grandchildRunLeaseID,
 		nestedBaseWorkspaceVersionID, childWorkspaceLeaseID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 4) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 4, $3)`, fixture.orgID, nestedResultDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
@@ -754,7 +754,7 @@ SELECT workspace_leases.id, workspace_mounts.fencing_generation,
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, fixture.ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 2, $3)`, fixture.orgID, cDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (

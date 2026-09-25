@@ -1288,7 +1288,7 @@ SELECT workspace_leases.id, workspace_leases.base_workspace_version_id,
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, tx, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, fixture.orgID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (
@@ -2266,7 +2266,7 @@ UPDATE run_attempts
 		dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE computers SET owner_run_id = NULL, owner_session_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
 	}
-	dbtest.MustExec(t, fixture.ctx, tx, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3) ON CONFLICT (org_id, digest) DO NOTHING`,
+	dbtest.MustExec(t, fixture.ctx, tx, `WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3) ON CONFLICT (org_id, digest) DO NOTHING`,
 		fixture.orgID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
@@ -2506,7 +2506,7 @@ VALUES ($1, $2, $3, $4, 'Environment', '#3366ff')`,
 		"environment-"+fixture.environmentID.String(),
 	)
 	dbtest.MustExec(t, ctx, pool, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
     ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
     ($1, $3, 1, 'application/octet-stream')`,

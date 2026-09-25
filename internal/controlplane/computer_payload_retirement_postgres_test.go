@@ -77,7 +77,7 @@ func TestComputerPayloadRetirementPreservesAuditAndSharedGraph(t *testing.T) {
 	// The newer saved head shares these exact objects; retiring the earlier
 	// locator must not retire graph bytes still needed by that head/source.
 	var available bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT retired_at IS NULL FROM cas_object_lifetimes WHERE digest=$1`, f.root.Pack.Digest).Scan(&available); err != nil || !available {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT retired_at IS NULL FROM cas_blobs WHERE digest=$1`, f.root.Pack.Digest).Scan(&available); err != nil || !available {
 		t.Fatalf("shared bytes retired: %v", err)
 	}
 	if _, err := f.server.publishComputerSave(t.Context(), f.worker, first, f.root); err != nil {

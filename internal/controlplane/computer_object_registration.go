@@ -156,7 +156,7 @@ func recordComputerObjectLocked(ctx context.Context, tx pgx.Tx, owner dispatch.C
 	}
 	q := db.New(tx)
 	if uploaded == nil && !reuse {
-		if _, err = tx.Exec(ctx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1) ON CONFLICT DO NOTHING`, object.digest); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2) ON CONFLICT DO NOTHING`, object.digest, object.size); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,$6,'application/octet-stream',$7,$8,$9) ON CONFLICT DO NOTHING`, owner.EnvironmentID, owner.ComputerID, object.digest, owner.OrgID, owner.ProjectID, object.size, object.kind, object.rank, object.encoded); err != nil {

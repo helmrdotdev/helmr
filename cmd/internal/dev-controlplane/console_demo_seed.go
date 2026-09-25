@@ -72,7 +72,7 @@ func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 
 	if _, err := tx.Exec(ctx, `
 WITH lifetimes AS (
-    INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3)
+    INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1)
     ON CONFLICT (digest) DO NOTHING
 )
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)

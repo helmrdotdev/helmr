@@ -71,7 +71,7 @@ func TestComputerLossEpisodeIsStablePostgres(t *testing.T) {
 			var reason, status string
 			var started, retained bool
 			if err := f.pool.QueryRow(ctx, `SELECT recovery_id,recovery_version_id,recovery_reason,recovery_started_at IS NOT NULL,status,
-				EXISTS(SELECT 1 FROM retained_computer_versions v WHERE v.computer_id=c.id AND v.version_id=c.recovery_version_id)
+				c.recovery_payload_required IS TRUE
 				FROM computers c WHERE id=$1`, a.workspaceID).Scan(&id, &source, &reason, &started, &status, &retained); err != nil {
 				t.Fatal(err)
 			}

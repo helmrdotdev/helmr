@@ -44,7 +44,7 @@ func TestComputerCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blocker.Rollback(context.Background())
-	if _, err = db.New(blocker).LockCollectedComputerLifetime(ctx, digest); err != nil {
+	if _, err = db.New(blocker).LockCollectedComputerBlob(ctx, digest); err != nil {
 		t.Fatal(err)
 	}
 	pid := blocker.Conn().PgConn().PID()
@@ -57,7 +57,7 @@ func TestComputerCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
 	// shared membership cleanup. Observe actual PostgreSQL lock waits.
 	for {
 		var blocked int
-		if err = f.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>$1 AND wait_event_type='Lock' AND query LIKE '%LockCollectedComputerLifetime%'`, pid).Scan(&blocked); err != nil {
+		if err = f.Pool.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND pid<>$1 AND wait_event_type='Lock' AND query LIKE '%LockCollectedComputerBlob%'`, pid).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
 		if blocked == 2 {
@@ -81,7 +81,7 @@ func TestComputerCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
 	}
 	var retired bool
 	var objects, members int
-	if err = f.Pool.QueryRow(ctx, `SELECT retired_at IS NOT NULL,(SELECT count(*) FROM computer_objects WHERE digest=$1),(SELECT count(*) FROM cas_objects WHERE digest=$1) FROM cas_object_lifetimes WHERE digest=$1`, digest).Scan(&retired, &objects, &members); err != nil {
+	if err = f.Pool.QueryRow(ctx, `SELECT retired_at IS NOT NULL,(SELECT count(*) FROM computer_objects WHERE digest=$1),(SELECT count(*) FROM cas_objects WHERE digest=$1) FROM cas_blobs WHERE digest=$1`, digest).Scan(&retired, &objects, &members); err != nil {
 		t.Fatal(err)
 	}
 	if !retired || objects != 0 || members != 0 {
@@ -113,7 +113,7 @@ func TestComputerCollectionDrainsOrphanGraph(t *testing.T) {
 			t.Fatal(err)
 		}
 		var remaining, retired int
-		if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_objects WHERE digest=ANY($1)),(SELECT count(*) FROM cas_object_lifetimes WHERE digest=ANY($1) AND retired_at IS NOT NULL)`, digests).Scan(&remaining, &retired); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM computer_objects WHERE digest=ANY($1)),(SELECT count(*) FROM cas_blobs WHERE digest=ANY($1) AND retired_at IS NOT NULL)`, digests).Scan(&remaining, &retired); err != nil {
 			t.Fatal(err)
 		}
 		if remaining != 2-pass || retired != pass+1 {

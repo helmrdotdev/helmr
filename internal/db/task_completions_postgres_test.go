@@ -154,7 +154,7 @@ func testTaskFailureRetainsPhysicalFrontier(t *testing.T, retry bool) {
 	artifactID := uuid.NewV7()
 	digest := dbtest.Digest("restored-task-frontier")
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/octet-stream')
 	`, fixture.orgID, digest)
 	dbtest.MustExec(t, ctx, fixture.pool, `

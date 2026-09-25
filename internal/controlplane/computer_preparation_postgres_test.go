@@ -43,7 +43,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	// Bind a valid admitted deployment to this reserved runtime. The existing
 	// publication fixture's opaque candidate isolates the database protocol;
 	// disk encoding/authentication is exercised by the computer package.
-	dbtest.MustExec(t, t.Context(), f.Pool, `WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`,
+	dbtest.MustExec(t, t.Context(), f.Pool, `WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, $3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`,
 		f.OrgID, seed.WorkspaceImageDigest, seed.WorkspaceImageSizeBytes, seed.WorkspaceImageMediaType)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE artifacts SET digest=$2,size_bytes=$3,media_type=$4
  WHERE id=(SELECT artifact_id FROM deployment_definitions WHERE id=$1)`,

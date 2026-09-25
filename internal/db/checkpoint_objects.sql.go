@@ -64,7 +64,7 @@ func (q *Queries) RegisterCheckpointManifest(ctx context.Context, arg RegisterCh
 
 const registerCheckpointObject = `-- name: RegisterCheckpointObject :one
 WITH lifetime AS (
-    INSERT INTO cas_object_lifetimes (digest) VALUES ($2)
+    INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, $3)
     ON CONFLICT DO NOTHING
 )
 INSERT INTO run_checkpoint_objects (checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status)

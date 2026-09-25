@@ -39,7 +39,7 @@ func (q *Queries) GetCasObject(ctx context.Context, arg GetCasObjectParams) (Cas
 
 const upsertCasObject = `-- name: UpsertCasObject :one
 WITH lifetime AS (
-    INSERT INTO cas_object_lifetimes (digest) VALUES ($2)
+    INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, $3)
     ON CONFLICT (digest) DO NOTHING
 )
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)

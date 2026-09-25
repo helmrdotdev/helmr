@@ -380,7 +380,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_object_lifetimes.available:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.logical_bytes:s,computer_version_roots.root_digest:s,computer_version_roots.root_key_id:s,computer_version_roots.root_kind:s,computer_version_roots.root_rank:s,computer_version_roots.root_size_bytes:s,computers.write_key_available:s,run_checkpoint_objects.availability_required:s,runtime_instances.computer_key_available:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.referenceable:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.logical_bytes:s,computer_version_roots.payload_required:s,computer_version_roots.root_digest:s,computer_version_roots.root_key_id:s,computer_version_roots.root_kind:s,computer_version_roots.root_rank:s,computer_version_roots.root_size_bytes:s,computer_versions.payload_available:s,computers.computer_payload_required:s,computers.recovery_payload_required:s,computers.write_key_available:s,run_attempts.computer_payload_required:s,run_checkpoint_objects.availability_required:s,run_checkpoints.computer_payload_required:s,run_waits.computer_payload_required:s,runs.computer_payload_required:s,runtime_instances.computer_key_available:s,runtime_instances.computer_payload_required:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s,workspace_processes.computer_payload_required:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -482,7 +482,7 @@ INSERT INTO worker_instances (
     '01900000-0000-7000-8000-000000000908',
     '00000000-0000-7000-8000-000000000907'
 );
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') ON CONFLICT DO NOTHING) INSERT INTO cas_objects (
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (
     org_id, digest, size_bytes, media_type
 ) VALUES (
     '00000000-0000-7000-8000-000000000901',

@@ -282,6 +282,15 @@ type AuthSession struct {
 	RevokedAt  pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type CasBlob struct {
+	Digest           string             `json:"digest"`
+	SizeBytes        int64              `json:"size_bytes"`
+	RetiredAt        pgtype.Timestamptz `json:"retired_at"`
+	Referenceable    pgtype.Bool        `json:"referenceable"`
+	NextReclaimAt    pgtype.Timestamptz `json:"next_reclaim_at"`
+	LastReclaimError pgtype.Text        `json:"last_reclaim_error"`
+}
+
 type CasObject struct {
 	OrgID                pgtype.UUID        `json:"org_id"`
 	Digest               string             `json:"digest"`
@@ -291,15 +300,7 @@ type CasObject struct {
 	AvailabilityRequired pgtype.Bool        `json:"availability_required"`
 }
 
-type CasObjectLifetime struct {
-	Digest           string             `json:"digest"`
-	RetiredAt        pgtype.Timestamptz `json:"retired_at"`
-	Available        pgtype.Bool        `json:"available"`
-	NextReclaimAt    pgtype.Timestamptz `json:"next_reclaim_at"`
-	LastReclaimError pgtype.Text        `json:"last_reclaim_error"`
-}
-
-type CasRetiredUpload struct {
+type CasUploadReclaim struct {
 	Digest        string             `json:"digest"`
 	UploadID      string             `json:"upload_id"`
 	NextReclaimAt pgtype.Timestamptz `json:"next_reclaim_at"`
@@ -327,6 +328,8 @@ type Computer struct {
 	RecoveryRuntimeID            pgtype.UUID        `json:"recovery_runtime_id"`
 	RecoveryCompletedAt          pgtype.Timestamptz `json:"recovery_completed_at"`
 	RecoveryFailure              []byte             `json:"recovery_failure"`
+	ComputerPayloadRequired      pgtype.Bool        `json:"computer_payload_required"`
+	RecoveryPayloadRequired      pgtype.Bool        `json:"recovery_payload_required"`
 	InitialConfig                []byte             `json:"initial_config"`
 	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
 	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
@@ -341,8 +344,6 @@ type Computer struct {
 	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
 	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
 	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
-	ComputerPayloadRequired      pgtype.Bool        `json:"computer_payload_required"`
-	RecoveryPayloadRequired      pgtype.Bool        `json:"recovery_payload_required"`
 }
 
 type ComputerDataKey struct {
@@ -599,11 +600,6 @@ type Region struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-type RetainedComputerVersion struct {
-	ComputerID pgtype.UUID `json:"computer_id"`
-	VersionID  pgtype.UUID `json:"version_id"`
-}
-
 type Run struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
@@ -715,13 +711,6 @@ type RunCheckpointObject struct {
 	AvailabilityRequired pgtype.Bool `json:"availability_required"`
 }
 
-type RunFinalizationObject struct {
-	RunLeaseID  pgtype.UUID `json:"run_lease_id"`
-	OperationID pgtype.UUID `json:"operation_id"`
-	Root        []byte      `json:"root"`
-	LeaseStatus string      `json:"lease_status"`
-}
-
 type RunLease struct {
 	ID                               pgtype.UUID        `json:"id"`
 	OrgID                            pgtype.UUID        `json:"org_id"`
@@ -756,6 +745,7 @@ type RunLease struct {
 	FinalizationKind                 pgtype.Text        `json:"finalization_kind"`
 	FinalizationStartedAt            pgtype.Timestamptz `json:"finalization_started_at"`
 	FinalizationRequestFingerprint   pgtype.Text        `json:"finalization_request_fingerprint"`
+	FinalizationRoot                 []byte             `json:"finalization_root"`
 	CheckpointedAt                   pgtype.Timestamptz `json:"checkpointed_at"`
 	TerminalAt                       pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode               pgtype.Text        `json:"terminal_reason_code"`
@@ -879,6 +869,7 @@ type RuntimeInstance struct {
 	ComputerSaveID                  pgtype.UUID        `json:"computer_save_id"`
 	ComputerSaveLeaseID             pgtype.UUID        `json:"computer_save_lease_id"`
 	ComputerSavePredecessorID       pgtype.UUID        `json:"computer_save_predecessor_id"`
+	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
 	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
 	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
 	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
@@ -901,7 +892,6 @@ type RuntimeInstance struct {
 	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
 	TerminalError                   []byte             `json:"terminal_error"`
 	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
 }
 
 type RuntimeSubstrate struct {

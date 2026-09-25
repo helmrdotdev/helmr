@@ -98,7 +98,7 @@ DELETE FROM cas_objects c
 -- merely observed an arbitrary temporarily unowned upload. Permanent retirement
 -- prevents late upload/adoption from reviving the same physical key.
 -- name: RetireCollectedComputerObject :execrows
-UPDATE cas_object_lifetimes l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp()
+UPDATE cas_blobs l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp()
  WHERE l.digest=sqlc.arg(digest) AND l.retired_at IS NULL
  AND NOT EXISTS (SELECT 1 FROM cas_objects c WHERE c.digest=l.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_objects o WHERE o.digest=l.digest)
@@ -108,5 +108,5 @@ UPDATE cas_object_lifetimes l SET retired_at=clock_timestamp(),next_reclaim_at=c
 -- serialize membership cleanup. Acquire in a separate statement after object
 -- deletion; subsequent statements then see the previous collector's commit.
 -- NO KEY UPDATE avoids blocking ordinary FK acquisition until actual retirement.
--- name: LockCollectedComputerLifetime :one
-SELECT digest FROM cas_object_lifetimes WHERE digest=sqlc.arg(digest) FOR NO KEY UPDATE;
+-- name: LockCollectedComputerBlob :one
+SELECT digest FROM cas_blobs WHERE digest=sqlc.arg(digest) FOR NO KEY UPDATE;

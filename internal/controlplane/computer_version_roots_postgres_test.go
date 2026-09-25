@@ -57,7 +57,7 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 			t.Fatalf("expected scoped retention rejection: %v", err)
 		}
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,512)`, digest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,512,'application/octet-stream')`, f.OrgID, digest)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,512,'application/octet-stream','root',2,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, key.ID)

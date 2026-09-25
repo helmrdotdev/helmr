@@ -224,16 +224,16 @@ func (q *Queries) ListUnreferencedComputerObjects(ctx context.Context, rowLimit 
 	return items, nil
 }
 
-const lockCollectedComputerLifetime = `-- name: LockCollectedComputerLifetime :one
-SELECT digest FROM cas_object_lifetimes WHERE digest=$1 FOR NO KEY UPDATE
+const lockCollectedComputerBlob = `-- name: LockCollectedComputerBlob :one
+SELECT digest FROM cas_blobs WHERE digest=$1 FOR NO KEY UPDATE
 `
 
 // Collectors deleting different logical owners of the same physical digest must
 // serialize membership cleanup. Acquire in a separate statement after object
 // deletion; subsequent statements then see the previous collector's commit.
 // NO KEY UPDATE avoids blocking ordinary FK acquisition until actual retirement.
-func (q *Queries) LockCollectedComputerLifetime(ctx context.Context, digest string) (string, error) {
-	row := q.db.QueryRow(ctx, lockCollectedComputerLifetime, digest)
+func (q *Queries) LockCollectedComputerBlob(ctx context.Context, digest string) (string, error) {
+	row := q.db.QueryRow(ctx, lockCollectedComputerBlob, digest)
 	var digest_2 string
 	err := row.Scan(&digest_2)
 	return digest_2, err
@@ -302,7 +302,7 @@ func (q *Queries) ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit 
 }
 
 const retireCollectedComputerObject = `-- name: RetireCollectedComputerObject :execrows
-UPDATE cas_object_lifetimes l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp()
+UPDATE cas_blobs l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timestamp()
  WHERE l.digest=$1 AND l.retired_at IS NULL
  AND NOT EXISTS (SELECT 1 FROM cas_objects c WHERE c.digest=l.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_objects o WHERE o.digest=l.digest)

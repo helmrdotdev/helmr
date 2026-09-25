@@ -40,8 +40,19 @@ const deleteUnreferencedComputerVersionRoot = `-- name: DeleteUnreferencedComput
 DELETE FROM computer_version_roots r
 WHERE r.environment_id=$1 AND r.computer_id=$2
  AND r.version_id=$3
- AND NOT EXISTS(SELECT 1 FROM retained_computer_versions owner
- WHERE owner.computer_id=r.computer_id AND owner.version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM computers owner WHERE computer_payload_required AND head_version_id IS NOT NULL AND owner.id=r.computer_id AND owner.head_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM computers owner WHERE recovery_payload_required AND recovery_version_id IS NOT NULL AND owner.id=r.computer_id AND owner.recovery_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runs owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_attempts owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_checkpoints owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_checkpoints owner WHERE computer_payload_required AND private_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.private_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_waits owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_waits owner WHERE computer_payload_required AND resume_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.resume_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM workspace_processes owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM workspace_processes owner WHERE computer_payload_required AND staged_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.staged_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE computer_payload_required AND reserved_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.reserved_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE retained_computer_source_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.retained_computer_source_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE reclaimed_at IS NULL AND computer_save_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.computer_save_id=r.version_id)
 `
 
 type DeleteUnreferencedComputerVersionRootParams struct {
@@ -147,8 +158,19 @@ func (q *Queries) ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInst
 const listUnreferencedComputerVersionRoots = `-- name: ListUnreferencedComputerVersionRoots :many
 SELECT r.environment_id,r.computer_id,r.version_id
 FROM computer_version_roots r
-WHERE NOT EXISTS(SELECT 1 FROM retained_computer_versions owner
- WHERE owner.computer_id=r.computer_id AND owner.version_id=r.version_id)
+WHERE NOT EXISTS (SELECT 1 FROM computers owner WHERE computer_payload_required AND head_version_id IS NOT NULL AND owner.id=r.computer_id AND owner.head_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM computers owner WHERE recovery_payload_required AND recovery_version_id IS NOT NULL AND owner.id=r.computer_id AND owner.recovery_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runs owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_attempts owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_checkpoints owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_checkpoints owner WHERE computer_payload_required AND private_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.private_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_waits owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM run_waits owner WHERE computer_payload_required AND resume_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.resume_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM workspace_processes owner WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.base_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM workspace_processes owner WHERE computer_payload_required AND staged_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.staged_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE computer_payload_required AND reserved_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.reserved_workspace_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE retained_computer_source_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.retained_computer_source_version_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE reclaimed_at IS NULL AND computer_save_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.computer_save_id=r.version_id)
 ORDER BY r.version_id LIMIT $1
 `
 
@@ -159,7 +181,7 @@ type ListUnreferencedComputerVersionRootsRow struct {
 }
 
 // Native owners arbitrate retirement with restrictive availability FKs. This
-// view only avoids repeatedly selecting retained roots in the bounded sweep.
+// discovery only avoids repeatedly selecting retained roots in the bounded sweep.
 func (q *Queries) ListUnreferencedComputerVersionRoots(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerVersionRootsRow, error) {
 	rows, err := q.db.Query(ctx, listUnreferencedComputerVersionRoots, rowLimit)
 	if err != nil {

@@ -37,7 +37,7 @@ func requireFinalizationComputer(ctx context.Context, q db.Querier, authority ru
 	if err != nil {
 		return err
 	}
-	_, err = q.RequireRunFinalizationObject(ctx, db.RequireRunFinalizationObjectParams{RunLeaseID: authority.runLease.ID, OperationID: pgvalue.UUID(uuid.MustParse(capture.receipt.OperationID)), Root: rawRoot})
+	_, err = q.RequireRunFinalizationRoot(ctx, db.RequireRunFinalizationRootParams{RunLeaseID: authority.runLease.ID, OperationID: pgvalue.UUID(uuid.MustParse(capture.receipt.OperationID)), Root: rawRoot})
 	if err != nil {
 		return err
 	}

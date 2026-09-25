@@ -36,7 +36,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	object := func(label, kind string, rank int, key pgtype.UUID, uploaded bool) string {
 		t.Helper()
 		digest := dbtest.Digest(label)
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
+		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,64)`, digest)
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream',$6,$7,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID, kind, rank)
 		if key.Valid {
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, key)
@@ -91,10 +91,11 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	if n := scalar(`SELECT count(*) FROM computer_object_keys WHERE digest=$1 AND NOT is_direct`, parent); n != 0 {
 		t.Fatal("failed certification leaked summary")
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,63,'application/octet-stream')`, f.OrgID, parent)
+	_, err = f.Pool.Exec(t.Context(), `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,63,'application/octet-stream')`, f.OrgID, parent)
+	state(err, "23503")
 	_, err = certify(parent)
 	state(err, "23503")
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_objects SET size_bytes=64 WHERE org_id=$1 AND digest=$2`, f.OrgID, parent)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,64,'application/octet-stream')`, f.OrgID, parent)
 	// Hold the exact row until a contender demonstrably waits. It must
 	// recheck certified after lock acquisition, not reuse a stale snapshot.
 	locker, err := f.Pool.Begin(t.Context())
@@ -165,7 +166,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	state(err, "23503")
 	_, err = f.Pool.Exec(t.Context(), `UPDATE computer_data_keys SET retired_at=now(),wrapped_key=NULL WHERE id=$1`, key2)
 	state(err, "23503")
-	_, err = f.Pool.Exec(t.Context(), `UPDATE cas_object_lifetimes SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, parent)
+	_, err = f.Pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, parent)
 	state(err, "23503")
 	// A sibling Computer in the same environment still cannot borrow these keys.
 	siblingRun := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
@@ -174,7 +175,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 		t.Fatal(err)
 	}
 	foreign := dbtest.Digest("foreign-root")
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, foreign)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,64)`, foreign)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',2,'{}')`, env, sibling, foreign, f.OrgID, f.ProjectID)
 	_, err = f.Pool.Exec(t.Context(), `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, sibling, foreign, key2)
 	state(err, "23503")
@@ -213,7 +214,7 @@ func TestComputerObjectCertificationRollback(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,64)`, digest)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,64,'application/octet-stream')`, f.OrgID, digest)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection) VALUES($1,$2,$3,$4,$5,64,'application/octet-stream','root',1,'{}')`, env, computerID, digest, f.OrgID, f.ProjectID)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, env, computerID, digest, material.ID)

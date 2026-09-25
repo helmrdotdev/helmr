@@ -91,6 +91,7 @@ CREATE TABLE environments (
     is_default BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    current_deployment_id UUID,
     UNIQUE (org_id, project_id, id),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
@@ -232,46 +233,43 @@ CREATE TABLE secret_versions (
     FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE RESTRICT
 );
 
-ALTER TABLE secrets
-    ADD CONSTRAINT secrets_current_version_fk
-    FOREIGN KEY (id, current_version_id)
-    REFERENCES secret_versions(secret_id, id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
 -- Physical-key lifetime is global; organization memberships are visibility, not
 -- deletion authority. A retired key can never acquire a new live reference.
-CREATE TABLE cas_object_lifetimes (
+-- Registration is not evidence of remote byte availability or verification.
+CREATE TABLE cas_blobs (
     digest TEXT PRIMARY KEY CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     retired_at TIMESTAMPTZ,
-    available BOOLEAN GENERATED ALWAYS AS (retired_at IS NULL) STORED,
+    referenceable BOOLEAN GENERATED ALWAYS AS (retired_at IS NULL) STORED,
     next_reclaim_at TIMESTAMPTZ,
     last_reclaim_error TEXT,
-    UNIQUE (digest, available),
+    UNIQUE (digest, size_bytes, referenceable),
     CHECK ((retired_at IS NULL) = (next_reclaim_at IS NULL))
 );
-CREATE INDEX cas_object_lifetimes_reclaim_idx
-    ON cas_object_lifetimes (next_reclaim_at, digest) WHERE retired_at IS NOT NULL;
+CREATE INDEX cas_blobs_reclaim_idx
+    ON cas_blobs (next_reclaim_at, digest) WHERE retired_at IS NOT NULL;
 
 -- Persist upload IDs before abort: in-flight parts may arrive after an abort.
-CREATE TABLE cas_retired_uploads (
-    digest TEXT NOT NULL REFERENCES cas_object_lifetimes(digest),
+CREATE TABLE cas_upload_reclaims (
+    digest TEXT NOT NULL REFERENCES cas_blobs(digest),
     upload_id TEXT NOT NULL CHECK (upload_id <> ''),
     next_reclaim_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (digest, upload_id)
 );
 
-CREATE INDEX cas_retired_uploads_reclaim_idx ON cas_retired_uploads (digest, next_reclaim_at, upload_id);
+CREATE INDEX cas_upload_reclaims_reclaim_idx ON cas_upload_reclaims (digest, next_reclaim_at, upload_id);
 
+-- Organization-scoped descriptors retain a physical Blob. Size is constrained
+-- by the Blob; media type belongs to this interpretation of its bytes.
 CREATE TABLE cas_objects (
     org_id UUID NOT NULL,
     digest TEXT NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
     size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
     media_type TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, digest),
     availability_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
-    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available),
+    PRIMARY KEY (org_id, digest),
+    FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, referenceable),
     CONSTRAINT cas_objects_descriptor_key
         UNIQUE (org_id, digest, size_bytes, media_type)
 );
@@ -406,12 +404,6 @@ CREATE TABLE worker_pool_cpu_shapes (
     cpu_config_digest TEXT NOT NULL CHECK (cpu_config_digest ~ '^sha256:[0-9a-f]{64}$'),
     PRIMARY KEY (worker_pool_id, vcpu_count)
 );
-
-ALTER TABLE worker_groups
-	ADD CONSTRAINT worker_groups_primary_pool_fkey
-	FOREIGN KEY (id, primary_pool_id)
-	REFERENCES worker_pools(worker_group_id, id)
-	ON DELETE RESTRICT;
 
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY,
@@ -625,15 +617,6 @@ CREATE TABLE deployment_definitions (
 
 CREATE INDEX deployment_definitions_artifact_idx
     ON deployment_definitions (environment_id, artifact_id);
-
-ALTER TABLE environments
-    ADD COLUMN current_deployment_id UUID;
-
-ALTER TABLE environments
-    ADD CONSTRAINT environments_current_deployment_fk
-    FOREIGN KEY (id, current_deployment_id)
-    REFERENCES deployments(environment_id, id)
-    ON DELETE RESTRICT;
 
 CREATE TABLE runtime_substrates (
     id UUID PRIMARY KEY,
@@ -853,6 +836,8 @@ CREATE TABLE computers (
     recovery_runtime_id UUID,
     recovery_completed_at TIMESTAMPTZ,
     recovery_failure JSONB CHECK (recovery_failure IS NULL OR (jsonb_typeof(recovery_failure)='object' AND recovery_id IS NOT NULL AND recovery_completed_at IS NULL)),
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status <> 'deleted' THEN true END) STORED,
+    recovery_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN recovery_id IS NOT NULL AND recovery_completed_at IS NULL AND status <> 'deleted' THEN true END) STORED,
     CONSTRAINT computers_recovery_preparation_check CHECK (
         (recovery_preparation_count = 0 AND recovery_runtime_id IS NULL AND next_recovery_preparation_at IS NULL AND recovery_completed_at IS NULL)
         OR (recovery_preparation_count > 0 AND recovery_id IS NOT NULL AND recovery_runtime_id IS NOT NULL AND next_recovery_preparation_at IS NOT NULL)
@@ -1161,6 +1146,7 @@ CREATE TABLE runs (
         CHECK (runtime_preparation_count BETWEEN 0 AND 8),
     next_runtime_preparation_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status IN ('queued','running','waiting','retry_delayed','cancel_requested') THEN true END) STORED,
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, id, deployment_id),
     UNIQUE (org_id, project_id, environment_id, id, workspace_id),
@@ -1289,20 +1275,6 @@ CREATE TABLE runs (
     CONSTRAINT runs_retry_time_check CHECK ((status = 'retry_delayed') = (retry_at IS NOT NULL))
 );
 
-ALTER TABLE computers
-    ADD CONSTRAINT computers_owner_actor_fk
-    FOREIGN KEY (owner_session_id, id)
-    REFERENCES sessions(id, workspace_id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE computers
-    ADD CONSTRAINT computers_owner_run_fk
-    FOREIGN KEY (owner_run_id, id)
-    REFERENCES runs(id, workspace_id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
 CREATE TABLE run_attempts (
     run_id UUID NOT NULL,
     number INTEGER NOT NULL CHECK (number > 0),
@@ -1317,6 +1289,7 @@ CREATE TABLE run_attempts (
     terminal_error JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     terminal_at TIMESTAMPTZ,
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN terminal_at IS NULL THEN true END) STORED,
     PRIMARY KEY (run_id, number),
     UNIQUE (run_id, number, workspace_id),
     FOREIGN KEY (run_id, entrypoint_kind, workspace_id)
@@ -1451,28 +1424,6 @@ CREATE TABLE session_events (
     FOREIGN KEY (producer_run_id, producer_attempt_number) REFERENCES run_attempts(run_id, number)
 );
 CREATE UNIQUE INDEX session_events_terminal_turn ON session_events(session_id, turn_id) WHERE kind IN ('turn.completed', 'turn.failed', 'turn.interrupted');
-ALTER TABLE sessions ADD FOREIGN KEY (id, active_turn_id) REFERENCES session_turns(session_id, id);
-ALTER TABLE session_turns ADD FOREIGN KEY (session_id, id, terminal_event_id) REFERENCES session_events(session_id, turn_id, id);
-
-ALTER TABLE runs
-    ADD CONSTRAINT runs_current_attempt_fk
-    FOREIGN KEY (id, current_attempt_number)
-    REFERENCES run_attempts(run_id, number)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE sessions
-    ADD CONSTRAINT sessions_current_run_fk
-    FOREIGN KEY (id, workspace_id, current_run_id)
-    REFERENCES runs(session_id, workspace_id, id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE sessions
-    ADD CONSTRAINT sessions_failure_run_fk
-    FOREIGN KEY (id, failure_run_id)
-    REFERENCES runs(session_id, id)
-    ON DELETE RESTRICT;
 
 CREATE INDEX runs_deployment_definition_idx
     ON runs (
@@ -1749,6 +1700,7 @@ CREATE TABLE workspace_processes (
     CONSTRAINT workspace_processes_exit_output_check CHECK (status NOT IN ('exit_requested', 'exited') OR (stdout IS NOT NULL AND stderr IS NOT NULL)),
     CONSTRAINT workspace_processes_exited_time_check CHECK (status <> 'exited' OR exited_at IS NOT NULL),
     CHECK (error IS NULL OR jsonb_typeof(error) = 'object'),
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status NOT IN ('exited','failed') THEN true END) STORED,
     UNIQUE (workspace_id, id),
     UNIQUE (id, workspace_id, runtime_instance_id),
     FOREIGN KEY (environment_id, workspace_id)
@@ -1775,12 +1727,6 @@ CREATE UNIQUE INDEX workspace_processes_claim_uidx
 CREATE INDEX workspace_processes_worker_replay_idx
     ON workspace_processes (worker_instance_id, worker_epoch, status, created_at, id)
     WHERE status IN ('starting', 'running', 'exit_requested');
-
-ALTER TABLE workspace_leases
-    ADD CONSTRAINT workspace_leases_owner_process_id_fkey
-    FOREIGN KEY (owner_process_id, workspace_id, runtime_instance_id)
-    REFERENCES workspace_processes(id, workspace_id, runtime_instance_id)
-    ON DELETE RESTRICT;
 
 CREATE UNIQUE INDEX workspace_leases_mount_active_uidx
     ON workspace_leases (workspace_mount_id)
@@ -1821,9 +1767,6 @@ CREATE TABLE computer_data_keys (
     UNIQUE (environment_id, computer_id, id, available),
     FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT
 );
-ALTER TABLE computers ADD CONSTRAINT computers_write_key_fkey
-    FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
-    REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT;
 
 -- Physical Computer storage ownership is independent of version audit lineage.
 -- Admission retains keys/lifetimes before upload; certification additionally pins
@@ -1851,7 +1794,7 @@ CREATE TABLE computer_objects (
     UNIQUE (environment_id, computer_id, digest, certified),
     FOREIGN KEY (org_id, project_id, environment_id) REFERENCES environments(org_id, project_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id) REFERENCES computers(environment_id, id) ON DELETE RESTRICT,
-    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available) ON DELETE RESTRICT,
+    FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, referenceable) ON DELETE RESTRICT,
     FOREIGN KEY (certified_org_id, digest, size_bytes, media_type)
         REFERENCES cas_objects(org_id, digest, size_bytes, media_type) ON DELETE RESTRICT
 );
@@ -2002,65 +1945,22 @@ CREATE TABLE computer_version_roots (
     root_key_id UUID GENERATED ALWAYS AS ((locator->'page'->>'key_id')::uuid) STORED NOT NULL,
     direct_key_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     certification_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
+    payload_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
     PRIMARY KEY (environment_id, computer_id, version_id),
     FOREIGN KEY (environment_id, computer_id, version_id)
         REFERENCES computer_versions(environment_id, workspace_id, id) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, root_digest, root_size_bytes, root_rank, certification_required, root_kind)
         REFERENCES computer_objects(environment_id, computer_id, digest, size_bytes, rank, certified, kind) ON DELETE RESTRICT,
     FOREIGN KEY (environment_id, computer_id, root_digest, root_key_id, direct_key_required)
-        REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id, is_direct) ON DELETE RESTRICT
+        REFERENCES computer_object_keys(environment_id, computer_id, digest, key_id, is_direct) ON DELETE RESTRICT,
+    CONSTRAINT computer_version_roots_available_fkey FOREIGN KEY (computer_id,version_id,payload_required)
+ REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT
 );
 CREATE INDEX computer_version_roots_object_idx ON computer_version_roots(environment_id, computer_id, root_digest);
 
 CREATE UNIQUE INDEX computer_versions_root_uidx
     ON computer_versions (workspace_id)
     WHERE parent_version_id IS NULL;
-
-ALTER TABLE workspace_mounts
-    ADD CONSTRAINT workspace_mounts_materialized_version_id_fkey
-    FOREIGN KEY (environment_id, workspace_id, materialized_version_id)
-    REFERENCES computer_versions(environment_id, workspace_id, id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE workspace_processes
-    ADD CONSTRAINT workspace_processes_staged_version_id_fkey
-    FOREIGN KEY (workspace_id, staged_version_id)
-    REFERENCES computer_versions(workspace_id, id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE workspace_leases
-    ADD CONSTRAINT workspace_leases_base_workspace_version_id_fkey
-    FOREIGN KEY (environment_id, workspace_id, base_workspace_version_id)
-    REFERENCES computer_versions(environment_id, workspace_id, id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE computers
-    ADD CONSTRAINT computers_head_version_id_fkey
-    FOREIGN KEY (environment_id, id, head_version_id)
-    REFERENCES computer_versions(environment_id, workspace_id, id)
-    ON DELETE RESTRICT
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE workspace_processes
-    ADD CONSTRAINT workspace_processes_base_workspace_version_id_fkey
-    FOREIGN KEY (workspace_id, base_workspace_version_id)
-    REFERENCES computer_versions(workspace_id, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE runs
-    ADD CONSTRAINT runs_base_workspace_version_fk
-    FOREIGN KEY (environment_id, workspace_id, base_workspace_version_id)
-    REFERENCES computer_versions(environment_id, workspace_id, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE run_attempts
-    ADD CONSTRAINT run_attempts_base_workspace_version_fk
-    FOREIGN KEY (workspace_id, base_workspace_version_id)
-    REFERENCES computer_versions(workspace_id, id)
-    ON DELETE RESTRICT;
 
 CREATE TABLE secret_resolutions (
     id UUID PRIMARY KEY,
@@ -2213,6 +2113,154 @@ CREATE INDEX control_outbox_dead_lettered_created_idx
     ON control_outbox (created_at, id)
     WHERE status = 'dead_lettered';
 
+CREATE TABLE run_leases (
+    id UUID PRIMARY KEY,
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    run_id UUID NOT NULL,
+    workspace_id UUID NOT NULL,
+    region_id TEXT NOT NULL,
+    lease_sequence BIGINT NOT NULL CHECK (lease_sequence > 0),
+    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    worker_group_id UUID NOT NULL,
+    worker_instance_id UUID NOT NULL,
+    worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
+    runtime_instance_id UUID NOT NULL,
+    runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
+    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis > 0),
+    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes > 0),
+    requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes >= 0),
+    requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
+    trace_id TEXT,
+    span_id TEXT,
+    parent_span_id TEXT,
+    traceparent TEXT,
+    status TEXT NOT NULL DEFAULT 'assigned'
+        CHECK (status IN (
+            'assigned',
+            'starting',
+            'running',
+            'checkpointing',
+            'finalizing',
+            'checkpointed',
+            'completed',
+            'failed',
+            'cancelled',
+            'lost',
+            'rejected',
+            'expired'
+        )),
+    start_deadline_at TIMESTAMPTZ NOT NULL,
+    claimed_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ,
+    renewed_at TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ NOT NULL,
+    previous_expires_at TIMESTAMPTZ,
+    finalization_operation_id UUID,
+    finalization_kind TEXT,
+    finalization_started_at TIMESTAMPTZ,
+    finalization_request_fingerprint TEXT,
+    finalization_root JSONB CHECK (jsonb_typeof(finalization_root) = 'object'),
+    checkpointed_at TIMESTAMPTZ,
+    terminal_at TIMESTAMPTZ,
+    terminal_reason_code TEXT,
+    terminal_error JSONB,
+    terminal_request_fingerprint TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, run_id, id),
+    UNIQUE (run_id, lease_sequence),
+    UNIQUE (run_id, attempt_number, workspace_id, id),
+    UNIQUE (workspace_id, runtime_instance_id, id),
+    FOREIGN KEY (runtime_identity_id)
+        REFERENCES runtime_identities(id)
+        ON DELETE RESTRICT,
+    CONSTRAINT run_leases_run_scope_fkey FOREIGN KEY (org_id, project_id, environment_id, run_id, workspace_id)
+        REFERENCES runs(org_id, project_id, environment_id, id, workspace_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (run_id, attempt_number)
+        REFERENCES run_attempts(run_id, number)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, workspace_id, region_id)
+        REFERENCES computers(environment_id, id, region_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT run_leases_expiry_order_check CHECK (expires_at > created_at),
+    CONSTRAINT run_leases_start_deadline_check CHECK (start_deadline_at <= expires_at),
+    CONSTRAINT run_leases_claim_time_check CHECK (claimed_at IS NULL OR claimed_at >= created_at),
+    CONSTRAINT run_leases_start_time_check CHECK (started_at IS NULL OR (claimed_at IS NOT NULL AND started_at >= claimed_at)),
+    CONSTRAINT run_leases_renewal_time_check CHECK (renewed_at IS NULL OR (
+        renewed_at >= COALESCE(started_at, claimed_at, created_at)
+        AND (terminal_at IS NULL OR renewed_at <= terminal_at)
+    )),
+    CONSTRAINT run_leases_renewal_pair_check CHECK ((previous_expires_at IS NULL) = (renewed_at IS NULL)),
+    CONSTRAINT run_leases_renewal_expiry_check CHECK (previous_expires_at IS NULL OR (
+        start_deadline_at <= previous_expires_at
+        AND renewed_at < previous_expires_at
+        AND previous_expires_at < expires_at
+    )),
+    CONSTRAINT run_leases_start_lifecycle_check CHECK (
+        (status = 'assigned' AND claimed_at IS NULL AND started_at IS NULL)
+        OR (status = 'starting' AND claimed_at IS NOT NULL AND started_at IS NULL)
+        OR (status IN ('running', 'checkpointing', 'finalizing', 'checkpointed', 'completed', 'failed') AND claimed_at IS NOT NULL AND started_at IS NOT NULL)
+        OR (status IN ('cancelled', 'lost', 'expired'))
+        OR (status = 'rejected' AND started_at IS NULL)
+    ),
+    CONSTRAINT run_leases_finalization_tuple_check CHECK (num_nonnulls(
+        finalization_operation_id,
+        finalization_kind,
+        finalization_started_at,
+        finalization_request_fingerprint
+    ) IN (0, 4)),
+    CONSTRAINT run_leases_finalization_lifecycle_check CHECK (
+        (status IN ('assigned', 'starting', 'running', 'checkpointing', 'checkpointed', 'rejected')
+         AND finalization_operation_id IS NULL)
+        OR (status = 'finalizing' AND finalization_operation_id IS NOT NULL)
+        OR status IN ('completed', 'failed', 'cancelled', 'lost', 'expired')
+    ),
+    CHECK (finalization_root IS NULL OR finalization_operation_id IS NOT NULL),
+    CHECK (finalization_kind IS NULL OR finalization_kind = 'capture'),
+    CHECK (finalization_request_fingerprint IS NULL OR finalization_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT run_leases_finalization_time_check CHECK (finalization_started_at IS NULL OR (
+        started_at IS NOT NULL
+        AND started_at <= finalization_started_at
+        AND finalization_started_at < expires_at
+        AND (terminal_at IS NULL OR finalization_started_at <= terminal_at)
+    )),
+    CONSTRAINT run_leases_checkpointed_time_check CHECK ((status = 'checkpointed') = (checkpointed_at IS NOT NULL)),
+    CONSTRAINT run_leases_terminal_shape_check CHECK (
+        (status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
+        OR (
+            status IN ('checkpointed', 'completed', 'failed', 'cancelled', 'lost', 'rejected', 'expired')
+            AND terminal_at IS NOT NULL
+            AND terminal_reason_code IS NOT NULL
+            AND btrim(terminal_reason_code) <> ''
+            AND octet_length(terminal_reason_code) <= 128
+        )
+    ),
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object'),
+    CHECK (terminal_request_fingerprint IS NULL OR terminal_request_fingerprint ~ '^sha256:[0-9a-f]{64}$')
+);
+
+CREATE UNIQUE INDEX run_leases_run_active_uidx
+    ON run_leases (run_id)
+    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
+
+CREATE UNIQUE INDEX run_leases_runtime_active_uidx
+    ON run_leases (runtime_instance_id)
+    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
+
+CREATE INDEX run_leases_worker_replay_idx
+    ON run_leases (worker_instance_id, worker_epoch, status, expires_at, id)
+    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
+
+CREATE INDEX run_leases_expiry_idx
+    ON run_leases (expires_at, id)
+    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
+
+CREATE INDEX run_leases_history_idx
+    ON run_leases (run_id, attempt_number, lease_sequence DESC);
+
 CREATE TABLE telemetry_outbox (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL,
@@ -2295,7 +2343,11 @@ CREATE TABLE telemetry_outbox (
             AND size_bytes IS NOT NULL
             AND observed_seq IS NOT NULL
         )
-    )
+    ),
+    CONSTRAINT telemetry_outbox_run_lease_id_fkey
+    FOREIGN KEY (org_id, run_id, run_lease_id)
+    REFERENCES run_leases(org_id, run_id, id)
+    ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
@@ -2311,179 +2363,6 @@ CREATE INDEX telemetry_outbox_written_gc_idx
     ON telemetry_outbox (written_at, id)
     WHERE written_at IS NOT NULL
       AND ((stream_kind = 'event' AND published_at IS NOT NULL) OR stream_kind = 'run_log');
-
-CREATE TABLE run_leases (
-    id UUID PRIMARY KEY,
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    workspace_id UUID NOT NULL,
-    region_id TEXT NOT NULL,
-    lease_sequence BIGINT NOT NULL CHECK (lease_sequence > 0),
-    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
-    worker_group_id UUID NOT NULL,
-    worker_instance_id UUID NOT NULL,
-    worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    runtime_instance_id UUID NOT NULL,
-    runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
-    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis > 0),
-    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes > 0),
-    requested_guest_ephemeral_disk_bytes BIGINT NOT NULL CHECK (requested_guest_ephemeral_disk_bytes >= 0),
-    requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
-    trace_id TEXT,
-    span_id TEXT,
-    parent_span_id TEXT,
-    traceparent TEXT,
-    status TEXT NOT NULL DEFAULT 'assigned'
-        CHECK (status IN (
-            'assigned',
-            'starting',
-            'running',
-            'checkpointing',
-            'finalizing',
-            'checkpointed',
-            'completed',
-            'failed',
-            'cancelled',
-            'lost',
-            'rejected',
-            'expired'
-        )),
-    start_deadline_at TIMESTAMPTZ NOT NULL,
-    claimed_at TIMESTAMPTZ,
-    started_at TIMESTAMPTZ,
-    renewed_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ NOT NULL,
-    previous_expires_at TIMESTAMPTZ,
-    finalization_operation_id UUID,
-    finalization_kind TEXT,
-    finalization_started_at TIMESTAMPTZ,
-    finalization_request_fingerprint TEXT,
-    checkpointed_at TIMESTAMPTZ,
-    terminal_at TIMESTAMPTZ,
-    terminal_reason_code TEXT,
-    terminal_error JSONB,
-    terminal_request_fingerprint TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (id, status),
-    UNIQUE (org_id, run_id, id),
-    UNIQUE (run_id, lease_sequence),
-    UNIQUE (run_id, attempt_number, workspace_id, id),
-    UNIQUE (workspace_id, runtime_instance_id, id),
-    FOREIGN KEY (runtime_identity_id)
-        REFERENCES runtime_identities(id)
-        ON DELETE RESTRICT,
-    CONSTRAINT run_leases_run_scope_fkey FOREIGN KEY (org_id, project_id, environment_id, run_id, workspace_id)
-        REFERENCES runs(org_id, project_id, environment_id, id, workspace_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (run_id, attempt_number)
-        REFERENCES run_attempts(run_id, number)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (environment_id, workspace_id, region_id)
-        REFERENCES computers(environment_id, id, region_id)
-        ON DELETE RESTRICT,
-    CONSTRAINT run_leases_expiry_order_check CHECK (expires_at > created_at),
-    CONSTRAINT run_leases_start_deadline_check CHECK (start_deadline_at <= expires_at),
-    CONSTRAINT run_leases_claim_time_check CHECK (claimed_at IS NULL OR claimed_at >= created_at),
-    CONSTRAINT run_leases_start_time_check CHECK (started_at IS NULL OR (claimed_at IS NOT NULL AND started_at >= claimed_at)),
-    CONSTRAINT run_leases_renewal_time_check CHECK (renewed_at IS NULL OR (
-        renewed_at >= COALESCE(started_at, claimed_at, created_at)
-        AND (terminal_at IS NULL OR renewed_at <= terminal_at)
-    )),
-    CONSTRAINT run_leases_renewal_pair_check CHECK ((previous_expires_at IS NULL) = (renewed_at IS NULL)),
-    CONSTRAINT run_leases_renewal_expiry_check CHECK (previous_expires_at IS NULL OR (
-        start_deadline_at <= previous_expires_at
-        AND renewed_at < previous_expires_at
-        AND previous_expires_at < expires_at
-    )),
-    CONSTRAINT run_leases_start_lifecycle_check CHECK (
-        (status = 'assigned' AND claimed_at IS NULL AND started_at IS NULL)
-        OR (status = 'starting' AND claimed_at IS NOT NULL AND started_at IS NULL)
-        OR (status IN ('running', 'checkpointing', 'finalizing', 'checkpointed', 'completed', 'failed') AND claimed_at IS NOT NULL AND started_at IS NOT NULL)
-        OR (status IN ('cancelled', 'lost', 'expired'))
-        OR (status = 'rejected' AND started_at IS NULL)
-    ),
-    CONSTRAINT run_leases_finalization_tuple_check CHECK (num_nonnulls(
-        finalization_operation_id,
-        finalization_kind,
-        finalization_started_at,
-        finalization_request_fingerprint
-    ) IN (0, 4)),
-    CONSTRAINT run_leases_finalization_lifecycle_check CHECK (
-        (status IN ('assigned', 'starting', 'running', 'checkpointing', 'checkpointed', 'rejected')
-         AND finalization_operation_id IS NULL)
-        OR (status = 'finalizing' AND finalization_operation_id IS NOT NULL)
-        OR status IN ('completed', 'failed', 'cancelled', 'lost', 'expired')
-    ),
-    CHECK (finalization_kind IS NULL OR finalization_kind = 'capture'),
-    CHECK (finalization_request_fingerprint IS NULL OR finalization_request_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
-    CONSTRAINT run_leases_finalization_time_check CHECK (finalization_started_at IS NULL OR (
-        started_at IS NOT NULL
-        AND started_at <= finalization_started_at
-        AND finalization_started_at < expires_at
-        AND (terminal_at IS NULL OR finalization_started_at <= terminal_at)
-    )),
-    CONSTRAINT run_leases_checkpointed_time_check CHECK ((status = 'checkpointed') = (checkpointed_at IS NOT NULL)),
-    CONSTRAINT run_leases_terminal_shape_check CHECK (
-        (status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
-        OR (
-            status IN ('checkpointed', 'completed', 'failed', 'cancelled', 'lost', 'rejected', 'expired')
-            AND terminal_at IS NOT NULL
-            AND terminal_reason_code IS NOT NULL
-            AND btrim(terminal_reason_code) <> ''
-            AND octet_length(terminal_reason_code) <= 128
-        )
-    ),
-    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object'),
-    CHECK (terminal_request_fingerprint IS NULL OR terminal_request_fingerprint ~ '^sha256:[0-9a-f]{64}$')
-);
-
-ALTER TABLE workspace_leases
-    ADD CONSTRAINT workspace_leases_owner_run_lease_fk
-    FOREIGN KEY (
-        workspace_id,
-        runtime_instance_id,
-        owner_run_lease_id
-    )
-    REFERENCES run_leases(
-        workspace_id,
-        runtime_instance_id,
-        id
-    )
-    ON DELETE RESTRICT;
-
-CREATE UNIQUE INDEX run_leases_run_active_uidx
-    ON run_leases (run_id)
-    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
-
-CREATE UNIQUE INDEX run_leases_runtime_active_uidx
-    ON run_leases (runtime_instance_id)
-    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
-
-CREATE INDEX run_leases_worker_replay_idx
-    ON run_leases (worker_instance_id, worker_epoch, status, expires_at, id)
-    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
-
-CREATE INDEX run_leases_expiry_idx
-    ON run_leases (expires_at, id)
-    WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
-
-CREATE INDEX run_leases_history_idx
-    ON run_leases (run_id, attempt_number, lease_sequence DESC);
-
-ALTER TABLE telemetry_outbox
-    ADD CONSTRAINT telemetry_outbox_run_lease_id_fkey
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-    REFERENCES run_leases(org_id, run_id, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE runs
-    ADD CONSTRAINT runs_current_run_lease_id_fkey
-    FOREIGN KEY (org_id, id, current_run_lease_id)
-    REFERENCES run_leases(org_id, run_id, id)
-    ON DELETE RESTRICT;
 
 CREATE TABLE run_checkpoints (
     id UUID PRIMARY KEY,
@@ -2514,6 +2393,7 @@ CREATE TABLE run_checkpoints (
     ready_at TIMESTAMPTZ,
     invalidated_at TIMESTAMPTZ,
     invalidation_reason_code TEXT,
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status IN ('creating','ready') THEN true END) STORED,
     UNIQUE (run_id, attempt_number, workspace_id, id),
     UNIQUE (id, workspace_id),
     UNIQUE (id, status),
@@ -2595,24 +2475,16 @@ CREATE TABLE run_checkpoints (
     CONSTRAINT run_checkpoints_ready_artifacts_check CHECK (
         status <> 'ready'
         OR runtime_config_artifact_id IS NOT NULL
-    )
+    ),
+    CONSTRAINT run_checkpoints_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT,
+    CONSTRAINT run_checkpoints_private_workspace_payload_fk FOREIGN KEY (workspace_id,private_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT
 );
 
--- Candidate descriptors have no independent lifecycle. The parent's status is
--- mirrored solely for FK pinning and cascades on every terminal transition.
-CREATE TABLE run_finalization_objects (
-    run_lease_id UUID PRIMARY KEY,
-    operation_id UUID NOT NULL,
-    root JSONB NOT NULL CHECK (jsonb_typeof(root) = 'object'),
-    lease_status TEXT NOT NULL,
-    FOREIGN KEY (run_lease_id, lease_status) REFERENCES run_leases(id, status)
-        ON UPDATE CASCADE ON DELETE RESTRICT
-);
-
+-- Each checkpoint retains its registered component objects until publication or abandonment.
 CREATE TABLE run_checkpoint_objects (
     checkpoint_id UUID NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('runtime_config', 'vm_state', 'memory', 'scratch_disk')),
-    digest TEXT NOT NULL UNIQUE REFERENCES cas_object_lifetimes(digest),
+    digest TEXT NOT NULL UNIQUE REFERENCES cas_blobs(digest),
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0),
     media_type TEXT NOT NULL,
     checkpoint_status TEXT NOT NULL,
@@ -2622,7 +2494,7 @@ CREATE TABLE run_checkpoint_objects (
     PRIMARY KEY (checkpoint_id, role),
     FOREIGN KEY (checkpoint_id, checkpoint_status) REFERENCES run_checkpoints(id, status)
         ON UPDATE CASCADE ON DELETE RESTRICT,
-    FOREIGN KEY (digest, availability_required) REFERENCES cas_object_lifetimes(digest, available)
+    FOREIGN KEY (digest, size_bytes, availability_required) REFERENCES cas_blobs(digest, size_bytes, referenceable)
 );
 
 CREATE INDEX run_checkpoints_history_idx
@@ -2710,6 +2582,7 @@ CREATE TABLE run_waits (
     suspension_error JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN suspension_status NOT IN ('released','cancelled','failed') THEN true END) STORED,
     UNIQUE (run_id, attempt_number, workspace_id, id),
     CHECK ((turn_id IS NULL) = (turn_session_id IS NULL)),
     CHECK ((turn_id IS NULL) = (turn_run_generation IS NULL)),
@@ -2911,7 +2784,13 @@ CREATE TABLE run_waits (
                   suspension_status IN ('released', 'cancelled', 'failed')
               ))
          ))
-    )
+    ),
+    CONSTRAINT run_waits_suspend_checkpoint_fk
+    FOREIGN KEY (run_id, attempt_number, workspace_id, suspend_checkpoint_id)
+    REFERENCES run_checkpoints(run_id, attempt_number, workspace_id, id)
+    ON DELETE RESTRICT,
+    CONSTRAINT run_waits_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT,
+    CONSTRAINT run_waits_resume_workspace_payload_fk FOREIGN KEY (workspace_id,resume_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT
 );
 
 CREATE UNIQUE INDEX run_waits_active_run_uidx
@@ -2963,18 +2842,6 @@ CREATE UNIQUE INDEX run_waits_same_workspace_child_active_uidx
     WHERE kind = 'child'
       AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
-ALTER TABLE run_checkpoints
-    ADD CONSTRAINT run_checkpoints_run_wait_id_fkey
-    FOREIGN KEY (run_id, attempt_number, workspace_id, run_wait_id)
-    REFERENCES run_waits(run_id, attempt_number, workspace_id, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE run_waits
-    ADD CONSTRAINT run_waits_suspend_checkpoint_fk
-    FOREIGN KEY (run_id, attempt_number, workspace_id, suspend_checkpoint_id)
-    REFERENCES run_checkpoints(run_id, attempt_number, workspace_id, id)
-    ON DELETE RESTRICT;
-
 CREATE TABLE runtime_instances (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
@@ -3005,6 +2872,7 @@ CREATE TABLE runtime_instances (
     computer_save_id UUID,
     computer_save_lease_id UUID,
     computer_save_predecessor_id UUID,
+    computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN reclaimed_at IS NULL THEN true END) STORED,
     CONSTRAINT runtime_instances_computer_save_shape_check CHECK (
         num_nonnulls(computer_save_id, computer_save_lease_id, computer_save_predecessor_id) = 0
         OR (num_nonnulls(computer_save_id, computer_save_lease_id, computer_save_predecessor_id) = 3
@@ -3126,7 +2994,8 @@ CREATE TABLE runtime_instances (
         OR (observed_state = 'lost' AND terminal_at IS NOT NULL AND terminal_reason_code IS NOT NULL)
     ),
     CHECK (terminal_reason_code IS NULL OR (btrim(terminal_reason_code) <> '' AND octet_length(terminal_reason_code) <= 128)),
-    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object')
+    CHECK (terminal_error IS NULL OR jsonb_typeof(terminal_error) = 'object'),
+    CONSTRAINT runtime_instances_reserved_workspace_payload_fk FOREIGN KEY (workspace_id,reserved_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT
 );
 
 -- Each publication retains its own staged objects until consumer quiescence.
@@ -3147,23 +3016,6 @@ CREATE TABLE runtime_computer_object_pins (
 );
 CREATE INDEX runtime_computer_object_pins_object_idx
     ON runtime_computer_object_pins(environment_id, computer_id, digest);
-
-ALTER TABLE computer_versions
-    ADD CONSTRAINT computer_versions_publisher_fkey
-    FOREIGN KEY (environment_id, workspace_id, publisher_runtime_instance_id)
-    REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT;
-
-ALTER TABLE run_leases
-    ADD CONSTRAINT run_leases_runtime_instance_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
-    REFERENCES runtime_instances(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE workspace_mounts
-    ADD CONSTRAINT workspace_mounts_runtime_instance_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
-    REFERENCES runtime_instances(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id)
-    ON DELETE RESTRICT;
 
 CREATE INDEX runtime_instances_deployment_definition_idx
     ON runtime_instances (environment_id, deployment_definition_id);
@@ -3261,73 +3113,157 @@ CREATE INDEX computer_versions_workspace_created_idx ON computer_versions(worksp
 CREATE INDEX public_access_tokens_expiry_active_idx ON public_access_tokens(expires_at, id)
     WHERE status = 'active';
 
-ALTER TABLE session_events ADD FOREIGN KEY (workspace_id, workspace_version_id) REFERENCES computer_versions(workspace_id, id);
+-- Circular foreign keys are declared after both sides exist.
+ALTER TABLE secrets
+    ADD CONSTRAINT secrets_current_version_fk
+    FOREIGN KEY (id, current_version_id)
+    REFERENCES secret_versions(secret_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_attempt_fk FOREIGN KEY (dispatch_hold_run_id, dispatch_hold_attempt_number) REFERENCES run_attempts(run_id, number);
-ALTER TABLE sessions ADD CONSTRAINT sessions_dispatch_hold_run_fk FOREIGN KEY (id, dispatch_hold_run_id) REFERENCES runs(session_id, id);
-ALTER TABLE session_turns ADD FOREIGN KEY (ready_run_lease_id) REFERENCES run_leases(id);
-ALTER TABLE session_messages ADD FOREIGN KEY (delivery_run_lease_id) REFERENCES run_leases(id);
+ALTER TABLE worker_groups
+    ADD CONSTRAINT worker_groups_primary_pool_fkey
+    FOREIGN KEY (id, primary_pool_id)
+    REFERENCES worker_pools(worker_group_id, id)
+    ON DELETE RESTRICT;
 
--- Payload lifetime is separate from immutable Version lineage. Initial versions
--- may be unmaterialized; available means not retired, not already uploaded.
-ALTER TABLE computer_version_roots
- ADD COLUMN payload_required BOOLEAN GENERATED ALWAYS AS (true) STORED,
- ADD CONSTRAINT computer_version_roots_available_fkey FOREIGN KEY (computer_id,version_id,payload_required)
- REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE environments
+    ADD CONSTRAINT environments_current_deployment_fk
+    FOREIGN KEY (id, current_deployment_id)
+    REFERENCES deployments(environment_id, id)
+    ON DELETE RESTRICT;
 
-ALTER TABLE computers ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status <> 'deleted' THEN true END) STORED;
-ALTER TABLE computers ADD CONSTRAINT computers_head_payload_fk FOREIGN KEY (id,head_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED;
-ALTER TABLE computers ADD CONSTRAINT computers_recovery_runtime_fk FOREIGN KEY (environment_id,id,recovery_runtime_id) REFERENCES runtime_instances(environment_id,workspace_id,id) ON DELETE RESTRICT;
-ALTER TABLE computers ADD CONSTRAINT computers_recovery_version_fk FOREIGN KEY (id,recovery_version_id) REFERENCES computer_versions(workspace_id,id) ON DELETE RESTRICT;
-ALTER TABLE computers ADD COLUMN recovery_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN recovery_id IS NOT NULL AND recovery_completed_at IS NULL AND status <> 'deleted' THEN true END) STORED;
-ALTER TABLE computers ADD CONSTRAINT computers_recovery_payload_fk FOREIGN KEY (id,recovery_version_id,recovery_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE computers
+    ADD CONSTRAINT computers_owner_actor_fk
+    FOREIGN KEY (owner_session_id, id)
+    REFERENCES sessions(id, workspace_id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT computers_owner_run_fk
+    FOREIGN KEY (owner_run_id, id)
+    REFERENCES runs(id, workspace_id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT computers_write_key_fkey
+    FOREIGN KEY (environment_id, id, write_key_id, write_key_available)
+    REFERENCES computer_data_keys(environment_id, computer_id, id, available) ON DELETE RESTRICT,
+    ADD CONSTRAINT computers_head_version_id_fkey
+    FOREIGN KEY (environment_id, id, head_version_id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT computers_head_payload_fk FOREIGN KEY (id,head_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT computers_recovery_runtime_fk FOREIGN KEY (environment_id,id,recovery_runtime_id) REFERENCES runtime_instances(environment_id,workspace_id,id) ON DELETE RESTRICT,
+    ADD CONSTRAINT computers_recovery_version_fk FOREIGN KEY (id,recovery_version_id) REFERENCES computer_versions(workspace_id,id) ON DELETE RESTRICT,
+    ADD CONSTRAINT computers_recovery_payload_fk FOREIGN KEY (id,recovery_version_id,recovery_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
 
+ALTER TABLE sessions
+    ADD FOREIGN KEY (id, active_turn_id) REFERENCES session_turns(session_id, id),
+    ADD CONSTRAINT sessions_current_run_fk
+    FOREIGN KEY (id, workspace_id, current_run_id)
+    REFERENCES runs(session_id, workspace_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT sessions_failure_run_fk
+    FOREIGN KEY (id, failure_run_id)
+    REFERENCES runs(session_id, id)
+    ON DELETE RESTRICT,
+    ADD CONSTRAINT sessions_dispatch_hold_attempt_fk FOREIGN KEY (dispatch_hold_run_id, dispatch_hold_attempt_number) REFERENCES run_attempts(run_id, number),
+    ADD CONSTRAINT sessions_dispatch_hold_run_fk FOREIGN KEY (id, dispatch_hold_run_id) REFERENCES runs(session_id, id);
 
-ALTER TABLE runs ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status IN ('queued','running','waiting','retry_delayed','cancel_requested') THEN true END) STORED;
-ALTER TABLE runs ADD CONSTRAINT runs_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE session_turns
+    ADD FOREIGN KEY (session_id, id, terminal_event_id) REFERENCES session_events(session_id, turn_id, id),
+    ADD FOREIGN KEY (ready_run_lease_id) REFERENCES run_leases(id);
 
-ALTER TABLE run_attempts ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN terminal_at IS NULL THEN true END) STORED;
-ALTER TABLE run_attempts ADD CONSTRAINT run_attempts_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE runs
+    ADD CONSTRAINT runs_current_attempt_fk
+    FOREIGN KEY (id, current_attempt_number)
+    REFERENCES run_attempts(run_id, number)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT runs_base_workspace_version_fk
+    FOREIGN KEY (environment_id, workspace_id, base_workspace_version_id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
+    ON DELETE RESTRICT,
+    ADD CONSTRAINT runs_current_run_lease_id_fkey
+    FOREIGN KEY (org_id, id, current_run_lease_id)
+    REFERENCES run_leases(org_id, run_id, id)
+    ON DELETE RESTRICT,
+    ADD CONSTRAINT runs_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
 
-ALTER TABLE run_checkpoints ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status IN ('creating','ready') THEN true END) STORED;
-ALTER TABLE run_checkpoints ADD CONSTRAINT run_checkpoints_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
-ALTER TABLE run_checkpoints ADD CONSTRAINT run_checkpoints_private_workspace_payload_fk FOREIGN KEY (workspace_id,private_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE workspace_leases
+    ADD CONSTRAINT workspace_leases_owner_process_id_fkey
+    FOREIGN KEY (owner_process_id, workspace_id, runtime_instance_id)
+    REFERENCES workspace_processes(id, workspace_id, runtime_instance_id)
+    ON DELETE RESTRICT,
+    ADD CONSTRAINT workspace_leases_base_workspace_version_id_fkey
+    FOREIGN KEY (environment_id, workspace_id, base_workspace_version_id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT workspace_leases_owner_run_lease_fk
+    FOREIGN KEY (
+        workspace_id,
+        runtime_instance_id,
+        owner_run_lease_id
+    )
+    REFERENCES run_leases(
+        workspace_id,
+        runtime_instance_id,
+        id
+    )
+    ON DELETE RESTRICT;
 
-ALTER TABLE run_waits ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN suspension_status NOT IN ('released','cancelled','failed') THEN true END) STORED;
-ALTER TABLE run_waits ADD CONSTRAINT run_waits_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
-ALTER TABLE run_waits ADD CONSTRAINT run_waits_resume_workspace_payload_fk FOREIGN KEY (workspace_id,resume_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE workspace_mounts
+    ADD CONSTRAINT workspace_mounts_materialized_version_id_fkey
+    FOREIGN KEY (environment_id, workspace_id, materialized_version_id)
+    REFERENCES computer_versions(environment_id, workspace_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT workspace_mounts_runtime_instance_id_fkey
+    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
+    REFERENCES runtime_instances(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id)
+    ON DELETE RESTRICT;
 
-ALTER TABLE workspace_processes ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN status NOT IN ('exited','failed') THEN true END) STORED;
-ALTER TABLE workspace_processes ADD CONSTRAINT workspace_processes_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
-ALTER TABLE workspace_processes ADD CONSTRAINT workspace_processes_staged_payload_fk FOREIGN KEY (workspace_id,staged_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE workspace_processes
+    ADD CONSTRAINT workspace_processes_staged_version_id_fkey
+    FOREIGN KEY (workspace_id, staged_version_id)
+    REFERENCES computer_versions(workspace_id, id)
+    ON DELETE RESTRICT
+    DEFERRABLE INITIALLY DEFERRED,
+    ADD CONSTRAINT workspace_processes_base_workspace_version_id_fkey
+    FOREIGN KEY (workspace_id, base_workspace_version_id)
+    REFERENCES computer_versions(workspace_id, id)
+    ON DELETE RESTRICT,
+    ADD CONSTRAINT workspace_processes_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT,
+    ADD CONSTRAINT workspace_processes_staged_payload_fk FOREIGN KEY (workspace_id,staged_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
 
-ALTER TABLE runtime_instances ADD COLUMN computer_payload_required BOOLEAN GENERATED ALWAYS AS (CASE WHEN reclaimed_at IS NULL THEN true END) STORED;
-ALTER TABLE runtime_instances ADD CONSTRAINT runtime_instances_reserved_workspace_payload_fk FOREIGN KEY (workspace_id,reserved_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
+ALTER TABLE run_attempts
+    ADD CONSTRAINT run_attempts_base_workspace_version_fk
+    FOREIGN KEY (workspace_id, base_workspace_version_id)
+    REFERENCES computer_versions(workspace_id, id)
+    ON DELETE RESTRICT,
+    ADD CONSTRAINT run_attempts_base_workspace_payload_fk FOREIGN KEY (workspace_id,base_workspace_version_id,computer_payload_required) REFERENCES computer_versions(workspace_id,id,payload_available) ON DELETE RESTRICT;
 
--- Discovery mirrors the enforced native owners; it is not a second owner ledger.
-CREATE VIEW retained_computer_versions AS
-SELECT id AS computer_id,head_version_id AS version_id FROM computers WHERE computer_payload_required AND head_version_id IS NOT NULL
-UNION ALL
-SELECT id AS computer_id,recovery_version_id AS version_id FROM computers WHERE recovery_payload_required AND recovery_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,base_workspace_version_id AS version_id FROM runs WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,base_workspace_version_id AS version_id FROM run_attempts WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,base_workspace_version_id AS version_id FROM run_checkpoints WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,private_workspace_version_id AS version_id FROM run_checkpoints WHERE computer_payload_required AND private_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,base_workspace_version_id AS version_id FROM run_waits WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,resume_workspace_version_id AS version_id FROM run_waits WHERE computer_payload_required AND resume_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,base_workspace_version_id AS version_id FROM workspace_processes WHERE computer_payload_required AND base_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,staged_version_id AS version_id FROM workspace_processes WHERE computer_payload_required AND staged_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id AS computer_id,reserved_workspace_version_id AS version_id FROM runtime_instances WHERE computer_payload_required AND reserved_workspace_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id,retained_computer_source_version_id FROM runtime_instances WHERE retained_computer_source_version_id IS NOT NULL
-UNION ALL
-SELECT workspace_id,computer_save_id FROM runtime_instances WHERE reclaimed_at IS NULL AND computer_save_id IS NOT NULL;
+ALTER TABLE run_checkpoints
+    ADD CONSTRAINT run_checkpoints_run_wait_id_fkey
+    FOREIGN KEY (run_id, attempt_number, workspace_id, run_wait_id)
+    REFERENCES run_waits(run_id, attempt_number, workspace_id, id)
+    ON DELETE RESTRICT;
+
+ALTER TABLE computer_versions
+    ADD CONSTRAINT computer_versions_publisher_fkey
+    FOREIGN KEY (environment_id, workspace_id, publisher_runtime_instance_id)
+    REFERENCES runtime_instances(environment_id, workspace_id, id) ON DELETE RESTRICT;
+
+ALTER TABLE run_leases
+    ADD CONSTRAINT run_leases_runtime_instance_id_fkey
+    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id)
+    REFERENCES runtime_instances(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id)
+    ON DELETE RESTRICT;
+
+ALTER TABLE session_events
+    ADD FOREIGN KEY (workspace_id, workspace_version_id) REFERENCES computer_versions(workspace_id, id);
+
+ALTER TABLE session_messages
+    ADD FOREIGN KEY (delivery_run_lease_id) REFERENCES run_leases(id);

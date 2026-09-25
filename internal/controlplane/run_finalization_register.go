@@ -84,7 +84,7 @@ func (s *Server) registerRunFinalization(ctx context.Context, worker workerActor
 		if err != nil {
 			return err
 		}
-		if _, err := work.q.RegisterRunFinalizationObject(ctx, db.RegisterRunFinalizationObjectParams{RunLeaseID: authority.runLease.ID, OperationID: pgvalue.UUID(operationID), Root: rawRoot}); err != nil {
+		if _, err := work.q.RegisterRunFinalizationRoot(ctx, db.RegisterRunFinalizationRootParams{RunLeaseID: authority.runLease.ID, OperationID: pgvalue.UUID(operationID), Root: rawRoot}); err != nil {
 			return fmt.Errorf("register immutable finalization disk: %w", err)
 		}
 		now, err := work.q.GetRunLeaseRenewalTime(ctx)

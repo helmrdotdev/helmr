@@ -44,7 +44,7 @@ func checkpointUpload(t *testing.T, f runtest.Fixture) checkpointUploadCandidate
  SELECT $1,environment_id,id,workspace_id,'timer',now()+interval '1 minute',revision,1,$2,$3 FROM runs WHERE id=$4`, waitID, work.LeaseID, uuid.NewV7(), work.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id)
  SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4`, p.ID, work.RunID, waitID, work.LeaseID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, p.Digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2)`, p.Digest, p.SizeBytes)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO run_checkpoint_objects(checkpoint_id,role,digest,size_bytes,media_type,checkpoint_status) VALUES($1,'memory',$2,$3,$4,'creating')`, p.ID, p.Digest, p.SizeBytes, p.MediaType)
 	return p
 }
@@ -58,19 +58,22 @@ func TestCasRetirementPinsAndCrossOrganizationAdoption(t *testing.T) {
 	q := db.New(f.Pool)
 	p := checkpointUpload(t, f)
 	// A direct physical-key mutation cannot bypass a registered upload pin.
-	_, err := f.Pool.Exec(t.Context(), `UPDATE cas_object_lifetimes SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, p.Digest)
+	_, err := f.Pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, p.Digest)
 	requireFK(t, err)
 	abandonCheckpointUpload(t, f, p)
 	// Even another organization's observed membership protects the global key.
 	otherOrg := pgvalue.UUID(uuid.NewV7())
+	// One physical digest cannot acquire a conflicting size in another organization.
+	_, err = q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: otherOrg, Digest: p.Digest, SizeBytes: p.SizeBytes + 1, MediaType: p.MediaType})
+	requireFK(t, err)
 	if _, err := q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: otherOrg, Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = q.RetireAbandonedCasObject(t.Context(), p.Digest)
+	_, err = q.RetireAbandonedCasBlob(t.Context(), p.Digest)
 	requireFK(t, err)
 	// Removing this test-only membership makes the abandoned object collectible.
 	dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM cas_objects WHERE org_id=$1 AND digest=$2`, otherOrg, p.Digest)
-	if n, err := q.RetireAbandonedCasObject(t.Context(), p.Digest); err != nil || n != 1 {
+	if n, err := q.RetireAbandonedCasBlob(t.Context(), p.Digest); err != nil || n != 1 {
 		t.Fatalf("retire: %d %v", n, err)
 	}
 	_, err = q.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{OrgID: pgvalue.UUID(f.OrgID), Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType})
@@ -104,7 +107,7 @@ func TestCasRetirementAdoptionRaces(t *testing.T) {
 				_, err := q.UpsertCasObject(ctx, db.UpsertCasObjectParams{OrgID: pgvalue.UUID(uuid.NewV7()), Digest: p.Digest, SizeBytes: p.SizeBytes, MediaType: p.MediaType})
 				return err
 			}
-			retire := func(q *db.Queries) error { _, err := q.RetireAbandonedCasObject(ctx, p.Digest); return err }
+			retire := func(q *db.Queries) error { _, err := q.RetireAbandonedCasBlob(ctx, p.Digest); return err }
 			firstOp, secondOp := adopt, retire
 			if retireFirst {
 				firstOp, secondOp = retire, adopt
@@ -212,7 +215,7 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 		t.Fatal("lost remote failure")
 	}
 	var recorded string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT last_reclaim_error FROM cas_object_lifetimes WHERE digest=$1 AND retired_at IS NOT NULL`, p.Digest).Scan(&recorded); err != nil || recorded == "" {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT last_reclaim_error FROM cas_blobs WHERE digest=$1 AND retired_at IS NOT NULL`, p.Digest).Scan(&recorded); err != nil || recorded == "" {
 		t.Fatalf("lost retry duty: %q %v", recorded, err)
 	}
 	store.failDelete = false
@@ -221,8 +224,8 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 		// longer appears in discovery still has its retained ID retried.
 		store.uploads = nil
 		store.versions = 1
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_retired_uploads SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_object_lifetimes SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_upload_reclaims SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_blobs SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
 		if err := r.Reconcile(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -238,8 +241,8 @@ func TestCasReclamationRetainsLateUploadsAndFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_retired_uploads SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_object_lifetimes SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_upload_reclaims SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_blobs SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
 	if err := r.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +274,7 @@ func TestCasReclamationFairMultipartProgress(t *testing.T) {
 	}
 	store.uploads = nil
 	for range 2 {
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_object_lifetimes SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE cas_blobs SET next_reclaim_at=now() WHERE digest=$1`, p.Digest)
 		if err := r.Reconcile(t.Context()); err != nil {
 			t.Fatal(err)
 		}

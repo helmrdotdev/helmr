@@ -39,7 +39,7 @@ func (r *Reclaimer) collectComputerObject(ctx context.Context, candidate db.List
 	if err != nil || n == 0 {
 		return err
 	}
-	if _, err = q.LockCollectedComputerLifetime(ctx, candidate.Digest); err != nil {
+	if _, err = q.LockCollectedComputerBlob(ctx, candidate.Digest); err != nil {
 		return err
 	}
 	if _, err = q.DeleteUnreferencedComputerCasMembership(ctx, db.DeleteUnreferencedComputerCasMembershipParams{OrgID: candidate.OrgID, Digest: candidate.Digest}); err != nil {

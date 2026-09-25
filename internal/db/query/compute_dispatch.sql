@@ -316,11 +316,7 @@ WITH candidate_scopes AS (
                                         SELECT 1
                                           FROM computer_versions AS retry_version
                                           JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
-                                          JOIN run_finalization_objects AS retry_capture
-                                            ON retry_capture.run_lease_id = prior_child_lease.id
-                                           AND retry_capture.operation_id = prior_child_lease.finalization_operation_id
-                                           AND retry_capture.lease_status = 'failed'
-                                           AND retry_capture.root = retry_root.locator
+                                          AND prior_child_lease.finalization_root = retry_root.locator
                                          WHERE retry_version.id = runs.base_workspace_version_id
                                            AND retry_version.workspace_id = runs.workspace_id
                                            AND retry_version.status = 'private'
@@ -906,11 +902,7 @@ SELECT runs.org_id,
                                     SELECT 1
                                       FROM computer_versions AS retry_version
                                       JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
-                                      JOIN run_finalization_objects AS retry_capture
-                                        ON retry_capture.run_lease_id = prior_child_lease.id
-                                       AND retry_capture.operation_id = prior_child_lease.finalization_operation_id
-                                       AND retry_capture.lease_status = 'failed'
-                                       AND retry_capture.root = retry_root.locator
+                                      AND prior_child_lease.finalization_root = retry_root.locator
                                      WHERE retry_version.id = runs.base_workspace_version_id
                                        AND retry_version.workspace_id = runs.workspace_id
                                        AND retry_version.status = 'private'

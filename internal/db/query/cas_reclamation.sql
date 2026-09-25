@@ -1,9 +1,9 @@
 -- Only abandoned uploads are retirement candidates. Memberships in any org and
 -- registered owners pin availability with FKs; these NOT EXISTS clauses avoid
 -- routine conflicts but are not the concurrency barrier.
--- name: ListAbandonedCasObjects :many
+-- name: ListAbandonedCasBlobs :many
 SELECT lifetime.digest
-  FROM cas_object_lifetimes lifetime
+  FROM cas_blobs lifetime
  WHERE lifetime.retired_at IS NULL
    AND EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=lifetime.digest AND c.checkpoint_status IN ('invalid','deleted'))
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.digest=lifetime.digest)
@@ -12,8 +12,8 @@ SELECT lifetime.digest
 
 -- Commit before making any remote calls. Never clear retired_at or remove this
 -- row: an in-flight upload can finish after a successful empty sweep.
--- name: RetireAbandonedCasObject :execrows
-UPDATE cas_object_lifetimes lifetime
+-- name: RetireAbandonedCasBlob :execrows
+UPDATE cas_blobs lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.digest=sqlc.arg(digest)
    AND lifetime.retired_at IS NULL
@@ -21,43 +21,43 @@ UPDATE cas_object_lifetimes lifetime
 
 -- Claim only scheduling responsibility, not permission to adopt the digest.
 -- A crashed sweeper becomes eligible again; repeated deletion is idempotent.
--- name: ClaimRetiredCasObjects :many
+-- name: ClaimRetiredCasBlobs :many
 WITH due AS (
-    SELECT digest FROM cas_object_lifetimes
+    SELECT digest FROM cas_blobs
      WHERE retired_at IS NOT NULL AND next_reclaim_at <= statement_timestamp()
      ORDER BY next_reclaim_at, digest LIMIT sqlc.arg(row_limit)
      FOR UPDATE SKIP LOCKED
 )
-UPDATE cas_object_lifetimes lifetime
+UPDATE cas_blobs lifetime
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes'
   FROM due WHERE lifetime.digest=due.digest
 RETURNING lifetime.digest;
 
--- name: RecordCasReclamation :exec
-UPDATE cas_object_lifetimes
+-- name: RecordCasBlobReclamation :exec
+UPDATE cas_blobs
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes',
        last_reclaim_error=sqlc.narg(last_error)
  WHERE digest=sqlc.arg(digest) AND retired_at IS NOT NULL;
 
 -- name: RegisterRetiredCasUpload :exec
-INSERT INTO cas_retired_uploads (digest, upload_id)
-SELECT lifetime.digest, sqlc.arg(upload_id) FROM cas_object_lifetimes lifetime
+INSERT INTO cas_upload_reclaims (digest, upload_id)
+SELECT lifetime.digest, sqlc.arg(upload_id) FROM cas_blobs lifetime
  WHERE lifetime.digest=sqlc.arg(digest) AND lifetime.retired_at IS NOT NULL
 ON CONFLICT DO NOTHING;
 
 -- name: ListRetiredCasUploads :many
-SELECT upload_id FROM cas_retired_uploads WHERE digest=sqlc.arg(digest) ORDER BY upload_id;
+SELECT upload_id FROM cas_upload_reclaims WHERE digest=sqlc.arg(digest) ORDER BY upload_id;
 
 -- Retained upload IDs get independent, fair retry scheduling. Historical IDs
 -- must not monopolize the digest's deadline or starve completed-version cleanup.
 -- name: ClaimRetiredCasUploads :many
 WITH due AS (
-    SELECT pending.digest, pending.upload_id FROM cas_retired_uploads pending
+    SELECT pending.digest, pending.upload_id FROM cas_upload_reclaims pending
      WHERE pending.digest=sqlc.arg(digest) AND pending.next_reclaim_at <= statement_timestamp()
      ORDER BY pending.next_reclaim_at, pending.upload_id LIMIT sqlc.arg(row_limit)
      FOR UPDATE SKIP LOCKED
 )
-UPDATE cas_retired_uploads upload
+UPDATE cas_upload_reclaims upload
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes'
   FROM due WHERE upload.digest=due.digest AND upload.upload_id=due.upload_id
 RETURNING upload.upload_id;

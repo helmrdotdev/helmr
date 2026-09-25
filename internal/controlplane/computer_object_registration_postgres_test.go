@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5/pgconn"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -91,11 +93,14 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err == nil {
 			t.Fatal("certification before upload succeeded")
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,'application/octet-stream')`, f.OrgID, o.digest, o.size+1)
+		_, err = f.Pool.Exec(t.Context(), `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,$3,'application/octet-stream')`, f.OrgID, o.digest, o.size+1)
+		var constraint *pgconn.PgError
+		if !errors.As(err, &constraint) || constraint.Code != "23503" {
+			t.Fatalf("conflicting blob size accepted: %v", err)
+		}
 		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err == nil {
 			t.Fatal("mismatched uploaded descriptor accepted")
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM cas_objects WHERE org_id=$1 AND digest=$2`, f.OrgID, o.digest)
 		upload(e)
 		if err = testRecordInitialComputerObject(t.Context(), f.Pool, fence, e, true); err != nil {
 			t.Fatal(err)

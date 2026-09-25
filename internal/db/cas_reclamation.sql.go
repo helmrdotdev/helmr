@@ -11,14 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimRetiredCasObjects = `-- name: ClaimRetiredCasObjects :many
+const claimRetiredCasBlobs = `-- name: ClaimRetiredCasBlobs :many
 WITH due AS (
-    SELECT digest FROM cas_object_lifetimes
+    SELECT digest FROM cas_blobs
      WHERE retired_at IS NOT NULL AND next_reclaim_at <= statement_timestamp()
      ORDER BY next_reclaim_at, digest LIMIT $1
      FOR UPDATE SKIP LOCKED
 )
-UPDATE cas_object_lifetimes lifetime
+UPDATE cas_blobs lifetime
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes'
   FROM due WHERE lifetime.digest=due.digest
 RETURNING lifetime.digest
@@ -26,8 +26,8 @@ RETURNING lifetime.digest
 
 // Claim only scheduling responsibility, not permission to adopt the digest.
 // A crashed sweeper becomes eligible again; repeated deletion is idempotent.
-func (q *Queries) ClaimRetiredCasObjects(ctx context.Context, rowLimit int32) ([]string, error) {
-	rows, err := q.db.Query(ctx, claimRetiredCasObjects, rowLimit)
+func (q *Queries) ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]string, error) {
+	rows, err := q.db.Query(ctx, claimRetiredCasBlobs, rowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -48,12 +48,12 @@ func (q *Queries) ClaimRetiredCasObjects(ctx context.Context, rowLimit int32) ([
 
 const claimRetiredCasUploads = `-- name: ClaimRetiredCasUploads :many
 WITH due AS (
-    SELECT pending.digest, pending.upload_id FROM cas_retired_uploads pending
+    SELECT pending.digest, pending.upload_id FROM cas_upload_reclaims pending
      WHERE pending.digest=$1 AND pending.next_reclaim_at <= statement_timestamp()
      ORDER BY pending.next_reclaim_at, pending.upload_id LIMIT $2
      FOR UPDATE SKIP LOCKED
 )
-UPDATE cas_retired_uploads upload
+UPDATE cas_upload_reclaims upload
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes'
   FROM due WHERE upload.digest=due.digest AND upload.upload_id=due.upload_id
 RETURNING upload.upload_id
@@ -86,9 +86,9 @@ func (q *Queries) ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCa
 	return items, nil
 }
 
-const listAbandonedCasObjects = `-- name: ListAbandonedCasObjects :many
+const listAbandonedCasBlobs = `-- name: ListAbandonedCasBlobs :many
 SELECT lifetime.digest
-  FROM cas_object_lifetimes lifetime
+  FROM cas_blobs lifetime
  WHERE lifetime.retired_at IS NULL
    AND EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=lifetime.digest AND c.checkpoint_status IN ('invalid','deleted'))
    AND NOT EXISTS (SELECT 1 FROM cas_objects o WHERE o.digest=lifetime.digest)
@@ -99,8 +99,8 @@ SELECT lifetime.digest
 // Only abandoned uploads are retirement candidates. Memberships in any org and
 // registered owners pin availability with FKs; these NOT EXISTS clauses avoid
 // routine conflicts but are not the concurrency barrier.
-func (q *Queries) ListAbandonedCasObjects(ctx context.Context, rowLimit int32) ([]string, error) {
-	rows, err := q.db.Query(ctx, listAbandonedCasObjects, rowLimit)
+func (q *Queries) ListAbandonedCasBlobs(ctx context.Context, rowLimit int32) ([]string, error) {
+	rows, err := q.db.Query(ctx, listAbandonedCasBlobs, rowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (q *Queries) ListAbandonedCasObjects(ctx context.Context, rowLimit int32) (
 }
 
 const listRetiredCasUploads = `-- name: ListRetiredCasUploads :many
-SELECT upload_id FROM cas_retired_uploads WHERE digest=$1 ORDER BY upload_id
+SELECT upload_id FROM cas_upload_reclaims WHERE digest=$1 ORDER BY upload_id
 `
 
 func (q *Queries) ListRetiredCasUploads(ctx context.Context, digest string) ([]string, error) {
@@ -143,26 +143,26 @@ func (q *Queries) ListRetiredCasUploads(ctx context.Context, digest string) ([]s
 	return items, nil
 }
 
-const recordCasReclamation = `-- name: RecordCasReclamation :exec
-UPDATE cas_object_lifetimes
+const recordCasBlobReclamation = `-- name: RecordCasBlobReclamation :exec
+UPDATE cas_blobs
    SET next_reclaim_at=clock_timestamp() + interval '5 minutes',
        last_reclaim_error=$1
  WHERE digest=$2 AND retired_at IS NOT NULL
 `
 
-type RecordCasReclamationParams struct {
+type RecordCasBlobReclamationParams struct {
 	LastError pgtype.Text `json:"last_error"`
 	Digest    string      `json:"digest"`
 }
 
-func (q *Queries) RecordCasReclamation(ctx context.Context, arg RecordCasReclamationParams) error {
-	_, err := q.db.Exec(ctx, recordCasReclamation, arg.LastError, arg.Digest)
+func (q *Queries) RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error {
+	_, err := q.db.Exec(ctx, recordCasBlobReclamation, arg.LastError, arg.Digest)
 	return err
 }
 
 const registerRetiredCasUpload = `-- name: RegisterRetiredCasUpload :exec
-INSERT INTO cas_retired_uploads (digest, upload_id)
-SELECT lifetime.digest, $1 FROM cas_object_lifetimes lifetime
+INSERT INTO cas_upload_reclaims (digest, upload_id)
+SELECT lifetime.digest, $1 FROM cas_blobs lifetime
  WHERE lifetime.digest=$2 AND lifetime.retired_at IS NOT NULL
 ON CONFLICT DO NOTHING
 `
@@ -177,8 +177,8 @@ func (q *Queries) RegisterRetiredCasUpload(ctx context.Context, arg RegisterReti
 	return err
 }
 
-const retireAbandonedCasObject = `-- name: RetireAbandonedCasObject :execrows
-UPDATE cas_object_lifetimes lifetime
+const retireAbandonedCasBlob = `-- name: RetireAbandonedCasBlob :execrows
+UPDATE cas_blobs lifetime
    SET retired_at=clock_timestamp(), next_reclaim_at=clock_timestamp()
  WHERE lifetime.digest=$1
    AND lifetime.retired_at IS NULL
@@ -187,8 +187,8 @@ UPDATE cas_object_lifetimes lifetime
 
 // Commit before making any remote calls. Never clear retired_at or remove this
 // row: an in-flight upload can finish after a successful empty sweep.
-func (q *Queries) RetireAbandonedCasObject(ctx context.Context, digest string) (int64, error) {
-	result, err := q.db.Exec(ctx, retireAbandonedCasObject, digest)
+func (q *Queries) RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error) {
+	result, err := q.db.Exec(ctx, retireAbandonedCasBlob, digest)
 	if err != nil {
 		return 0, err
 	}

@@ -48,7 +48,7 @@ func TestRunFinalizationRegistrationPostgres(t *testing.T) {
 		}
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_finalization_objects WHERE run_lease_id=$1`, f.claim.runLease.ID).Scan(&count); err != nil || count != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_leases WHERE id=$1 AND finalization_root IS NOT NULL`, f.claim.runLease.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("registrations=%d %v", count, err)
 	}
 	for _, mode := range []string{"digest", "size", "operation", "computer", "capacity", "epoch"} {
@@ -110,7 +110,7 @@ func TestRunFinalizationPublicationRequiresRegisteredDiskPostgres(t *testing.T) 
 	}
 	assertRetainedActorCapture(t, f, req.Workspace.Captured, f.rootID)
 	var status string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT lease_status FROM run_finalization_objects WHERE run_lease_id=$1`, f.claim.runLease.ID).Scan(&status); err != nil || status != "failed" {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM run_leases WHERE id=$1 AND finalization_root IS NOT NULL`, f.claim.runLease.ID).Scan(&status); err != nil || status != "failed" {
 		t.Fatalf("registration status=%s: %v", status, err)
 	}
 	// Certified generation membership survives the terminal lease transition.
@@ -129,7 +129,7 @@ func TestRunFinalizationRegistrationRejectsExpiredAuthorityPostgres(t *testing.T
 		t.Fatal("expired registration accepted")
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_finalization_objects WHERE run_lease_id=$1`, pgvalue.UUID(uuid.MustParse(req.Lease.ID))).Scan(&count); err != nil || count != 0 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM run_leases WHERE id=$1 AND finalization_root IS NOT NULL`, pgvalue.UUID(uuid.MustParse(req.Lease.ID))).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expired candidate retained %d %v", count, err)
 	}
 }

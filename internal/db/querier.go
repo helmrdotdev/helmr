@@ -83,7 +83,7 @@ type Querier interface {
 	ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTelemetryOutboxParams) ([]ClaimLiveTelemetryOutboxRow, error)
 	// Claim only scheduling responsibility, not permission to adopt the digest.
 	// A crashed sweeper becomes eligible again; repeated deletion is idempotent.
-	ClaimRetiredCasObjects(ctx context.Context, rowLimit int32) ([]string, error)
+	ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
 	// Retained upload IDs get independent, fair retry scheduling. Historical IDs
 	// must not monopolize the digest's deadline or starve completed-version cleanup.
 	ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCasUploadsParams) ([]string, error)
@@ -367,7 +367,7 @@ type Querier interface {
 	// Only abandoned uploads are retirement candidates. Memberships in any org and
 	// registered owners pin availability with FKs; these NOT EXISTS clauses avoid
 	// routine conflicts but are not the concurrency barrier.
-	ListAbandonedCasObjects(ctx context.Context, rowLimit int32) ([]string, error)
+	ListAbandonedCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
 	ListCancellationLineage(ctx context.Context, arg ListCancellationLineageParams) ([]ListCancellationLineageRow, error)
 	ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
@@ -423,7 +423,7 @@ type Querier interface {
 	// adoption after this discovery snapshot.
 	ListUnreferencedComputerObjects(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerObjectsRow, error)
 	// Native owners arbitrate retirement with restrictive availability FKs. This
-	// view only avoids repeatedly selecting retained roots in the bounded sweep.
+	// discovery only avoids repeatedly selecting retained roots in the bounded sweep.
 	ListUnreferencedComputerVersionRoots(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerVersionRootsRow, error)
 	ListUnsettledSessionMessages(ctx context.Context, arg ListUnsettledSessionMessagesParams) ([]SessionMessage, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
@@ -457,7 +457,7 @@ type Querier interface {
 	// serialize membership cleanup. Acquire in a separate statement after object
 	// deletion; subsequent statements then see the previous collector's commit.
 	// NO KEY UPDATE avoids blocking ordinary FK acquisition until actual retirement.
-	LockCollectedComputerLifetime(ctx context.Context, digest string) (string, error)
+	LockCollectedComputerBlob(ctx context.Context, digest string) (string, error)
 	// The caller owns the fenced publication transaction. These storage operations
 	// neither authenticate a Worker nor accept an unverified ciphertext declaration.
 	// Admission/edge/key mutation must lock the parent and reject certified objects;
@@ -575,7 +575,7 @@ type Querier interface {
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error)
 	ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error)
 	ReconcileSchedules(ctx context.Context, arg ReconcileSchedulesParams) ([]ReconcileSchedulesRow, error)
-	RecordCasReclamation(ctx context.Context, arg RecordCasReclamationParams) error
+	RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)
 	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)
@@ -590,8 +590,8 @@ type Querier interface {
 	RegisterResolvedChildCall(ctx context.Context, arg RegisterResolvedChildCallParams) (RunWait, error)
 	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
 	// Register the immutable generation identity before its objects are uploaded.
-	// Runtime object pins retain the candidate until publication or reclamation.
-	RegisterRunFinalizationObject(ctx context.Context, arg RegisterRunFinalizationObjectParams) (RunFinalizationObject, error)
+	// The lease owns candidate identity and retains it as terminal retry evidence.
+	RegisterRunFinalizationRoot(ctx context.Context, arg RegisterRunFinalizationRootParams) (pgtype.UUID, error)
 	RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error)
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
 	RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error)
@@ -620,7 +620,7 @@ type Querier interface {
 	RequireCheckpointRestoreSupplier(ctx context.Context, arg RequireCheckpointRestoreSupplierParams) (pgtype.UUID, error)
 	RequireLostRunComputerRecovery(ctx context.Context, arg RequireLostRunComputerRecoveryParams) (int64, error)
 	RequireRegisteredCheckpointManifest(ctx context.Context, arg RequireRegisteredCheckpointManifestParams) (pgtype.UUID, error)
-	RequireRunFinalizationObject(ctx context.Context, arg RequireRunFinalizationObjectParams) (RunFinalizationObject, error)
+	RequireRunFinalizationRoot(ctx context.Context, arg RequireRunFinalizationRootParams) (pgtype.UUID, error)
 	RequireRuntimeComputerObjectPin(ctx context.Context, arg RequireRuntimeComputerObjectPinParams) (string, error)
 	ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error)
 	ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (ReserveWorkspaceForActorRow, error)
@@ -635,7 +635,7 @@ type Querier interface {
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	// Commit before making any remote calls. Never clear retired_at or remove this
 	// row: an in-flight upload can finish after a successful empty sweep.
-	RetireAbandonedCasObject(ctx context.Context, digest string) (int64, error)
+	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
 	// The caller has removed an abandoned graph owner in this transaction, not
 	// merely observed an arbitrary temporarily unowned upload. Permanent retirement
 	// prevents late upload/adoption from reviving the same physical key.

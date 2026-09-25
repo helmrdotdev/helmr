@@ -902,7 +902,7 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		"staging-"+fixture.environmentID.String(),
 		fixture.otherEnvID, "preview-"+fixture.otherEnvID.String())
 	dbtest.MustExec(t, t.Context(), pool, `
-		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2), ($3), ($4), ($5), ($6), ($7), ($8) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1), ($4, 1), ($5, 1), ($6, 1), ($7, 1), ($8, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $3, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $4, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),

@@ -63,7 +63,7 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects WHERE digest=$1`, row.Digest).Scan(&observed); err != nil || observed != 0 {
 			t.Fatalf("registration observed storage: %d %v", observed, err)
 		}
-		if _, err := f.Pool.Exec(t.Context(), `UPDATE cas_object_lifetimes SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, row.Digest); err == nil {
+		if _, err := f.Pool.Exec(t.Context(), `UPDATE cas_blobs SET retired_at=now(),next_reclaim_at=now() WHERE digest=$1`, row.Digest); err == nil {
 			t.Fatal("creating candidate lost pin")
 		}
 	}
@@ -75,12 +75,12 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 	}
 	// Use the actual failed receipt path, not a test-only unpin operation.
 	f.workerCall(t, f.server.workerMarkCheckpointFailed, workerapi.CheckpointFailedRequest{Lease: req.Lease, RequestVersion: req.RequestVersion, RunWaitID: req.RunWaitID, CheckpointID: req.CheckpointID, Error: "upload failed"}, nil)
-	collectible, err := f.server.db.ListAbandonedCasObjects(t.Context(), 100)
+	collectible, err := f.server.db.ListAbandonedCasBlobs(t.Context(), 100)
 	if err != nil || len(collectible) != 4 {
 		t.Fatalf("collector cannot discover failed set: %v %v", collectible, err)
 	}
 	for _, row := range rows {
-		if n, err := f.server.db.RetireAbandonedCasObject(t.Context(), row.Digest); err != nil || n != 1 {
+		if n, err := f.server.db.RetireAbandonedCasBlob(t.Context(), row.Digest); err != nil || n != 1 {
 			t.Fatalf("failed checkpoint object not collectible: %d %v", n, err)
 		}
 	}
@@ -92,7 +92,7 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 func TestCheckpointRegistrationRollsBackWholeSetOnRetiredMember(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
 	digest := req.Manifest.RuntimeState.MemoryArtifacts[0].Digest
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_object_lifetimes(digest,retired_at,next_reclaim_at) VALUES($1,now(),now())`, digest)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO cas_blobs(digest,size_bytes,retired_at,next_reclaim_at) VALUES($1,$2,now(),now())`, digest, req.Manifest.RuntimeState.MemoryArtifacts[0].SizeBytes)
 	if _, err := f.server.registerCheckpoint(t.Context(), f.worker, req); err == nil {
 		t.Fatal("adopted retired memory")
 	}
@@ -174,13 +174,13 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	digest := req.Manifest.RuntimeState.ConfigArtifact.Digest
-	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
+	dbtest.MustExec(t, ctx, f.Pool, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,$2)`, digest, req.Manifest.RuntimeState.ConfigArtifact.SizeBytes)
 	locker, err := f.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer locker.Rollback(context.Background())
-	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_object_lifetimes WHERE digest=$1 FOR UPDATE`, digest)
+	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_blobs WHERE digest=$1 FOR UPDATE`, digest)
 	var expiry time.Time
 	if err := f.Pool.QueryRow(ctx, `UPDATE run_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
 		t.Fatal(err)

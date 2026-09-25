@@ -68,13 +68,13 @@ func (r *Reclaimer) Reconcile(ctx context.Context) error {
 	if err := r.collectComputerKeys(ctx); err != nil {
 		return err
 	}
-	candidates, err := r.queries.ListAbandonedCasObjects(ctx, 100)
+	candidates, err := r.queries.ListAbandonedCasBlobs(ctx, 100)
 	if err != nil {
 		return err
 	}
 	var failures []error
 	for _, digest := range candidates {
-		if _, err := r.queries.RetireAbandonedCasObject(ctx, digest); err != nil {
+		if _, err := r.queries.RetireAbandonedCasBlob(ctx, digest); err != nil {
 			// An adopter or registered owner won the race. The FK, not the
 			// candidate list's earlier snapshot, is the final deletion barrier.
 			var pgErr *pgconn.PgError
@@ -87,7 +87,7 @@ func (r *Reclaimer) Reconcile(ctx context.Context) error {
 	// Claim just before work, not a large batch that can expire while queued
 	// locally. Storage work is bounded below the five-minute recovery interval.
 	for range 100 {
-		digests, err := r.queries.ClaimRetiredCasObjects(ctx, 1)
+		digests, err := r.queries.ClaimRetiredCasBlobs(ctx, 1)
 		if err != nil {
 			return errors.Join(append(failures, err)...)
 		}
@@ -103,7 +103,7 @@ func (r *Reclaimer) Reconcile(ctx context.Context) error {
 			recorded = pgtype.Text{String: err.Error(), Valid: true}
 			failures = append(failures, fmt.Errorf("reclaim %s: %w", digest, err))
 		}
-		if recordErr := r.queries.RecordCasReclamation(ctx, db.RecordCasReclamationParams{
+		if recordErr := r.queries.RecordCasBlobReclamation(ctx, db.RecordCasBlobReclamationParams{
 			Digest: digest, LastError: recorded,
 		}); recordErr != nil {
 			failures = append(failures, recordErr)

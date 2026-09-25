@@ -68,7 +68,7 @@ func InsertCheckpointArtifacts(t *testing.T, ctx context.Context, executor inter
 				($4::uuid, $8::text, 'run_checkpoint_memory'::artifact_kind, 'application/vnd.helmr.firecracker.memory.v0+filepack'),
 				($5::uuid, $9::text, 'run_checkpoint_scratch_disk'::artifact_kind, 'application/vnd.helmr.firecracker.scratch-disk.v0+filepack')
 		), lifetimes AS (
-			INSERT INTO cas_object_lifetimes (digest) SELECT digest FROM descriptors ON CONFLICT DO NOTHING
+			INSERT INTO cas_blobs (digest, size_bytes) SELECT digest, 1 FROM descriptors ON CONFLICT DO NOTHING
 		), inserted_cas AS (
 			INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 			SELECT authority.org_id, descriptors.digest, 1, descriptors.media_type
@@ -96,7 +96,7 @@ func InsertCommittedComputerRoot(t *testing.T, ctx context.Context, executor int
 	artifactID := uuid.NewV7()
 	digest := Digest(artifactID.String())
 	MustExec(t, ctx, executor, `
-WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1024) ON CONFLICT DO NOTHING)
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 SELECT org_id, $2, 1024, 'application/vnd.helmr.computer.disk.v0+filepack+aesgcm'
   FROM environments WHERE id = $1`, environmentID, digest)

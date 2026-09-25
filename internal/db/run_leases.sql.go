@@ -32,7 +32,7 @@ UPDATE run_leases
    AND finalization_kind IS NULL
    AND finalization_started_at IS NULL
    AND finalization_request_fingerprint IS NULL
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type BeginRunLeaseFinalizationParams struct {
@@ -98,6 +98,7 @@ func (q *Queries) BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLea
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1195,7 +1196,7 @@ func (q *Queries) ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, l
 }
 
 const lockLiveRunLease = `-- name: LockLiveRunLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -1258,6 +1259,7 @@ func (q *Queries) LockLiveRunLease(ctx context.Context, arg LockLiveRunLeasePara
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1330,7 +1332,7 @@ func (q *Queries) LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCh
 }
 
 const lockRunEntrypointLease = `-- name: LockRunEntrypointLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -1393,6 +1395,7 @@ func (q *Queries) LockRunEntrypointLease(ctx context.Context, arg LockRunEntrypo
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1583,7 +1586,7 @@ func (q *Queries) LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLease
 }
 
 const lockRunLeaseClaimLease = `-- name: LockRunLeaseClaimLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
  FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -1647,6 +1650,7 @@ func (q *Queries) LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseCl
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1885,7 +1889,7 @@ func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClai
 }
 
 const lockRunLeaseClaimRuntime = `-- name: LockRunLeaseClaimRuntime :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, computer_save_sequence, computer_save_id, computer_save_lease_id, computer_save_predecessor_id, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at, computer_payload_required
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, computer_save_sequence, computer_save_id, computer_save_lease_id, computer_save_predecessor_id, computer_payload_required, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
   FROM runtime_instances
  WHERE id = $1
    AND org_id = $2
@@ -1954,6 +1958,7 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.ComputerSaveID,
 		&i.ComputerSaveLeaseID,
 		&i.ComputerSavePredecessorID,
+		&i.ComputerPayloadRequired,
 		&i.RetainedComputerSourceVersionID,
 		&i.ComputerWriteKeyID,
 		&i.RetainedComputerWriteKeyID,
@@ -1976,7 +1981,6 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.TerminalReasonCode,
 		&i.TerminalError,
 		&i.UpdatedAt,
-		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2328,7 +2332,7 @@ func (q *Queries) LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockR
 }
 
 const lockRunStartLease = `-- name: LockRunStartLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -2392,6 +2396,7 @@ func (q *Queries) LockRunStartLease(ctx context.Context, arg LockRunStartLeasePa
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -2544,7 +2549,7 @@ UPDATE run_leases
    AND status = 'starting'
    AND start_deadline_at > transaction_timestamp()
    AND expires_at > transaction_timestamp()
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type MarkRunLeaseRunningParams struct {
@@ -2608,6 +2613,7 @@ func (q *Queries) MarkRunLeaseRunning(ctx context.Context, arg MarkRunLeaseRunni
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -2632,7 +2638,7 @@ UPDATE run_leases
    AND status = 'assigned'
    AND start_deadline_at > transaction_timestamp()
    AND expires_at > transaction_timestamp()
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type MarkRunLeaseStartingParams struct {
@@ -2686,6 +2692,7 @@ func (q *Queries) MarkRunLeaseStarting(ctx context.Context, arg MarkRunLeaseStar
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -3615,7 +3622,7 @@ UPDATE run_leases
    AND lease_sequence = $7
    AND expires_at = $8
    AND status IN ('running', 'checkpointing')
- RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+ RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type RenewRunLeaseExpiryParams struct {
@@ -3675,6 +3682,7 @@ func (q *Queries) RenewRunLeaseExpiry(ctx context.Context, arg RenewRunLeaseExpi
 		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,

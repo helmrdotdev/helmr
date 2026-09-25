@@ -26,7 +26,7 @@ func InsertComputerGeneration(t *testing.T, ctx context.Context, tx interface {
 		t.Fatal(err)
 	}
 	MustExec(t, ctx, tx, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, key, environment, computerID)
-	MustExec(t, ctx, tx, `INSERT INTO cas_object_lifetimes(digest) VALUES($1)`, digest)
+	MustExec(t, ctx, tx, `INSERT INTO cas_blobs(digest,size_bytes) VALUES($1,512)`, digest)
 	MustExec(t, ctx, tx, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) SELECT org_id,$2,512,'application/octet-stream' FROM environments WHERE id=$1`, environment, digest)
 	MustExec(t, ctx, tx, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at) SELECT id,$2,$3,org_id,project_id,512,'application/octet-stream','root',2,'{}',now() FROM environments WHERE id=$1`, environment, computerID, digest)
 	MustExec(t, ctx, tx, `INSERT INTO computer_object_keys(environment_id,computer_id,digest,key_id,is_direct) VALUES($1,$2,$3,$4,true)`, environment, computerID, digest, key)

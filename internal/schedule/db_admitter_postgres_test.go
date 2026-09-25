@@ -421,7 +421,7 @@ func seedScheduleArtifact(
 		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
 	}
 	dbtest.MustExec(t, t.Context(), pool, `
-		WITH lifetime AS (INSERT INTO cas_object_lifetimes (digest) VALUES ($2) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, $3)
 	`, orgID, digest, mediaType)
 	dbtest.MustExec(t, t.Context(), pool, `

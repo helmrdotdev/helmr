@@ -138,7 +138,7 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 			return errStaleRunFinalization
 		}
 		var registered bool
-		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM run_finalization_objects WHERE run_lease_id=$1 AND operation_id=$2 AND lease_status='finalizing')`, authority.runLease.ID, pgvalue.UUID(operation)).Scan(&registered); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM run_leases WHERE id=$1 AND finalization_operation_id=$2 AND status='finalizing' AND finalization_root IS NOT NULL)`, authority.runLease.ID, pgvalue.UUID(operation)).Scan(&registered); err != nil {
 			return err
 		}
 		if !registered {

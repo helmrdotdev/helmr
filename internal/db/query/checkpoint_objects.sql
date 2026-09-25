@@ -3,7 +3,7 @@
 -- entire four-object set must succeed or roll back; exact replays preserve candidate identity.
 -- name: RegisterCheckpointObject :one
 WITH lifetime AS (
-    INSERT INTO cas_object_lifetimes (digest) VALUES (sqlc.arg(digest))
+    INSERT INTO cas_blobs (digest, size_bytes) VALUES (sqlc.arg(digest), sqlc.arg(size_bytes))
     ON CONFLICT DO NOTHING
 )
 INSERT INTO run_checkpoint_objects (checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status)
