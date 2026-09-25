@@ -9,9 +9,8 @@ declared on the Actor.
 - `codex.ts`: a native thread/turn, exact `turn/steer`, command/file approvals and
   `item/tool/requestUserInput`. Unsupported interactive methods fail closed. Secret
   questions require a private application channel and are rejected here.
-- `claude.ts`: `canUseTool`, `AskUserQuestion`, and streaming-input follow-ups. Claude
-  serializes those inputs after each native result; this sample does not describe
-  them as Codex-style steering.
+- `claude.ts`: `canUseTool`, `AskUserQuestion`, and streaming-input follow-ups. The sample
+  queues follow-ups and submits them after each native result.
 - `human.ts`: live request correlation and the fresh permission admission write.
   This map disappears with the process; it is not a Token or managed durable wait.
 - `../../interfaces/issue-fixer-slack.ts`: verified Slack intake and a retained-event
