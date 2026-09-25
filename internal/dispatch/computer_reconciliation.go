@@ -100,8 +100,8 @@ func (d *Authority) reconcileUnownedComputer(ctx context.Context, id pgtype.UUID
  NOT EXISTS(SELECT 1 FROM runtime_instances WHERE workspace_id=$1 AND reclaimed_at IS NULL)
  AND NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_id=$1 AND status IN ('active','releasing'))
  AND NOT EXISTS(SELECT 1 FROM workspace_processes WHERE workspace_id=$1 AND status IN ('starting','running','exit_requested'))
- AND ($3=8 OR $4::boolean OR EXISTS(SELECT 1 FROM computer_versions v JOIN computers c ON c.id=v.workspace_id
- WHERE c.id=$1 AND v.id=$2 AND c.head_version_id=v.id AND v.status='committed' AND v.payload_available))`, id, source, count, len(failure) > 0).Scan(&safe); err != nil {
+ AND ($3=8 OR $4::boolean OR EXISTS(SELECT 1 FROM computer_versions v JOIN computers c ON c.id=v.computer_id
+ WHERE c.id=$1 AND v.id=$2 AND c.head_version_id=v.id AND v.status='committed' AND v.payload_not_retired))`, id, source, count, len(failure) > 0).Scan(&safe); err != nil {
 		return err
 	}
 	if !safe {

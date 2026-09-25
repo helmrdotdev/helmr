@@ -42,11 +42,10 @@ WITH selected_definition AS (
     INSERT INTO computer_versions (
         id,
         environment_id,
-        workspace_id,
+        computer_id,
         status,
-        content_digest,
-        size_bytes,
-        entry_count,
+        root_pack_digest,
+        logical_bytes,
         ownership_generation,
         writer_generation,
         published_at
@@ -59,14 +58,13 @@ WITH selected_definition AS (
            0,
            0,
            0,
-           0,
            NULL
       FROM created_workspace
-    RETURNING workspace_id
+    RETURNING computer_id
 )
 SELECT created_workspace.*
   FROM created_workspace
-  JOIN created_version ON created_version.workspace_id = created_workspace.id;
+  JOIN created_version ON created_version.computer_id = created_workspace.id;
 
 -- name: ResolveCurrentWorkspaceDefinitionForCreate :one
 SELECT deployment_definitions.*
@@ -242,7 +240,7 @@ SELECT computers.id,
    AND definitions.kind = 'sandbox'
    AND definitions.declared_id = computers.sandbox_declared_id
   JOIN computer_versions AS head
-    ON head.workspace_id = computers.id
+    ON head.computer_id = computers.id
    AND head.id = computers.head_version_id
    AND head.status IN ('initializing', 'committed')
  WHERE computers.environment_id = sqlc.arg(environment_id)

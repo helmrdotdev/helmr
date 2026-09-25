@@ -224,7 +224,7 @@ SELECT runs.id,
           AND (checkpoint.expires_at IS NULL
                OR checkpoint.expires_at > transaction_timestamp())
          JOIN computer_versions AS base
-           ON base.workspace_id = edge.workspace_id
+           ON base.computer_id = edge.workspace_id
           AND base.id = edge.base_workspace_version_id
           AND base.status = 'private'
          LEFT JOIN LATERAL (
@@ -276,10 +276,10 @@ SELECT runs.id,
 				     OR EXISTS (
 				         SELECT 1
 				           FROM computer_versions AS retry_version
-				           JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
+				           JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
 				           AND child_lease.finalization_root = retry_root.locator
 				          WHERE retry_version.id = runs.base_workspace_version_id
-				            AND retry_version.workspace_id = runs.workspace_id
+				            AND retry_version.computer_id = runs.workspace_id
 				            AND retry_version.status = 'private'
 				            AND retry_version.source_workspace_lease_id = child_workspace_lease.id
 				            AND retry_version.parent_version_id = child_workspace_lease.base_workspace_version_id
@@ -289,7 +289,7 @@ SELECT runs.id,
 				            AND child_lease.status = 'failed'
 				            AND child_lease.terminal_at IS NOT NULL
 				            AND child_lease.terminal_request_fingerprint IS NOT NULL
-				            AND child_lease.finalization_kind = 'capture'
+				            AND child_lease.finalization_operation_id IS NOT NULL
 				     )
 				     OR EXISTS (
 				         SELECT 1
@@ -390,7 +390,7 @@ SELECT runs.id,
    AND (restore_checkpoint.expires_at IS NULL
         OR restore_checkpoint.expires_at > transaction_timestamp())
 	  LEFT JOIN computer_versions AS restore_version
-	    ON restore_version.workspace_id = restore_checkpoint.workspace_id
+	    ON restore_version.computer_id = restore_checkpoint.workspace_id
 	   AND restore_version.id = coalesce(
 	       restore_wait.resume_workspace_version_id,
 	       restore_checkpoint.private_workspace_version_id
@@ -641,7 +641,7 @@ SELECT run_attempts.base_workspace_version_id,
        run_attempts.session_input_start_sequence
   FROM run_attempts
   JOIN computer_versions
-    ON computer_versions.workspace_id = run_attempts.workspace_id
+    ON computer_versions.computer_id = run_attempts.workspace_id
    AND computer_versions.id = run_attempts.base_workspace_version_id
    AND (($5::boolean AND computer_versions.status = 'private')
         OR (NOT $5::boolean AND computer_versions.status = 'committed')
@@ -714,7 +714,7 @@ SELECT source_lease.worker_group_id,
    AND (run_checkpoints.expires_at IS NULL
         OR run_checkpoints.expires_at > transaction_timestamp())
   JOIN computer_versions
-    ON computer_versions.workspace_id = run_checkpoints.workspace_id
+    ON computer_versions.computer_id = run_checkpoints.workspace_id
    AND computer_versions.id = run_checkpoints.private_workspace_version_id
    AND computer_versions.status = 'private'
   JOIN run_leases AS source_lease
@@ -751,7 +751,7 @@ SELECT source_lease.worker_group_id,
                  FROM computer_versions AS child_version
                  JOIN workspace_leases AS child_source
                    ON child_source.id = child_version.source_workspace_lease_id
-                  AND child_source.workspace_id = child_version.workspace_id
+                  AND child_source.workspace_id = child_version.computer_id
                   AND child_source.base_workspace_version_id = child_version.parent_version_id
                   AND child_source.ownership_generation = child_version.ownership_generation
                   AND child_source.writer_generation = child_version.writer_generation
@@ -760,11 +760,11 @@ SELECT source_lease.worker_group_id,
                  JOIN run_leases AS child_lease
                    ON child_lease.id = child_source.owner_run_lease_id
                   AND child_lease.run_id = run_waits.child_run_id
-                  AND child_lease.workspace_id = child_version.workspace_id
+                  AND child_lease.workspace_id = child_version.computer_id
                   AND child_lease.status = 'completed'
                  JOIN runtime_instances AS child_runtime
                    ON child_runtime.id = child_lease.runtime_instance_id
-                  AND child_runtime.workspace_id = child_version.workspace_id
+                  AND child_runtime.workspace_id = child_version.computer_id
                   AND child_runtime.runtime_identity_id = child_lease.runtime_identity_id
                   AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                  JOIN runs AS child
@@ -789,7 +789,7 @@ SELECT source_lease.worker_group_id,
                         AND terminal_attempt.terminal_at IS NOT NULL
                         AND terminal_attempt.terminal_outcome = 'succeeded')
                 WHERE child_version.id = run_waits.resume_workspace_version_id
-                  AND child_version.workspace_id = run_checkpoints.workspace_id
+                  AND child_version.computer_id = run_checkpoints.workspace_id
                   AND child_version.status = 'private'
                   AND child_version.ownership_generation = $14
                   AND child_version.writer_generation = run_waits.child_writer_generation

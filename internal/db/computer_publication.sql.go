@@ -12,7 +12,7 @@ import (
 )
 
 const getWorkerInitialComputerVersion = `-- name: GetWorkerInitialComputerVersion :one
-SELECT v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_available FROM computer_versions v
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired FROM computer_versions v
  JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
  WHERE v.publisher_save_sequence IS NULL AND v.publisher_runtime_instance_id=$1
    AND v.publisher_desired_version=$2
@@ -42,12 +42,10 @@ func (q *Queries) GetWorkerInitialComputerVersion(ctx context.Context, arg GetWo
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
+		&i.RootPackDigest,
+		&i.LogicalBytes,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
@@ -60,7 +58,7 @@ func (q *Queries) GetWorkerInitialComputerVersion(ctx context.Context, arg GetWo
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
-		&i.PayloadAvailable,
+		&i.PayloadNotRetired,
 	)
 	return i, err
 }
@@ -69,31 +67,31 @@ const publishInitialComputerVersion = `-- name: PublishInitialComputerVersion :o
 WITH published AS (
     UPDATE computer_versions v
        SET status='committed', published_at=clock_timestamp(),
-           content_digest=$1, size_bytes=$2,
+           root_pack_digest=$1, logical_bytes=$2,
            publisher_runtime_instance_id=$3,
            publisher_desired_version=$4,
            publication_request_fingerprint=$5
       FROM computers c
-     WHERE v.environment_id=$6 AND v.workspace_id=$7
+     WHERE v.environment_id=$6 AND v.computer_id=$7
        AND v.id=$8 AND v.status='initializing' AND v.parent_version_id IS NULL
-       AND c.environment_id=v.environment_id AND c.id=v.workspace_id
+       AND c.environment_id=v.environment_id AND c.id=v.computer_id
        AND c.head_version_id=v.id AND c.initial_config IS NULL
-    RETURNING v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_available
+    RETURNING v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired
 ), retained AS (
     INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
-    SELECT environment_id,workspace_id,id,$9 FROM published
+    SELECT environment_id,computer_id,id,$9 FROM published
     RETURNING version_id
 ), configured AS (
     UPDATE computers c SET initial_config=$10, updated_at=p.published_at
       FROM published p, retained r
-     WHERE c.environment_id=p.environment_id AND c.id=p.workspace_id AND r.version_id=p.id
+     WHERE c.environment_id=p.environment_id AND c.id=p.computer_id AND r.version_id=p.id
     RETURNING c.id
 )
-SELECT p.id, p.environment_id, p.workspace_id, p.parent_version_id, p.artifact_id, p.content_digest, p.size_bytes, p.entry_count, p.status, p.source_workspace_lease_id, p.publisher_runtime_instance_id, p.publisher_save_sequence, p.publisher_desired_version, p.publication_request_fingerprint, p.ownership_generation, p.writer_generation, p.created_at, p.published_at, p.discarded_at, p.payload_retired_at, p.payload_available FROM published p JOIN configured c ON c.id=p.workspace_id
+SELECT p.id, p.environment_id, p.computer_id, p.parent_version_id, p.root_pack_digest, p.logical_bytes, p.status, p.source_workspace_lease_id, p.publisher_runtime_instance_id, p.publisher_save_sequence, p.publisher_desired_version, p.publication_request_fingerprint, p.ownership_generation, p.writer_generation, p.created_at, p.published_at, p.discarded_at, p.payload_retired_at, p.payload_not_retired FROM published p JOIN configured c ON c.id=p.computer_id
 `
 
 type PublishInitialComputerVersionParams struct {
-	ContentDigest     pgtype.Text `json:"content_digest"`
+	RootPackDigest    pgtype.Text `json:"root_pack_digest"`
 	LogicalBytes      int64       `json:"logical_bytes"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
 	DesiredVersion    pgtype.Int8 `json:"desired_version"`
@@ -108,12 +106,10 @@ type PublishInitialComputerVersionParams struct {
 type PublishInitialComputerVersionRow struct {
 	ID                            pgtype.UUID        `json:"id"`
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
-	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
+	ComputerID                    pgtype.UUID        `json:"computer_id"`
 	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID                    pgtype.UUID        `json:"artifact_id"`
-	ContentDigest                 pgtype.Text        `json:"content_digest"`
-	SizeBytes                     int64              `json:"size_bytes"`
-	EntryCount                    int32              `json:"entry_count"`
+	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
+	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
 	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
 	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
@@ -126,14 +122,14 @@ type PublishInitialComputerVersionRow struct {
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
-	PayloadAvailable              pgtype.Bool        `json:"payload_available"`
+	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
 }
 
 // The owner validates the exact certified root page and holds the preparation
 // locks. Publication records success once; pending uploads remain Runtime pins.
 func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg PublishInitialComputerVersionParams) (PublishInitialComputerVersionRow, error) {
 	row := q.db.QueryRow(ctx, publishInitialComputerVersion,
-		arg.ContentDigest,
+		arg.RootPackDigest,
 		arg.LogicalBytes,
 		arg.RuntimeInstanceID,
 		arg.DesiredVersion,
@@ -148,12 +144,10 @@ func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg Publish
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
+		&i.RootPackDigest,
+		&i.LogicalBytes,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
@@ -166,7 +160,7 @@ func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg Publish
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
-		&i.PayloadAvailable,
+		&i.PayloadNotRetired,
 	)
 	return i, err
 }

@@ -77,7 +77,7 @@ UPDATE workspace_leases
  WHERE id = $2`, processID, workspaceLeaseID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE workspace_mounts
-   SET status = 'unmounting', finalization_kind = 'capture',
+   SET status = 'unmounting', finalization_action = 'capture',
        finalization_reason_code = 'workspace_exec_completed', stopped_at = now()
  WHERE id = $1`, mountID)
 
@@ -177,8 +177,8 @@ func TestExecGenerationRejectsUnpublishedAndChangedCapture(t *testing.T) {
 func (f *execGenerationFixture) advanceSavedHead(t *testing.T) uuid.UUID {
 	t.Helper()
 	id := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,content_digest,size_bytes,entry_count,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
- SELECT $2,v.environment_id,v.workspace_id,v.id,v.content_digest,v.size_bytes,v.entry_count,'committed',(SELECT id FROM workspace_leases WHERE owner_process_id=$3),c.ownership_generation,c.writer_generation,now()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ SELECT $2,v.environment_id,v.computer_id,v.id,v.root_pack_digest,v.logical_bytes,'committed',(SELECT id FROM workspace_leases WHERE owner_process_id=$3),c.ownership_generation,c.writer_generation,now()
  FROM computers c JOIN computer_versions v ON v.id=c.head_version_id WHERE c.id=$1`, f.computerID, id, f.processID)
 	raw, err := json.Marshal(f.root)
 	if err != nil {
@@ -195,7 +195,7 @@ func TestExecSettlementAfterSavedHeadAdvancement(t *testing.T) {
 			f := newExecGenerationFixture(t)
 			head := f.advanceSavedHead(t)
 			if mode == "recovered failure" {
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL WHERE id=$1`, f.mountID)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET finalization_action=NULL, finalization_reason_code=NULL WHERE id=$1`, f.mountID)
 				f.recoverExec(t)
 			} else if mode == "failure" {
 				w := f.call(t, f.server.workerFailWorkspaceMount, workerapi.WorkspaceMountFailRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), Error: json.RawMessage(`{"code":"fixture_failure"}`)})

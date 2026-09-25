@@ -165,12 +165,12 @@ func classifyWorkspaceExecRecovery(
 	secretsValid bool,
 ) workspaceExecRecoveryKind {
 	if authority.WorkspaceProcess.Status != db.WorkspaceProcessStatusExitRequested ||
-		!authority.WorkspaceMount.FinalizationKind.Valid ||
+		!authority.WorkspaceMount.FinalizationAction.Valid ||
 		!authority.WorkspaceMount.FinalizationReasonCode.Valid ||
 		authority.WorkspaceMount.FinalizationReasonCode.String == "" {
 		return workspaceExecRecoveryUncertain
 	}
-	switch authority.WorkspaceMount.FinalizationKind.String {
+	switch authority.WorkspaceMount.FinalizationAction.String {
 	case "capture":
 		if authority.WorkspaceProcess.StagedVersionID.Valid &&
 			len(authority.WorkspaceMount.FinalizationError) == 0 {

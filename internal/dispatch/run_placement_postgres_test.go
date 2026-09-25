@@ -354,17 +354,7 @@ SELECT $1, environment_id, region_id, sandbox_declared_id,
        deployment_definition_id, $2, 1, 0, $3
   FROM computers
  WHERE id = $4`, secondWorkspaceID, secondRunID, secondVersionID, fixture.workspaceID)
-	dbtest.MustExec(t, fixture.ctx, tx, `
-INSERT INTO computer_versions (
-    id, environment_id, workspace_id, content_digest, artifact_id,
-    size_bytes, entry_count, status,
-    ownership_generation, writer_generation, published_at
-)
-SELECT $1, environment_id, $2, content_digest, artifact_id,
-       size_bytes, entry_count, status, 0, 0, transaction_timestamp()
-  FROM computer_versions
- WHERE id = (SELECT head_version_id FROM computers WHERE id = $3)`,
-		secondVersionID, secondWorkspaceID, fixture.workspaceID)
+	dbtest.InsertCommittedComputerRoot(t, fixture.ctx, tx, secondVersionID, fixture.environmentID, secondWorkspaceID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, secondWorkspaceID, secondVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
@@ -505,7 +495,7 @@ SELECT ('10000000-0000-8000-8000-' || lpad(value::text, 12, '0'))::uuid, transac
 	var mountWorkerID, runtimeID pgtype.UUID
 	var workerEpoch, fencingGeneration int64
 	if err := fixture.pool.QueryRow(fixture.ctx, `
-SELECT status, finalization_kind, finalization_reason_code,
+SELECT status, finalization_action, finalization_reason_code,
        worker_instance_id, worker_epoch, runtime_instance_id, fencing_generation
   FROM workspace_mounts
  WHERE id = $1`, mounted.WorkspaceMountID).Scan(
@@ -1299,16 +1289,15 @@ INSERT INTO artifacts (
 	)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id,
-    parent_version_id, content_digest, status, source_workspace_lease_id,
-    ownership_generation, writer_generation, artifact_id,
-    entry_count, size_bytes
+    id, environment_id, computer_id,
+    parent_version_id, root_pack_digest, status, source_workspace_lease_id,
+    ownership_generation, writer_generation, logical_bytes
 ) VALUES (
     $1, $2, $3, $4, $5, 'private', $6,
-    1, 1, $7, 1, 1
+    1, 1, 1
 )`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseWorkspaceVersionID,
-		privateDigest, sourceWorkspaceLeaseID, privateArtifactID,
+		privateDigest, sourceWorkspaceLeaseID,
 	)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, privateVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -1330,7 +1319,7 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
@@ -2080,20 +2069,17 @@ UPDATE runs
  WHERE id = $1`, fixture.runID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    content_digest, size_bytes, entry_count, status,
-    source_workspace_lease_id, ownership_generation, writer_generation,
-    artifact_id, published_at
+    id, environment_id, computer_id, parent_version_id,
+    root_pack_digest, logical_bytes, status,
+    source_workspace_lease_id, ownership_generation, writer_generation, published_at
 )
-SELECT $1, computer_versions.environment_id, computer_versions.workspace_id,
+SELECT $1, computer_versions.environment_id, computer_versions.computer_id,
        computer_versions.id,
-       computer_versions.content_digest, computer_versions.size_bytes,
-       computer_versions.entry_count, 'committed', $2,
+       computer_versions.root_pack_digest, computer_versions.logical_bytes, 'committed', $2,
        computers.ownership_generation, computers.writer_generation,
-       computer_versions.artifact_id,
        transaction_timestamp()
   FROM computer_versions
-  JOIN computers ON computers.id = computer_versions.workspace_id
+  JOIN computers ON computers.id = computer_versions.computer_id
  WHERE computer_versions.id = $3`, continuationFrontierID, workspaceLeaseID, frontierID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, continuationFrontierID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
@@ -2274,11 +2260,11 @@ VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fix
 		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id, content_digest, status, source_workspace_lease_id, ownership_generation,
-    writer_generation, artifact_id, entry_count, size_bytes
-) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, $7, 1, 1)`,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, status, source_workspace_lease_id, ownership_generation,
+    writer_generation, logical_bytes
+) VALUES ($1, $2, $3, $4, $5, 'private', $6, 1, 1, 1)`,
 		privateVersionID, fixture.environmentID, fixture.workspaceID, baseWorkspaceVersionID, privateDigest,
-		sourceWorkspaceLeaseID, privateArtifactID)
+		sourceWorkspaceLeaseID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, privateVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO run_waits (
@@ -2296,7 +2282,7 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id, actor_speculative_input_sequence,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    status, restore_manifest, ready_request_fingerprint, ready_at
+    status, manifest, ready_request_fingerprint, ready_at
 ) VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8, $13, $9, $10, $11, $12,
           'ready', '{"kind":"suspend"}'::jsonb, 'sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8', now())`,
 		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
@@ -2421,8 +2407,8 @@ UPDATE worker_instances
 	).Scan(&runtimes); err != nil {
 		t.Fatal(err)
 	}
-	if runtimes != 0 {
-		t.Fatalf("created %d runtimes for an incompatible per-VM profile", runtimes)
+	if runtimes != 1 {
+		t.Fatalf("runtime count = %d, want only the reclaimed publisher", runtimes)
 	}
 }
 

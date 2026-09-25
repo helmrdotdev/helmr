@@ -160,7 +160,7 @@ ORDER BY s.id FOR UPDATE OF s;
 
 -- name: SessionRecoveryHeadCommitted :one
 SELECT EXISTS(SELECT 1 FROM computer_versions
- WHERE environment_id=$1 AND workspace_id=$2 AND id=$3 AND status='committed') AS committed;
+ WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND status='committed') AS committed;
 
 -- name: RunWaitSessionStopped :one
 SELECT EXISTS (

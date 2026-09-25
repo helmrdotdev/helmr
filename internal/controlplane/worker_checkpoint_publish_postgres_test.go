@@ -72,10 +72,35 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		t.Fatal("no private Computer version")
 	}
 	var status, digest, media string
-	var logical, entries int64
-	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.content_digest,v.size_bytes,v.entry_count,a.media_type FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id JOIN computer_objects a ON a.digest=r.root_digest AND a.computer_id=r.computer_id AND a.environment_id=r.environment_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &entries, &media)
-	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Root.Pack.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || entries != 0 || media != "application/octet-stream" {
-		t.Fatalf("version %s %s %d %d %s: %v", status, digest, logical, entries, media, err)
+	var logical int64
+	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.root_pack_digest,v.logical_bytes,a.media_type FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id JOIN computer_objects a ON a.digest=r.root_pack_digest AND a.computer_id=r.computer_id AND a.environment_id=r.environment_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &media)
+	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Root.Pack.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || media != "application/octet-stream" {
+		t.Fatalf("version %s %s %d %s: %v", status, digest, logical, media, err)
+	}
+	registered := req.Manifest
+	registered.Phases = nil
+	registeredJSON, err := json.Marshal(registered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unchanged bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest=$2::jsonb FROM run_checkpoints WHERE id=$1`, req.CheckpointID, registeredJSON).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("registered manifest changed: %v", err)
+	}
+	var storedManifest, phases []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest,phase_timings FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&storedManifest, &phases); err != nil {
+		t.Fatal(err)
+	}
+	var stored workerapi.CheckpointManifest
+	if err := json.Unmarshal(storedManifest, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Phases) != 0 {
+		t.Fatal("timings mutated registered manifest")
+	}
+	var observed []workerapi.CheckpointPhase
+	if err := json.Unmarshal(phases, &observed); err != nil || len(observed) != 1 || observed[0].Name != "upload" || observed[0].DurationMs != 5 {
+		t.Fatalf("phase timings=%s: %v", phases, err)
 	}
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil {
@@ -97,6 +122,10 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &replay)
 	if replay != receipt {
 		t.Fatal("lost reply created a different publication")
+	}
+	ready.Manifest.Phases = []workerapi.CheckpointPhase{{Name: "upload", DurationMs: 6}}
+	if status := checkpointReadyStatus(t, f, ready); status < 400 {
+		t.Fatalf("changed ready replay accepted: %d", status)
 	}
 }
 

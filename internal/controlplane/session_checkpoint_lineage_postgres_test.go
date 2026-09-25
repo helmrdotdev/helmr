@@ -70,7 +70,7 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	}{
 		{"broken restore pointer", `UPDATE runtime_instances SET restore_checkpoint_id=NULL WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, uuid.MustParse(c2.CheckpointID)},
 		{"unacknowledged prior restore", `UPDATE run_waits SET resume_ack_version=0 WHERE id=(SELECT run_wait_id FROM run_checkpoints WHERE id=$1)`, uuid.MustParse(c1.CheckpointID)},
-		{"wrong private parent", `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.workspace_id) WHERE id=$1`, uuid.MustParse(c2.WorkspaceVersionID)},
+		{"wrong private parent", `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.computer_id) WHERE id=$1`, uuid.MustParse(c2.WorkspaceVersionID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tx, err := f.Pool.Begin(t.Context())
@@ -293,7 +293,7 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 		if err := f.Pool.QueryRow(t.Context(), `SELECT w.resume_workspace_version_id,v.parent_version_id,r.revision FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN computer_versions v ON v.id=w.resume_workspace_version_id WHERE w.id=$1`, uuid.MustParse(req.RunWaitID)).Scan(&childVersion, &parentVersion, &revision); err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.workspace_id) WHERE id=$1`, childVersion)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.computer_id) WHERE id=$1`, childVersion)
 		_, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(parentID), ExpectedRunRevision: revision})
 		if !errors.Is(err, dispatch.ErrCandidateChanged) {
 			t.Fatalf("wrong latest child output parent placement: %v", err)

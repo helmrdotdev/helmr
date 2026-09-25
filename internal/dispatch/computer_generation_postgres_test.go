@@ -53,7 +53,7 @@ func TestRuntimeReservationRetainsExactComputerGeneration(t *testing.T) {
 				switch state {
 				case "initializing":
 					dbtest.MustExec(t, f.ctx, f.pool, `DELETE FROM computer_version_roots WHERE version_id=$1`, version)
-					dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET status='initializing',artifact_id=NULL,content_digest=NULL,size_bytes=0,published_at=NULL WHERE id=$1`, version)
+					dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET status='initializing',publisher_runtime_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL,root_pack_digest=NULL,logical_bytes=0,published_at=NULL WHERE id=$1`, version)
 				case "missing root":
 					dbtest.MustExec(t, f.ctx, f.pool, `DELETE FROM computer_version_roots WHERE version_id=$1`, version)
 				case "wrong capacity":
@@ -74,8 +74,8 @@ func TestRuntimeReservationRetainsExactComputerGeneration(t *testing.T) {
 						t.Fatal("invalid source allocated")
 					}
 					var count int
-					if e := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM runtime_instances WHERE workspace_id=$1`, f.workspaceID).Scan(&count); e != nil || count != 0 {
-						t.Fatalf("partial allocation: %d %v", count, e)
+					if e := f.pool.QueryRow(f.ctx, `SELECT count(*) FROM runtime_instances WHERE workspace_id=$1`, f.workspaceID).Scan(&count); e != nil || count != 1 {
+						t.Fatalf("runtime count = %d, want only the reclaimed publisher: %v", count, e)
 					}
 					return
 				}
@@ -116,7 +116,7 @@ func TestExecPlacementUsesGenerationWithoutArtifact(t *testing.T) {
 	}
 	// Model initial generation publication by the reserved Runtime, without a
 	// whole-file artifact. Publication itself has separate HTTP/byte-level tests.
-	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET artifact_id=NULL,publisher_runtime_instance_id=$2,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('a1',32),'hex') WHERE id=$1`, root, reserved.RuntimeInstanceID)
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET publisher_runtime_instance_id=$2,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('a1',32),'hex') WHERE id=$1`, root, reserved.RuntimeInstanceID)
 	markRunPlacementRuntimeReady(t, f, reserved.RuntimeInstanceID)
 	mounting, err := f.authority.PlaceWorkspaceExec(f.ctx, candidate)
 	if err != nil || !mounting.WorkspaceMountID.Valid {

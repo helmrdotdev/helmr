@@ -603,7 +603,7 @@ WITH selected_target AS MATERIALIZED (
         ON computers.environment_id = parent.environment_id
        AND computers.id = $2
       JOIN computer_versions
-        ON computer_versions.workspace_id = computers.id
+        ON computer_versions.computer_id = computers.id
        AND computer_versions.id = $3
        AND computer_versions.status = 'committed'
       LEFT JOIN idempotency_claims
@@ -909,7 +909,7 @@ WITH selected_target AS MATERIALIZED (
         ON computers.environment_id = environments.id
        AND computers.id = $2
       JOIN computer_versions
-        ON computer_versions.workspace_id = computers.id
+        ON computer_versions.computer_id = computers.id
        AND computer_versions.id = $3
        AND computer_versions.status = 'committed'
      WHERE environments.id = $4
@@ -1209,7 +1209,7 @@ WITH selected_target AS MATERIALIZED (
        AND checkpoint.private_workspace_version_id =
            $6
       JOIN computer_versions AS base
-        ON base.workspace_id = parent.workspace_id
+        ON base.computer_id = parent.workspace_id
        AND base.id = checkpoint.private_workspace_version_id
        AND base.status = 'private'
       JOIN deployment_definitions AS definitions

@@ -286,7 +286,7 @@ type CasBlob struct {
 	Digest           string             `json:"digest"`
 	SizeBytes        int64              `json:"size_bytes"`
 	RetiredAt        pgtype.Timestamptz `json:"retired_at"`
-	Referenceable    pgtype.Bool        `json:"referenceable"`
+	NotRetired       pgtype.Bool        `json:"not_retired"`
 	NextReclaimAt    pgtype.Timestamptz `json:"next_reclaim_at"`
 	LastReclaimError pgtype.Text        `json:"last_reclaim_error"`
 }
@@ -396,12 +396,10 @@ type ComputerObjectKey struct {
 type ComputerVersion struct {
 	ID                            pgtype.UUID        `json:"id"`
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
-	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
+	ComputerID                    pgtype.UUID        `json:"computer_id"`
 	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID                    pgtype.UUID        `json:"artifact_id"`
-	ContentDigest                 pgtype.Text        `json:"content_digest"`
-	SizeBytes                     int64              `json:"size_bytes"`
-	EntryCount                    int32              `json:"entry_count"`
+	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
+	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
 	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
 	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
@@ -414,7 +412,7 @@ type ComputerVersion struct {
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
-	PayloadAvailable              pgtype.Bool        `json:"payload_available"`
+	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
 }
 
 type ComputerVersionRoot struct {
@@ -424,10 +422,10 @@ type ComputerVersionRoot struct {
 	Locator               []byte      `json:"locator"`
 	LogicalBytes          int64       `json:"logical_bytes"`
 	RootKind              pgtype.Text `json:"root_kind"`
-	RootDigest            string      `json:"root_digest"`
-	RootSizeBytes         int64       `json:"root_size_bytes"`
-	RootRank              int32       `json:"root_rank"`
-	RootKeyID             pgtype.UUID `json:"root_key_id"`
+	RootPackDigest        string      `json:"root_pack_digest"`
+	RootPackSizeBytes     int64       `json:"root_pack_size_bytes"`
+	RootPackRank          int32       `json:"root_pack_rank"`
+	RootPageKeyID         pgtype.UUID `json:"root_page_key_id"`
 	DirectKeyRequired     pgtype.Bool `json:"direct_key_required"`
 	CertificationRequired pgtype.Bool `json:"certification_required"`
 	PayloadRequired       pgtype.Bool `json:"payload_required"`
@@ -689,8 +687,8 @@ type RunCheckpoint struct {
 	ScratchDiskArtifactID         pgtype.UUID        `json:"scratch_disk_artifact_id"`
 	ActorSpeculativeInputSequence pgtype.Int8        `json:"actor_speculative_input_sequence"`
 	Status                        string             `json:"status"`
-	RestoreManifest               []byte             `json:"restore_manifest"`
-	CandidateManifest             []byte             `json:"candidate_manifest"`
+	Manifest                      []byte             `json:"manifest"`
+	PhaseTimings                  []byte             `json:"phase_timings"`
 	ReadyRequestFingerprint       pgtype.Text        `json:"ready_request_fingerprint"`
 	FailedRequestFingerprint      pgtype.Text        `json:"failed_request_fingerprint"`
 	ExpiresAt                     pgtype.Timestamptz `json:"expires_at"`
@@ -742,7 +740,6 @@ type RunLease struct {
 	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
 	PreviousExpiresAt                pgtype.Timestamptz `json:"previous_expires_at"`
 	FinalizationOperationID          pgtype.UUID        `json:"finalization_operation_id"`
-	FinalizationKind                 pgtype.Text        `json:"finalization_kind"`
 	FinalizationStartedAt            pgtype.Timestamptz `json:"finalization_started_at"`
 	FinalizationRequestFingerprint   pgtype.Text        `json:"finalization_request_fingerprint"`
 	FinalizationRoot                 []byte             `json:"finalization_root"`
@@ -866,9 +863,9 @@ type RuntimeInstance struct {
 	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
 	ComputerSourceVersionID         pgtype.UUID        `json:"computer_source_version_id"`
 	ComputerSaveSequence            int64              `json:"computer_save_sequence"`
-	ComputerSaveID                  pgtype.UUID        `json:"computer_save_id"`
+	ComputerSaveVersionID           pgtype.UUID        `json:"computer_save_version_id"`
 	ComputerSaveLeaseID             pgtype.UUID        `json:"computer_save_lease_id"`
-	ComputerSavePredecessorID       pgtype.UUID        `json:"computer_save_predecessor_id"`
+	ComputerSaveBaseVersionID       pgtype.UUID        `json:"computer_save_base_version_id"`
 	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
 	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
 	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
@@ -1292,7 +1289,7 @@ type WorkspaceMount struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`

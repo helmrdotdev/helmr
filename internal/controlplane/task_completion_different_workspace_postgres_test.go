@@ -98,7 +98,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
  checkpoint_request_version, checkpoint_ack_version, resume_attach_id, suspension_status)
  VALUES ($1,$2,$3,$4,'child','pending',$5,'test-task',$6,'{"Method":"call"}'::jsonb,5,1,$7,1,1,$8,'parked')`, waitID, base.EnvironmentID, parent.RunID, parentWorkspace, child.RunID, claimID, parent.LeaseID, uuid.NewV7())
 	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, parent.RunID, checkpointID.String())
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints (id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,private_workspace_version_id,runtime_config_artifact_id,vm_state_artifact_id,memory_artifact_id,scratch_disk_artifact_id,status,restore_manifest,ready_request_fingerprint,ready_at)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints (id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,private_workspace_version_id,runtime_config_artifact_id,vm_state_artifact_id,memory_artifact_id,scratch_disk_artifact_id,status,manifest,ready_request_fingerprint,ready_at)
  VALUES ($1,$2,1,$3,$4,$5,$6,$7,$7,$8,$9,$10,$11,'ready','{"kind":"suspend"}'::jsonb,'sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8',transaction_timestamp())`, checkpointID, parent.RunID, waitID, parent.LeaseID, parentWorkspaceLease, parentWorkspace, parentVersion, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id=$2 WHERE id=$1`, waitID, checkpointID)
 	if err := tx.Commit(ctx); err != nil {
@@ -153,7 +153,7 @@ func testDifferentWorkspaceChildCompletion(t *testing.T, transition string) {
 		}
 		for range 2 {
 			savedHead = uuid.NewV7()
-			dbtest.MustExec(t, ctx, base.Pool, `INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,content_digest,size_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+			dbtest.MustExec(t, ctx, base.Pool, `INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
  SELECT $2,c.environment_id,c.id,c.head_version_id,$4,$5,'committed',$3,c.ownership_generation,c.writer_generation,now() FROM computers c WHERE c.id=$1`, childWorkspace, savedHead, workspaceLeaseID, capture.Disk.Root.Pack.Digest, capture.Disk.Root.LogicalBytes)
 			dbtest.MustExec(t, ctx, base.Pool, `INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator) SELECT environment_id,id,$2,$3 FROM computers WHERE id=$1`, childWorkspace, savedHead, raw)
 			dbtest.MustExec(t, ctx, base.Pool, `UPDATE computers SET head_version_id=$2,revision=revision+1 WHERE id=$1`, childWorkspace, savedHead)

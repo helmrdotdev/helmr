@@ -14,14 +14,14 @@ import (
 const abandonReclaimedComputerSaves = `-- name: AbandonReclaimedComputerSaves :execrows
 WITH released AS (
  SELECT r.id FROM runtime_instances r
- WHERE r.reclaimed_at IS NOT NULL AND r.computer_save_id IS NOT NULL
+ WHERE r.reclaimed_at IS NOT NULL AND r.computer_save_version_id IS NOT NULL
  AND NOT EXISTS(SELECT 1 FROM computer_versions v WHERE v.publisher_runtime_instance_id=r.id
    AND v.publisher_save_sequence=r.computer_save_sequence)
  ORDER BY r.id LIMIT $1
  FOR UPDATE OF r SKIP LOCKED
 )
 UPDATE runtime_instances r
-SET computer_save_id=NULL,computer_save_lease_id=NULL,computer_save_predecessor_id=NULL,
+SET computer_save_version_id=NULL,computer_save_lease_id=NULL,computer_save_base_version_id=NULL,
  updated_at=clock_timestamp()
 FROM released WHERE r.id=released.id
 `
@@ -40,11 +40,11 @@ func (q *Queries) AbandonReclaimedComputerSaves(ctx context.Context, rowLimit in
 
 const abandonRuntimeComputerSave = `-- name: AbandonRuntimeComputerSave :execrows
 UPDATE runtime_instances r
-   SET computer_save_id=NULL, computer_save_lease_id=NULL,
-       computer_save_predecessor_id=NULL, updated_at=clock_timestamp()
+   SET computer_save_version_id=NULL, computer_save_lease_id=NULL,
+       computer_save_base_version_id=NULL, updated_at=clock_timestamp()
  WHERE r.id=$1
    AND r.worker_instance_id=$2 AND r.worker_epoch=$3
-   AND r.computer_save_sequence=$4 AND r.computer_save_id=$5
+   AND r.computer_save_sequence=$4 AND r.computer_save_version_id=$5
    AND r.computer_save_lease_id=$6
    AND NOT EXISTS(SELECT 1 FROM computer_versions v
        WHERE v.publisher_runtime_instance_id=r.id
@@ -80,15 +80,15 @@ func (q *Queries) AbandonRuntimeComputerSave(ctx context.Context, arg AbandonRun
 const adoptRuntimeComputerSave = `-- name: AdoptRuntimeComputerSave :execrows
 UPDATE runtime_instances r
 SET computer_source_version_id=v.id,
-    computer_save_id=NULL, computer_save_lease_id=NULL,
-    computer_save_predecessor_id=NULL, updated_at=clock_timestamp()
+    computer_save_version_id=NULL, computer_save_lease_id=NULL,
+    computer_save_base_version_id=NULL, updated_at=clock_timestamp()
 FROM computer_versions v, computer_version_roots root
 WHERE r.id=$1
   AND r.worker_instance_id=$2 AND r.worker_epoch=$3
   AND r.reclaimed_at IS NULL
-  AND r.computer_save_sequence=$4 AND r.computer_save_id=$5
+  AND r.computer_save_sequence=$4 AND r.computer_save_version_id=$5
   AND r.computer_save_lease_id=$6
-  AND v.id=r.computer_save_id AND v.publisher_runtime_instance_id=r.id
+  AND v.id=r.computer_save_version_id AND v.publisher_runtime_instance_id=r.id
   AND v.publisher_save_sequence=r.computer_save_sequence AND v.status='committed'
   AND root.environment_id=r.environment_id AND root.computer_id=r.workspace_id
   AND root.version_id=v.id
@@ -124,9 +124,9 @@ func (q *Queries) AdoptRuntimeComputerSave(ctx context.Context, arg AdoptRuntime
 const beginRuntimeComputerSave = `-- name: BeginRuntimeComputerSave :one
 UPDATE runtime_instances r
    SET computer_save_sequence=$1,
-       computer_save_id=$2,
+       computer_save_version_id=$2,
        computer_save_lease_id=$3,
-       computer_save_predecessor_id=$4,
+       computer_save_base_version_id=$4,
        updated_at=clock_timestamp()
   FROM computers c, workspace_leases l, computer_versions v
  WHERE r.id=$5
@@ -135,21 +135,21 @@ UPDATE runtime_instances r
    AND r.observed_state='ready' AND r.reclaimed_at IS NULL
    AND c.id=r.workspace_id AND c.environment_id=r.environment_id
    AND c.status='active'
-   AND v.id=c.head_version_id AND v.workspace_id=c.id AND v.environment_id=c.environment_id
+   AND v.id=c.head_version_id AND v.computer_id=c.id AND v.environment_id=c.environment_id
    AND v.status='committed'
    AND l.id=$3 AND l.workspace_id=c.id AND l.runtime_instance_id=r.id
    AND l.worker_instance_id=r.worker_instance_id AND l.worker_epoch=r.worker_epoch
    AND l.ownership_generation=c.ownership_generation AND l.writer_generation=c.writer_generation
    AND l.status='active' AND l.expires_at>clock_timestamp()
    AND (
-       (r.computer_save_id IS NULL AND r.computer_save_sequence=$1::bigint-1
+       (r.computer_save_version_id IS NULL AND r.computer_save_sequence=$1::bigint-1
            AND c.head_version_id=$4
            AND NOT EXISTS(SELECT 1 FROM computer_versions existing WHERE existing.id=$2))
-       OR (r.computer_save_sequence=$1 AND r.computer_save_id=$2
+       OR (r.computer_save_sequence=$1 AND r.computer_save_version_id=$2
            AND r.computer_save_lease_id=$3
-           AND r.computer_save_predecessor_id=$4)
+           AND r.computer_save_base_version_id=$4)
    )
-RETURNING r.computer_save_sequence, r.computer_save_id, r.computer_save_lease_id, r.computer_save_predecessor_id
+RETURNING r.computer_save_sequence, r.computer_save_version_id, r.computer_save_lease_id, r.computer_save_base_version_id
 `
 
 type BeginRuntimeComputerSaveParams struct {
@@ -165,9 +165,9 @@ type BeginRuntimeComputerSaveParams struct {
 
 type BeginRuntimeComputerSaveRow struct {
 	ComputerSaveSequence      int64       `json:"computer_save_sequence"`
-	ComputerSaveID            pgtype.UUID `json:"computer_save_id"`
+	ComputerSaveVersionID     pgtype.UUID `json:"computer_save_version_id"`
 	ComputerSaveLeaseID       pgtype.UUID `json:"computer_save_lease_id"`
-	ComputerSavePredecessorID pgtype.UUID `json:"computer_save_predecessor_id"`
+	ComputerSaveBaseVersionID pgtype.UUID `json:"computer_save_base_version_id"`
 }
 
 // The publication owner holds secret, Computer and execution locks and validates
@@ -187,15 +187,15 @@ func (q *Queries) BeginRuntimeComputerSave(ctx context.Context, arg BeginRuntime
 	var i BeginRuntimeComputerSaveRow
 	err := row.Scan(
 		&i.ComputerSaveSequence,
-		&i.ComputerSaveID,
+		&i.ComputerSaveVersionID,
 		&i.ComputerSaveLeaseID,
-		&i.ComputerSavePredecessorID,
+		&i.ComputerSaveBaseVersionID,
 	)
 	return i, err
 }
 
 const getWorkerComputerSave = `-- name: GetWorkerComputerSave :one
-SELECT v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_available FROM computer_versions v JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired FROM computer_versions v JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
  WHERE v.id=$1 AND v.publisher_save_sequence=$2
  AND r.worker_instance_id=$3
  AND r.worker_group_id=$4 AND r.worker_epoch=$5
@@ -222,12 +222,10 @@ func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComput
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
+		&i.RootPackDigest,
+		&i.LogicalBytes,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
@@ -240,14 +238,14 @@ func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComput
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
-		&i.PayloadAvailable,
+		&i.PayloadNotRetired,
 	)
 	return i, err
 }
 
 const isComputerSaveAbandoned = `-- name: IsComputerSaveAbandoned :one
 SELECT (r.computer_save_sequence >= $1::bigint
-        AND (r.computer_save_sequence > $1::bigint OR r.computer_save_id IS NULL)
+        AND (r.computer_save_sequence > $1::bigint OR r.computer_save_version_id IS NULL)
         AND NOT EXISTS(SELECT 1 FROM computer_versions v WHERE v.publisher_runtime_instance_id=r.id
           AND v.publisher_save_sequence=$1::bigint)) AS abandoned
 FROM runtime_instances r
@@ -297,7 +295,7 @@ func (q *Queries) IsComputerSaveAbandoned(ctx context.Context, arg IsComputerSav
 const isRuntimeComputerSaveAdopted = `-- name: IsRuntimeComputerSaveAdopted :one
 SELECT computer_save_sequence > $1::bigint
    OR (computer_save_sequence = $1::bigint
-       AND computer_save_id IS DISTINCT FROM $2::uuid) AS adopted
+       AND computer_save_version_id IS DISTINCT FROM $2::uuid) AS adopted
 FROM runtime_instances WHERE id=$3
 `
 
@@ -317,36 +315,36 @@ func (q *Queries) IsRuntimeComputerSaveAdopted(ctx context.Context, arg IsRuntim
 
 const publishRuntimeComputerSave = `-- name: PublishRuntimeComputerSave :one
 WITH created AS (
- INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,
- content_digest,size_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,
+ INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,
+ root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,
  publisher_runtime_instance_id,publisher_desired_version,publisher_save_sequence,
  publication_request_fingerprint,published_at)
- SELECT r.computer_save_id,r.environment_id,r.workspace_id,r.computer_save_predecessor_id,
+ SELECT r.computer_save_version_id,r.environment_id,r.workspace_id,r.computer_save_base_version_id,
  $1,$2,'committed',l.id,l.ownership_generation,l.writer_generation,
  r.id,r.desired_version,r.computer_save_sequence,$3,clock_timestamp()
  FROM runtime_instances r JOIN workspace_leases l ON l.id=r.computer_save_lease_id
  JOIN computers c ON c.id=r.workspace_id AND c.environment_id=r.environment_id
- WHERE r.id=$4 AND r.computer_save_id=$5
+ WHERE r.id=$4 AND r.computer_save_version_id=$5
  AND r.computer_save_sequence=$6
  AND r.reclaimed_at IS NULL AND r.desired_state='ready'
- AND c.head_version_id=r.computer_save_predecessor_id
+ AND c.head_version_id=r.computer_save_base_version_id
  AND c.ownership_generation=l.ownership_generation AND c.writer_generation=l.writer_generation
  AND l.status='active' AND l.expires_at>clock_timestamp()
- RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_available
+ RETURNING id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired
 ), retained AS (
  INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
- SELECT environment_id,workspace_id,id,$7 FROM created RETURNING version_id
+ SELECT environment_id,computer_id,id,$7 FROM created RETURNING version_id
 ), advanced AS (
  UPDATE computers c SET head_version_id=v.id,revision=revision+1,updated_at=v.published_at
- FROM created v,retained root WHERE c.id=v.workspace_id AND root.version_id=v.id
+ FROM created v,retained root WHERE c.id=v.computer_id AND root.version_id=v.id
  AND c.head_version_id=v.parent_version_id
  RETURNING c.id
 )
-SELECT v.id, v.environment_id, v.workspace_id, v.parent_version_id, v.artifact_id, v.content_digest, v.size_bytes, v.entry_count, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_available FROM created v JOIN advanced c ON c.id=v.workspace_id
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired FROM created v JOIN advanced c ON c.id=v.computer_id
 `
 
 type PublishRuntimeComputerSaveParams struct {
-	ContentDigest     pgtype.Text `json:"content_digest"`
+	RootPackDigest    pgtype.Text `json:"root_pack_digest"`
 	LogicalBytes      int64       `json:"logical_bytes"`
 	Fingerprint       []byte      `json:"fingerprint"`
 	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
@@ -358,12 +356,10 @@ type PublishRuntimeComputerSaveParams struct {
 type PublishRuntimeComputerSaveRow struct {
 	ID                            pgtype.UUID        `json:"id"`
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
-	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
+	ComputerID                    pgtype.UUID        `json:"computer_id"`
 	ParentVersionID               pgtype.UUID        `json:"parent_version_id"`
-	ArtifactID                    pgtype.UUID        `json:"artifact_id"`
-	ContentDigest                 pgtype.Text        `json:"content_digest"`
-	SizeBytes                     int64              `json:"size_bytes"`
-	EntryCount                    int32              `json:"entry_count"`
+	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
+	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
 	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
 	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
@@ -376,7 +372,7 @@ type PublishRuntimeComputerSaveRow struct {
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
-	PayloadAvailable              pgtype.Bool        `json:"payload_available"`
+	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
 }
 
 // All objects are certified and retained by the exact operation before this
@@ -384,7 +380,7 @@ type PublishRuntimeComputerSaveRow struct {
 // deadlines before commit. Pending ownership remains until source adoption.
 func (q *Queries) PublishRuntimeComputerSave(ctx context.Context, arg PublishRuntimeComputerSaveParams) (PublishRuntimeComputerSaveRow, error) {
 	row := q.db.QueryRow(ctx, publishRuntimeComputerSave,
-		arg.ContentDigest,
+		arg.RootPackDigest,
 		arg.LogicalBytes,
 		arg.Fingerprint,
 		arg.RuntimeInstanceID,
@@ -396,12 +392,10 @@ func (q *Queries) PublishRuntimeComputerSave(ctx context.Context, arg PublishRun
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
+		&i.RootPackDigest,
+		&i.LogicalBytes,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
@@ -414,7 +408,7 @@ func (q *Queries) PublishRuntimeComputerSave(ctx context.Context, arg PublishRun
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
-		&i.PayloadAvailable,
+		&i.PayloadNotRetired,
 	)
 	return i, err
 }

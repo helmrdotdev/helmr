@@ -128,7 +128,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 	}
 	var mountStatus, finalizationKind, finalizationReason string
 	if err := pool.QueryRow(ctx, `
-		SELECT status, finalization_kind, finalization_reason_code
+		SELECT status, finalization_action, finalization_reason_code
 		  FROM workspace_mounts
 		 WHERE id = $1
 	`, mountID).Scan(&mountStatus, &finalizationKind, &finalizationReason); err != nil {
@@ -187,7 +187,7 @@ func TestWorkerStartupRecoveryLosesMountBeforeReclaimingOldRuntime(t *testing.T)
 	var runtimeTerminalAt, reclaimedAt pgtype.Timestamptz
 	if err := pool.QueryRow(ctx, `
 SELECT workspace_mounts.status, workspace_mounts.terminal_reason_code,
-       workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code,
+       workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code,
        workspace_mounts.lost_at, workspace_mounts.terminal_at,
        runtime_instances.observed_state, runtime_instances.observed_version,
        runtime_instances.terminal_reason_code,
@@ -443,7 +443,7 @@ INSERT INTO workspace_mounts (
     id, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, worker_epoch, workspace_id, materialized_version_id,
     runtime_instance_id, status, dirty_generation, mounted_at, stopped_at,
-    finalization_kind, finalization_reason_code
+    finalization_action, finalization_reason_code
 )
 SELECT $1, runtime_instances.org_id, runtime_instances.worker_group_id,
        runtime_instances.project_id, runtime_instances.environment_id,

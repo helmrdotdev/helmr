@@ -38,7 +38,7 @@ func TestComputerSaveAdmissionUsesLiveExecutionAuthority(t *testing.T) {
 					request.OrgID = f.OrgID.String()
 					request.WorkspaceMountID = f.mountID.String()
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 					if mode == "closed runtime" {
 						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtimeID)
 					}
@@ -60,7 +60,7 @@ func TestComputerSaveAdmissionUsesLiveExecutionAuthority(t *testing.T) {
 					}
 					defer tx.Rollback(t.Context())
 					var pending int
-					if e = tx.QueryRow(t.Context(), `SELECT count(*) FROM runtime_instances WHERE computer_save_id=$1`, request.SaveID).Scan(&pending); e != nil || pending != 0 {
+					if e = tx.QueryRow(t.Context(), `SELECT count(*) FROM runtime_instances WHERE computer_save_version_id=$1`, request.SaveID).Scan(&pending); e != nil || pending != 0 {
 						t.Fatalf("rejected request persisted: %d %v", pending, e)
 					}
 					return

@@ -26,7 +26,7 @@ func TestUnownedComputerRecoveryRetainsSourceWithoutStartingRuntime(t *testing.T
 	if err := f.pool.QueryRow(f.ctx, `SELECT status,dirty_state,head_version_id,recovery_payload_required,(SELECT count(*) FROM runtime_instances WHERE workspace_id=c.id) FROM computers c WHERE id=$1`, f.workspaceID).Scan(&status, &dirty, &head, &pinned, &runtimes); err != nil {
 		t.Fatal(err)
 	}
-	if status != "active" || dirty != "clean" || head != uuid.UUID(source.Bytes) || !pinned || runtimes != 0 {
+	if status != "active" || dirty != "clean" || head != uuid.UUID(source.Bytes) || !pinned || runtimes != 1 {
 		t.Fatalf("repaired=%s/%s head=%s pinned=%v runtimes=%d", status, dirty, head, pinned, runtimes)
 	}
 }

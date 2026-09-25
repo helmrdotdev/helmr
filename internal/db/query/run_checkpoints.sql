@@ -11,7 +11,6 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id,
     actor_speculative_input_sequence,
     status,
-    restore_manifest,
     expires_at
 )
 VALUES (
@@ -26,7 +25,6 @@ VALUES (
     sqlc.narg(private_workspace_version_id),
     sqlc.narg(actor_speculative_input_sequence),
     'creating',
-    sqlc.arg(restore_manifest),
     sqlc.narg(expires_at)
 )
 RETURNING run_checkpoints.*;
@@ -39,7 +37,7 @@ UPDATE run_checkpoints
        vm_state_artifact_id = sqlc.arg(vm_state_artifact_id),
        memory_artifact_id = sqlc.arg(memory_artifact_id),
        scratch_disk_artifact_id = sqlc.arg(scratch_disk_artifact_id),
-       restore_manifest = sqlc.arg(restore_manifest),
+       phase_timings = sqlc.narg(phase_timings),
        ready_request_fingerprint = sqlc.arg(ready_request_fingerprint),
        ready_at = now()
   FROM runs,
@@ -51,6 +49,7 @@ UPDATE run_checkpoints
    AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
    AND run_checkpoints.id = sqlc.arg(id)
    AND run_checkpoints.status = 'creating'
+   AND run_checkpoints.manifest = sqlc.arg(manifest)
    AND runs.id = run_checkpoints.run_id
    AND runtime_config_artifact.id = sqlc.arg(runtime_config_artifact_id)
    AND runtime_config_artifact.environment_id = runs.environment_id
@@ -108,16 +107,16 @@ SELECT *
 
 -- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id,
-    parent_version_id, content_digest,
-    size_bytes, entry_count, status, source_workspace_lease_id,
+    id, environment_id, computer_id,
+    parent_version_id, root_pack_digest,
+    logical_bytes, status, source_workspace_lease_id,
     ownership_generation, writer_generation
 )
 SELECT
     sqlc.arg(id), sqlc.arg(environment_id),
     sqlc.arg(workspace_id), sqlc.arg(parent_version_id),
-    sqlc.arg(content_digest),
-    sqlc.arg(size_bytes), sqlc.arg(entry_count), 'private',
+    sqlc.arg(root_pack_digest),
+    sqlc.arg(logical_bytes), 'private',
     sqlc.arg(source_workspace_lease_id), sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation)
 RETURNING *;
@@ -485,7 +484,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
  SELECT a.base_workspace_version_id FROM run_attempts a
  JOIN computers c ON c.id=a.workspace_id
  JOIN computer_versions saved ON saved.id=c.head_version_id
-   AND saved.workspace_id=c.id AND saved.environment_id=c.environment_id
+   AND saved.computer_id=c.id AND saved.environment_id=c.environment_id
    AND saved.status='committed'
  WHERE a.run_id=sqlc.arg(run_id)::uuid AND a.number=sqlc.arg(attempt_number)::integer
  AND a.workspace_id=sqlc.arg(workspace_id)::uuid AND a.entrypoint_kind='actor'
@@ -506,7 +505,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
        AND w.checkpoint_request_version > 0 AND w.checkpoint_ack_version = w.checkpoint_request_version
        AND w.actor_speculative_input_sequence = c.actor_speculative_input_sequence
       JOIN computer_versions v ON v.id = c.private_workspace_version_id
-       AND v.workspace_id = c.workspace_id AND v.status = 'private'
+       AND v.computer_id = c.workspace_id AND v.status = 'private'
        AND v.parent_version_id = c.base_workspace_version_id
       JOIN workspace_leases source ON source.id = c.source_workspace_lease_id
        AND source.id = v.source_workspace_lease_id AND source.workspace_id = c.workspace_id
@@ -578,18 +577,18 @@ WITH RECURSIVE origin AS MATERIALIZED (
                         AND EXISTS (
                           SELECT 1 FROM computer_versions child_version
                           JOIN workspace_leases child_source ON child_source.id = child_version.source_workspace_lease_id
-                           AND child_source.workspace_id = child_version.workspace_id
+                           AND child_source.workspace_id = child_version.computer_id
                            AND child_source.base_workspace_version_id = child_version.parent_version_id
                            AND child_source.ownership_generation = child_version.ownership_generation
                            AND child_source.writer_generation = child_version.writer_generation
                            AND child_source.status IN ('released', 'fenced') AND child_source.owner_process_id IS NULL
                           JOIN run_leases child_lease ON child_lease.id = child_source.owner_run_lease_id
                            AND child_lease.run_id = child.id AND child_lease.attempt_number = child.current_attempt_number
-                           AND child_lease.workspace_id = child_version.workspace_id AND child_lease.status = 'completed'
+                           AND child_lease.workspace_id = child_version.computer_id AND child_lease.status = 'completed'
                           JOIN runtime_instances child_runtime ON child_runtime.id = child_lease.runtime_instance_id
                            AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                           WHERE child_version.id = current.base_workspace_version_id
-                            AND child_version.workspace_id = sqlc.arg(workspace_id)::uuid AND child_version.status = 'private'
+                            AND child_version.computer_id = sqlc.arg(workspace_id)::uuid AND child_version.status = 'private'
                             AND child_version.ownership_generation = sqlc.arg(ownership_generation)::bigint
                             AND child_version.writer_generation = prior.child_writer_generation
                             AND prior.parent_writer_generation < prior.child_writer_generation
@@ -620,7 +619,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
 SELECT EXISTS (
     SELECT 1 FROM lineage JOIN computer_versions head ON head.id = lineage.base_workspace_version_id
      WHERE head.id = (SELECT base_workspace_version_id FROM origin)
-       AND head.workspace_id = sqlc.arg(workspace_id)::uuid AND head.status = 'committed'
+       AND head.computer_id = sqlc.arg(workspace_id)::uuid AND head.status = 'committed'
 );
 
 -- name: SameWorkspaceChildHasNoExecution :one

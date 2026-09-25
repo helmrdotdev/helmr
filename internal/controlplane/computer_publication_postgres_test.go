@@ -145,7 +145,7 @@ func TestInitialGenerationPublicationRejectsInvalidCandidate(t *testing.T) {
 				t.Fatal("invalid publication accepted")
 			}
 			var unchanged bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT runtime.computer_source_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_version_roots r WHERE r.version_id=v.id) FROM runtime_instances runtime JOIN computer_versions v ON v.id=runtime.reserved_workspace_version_id JOIN computers c ON c.id=v.workspace_id WHERE runtime.id=$1`, f.runtime).Scan(&unchanged); err != nil || !unchanged {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT runtime.computer_source_version_id IS NULL AND v.status='initializing' AND v.publication_request_fingerprint IS NULL AND c.initial_config IS NULL AND NOT EXISTS(SELECT 1 FROM computer_version_roots r WHERE r.version_id=v.id) FROM runtime_instances runtime JOIN computer_versions v ON v.id=runtime.reserved_workspace_version_id JOIN computers c ON c.id=v.computer_id WHERE runtime.id=$1`, f.runtime).Scan(&unchanged); err != nil || !unchanged {
 				t.Fatalf("partial publication survived: %v %v", unchanged, err)
 			}
 		})

@@ -309,7 +309,6 @@ func validateTaskCompletionAuthority(
 		!authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid ||
 		!authority.runLease.FinalizationOperationID.Valid ||
-		!authority.runLease.FinalizationKind.Valid ||
 		!authority.runLease.FinalizationStartedAt.Valid ||
 		!authority.runLease.FinalizationRequestFingerprint.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
@@ -345,11 +344,9 @@ func validateTaskCompletionAuthority(
 		return errStaleTaskCompletion
 	}
 	finalization := completion.capture.receipt
-	wantKind := string(workerapi.RunFinalizationCapture)
 	operationID, err := uuid.Parse(finalization.OperationID)
 	if err != nil ||
-		authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) ||
-		authority.runLease.FinalizationKind.String != wantKind {
+		authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) {
 		return staleAuthority(staleAuthorityTaskCompletion, taskCompletionPointOperation, errStaleTaskCompletion)
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
@@ -431,7 +428,7 @@ func recordTaskWorkspaceVersion(
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspace.HeadVersionID,
-		ContentDigest:   pgvalue.Text(capture.root.Pack.Digest), SizeBytes: capture.root.LogicalBytes, EntryCount: 0,
+		RootPackDigest:  pgvalue.Text(capture.root.Pack.Digest), LogicalBytes: capture.root.LogicalBytes,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration, PublishedAt: completedAt,
@@ -846,8 +843,8 @@ func recordChildTaskWorkspaceVersion(
 		ID:            pgvalue.UUID(uuid.NewV7()),
 		EnvironmentID: authority.run.EnvironmentID,
 		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		ContentDigest: pgvalue.Text(capture.root.Pack.Digest),
-		SizeBytes:     capture.root.LogicalBytes, EntryCount: 0,
+		RootPackDigest:         pgvalue.Text(capture.root.Pack.Digest),
+		LogicalBytes:           capture.root.LogicalBytes,
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
 	})

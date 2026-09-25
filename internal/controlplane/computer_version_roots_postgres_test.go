@@ -208,7 +208,7 @@ func TestComputerVersionRootRuntimeRetention(t *testing.T) {
 	if _, err := b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
 		t.Fatal("initial source key grant", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET status='committed',published_at=clock_timestamp(),content_digest=$2,size_bytes=$3,publisher_runtime_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET status='committed',published_at=clock_timestamp(),root_pack_digest=$2,logical_bytes=$3,publisher_runtime_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.runtime)
 	delivered, err := b.source(t.Context(), fence)
 	if err != nil || delivered.Root != root || len(delivered.Keys) != 2 || !bytes.Equal(delivered.Keys[0].Key, key.Key) {
 		t.Fatalf("source delivery: %v", err)

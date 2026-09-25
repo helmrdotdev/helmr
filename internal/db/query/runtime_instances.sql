@@ -24,9 +24,8 @@ SELECT runtime_instances.*,
        artifacts.media_type AS workspace_image_media_type,
        '/workspace'::text AS workspace_mount_path,
        reserved_computer_versions.id AS base_workspace_version_id,
-	   reserved_computer_versions.content_digest AS workspace_content_digest,
-	   reserved_computer_versions.size_bytes AS workspace_logical_size_bytes,
-       reserved_computer_versions.entry_count AS workspace_entry_count,
+	   reserved_computer_versions.root_pack_digest AS workspace_content_digest,
+	   reserved_computer_versions.logical_bytes AS workspace_logical_size_bytes,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
        program_deployments.runtime_artifact_digest AS program_runtime_digest,
@@ -51,7 +50,7 @@ SELECT runtime_instances.*,
                 AND artifacts.id = deployment_definitions.artifact_id
   LEFT JOIN computer_versions AS reserved_computer_versions
     ON reserved_computer_versions.environment_id = runtime_instances.environment_id
-   AND reserved_computer_versions.workspace_id = runtime_instances.workspace_id
+   AND reserved_computer_versions.computer_id = runtime_instances.workspace_id
    AND reserved_computer_versions.id = runtime_instances.reserved_workspace_version_id
    AND reserved_computer_versions.status IN ('initializing', 'committed', 'private')
   JOIN computers AS computer
@@ -59,7 +58,7 @@ SELECT runtime_instances.*,
    AND computer.id = runtime_instances.workspace_id
   LEFT JOIN computer_version_roots AS computer_root
     ON computer_root.environment_id=reserved_computer_versions.environment_id
-   AND computer_root.computer_id=reserved_computer_versions.workspace_id
+   AND computer_root.computer_id=reserved_computer_versions.computer_id
    AND computer_root.version_id=reserved_computer_versions.id
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
@@ -394,7 +393,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
        AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
       JOIN computer_versions
-        ON computer_versions.workspace_id = runtime_instances.workspace_id
+        ON computer_versions.computer_id = runtime_instances.workspace_id
        AND computer_versions.id = runtime_instances.reserved_workspace_version_id
        AND computer_versions.status = 'private'
      WHERE runtime_instances.id = sqlc.arg(id)
@@ -431,10 +430,10 @@ UPDATE runtime_instances
        SELECT 1 FROM computer_versions AS persistent_version
          JOIN computer_version_roots AS retained_root
            ON retained_root.environment_id = persistent_version.environment_id
-          AND retained_root.computer_id = persistent_version.workspace_id
+          AND retained_root.computer_id = persistent_version.computer_id
           AND retained_root.version_id = persistent_version.id
         WHERE persistent_version.environment_id = runtime_instances.environment_id
-          AND persistent_version.workspace_id = runtime_instances.workspace_id
+          AND persistent_version.computer_id = runtime_instances.workspace_id
           AND persistent_version.id = runtime_instances.reserved_workspace_version_id
           AND persistent_version.status IN ('committed', 'private')
           AND runtime_instances.retained_computer_source_version_id = persistent_version.id
@@ -591,7 +590,7 @@ WITH closing AS (
     RETURNING *
 ), stopped_mounts AS (
     UPDATE workspace_mounts
-       SET status = 'unmounting', finalization_kind = 'discard',
+       SET status = 'unmounting', finalization_action = 'discard',
            finalization_reason_code = closing.desired_reason, finalization_error = NULL,
            stopped_at = COALESCE(stopped_at, transaction_timestamp()),
            updated_at = transaction_timestamp()

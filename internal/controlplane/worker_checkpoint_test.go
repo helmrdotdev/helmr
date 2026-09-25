@@ -28,7 +28,7 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 		parsed.artifacts.vmState.artifact.Digest != request.Manifest.RuntimeState.VMStateArtifact.Digest ||
 		parsed.artifacts.memory.artifact.Digest != request.Manifest.RuntimeState.MemoryArtifacts[0].Digest ||
 		parsed.artifacts.scratchDisk.artifact.Digest != request.Manifest.RuntimeState.ScratchDiskArtifact.Digest ||
-		parsed.fingerprint == "" || len(parsed.manifest) == 0 {
+		parsed.fingerprint == "" {
 		t.Fatalf("parsed checkpoint-ready = %+v", parsed)
 	}
 	if normalized.Lease != request.Lease {

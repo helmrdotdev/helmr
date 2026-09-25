@@ -456,7 +456,6 @@ SELECT runs.id AS run_id,
             AND runs.status = 'running'
             AND runs.active_started_at IS NULL
             AND run_leases.finalization_operation_id IS NOT NULL
-            AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
    AND (runs.entrypoint_kind = 'task'
@@ -479,7 +478,7 @@ SELECT runs.id AS run_id,
                AND run_checkpoints.run_wait_id = run_waits.id
                AND run_checkpoints.workspace_id = runs.workspace_id
               JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
-               AND computer_versions.workspace_id = run_checkpoints.workspace_id
+               AND computer_versions.computer_id = run_checkpoints.workspace_id
               JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
                AND source_run_leases.run_id = runs.id
                AND source_run_leases.attempt_number = runs.current_attempt_number

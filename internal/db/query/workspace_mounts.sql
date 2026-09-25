@@ -72,10 +72,10 @@ WITH same_workspace_child_authority AS MATERIALIZED (
                  OR EXISTS (
                      SELECT 1
                        FROM computer_versions AS retry_version
-                       JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.workspace_id AND retry_root.environment_id = retry_version.environment_id
+                       JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
                        AND child_lease.finalization_root = retry_root.locator
                       WHERE retry_version.id = child.base_workspace_version_id
-                        AND retry_version.workspace_id = child.workspace_id
+                        AND retry_version.computer_id = child.workspace_id
                         AND retry_version.status = 'private'
                         AND retry_version.source_workspace_lease_id = child_workspace_lease.id
                         AND retry_version.parent_version_id = child_workspace_lease.base_workspace_version_id
@@ -85,7 +85,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
                         AND child_lease.status = 'failed'
                         AND child_lease.terminal_at IS NOT NULL
                         AND child_lease.terminal_request_fingerprint IS NOT NULL
-                        AND child_lease.finalization_kind = 'capture'
+                        AND child_lease.finalization_operation_id IS NOT NULL
                  )
                  OR EXISTS (
                      SELECT 1
@@ -157,7 +157,7 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
   JOIN run_attempts ON run_attempts.run_id = runtime_instances.reserved_run_id
                    AND run_attempts.number = runtime_instances.reserved_attempt_number
                    AND run_attempts.workspace_id = runtime_instances.workspace_id
-  JOIN computer_versions ON computer_versions.workspace_id = runtime_instances.workspace_id
+  JOIN computer_versions ON computer_versions.computer_id = runtime_instances.workspace_id
                          AND computer_versions.id = runtime_instances.reserved_workspace_version_id
                          AND (
                              (runtime_instances.restore_checkpoint_id IS NOT NULL
@@ -209,7 +209,7 @@ SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
    AND workspace_processes.workspace_id = runtime_instances.workspace_id
    AND workspace_processes.status = 'pending'
   JOIN computer_versions
-    ON computer_versions.workspace_id = runtime_instances.workspace_id
+    ON computer_versions.computer_id = runtime_instances.workspace_id
    AND computer_versions.id = runtime_instances.reserved_workspace_version_id
    AND computer_versions.status = 'committed'
  WHERE runtime_instances.org_id = sqlc.arg(org_id)
@@ -289,7 +289,7 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
    AND deployment_definitions.kind = 'sandbox'
   JOIN computer_versions
-    ON computer_versions.workspace_id = claimed.workspace_id
+    ON computer_versions.computer_id = claimed.workspace_id
    AND computer_versions.id = claimed.materialized_version_id
   JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
@@ -361,7 +361,7 @@ RETURNING *;
 WITH mount AS (
     UPDATE workspace_mounts
        SET status = 'unmounting',
-           finalization_kind = 'discard',
+           finalization_action = 'discard',
            finalization_reason_code = 'workspace_deleted',
            finalization_error = NULL,
            stopped_at = COALESCE(stopped_at, transaction_timestamp()),
@@ -375,9 +375,9 @@ WITH mount AS (
            OR (
                workspace_mounts.status = 'unmounting'
                AND (
-                   workspace_mounts.finalization_kind IS NULL
+                   workspace_mounts.finalization_action IS NULL
                    OR (
-                       workspace_mounts.finalization_kind = 'discard'
+                       workspace_mounts.finalization_action = 'discard'
                        AND workspace_mounts.finalization_reason_code = 'workspace_deleted'
                        AND workspace_mounts.finalization_error IS NULL
                    )
@@ -464,7 +464,7 @@ WITH candidates AS (
 )
 UPDATE workspace_mounts
    SET status = 'unmounting',
-       finalization_kind = 'discard',
+       finalization_action = 'discard',
        finalization_reason_code = 'capacity_pressure',
        finalization_error = NULL,
        stopped_at = now(),

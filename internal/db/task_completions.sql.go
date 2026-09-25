@@ -391,12 +391,11 @@ UPDATE run_leases
    AND lease_sequence = $10
    AND status = 'finalizing'
    AND finalization_operation_id IS NOT NULL
-   AND finalization_kind IS NOT NULL
    AND finalization_started_at IS NOT NULL
    AND finalization_request_fingerprint IS NOT NULL
    AND terminal_request_fingerprint IS NULL
    AND expires_at > $2
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type CompleteTaskRunLeaseParams struct {
@@ -457,7 +456,6 @@ func (q *Queries) CompleteTaskRunLease(ctx context.Context, arg CompleteTaskRunL
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
 		&i.FinalizationRoot,
@@ -798,11 +796,10 @@ const publishTaskWorkspaceVersion = `-- name: PublishTaskWorkspaceVersion :one
 INSERT INTO computer_versions (
     id,
     environment_id,
-    workspace_id,
+    computer_id,
     parent_version_id,
-    content_digest,
-    size_bytes,
-    entry_count,
+    root_pack_digest,
+    logical_bytes,
     status,
     source_workspace_lease_id,
     ownership_generation,
@@ -816,18 +813,17 @@ SELECT
     $4,
     $5,
     $6,
-    $7,
     'committed',
+    $7,
     $8,
     $9,
-    $10,
-    $11
+    $10
 FROM computer_versions predecessor
 WHERE predecessor.id=$4
   AND predecessor.environment_id=$2
-  AND predecessor.workspace_id=$3
+  AND predecessor.computer_id=$3
   AND predecessor.status='committed'
-RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_available
+RETURNING id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired
 `
 
 type PublishTaskWorkspaceVersionParams struct {
@@ -835,9 +831,8 @@ type PublishTaskWorkspaceVersionParams struct {
 	EnvironmentID          pgtype.UUID        `json:"environment_id"`
 	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID        `json:"parent_version_id"`
-	ContentDigest          pgtype.Text        `json:"content_digest"`
-	SizeBytes              int64              `json:"size_bytes"`
-	EntryCount             int32              `json:"entry_count"`
+	RootPackDigest         pgtype.Text        `json:"root_pack_digest"`
+	LogicalBytes           int64              `json:"logical_bytes"`
 	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
 	OwnershipGeneration    int64              `json:"ownership_generation"`
 	WriterGeneration       int64              `json:"writer_generation"`
@@ -850,9 +845,8 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
-		arg.ContentDigest,
-		arg.SizeBytes,
-		arg.EntryCount,
+		arg.RootPackDigest,
+		arg.LogicalBytes,
 		arg.SourceWorkspaceLeaseID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
@@ -862,12 +856,10 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
+		&i.RootPackDigest,
+		&i.LogicalBytes,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
@@ -880,7 +872,7 @@ func (q *Queries) PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTa
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
-		&i.PayloadAvailable,
+		&i.PayloadNotRetired,
 	)
 	return i, err
 }
@@ -1214,7 +1206,7 @@ WITH authority AS MATERIALIZED (
        AND workspace_mounts.fencing_generation = $7
        AND (workspace_mounts.status = 'mounted'
             OR (workspace_mounts.status = 'unmounting'
-                AND workspace_mounts.finalization_kind = 'discard'
+                AND workspace_mounts.finalization_action = 'discard'
                 AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
                 AND workspace_mounts.finalization_error IS NULL))
      WHERE run_leases.id = $15
@@ -1245,7 +1237,7 @@ WITH authority AS MATERIALIZED (
 )
 UPDATE workspace_mounts
    SET status = 'unmounting',
-       finalization_kind = 'discard',
+       finalization_action = 'discard',
        finalization_reason_code = 'same_workspace_child_attempt_finished',
        finalization_error = NULL,
        stopped_at = COALESCE(workspace_mounts.stopped_at, $1),
@@ -1255,10 +1247,10 @@ UPDATE workspace_mounts
    AND workspace_mounts.runtime_instance_id = closing_runtime.id
    AND (workspace_mounts.status = 'mounted'
         OR (workspace_mounts.status = 'unmounting'
-            AND workspace_mounts.finalization_kind = 'discard'
+            AND workspace_mounts.finalization_action = 'discard'
             AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type RequestSameWorkspaceChildAttemptRuntimeDiscardParams struct {
@@ -1320,7 +1312,7 @@ func (q *Queries) RequestSameWorkspaceChildAttemptRuntimeDiscard(ctx context.Con
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.MountedAt,
@@ -1351,7 +1343,7 @@ UPDATE workspace_mounts
    AND materialized_version_id = $9
    AND fencing_generation = $10
    AND status = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type UpdateTaskWorkspaceMountFrontierParams struct {
@@ -1399,7 +1391,7 @@ func (q *Queries) UpdateTaskWorkspaceMountFrontier(ctx context.Context, arg Upda
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.MountedAt,

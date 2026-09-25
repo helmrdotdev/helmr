@@ -153,7 +153,7 @@ func TestOwnershipScheduleWholeBatchGateIncludesExistingFallback(t *testing.T) {
 func ownershipVersionParams(t *testing.T, f runLeaseClaimFixture, work runLeaseWork) CreatePrivateCheckpointWorkspaceVersionParams {
 	t.Helper()
 	ctx := t.Context()
-	p := CreatePrivateCheckpointWorkspaceVersionParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), ContentDigest: pgvalue.Text(dbtest.Digest("ownership-version")), SizeBytes: 1, EntryCount: 1}
+	p := CreatePrivateCheckpointWorkspaceVersionParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RootPackDigest: pgvalue.Text(dbtest.Digest("ownership-version")), LogicalBytes: 1}
 	if err := f.pool.QueryRow(ctx, "SELECT workspace_id,base_workspace_version_id,id,ownership_generation,writer_generation FROM workspace_leases WHERE owner_run_lease_id=$1", work.leaseID).Scan(&p.WorkspaceID, &p.ParentVersionID, &p.SourceWorkspaceLeaseID, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -177,14 +177,14 @@ func TestOwnershipDerivedVersionInsertionGates(t *testing.T) {
 				if !publish {
 					return q.CreatePrivateCheckpointWorkspaceVersion(ctx, p)
 				}
-				return q.PublishTaskWorkspaceVersion(ctx, PublishTaskWorkspaceVersionParams{ID: p.ID, EnvironmentID: p.EnvironmentID, WorkspaceID: p.WorkspaceID, ParentVersionID: p.ParentVersionID, ContentDigest: p.ContentDigest, SizeBytes: p.SizeBytes, EntryCount: p.EntryCount, SourceWorkspaceLeaseID: p.SourceWorkspaceLeaseID, OwnershipGeneration: p.OwnershipGeneration, WriterGeneration: p.WriterGeneration, PublishedAt: pgvalue.Timestamptz(time.Now())})
+				return q.PublishTaskWorkspaceVersion(ctx, PublishTaskWorkspaceVersionParams{ID: p.ID, EnvironmentID: p.EnvironmentID, WorkspaceID: p.WorkspaceID, ParentVersionID: p.ParentVersionID, RootPackDigest: p.RootPackDigest, LogicalBytes: p.LogicalBytes, SourceWorkspaceLeaseID: p.SourceWorkspaceLeaseID, OwnershipGeneration: p.OwnershipGeneration, WriterGeneration: p.WriterGeneration, PublishedAt: pgvalue.Timestamptz(time.Now())})
 			}
 
 			good, err := insert(f.queries, p)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if good.ArtifactID.Valid || good.ParentVersionID != p.ParentVersionID {
+			if good.ParentVersionID != p.ParentVersionID {
 				t.Fatalf("version=%+v", good)
 			}
 			tx, err := f.pool.Begin(ctx)

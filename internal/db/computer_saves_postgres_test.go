@@ -132,7 +132,7 @@ func TestReclaimedComputerSaveCleanupRequiresPhysicalExclusion(t *testing.T) {
 	}
 	var sequence int64
 	var cleared bool
-	if err := f.pool.QueryRow(ctx, `SELECT computer_save_sequence,computer_save_id IS NULL AND computer_save_lease_id IS NULL AND computer_save_predecessor_id IS NULL FROM runtime_instances WHERE id=$1`, p.RuntimeInstanceID).Scan(&sequence, &cleared); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT computer_save_sequence,computer_save_version_id IS NULL AND computer_save_lease_id IS NULL AND computer_save_base_version_id IS NULL FROM runtime_instances WHERE id=$1`, p.RuntimeInstanceID).Scan(&sequence, &cleared); err != nil {
 		t.Fatal(err)
 	}
 	if sequence != 1 || !cleared {

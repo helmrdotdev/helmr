@@ -226,11 +226,10 @@ WITH selected_definition AS (
     INSERT INTO computer_versions (
         id,
         environment_id,
-        workspace_id,
+        computer_id,
         status,
-        content_digest,
-        size_bytes,
-        entry_count,
+        root_pack_digest,
+        logical_bytes,
         ownership_generation,
         writer_generation,
         published_at
@@ -243,14 +242,13 @@ WITH selected_definition AS (
            0,
            0,
            0,
-           0,
            NULL
       FROM created_workspace
-    RETURNING workspace_id
+    RETURNING computer_id
 )
 SELECT created_workspace.id, created_workspace.environment_id, created_workspace.region_id, created_workspace.sandbox_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.revision, created_workspace.owner_session_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.status, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
-  JOIN created_version ON created_version.workspace_id = created_workspace.id
+  JOIN created_version ON created_version.computer_id = created_workspace.id
 `
 
 type CreateWorkspaceForScheduleFireParams struct {

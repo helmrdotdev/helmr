@@ -165,16 +165,15 @@ func testTaskFailureRetainsPhysicalFrontier(t *testing.T, retry bool) {
 	`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest, fixture.workerID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO computer_versions (
-			id, environment_id, workspace_id,
-			parent_version_id, artifact_id, content_digest,
-			size_bytes, entry_count, status, source_workspace_lease_id,
+			id, environment_id, computer_id,
+			parent_version_id, root_pack_digest,
+			logical_bytes, status, source_workspace_lease_id,
 			ownership_generation, writer_generation, published_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6,
-			1, 1, 'committed', $7, 1, 1, now()
+			$1, $2, $3, $4, $5,
+			1, 'committed', $6, 1, 1, now()
 		)
-	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseWorkspaceVersionID,
-		artifactID, digest, authority.workspaceLeaseID)
+	`, restoredVersionID, fixture.environmentID, authority.workspaceID, authority.baseWorkspaceVersionID, digest, authority.workspaceLeaseID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		UPDATE workspace_mounts SET materialized_version_id = $1 WHERE id = $2
 	`, restoredVersionID, authority.mountID)
@@ -424,7 +423,6 @@ func beginTaskCompletionFinalization(
 		UPDATE run_leases
 		   SET status = 'finalizing',
 		       finalization_operation_id = $2,
-		       finalization_kind = 'capture',
 		       finalization_started_at = now(),
 		       finalization_request_fingerprint = 'sha256:6efa7ef866e15db96245ea5804c38662a1c3ef899643545704a867b61bdfc9eb'
 		 WHERE id = $1

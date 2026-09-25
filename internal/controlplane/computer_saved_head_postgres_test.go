@@ -14,8 +14,8 @@ import (
 func advanceActorSavedHead(t *testing.T, f *actorCheckpointFixture) uuid.UUID {
 	t.Helper()
 	next := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,content_digest,size_bytes,entry_count,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
- SELECT $2,v.environment_id,v.workspace_id,v.id,v.content_digest,v.size_bytes,v.entry_count,'committed',$3,c.ownership_generation,c.writer_generation,now()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ SELECT $2,v.environment_id,v.computer_id,v.id,v.root_pack_digest,v.logical_bytes,'committed',$3,c.ownership_generation,c.writer_generation,now()
  FROM computers c JOIN computer_versions v ON v.id=c.head_version_id WHERE c.id=$1`, f.workspaceID, next, f.claim.workspaceLease.ID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
  SELECT r.environment_id,r.computer_id,$2,r.locator FROM computers c JOIN computer_version_roots r ON r.version_id=c.head_version_id WHERE c.id=$1`, f.workspaceID, next)

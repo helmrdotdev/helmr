@@ -21,7 +21,7 @@ import (
 )
 
 func computerSavePublicationKey(r db.RuntimeInstance) []byte {
-	return computerPublicationKey("save/"+strconv.FormatInt(r.ComputerSaveSequence, 10), r.ID, r.ComputerSaveID)
+	return computerPublicationKey("save/"+strconv.FormatInt(r.ComputerSaveSequence, 10), r.ID, r.ComputerSaveVersionID)
 }
 
 // recordComputerSaveObject revalidates live authority on both sides of remote
@@ -115,7 +115,7 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 		if !bytes.Equal(v.PublicationRequestFingerprint, fingerprint[:]) {
 			return zero, computerObjectConflict("save publication differs from committed request")
 		}
-		return computerPublicationResult{ComputerID: v.WorkspaceID, VersionID: v.ID}, nil
+		return computerPublicationResult{ComputerID: v.ComputerID, VersionID: v.ID}, nil
 	}
 	if result, err := replay(); !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
@@ -149,11 +149,11 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 		if err != nil {
 			return err
 		}
-		v, err := q.PublishRuntimeComputerSave(ctx, db.PublishRuntimeComputerSaveParams{RuntimeInstanceID: r.ID, SaveID: pgvalue.UUID(id), Sequence: request.Sequence, ContentDigest: pgvalue.Text(root.Pack.Digest), LogicalBytes: root.LogicalBytes, Fingerprint: fingerprint[:], Locator: encoded})
+		v, err := q.PublishRuntimeComputerSave(ctx, db.PublishRuntimeComputerSaveParams{RuntimeInstanceID: r.ID, SaveID: pgvalue.UUID(id), Sequence: request.Sequence, RootPackDigest: pgvalue.Text(root.Pack.Digest), LogicalBytes: root.LogicalBytes, Fingerprint: fingerprint[:], Locator: encoded})
 		if err != nil {
 			return err
 		}
-		result = computerPublicationResult{ComputerID: v.WorkspaceID, VersionID: v.ID}
+		result = computerPublicationResult{ComputerID: v.ComputerID, VersionID: v.ID}
 		return nil
 	})
 	if err != nil {
@@ -201,7 +201,7 @@ func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, re
 		return nil
 	}
 	_, err := s.withComputerSave(ctx, worker, request, computerSaveAbandon, func(tx pgx.Tx, q *db.Queries, r db.RuntimeInstance, l db.WorkspaceLease) error {
-		cleared, err := q.AbandonRuntimeComputerSave(ctx, db.AbandonRuntimeComputerSaveParams{RuntimeInstanceID: r.ID, WorkerInstanceID: r.WorkerInstanceID, WorkerEpoch: r.WorkerEpoch, Sequence: r.ComputerSaveSequence, SaveID: r.ComputerSaveID, LeaseID: l.ID})
+		cleared, err := q.AbandonRuntimeComputerSave(ctx, db.AbandonRuntimeComputerSaveParams{RuntimeInstanceID: r.ID, WorkerInstanceID: r.WorkerInstanceID, WorkerEpoch: r.WorkerEpoch, Sequence: r.ComputerSaveSequence, SaveID: r.ComputerSaveVersionID, LeaseID: l.ID})
 		if err != nil {
 			return err
 		}

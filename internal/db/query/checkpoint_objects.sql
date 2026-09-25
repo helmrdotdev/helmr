@@ -20,12 +20,12 @@ RETURNING *;
 SELECT * FROM run_checkpoint_objects WHERE checkpoint_id=sqlc.arg(checkpoint_id) ORDER BY role;
 
 -- name: RegisterCheckpointManifest :execrows
-UPDATE run_checkpoints SET candidate_manifest=sqlc.arg(manifest)
+UPDATE run_checkpoints SET manifest=sqlc.arg(manifest)
  WHERE id=sqlc.arg(id) AND status='creating'
-   AND (candidate_manifest IS NULL OR candidate_manifest=sqlc.arg(manifest));
+   AND (manifest IS NULL OR manifest=sqlc.arg(manifest));
 
 -- name: RequireRegisteredCheckpointManifest :one
 SELECT id FROM run_checkpoints
  WHERE id=sqlc.arg(id) AND status='creating'
-   AND candidate_manifest=sqlc.arg(manifest)
+   AND manifest=sqlc.arg(manifest)
    AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=4;

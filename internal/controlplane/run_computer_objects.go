@@ -96,7 +96,7 @@ func (s *Server) recordRunComputerObject(ctx context.Context, worker workerActor
 			return computerObjectConflict("checkpoint request version required")
 		}
 		var raw []byte
-		if err = tx.QueryRow(ctx, `SELECT candidate_manifest FROM run_checkpoints WHERE id=$1 AND status='creating'`, pgvalue.UUID(id)).Scan(&raw); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT manifest FROM run_checkpoints WHERE id=$1 AND status='creating'`, pgvalue.UUID(id)).Scan(&raw); err != nil {
 			return err
 		}
 		var manifest workerapi.CheckpointManifest

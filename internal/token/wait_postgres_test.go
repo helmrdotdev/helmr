@@ -386,7 +386,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		RunID: pgvalue.UUID(work.runID), AttemptNumber: int32(1),
 		RunWaitID: pgvalue.UUID(registered.WaitID), SourceRunLeaseID: pgvalue.UUID(work.leaseID),
 		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
-		BaseWorkspaceVersionID: pgvalue.UUID(authority.physicalVersionID), RestoreManifest: []byte(`{}`),
+		BaseWorkspaceVersionID:        pgvalue.UUID(authority.physicalVersionID),
 		ActorSpeculativeInputSequence: registration.ActorSpeculativeInputSequence,
 	}); err != nil {
 		t.Fatal(err)
@@ -424,9 +424,12 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		ID:            pgvalue.UUID(privateVersionID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(authority.workspaceID),
 		ParentVersionID: pgvalue.UUID(authority.physicalVersionID),
-		ContentDigest:   pgvalue.Text(workspaceTreeDigest), SizeBytes: 10, EntryCount: 1,
+		RootPackDigest:  pgvalue.Text(workspaceTreeDigest), LogicalBytes: 10,
 		SourceWorkspaceLeaseID: pgvalue.UUID(authority.workspaceLeaseID), OwnershipGeneration: 1, WriterGeneration: 1,
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.RegisterCheckpointManifest(ctx, db.RegisterCheckpointManifestParams{ID: pgvalue.UUID(checkpointID), Manifest: []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, fixture.pool, work.runID, checkpointID.String())
@@ -443,7 +446,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		VMStateArtifactID:         pgvalue.UUID(checkpointArtifacts.VMState),
 		MemoryArtifactID:          pgvalue.UUID(checkpointArtifacts.Memory),
 		ScratchDiskArtifactID:     pgvalue.UUID(checkpointArtifacts.ScratchDisk),
-		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		Manifest:                  []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-wrong-environment-" + checkpointID.String())),
 		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
 	}); !errors.Is(err, pgx.ErrNoRows) {
@@ -457,7 +460,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		VMStateArtifactID:         pgvalue.UUID(checkpointArtifacts.RuntimeConfig),
 		MemoryArtifactID:          pgvalue.UUID(checkpointArtifacts.Memory),
 		ScratchDiskArtifactID:     pgvalue.UUID(checkpointArtifacts.ScratchDisk),
-		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		Manifest:                  []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-wrong-kinds-" + checkpointID.String())),
 		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
 	}); !errors.Is(err, pgx.ErrNoRows) {
@@ -469,7 +472,7 @@ func testPendingRootTokenWaitCheckpointReadyCommitsAtomicParkingFacts(t *testing
 		VMStateArtifactID:         pgvalue.UUID(checkpointArtifacts.VMState),
 		MemoryArtifactID:          pgvalue.UUID(checkpointArtifacts.Memory),
 		ScratchDiskArtifactID:     pgvalue.UUID(checkpointArtifacts.ScratchDisk),
-		RestoreManifest:           []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
+		Manifest:                  []byte(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		ReadyRequestFingerprint:   pgvalue.Text(dbtest.Digest("checkpoint-ready-" + checkpointID.String())),
 		RunID:                     pgvalue.UUID(work.runID), AttemptNumber: int32(1), ID: pgvalue.UUID(checkpointID),
 	}); err != nil {
@@ -727,7 +730,7 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 		    base_workspace_version_id, private_workspace_version_id,
 		    runtime_config_artifact_id, vm_state_artifact_id,
 		    memory_artifact_id, scratch_disk_artifact_id,
-		    status, restore_manifest, ready_request_fingerprint, ready_at
+		    status, manifest, ready_request_fingerprint, ready_at
 		) VALUES (
 		    $1, $2, 1, $3, $4, $5, $6, $7, $7,
 		    $8, $9, $10, $11,
@@ -1129,7 +1132,7 @@ func newTokenWaitReconcileSetup(
 			    base_workspace_version_id, private_workspace_version_id,
 			    runtime_config_artifact_id, vm_state_artifact_id,
 			    memory_artifact_id, scratch_disk_artifact_id,
-			    status, restore_manifest, ready_request_fingerprint, ready_at
+			    status, manifest, ready_request_fingerprint, ready_at
 			) VALUES (
 			    $1, $2, 1, $3, $4, $5, $6, $7, $7,
 			    $8, $9, $10, $11,

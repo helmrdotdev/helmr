@@ -141,37 +141,6 @@ func TestTaskCompletionRejectsRunningLease(t *testing.T) {
 	}
 }
 
-func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
-	request := validTaskCompletionRequest(t)
-	completion, err := parseTaskCompletionRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseID := pgvalue.UUID(uuid.MustParse(request.Workspace.Captured.Receipt.Fence.BaseWorkspaceVersionID))
-	operationID := pgvalue.UUID(uuid.MustParse(completion.capture.receipt.OperationID))
-	authority := runLeaseClaimAuthority{
-		run: db.Run{
-			EntrypointKind: "task", BaseWorkspaceVersionID: baseID,
-		},
-		attempt: db.RunAttempt{
-			EntrypointKind: "task", EntrypointEnteredAt: pgvalue.Timestamptz(time.Now()),
-			BaseWorkspaceVersionID: baseID,
-		},
-		runLease: db.RunLease{
-			Status: db.RunLeaseStatusFinalizing, FinalizationOperationID: operationID,
-			FinalizationKind:               pgvalue.Text("reset"),
-			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
-			FinalizationRequestFingerprint: pgvalue.Text("sha256:a798aa14ee85550172dc7b9e352e89bb54a1bdd6c44282ec539f1d6cfd323b6e"),
-		},
-		workspace: db.LockRunLeaseClaimWorkspaceRow{HeadVersionID: baseID},
-	}
-	if err := validateTaskCompletionAuthority(
-		context.Background(), nil, completion, authority,
-	); !errors.Is(err, errStaleTaskCompletion) {
-		t.Fatalf("error = %v, want stale completion", err)
-	}
-}
-
 func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	runBase := pgvalue.UUID(uuid.NewV7())
 	leaseBase := pgvalue.UUID(uuid.NewV7())
@@ -226,8 +195,8 @@ func TestRecordTaskWorkspaceVersionRecordsGenerationIdentity(t *testing.T) {
 	if store.publish.ParentVersionID != authority.workspace.HeadVersionID {
 		t.Fatal("publication used execution baseline as predecessor")
 	}
-	if got != versionID || store.publish.ContentDigest.String != capture.root.Pack.Digest ||
-		store.publish.SizeBytes != capture.root.LogicalBytes || store.publish.EntryCount != 0 {
+	if got != versionID || store.publish.RootPackDigest.String != capture.root.Pack.Digest ||
+		store.publish.LogicalBytes != capture.root.LogicalBytes {
 		t.Fatalf("published version = %+v", store.publish)
 	}
 }

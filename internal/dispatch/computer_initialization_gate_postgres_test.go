@@ -30,7 +30,7 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 
 	// The fixture already has a certified root; commit its version status as
 	// the current generation publisher does. Runtime retention is still required.
-	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions v SET status='committed',published_at=clock_timestamp(),content_digest=r.root_digest,size_bytes=r.logical_bytes,publisher_runtime_instance_id=$2,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('a1',32),'hex') FROM computer_version_roots r WHERE v.id=$1 AND r.version_id=v.id`, versionID, runtimeID)
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions v SET status='committed',published_at=clock_timestamp(),root_pack_digest=r.root_pack_digest,logical_bytes=r.logical_bytes,publisher_runtime_instance_id=$2,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('a1',32),'hex') FROM computer_version_roots r WHERE v.id=$1 AND r.version_id=v.id`, versionID, runtimeID)
 	if _, err := db.New(f.pool).MarkRuntimeInstanceReady(f.ctx, params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("unretained generation passed readiness gate: %v", err)
 	}
@@ -61,8 +61,8 @@ func TestInitializingComputerPreparesButCannotBecomeReadyOrExecute(t *testing.T)
 func TestInitializingComputerAcceptsExplicitExecWithoutGrant(t *testing.T) {
 	f := newRunPlacementFixture(t)
 	root := workspaceHeadVersion(t, f)
-	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET status='initializing', artifact_id=NULL,
-content_digest=NULL,size_bytes=0,published_at=NULL WHERE id=$1`, root)
+	dbtest.MustExec(t, f.ctx, f.pool, `UPDATE computer_versions SET status='initializing', publisher_runtime_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL,
+root_pack_digest=NULL,logical_bytes=0,published_at=NULL WHERE id=$1`, root)
 	processID := createPendingWorkspaceExec(t, f)
 	q := db.New(f.pool)
 	if _, err := q.LockWorkspaceAdmissionAuthority(f.ctx, db.LockWorkspaceAdmissionAuthorityParams{

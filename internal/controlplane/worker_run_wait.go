@@ -382,7 +382,6 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			SourceRunLeaseID: authority.runLease.ID, SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 			WorkspaceID: authority.workspace.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 			ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
-			RestoreManifest:               []byte(`{}`),
 		}); err != nil {
 			return fmt.Errorf("create run checkpoint intent: %w", err)
 		}

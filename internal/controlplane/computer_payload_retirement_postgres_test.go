@@ -47,7 +47,7 @@ func retirementSaveFixture(t *testing.T) (*execGenerationFixture, workerapi.Comp
 	t.Helper()
 	f := newExecGenerationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 	first := publishRetirementSave(t, f, 1)
 	publishRetirementSave(t, f, 2)
 	collector, err := artifactgc.New(f.Pool, &computerGraphReclaimStore{t: t, q: f.server.db}, slog.New(slog.NewTextHandler(io.Discard, nil)))

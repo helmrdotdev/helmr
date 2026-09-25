@@ -125,7 +125,7 @@ func checkpointCorrelationID(
 	wait db.RunWait,
 ) (string, error) {
 	var manifest workerapi.CheckpointManifest
-	if err := json.Unmarshal(checkpoint.RestoreManifest, &manifest); err != nil {
+	if err := json.Unmarshal(checkpoint.Manifest, &manifest); err != nil {
 		return "", fmt.Errorf("decode run checkpoint correlation authority: %w", err)
 	}
 	correlationID := strings.TrimSpace(manifest.RecoveryPoint.CorrelationID)
@@ -438,7 +438,7 @@ func projectRunLeaseCheckpoint(
 	checkpoint db.RunCheckpoint,
 	authority checkpointArtifactAuthority,
 ) (runLeaseCheckpointProjection, error) {
-	if checkpoint.Status != db.RunCheckpointStatusReady || !json.Valid(checkpoint.RestoreManifest) {
+	if checkpoint.Status != db.RunCheckpointStatusReady || !json.Valid(checkpoint.Manifest) {
 		return runLeaseCheckpointProjection{}, errors.New("run checkpoint authority is invalid")
 	}
 	descriptors := [4]struct {
@@ -466,7 +466,7 @@ func projectRunLeaseCheckpoint(
 		})
 	}
 	return runLeaseCheckpointProjection{
-		Manifest:  append(json.RawMessage(nil), checkpoint.RestoreManifest...),
+		Manifest:  append(json.RawMessage(nil), checkpoint.Manifest...),
 		Artifacts: artifacts,
 	}, nil
 }

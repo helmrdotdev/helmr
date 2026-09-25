@@ -286,7 +286,7 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, 'ready',
@@ -317,11 +317,10 @@ UPDATE run_attempts
 UPDATE run_leases
    SET status = 'finalizing', claimed_at = COALESCE(claimed_at, created_at),
        started_at = COALESCE(started_at, claimed_at, created_at), expires_at = $2,
-       finalization_operation_id = $3, finalization_kind = $4,
+       finalization_operation_id = $3,
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'sha256:8b0d6826f8d226df300af31f6dfde06263d999e8851e8f452624c3b5d0dd09a7'
- WHERE id = $1`, work.LeaseID, expiresAt, operationID,
-		string(workerapi.RunFinalizationCapture))
+ WHERE id = $1`, work.LeaseID, expiresAt, operationID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET writer_generation = 2, expires_at = $2

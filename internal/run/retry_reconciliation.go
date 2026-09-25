@@ -98,7 +98,7 @@ FROM runs r WHERE r.id=$1 AND m.workspace_id=r.workspace_id AND m.status IN ('mo
 	}
 	result, err := tx.Exec(ctx, `UPDATE computers c SET status='active',desired_state='active',dirty_state='clean',revision=c.revision+1,updated_at=now()
 FROM runs r,computer_versions v WHERE r.id=$1 AND c.id=r.workspace_id AND c.owner_run_id=r.id AND c.status='recovery_required'
-AND v.id=c.head_version_id AND v.workspace_id=c.id AND v.status='committed' AND v.payload_available
+AND v.id=c.head_version_id AND v.computer_id=c.id AND v.status='committed' AND v.payload_not_retired
 AND c.recovery_version_id=v.id AND r.base_workspace_version_id=v.id`, id)
 	if err != nil {
 		return err

@@ -27,7 +27,7 @@ SELECT k.* FROM runtime_instances r
  JOIN computer_version_roots v ON v.environment_id=r.environment_id AND v.computer_id=r.workspace_id
    AND v.version_id=r.retained_computer_source_version_id
  JOIN computer_object_keys dependency ON dependency.environment_id=v.environment_id
-   AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_digest
+   AND dependency.computer_id=v.computer_id AND dependency.digest=v.root_pack_digest
  JOIN computer_data_keys k ON k.environment_id=dependency.environment_id
    AND k.computer_id=dependency.computer_id AND k.id=dependency.key_id
  WHERE r.id=sqlc.arg(runtime_instance_id)
@@ -67,7 +67,7 @@ WHERE NOT EXISTS (SELECT 1 FROM computers owner WHERE computer_payload_required 
  AND NOT EXISTS (SELECT 1 FROM workspace_processes owner WHERE computer_payload_required AND staged_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.staged_version_id=r.version_id)
  AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE computer_payload_required AND reserved_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.reserved_workspace_version_id=r.version_id)
  AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE retained_computer_source_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.retained_computer_source_version_id=r.version_id)
- AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE reclaimed_at IS NULL AND computer_save_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.computer_save_id=r.version_id)
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE reclaimed_at IS NULL AND computer_save_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.computer_save_version_id=r.version_id)
 ORDER BY r.version_id LIMIT sqlc.arg(row_limit);
 
 -- name: DeleteUnreferencedComputerVersionRoot :execrows
@@ -86,11 +86,11 @@ WHERE r.environment_id=sqlc.arg(environment_id) AND r.computer_id=sqlc.arg(compu
  AND NOT EXISTS (SELECT 1 FROM workspace_processes owner WHERE computer_payload_required AND staged_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.staged_version_id=r.version_id)
  AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE computer_payload_required AND reserved_workspace_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.reserved_workspace_version_id=r.version_id)
  AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE retained_computer_source_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.retained_computer_source_version_id=r.version_id)
- AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE reclaimed_at IS NULL AND computer_save_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.computer_save_id=r.version_id);
+ AND NOT EXISTS (SELECT 1 FROM runtime_instances owner WHERE reclaimed_at IS NULL AND computer_save_version_id IS NOT NULL AND owner.workspace_id=r.computer_id AND owner.computer_save_version_id=r.version_id);
 
 -- Called after deleting the exact root in the same transaction. A concurrent
 -- owner acquisition rejects this update and rolls root removal back as well.
 -- name: RetireComputerVersionPayload :execrows
 UPDATE computer_versions SET payload_retired_at=clock_timestamp()
-WHERE environment_id=sqlc.arg(environment_id) AND workspace_id=sqlc.arg(computer_id)
- AND id=sqlc.arg(version_id) AND payload_available;
+WHERE environment_id=sqlc.arg(environment_id) AND computer_id=sqlc.arg(computer_id)
+ AND id=sqlc.arg(version_id) AND payload_not_retired;

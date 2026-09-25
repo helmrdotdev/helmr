@@ -83,12 +83,12 @@ WITH selected_shape AS MATERIALIZED (
       JOIN computer_versions AS source
         ON source.id = sqlc.arg(base_workspace_version_id)
        AND source.environment_id = sqlc.arg(environment_id)
-       AND source.workspace_id = sqlc.arg(workspace_id)
+       AND source.computer_id = sqlc.arg(workspace_id)
        AND source.status IN ('initializing', 'committed', 'private')
        AND (source.status = 'initializing' OR EXISTS (
            SELECT 1 FROM computer_version_roots AS root
             WHERE root.environment_id = source.environment_id
-              AND root.computer_id = source.workspace_id
+              AND root.computer_id = source.computer_id
               AND root.version_id = source.id
               AND root.logical_bytes = sqlc.arg(reserved_guest_ephemeral_disk_bytes)
        ))

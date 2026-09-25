@@ -889,7 +889,7 @@ INSERT INTO run_checkpoints (
     base_workspace_version_id, private_workspace_version_id,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    status, restore_manifest, ready_request_fingerprint, ready_at
+    status, manifest, ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7,
     $8, $9, $10, $11,

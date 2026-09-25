@@ -133,7 +133,7 @@ func TestComputerSaveSettlementAcrossManagedWait(t *testing.T) {
 					}
 				}
 				var pending bool
-				if err := f.Pool.QueryRow(t.Context(), `SELECT computer_save_id IS NOT NULL FROM runtime_instances WHERE id=$1`, f.claim.runtime.ID).Scan(&pending); err != nil || pending {
+				if err := f.Pool.QueryRow(t.Context(), `SELECT computer_save_version_id IS NOT NULL FROM runtime_instances WHERE id=$1`, f.claim.runtime.ID).Scan(&pending); err != nil || pending {
 					t.Fatalf("slot not settled %v %v", pending, err)
 				}
 				// Retired IDs and future requests cannot revive execution in waiting state.

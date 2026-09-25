@@ -61,7 +61,7 @@ func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
 		Status: db.RunCheckpointStatusReady, RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()),
 		VMStateArtifactID: pgvalue.UUID(uuid.New()), MemoryArtifactID: pgvalue.UUID(uuid.New()),
 		ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-		RestoreManifest:       testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
+		Manifest:              testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
 	}
 	artifacts := validCheckpointArtifactAuthority()
 	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
@@ -170,7 +170,7 @@ func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.
 		ID: pgvalue.UUID(uuid.New()), Status: db.RunCheckpointStatusReady,
 		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-		RestoreManifest: []byte(`{"version":0}`),
+		Manifest: []byte(`{"version":0}`),
 	}
 	artifacts := validCheckpointArtifactAuthority()
 	projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)

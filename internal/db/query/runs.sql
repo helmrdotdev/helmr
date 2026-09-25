@@ -49,7 +49,7 @@ WITH selected_target AS MATERIALIZED (
         ON computers.environment_id = environments.id
        AND computers.id = sqlc.arg(workspace_id)
       JOIN computer_versions
-        ON computer_versions.workspace_id = computers.id
+        ON computer_versions.computer_id = computers.id
        AND computer_versions.id = sqlc.arg(base_workspace_version_id)
        AND computer_versions.status = 'committed'
      WHERE environments.id = sqlc.arg(environment_id)
@@ -375,7 +375,7 @@ WITH selected_target AS MATERIALIZED (
         ON computers.environment_id = parent.environment_id
        AND computers.id = sqlc.arg(workspace_id)
       JOIN computer_versions
-        ON computer_versions.workspace_id = computers.id
+        ON computer_versions.computer_id = computers.id
        AND computer_versions.id = sqlc.arg(base_workspace_version_id)
        AND computer_versions.status = 'committed'
       LEFT JOIN idempotency_claims
@@ -508,7 +508,7 @@ WITH selected_target AS MATERIALIZED (
        AND checkpoint.private_workspace_version_id =
            sqlc.arg(base_workspace_version_id)
       JOIN computer_versions AS base
-        ON base.workspace_id = parent.workspace_id
+        ON base.computer_id = parent.workspace_id
        AND base.id = checkpoint.private_workspace_version_id
        AND base.status = 'private'
       JOIN deployment_definitions AS definitions

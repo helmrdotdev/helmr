@@ -421,7 +421,6 @@ func (s *runLeaseClaimStore) BeginRunLeaseFinalization(
 	s.authority.runLease.Status = db.RunLeaseStatusFinalizing
 	s.authority.runLease.ExpiresAt = params.ExpiresAt
 	s.authority.runLease.FinalizationOperationID = params.FinalizationOperationID
-	s.authority.runLease.FinalizationKind = params.FinalizationKind
 	s.authority.runLease.FinalizationStartedAt = params.FinalizationStartedAt
 	s.authority.runLease.FinalizationRequestFingerprint = params.FinalizationRequestFingerprint
 	s.finalizationWrites++

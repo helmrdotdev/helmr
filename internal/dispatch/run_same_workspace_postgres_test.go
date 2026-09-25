@@ -83,13 +83,12 @@ INSERT INTO artifacts (
 		bDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 1, 1,
-    'private', $7, 1, 1
-)`, bVersionID, fixture.environmentID, fixture.workspaceID, aVersionID,
-		bArtifactID, bDigest, parentWorkspaceLeaseID)
+    $1, $2, $3, $4, $5, 1,
+    'private', $6, 1, 1
+)`, bVersionID, fixture.environmentID, fixture.workspaceID, aVersionID, bDigest, parentWorkspaceLeaseID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, bVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO runs (
@@ -127,7 +126,7 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ready',
@@ -357,13 +356,12 @@ INSERT INTO artifacts (
 		nestedBaseDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 3, 3,
-    'private', $7, 1, 2
-)`, nestedBaseWorkspaceVersionID, fixture.environmentID, fixture.workspaceID, bVersionID,
-		nestedBaseArtifactID, nestedBaseDigest, childWorkspaceLeaseID)
+    $1, $2, $3, $4, $5, 3,
+    'private', $6, 1, 2
+)`, nestedBaseWorkspaceVersionID, fixture.environmentID, fixture.workspaceID, bVersionID, nestedBaseDigest, childWorkspaceLeaseID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, nestedBaseWorkspaceVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO idempotency_claims (
@@ -408,7 +406,7 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'ready',
@@ -507,13 +505,12 @@ INSERT INTO artifacts (
 		nestedResultDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 4, 4,
-    'private', $7, 1, 3
-)`, nestedResultVersionID, fixture.environmentID, fixture.workspaceID, nestedBaseWorkspaceVersionID,
-		nestedResultArtifactID, nestedResultDigest, grandchildWorkspaceLeaseID)
+    $1, $2, $3, $4, $5, 4,
+    'private', $6, 1, 3
+)`, nestedResultVersionID, fixture.environmentID, fixture.workspaceID, nestedBaseWorkspaceVersionID, nestedResultDigest, grandchildWorkspaceLeaseID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, nestedResultVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
@@ -764,13 +761,12 @@ INSERT INTO artifacts (
 		cDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status,
     source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 2, 2,
-    'private', $7, 1, 5
-)`, cVersionID, fixture.environmentID, fixture.workspaceID, nestedResultVersionID,
-		cArtifactID, cDigest, childWorkspaceLeaseID)
+    $1, $2, $3, $4, $5, 2,
+    'private', $6, 1, 5
+)`, cVersionID, fixture.environmentID, fixture.workspaceID, nestedResultVersionID, cDigest, childWorkspaceLeaseID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, fixture.workspaceID, cVersionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 UPDATE run_attempts
@@ -1091,10 +1087,10 @@ func assertSharedTaskReentry(t *testing.T, f runPlacementFixture, child, claim, 
 	}
 	defer tx.Rollback(ctx)
 	qtx := db.New(tx)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,artifact_id,content_digest,size_bytes,entry_count,status,source_workspace_lease_id,ownership_generation,writer_generation) SELECT $1,environment_id,workspace_id,$2,artifact_id,content_digest,size_bytes,entry_count,'private',$3,$4,$5 FROM computer_versions WHERE id=$6`, version, head, wl, ownership, writer, oldBase)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation) SELECT $1,environment_id,computer_id,$2,root_pack_digest,logical_bytes,'private',$3,$4,$5 FROM computer_versions WHERE id=$6`, version, head, wl, ownership, writer, oldBase)
 	insertPlacementGeneration(t, ctx, tx, f.environmentID, f.workspaceID, version)
 	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, f.runID, cp.String())
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,private_workspace_version_id,runtime_config_artifact_id,vm_state_artifact_id,memory_artifact_id,scratch_disk_artifact_id,status,restore_manifest,ready_request_fingerprint,ready_at) VALUES($1,$2,2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'ready','{"kind":"suspend"}','sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8',now())`, cp, f.runID, waitID, lease.ID, wl, f.workspaceID, head, version, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id,private_workspace_version_id,runtime_config_artifact_id,vm_state_artifact_id,memory_artifact_id,scratch_disk_artifact_id,status,manifest,ready_request_fingerprint,ready_at) VALUES($1,$2,2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'ready','{"kind":"suspend"}','sha256:c6a8f322cea284f70d8d5bdfa780132e389aca57ace69073ac76e8daa12dacc8',now())`, cp, f.runID, waitID, lease.ID, wl, f.workspaceID, head, version, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_waits SET suspension_status='checkpointing',suspend_checkpoint_id=$2,checkpoint_request_version=1 WHERE id=$1`, waitID, cp)
 	dbtest.MustExec(t, ctx, tx, `UPDATE runs SET active_started_at=NULL WHERE id=$1`, f.runID)
 	rebound, err := qtx.RebindSharedChildAttempt(ctx, db.RebindSharedChildAttemptParams{ChildRunID: pgvalue.UUID(child), EnvironmentID: pgvalue.UUID(f.environmentID), ParentRunID: pgvalue.UUID(f.runID), WorkspaceID: pgvalue.UUID(f.workspaceID), ClaimID: pgvalue.UUID(claim), BaseWorkspaceVersionID: pgvalue.UUID(version)})

@@ -144,7 +144,7 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 	}
-	authority.checkpoint.RestoreManifest = testCheckpointManifest(
+	authority.checkpoint.Manifest = testCheckpointManifest(
 		t,
 		authority.checkpoint.ID,
 		authority.run.ID,

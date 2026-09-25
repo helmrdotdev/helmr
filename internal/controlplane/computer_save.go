@@ -124,7 +124,7 @@ func (s *Server) withComputerSave(ctx context.Context, worker workerActor, reque
 	if !claims {
 		return result, computerObjectConflict("worker claims changed")
 	}
-	pending := runtime.ComputerSaveID == pgvalue.UUID(save) && runtime.ComputerSaveSequence == request.Sequence && runtime.ComputerSaveLeaseID == lease.ID
+	pending := runtime.ComputerSaveVersionID == pgvalue.UUID(save) && runtime.ComputerSaveSequence == request.Sequence && runtime.ComputerSaveLeaseID == lease.ID
 	settlement := operation == computerSaveAdopt || operation == computerSaveAbandon || (operation == computerSaveBegin && pending)
 	if !settlement {
 		if !executing {
@@ -138,13 +138,13 @@ func (s *Server) withComputerSave(ctx context.Context, worker workerActor, reque
 		// fresh bytes or a new admission after execution enters managed waiting.
 		hardDeadline = time.Time{}
 	}
-	predecessor := runtime.ComputerSavePredecessorID
+	predecessor := runtime.ComputerSaveBaseVersionID
 	if operation == computerSaveBegin && !pending {
 		row, err := q.BeginRuntimeComputerSave(ctx, db.BeginRuntimeComputerSaveParams{Sequence: request.Sequence, SaveID: pgvalue.UUID(save), LeaseID: lease.ID, PredecessorID: head, RuntimeInstanceID: runtime.ID, WorkerInstanceID: runtime.WorkerInstanceID, WorkerEpoch: runtime.WorkerEpoch, DesiredVersion: runtime.DesiredVersion})
 		if err != nil {
 			return result, err
 		}
-		predecessor = row.ComputerSavePredecessorID
+		predecessor = row.ComputerSaveBaseVersionID
 	} else if !pending {
 		return result, computerObjectConflict("save operation is not pending")
 	}

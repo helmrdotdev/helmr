@@ -44,9 +44,9 @@ func (q *Queries) ListCheckpointObjects(ctx context.Context, checkpointID pgtype
 }
 
 const registerCheckpointManifest = `-- name: RegisterCheckpointManifest :execrows
-UPDATE run_checkpoints SET candidate_manifest=$1
+UPDATE run_checkpoints SET manifest=$1
  WHERE id=$2 AND status='creating'
-   AND (candidate_manifest IS NULL OR candidate_manifest=$1)
+   AND (manifest IS NULL OR manifest=$1)
 `
 
 type RegisterCheckpointManifestParams struct {
@@ -113,7 +113,7 @@ func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterChec
 const requireRegisteredCheckpointManifest = `-- name: RequireRegisteredCheckpointManifest :one
 SELECT id FROM run_checkpoints
  WHERE id=$1 AND status='creating'
-   AND candidate_manifest=$2
+   AND manifest=$2
    AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=4
 `
 

@@ -134,7 +134,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	var versionCount, secretPlacementCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT deployment_definitions.deployment_id,
-		       (SELECT count(*) FROM computer_versions WHERE workspace_id = computers.id),
+		       (SELECT count(*) FROM computer_versions WHERE computer_id = computers.id),
 		       (SELECT count(*) FROM workspace_secrets WHERE workspace_id = computers.id)
 		  FROM computers
 		  JOIN deployment_definitions
@@ -557,7 +557,7 @@ INSERT INTO workspace_mounts (
 		var stoppedAtValid bool
 		if err := product.pool.QueryRow(t.Context(), `
 SELECT computers.status, workspace_mounts.status,
-       workspace_mounts.finalization_kind,
+       workspace_mounts.finalization_action,
        workspace_mounts.finalization_reason_code,
        workspace_mounts.stopped_at IS NOT NULL,
        runtime_instances.desired_state, runtime_instances.desired_version,
@@ -608,7 +608,7 @@ SELECT computers.status, workspace_mounts.status,
 
 	if _, err := product.pool.Exec(t.Context(), `
 UPDATE workspace_mounts
-   SET finalization_kind = 'capture',
+   SET finalization_action = 'capture',
        finalization_reason_code = 'workspace_exec_completed'
  WHERE id = $1`, mountID); err != nil {
 		t.Fatal(err)
@@ -626,7 +626,7 @@ UPDATE runtime_instances
 	var finalizationKind, finalizationReason, desiredState, desiredReason string
 	var desiredVersion int64
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT workspace_mounts.finalization_kind,
+SELECT workspace_mounts.finalization_action,
        workspace_mounts.finalization_reason_code,
        runtime_instances.desired_state,
        runtime_instances.desired_version,
@@ -694,7 +694,7 @@ SELECT computers.status, computers.deployment_definition_id,
 		t.Fatal(err)
 	}
 	if workspaceStatus != db.WorkspaceStatusDeleted ||
-		retainedDefinitionID != sandboxDefinitionID || retainedRuntimeCount != 1 {
+		retainedDefinitionID != sandboxDefinitionID || retainedRuntimeCount != 2 {
 		t.Fatalf(
 			"workspace=%s definition=%s runtimes=%d",
 			workspaceStatus, retainedDefinitionID, retainedRuntimeCount,

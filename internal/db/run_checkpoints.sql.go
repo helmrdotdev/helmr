@@ -16,7 +16,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
  SELECT a.base_workspace_version_id FROM run_attempts a
  JOIN computers c ON c.id=a.workspace_id
  JOIN computer_versions saved ON saved.id=c.head_version_id
-   AND saved.workspace_id=c.id AND saved.environment_id=c.environment_id
+   AND saved.computer_id=c.id AND saved.environment_id=c.environment_id
    AND saved.status='committed'
  WHERE a.run_id=$2::uuid AND a.number=$3::integer
  AND a.workspace_id=$1::uuid AND a.entrypoint_kind='actor'
@@ -37,7 +37,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
        AND w.checkpoint_request_version > 0 AND w.checkpoint_ack_version = w.checkpoint_request_version
        AND w.actor_speculative_input_sequence = c.actor_speculative_input_sequence
       JOIN computer_versions v ON v.id = c.private_workspace_version_id
-       AND v.workspace_id = c.workspace_id AND v.status = 'private'
+       AND v.computer_id = c.workspace_id AND v.status = 'private'
        AND v.parent_version_id = c.base_workspace_version_id
       JOIN workspace_leases source ON source.id = c.source_workspace_lease_id
        AND source.id = v.source_workspace_lease_id AND source.workspace_id = c.workspace_id
@@ -109,18 +109,18 @@ WITH RECURSIVE origin AS MATERIALIZED (
                         AND EXISTS (
                           SELECT 1 FROM computer_versions child_version
                           JOIN workspace_leases child_source ON child_source.id = child_version.source_workspace_lease_id
-                           AND child_source.workspace_id = child_version.workspace_id
+                           AND child_source.workspace_id = child_version.computer_id
                            AND child_source.base_workspace_version_id = child_version.parent_version_id
                            AND child_source.ownership_generation = child_version.ownership_generation
                            AND child_source.writer_generation = child_version.writer_generation
                            AND child_source.status IN ('released', 'fenced') AND child_source.owner_process_id IS NULL
                           JOIN run_leases child_lease ON child_lease.id = child_source.owner_run_lease_id
                            AND child_lease.run_id = child.id AND child_lease.attempt_number = child.current_attempt_number
-                           AND child_lease.workspace_id = child_version.workspace_id AND child_lease.status = 'completed'
+                           AND child_lease.workspace_id = child_version.computer_id AND child_lease.status = 'completed'
                           JOIN runtime_instances child_runtime ON child_runtime.id = child_lease.runtime_instance_id
                            AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                           WHERE child_version.id = current.base_workspace_version_id
-                            AND child_version.workspace_id = $1::uuid AND child_version.status = 'private'
+                            AND child_version.computer_id = $1::uuid AND child_version.status = 'private'
                             AND child_version.ownership_generation = $4::bigint
                             AND child_version.writer_generation = prior.child_writer_generation
                             AND prior.parent_writer_generation < prior.child_writer_generation
@@ -151,7 +151,7 @@ WITH RECURSIVE origin AS MATERIALIZED (
 SELECT EXISTS (
     SELECT 1 FROM lineage JOIN computer_versions head ON head.id = lineage.base_workspace_version_id
      WHERE head.id = (SELECT base_workspace_version_id FROM origin)
-       AND head.workspace_id = $1::uuid AND head.status = 'committed'
+       AND head.computer_id = $1::uuid AND head.status = 'committed'
 )
 `
 
@@ -195,7 +195,7 @@ UPDATE run_leases
    AND lease_sequence = $6
    AND status = 'checkpointing'
    AND expires_at > $1
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type CheckpointRunLeaseParams struct {
@@ -248,7 +248,6 @@ func (q *Queries) CheckpointRunLease(ctx context.Context, arg CheckpointRunLease
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
 		&i.FinalizationRoot,
@@ -688,19 +687,19 @@ func (q *Queries) CommitTerminalCheckpointReady(ctx context.Context, arg CommitT
 
 const createPrivateCheckpointWorkspaceVersion = `-- name: CreatePrivateCheckpointWorkspaceVersion :one
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id,
-    parent_version_id, content_digest,
-    size_bytes, entry_count, status, source_workspace_lease_id,
+    id, environment_id, computer_id,
+    parent_version_id, root_pack_digest,
+    logical_bytes, status, source_workspace_lease_id,
     ownership_generation, writer_generation
 )
 SELECT
     $1, $2,
     $3, $4,
     $5,
-    $6, $7, 'private',
-    $8, $9,
-    $10
-RETURNING id, environment_id, workspace_id, parent_version_id, artifact_id, content_digest, size_bytes, entry_count, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_available
+    $6, 'private',
+    $7, $8,
+    $9
+RETURNING id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired
 `
 
 type CreatePrivateCheckpointWorkspaceVersionParams struct {
@@ -708,9 +707,8 @@ type CreatePrivateCheckpointWorkspaceVersionParams struct {
 	EnvironmentID          pgtype.UUID `json:"environment_id"`
 	WorkspaceID            pgtype.UUID `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID `json:"parent_version_id"`
-	ContentDigest          pgtype.Text `json:"content_digest"`
-	SizeBytes              int64       `json:"size_bytes"`
-	EntryCount             int32       `json:"entry_count"`
+	RootPackDigest         pgtype.Text `json:"root_pack_digest"`
+	LogicalBytes           int64       `json:"logical_bytes"`
 	SourceWorkspaceLeaseID pgtype.UUID `json:"source_workspace_lease_id"`
 	OwnershipGeneration    int64       `json:"ownership_generation"`
 	WriterGeneration       int64       `json:"writer_generation"`
@@ -722,9 +720,8 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.ParentVersionID,
-		arg.ContentDigest,
-		arg.SizeBytes,
-		arg.EntryCount,
+		arg.RootPackDigest,
+		arg.LogicalBytes,
 		arg.SourceWorkspaceLeaseID,
 		arg.OwnershipGeneration,
 		arg.WriterGeneration,
@@ -733,12 +730,10 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.ParentVersionID,
-		&i.ArtifactID,
-		&i.ContentDigest,
-		&i.SizeBytes,
-		&i.EntryCount,
+		&i.RootPackDigest,
+		&i.LogicalBytes,
 		&i.Status,
 		&i.SourceWorkspaceLeaseID,
 		&i.PublisherRuntimeInstanceID,
@@ -751,7 +746,7 @@ func (q *Queries) CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, a
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
-		&i.PayloadAvailable,
+		&i.PayloadNotRetired,
 	)
 	return i, err
 }
@@ -769,7 +764,6 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id,
     actor_speculative_input_sequence,
     status,
-    restore_manifest,
     expires_at
 )
 VALUES (
@@ -784,10 +778,9 @@ VALUES (
     $9,
     $10,
     'creating',
-    $11,
-    $12
+    $11
 )
-RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.restore_manifest, run_checkpoints.candidate_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required
+RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.manifest, run_checkpoints.phase_timings, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required
 `
 
 type CreateRunCheckpointParams struct {
@@ -801,7 +794,6 @@ type CreateRunCheckpointParams struct {
 	BaseWorkspaceVersionID        pgtype.UUID        `json:"base_workspace_version_id"`
 	PrivateWorkspaceVersionID     pgtype.UUID        `json:"private_workspace_version_id"`
 	ActorSpeculativeInputSequence pgtype.Int8        `json:"actor_speculative_input_sequence"`
-	RestoreManifest               []byte             `json:"restore_manifest"`
 	ExpiresAt                     pgtype.Timestamptz `json:"expires_at"`
 }
 
@@ -817,7 +809,6 @@ func (q *Queries) CreateRunCheckpoint(ctx context.Context, arg CreateRunCheckpoi
 		arg.BaseWorkspaceVersionID,
 		arg.PrivateWorkspaceVersionID,
 		arg.ActorSpeculativeInputSequence,
-		arg.RestoreManifest,
 		arg.ExpiresAt,
 	)
 	var i RunCheckpoint
@@ -837,8 +828,8 @@ func (q *Queries) CreateRunCheckpoint(ctx context.Context, arg CreateRunCheckpoi
 		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.Status,
-		&i.RestoreManifest,
-		&i.CandidateManifest,
+		&i.Manifest,
+		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
 		&i.FailedRequestFingerprint,
 		&i.ExpiresAt,
@@ -866,7 +857,7 @@ WITH closed_mount AS (
        AND workspace_mounts.worker_epoch = $5
        AND workspace_mounts.fencing_generation = $6
        AND workspace_mounts.status = 'mounted'
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 ), closed_runtime AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
@@ -890,7 +881,7 @@ WITH closed_mount AS (
        AND runtime_instances.observed_version = $8
     RETURNING runtime_instances.id
 )
-SELECT closed_mount.id, closed_mount.org_id, closed_mount.worker_group_id, closed_mount.project_id, closed_mount.environment_id, closed_mount.region_id, closed_mount.worker_instance_id, closed_mount.worker_epoch, closed_mount.workspace_id, closed_mount.materialized_version_id, closed_mount.runtime_instance_id, closed_mount.guest_channel_token_hash, closed_mount.guest_channel_token_expires_at, closed_mount.status, closed_mount.request, closed_mount.dirty_generation, closed_mount.fencing_generation, closed_mount.finalization_kind, closed_mount.finalization_reason_code, closed_mount.finalization_error, closed_mount.mounted_at, closed_mount.unmounted_at, closed_mount.stopped_at, closed_mount.lost_at, closed_mount.failed_at, closed_mount.terminal_at, closed_mount.terminal_reason_code, closed_mount.terminal_error, closed_mount.created_at, closed_mount.updated_at
+SELECT closed_mount.id, closed_mount.org_id, closed_mount.worker_group_id, closed_mount.project_id, closed_mount.environment_id, closed_mount.region_id, closed_mount.worker_instance_id, closed_mount.worker_epoch, closed_mount.workspace_id, closed_mount.materialized_version_id, closed_mount.runtime_instance_id, closed_mount.guest_channel_token_hash, closed_mount.guest_channel_token_expires_at, closed_mount.status, closed_mount.request, closed_mount.dirty_generation, closed_mount.fencing_generation, closed_mount.finalization_action, closed_mount.finalization_reason_code, closed_mount.finalization_error, closed_mount.mounted_at, closed_mount.unmounted_at, closed_mount.stopped_at, closed_mount.lost_at, closed_mount.failed_at, closed_mount.terminal_at, closed_mount.terminal_reason_code, closed_mount.terminal_error, closed_mount.created_at, closed_mount.updated_at
   FROM closed_mount
   JOIN closed_runtime ON closed_runtime.id = closed_mount.runtime_instance_id
 `
@@ -924,7 +915,7 @@ type DetachCheckpointSourceRow struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
@@ -969,7 +960,7 @@ func (q *Queries) DetachCheckpointSource(ctx context.Context, arg DetachCheckpoi
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
 		&i.MountedAt,
@@ -1054,7 +1045,7 @@ func (q *Queries) GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) 
 }
 
 const getReadyRunCheckpoint = `-- name: GetReadyRunCheckpoint :one
-SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.restore_manifest, run_checkpoints.candidate_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required,
+SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.manifest, run_checkpoints.phase_timings, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required,
        runtime_config_artifact.digest AS runtime_config_digest,
        runtime_config_artifact.size_bytes AS runtime_config_size_bytes,
        runtime_config_artifact.media_type AS runtime_config_media_type,
@@ -1138,8 +1129,8 @@ func (q *Queries) GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunChec
 		&i.RunCheckpoint.ScratchDiskArtifactID,
 		&i.RunCheckpoint.ActorSpeculativeInputSequence,
 		&i.RunCheckpoint.Status,
-		&i.RunCheckpoint.RestoreManifest,
-		&i.RunCheckpoint.CandidateManifest,
+		&i.RunCheckpoint.Manifest,
+		&i.RunCheckpoint.PhaseTimings,
 		&i.RunCheckpoint.ReadyRequestFingerprint,
 		&i.RunCheckpoint.FailedRequestFingerprint,
 		&i.RunCheckpoint.ExpiresAt,
@@ -1165,9 +1156,9 @@ func (q *Queries) GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunChec
 }
 
 const getRunCheckpointSource = `-- name: GetRunCheckpointSource :one
-SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.runtime_identity_id, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_guest_ephemeral_disk_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.status, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.previous_expires_at, run_leases.finalization_operation_id, run_leases.finalization_kind, run_leases.finalization_started_at, run_leases.finalization_request_fingerprint, run_leases.finalization_root, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at,
+SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.runtime_identity_id, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_guest_ephemeral_disk_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.status, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.previous_expires_at, run_leases.finalization_operation_id, run_leases.finalization_started_at, run_leases.finalization_request_fingerprint, run_leases.finalization_root, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at,
        workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.status, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_workspace_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
-       runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.computer_source_version_id, runtime_instances.computer_save_sequence, runtime_instances.computer_save_id, runtime_instances.computer_save_lease_id, runtime_instances.computer_save_predecessor_id, runtime_instances.computer_payload_required, runtime_instances.retained_computer_source_version_id, runtime_instances.computer_write_key_id, runtime_instances.retained_computer_write_key_id, runtime_instances.computer_key_available, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+       runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.computer_source_version_id, runtime_instances.computer_save_sequence, runtime_instances.computer_save_version_id, runtime_instances.computer_save_lease_id, runtime_instances.computer_save_base_version_id, runtime_instances.computer_payload_required, runtime_instances.retained_computer_source_version_id, runtime_instances.computer_write_key_id, runtime_instances.retained_computer_write_key_id, runtime_instances.computer_key_available, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
   FROM run_leases
   JOIN workspace_leases
     ON workspace_leases.id = $1
@@ -1239,7 +1230,6 @@ func (q *Queries) GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpoi
 		&i.RunLease.ExpiresAt,
 		&i.RunLease.PreviousExpiresAt,
 		&i.RunLease.FinalizationOperationID,
-		&i.RunLease.FinalizationKind,
 		&i.RunLease.FinalizationStartedAt,
 		&i.RunLease.FinalizationRequestFingerprint,
 		&i.RunLease.FinalizationRoot,
@@ -1303,9 +1293,9 @@ func (q *Queries) GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpoi
 		&i.RuntimeInstance.ReservedWorkspaceVersionID,
 		&i.RuntimeInstance.ComputerSourceVersionID,
 		&i.RuntimeInstance.ComputerSaveSequence,
-		&i.RuntimeInstance.ComputerSaveID,
+		&i.RuntimeInstance.ComputerSaveVersionID,
 		&i.RuntimeInstance.ComputerSaveLeaseID,
-		&i.RuntimeInstance.ComputerSavePredecessorID,
+		&i.RuntimeInstance.ComputerSaveBaseVersionID,
 		&i.RuntimeInstance.ComputerPayloadRequired,
 		&i.RuntimeInstance.RetainedComputerSourceVersionID,
 		&i.RuntimeInstance.ComputerWriteKeyID,
@@ -1399,7 +1389,7 @@ UPDATE run_checkpoints
    AND source_run_lease_id = $6
    AND workspace_id = $7
    AND status = 'creating'
-RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, restore_manifest, candidate_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required
+RETURNING id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required
 `
 
 type InvalidateFailedRunCheckpointParams struct {
@@ -1439,8 +1429,8 @@ func (q *Queries) InvalidateFailedRunCheckpoint(ctx context.Context, arg Invalid
 		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.Status,
-		&i.RestoreManifest,
-		&i.CandidateManifest,
+		&i.Manifest,
+		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
 		&i.FailedRequestFingerprint,
 		&i.ExpiresAt,
@@ -1454,7 +1444,7 @@ func (q *Queries) InvalidateFailedRunCheckpoint(ctx context.Context, arg Invalid
 }
 
 const lockCreatingRunCheckpoint = `-- name: LockCreatingRunCheckpoint :one
-SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, restore_manifest, candidate_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required
+SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required
   FROM run_checkpoints
  WHERE id = $1
    AND run_id = $2
@@ -1504,8 +1494,8 @@ func (q *Queries) LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatin
 		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.Status,
-		&i.RestoreManifest,
-		&i.CandidateManifest,
+		&i.Manifest,
+		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
 		&i.FailedRequestFingerprint,
 		&i.ExpiresAt,
@@ -1519,7 +1509,7 @@ func (q *Queries) LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatin
 }
 
 const lockRestorableRunCheckpoint = `-- name: LockRestorableRunCheckpoint :one
-SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.restore_manifest, run_checkpoints.candidate_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required,
+SELECT run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.manifest, run_checkpoints.phase_timings, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required,
        runtime_config_artifact.digest AS runtime_config_digest,
        runtime_config_artifact.size_bytes AS runtime_config_size_bytes,
        runtime_config_artifact.media_type AS runtime_config_media_type,
@@ -1610,8 +1600,8 @@ func (q *Queries) LockRestorableRunCheckpoint(ctx context.Context, arg LockResto
 		&i.RunCheckpoint.ScratchDiskArtifactID,
 		&i.RunCheckpoint.ActorSpeculativeInputSequence,
 		&i.RunCheckpoint.Status,
-		&i.RunCheckpoint.RestoreManifest,
-		&i.RunCheckpoint.CandidateManifest,
+		&i.RunCheckpoint.Manifest,
+		&i.RunCheckpoint.PhaseTimings,
 		&i.RunCheckpoint.ReadyRequestFingerprint,
 		&i.RunCheckpoint.FailedRequestFingerprint,
 		&i.RunCheckpoint.ExpiresAt,
@@ -1644,7 +1634,7 @@ UPDATE run_checkpoints
        vm_state_artifact_id = $3,
        memory_artifact_id = $4,
        scratch_disk_artifact_id = $5,
-       restore_manifest = $6,
+       phase_timings = $6,
        ready_request_fingerprint = $7,
        ready_at = now()
   FROM runs,
@@ -1656,6 +1646,7 @@ UPDATE run_checkpoints
    AND run_checkpoints.attempt_number = $9
    AND run_checkpoints.id = $10
    AND run_checkpoints.status = 'creating'
+   AND run_checkpoints.manifest = $11
    AND runs.id = run_checkpoints.run_id
    AND runtime_config_artifact.id = $2
    AND runtime_config_artifact.environment_id = runs.environment_id
@@ -1669,7 +1660,7 @@ UPDATE run_checkpoints
    AND scratch_disk_artifact.id = $5
    AND scratch_disk_artifact.environment_id = runs.environment_id
    AND scratch_disk_artifact.kind = 'run_checkpoint_scratch_disk'
-RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.restore_manifest, run_checkpoints.candidate_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required
+RETURNING run_checkpoints.id, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.runtime_config_artifact_id, run_checkpoints.vm_state_artifact_id, run_checkpoints.memory_artifact_id, run_checkpoints.scratch_disk_artifact_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.status, run_checkpoints.manifest, run_checkpoints.phase_timings, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code, run_checkpoints.computer_payload_required
 `
 
 type MarkRunCheckpointReadyParams struct {
@@ -1678,11 +1669,12 @@ type MarkRunCheckpointReadyParams struct {
 	VMStateArtifactID         pgtype.UUID `json:"vm_state_artifact_id"`
 	MemoryArtifactID          pgtype.UUID `json:"memory_artifact_id"`
 	ScratchDiskArtifactID     pgtype.UUID `json:"scratch_disk_artifact_id"`
-	RestoreManifest           []byte      `json:"restore_manifest"`
+	PhaseTimings              []byte      `json:"phase_timings"`
 	ReadyRequestFingerprint   pgtype.Text `json:"ready_request_fingerprint"`
 	RunID                     pgtype.UUID `json:"run_id"`
 	AttemptNumber             int32       `json:"attempt_number"`
 	ID                        pgtype.UUID `json:"id"`
+	Manifest                  []byte      `json:"manifest"`
 }
 
 func (q *Queries) MarkRunCheckpointReady(ctx context.Context, arg MarkRunCheckpointReadyParams) (RunCheckpoint, error) {
@@ -1692,11 +1684,12 @@ func (q *Queries) MarkRunCheckpointReady(ctx context.Context, arg MarkRunCheckpo
 		arg.VMStateArtifactID,
 		arg.MemoryArtifactID,
 		arg.ScratchDiskArtifactID,
-		arg.RestoreManifest,
+		arg.PhaseTimings,
 		arg.ReadyRequestFingerprint,
 		arg.RunID,
 		arg.AttemptNumber,
 		arg.ID,
+		arg.Manifest,
 	)
 	var i RunCheckpoint
 	err := row.Scan(
@@ -1715,8 +1708,8 @@ func (q *Queries) MarkRunCheckpointReady(ctx context.Context, arg MarkRunCheckpo
 		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.Status,
-		&i.RestoreManifest,
-		&i.CandidateManifest,
+		&i.Manifest,
+		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
 		&i.FailedRequestFingerprint,
 		&i.ExpiresAt,

@@ -54,11 +54,11 @@ UPDATE runs
 		t.Fatal(err)
 	}
 
-	var rootArtifact uuid.UUID
+	var publisherID uuid.UUID
 	var rootDigest string
 	var rootBytes int64
-	if err := tx.QueryRow(fixture.ctx, `SELECT v.artifact_id,v.content_digest,v.size_bytes FROM computer_versions v
-JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).Scan(&rootArtifact, &rootDigest, &rootBytes); err != nil {
+	if err := tx.QueryRow(fixture.ctx, `SELECT v.publisher_runtime_instance_id,v.root_pack_digest,v.logical_bytes FROM computer_versions v
+JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).Scan(&publisherID, &rootDigest, &rootBytes); err != nil {
 		t.Fatal(err)
 	}
 	workspaces := make([][]any, 0, rows-1)
@@ -86,8 +86,8 @@ JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).
 		})
 		versions = append(versions, []any{
 			versionID, fixture.environmentID, workspaceID,
-			rootDigest, rootArtifact, rootBytes,
-			"committed", int64(0), int64(0), base,
+			rootDigest, rootBytes,
+			"committed", int64(0), int64(0), base, versionID, int64(1), dbtest.Hash(versionID.String()),
 		})
 		runs = append(runs, []any{
 			runID, fixture.orgID, fixture.projectID, fixture.environmentID,
@@ -102,9 +102,17 @@ JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).
 		"id", "environment_id", "region_id", "sandbox_declared_id", "deployment_definition_id",
 		"owner_run_id", "ownership_generation", "writer_generation", "head_version_id",
 	}, workspaces)
+	dbtest.MustExec(t, fixture.ctx, tx, `INSERT INTO runtime_instances(id,org_id,project_id,environment_id,region_id,worker_group_id,worker_instance_id,
+ runtime_identity_id,deployment_definition_id,worker_epoch,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,
+ reserved_guest_ephemeral_disk_bytes,reserved_execution_slots,workspace_id,preparation_expires_at,desired_state,desired_version,desired_reason,
+ observed_state,terminal_at,reclaimed_at,reclaim_evidence,terminal_reason_code)
+ SELECT c.head_version_id,r.org_id,r.project_id,c.environment_id,c.region_id,r.worker_group_id,r.worker_instance_id,
+ r.runtime_identity_id,c.deployment_definition_id,r.worker_epoch,r.vm_vcpu_count,r.cpu_config_digest,r.reserved_cpu_millis,r.reserved_memory_bytes,
+ r.reserved_guest_ephemeral_disk_bytes,r.reserved_execution_slots,c.id,now(),'closed',2,'initialization_completed','closed',now(),now(),'{}','initialization_completed'
+ FROM computers c CROSS JOIN runtime_instances r WHERE c.environment_id=$1 AND c.id<>$2 AND r.id=$3`, fixture.environmentID, fixture.workspaceID, publisherID)
 	copyRows(t, fixture.ctx, tx, "computer_versions", []string{
-		"id", "environment_id", "workspace_id", "content_digest", "artifact_id", "size_bytes", "status",
-		"ownership_generation", "writer_generation", "published_at",
+		"id", "environment_id", "computer_id", "root_pack_digest", "logical_bytes", "status",
+		"ownership_generation", "writer_generation", "published_at", "publisher_runtime_instance_id", "publisher_desired_version", "publication_request_fingerprint",
 	}, versions)
 	for index := 1; index < rows; index++ {
 		insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, measurementUUID("workspace", index), measurementUUID("version", index))

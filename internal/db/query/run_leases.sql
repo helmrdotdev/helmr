@@ -660,7 +660,6 @@ UPDATE run_leases
    SET status = 'finalizing',
        expires_at = sqlc.arg(expires_at),
        finalization_operation_id = sqlc.arg(finalization_operation_id),
-       finalization_kind = sqlc.arg(finalization_kind),
        finalization_started_at = sqlc.arg(finalization_started_at),
        finalization_request_fingerprint = sqlc.arg(finalization_request_fingerprint),
        updated_at = sqlc.arg(finalization_started_at)
@@ -673,7 +672,6 @@ UPDATE run_leases
    AND expires_at = sqlc.arg(previous_expires_at)
    AND sqlc.arg(expires_at)::timestamptz > expires_at
    AND finalization_operation_id IS NULL
-   AND finalization_kind IS NULL
    AND finalization_started_at IS NULL
    AND finalization_request_fingerprint IS NULL
 RETURNING *;
@@ -830,7 +828,6 @@ SELECT runs.org_id,
             AND runs.status = 'running'
             AND runs.active_started_at IS NULL
             AND run_leases.finalization_operation_id IS NOT NULL
-            AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
    -- Recover uncertain Actors once through Session hold and physical cleanup.
@@ -856,7 +853,7 @@ SELECT runs.org_id,
                AND run_checkpoints.run_wait_id = run_waits.id
                AND run_checkpoints.workspace_id = runs.workspace_id
               JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
-               AND computer_versions.workspace_id = run_checkpoints.workspace_id
+               AND computer_versions.computer_id = run_checkpoints.workspace_id
               JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
                AND source_run_leases.run_id = runs.id
                AND source_run_leases.attempt_number = runs.current_attempt_number
@@ -977,7 +974,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                               FROM run_checkpoints
                               JOIN computer_versions
                                 ON computer_versions.id = run_checkpoints.private_workspace_version_id
-                               AND computer_versions.workspace_id = run_checkpoints.workspace_id
+                               AND computer_versions.computer_id = run_checkpoints.workspace_id
                               JOIN run_leases AS source_run_leases
                                 ON source_run_leases.id = run_checkpoints.source_run_lease_id
                                AND source_run_leases.run_id = run_checkpoints.run_id
@@ -1399,7 +1396,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_checkpoints.workspace_id = loss_authority.workspace_id
       JOIN computer_versions
         ON computer_versions.id = run_checkpoints.private_workspace_version_id
-       AND computer_versions.workspace_id = run_checkpoints.workspace_id
+       AND computer_versions.computer_id = run_checkpoints.workspace_id
       JOIN run_leases AS source_run_leases
         ON source_run_leases.id = run_checkpoints.source_run_lease_id
        AND source_run_leases.run_id = run_checkpoints.run_id

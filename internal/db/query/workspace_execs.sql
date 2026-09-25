@@ -90,7 +90,7 @@ SELECT workspace_processes.id AS process_id,
    AND definitions.kind = 'sandbox'
    AND definitions.declared_id = computers.sandbox_declared_id
   JOIN computer_versions
-    ON computer_versions.workspace_id = computers.id
+    ON computer_versions.computer_id = computers.id
    AND computer_versions.id = workspace_processes.base_workspace_version_id
    AND computer_versions.status IN ('initializing', 'committed')
  WHERE workspace_processes.status = 'pending'
@@ -214,12 +214,12 @@ WITH selected_shape AS MATERIALIZED (
       JOIN computer_versions AS source
         ON source.id = sqlc.arg(base_workspace_version_id)
        AND source.environment_id = sqlc.arg(environment_id)
-       AND source.workspace_id = sqlc.arg(workspace_id)
+       AND source.computer_id = sqlc.arg(workspace_id)
        AND source.status IN ('initializing', 'committed', 'private')
        AND (source.status = 'initializing' OR EXISTS (
            SELECT 1 FROM computer_version_roots AS root
             WHERE root.environment_id = source.environment_id
-              AND root.computer_id = source.workspace_id
+              AND root.computer_id = source.computer_id
               AND root.version_id = source.id
               AND root.logical_bytes = sqlc.arg(reserved_guest_ephemeral_disk_bytes)
        ))
@@ -266,8 +266,8 @@ UPDATE computers
        SELECT 1 FROM computer_versions AS base
        JOIN computer_version_roots root
          ON root.environment_id=base.environment_id
-        AND root.computer_id=base.workspace_id AND root.version_id=base.id
-        WHERE base.workspace_id = computers.id
+        AND root.computer_id=base.computer_id AND root.version_id=base.id
+        WHERE base.computer_id = computers.id
           AND base.id = computers.head_version_id
           AND base.status = 'committed'
           AND base.environment_id = computers.environment_id
@@ -683,7 +683,7 @@ RETURNING *;
 WITH requested AS (
     UPDATE workspace_mounts
        SET status = 'unmounting',
-           finalization_kind = sqlc.arg(finalization_kind),
+           finalization_action = sqlc.arg(finalization_action),
            finalization_reason_code = sqlc.arg(reason_code),
            finalization_error = sqlc.narg(error),
            stopped_at = COALESCE(stopped_at, transaction_timestamp()),
@@ -693,9 +693,9 @@ WITH requested AS (
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.status IN ('mounted', 'unmounting')
        AND (
-           workspace_mounts.finalization_kind IS NULL
+           workspace_mounts.finalization_action IS NULL
            OR (
-               workspace_mounts.finalization_kind = sqlc.arg(finalization_kind)
+               workspace_mounts.finalization_action = sqlc.arg(finalization_action)
                AND workspace_mounts.finalization_reason_code = sqlc.arg(reason_code)
                AND workspace_mounts.finalization_error IS NOT DISTINCT FROM sqlc.narg(error)
            )
@@ -728,7 +728,7 @@ WITH authority AS (
        AND workspace_processes.status = 'exit_requested'
       JOIN computers ON computers.id = workspace_mounts.workspace_id
       JOIN computer_versions predecessor ON predecessor.id = computers.head_version_id
-       AND predecessor.workspace_id = computers.id
+       AND predecessor.computer_id = computers.id
        AND predecessor.environment_id = computers.environment_id
        AND predecessor.status = 'committed'
       JOIN workspace_leases
@@ -739,18 +739,18 @@ WITH authority AS (
        AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.status = 'unmounting'
-       AND workspace_mounts.finalization_kind = 'capture'
+       AND workspace_mounts.finalization_action = 'capture'
        AND workspace_processes.staged_version_id IS NULL
      FOR UPDATE OF workspace_mounts, workspace_processes, workspace_leases, computers
 ), created AS (
     INSERT INTO computer_versions (
-        id, environment_id, workspace_id,
-        parent_version_id, content_digest, size_bytes, status, source_workspace_lease_id,
+        id, environment_id, computer_id,
+        parent_version_id, root_pack_digest, logical_bytes, status, source_workspace_lease_id,
         ownership_generation, writer_generation
     )
     SELECT sqlc.arg(workspace_version_id),
            authority.environment_id, authority.workspace_id, authority.head_version_id,
-           sqlc.arg(content_digest), sqlc.arg(size_bytes),
+           sqlc.arg(root_pack_digest), sqlc.arg(logical_bytes),
            'private', authority.source_workspace_lease_id,
            authority.ownership_generation, authority.writer_generation
       FROM authority
@@ -773,11 +773,11 @@ UPDATE computer_versions
    SET status = 'committed',
        published_at = transaction_timestamp()
  WHERE id = sqlc.arg(version_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_versions.computer_id = sqlc.arg(workspace_id)
    AND status = 'private'
    AND EXISTS (SELECT 1 FROM computer_version_roots r
        WHERE r.environment_id=computer_versions.environment_id
-       AND r.computer_id=computer_versions.workspace_id AND r.version_id=computer_versions.id)
+       AND r.computer_id=computer_versions.computer_id AND r.version_id=computer_versions.id)
 RETURNING *;
 
 -- name: FinalizeWorkspaceExecWorkspace :one
@@ -793,8 +793,8 @@ UPDATE computers
    AND computers.writer_generation = sqlc.arg(writer_generation)
    AND (sqlc.narg(version_id)::uuid IS NULL OR EXISTS (
        SELECT 1 FROM computer_versions v JOIN computer_version_roots r
-       ON r.environment_id=v.environment_id AND r.computer_id=v.workspace_id AND r.version_id=v.id
-       WHERE v.id=sqlc.narg(version_id) AND v.workspace_id=computers.id
+       ON r.environment_id=v.environment_id AND r.computer_id=v.computer_id AND r.version_id=v.id
+       WHERE v.id=sqlc.narg(version_id) AND v.computer_id=computers.id
        AND v.status='committed' AND v.parent_version_id=computers.head_version_id))
 RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
@@ -854,7 +854,7 @@ UPDATE computer_versions
    SET status = 'discarded',
        discarded_at = transaction_timestamp()
  WHERE id = sqlc.arg(version_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_versions.computer_id = sqlc.arg(workspace_id)
    AND status = 'private';
 
 -- name: ReleaseWorkspaceExecLease :one

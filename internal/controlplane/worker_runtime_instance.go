@@ -444,7 +444,7 @@ func (s *Server) markRuntimeInstanceFailed(
    recovery_preparation_count=0,next_recovery_preparation_at=NULL,recovery_runtime_id=NULL,recovery_completed_at=NULL,
    recovery_failure=coalesce(recovery_failure,jsonb_build_object('code','computer_source_unavailable','message','Published Computer source is unavailable','details',$3::jsonb)),revision=revision+1,updated_at=now()
    FROM runtime_instances r,computer_versions v WHERE r.id=$1 AND c.id=r.workspace_id
-   AND c.head_version_id=r.retained_computer_source_version_id AND v.id=c.head_version_id AND v.workspace_id=c.id AND v.status='committed'`, params.ID, pgvalue.UUID(uuid.NewV7()), params.Error)
+   AND c.head_version_id=r.retained_computer_source_version_id AND v.id=c.head_version_id AND v.computer_id=c.id AND v.status='committed'`, params.ID, pgvalue.UUID(uuid.NewV7()), params.Error)
 		if err != nil {
 			return db.RuntimeInstance{}, err
 		}

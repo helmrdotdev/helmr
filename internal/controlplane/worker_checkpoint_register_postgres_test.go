@@ -101,7 +101,7 @@ func TestCheckpointRegistrationRollsBackWholeSetOnRetiredMember(t *testing.T) {
 		t.Fatalf("partial registration survived: %d %v", len(rows), err)
 	}
 	var empty bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT candidate_manifest IS NULL FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&empty); err != nil || !empty {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest IS NULL FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&empty); err != nil || !empty {
 		t.Fatalf("partial manifest survived: %v %v", empty, err)
 	}
 }

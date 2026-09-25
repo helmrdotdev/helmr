@@ -104,7 +104,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	if source != ws.HeadVersionID {
 		return actor, true, nil
 	}
-	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, WorkspaceID: actor.WorkspaceID, ID: source})
+	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.WorkspaceID, ID: source})
 	if err != nil || !committed {
 		return actor, true, err
 	}
@@ -237,7 +237,7 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 	if err != nil || !owned {
 		return actor, true, err
 	}
-	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, WorkspaceID: actor.WorkspaceID, ID: ws.HeadVersionID})
+	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.WorkspaceID, ID: ws.HeadVersionID})
 	if err != nil || !committed {
 		return actor, true, err
 	}

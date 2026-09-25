@@ -294,11 +294,10 @@ WITH selected_definition AS (
     INSERT INTO computer_versions (
         id,
         environment_id,
-        workspace_id,
+        computer_id,
         status,
-        content_digest,
-        size_bytes,
-        entry_count,
+        root_pack_digest,
+        logical_bytes,
         ownership_generation,
         writer_generation,
         published_at
@@ -311,14 +310,13 @@ WITH selected_definition AS (
            0,
            0,
            0,
-           0,
            NULL
       FROM created_workspace
-    RETURNING workspace_id
+    RETURNING computer_id
 )
 SELECT created_workspace.*
   FROM created_workspace
-  JOIN created_version ON created_version.workspace_id = created_workspace.id;
+  JOIN created_version ON created_version.computer_id = created_workspace.id;
 
 -- name: ClaimDueSchedules :many
 WITH candidates AS (

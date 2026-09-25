@@ -25,7 +25,7 @@ import (
 func TestComputerSavePublicationAndHistoricalReplay(t *testing.T) {
 	f := newExecGenerationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 	request := workerapi.ComputerSaveBeginRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), SaveID: uuid.NewV7().String(), Sequence: 1}
 	admission, err := f.server.beginComputerSave(t.Context(), f.worker, request)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestComputerSavePublicationAndHistoricalReplay(t *testing.T) {
 		t.Fatal("unstable receipt identity")
 	}
 	var parent, head, origin, pending string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT v.parent_version_id::text,c.head_version_id::text,p.base_workspace_version_id::text,r.computer_save_id::text FROM computer_versions v JOIN computers c ON c.id=v.workspace_id JOIN workspace_processes p ON p.workspace_id=c.id JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id WHERE v.id=$1`, first.VersionID).Scan(&parent, &head, &origin, &pending); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT v.parent_version_id::text,c.head_version_id::text,p.base_workspace_version_id::text,r.computer_save_version_id::text FROM computer_versions v JOIN computers c ON c.id=v.computer_id JOIN workspace_processes p ON p.workspace_id=c.id JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id WHERE v.id=$1`, first.VersionID).Scan(&parent, &head, &origin, &pending); err != nil {
 		t.Fatal(err)
 	}
 	if parent != admission.PredecessorID || head != request.SaveID || origin != f.baseID.String() || pending != request.SaveID {
@@ -98,7 +98,7 @@ func TestComputerSavePublicationAndHistoricalReplay(t *testing.T) {
 	}
 	var rollbackSource pgtype.UUID
 	var rollbackPending string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_source_version_id,computer_save_id::text FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&rollbackSource, &rollbackPending); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_source_version_id,computer_save_version_id::text FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&rollbackSource, &rollbackPending); err != nil {
 		t.Fatal(err)
 	}
 	if rollbackSource != originalSource || rollbackPending != request.SaveID {
@@ -115,7 +115,7 @@ func TestComputerSavePublicationAndHistoricalReplay(t *testing.T) {
 	var source string
 	var reserved pgtype.UUID
 	var savePending bool
-	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_source_version_id::text,reserved_workspace_version_id,computer_save_id IS NOT NULL FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&source, &reserved, &savePending); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_source_version_id::text,reserved_workspace_version_id,computer_save_version_id IS NOT NULL FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&source, &reserved, &savePending); err != nil {
 		t.Fatal(err)
 	}
 	if source != request.SaveID || reserved != originalReservation || savePending {
@@ -139,7 +139,7 @@ func TestComputerSavePublicationAndHistoricalReplay(t *testing.T) {
 	if err = f.server.adoptComputerSave(t.Context(), f.worker, request, f.root); err != nil {
 		t.Fatalf("historical adoption after later publication: %v", err)
 	}
-	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_save_id::text FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&pending); err != nil || pending != next.SaveID {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_save_version_id::text FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&pending); err != nil || pending != next.SaveID {
 		t.Fatalf("old adoption cleared successor: %s %v", pending, err)
 	}
 	replay, err := f.server.publishComputerSave(t.Context(), f.worker, request, f.root)
@@ -181,7 +181,7 @@ func TestComputerSavePublishesNewEncryptedGeneration(t *testing.T) {
 	f := newExecGenerationFixture(t)
 	client := computerSaveHTTPClient(t, f.server, f.worker)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 	request := workerapi.ComputerSaveBeginRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), SaveID: uuid.NewV7().String(), Sequence: 1}
 	if _, err := client.BeginComputerSave(t.Context(), request); err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestComputerSaveRechecksAuthorityAfterAdmission(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f := newExecGenerationFixture(t)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 			request := workerapi.ComputerSaveBeginRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), SaveID: uuid.NewV7().String(), Sequence: 1}
 			if _, err := f.server.beginComputerSave(t.Context(), f.worker, request); err != nil {
 				t.Fatal(err)
@@ -321,7 +321,7 @@ func TestComputerSaveRechecksAuthorityAfterAdmission(t *testing.T) {
 func TestComputerSaveAbandonmentOnlyReleasesExactOperation(t *testing.T) {
 	f := newExecGenerationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 	request := workerapi.ComputerSaveBeginRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), SaveID: uuid.NewV7().String(), Sequence: 1}
 	if _, err := f.server.beginComputerSave(t.Context(), f.worker, request); err != nil {
 		t.Fatal(err)
@@ -341,7 +341,7 @@ func TestComputerSaveAbandonmentOnlyReleasesExactOperation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var abandonedPins int
-	key := computerSavePublicationKey(db.RuntimeInstance{ID: pgvalue.UUID(f.runtimeID), ComputerSaveSequence: request.Sequence, ComputerSaveID: pgvalue.UUID(uuid.MustParse(request.SaveID))})
+	key := computerSavePublicationKey(db.RuntimeInstance{ID: pgvalue.UUID(f.runtimeID), ComputerSaveSequence: request.Sequence, ComputerSaveVersionID: pgvalue.UUID(uuid.MustParse(request.SaveID))})
 	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$2`, f.runtimeID, key).Scan(&abandonedPins); err != nil || abandonedPins != 0 {
 		t.Fatalf("abandoned pins: %d %v", abandonedPins, err)
 	}
@@ -362,7 +362,7 @@ func TestComputerSaveAbandonmentOnlyReleasesExactOperation(t *testing.T) {
 		t.Fatalf("old absence acknowledgement: %v", err)
 	}
 	var pending string
-	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_save_id::text FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&pending); err != nil || pending != next.SaveID {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_save_version_id::text FROM runtime_instances WHERE id=$1`, f.runtimeID).Scan(&pending); err != nil || pending != next.SaveID {
 		t.Fatalf("old abandon changed successor: %s %v", pending, err)
 	}
 	if err := f.server.recordComputerSaveObject(t.Context(), f.worker, next, inspection, "reuse"); err != nil {
@@ -396,7 +396,7 @@ func TestComputerSaveAbandonmentReplayAfterAuthorityExpires(t *testing.T) {
 				server, worker = f.server, f.worker
 				request.OrgID, request.WorkspaceMountID = f.OrgID.String(), f.mountID.String()
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 				expire = func() {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtimeID)
 				}
@@ -487,7 +487,7 @@ func TestComputerSaveHTTPReplayAndAbandonment(t *testing.T) {
 func TestComputerSaveReclamationDoesNotFabricateAdoption(t *testing.T) {
 	f := newExecGenerationFixture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_processes SET status='running' WHERE id=$1`, f.processID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_kind=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET status='mounted',finalization_action=NULL,finalization_reason_code=NULL,stopped_at=NULL WHERE id=$1`, f.mountID)
 	request := workerapi.ComputerSaveBeginRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), SaveID: uuid.NewV7().String(), Sequence: 1}
 	if _, err := f.server.beginComputerSave(t.Context(), f.worker, request); err != nil {
 		t.Fatal(err)

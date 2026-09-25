@@ -20,12 +20,12 @@ SELECT computer_versions.id AS version_id,
   FROM computer_versions
   JOIN computers
     ON computers.environment_id = computer_versions.environment_id
-   AND computers.id = computer_versions.workspace_id
+   AND computers.id = computer_versions.computer_id
   JOIN environments ON environments.id = computers.environment_id
  WHERE environments.org_id = $1
    AND environments.project_id = $2
    AND computer_versions.environment_id = $3
-   AND computer_versions.workspace_id = $4
+   AND computer_versions.computer_id = $4
    AND computer_versions.id = $5
    AND computer_versions.status IN ('committed', 'private')
 `

@@ -221,7 +221,6 @@ func validActorCompletionAuthority(
 	authority.runLease.Status = db.RunLeaseStatusFinalizing
 	authority.runLease.StartDeadlineAt = pgvalue.Timestamptz(now.Add(-time.Minute))
 	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(30 * time.Minute))
-	authority.runLease.FinalizationKind = pgvalue.Text(string(workerapi.RunFinalizationCapture))
 	authority.runLease.FinalizationStartedAt = pgvalue.Timestamptz(now)
 	authority.runLease.FinalizationRequestFingerprint = pgvalue.Text("sha256:frozen")
 	authority.workspaceLease.ExpiresAt = authority.runLease.ExpiresAt

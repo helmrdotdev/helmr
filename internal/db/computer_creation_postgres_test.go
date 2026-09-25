@@ -44,7 +44,7 @@ VALUES ($1,$2,'test-task',$3,$4,'* * * * *','UTC','active',now(),now()+interval 
 			}
 			var valid bool
 			if err := f.Pool.QueryRow(t.Context(), `SELECT v.id=$2 AND v.status='initializing' AND v.parent_version_id IS NULL
-AND v.artifact_id IS NULL AND v.content_digest IS NULL AND v.size_bytes=0 AND v.published_at IS NULL
+AND v.publisher_runtime_instance_id IS NULL AND v.root_pack_digest IS NULL AND v.logical_bytes=0 AND v.published_at IS NULL
 FROM computers w JOIN computer_versions v ON v.id=w.head_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
 				t.Fatalf("new root fabricated persistence: %v %v", valid, err)
 			}

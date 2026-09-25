@@ -380,7 +380,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "cas_blobs.referenceable:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.logical_bytes:s,computer_version_roots.payload_required:s,computer_version_roots.root_digest:s,computer_version_roots.root_key_id:s,computer_version_roots.root_kind:s,computer_version_roots.root_rank:s,computer_version_roots.root_size_bytes:s,computer_versions.payload_available:s,computers.computer_payload_required:s,computers.recovery_payload_required:s,computers.write_key_available:s,run_attempts.computer_payload_required:s,run_checkpoint_objects.availability_required:s,run_checkpoints.computer_payload_required:s,run_waits.computer_payload_required:s,runs.computer_payload_required:s,runtime_instances.computer_key_available:s,runtime_instances.computer_payload_required:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s,workspace_processes.computer_payload_required:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.logical_bytes:s,computer_version_roots.payload_required:s,computer_version_roots.root_kind:s,computer_version_roots.root_pack_digest:s,computer_version_roots.root_pack_rank:s,computer_version_roots.root_pack_size_bytes:s,computer_version_roots.root_page_key_id:s,computer_versions.payload_not_retired:s,computers.computer_payload_required:s,computers.recovery_payload_required:s,computers.write_key_available:s,run_attempts.computer_payload_required:s,run_checkpoint_objects.availability_required:s,run_checkpoints.computer_payload_required:s,run_waits.computer_payload_required:s,runs.computer_payload_required:s,runtime_instances.computer_key_available:s,runtime_instances.computer_payload_required:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s,workspace_processes.computer_payload_required:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -670,9 +670,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		   AND column_name = ANY($1::text[])
 	`, []string{
 		"parent_version_id",
-		"artifact_id",
-		"content_digest",
-		"entry_count",
+		"root_pack_digest",
 		"source_workspace_lease_id",
 		"ownership_generation",
 		"writer_generation",
@@ -681,8 +679,8 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}).Scan(&authorityColumns); err != nil {
 		t.Fatal(err)
 	}
-	if authorityColumns != 9 {
-		t.Fatalf("workspace version authority columns = %d, want 9", authorityColumns)
+	if authorityColumns != 7 {
+		t.Fatalf("workspace version authority columns = %d, want 7", authorityColumns)
 	}
 	var oneRoot bool
 	if err := pool.QueryRow(ctx, `
@@ -692,7 +690,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 			 WHERE schemaname = 'public'
 			   AND tablename = 'computer_versions'
 			   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
-			   AND indexdef LIKE '%(workspace_id)%'
+			   AND indexdef LIKE '%(computer_id)%'
 			   AND indexdef LIKE '%WHERE (parent_version_id IS NULL)%'
 		)
 	`).Scan(&oneRoot); err != nil {
@@ -715,21 +713,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}
 	if !fencedSource {
 		t.Fatal("workspace versions do not bind their source lease and writer fence")
-	}
-	var artifactScopeBinding bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_constraint
-			 WHERE conrelid = 'computer_versions'::regclass
-			   AND contype = 'f'
-			   AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (environment_id, artifact_id) REFERENCES artifacts(environment_id, id)%'
-		)
-	`).Scan(&artifactScopeBinding); err != nil {
-		t.Fatal(err)
-	}
-	if !artifactScopeBinding {
-		t.Fatal("workspace versions do not bind their artifact scope")
 	}
 	var mountProjectionColumns int
 	if err := pool.QueryRow(ctx, `

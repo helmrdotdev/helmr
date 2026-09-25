@@ -148,7 +148,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontier(t *testing.T) {
 				Status: db.RunCheckpointStatusReady, BaseWorkspaceVersionID: sourceVersionID,
 				RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 				MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-				RestoreManifest: manifest,
+				Manifest: manifest,
 			},
 			RuntimeConfigDigest: validDigest('a'), RuntimeConfigSizeBytes: 1, RuntimeConfigMediaType: "application/example",
 			VMStateDigest: validDigest('b'), VMStateSizeBytes: 2, VMStateMediaType: "application/example",

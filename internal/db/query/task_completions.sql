@@ -31,11 +31,10 @@ SELECT clock_timestamp()::timestamptz;
 INSERT INTO computer_versions (
     id,
     environment_id,
-    workspace_id,
+    computer_id,
     parent_version_id,
-    content_digest,
-    size_bytes,
-    entry_count,
+    root_pack_digest,
+    logical_bytes,
     status,
     source_workspace_lease_id,
     ownership_generation,
@@ -47,9 +46,8 @@ SELECT
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
     sqlc.arg(parent_version_id),
-    sqlc.arg(content_digest),
-    sqlc.arg(size_bytes),
-    sqlc.arg(entry_count),
+    sqlc.arg(root_pack_digest),
+    sqlc.arg(logical_bytes),
     'committed',
     sqlc.arg(source_workspace_lease_id),
     sqlc.arg(ownership_generation),
@@ -58,7 +56,7 @@ SELECT
 FROM computer_versions predecessor
 WHERE predecessor.id=sqlc.arg(parent_version_id)
   AND predecessor.environment_id=sqlc.arg(environment_id)
-  AND predecessor.workspace_id=sqlc.arg(workspace_id)
+  AND predecessor.computer_id=sqlc.arg(workspace_id)
   AND predecessor.status='committed'
 RETURNING *;
 
@@ -141,7 +139,7 @@ WITH authority AS MATERIALIZED (
        AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
        AND (workspace_mounts.status = 'mounted'
             OR (workspace_mounts.status = 'unmounting'
-                AND workspace_mounts.finalization_kind = 'discard'
+                AND workspace_mounts.finalization_action = 'discard'
                 AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
                 AND workspace_mounts.finalization_error IS NULL))
      WHERE run_leases.id = sqlc.arg(run_lease_id)
@@ -172,7 +170,7 @@ WITH authority AS MATERIALIZED (
 )
 UPDATE workspace_mounts
    SET status = 'unmounting',
-       finalization_kind = 'discard',
+       finalization_action = 'discard',
        finalization_reason_code = 'same_workspace_child_attempt_finished',
        finalization_error = NULL,
        stopped_at = COALESCE(workspace_mounts.stopped_at, sqlc.arg(completed_at)),
@@ -182,7 +180,7 @@ UPDATE workspace_mounts
    AND workspace_mounts.runtime_instance_id = closing_runtime.id
    AND (workspace_mounts.status = 'mounted'
         OR (workspace_mounts.status = 'unmounting'
-            AND workspace_mounts.finalization_kind = 'discard'
+            AND workspace_mounts.finalization_action = 'discard'
             AND workspace_mounts.finalization_reason_code = 'same_workspace_child_attempt_finished'
             AND workspace_mounts.finalization_error IS NULL))
 RETURNING workspace_mounts.*;
@@ -202,7 +200,6 @@ UPDATE run_leases
    AND lease_sequence = sqlc.arg(lease_sequence)
    AND status = 'finalizing'
    AND finalization_operation_id IS NOT NULL
-   AND finalization_kind IS NOT NULL
    AND finalization_started_at IS NOT NULL
    AND finalization_request_fingerprint IS NOT NULL
    AND terminal_request_fingerprint IS NULL

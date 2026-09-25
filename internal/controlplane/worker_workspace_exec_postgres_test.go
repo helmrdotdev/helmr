@@ -121,8 +121,8 @@ UPDATE workspace_leases
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,$3)`, fixture.OrgID, digest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES($1,$2,$3,$4,$5,'workspace_version',1,$6)`, artifactID, fixture.OrgID, fixture.ProjectID, fixture.EnvironmentID, digest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
- INSERT INTO computer_versions(id,environment_id,workspace_id,parent_version_id,artifact_id,status,content_digest,size_bytes,entry_count,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
- VALUES($1,$2,$3,$4,$5,'committed',$6,1,1,$7,$8,$9,now())`, promoted, fixture.EnvironmentID, workspaceID, baseWorkspaceVersionID, artifactID, digest, workspaceLeaseID, owner, writer)
+ INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,status,root_pack_digest,logical_bytes,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ VALUES($1,$2,$3,$4,'committed',$5,1,$6,$7,$8,now())`, promoted, fixture.EnvironmentID, workspaceID, baseWorkspaceVersionID, digest, workspaceLeaseID, owner, writer)
 
 	for _, test := range []struct {
 		name, sql string

@@ -1005,17 +1005,17 @@ func (q *Queries) SessionOwnedExecutionsExcluded(ctx context.Context, parentRunI
 
 const sessionRecoveryHeadCommitted = `-- name: SessionRecoveryHeadCommitted :one
 SELECT EXISTS(SELECT 1 FROM computer_versions
- WHERE environment_id=$1 AND workspace_id=$2 AND id=$3 AND status='committed') AS committed
+ WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND status='committed') AS committed
 `
 
 type SessionRecoveryHeadCommittedParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	ComputerID    pgtype.UUID `json:"computer_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) SessionRecoveryHeadCommitted(ctx context.Context, arg SessionRecoveryHeadCommittedParams) (bool, error) {
-	row := q.db.QueryRow(ctx, sessionRecoveryHeadCommitted, arg.EnvironmentID, arg.WorkspaceID, arg.ID)
+	row := q.db.QueryRow(ctx, sessionRecoveryHeadCommitted, arg.EnvironmentID, arg.ComputerID, arg.ID)
 	var committed bool
 	err := row.Scan(&committed)
 	return committed, err

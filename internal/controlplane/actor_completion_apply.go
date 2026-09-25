@@ -237,7 +237,7 @@ func validateActorCompletionAuthority(
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
 		authority.runLease.Status != db.RunLeaseStatusFinalizing || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid || !authority.runLease.FinalizationOperationID.Valid ||
-		!authority.runLease.FinalizationKind.Valid || !authority.runLease.FinalizationStartedAt.Valid ||
+		!authority.runLease.FinalizationStartedAt.Valid ||
 		!authority.runLease.FinalizationRequestFingerprint.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != authority.run.ID ||
 		(actor.Status != "open" && actor.Status != "closing") || authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
 		!authority.workspace.HeadVersionID.Valid ||
@@ -261,9 +261,8 @@ func validateActorCompletionAuthority(
 		return errStaleActorCompletion
 	}
 	finalization := completion.capture.receipt
-	wantKind := string(workerapi.RunFinalizationCapture)
 	operationID, err := uuid.Parse(finalization.OperationID)
-	if err != nil || authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) || authority.runLease.FinalizationKind.String != wantKind {
+	if err != nil || authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) {
 		return errStaleActorCompletion
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{

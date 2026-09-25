@@ -344,35 +344,7 @@ SELECT (row).id, (row).environment_id, (row).region_id, (row).sandbox_declared_i
     (row).deleted_at, (row).secret_ca_certificate, (row).secret_ca_private_key_nonce, (row).secret_ca_private_key_ciphertext,
     (row).secret_ca_not_after
 FROM cloned`, sourceMountID, workspaceID, runID, versionID)
-	dbtest.MustExec(t, fixture.ctx, tx, `
-WITH cloned AS (
-SELECT (jsonb_populate_record(
-    NULL::computer_versions,
-    to_jsonb(source_version) || jsonb_build_object(
-        'id', $2::text,
-        'workspace_id', $3::text,
-        'created_at', transaction_timestamp(),
-        'published_at', transaction_timestamp()
-    )
-)) AS row
-  FROM workspace_mounts source_mount
-  JOIN computer_versions source_version
-    ON source_version.id = source_mount.materialized_version_id
- WHERE source_mount.id = $1
-)
-INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    artifact_id, content_digest, size_bytes, entry_count,
-    status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence,
-    publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation,
-    created_at, published_at, discarded_at, payload_retired_at
-)
-SELECT (row).id, (row).environment_id, (row).workspace_id, (row).parent_version_id,
-    (row).artifact_id, (row).content_digest, (row).size_bytes, (row).entry_count,
-    (row).status, (row).source_workspace_lease_id, (row).publisher_runtime_instance_id, (row).publisher_save_sequence,
-    (row).publisher_desired_version, (row).publication_request_fingerprint, (row).ownership_generation, (row).writer_generation,
-    (row).created_at, (row).published_at, (row).discarded_at, (row).payload_retired_at
-FROM cloned`, sourceMountID, versionID, workspaceID)
+	dbtest.InsertCommittedComputerRoot(t, fixture.ctx, tx, versionID, fixture.environmentID, workspaceID)
 	insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, workspaceID, versionID)
 	dbtest.MustExec(t, fixture.ctx, tx, `
 WITH cloned AS (

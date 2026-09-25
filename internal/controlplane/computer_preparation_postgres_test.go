@@ -28,7 +28,7 @@ func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=$2::jsonb WHERE id=$1`, f.WorkspaceDefinitionID, fmt.Sprintf(`{"image":{"artifactDigest":%q,"mediaType":"application/octet-stream"},"resources":{"milliCpu":1000,"memoryMiB":1024}}`, dbtest.Digest("run-lease-image")))
 	diskBytes := int64(compute.WorkspaceGuestEphemeralDiskMiB) * 1048576
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET reserved_guest_ephemeral_disk_bytes=$2 WHERE id=$1`, runtime, diskBytes)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET status='initializing',artifact_id=NULL,content_digest=NULL,size_bytes=0,published_at=NULL WHERE workspace_id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET status='initializing',publisher_runtime_instance_id=NULL,publisher_desired_version=NULL,publication_request_fingerprint=NULL,root_pack_digest=NULL,logical_bytes=0,published_at=NULL WHERE computer_id=(SELECT workspace_id FROM runtime_instances WHERE id=$1)`, runtime)
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

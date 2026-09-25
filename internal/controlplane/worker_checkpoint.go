@@ -28,7 +28,6 @@ type parsedCheckpointReady struct {
 	waitID         uuid.UUID
 	checkpointID   uuid.UUID
 	computer       workerapi.CheckpointComputer
-	manifest       []byte
 	fingerprint    string
 	artifacts      checkpointArtifactProofs
 	requestVersion int64
@@ -318,7 +317,7 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
-	manifest, artifacts, err := validateCheckpointReadyManifest(request)
+	_, artifacts, err := validateCheckpointReadyManifest(request)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
@@ -330,8 +329,8 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	}
 	return parsedCheckpointReady{
 		lease: lease, waitID: waitID, checkpointID: checkpointID,
-		computer: *request.Manifest.RuntimeState.Computer,
-		manifest: manifest, fingerprint: fingerprint, artifacts: artifacts,
+		computer:    *request.Manifest.RuntimeState.Computer,
+		fingerprint: fingerprint, artifacts: artifacts,
 		requestVersion: request.RequestVersion,
 	}, normalized, nil
 }
@@ -526,8 +525,15 @@ func (s *Server) commitCheckpointReady(
 		if err != nil {
 			return err
 		}
+		phases, err := json.Marshal(request.Manifest.Phases)
+		if err != nil {
+			return err
+		}
+		if request.Manifest.Phases == nil {
+			phases = nil
+		}
 		if _, err := work.q.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
-			PrivateWorkspaceVersionID: workspaceVersionID, RestoreManifest: ready.manifest,
+			PrivateWorkspaceVersionID: workspaceVersionID, Manifest: encoded, PhaseTimings: phases,
 			RuntimeConfigArtifactID: artifactIDs.runtimeConfig, VMStateArtifactID: artifactIDs.vmState,
 			MemoryArtifactID: artifactIDs.memory, ScratchDiskArtifactID: artifactIDs.scratchDisk,
 			ReadyRequestFingerprint: pgvalue.Text(ready.fingerprint), RunID: authority.run.ID,

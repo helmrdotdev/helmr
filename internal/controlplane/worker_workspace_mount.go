@@ -162,7 +162,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			}
 			versionID = a.WorkspaceProcess.StagedVersionID
 		} else {
-			staged, err := q.StageWorkspaceExecCapture(r.Context(), db.StageWorkspaceExecCaptureParams{WorkspaceMountID: a.WorkspaceMount.ID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch, WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), SizeBytes: request.Computer.LogicalBytes, ContentDigest: pgvalue.Text(request.Computer.Root.Pack.Digest)})
+			staged, err := q.StageWorkspaceExecCapture(r.Context(), db.StageWorkspaceExecCaptureParams{WorkspaceMountID: a.WorkspaceMount.ID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch, WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), LogicalBytes: request.Computer.LogicalBytes, RootPackDigest: pgvalue.Text(request.Computer.Root.Pack.Digest)})
 			if err != nil {
 				return fmt.Errorf("stage exec root: %w", err)
 			}
@@ -297,7 +297,7 @@ func (s *Server) finalizeWorkspaceExec(
 	finalState := db.WorkspaceProcessStatusFailed
 	reasonCode := mount.FinalizationReasonCode
 	errorJSON := mount.FinalizationError
-	if mount.FinalizationKind.String == "capture" {
+	if mount.FinalizationAction.String == "capture" {
 		if !process.StagedVersionID.Valid {
 			return errors.New("workspace exec capture is not staged")
 		}
@@ -674,7 +674,7 @@ func workspaceMountResponse(row db.WorkspaceMount) workerapi.WorkspaceMountRespo
 		Status:                 string(row.Status),
 		FencingGeneration:      row.FencingGeneration,
 		DirtyGeneration:        row.DirtyGeneration,
-		FinalizationKind:       row.FinalizationKind.String,
+		FinalizationKind:       row.FinalizationAction.String,
 		ReservationExpiresAt:   pgTime(row.GuestChannelTokenExpiresAt),
 		LastHeartbeatAt:        pgTime(row.UpdatedAt),
 		CreatedAt:              row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,

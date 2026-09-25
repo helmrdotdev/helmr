@@ -223,7 +223,7 @@ func TestClassifyWorkspaceExecRecovery(t *testing.T) {
 				db.LockWorkspaceExecRecoveryAuthorityRow{
 					WorkspaceProcess: db.WorkspaceProcess{Status: test.process, StagedVersionID: test.staged},
 					WorkspaceMount: db.WorkspaceMount{
-						FinalizationKind:       test.kind,
+						FinalizationAction:     test.kind,
 						FinalizationReasonCode: test.reason,
 						FinalizationError:      test.errorJSON,
 					},

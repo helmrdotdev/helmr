@@ -49,7 +49,7 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 		if !bytes.Equal(v.PublicationRequestFingerprint, fingerprint[:]) {
 			return empty, errors.New("initial Computer publication differs from committed request")
 		}
-		return computerPublicationResult{ComputerID: v.WorkspaceID, VersionID: v.ID}, nil
+		return computerPublicationResult{ComputerID: v.ComputerID, VersionID: v.ID}, nil
 	}
 	if result, err := replay(); !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
@@ -111,7 +111,7 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 	if err != nil {
 		return empty, err
 	}
-	version, err := q.PublishInitialComputerVersion(ctx, db.PublishInitialComputerVersionParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, VersionID: owner.VersionID, RuntimeInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, Fingerprint: fingerprint[:], ContentDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: owner.LogicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
+	version, err := q.PublishInitialComputerVersion(ctx, db.PublishInitialComputerVersionParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, VersionID: owner.VersionID, RuntimeInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, Fingerprint: fingerprint[:], RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: owner.LogicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
 	if err != nil {
 		return empty, err
 	}
@@ -134,5 +134,5 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 	if err = tx.Commit(ctx); err != nil {
 		return empty, err
 	}
-	return computerPublicationResult{ComputerID: version.WorkspaceID, VersionID: version.ID}, nil
+	return computerPublicationResult{ComputerID: version.ComputerID, VersionID: version.ID}, nil
 }

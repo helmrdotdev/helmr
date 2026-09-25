@@ -73,7 +73,7 @@ DELETE FROM runtime_computer_object_pins p USING released r
 -- name: ListUnreferencedComputerObjects :many
 SELECT o.environment_id,o.computer_id,o.digest,o.org_id
  FROM computer_objects o
- WHERE NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_digest=o.digest)
+ WHERE NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
  ORDER BY o.rank DESC,o.environment_id,o.computer_id,o.digest
@@ -82,7 +82,7 @@ SELECT o.environment_id,o.computer_id,o.digest,o.org_id
 -- name: DeleteUnreferencedComputerObject :execrows
 DELETE FROM computer_objects o
  WHERE o.environment_id=sqlc.arg(environment_id) AND o.computer_id=sqlc.arg(computer_id) AND o.digest=sqlc.arg(digest)
- AND NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest);
 

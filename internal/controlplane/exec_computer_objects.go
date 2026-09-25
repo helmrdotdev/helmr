@@ -42,7 +42,7 @@ func lockExecComputerPublication(ctx context.Context, tx pgx.Tx, q db.Querier, w
 	if err != nil {
 		return zero, err
 	}
-	if a.WorkspaceProcess.Status != db.WorkspaceProcessStatusExitRequested || a.WorkspaceMount.Status != "unmounting" || a.WorkspaceMount.FinalizationKind.String != "capture" || a.RuntimeInstance.ReclaimedAt.Valid {
+	if a.WorkspaceProcess.Status != db.WorkspaceProcessStatusExitRequested || a.WorkspaceMount.Status != "unmounting" || a.WorkspaceMount.FinalizationAction.String != "capture" || a.RuntimeInstance.ReclaimedAt.Valid {
 		return zero, computerObjectConflict("exec is not publishing")
 	}
 	var claims bool

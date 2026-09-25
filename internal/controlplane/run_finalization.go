@@ -126,7 +126,6 @@ func (s *Server) beginRunFinalization(
 			if authority.run.ActiveStartedAt.Valid ||
 				!authority.runLease.FinalizationOperationID.Valid ||
 				authority.runLease.FinalizationOperationID != pgvalue.UUID(parsed.operationID) ||
-				authority.runLease.FinalizationKind.String != string(parsed.kind) ||
 				authority.runLease.FinalizationRequestFingerprint.String != parsed.fingerprint ||
 				!authority.runLease.FinalizationStartedAt.Valid {
 				return errStaleRunFinalization
@@ -141,7 +140,6 @@ func (s *Server) beginRunFinalization(
 		if authority.runLease.Status != db.RunLeaseStatusRunning ||
 			!authority.run.ActiveStartedAt.Valid ||
 			authority.runLease.FinalizationOperationID.Valid ||
-			authority.runLease.FinalizationKind.Valid ||
 			authority.runLease.FinalizationStartedAt.Valid ||
 			authority.runLease.FinalizationRequestFingerprint.Valid {
 			return errStaleRunFinalization
@@ -192,7 +190,7 @@ func (s *Server) beginRunFinalization(
 		previousExpiry := authority.runLease.ExpiresAt
 		authority.runLease, err = work.q.BeginRunLeaseFinalization(ctx, db.BeginRunLeaseFinalizationParams{
 			ExpiresAt: pgvalue.Timestamptz(expiresAt), FinalizationOperationID: pgvalue.UUID(parsed.operationID),
-			FinalizationKind: pgvalue.Text(string(parsed.kind)), FinalizationStartedAt: startedAt,
+			FinalizationStartedAt:          startedAt,
 			FinalizationRequestFingerprint: pgvalue.Text(parsed.fingerprint), ID: authority.runLease.ID,
 			RunID: authority.run.ID, WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
 			LeaseSequence: authority.runLease.LeaseSequence, PreviousExpiresAt: previousExpiry,

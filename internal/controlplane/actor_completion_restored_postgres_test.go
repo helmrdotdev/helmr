@@ -112,20 +112,20 @@ SELECT runs.status,
 	}
 	var digest string
 	var parent uuid.UUID
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT r.root_digest,v.parent_version_id FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT r.root_pack_digest,v.parent_version_id FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
 		t.Fatal(err)
 	}
 	if digest != fixture.request.Workspace.Captured.Disk.Root.Pack.Digest || parent != fixture.headVersionID {
 		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
 	}
 	var countBefore, countAfter int
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countBefore); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE computer_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countBefore); err != nil {
 		t.Fatal(err)
 	}
 	if err := fixture.server.completeActor(t.Context(), fixture.worker, fixture.request, completion); err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE workspace_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countAfter); err != nil {
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE computer_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countAfter); err != nil {
 		t.Fatal(err)
 	}
 	if countAfter != countBefore {
@@ -300,14 +300,12 @@ INSERT INTO artifacts (
 		checkpointDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    artifact_id, content_digest, size_bytes, entry_count,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes,
     status, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 1, 1,
-    'private', $7, $8, 1
-)`, checkpointVersionID, base.EnvironmentID, workspaceID, headVersionID,
-		checkpointArtifactID, checkpointDigest, sourceWorkspaceLeaseID, ownershipGeneration)
+    $1, $2, $3, $4, $5, 1,
+    'private', $6, $7, 1
+)`, checkpointVersionID, base.EnvironmentID, workspaceID, headVersionID, checkpointDigest, sourceWorkspaceLeaseID, ownershipGeneration)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash, request_fingerprint, accepted_at
@@ -386,14 +384,12 @@ INSERT INTO artifacts (
 		privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO computer_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    artifact_id, content_digest, size_bytes, entry_count,
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes,
     status, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 1, 1,
-    'private', $7, $8, $9
-)`, privateVersionID, base.EnvironmentID, workspaceID, checkpointVersionID,
-		privateArtifactID, privateDigest, childWorkspaceLeaseID, ownershipGeneration, int64(2))
+    $1, $2, $3, $4, $5, 1,
+    'private', $6, $7, $8
+)`, privateVersionID, base.EnvironmentID, workspaceID, checkpointVersionID, privateDigest, childWorkspaceLeaseID, ownershipGeneration, int64(2))
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
@@ -415,7 +411,7 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id, actor_speculative_input_sequence,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    status, restore_manifest,
+    status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8,
@@ -454,11 +450,10 @@ UPDATE run_leases
        started_at = COALESCE(started_at, claimed_at, created_at),
        expires_at = $2,
        finalization_operation_id = $3,
-       finalization_kind = $4,
+
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3'
- WHERE id = $1`, work.LeaseID, expiresAt, operationID,
-		string(workerapi.RunFinalizationCapture))
+ WHERE id = $1`, work.LeaseID, expiresAt, operationID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET base_workspace_version_id = $2, expires_at = $3

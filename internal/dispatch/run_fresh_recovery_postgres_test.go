@@ -351,7 +351,7 @@ func TestFinalizingLeaseLossPreservesReceiptBeforeRetry(t *testing.T) {
 UPDATE run_leases
    SET status = 'finalizing', claimed_at = created_at, started_at = created_at,
        expires_at = transaction_timestamp() - interval '1 second',
-       finalization_operation_id = $2, finalization_kind = 'capture',
+       finalization_operation_id = $2,
        finalization_started_at = transaction_timestamp() - interval '2 seconds',
        finalization_request_fingerprint = 'sha256:' || repeat('a', 64)
  WHERE id = $1`, leaseID, operationID)
@@ -372,29 +372,29 @@ UPDATE runs
 	if recovered != 1 {
 		t.Fatalf("recovered = %d, want 1", recovered)
 	}
-	var runStatus, leaseStatus, finalizationKind, fingerprint string
+	var runStatus, leaseStatus, fingerprint string
 	var currentAttempt int32
 	var currentLease, retainedOperationID pgtype.UUID
 	var finalizationStarted pgtype.Timestamptz
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT runs.status, runs.current_attempt_number, runs.current_run_lease_id,
        run_leases.status, run_leases.finalization_operation_id,
-       run_leases.finalization_kind, run_leases.finalization_started_at,
+       run_leases.finalization_started_at,
        run_leases.finalization_request_fingerprint
   FROM runs JOIN run_leases ON run_leases.id = $2
  WHERE runs.id = $1`, fixture.runID, leaseID).Scan(
 		&runStatus, &currentAttempt, &currentLease, &leaseStatus, &retainedOperationID,
-		&finalizationKind, &finalizationStarted, &fingerprint,
+		&finalizationStarted, &fingerprint,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != "retry_delayed" || currentAttempt != 2 || currentLease.Valid ||
 		leaseStatus != "expired" || retainedOperationID != pgvalue.UUID(operationID) ||
-		finalizationKind != "capture" || !finalizationStarted.Valid ||
+		!finalizationStarted.Valid ||
 		fingerprint != "sha256:"+strings.Repeat("a", 64) {
-		t.Fatalf("finalizing recovery run=%s attempt=%d current=%v lease=%s operation=%v kind=%s started=%v fingerprint=%s",
+		t.Fatalf("finalizing recovery run=%s attempt=%d current=%v lease=%s operation=%v started=%v fingerprint=%s",
 			runStatus, currentAttempt, currentLease, leaseStatus, retainedOperationID,
-			finalizationKind, finalizationStarted, fingerprint)
+			finalizationStarted, fingerprint)
 	}
 	if replay, err := fixture.authority.RecoverRunExecutionLeases(fixture.ctx, 10); err != nil || replay != 0 {
 		t.Fatalf("finalizing recovery replay = %d, %v; want 0, nil", replay, err)

@@ -158,7 +158,7 @@ func TestExpiredExecReservationClosesWithoutPendingCandidate(t *testing.T) {
 		t.Fatalf("exec recovery: %d/%v", n, err)
 	}
 	var state, kind, reason string
-	if err := fixture.pool.QueryRow(fixture.ctx, "SELECT status,finalization_kind,finalization_reason_code FROM workspace_mounts WHERE id=$1", mountID).Scan(&state, &kind, &reason); err != nil {
+	if err := fixture.pool.QueryRow(fixture.ctx, "SELECT status,finalization_action,finalization_reason_code FROM workspace_mounts WHERE id=$1", mountID).Scan(&state, &kind, &reason); err != nil {
 		t.Fatal(err)
 	}
 	if state != "unmounting" || kind != "discard" || reason != "runtime_reservation_expired" {

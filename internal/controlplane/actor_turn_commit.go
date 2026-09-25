@@ -174,7 +174,7 @@ func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority
 		(actor.Status != "open" && actor.Status != "closing") ||
 		authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
 		!authority.workspace.HeadVersionID.Valid ||
-		authority.runLease.FinalizationOperationID.Valid || authority.runLease.FinalizationKind.Valid ||
+		authority.runLease.FinalizationOperationID.Valid ||
 		authority.runLease.FinalizationStartedAt.Valid || authority.runLease.FinalizationRequestFingerprint.Valid {
 		return errStaleActorTurnCommit
 	}
