@@ -716,7 +716,6 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 	}
 	return Pool{
 		WorkerGroupID: pgvalue.MustUUIDValue(row.WorkerGroupID), RuntimeIdentityID: row.RuntimeIdentityID.String,
-		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 		PerVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis.Int64, MemoryBytes: row.PerVMMemoryBytes.Int64,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
@@ -730,7 +729,6 @@ func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID)
 		WorkerGroupID: pgvalue.UUID(plannerTestGroupID), PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
 		WorkerInstanceID:  plannerTestUUID(row.ID.Bytes[15] + 100),
 		RuntimeIdentityID: row.RuntimeIdentityID, RuntimeArch: "x86_64", VMRuntimeContract: runtimeid.Contract,
-		SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 		PerVMCPUMillis: row.PerVMCPUMillis.Int64, PerVMMemoryBytes: row.PerVMMemoryBytes.Int64,
 		PerVMGuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 		AvailableCPUMillis:           row.CapacityCPUMillis.Int64, AvailableMemoryBytes: row.CapacityMemoryBytes.Int64,
@@ -764,7 +762,6 @@ func plannerRestoreRun(seed byte, requirements RestoreRequirements) db.ListQueue
 		RequiredVMVCPUCount: requirements.VCPUCount, RequiredCPUConfigDigest: requirements.CPUConfigDigest,
 		RequiredCPUMillis: requirements.Resources.CPUMillis, RequiredMemoryBytes: requirements.Resources.MemoryBytes,
 		RequiredGuestEphemeralDiskBytes: requirements.Resources.GuestEphemeralDiskBytes,
-		RequiredSubstrateFormat:         requirements.SubstrateFormat, RequiredSubstrateContract: requirements.SubstrateContract,
 	}
 }
 
@@ -772,7 +769,6 @@ func plannerRestoreRequirements() RestoreRequirements {
 	return RestoreRequirements{
 		WorkerGroupID: plannerTestGroupID, RuntimeIdentityID: plannerTestRuntimeIdentityID,
 		VCPUCount: 1, CPUConfigDigest: plannerTestCPUConfigDigest,
-		SubstrateFormat: plannerTestSubstrateFormat, SubstrateContract: plannerTestSubstrateContract,
 		Resources: plannerRunResources(),
 	}
 }

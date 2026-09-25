@@ -968,20 +968,18 @@ SELECT worker_groups.id AS worker_group_id,
        ($9::text <> ''
         AND worker_groups.id = $10
         AND worker_instances.runtime_identity_id = $9
-        AND worker_instances.substrate_format = $11
-        AND worker_instances.substrate_contract = $12
-        AND $13::integer > 0
-        AND $14::text <> ''
+        AND $11::integer > 0
+        AND $12::text <> ''
         AND EXISTS (
             SELECT 1
               FROM worker_pool_cpu_shapes
              WHERE worker_pool_cpu_shapes.worker_pool_id = worker_instances.worker_pool_id
-               AND worker_pool_cpu_shapes.vcpu_count = $13
-               AND worker_pool_cpu_shapes.cpu_config_digest = $14
+               AND worker_pool_cpu_shapes.vcpu_count = $11
+               AND worker_pool_cpu_shapes.cpu_config_digest = $12
         ))
    )
  ORDER BY worker_instances.id
- LIMIT $15
+ LIMIT $13
 `
 
 type ListRunWorkerCapacityPressureCandidatesParams struct {
@@ -995,8 +993,6 @@ type ListRunWorkerCapacityPressureCandidatesParams struct {
 	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
 	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
 	RequiredWorkerGroupID           pgtype.UUID `json:"required_worker_group_id"`
-	RequiredSubstrateFormat         string      `json:"required_substrate_format"`
-	RequiredSubstrateContract       string      `json:"required_substrate_contract"`
 	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
 	RequiredCPUConfigDigest         string      `json:"required_cpu_config_digest"`
 	RowLimit                        int32       `json:"row_limit"`
@@ -1021,8 +1017,6 @@ func (q *Queries) ListRunWorkerCapacityPressureCandidates(ctx context.Context, a
 		arg.RequiredGuestEphemeralDiskBytes,
 		arg.RequiredRuntimeIdentityID,
 		arg.RequiredWorkerGroupID,
-		arg.RequiredSubstrateFormat,
-		arg.RequiredSubstrateContract,
 		arg.RequiredVMVCPUCount,
 		arg.RequiredCPUConfigDigest,
 		arg.RowLimit,
@@ -1762,12 +1756,6 @@ SELECT supplier.id
     ON source_shape.worker_pool_id = source_pool.id
    AND source_shape.vcpu_count = source_runtime.vm_vcpu_count
    AND source_shape.cpu_config_digest = source_runtime.cpu_config_digest
-  LEFT JOIN runtime_substrates
-    ON runtime_substrates.id = source_runtime.runtime_substrate_id
-   AND runtime_substrates.org_id = source_runtime.org_id
-   AND runtime_substrates.project_id = source_runtime.project_id
-   AND runtime_substrates.environment_id = source_runtime.environment_id
-   AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
   JOIN worker_pools AS supplier
 	ON supplier.worker_group_id = source_lease.worker_group_id
 	AND supplier.status = 'active'
@@ -1775,13 +1763,6 @@ SELECT supplier.id
    AND supplier.per_vm_cpu_millis >= source_lease.requested_cpu_millis
    AND supplier.per_vm_memory_bytes >= source_lease.requested_memory_bytes
    AND supplier.per_vm_guest_ephemeral_disk_bytes >= source_lease.requested_guest_ephemeral_disk_bytes
-   AND (
-       source_runtime.runtime_substrate_id IS NULL
-       OR (
-           supplier.substrate_format = runtime_substrates.substrate_format
-           AND supplier.substrate_contract = runtime_substrates.substrate_contract
-       )
-   )
   JOIN worker_pool_cpu_shapes AS supplier_shape
     ON supplier_shape.worker_pool_id = supplier.id
    AND supplier_shape.vcpu_count = source_runtime.vm_vcpu_count
@@ -1797,13 +1778,6 @@ SELECT supplier.id
    AND source_pool.per_vm_cpu_millis >= source_lease.requested_cpu_millis
    AND source_pool.per_vm_memory_bytes >= source_lease.requested_memory_bytes
    AND source_pool.per_vm_guest_ephemeral_disk_bytes >= source_lease.requested_guest_ephemeral_disk_bytes
-   AND (
-       source_runtime.runtime_substrate_id IS NULL
-       OR (
-           source_pool.substrate_format = runtime_substrates.substrate_format
-           AND source_pool.substrate_contract = runtime_substrates.substrate_contract
-       )
-   )
  LIMIT 1
 `
 
@@ -1970,16 +1944,14 @@ WITH compatible_workers AS (
            ($8::text <> ''
             AND worker_groups.id = $9
             AND worker_instances.runtime_identity_id = $8
-            AND worker_instances.substrate_format = $10
-            AND worker_instances.substrate_contract = $11
-            AND $12::integer > 0
-            AND $13::text <> ''
+            AND $10::integer > 0
+            AND $11::text <> ''
             AND EXISTS (
                 SELECT 1
                   FROM worker_pool_cpu_shapes
                  WHERE worker_pool_cpu_shapes.worker_pool_id = worker_instances.worker_pool_id
-                   AND worker_pool_cpu_shapes.vcpu_count = $12
-                   AND worker_pool_cpu_shapes.cpu_config_digest = $13
+                   AND worker_pool_cpu_shapes.vcpu_count = $10
+                   AND worker_pool_cpu_shapes.cpu_config_digest = $11
             ))
        )
 ), available_workers AS (
@@ -2063,8 +2035,6 @@ type SelectRunWorkerCapacityParams struct {
 	VMRuntimeContract               string      `json:"vm_runtime_contract"`
 	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
 	RequiredWorkerGroupID           pgtype.UUID `json:"required_worker_group_id"`
-	RequiredSubstrateFormat         string      `json:"required_substrate_format"`
-	RequiredSubstrateContract       string      `json:"required_substrate_contract"`
 	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
 	RequiredCPUConfigDigest         string      `json:"required_cpu_config_digest"`
 }
@@ -2087,8 +2057,6 @@ func (q *Queries) SelectRunWorkerCapacity(ctx context.Context, arg SelectRunWork
 		arg.VMRuntimeContract,
 		arg.RequiredRuntimeIdentityID,
 		arg.RequiredWorkerGroupID,
-		arg.RequiredSubstrateFormat,
-		arg.RequiredSubstrateContract,
 		arg.RequiredVMVCPUCount,
 		arg.RequiredCPUConfigDigest,
 	)
@@ -2299,10 +2267,7 @@ WITH restore_profiles AS MATERIALIZED (
            source_runtime.cpu_config_digest,
            source_lease.requested_cpu_millis,
            source_lease.requested_memory_bytes,
-           source_lease.requested_guest_ephemeral_disk_bytes,
-           runtime_substrates.substrate_format,
-           runtime_substrates.substrate_contract,
-           (runtime_substrates.id IS NOT NULL) AS substrate_known
+           source_lease.requested_guest_ephemeral_disk_bytes
       FROM run_checkpoints
       JOIN run_leases AS source_lease
         ON source_lease.id = run_checkpoints.source_run_lease_id
@@ -2313,12 +2278,6 @@ WITH restore_profiles AS MATERIALIZED (
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
        AND source_runtime.worker_group_id = source_lease.worker_group_id
-      LEFT JOIN runtime_substrates
-        ON runtime_substrates.id = source_runtime.runtime_substrate_id
-       AND runtime_substrates.org_id = source_runtime.org_id
-       AND runtime_substrates.project_id = source_runtime.project_id
-       AND runtime_substrates.environment_id = source_runtime.environment_id
-       AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
      WHERE run_checkpoints.status = 'ready'
        AND (run_checkpoints.expires_at IS NULL
             OR run_checkpoints.expires_at > transaction_timestamp())
@@ -2329,10 +2288,7 @@ WITH restore_profiles AS MATERIALIZED (
            source_runtime.cpu_config_digest,
            source_lease.requested_cpu_millis,
            source_lease.requested_memory_bytes,
-           source_lease.requested_guest_ephemeral_disk_bytes,
-           runtime_substrates.substrate_format,
-           runtime_substrates.substrate_contract,
-           (runtime_substrates.id IS NOT NULL) AS substrate_known
+           source_lease.requested_guest_ephemeral_disk_bytes
       FROM run_leases AS source_lease
       JOIN runtime_instances AS source_runtime
         ON source_runtime.id = source_lease.runtime_instance_id
@@ -2340,12 +2296,6 @@ WITH restore_profiles AS MATERIALIZED (
        AND source_runtime.worker_instance_id = source_lease.worker_instance_id
        AND source_runtime.worker_epoch = source_lease.worker_epoch
        AND source_runtime.reclaimed_at IS NULL
-      LEFT JOIN runtime_substrates
-        ON runtime_substrates.id = source_runtime.runtime_substrate_id
-       AND runtime_substrates.org_id = source_runtime.org_id
-       AND runtime_substrates.project_id = source_runtime.project_id
-       AND runtime_substrates.environment_id = source_runtime.environment_id
-       AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
      WHERE source_lease.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
 )
 UPDATE worker_pools AS target
@@ -2377,31 +2327,22 @@ UPDATE worker_pools AS target
                       AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
                       AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
                       AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                      AND (
-                          NOT restore_profiles.substrate_known
-                          OR (
-                              target.substrate_format = restore_profiles.substrate_format
-                              AND target.substrate_contract = restore_profiles.substrate_contract
-                              AND NOT EXISTS (
-                                  SELECT 1
-                                    FROM worker_pools AS supplier
-                                   WHERE supplier.worker_group_id = target.worker_group_id
-                                     AND supplier.id <> target.id
-                                     AND supplier.status = 'active'
-                                     AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
-                                     AND supplier.substrate_format = restore_profiles.substrate_format
-                                     AND supplier.substrate_contract = restore_profiles.substrate_contract
-                                     AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                                     AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                                     AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                                     AND EXISTS (
-                                         SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
-                                          WHERE supplier_shape.worker_pool_id = supplier.id
-                                            AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                            AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                                     )
-                              )
-                          )
+                      AND NOT EXISTS (
+                          SELECT 1
+                            FROM worker_pools AS supplier
+                           WHERE supplier.worker_group_id = target.worker_group_id
+                             AND supplier.id <> target.id
+                             AND supplier.status = 'active'
+                             AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
+                             AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
+                             AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
+                             AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
+                             AND EXISTS (
+                                 SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
+                                  WHERE supplier_shape.worker_pool_id = supplier.id
+                                    AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
+                                    AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
+                             )
                       )
                )
            )
@@ -2515,31 +2456,22 @@ UPDATE worker_pools AS target
                               AND target.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
                               AND target.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
                               AND target.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                              AND (
-                                  NOT restore_profiles.substrate_known
-                                  OR (
-                                      target.substrate_format = restore_profiles.substrate_format
-                                      AND target.substrate_contract = restore_profiles.substrate_contract
-                                      AND NOT EXISTS (
-                                          SELECT 1
-                                            FROM worker_pools AS supplier
-                                           WHERE supplier.worker_group_id = target.worker_group_id
-                                             AND supplier.id <> target.id
-	                                             AND supplier.status = 'active'
-                                             AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
-                                             AND supplier.substrate_format = restore_profiles.substrate_format
-                                             AND supplier.substrate_contract = restore_profiles.substrate_contract
-                                             AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
-                                             AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
-                                             AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
-                                             AND EXISTS (
-                                                 SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
-                                                  WHERE supplier_shape.worker_pool_id = supplier.id
-                                                    AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
-                                                    AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
-                                             )
-                                      )
-                                  )
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                    FROM worker_pools AS supplier
+                                   WHERE supplier.worker_group_id = target.worker_group_id
+                                     AND supplier.id <> target.id
+                                     AND supplier.status = 'active'
+                                     AND supplier.runtime_identity_id = restore_profiles.runtime_identity_id
+                                     AND supplier.per_vm_cpu_millis >= restore_profiles.requested_cpu_millis
+                                     AND supplier.per_vm_memory_bytes >= restore_profiles.requested_memory_bytes
+                                     AND supplier.per_vm_guest_ephemeral_disk_bytes >= restore_profiles.requested_guest_ephemeral_disk_bytes
+                                     AND EXISTS (
+                                         SELECT 1 FROM worker_pool_cpu_shapes AS supplier_shape
+                                          WHERE supplier_shape.worker_pool_id = supplier.id
+                                            AND supplier_shape.vcpu_count = restore_profiles.vm_vcpu_count
+                                            AND supplier_shape.cpu_config_digest = restore_profiles.cpu_config_digest
+                                     )
                               )
                        )
                    )

@@ -652,15 +652,8 @@ func seedLiveRuntimeForWorkerPool(
 	pool db.WorkerPool,
 ) adminPoolLiveRuntime {
 	t.Helper()
-	var substrateID, sandboxDefinitionID uuid.UUID
-	if err := product.pool.QueryRow(t.Context(), `
-SELECT id, deployment_definition_id
-  FROM runtime_substrates
- WHERE environment_id = $1
-   AND substrate_format = $2
-   AND substrate_contract = $3`,
-		product.environmentID, fixture.substrateFormat, fixture.substrateContract,
-	).Scan(&substrateID, &sandboxDefinitionID); err != nil {
+	var sandboxDefinitionID uuid.UUID
+	if err := product.pool.QueryRow(t.Context(), `SELECT deployment_definition_id FROM computers WHERE id=$1`, product.workspaceIDs[0]).Scan(&sandboxDefinitionID); err != nil {
 		t.Fatal(err)
 	}
 	live := adminPoolLiveRuntime{
@@ -689,16 +682,16 @@ INSERT INTO worker_instances (
 INSERT INTO runtime_instances (
     id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
-    runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
+    worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
     reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
     workspace_id, desired_reason
 ) VALUES (
-    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
-    1, 1, $10, 1000, 1073741824, 4294967296, 1, $11, 'placed'
+    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8,
+    1, 1, $9, 1000, 1073741824, 4294967296, 1, $10, 'placed'
 )`, live.runtimeID, product.orgID, fixture.group.ID, product.projectID,
 		product.environmentID, live.workerID, fixture.runtimeIdentityID,
-		sandboxDefinitionID, substrateID, fixture.cpuConfigDigest, product.workspaceIDs[0])
+		sandboxDefinitionID, fixture.cpuConfigDigest, product.workspaceIDs[0])
 	return live
 }
 
@@ -761,7 +754,6 @@ SELECT deployment_definition_id, head_version_id
 	}
 
 	workerID := uuid.NewV7()
-	runtimeSubstrateID := uuid.NewV7()
 	runtimeID := uuid.NewV7()
 	runID := uuid.NewV7()
 	runLeaseID := uuid.NewV7()
@@ -775,14 +767,6 @@ INSERT INTO worker_instances (
     id, resource_id, worker_group_id, worker_pool_id, status, lost_at
 ) VALUES ($1, $2, $3, $4, 'lost', now())`,
 		workerID, "retained-checkpoint-worker", fixture.group.ID, pool.ID)
-	dbtest.MustExec(t, t.Context(), product.pool, `
-INSERT INTO runtime_substrates (
-    id, org_id, project_id, environment_id, deployment_definition_id,
-    substrate_digest, substrate_format, substrate_contract, substrate_size_bytes
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1)`,
-		runtimeSubstrateID, product.orgID, product.projectID, product.environmentID,
-		sandboxDefinitionID, dbtest.Digest("retained-checkpoint-substrate"),
-		fixture.substrateFormat, fixture.substrateContract)
 	tx, err := product.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -813,7 +797,7 @@ INSERT INTO run_attempts (
 INSERT INTO runtime_instances (
     id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
-    runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
+    worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
     reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
     workspace_id, desired_state, desired_version, desired_reason,
@@ -821,14 +805,14 @@ INSERT INTO runtime_instances (
     reclaimed_at, reclaim_evidence,
     terminal_at, terminal_reason_code
 ) VALUES (
-    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
-    1, 1, $10, 1000, 1073741824, 4294967296, 1, $11,
+    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8,
+    1, 1, $9, 1000, 1073741824, 4294967296, 1, $10,
     'closed', 2, 'checkpointed', 'closed', 2, 2,
     now(), '{"method":"checkpointed"}'::jsonb,
     now(), 'checkpointed'
 )`, runtimeID, product.orgID, fixture.group.ID, product.projectID,
 		product.environmentID, workerID, fixture.runtimeIdentityID, sandboxDefinitionID,
-		runtimeSubstrateID, fixture.cpuConfigDigest, product.workspaceIDs[0])
+		fixture.cpuConfigDigest, product.workspaceIDs[0])
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO run_leases (
     id, org_id, project_id, environment_id, run_id, workspace_id,

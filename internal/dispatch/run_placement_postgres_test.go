@@ -1372,14 +1372,6 @@ UPDATE runtime_instances
 		ExpectedRunRevision: 3,
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances SET substrate_contract = 'incompatible-contract' WHERE id = $1`, fixture.workerID)
-	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCapacityUnavailable) {
-		t.Fatalf("restore placement with incompatible substrate contract error = %v, want ErrCapacityUnavailable", err)
-	}
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances SET substrate_contract = $2 WHERE id = $1`,
-		fixture.workerID, capacity.SubstrateContractExt4)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
 UPDATE workspace_leases SET mount_fencing_generation = $2 WHERE id = $1`,
 		sourceWorkspaceLeaseID, int64(math.MaxInt64-1))
 	if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, restoreCandidate); !errors.Is(err, ErrCandidateChanged) {
@@ -1500,7 +1492,7 @@ SELECT run_waits.suspension_status,
 	if waitStatus != "resuming" || waitLeaseID != restoreGrant.Lease.ID ||
 		leaseBaseWorkspaceVersionID != pgvalue.UUID(privateVersionID) ||
 		restoredCheckpointID != pgvalue.UUID(checkpointID) || clearedReservation.Valid ||
-		!restoredSubstrateID.Valid || restoredSubstrateID != sourceSubstrateID {
+		restoredSubstrateID.Valid || sourceSubstrateID.Valid {
 		t.Fatalf("restore grant wait=%s lease=%s base=%s checkpoint=%s reserved=%s",
 			waitStatus, pgvalue.UUIDString(waitLeaseID), pgvalue.UUIDString(leaseBaseWorkspaceVersionID),
 			pgvalue.UUIDString(restoredCheckpointID), pgvalue.UUIDString(clearedReservation))

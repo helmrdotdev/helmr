@@ -23,7 +23,6 @@ type runRuntime struct {
 	workerID                pgtype.UUID
 	workerEpoch             int64
 	runtimeIdentityID       string
-	runtimeSubstrateID      pgtype.UUID
 	deploymentDefinition    pgtype.UUID
 	programDeployment       pgtype.UUID
 	restoreCheckpoint       pgtype.UUID
@@ -295,7 +294,6 @@ SELECT runtime_instances.id,
        runtime_instances.worker_instance_id,
        runtime_instances.worker_epoch,
        runtime_instances.runtime_identity_id,
-       runtime_instances.runtime_substrate_id,
        runtime_instances.deployment_definition_id,
        runtime_instances.program_deployment_id,
        runtime_instances.restore_checkpoint_id,
@@ -345,7 +343,6 @@ SELECT locked.id,
        locked.worker_instance_id,
        locked.worker_epoch,
        locked.runtime_identity_id,
-       locked.runtime_substrate_id,
        locked.deployment_definition_id,
        locked.program_deployment_id,
        locked.restore_checkpoint_id,
@@ -383,7 +380,6 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.workerID,
 		&runtime.workerEpoch,
 		&runtime.runtimeIdentityID,
-		&runtime.runtimeSubstrateID,
 		&runtime.deploymentDefinition,
 		&runtime.programDeployment,
 		&runtime.restoreCheckpoint,
@@ -426,8 +422,7 @@ func validateRunRuntime(
 	}
 	if authority.restoreCheckpointID.Valid &&
 		(runtime.restoreCheckpoint != authority.restoreCheckpointID ||
-			runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID ||
-			runtime.runtimeSubstrateID != authority.restoreSubstrateID) {
+			runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID) {
 		return errors.New("workspace runtime does not match checkpoint source")
 	}
 	if runtime.reservedProcessID.Valid {
@@ -512,8 +507,6 @@ func selectRunWorker(
 		RequiredRuntimeIdentityID:       authority.restoreRuntimeIdentityID,
 		RequiredVMVCPUCount:             authority.restoreVMVCPUCount,
 		RequiredCPUConfigDigest:         authority.restoreCPUConfigDigest,
-		RequiredSubstrateFormat:         authority.restoreSubstrateFormat,
-		RequiredSubstrateContract:       authority.restoreSubstrateContract,
 	})
 	if err != nil {
 		return runWorker{}, err
@@ -552,8 +545,6 @@ func requestRunCapacityPressure(
 				RequiredRuntimeIdentityID:       authority.restoreRuntimeIdentityID,
 				RequiredVMVCPUCount:             authority.restoreVMVCPUCount,
 				RequiredCPUConfigDigest:         authority.restoreCPUConfigDigest,
-				RequiredSubstrateFormat:         authority.restoreSubstrateFormat,
-				RequiredSubstrateContract:       authority.restoreSubstrateContract,
 				RowLimit:                        runWorkerPressurePageSize,
 			},
 		)

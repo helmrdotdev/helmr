@@ -337,7 +337,6 @@ func (f *actorCheckpointFixture) publishWaitCheckpoint(t *testing.T, waitID uuid
 	rp.Runtime.RootfsDigest = dbtest.Digest("run-lease-rootfs")
 	rp.Runtime.VMVCPUCount = 1
 	rp.Runtime.CPUConfigDigest = f.CPUConfigDigest
-	rp.Runtime.Substrate = &workerapi.CheckpointRuntimeSubstrate{Digest: dbtest.Digest("frontier-substrate"), Format: "squashfs", Contract: "builder-v0", SizeBytes: 1}
 	// The storage authority is the whole Computer disk, independent of the
 	// tree capture still used by the separate turn-completion test helper.
 	req.Manifest.RuntimeState.Computer = &workerapi.CheckpointComputer{

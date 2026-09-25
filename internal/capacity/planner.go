@@ -59,8 +59,6 @@ type item struct {
 	targetPoolID      pgtype.UUID
 	restore           *RestoreRequirements
 	runtimeIdentityID string
-	substrateFormat   string
-	substrateContract string
 	reason            string
 	key               string
 }
@@ -75,8 +73,6 @@ type bin struct {
 	runtimeArch       string
 	runtimeContract   string
 	runtimeIdentityID string
-	substrateFormat   string
-	substrateContract string
 	runPaused         bool
 	runtimePaused     bool
 	perVM             ResourceVector
@@ -88,16 +84,12 @@ type RestoreRequirements struct {
 	RuntimeIdentityID string
 	VCPUCount         int32
 	CPUConfigDigest   string
-	SubstrateFormat   string
-	SubstrateContract string
 	Resources         ResourceVector
 }
 
 type Pool struct {
 	WorkerGroupID     uuid.UUID
 	RuntimeIdentityID string
-	SubstrateFormat   string
-	SubstrateContract string
 	PerVM             ResourceVector
 	CPUShapes         []runtimeid.CPUShape
 }
@@ -107,8 +99,6 @@ func CanRestore(requirements RestoreRequirements, pool Pool) bool {
 		pool.WorkerGroupID != requirements.WorkerGroupID ||
 		requirements.RuntimeIdentityID == "" || pool.RuntimeIdentityID != requirements.RuntimeIdentityID ||
 		requirements.VCPUCount <= 0 || requirements.CPUConfigDigest == "" ||
-		pool.SubstrateFormat != requirements.SubstrateFormat ||
-		pool.SubstrateContract != requirements.SubstrateContract ||
 		!fitsPhysical(pool.PerVM, requirements.Resources) {
 		return false
 	}
@@ -373,14 +363,12 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 		supportsRun: true,
 		runtimeArch: "x86_64", runtimeContract: runtimeid.Contract,
 		runtimeIdentityID: row.RuntimeIdentityID.String,
-		substrateFormat:   row.SubstrateFormat.String, substrateContract: row.SubstrateContract.String,
-		perVM: perVM, cpuShapes: shapes,
+		perVM:             perVM, cpuShapes: shapes,
 	}
 	return poolPlan{
 		id: row.ID, max: max,
 		pool: Pool{
 			WorkerGroupID: workerGroupID, RuntimeIdentityID: row.RuntimeIdentityID.String,
-			SubstrateFormat: row.SubstrateFormat.String, SubstrateContract: row.SubstrateContract.String,
 			PerVM: perVM, CPUShapes: shapes,
 		},
 		template: template,
@@ -396,7 +384,6 @@ func candidateMatchesBin(candidate item, target bin) bool {
 	if candidate.restore != nil {
 		return CanRestore(*candidate.restore, Pool{
 			WorkerGroupID: target.workerGroupID, RuntimeIdentityID: target.runtimeIdentityID,
-			SubstrateFormat: target.substrateFormat, SubstrateContract: target.substrateContract,
 			PerVM: target.perVM, CPUShapes: target.cpuShapes,
 		})
 	}
@@ -570,8 +557,7 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 	if row.RequiredRuntimeIdentityID != "" {
 		if !row.RequiredWorkerGroupID.Valid || row.RequiredVMVCPUCount <= 0 ||
 			row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 ||
-			row.RequiredMemoryBytes <= 0 || row.RequiredGuestEphemeralDiskBytes <= 0 ||
-			row.RequiredSubstrateFormat == "" || row.RequiredSubstrateContract == "" {
+			row.RequiredMemoryBytes <= 0 || row.RequiredGuestEphemeralDiskBytes <= 0 {
 			result.reason = reasonInvalidWorkload
 			return result
 		}
@@ -582,14 +568,11 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 		result.restore = &RestoreRequirements{
 			WorkerGroupID: pgvalue.MustUUIDValue(row.RequiredWorkerGroupID), RuntimeIdentityID: row.RequiredRuntimeIdentityID,
 			VCPUCount: row.RequiredVMVCPUCount, CPUConfigDigest: row.RequiredCPUConfigDigest,
-			SubstrateFormat: row.RequiredSubstrateFormat, SubstrateContract: row.RequiredSubstrateContract,
 			Resources: resources,
 		}
 	}
 	result.resources = resources
 	result.runtimeIdentityID = row.RequiredRuntimeIdentityID
-	result.substrateFormat = row.RequiredSubstrateFormat
-	result.substrateContract = row.RequiredSubstrateContract
 	return result
 }
 
@@ -649,7 +632,6 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 		runConsumers: row.AvailableRunConsumers, runtimeStarts: row.AvailableRuntimeStarts, supportsRun: true,
 		runtimeArch:     row.RuntimeArch,
 		runtimeContract: row.VMRuntimeContract, runtimeIdentityID: row.RuntimeIdentityID.String,
-		substrateFormat: row.SubstrateFormat, substrateContract: row.SubstrateContract,
 		runPaused:     row.RunPausedReason.Valid,
 		runtimePaused: row.RuntimePausedReason.Valid,
 		perVM: ResourceVector{
@@ -675,9 +657,7 @@ func incompatibility(candidate item, target bin) string {
 	if target.runtimeArch != "x86_64" || target.runtimeContract != runtimeid.Contract {
 		return reasonRuntimeCompatibility
 	}
-	if candidate.role == "run" && ((candidate.runtimeIdentityID != "" && candidate.runtimeIdentityID != target.runtimeIdentityID) ||
-		(candidate.substrateFormat != "" && candidate.substrateFormat != target.substrateFormat) ||
-		(candidate.substrateContract != "" && candidate.substrateContract != target.substrateContract)) {
+	if candidate.role == "run" && candidate.runtimeIdentityID != "" && candidate.runtimeIdentityID != target.runtimeIdentityID {
 		return reasonRuntimeCompatibility
 	}
 	if !fitsResources(target.resources, candidate.resources) {

@@ -38,9 +38,6 @@ type runPlacementAuthority struct {
 	restoreRuntimeIdentityID  string
 	restoreVMVCPUCount        int32
 	restoreCPUConfigDigest    string
-	restoreSubstrateID        pgtype.UUID
-	restoreSubstrateFormat    string
-	restoreSubstrateContract  string
 	restoreMountGeneration    pgtype.Int8
 	sameWorkspaceResume       bool
 	resumeOwnership           pgtype.Int8
@@ -695,9 +692,6 @@ SELECT source_lease.worker_group_id,
        source_runtime.runtime_identity_id,
        source_runtime.vm_vcpu_count,
 	       source_runtime.cpu_config_digest,
-	       source_runtime.runtime_substrate_id,
-	       runtime_substrates.substrate_format,
-	       runtime_substrates.substrate_contract,
 	       source_workspace_lease.mount_fencing_generation
 	  FROM run_waits
 	  JOIN run_checkpoints
@@ -839,12 +833,6 @@ SELECT source_lease.worker_group_id,
    AND source_runtime.reserved_memory_bytes = source_lease.requested_memory_bytes
    AND source_runtime.reserved_guest_ephemeral_disk_bytes = source_lease.requested_guest_ephemeral_disk_bytes
    AND source_runtime.reserved_execution_slots = source_lease.requested_execution_slots
-  JOIN runtime_substrates
-    ON runtime_substrates.id = source_runtime.runtime_substrate_id
-   AND runtime_substrates.org_id = source_runtime.org_id
-   AND runtime_substrates.project_id = source_runtime.project_id
-   AND runtime_substrates.environment_id = source_runtime.environment_id
-   AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
  WHERE source_runtime.reclaimed_at IS NOT NULL
    AND source_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
    AND run_waits.id = $1
@@ -876,9 +864,6 @@ SELECT source_lease.worker_group_id,
 			&authority.restoreRuntimeIdentityID,
 			&authority.restoreVMVCPUCount,
 			&authority.restoreCPUConfigDigest,
-			&authority.restoreSubstrateID,
-			&authority.restoreSubstrateFormat,
-			&authority.restoreSubstrateContract,
 			&restoreSourceMountGeneration,
 		)
 		if err != nil {

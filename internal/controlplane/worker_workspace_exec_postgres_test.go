@@ -66,11 +66,6 @@ UPDATE workspace_leases
  WHERE id = $2`, processID, workspaceLeaseID)
 
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET status='mounted',materialized_version_id=$2 WHERE id=$1`, mountID, baseWorkspaceVersionID)
-	substrateID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `
- INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes)
- SELECT $2,org_id,project_id,environment_id,deployment_definition_id,'sha256:82a76312340ff2dc8b52b1e6ff24308d9d9f54c3cb94e5957660b94afc53bc2d','squashfs','builder-v0',1 FROM runtime_instances WHERE id=$1`, runtimeID, substrateID)
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET runtime_substrate_id=$2 WHERE id=$1`, runtimeID, substrateID)
 	key, err := workspace.NewFencingKey(bytes.Repeat([]byte{42}, workspace.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
