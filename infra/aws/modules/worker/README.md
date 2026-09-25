@@ -93,3 +93,12 @@ leave the input unset or supply that same ARN. A changed ARN or canonically
 changed external policy document fails planning. Do not substitute today's
 boundary for a retained generation or omit the nullable discriminator. The
 quickstart and standard roots round-trip this current sealed record.
+
+
+Computer storage requires explicit `computer_save_interval_seconds` and
+`computer_devices`. The interval schedules background saves; it is not an RPO or
+mandatory Turn-completion barrier. The device list is an exclusive NBD allowlist.
+Bootstrap loads NBD with enough device indices, persists that module configuration
+across reboot, and rejects connected devices before starting the Worker. Supply
+sufficient devices for concurrent Computers and preparation; they are not shared
+with another service. The Worker image must contain `kmod` and the host NBD module.

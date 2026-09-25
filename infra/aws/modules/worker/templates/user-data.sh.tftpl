@@ -248,5 +248,15 @@ ExecStart=
 ExecStart=${worker_binary_path}
 EOF
 systemctl daemon-reload
+# Device ownership is explicit; never borrow an already connected NBD device.
+install -d -m 0755 /etc/modules-load.d /etc/modprobe.d
+printf '%s\n' nbd >/etc/modules-load.d/helmr-computer.conf
+printf '%s\n' 'options nbd nbds_max=${computer_device_count} max_part=0' >/etc/modprobe.d/helmr-computer.conf
+modprobe nbd nbds_max='${computer_device_count}' max_part=0
+%{ for device in computer_devices ~}
+test -b '${device}'
+test ! -e '/sys/block/${basename(device)}/pid'
+%{ endfor ~}
 systemctl enable --now '${worker_service_name}'
+
 systemctl enable --now helmr-asg-lifecycle.service

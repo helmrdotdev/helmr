@@ -316,14 +316,6 @@ func TestIgnoreStopSignalErrorDropsForcedSIGKILL(t *testing.T) {
 	}
 }
 
-func TestCleanupGuestSessionResourcesRunsAfterStopError(t *testing.T) {
-	called := false
-	cleanupGuestSessionResources(func() { called = true })
-	if !called {
-		t.Fatal("cleanup did not run")
-	}
-}
-
 type testWrappedErrors []error
 
 func (e testWrappedErrors) Error() string {
@@ -1228,7 +1220,7 @@ func TestWithJailedRestoreFilesLinksComputerAndPreservesSnapshotInodes(t *testin
 }
 
 func TestRuntimeDrivesIncludeOptionalReadonlySubstrate(t *testing.T) {
-	drives := runtimeDrives("/rootfs.squashfs", "/scratch.ext4", "/substrate.ext4", nil)
+	drives := runtimeDrivesWithComputer("/rootfs.squashfs", "/scratch.ext4", "/substrate.ext4", "", nil, nil)
 	if len(drives) != 3 {
 		t.Fatalf("drive count = %d, want 3", len(drives))
 	}
@@ -1409,11 +1401,13 @@ func TestPrepareRestoreReadOnlyDrivePathsFailsClosed(t *testing.T) {
 
 func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
-	drives := runtimeDrives(
+	drives := runtimeDrivesWithComputer(
 		"/rootfs.squashfs",
 		"/scratch.ext4",
 		"",
+		"",
 		[]vm.ReadOnlyDrive{{ID: vm.ProgramDrive, Source: source}},
+		nil,
 	)
 	if len(drives) != 3 {
 		t.Fatalf("drive count = %d, want 3", len(drives))
@@ -1431,14 +1425,16 @@ func TestRuntimeDrivesIncludeSealedReadOnlyDrives(t *testing.T) {
 
 func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
-	drives := runtimeDrives(
+	drives := runtimeDrivesWithComputer(
 		"/rootfs.squashfs",
 		"/scratch.ext4",
 		"/workspace.ext4",
+		"",
 		[]vm.ReadOnlyDrive{
 			{ID: vm.ProgramDrive, Source: source},
 			{ID: vm.ProgramRuntimeDrive, Source: source},
 		},
+		nil,
 	)
 	want := []string{
 		"rootfs",
@@ -1784,14 +1780,16 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 				UID:           firecracker.Int(os.Getuid()),
 				GID:           firecracker.Int(os.Getgid()),
 			},
-			Drives: runtimeDrives(
+			Drives: runtimeDrivesWithComputer(
 				rootfsPath,
 				scratchPath,
+				"",
 				"",
 				[]vm.ReadOnlyDrive{{
 					ID:     vm.ProgramDrive,
 					Source: source,
 				}},
+				nil,
 			),
 		},
 		Handlers: firecracker.Handlers{

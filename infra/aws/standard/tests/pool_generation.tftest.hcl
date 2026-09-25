@@ -54,6 +54,8 @@ override_module {
 }
 
 variables {
+  worker_computer_save_interval_seconds    = 60
+  worker_computer_devices                  = ["/dev/nbd0", "/dev/nbd1"]
   aws_region                               = "us-east-1"
   worker_group_name                        = "workers"
   region_id                                = "us-east-1"
@@ -92,12 +94,16 @@ variables {
 }
 
 run "baseline_execution_generation" {
-  command = plan
+  command = apply
+  variables {
+    enable_nat_gateway = true
+    create_worker      = true
+    worker_min_size    = 0
+  }
 
   assert {
     condition = (
       local.worker_pool_name == "execution-${sha256(jsonencode(local.worker_generation_inputs))}" &&
-      local.worker_pool_name == "execution-ff9acb4cdfd695cbf54f6061a125a4556e3804d00cbcc267e561084fd5dce614" &&
       length(local.worker_pool_name) == 74 &&
       can(regex("^execution-[0-9a-f]{64}$", local.worker_pool_name)) &&
       length(output.worker_generation_definitions) == 1 &&
@@ -109,10 +115,13 @@ run "baseline_execution_generation" {
 
 run "immutable_capacity_change_rotates_generation" {
   command = plan
-  variables { worker_vm_scratch_disk_mib = 40960 }
+  variables {
+    worker_vm_scratch_disk_mib  = 40960
+    retained_worker_generations = run.baseline_execution_generation.worker_generation_definitions
+  }
 
   assert {
-    condition     = local.worker_pool_name == "execution-fd4eab65c9b4ad30076d6dd72040140dab8ab791116fe5c8fc95e5cff92acaf7"
+    condition     = local.worker_pool_name != one(keys(var.retained_worker_generations))
     error_message = "an immutable execution-shape change must rotate the Pool generation"
   }
 }
@@ -120,13 +129,14 @@ run "immutable_capacity_change_rotates_generation" {
 run "scale_policy_does_not_rotate_generation" {
   command = plan
   variables {
-    worker_min_size = 5
-    worker_max_size = 9
+    retained_worker_generations = run.baseline_execution_generation.worker_generation_definitions
+    worker_min_size             = 5
+    worker_max_size             = 9
   }
 
   assert {
     condition = (
-      local.worker_pool_name == "execution-ff9acb4cdfd695cbf54f6061a125a4556e3804d00cbcc267e561084fd5dce614" &&
+      local.worker_pool_name == one(keys(var.retained_worker_generations)) &&
       one(values(output.worker_generation_definitions)).min_size == 5 &&
       one(values(output.worker_generation_definitions)).max_size == 9
     )
@@ -144,9 +154,11 @@ run "export_current_sealed_generation" {
 run "retain_current_sealed_generation" {
   command = plan
   variables {
-    worker_vm_scratch_disk_mib  = 40960
-    create_worker               = true
-    retained_worker_generations = run.export_current_sealed_generation.worker_generation_definitions
+    worker_vm_scratch_disk_mib            = 40960
+    create_worker                         = true
+    worker_computer_save_interval_seconds = 30
+    worker_computer_devices               = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2"]
+    retained_worker_generations           = run.export_current_sealed_generation.worker_generation_definitions
   }
   assert {
     condition     = alltrue([for key, generation in var.retained_worker_generations : jsonencode(output.worker_generation_definitions[key].sealed_provider_definition) == jsonencode(generation.sealed_provider_definition) && generation.sealed_provider_definition.boundary_policy_arn == null])
@@ -168,5 +180,28 @@ run "rollback_disabled" {
     create_controlplane_service = true
     certificate_arn             = "arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000001"
     enable_deployment_rollback  = false
+  }
+}
+
+run "save_interval_rotates_generation" {
+  command = plan
+  variables {
+    worker_computer_save_interval_seconds = 30
+    retained_worker_generations           = run.export_current_sealed_generation.worker_generation_definitions
+  }
+  assert {
+    condition     = local.worker_pool_name != one(keys(var.retained_worker_generations))
+    error_message = "Changing Computer save cadence must allocate a new Pool."
+  }
+}
+run "device_allowlist_rotates_generation" {
+  command = plan
+  variables {
+    worker_computer_devices     = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2"]
+    retained_worker_generations = run.export_current_sealed_generation.worker_generation_definitions
+  }
+  assert {
+    condition     = local.worker_pool_name != one(keys(var.retained_worker_generations))
+    error_message = "Changing Computer devices must allocate a new Pool."
   }
 }

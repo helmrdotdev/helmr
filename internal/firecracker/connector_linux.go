@@ -1388,21 +1388,6 @@ func ext4FreeBytes(path string) (uint64, error) {
 	return freeBlocks * blockSize, nil
 }
 
-func runtimeDrives(
-	rootfsPath string,
-	scratchDiskPath string,
-	substrateDiskPath string,
-	readOnlyDrives []vm.ReadOnlyDrive,
-) []models.Drive {
-	return runtimeDrivesWithReadOnlyPaths(
-		rootfsPath,
-		scratchDiskPath,
-		substrateDiskPath,
-		readOnlyDrives,
-		nil,
-	)
-}
-
 func runtimeDrivesWithReadOnlyPaths(
 	rootfsPath string,
 	scratchDiskPath string,
@@ -2157,13 +2142,6 @@ func (s *guestSession) Close(ctx context.Context) error {
 		)
 	})
 	return s.err
-}
-
-func cleanupGuestSessionResources(cleanup func()) {
-	if cleanup == nil {
-		return
-	}
-	cleanup()
 }
 
 func closeGuestStream(ctx context.Context, stream io.Closer) error {

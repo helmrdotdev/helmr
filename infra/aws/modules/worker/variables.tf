@@ -455,3 +455,21 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "computer_save_interval_seconds" {
+  description = "Explicit background Computer save interval; not a maximum data-loss guarantee."
+  type        = number
+  validation {
+    condition     = var.computer_save_interval_seconds > 0 && var.computer_save_interval_seconds <= 9223372036 && floor(var.computer_save_interval_seconds) == var.computer_save_interval_seconds
+    error_message = "computer_save_interval_seconds must be a positive whole number fitting a Go duration."
+  }
+}
+
+variable "computer_devices" {
+  description = "Dedicated NBD device allowlist owned exclusively by this Worker."
+  type        = list(string)
+  validation {
+    condition     = length(var.computer_devices) > 0 && length(distinct(var.computer_devices)) == length(var.computer_devices) && alltrue([for device in var.computer_devices : can(regex("^/dev/nbd(0|[1-9][0-9]{0,3})$", device))])
+    error_message = "computer_devices must contain unique absolute NBD paths with indices 0-9999."
+  }
+}
