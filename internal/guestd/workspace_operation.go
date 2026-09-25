@@ -812,18 +812,14 @@ func restoreWorkspaceMount(request *workspacev0.MaterializeWorkspaceRequest, reg
 	if strings.TrimSpace(workspaceImage.GetDigest()) == "" {
 		return nil, errors.New("workspace materialize workspace_image digest is required")
 	}
-	if workspaceImage.GetMediaType() != workspaceImageMediaType {
-		return nil, fmt.Errorf("workspace materialize workspace_image media_type %q is not supported", workspaceImage.GetMediaType())
-	}
-	if workspaceImage.GetEncoding() != workspaceImageEncoding {
-		return nil, fmt.Errorf("workspace materialize workspace_image encoding %q is not supported", workspaceImage.GetEncoding())
-	}
 	if workspaceImage.GetSizeBytes() == 0 {
 		return nil, errors.New("workspace materialize workspace_image size_bytes is required")
 	}
 	if !request.GetUsePreparedRuntime() {
 		return nil, errors.New("computer mount requires a prepared runtime")
 	}
+	// Materialization binds the already prepared filesystem; it does not decode
+	// an image stream. Format admission belongs to the preparation path.
 	prepared, ok := registry.takePreparedRuntime(runtimeInstanceID, workspaceImage.GetDigest(), mountPath)
 	if !ok {
 		return nil, errors.New("prepared computer runtime is not available")
