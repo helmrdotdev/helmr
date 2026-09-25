@@ -87,7 +87,6 @@ termination_hook='${termination_lifecycle_hook_name}'
 drain_timeout='${termination_drain_timeout_seconds}s'
 heartbeat_interval='${lifecycle_heartbeat_interval_seconds}'
 worker_binary='${worker_binary_path}'
-env_file=/etc/helmr/worker.env
 drain_marker='${worker_work_dir}/drain-complete'
 metadata_url=http://169.254.169.254/latest
 launch_started_at="$(cat /run/helmr-launch-started-at 2>/dev/null || date +%s)"
@@ -141,20 +140,11 @@ record_heartbeat() {
     --instance-id "$(instance_id)" >/dev/null
 }
 
-load_worker_env() {
-  if [ -f "$env_file" ]; then
-    set -a
-    . "$env_file"
-    set +a
-  fi
-}
-
 complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
   fi
   systemctl is-active --quiet '${worker_service_name}' || return 1
-  load_worker_env
   "$worker_binary" status >/dev/null || return 1
   complete_lifecycle_action "$launch_hook" CONTINUE
 }
@@ -164,7 +154,6 @@ drain_and_complete_termination() {
 		complete_lifecycle_action "$termination_hook" CONTINUE
 		return 0
 	fi
-  load_worker_env
   "$worker_binary" drain --timeout "$drain_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
   drain_pid="$!"
   while kill -0 "$drain_pid" 2>/dev/null; do
@@ -228,6 +217,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+EnvironmentFile=/etc/helmr/worker.env
 ExecStart=/usr/local/bin/helmr-asg-lifecycle watch
 Restart=always
 RestartSec=15s
