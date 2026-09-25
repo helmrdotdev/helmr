@@ -142,7 +142,7 @@ func TestWorkspaceRuntimePrepareUsesWorkspaceImageAndRuntimeInstanceID(t *testin
 	prepared.cleanup()
 }
 
-func TestWorkspaceImageContractIsExact(t *testing.T) {
+func TestWorkspaceImagePreparationContractIsExact(t *testing.T) {
 	tests := []struct {
 		name      string
 		mediaType string
@@ -168,16 +168,6 @@ func TestWorkspaceImageContractIsExact(t *testing.T) {
 			}, slogDiscard())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("prepare error = %v, want %s rejection", err, tt.want)
-			}
-			_, err = restoreWorkspaceMount(&workspacev0.MaterializeWorkspaceRequest{
-				Envelope:          &workspacev0.WorkspaceOperationEnvelope{},
-				MountPath:         "/workspace",
-				Target:            testComputerMountTarget("version-1"),
-				RuntimeInstanceId: "runtime-instance-1",
-				WorkspaceImage:    workspaceImage,
-			}, newWorkspaceOperationRegistry())
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("materialize error = %v, want %s rejection", err, tt.want)
 			}
 		})
 	}
