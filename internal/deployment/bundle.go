@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -81,6 +84,8 @@ type BundleWorkspaceImage struct {
 }
 
 type BundleWorkspaceImageArtifact struct {
+	Profile      string              `json:"profile"`
+	Config       oci.RuntimeConfig   `json:"config"`
 	Architecture RuntimeArchitecture `json:"architecture"`
 	Digest       string              `json:"digest"`
 	MediaType    string              `json:"mediaType"`
@@ -262,7 +267,9 @@ func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, e
 		}
 		if sandboxes[index].Sandbox == nil ||
 			sandboxes[index].Sandbox.Image.ArtifactDigest != image.Artifact.Digest ||
-			sandboxes[index].Sandbox.Image.MediaType != image.Artifact.MediaType {
+			sandboxes[index].Sandbox.Image.MediaType != image.Artifact.MediaType ||
+			sandboxes[index].Sandbox.Image.Profile != image.Artifact.Profile ||
+			!reflect.DeepEqual(sandboxes[index].Sandbox.Image.Config, image.Artifact.Config) {
 			return nil, fmt.Errorf(
 				"deployment bundle workspaceImages[%d] artifact does not match plan",
 				index,
@@ -281,6 +288,9 @@ func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, e
 		if err := validateBundleObject(object, fmt.Sprintf("workspaceImages[%d]", index)); err != nil {
 			return nil, err
 		}
+		if artifact.Profile != computer.SeedProfile {
+			return nil, fmt.Errorf("deployment disk profile %q is unsupported", artifact.Profile)
+		}
 		if artifact.MediaType != WorkspaceImageArtifactMediaType {
 			return nil, fmt.Errorf(
 				"deployment bundle workspaceImages[%d] mediaType = %q, want %q",
@@ -292,6 +302,7 @@ func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, e
 		images = append(images, WorkspaceImage{
 			DeclaredID: image.DeclaredID,
 			Artifact: WorkspaceImageArtifact{
+				Profile: artifact.Profile, Config: artifact.Config,
 				Architecture: artifact.Architecture,
 				Digest:       artifact.Digest,
 				MediaType:    artifact.MediaType,

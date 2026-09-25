@@ -87,13 +87,12 @@ func TestWorkerTaskWorkspaceProofRejectsAmbiguousWireShapes(t *testing.T) {
 	}
 }
 
-func TestWorkerWorkspaceResetTargetRequiresOneSource(t *testing.T) {
+func TestWorkerComputerMountTargetRequiresVersionOnly(t *testing.T) {
 	valid := []string{
-		`{"base_workspace_version_id":"base","tree":{},"empty":{}}`,
-		`{"base_workspace_version_id":"base","tree":{},"artifact":{}}`,
+		`{"base_workspace_version_id":"base"}`,
 	}
 	for _, raw := range valid {
-		var target WorkspaceResetTarget
+		var target ComputerMountTarget
 		if err := json.Unmarshal([]byte(raw), &target); err != nil {
 			t.Fatalf("valid target %s was rejected: %v", raw, err)
 		}
@@ -105,7 +104,7 @@ func TestWorkerWorkspaceResetTargetRequiresOneSource(t *testing.T) {
 		`{"base_workspace_version_id":"base","tree":{},"empty":{},"unknown":true}`,
 	}
 	for _, raw := range invalid {
-		var target WorkspaceResetTarget
+		var target ComputerMountTarget
 		if err := json.Unmarshal([]byte(raw), &target); err == nil {
 			t.Fatalf("ambiguous target %s was accepted", raw)
 		}

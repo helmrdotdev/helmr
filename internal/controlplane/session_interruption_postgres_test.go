@@ -29,10 +29,9 @@ func interruptedCompletionRequest(t *testing.T, f *actorCheckpointFixture, hold 
 	assignment.ExpiresAt = begun.ExpiresAt
 	captured := validTaskWorkspaceCapture(t, assignment)
 	artifact := f.capture(t, "interrupted private work")
-	captured.Tree = artifact.Tree
-	captured.Artifact = artifact.Artifact
 	captured.Receipt.OperationID = operation
 	setCaptureFingerprint(t, captured)
+	f.registerFinalizationDisk(t, captured, artifact.Artifact.Digest)
 	var turnID *string
 	if turn != nil {
 		id := turn.String()
@@ -99,7 +98,7 @@ func TestSessionCooperativeInterruptionPostgres(t *testing.T) {
 			var cursor int64
 			var current, active *uuid.UUID
 			var terminals int
-			if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,s.dispatch_hold_reason,s.current_run_id,s.active_turn_id,s.committed_input_sequence,w.head_version_id,t.status,r.status,q.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.interrupted') FROM sessions s JOIN workspaces w ON w.id=s.workspace_id JOIN session_turns t ON t.id=$2 JOIN runs r ON r.id=$3 JOIN session_turns q ON q.id=$4 WHERE s.id=$1`, f.sessionID, scope.TurnID, f.runID, queued.TurnID).Scan(&hold, &reason, &current, &active, &cursor, &head, &turnState, &runState, &queuedState, &terminals); err != nil {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,s.dispatch_hold_reason,s.current_run_id,s.active_turn_id,s.committed_input_sequence,w.head_version_id,t.status,r.status,q.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.interrupted') FROM sessions s JOIN computers w ON w.id=s.workspace_id JOIN session_turns t ON t.id=$2 JOIN runs r ON r.id=$3 JOIN session_turns q ON q.id=$4 WHERE s.id=$1`, f.sessionID, scope.TurnID, f.runID, queued.TurnID).Scan(&hold, &reason, &current, &active, &cursor, &head, &turnState, &runState, &queuedState, &terminals); err != nil {
 				t.Fatal(err)
 			}
 			if reason != "interrupted" || hold == stopped.HoldID || current != nil || active != nil || cursor != 1 || head == f.rootID || turnState != "interrupted" || runState != "cancelled" || queuedState != "queued" || terminals != 1 {

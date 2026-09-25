@@ -221,12 +221,11 @@ func TestClassifyWorkspaceExecRecovery(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			got := classifyWorkspaceExecRecovery(
 				db.LockWorkspaceExecRecoveryAuthorityRow{
-					WorkspaceProcess: db.WorkspaceProcess{Status: test.process},
+					WorkspaceProcess: db.WorkspaceProcess{Status: test.process, StagedVersionID: test.staged},
 					WorkspaceMount: db.WorkspaceMount{
-						FinalizationKind:       test.kind,
+						FinalizationAction:     test.kind,
 						FinalizationReasonCode: test.reason,
 						FinalizationError:      test.errorJSON,
-						StagedVersionID:        test.staged,
 					},
 				},
 				test.secrets,

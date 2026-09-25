@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -176,10 +175,10 @@ func assertPrimitiveLifecycleSchema(
 		"run_leases",
 		"runtime_instances",
 		"runtime_instances",
-		"workspaces",
-		"workspaces",
-		"workspaces",
-		"workspace_versions",
+		"computers",
+		"computers",
+		"computers",
+		"computer_versions",
 		"workspace_mounts",
 		"workspace_leases",
 		"workspace_processes",
@@ -368,8 +367,9 @@ func assertNoBusinessDatabaseLogic(
 		t.Fatalf("application-owned PostgreSQL rules = %d, want 0", ruleCount)
 	}
 
-	// Physical outbox byte accounting is the sole generated storage projection;
-	// application lifecycle state and metadata admission remain owned by Go.
+	// Generated columns project physical byte accounting and FK availability
+	// keys and conditional retention references. Lifecycle transitions and metadata
+	// admission remain owned by Go.
 	var generatedColumns []string
 	if err := pool.QueryRow(ctx, `
 		SELECT COALESCE(array_agg(c.relname || '.' || a.attname || ':' || a.attgenerated::text ORDER BY c.relname, a.attname), ARRAY[]::text[])
@@ -380,7 +380,7 @@ func assertNoBusinessDatabaseLogic(
 	`).Scan(&generatedColumns); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(generatedColumns, ",") != "telemetry_outbox.ingest_size_bytes:s" {
+	if strings.Join(generatedColumns, ",") != "cas_blobs.not_retired:s,cas_objects.availability_required:s,computer_data_keys.available:s,computer_object_edges.certification_required:s,computer_object_keys.availability_required:s,computer_objects.availability_required:s,computer_objects.certified:s,computer_objects.certified_org_id:s,computer_version_roots.certification_required:s,computer_version_roots.direct_key_required:s,computer_version_roots.logical_bytes:s,computer_version_roots.payload_required:s,computer_version_roots.root_kind:s,computer_version_roots.root_pack_digest:s,computer_version_roots.root_pack_rank:s,computer_version_roots.root_pack_size_bytes:s,computer_version_roots.root_page_key_id:s,computer_versions.payload_not_retired:s,computers.computer_payload_required:s,computers.recovery_payload_required:s,computers.write_key_available:s,run_attempts.computer_payload_required:s,run_checkpoint_objects.availability_required:s,run_checkpoints.computer_payload_required:s,run_waits.computer_payload_required:s,runs.computer_payload_required:s,runtime_instances.computer_key_available:s,runtime_instances.computer_payload_required:s,runtime_instances.retained_computer_source_version_id:s,runtime_instances.retained_computer_write_key_id:s,telemetry_outbox.ingest_size_bytes:s,workspace_processes.computer_payload_required:s" {
 		t.Fatalf("unexpected generated storage columns: %v", generatedColumns)
 	}
 
@@ -482,7 +482,7 @@ INSERT INTO worker_instances (
     '01900000-0000-7000-8000-000000000908',
     '00000000-0000-7000-8000-000000000907'
 );
-INSERT INTO cas_objects (
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (
     org_id, digest, size_bytes, media_type
 ) VALUES (
     '00000000-0000-7000-8000-000000000901',
@@ -666,13 +666,11 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		SELECT count(*)
 		  FROM information_schema.columns
 		 WHERE table_schema = 'public'
-		   AND table_name = 'workspace_versions'
+		   AND table_name = 'computer_versions'
 		   AND column_name = ANY($1::text[])
 	`, []string{
 		"parent_version_id",
-		"artifact_id",
-		"content_digest",
-		"entry_count",
+		"root_pack_digest",
 		"source_workspace_lease_id",
 		"ownership_generation",
 		"writer_generation",
@@ -681,23 +679,8 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}).Scan(&authorityColumns); err != nil {
 		t.Fatal(err)
 	}
-	if authorityColumns != 9 {
-		t.Fatalf("workspace version authority columns = %d, want 9", authorityColumns)
-	}
-	var emptyTreeCheck bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_constraint
-			 WHERE conrelid = 'workspace_versions'::regclass
-			   AND contype = 'c'
-			   AND pg_get_constraintdef(oid) LIKE '%' || $1 || '%'
-		)
-	`, workspace.CanonicalEmptyTreeDigest).Scan(&emptyTreeCheck); err != nil {
-		t.Fatal(err)
-	}
-	if !emptyTreeCheck {
-		t.Fatal("workspace generation zero does not pin the canonical empty tree digest")
+	if authorityColumns != 7 {
+		t.Fatalf("workspace version authority columns = %d, want 7", authorityColumns)
 	}
 	var oneRoot bool
 	if err := pool.QueryRow(ctx, `
@@ -705,9 +688,9 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 			SELECT 1
 			  FROM pg_indexes
 			 WHERE schemaname = 'public'
-			   AND tablename = 'workspace_versions'
+			   AND tablename = 'computer_versions'
 			   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
-			   AND indexdef LIKE '%(workspace_id)%'
+			   AND indexdef LIKE '%(computer_id)%'
 			   AND indexdef LIKE '%WHERE (parent_version_id IS NULL)%'
 		)
 	`).Scan(&oneRoot); err != nil {
@@ -721,7 +704,7 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 		SELECT EXISTS (
 			SELECT 1
 			  FROM pg_constraint
-			 WHERE conrelid = 'workspace_versions'::regclass
+			 WHERE conrelid = 'computer_versions'::regclass
 			   AND contype = 'f'
 			   AND pg_get_constraintdef(oid) LIKE '%source_workspace_lease_id, ownership_generation, writer_generation%'
 		)
@@ -730,21 +713,6 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	}
 	if !fencedSource {
 		t.Fatal("workspace versions do not bind their source lease and writer fence")
-	}
-	var artifactScopeBinding bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_constraint
-			 WHERE conrelid = 'workspace_versions'::regclass
-			   AND contype = 'f'
-			   AND pg_get_constraintdef(oid) LIKE '%FOREIGN KEY (environment_id, artifact_id) REFERENCES artifacts(environment_id, id)%'
-		)
-	`).Scan(&artifactScopeBinding); err != nil {
-		t.Fatal(err)
-	}
-	if !artifactScopeBinding {
-		t.Fatal("workspace versions do not bind their artifact scope")
 	}
 	var mountProjectionColumns int
 	if err := pool.QueryRow(ctx, `
@@ -876,7 +844,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "sessions", "session_turns", "session_messages", "session_events", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "computers", "sessions", "session_turns", "session_messages", "session_events", "runs", "run_attempts", "run_waits", "run_checkpoints", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns

@@ -64,21 +64,12 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspaces (
+		INSERT INTO computers (
 			id, environment_id, region_id, sandbox_declared_id,
 			deployment_definition_id, head_version_id
 		) VALUES ($1, $2, $3, 'capacity-workspace', $4, $5)
 	`, workspaceID, ids.environmentID, dbtest.DefaultRegionID, definitionID, versionID)
-	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, content_digest, status,
-			ownership_generation, writer_generation, published_at
-		) VALUES (
-			$1, $2, $3,
-			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			'committed', 0, 0, now()
-		)
-	`, versionID, ids.environmentID, workspaceID)
+	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, ids.environmentID, workspaceID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -161,20 +152,20 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		 WHERE id = $1
 	`, processID)
 
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET desired_state = 'stopped' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET desired_state = 'stopped' WHERE id = $1`, workspaceID)
 	requireVisible(queries, true, "stopped Workspace")
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET desired_state = 'deleted' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET desired_state = 'deleted' WHERE id = $1`, workspaceID)
 	requireVisible(queries, false, "deleted desired state")
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET desired_state = 'active' WHERE id = $1`, workspaceID)
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET desired_state = 'active' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET dirty_state = 'dirty' WHERE id = $1`, workspaceID)
 	requireVisible(queries, false, "dirty Workspace")
-	dbtest.MustExec(t, ctx, pool, `UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1`, workspaceID)
+	dbtest.MustExec(t, ctx, pool, `UPDATE computers SET dirty_state = 'clean' WHERE id = $1`, workspaceID)
 	dbtest.MustExec(t, ctx, pool, `
-		UPDATE workspaces SET status = 'deleting', desired_state = 'deleted' WHERE id = $1
+		UPDATE computers SET status = 'deleting', desired_state = 'deleted' WHERE id = $1
 	`, workspaceID)
 	requireVisible(queries, false, "non-active Workspace")
 	dbtest.MustExec(t, ctx, pool, `
-		UPDATE workspaces SET status = 'active', desired_state = 'active' WHERE id = $1
+		UPDATE computers SET status = 'active', desired_state = 'active' WHERE id = $1
 	`, workspaceID)
 
 	for _, authority := range []struct {
@@ -191,7 +182,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			}
 			defer func() { _ = tx.Rollback(context.Background()) }()
 			dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-			dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET `+authority.column+` = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
+			dbtest.MustExec(t, ctx, tx, `UPDATE computers SET `+authority.column+` = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
 			requireVisible(db.New(tx), false, authority.name)
 		})
 	}
@@ -203,7 +194,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		}
 		defer func() { _ = tx.Rollback(context.Background()) }()
 		dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-		dbtest.MustExec(t, ctx, tx, `UPDATE workspaces SET head_version_id = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
+		dbtest.MustExec(t, ctx, tx, `UPDATE computers SET head_version_id = $2 WHERE id = $1`, workspaceID, uuid.NewV7())
 		requireVisible(db.New(tx), false, "mismatched head")
 	})
 
@@ -223,7 +214,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			cpu_environment_digest, observed_at, epoch_started_at, activated_at
 		) VALUES (
 			$1, $2, $3, $4, 'active', 1, $5, $6,
-			'ext4', 'helmr.substrate.ext4.v0',
+			'ext4', 'helmr.substrate.ext4.v1',
 			8000, 17179869184, 274877906944,
 			4000, 8589934592, 34359738368,
 			8, 1, '{}'::jsonb, $7, now(), now(), now()
@@ -234,14 +225,14 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 	runtimeID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
 			worker_epoch, vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
 			workspace_id, desired_reason
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9,
+			$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9,
 			1, 1, $10, 1000, 1073741824, 34359738368, 1,
 			$11, 'workspace-exec-capacity-test'
 		)
@@ -252,7 +243,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		UPDATE runtime_instances
 		   SET reserved_process_id = $2,
 		       reserved_workspace_version_id = $3,
-		       reservation_expires_at = now() + interval '5 minutes'
+		       reservation_expires_at = NULL
 		 WHERE id = $1
 	`, runtimeID, processID, versionID)
 	requireAccounted(queries, "same-process live Runtime", uuid.MustParse(dbtest.DefaultWorkerPoolID))
@@ -337,7 +328,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 		interleavedRuntimeID := uuid.NewV7()
 		dbtest.MustExec(t, ctx, pool, `
 			INSERT INTO runtime_instances (
-				id, org_id, worker_group_id, project_id, environment_id, region_id,
+				id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 				worker_instance_id, runtime_identity_id, deployment_definition_id,
 				worker_epoch, vm_vcpu_count, cpu_config_digest,
 				reserved_cpu_millis, reserved_memory_bytes,
@@ -345,9 +336,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 				workspace_id, reserved_process_id, reserved_workspace_version_id,
 				reservation_expires_at, desired_reason
 			) VALUES (
-				$1, $2, $3, $4, $5, $6, $7, $8, $9,
+				$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9,
 				1, 1, $10, 1000, 1073741824, 34359738368, 1,
-				$11, $12, $13, now() + interval '5 minutes',
+				$11, $12, $13, NULL,
 				'workspace-exec-capacity-interleaving-test'
 			)
 		`, interleavedRuntimeID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID,
@@ -398,7 +389,7 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 			afterExec: func() {
 				dbtest.MustExec(t, ctx, pool, `
 					INSERT INTO runtime_instances (
-						id, org_id, worker_group_id, project_id, environment_id, region_id,
+						id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 						worker_instance_id, runtime_identity_id, deployment_definition_id,
 						worker_epoch, vm_vcpu_count, cpu_config_digest,
 						reserved_cpu_millis, reserved_memory_bytes,
@@ -406,9 +397,9 @@ func TestPendingWorkspaceExecCapacityCandidatesExcludeDiscoverableRuntime(t *tes
 						workspace_id, reserved_process_id, reserved_workspace_version_id,
 						reservation_expires_at, desired_reason
 					) VALUES (
-						$1, $2, $3, $4, $5, $6, $7, $8, $9,
+						$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9,
 						1, 1, $10, 1000, 1073741824, 34359738368, 1,
-						$11, $12, $13, now() + interval '5 minutes',
+						$11, $12, $13, NULL,
 						'workspace-exec-capacity-reverse-interleaving-test'
 					)
 				`, interleavedRuntimeID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID,

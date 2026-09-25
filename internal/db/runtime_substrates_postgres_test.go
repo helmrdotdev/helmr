@@ -239,7 +239,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		VALUES ($1, $2, $3, $4, 'Authority', '#3366ff')
 	`, environmentID, orgID, projectID, "authority-"+dbtest.ShortID(environmentID))
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'), ($1, $3, 1, 'application/octet-stream')
 	`, orgID, programDigest, imageDigest)
 	dbtest.MustExec(t, ctx, pool, `
@@ -280,24 +280,14 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO workspaces (
+		INSERT INTO computers (
 			id, environment_id, region_id,
 			sandbox_declared_id, deployment_definition_id, head_version_id
 		) VALUES ($1, $2, $3, 'authority-workspace', $4, $5)
 	`, workspaceID, environmentID, dbtest.DefaultRegionID, definitionID, rootVersionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, content_digest, status, ownership_generation, writer_generation, published_at
-		) VALUES (
-			$1, $2, $3,
-			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			'committed', 0, 0, now()
-		)
-	`, rootVersionID, environmentID, workspaceID); err != nil {
-		t.Fatal(err)
-	}
+	dbtest.InsertCommittedComputerRoot(t, ctx, tx, rootVersionID, environmentID, workspaceID)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +308,7 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 		) VALUES (
 			$1, $2, $3, $4, 'active',
 			1, $5,
-			$6, 'ext4', 'helmr.substrate.ext4.v0',
+			$6, 'ext4', 'helmr.substrate.ext4.v1',
 			8000, 17179869184, 274877906944,
 			4000, 8589934592, 34359738368,
 			8, 1, '{}'::jsonb, $7, now(), now(), now()
@@ -329,14 +319,14 @@ func seedRuntimeSubstrateAuthority(t *testing.T, ctx context.Context, pool inter
 	runtimeID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id, worker_epoch,
 			vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
 			reserved_guest_ephemeral_disk_bytes,
 			reserved_execution_slots, workspace_id, desired_reason
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1,
+			$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9, 1,
 			1, $11,
 			1000, 1073741824, 2147483648,
 			1, $10, 'authority-test'

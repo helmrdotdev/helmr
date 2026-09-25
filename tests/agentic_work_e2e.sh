@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the agentic-work fixture's declared tasks in the Workspace image its own
+# Runs the agentic-work fixture's declared tasks in the Computer seed its own
 # SDK declaration built, through guestd's managed Program launch path. The
 # handlers drive real tools: Git, Chromium through Playwright, Python with
 # NumPy, Sharp, and child processes. A privileged container supplies Linux
@@ -32,26 +32,29 @@ workspace=$(object "$(jq -er '.workspaceImages[] | select(.declaredId == "agenti
 mkdir "$tmp/context"
 cp "$runtime_release/runtime.squashfs" "$tmp/context/runtime.squashfs"
 cp "$program" "$tmp/context/program.squashfs"
-cp "$workspace" "$tmp/context/workspace.oci.tar"
+mkdir -p "$tmp/context/objects/sha256"
+cp "$workspace" "$tmp/context/objects/sha256/$(basename "$workspace")"
+jq -e '.workspaceImages[] | select(.declaredId == "agentic-work") | .artifact' "$bundle/bundle.json" >"$tmp/context/seed.json"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
 
 cat >"$tmp/context/Dockerfile" <<'DOCKERFILE'
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends squashfs-tools && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends squashfs-tools mount && rm -rf /var/lib/apt/lists/*
 COPY runtime.squashfs program.squashfs /artifacts/
 RUN mkdir -p /var/lib/helmr/program \
  && unsquashfs -d /var/lib/helmr/program/runtime /artifacts/runtime.squashfs >/dev/null \
  && unsquashfs -d /var/lib/helmr/program/artifact /artifacts/program.squashfs >/dev/null
-COPY workspace.oci.tar /artifacts/workspace.oci.tar
+COPY objects /artifacts/objects
+COPY seed.json /artifacts/seed.json
 COPY guestd.test /guestd.test
-ENV HELMR_GUESTD_AGENTIC_WORKSPACE_IMAGE=/artifacts/workspace.oci.tar
+ENV HELMR_GUESTD_AGENTIC_COMPUTER_SEED=/artifacts/seed.json
 # guestd reads the resolver the guest init provides at /run/resolv.conf.
 ENTRYPOINT ["/bin/sh", "-ceu", "cp /etc/resolv.conf /run/resolv.conf && exec /guestd.test -test.run '^TestManagedNodeAgenticWork$' -test.v -test.count=1 -test.timeout=40m"]
 DOCKERFILE
 
 docker build --platform linux/amd64 --tag "$image" "$tmp/context" >"$tmp/build.log" 2>&1 ||
   { tail -n 60 "$tmp/build.log" >&2; exit 1; }
-# The unpacked Workspace root needs a real filesystem, not the container overlay.
+# Decode the sparse Computer disk in tmpfs, then mount it through a disposable loop device.
 docker run --rm --platform linux/amd64 --privileged --tmpfs /tmp:exec,size=8g "$image" | tee "$tmp/run.log"
 grep -E '^--- PASS: TestManagedNodeAgenticWork ' "$tmp/run.log" >/dev/null
 if grep -E '^\s*--- (SKIP|FAIL)' "$tmp/run.log"; then

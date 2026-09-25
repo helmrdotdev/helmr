@@ -204,7 +204,7 @@ WITH selected_definition AS (
        AND schedules.generation = $4
        AND schedules.status = 'active'
 ), created_workspace AS (
-    INSERT INTO workspaces (
+    INSERT INTO computers (
         id,
         environment_id,
         region_id,
@@ -221,16 +221,15 @@ WITH selected_definition AS (
            $6,
            NULL
       FROM selected_definition
-    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 ), created_version AS (
-    INSERT INTO workspace_versions (
+    INSERT INTO computer_versions (
         id,
         environment_id,
-        workspace_id,
+        computer_id,
         status,
-        content_digest,
-        size_bytes,
-        entry_count,
+        root_pack_digest,
+        logical_bytes,
         ownership_generation,
         writer_generation,
         published_at
@@ -238,19 +237,18 @@ WITH selected_definition AS (
     SELECT $6,
            created_workspace.environment_id,
            created_workspace.id,
-           'committed',
-           'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
+           'initializing',
+           NULL,
            0,
            0,
            0,
-           0,
-           now()
+           NULL
       FROM created_workspace
-    RETURNING workspace_id
+    RETURNING computer_id
 )
 SELECT created_workspace.id, created_workspace.environment_id, created_workspace.region_id, created_workspace.sandbox_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.revision, created_workspace.owner_session_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.status, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
-  JOIN created_version ON created_version.workspace_id = created_workspace.id
+  JOIN created_version ON created_version.computer_id = created_workspace.id
 `
 
 type CreateWorkspaceForScheduleFireParams struct {
@@ -428,7 +426,7 @@ func (q *Queries) GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams
 }
 
 const getScheduledRunReceipt = `-- name: GetScheduledRunReceipt :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE environment_id = $1
    AND schedule_id = $2
@@ -498,6 +496,7 @@ func (q *Queries) GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRu
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }

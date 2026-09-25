@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -36,6 +37,8 @@ const (
 )
 
 type ProgramRunner struct {
+	CheckpointObjects   cas.ImmutableStore
+	Capacity            *capacity.Ledger
 	CAS                 cas.Store
 	CheckpointEncryptor *checkpoint.Encryptor
 	WorkspaceMounts     WorkspaceMountSessionRegistry
@@ -83,14 +86,6 @@ func readResumeAck(ctx context.Context, session vm.Session) (*programv0.ResumeAc
 		return nil, err
 	}
 	return &ack, nil
-}
-
-func removeFiles(paths []string) {
-	for _, path := range paths {
-		if strings.TrimSpace(path) != "" {
-			_ = os.Remove(path)
-		}
-	}
 }
 
 func readProtoFrameContext(

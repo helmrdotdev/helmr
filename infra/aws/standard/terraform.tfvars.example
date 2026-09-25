@@ -73,3 +73,7 @@ worker_disk_mib               = null
 worker_vm_vcpus               = 2
 worker_vm_memory_mib          = 4096
 worker_vm_scratch_disk_mib    = 32768
+
+# Initial evaluation values; tune using workload measurements.
+worker_computer_save_interval_seconds = 60
+worker_computer_devices = ["/dev/nbd0", "/dev/nbd1", "/dev/nbd2", "/dev/nbd3"]

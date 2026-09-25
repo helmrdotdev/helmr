@@ -9,10 +9,10 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
@@ -23,12 +23,12 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
 		parsed.requestVersion != request.RequestVersion ||
-		parsed.capture.tree.Digest != request.WorkspaceCapture.Tree.Digest ||
+		parsed.computer.Root.Pack.Digest != request.Manifest.RuntimeState.Computer.Root.Pack.Digest ||
 		parsed.artifacts.runtimeConfig.artifact.Digest != request.Manifest.RuntimeState.ConfigArtifact.Digest ||
 		parsed.artifacts.vmState.artifact.Digest != request.Manifest.RuntimeState.VMStateArtifact.Digest ||
 		parsed.artifacts.memory.artifact.Digest != request.Manifest.RuntimeState.MemoryArtifacts[0].Digest ||
 		parsed.artifacts.scratchDisk.artifact.Digest != request.Manifest.RuntimeState.ScratchDiskArtifact.Digest ||
-		parsed.fingerprint == "" || len(parsed.manifest) == 0 {
+		parsed.fingerprint == "" {
 		t.Fatalf("parsed checkpoint-ready = %+v", parsed)
 	}
 	if normalized.Lease != request.Lease {
@@ -36,7 +36,9 @@ func TestParseCheckpointReadyRequestBindsDurableRestoreAuthority(t *testing.T) {
 	}
 
 	changed := request
-	changed.WorkspaceCapture.Tree.Digest = digestWith("9")
+	disk := *changed.Manifest.RuntimeState.Computer
+	disk.Root.Pack.Digest = digestWith("9")
+	changed.Manifest.RuntimeState.Computer = &disk
 	changedParsed, _, err := parseCheckpointReadyRequest(changed)
 	if err != nil {
 		t.Fatal(err)
@@ -83,8 +85,7 @@ func TestParseCheckpointFailedRequestBindsNormalizedFailure(t *testing.T) {
 	}
 	if parsed.waitID.String() != request.RunWaitID || parsed.checkpointID.String() != request.CheckpointID ||
 		parsed.requestVersion != request.RequestVersion ||
-		parsed.fingerprint == "" || normalized.Error != "snapshot failed" ||
-		!strings.Contains(string(parsed.errorPayload), `"message":"snapshot failed"`) {
+		parsed.fingerprint == "" || normalized.Error != "snapshot failed" {
 		t.Fatalf("parsed checkpoint failure = %+v, normalized=%+v", parsed, normalized)
 	}
 	changed := request
@@ -130,13 +131,6 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 	}
 	return workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: 1, RunWaitID: waitID, CheckpointID: checkpointID,
-		WorkspaceCapture: workerapi.CheckpointWorkspaceCapture{
-			Tree: workerapi.WorkspaceTreeIdentity{Digest: digestWith("2"), SizeBytes: 10, EntryCount: 1},
-			Artifact: workerapi.WorkspaceArtifact{
-				Digest: digestWith("3"), MediaType: workspace.ArtifactMediaType,
-				Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: 1,
-			},
-		},
 		Manifest: workerapi.CheckpointManifest{
 			RecoveryPoint: workerapi.CheckpointRecoveryPoint{
 				ID: checkpointID, RunID: runID, AttemptNumber: 1, RunWaitID: waitID,
@@ -149,6 +143,7 @@ func validCheckpointReadyRequest() workerapi.CheckpointReadyRequest {
 				},
 			},
 			RuntimeState: workerapi.CheckpointRuntimeState{
+				Computer:            &workerapi.CheckpointComputer{ComputerID: lease.WorkspaceID, LogicalBytes: computer.SeedCapacity, Root: testGenerationRoot(computer.SeedCapacity)},
 				ConfigArtifact:      workerapi.CheckpointArtifact{Digest: digestWith("a"), SizeBytes: 100, MediaType: cas.CheckpointRuntimeConfigMediaType},
 				VMStateArtifact:     workerapi.CheckpointArtifact{Digest: digestWith("b"), SizeBytes: 100, MediaType: cas.CheckpointVMStateMediaType},
 				ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: digestWith("c"), SizeBytes: 100, MediaType: cas.CheckpointScratchDiskMediaType},
@@ -176,4 +171,12 @@ func TestCheckpointRuntimeShapeAuthorityMatchesLockedRuntime(t *testing.T) {
 
 func digestWith(character string) string {
 	return "sha256:" + strings.Repeat(character, 64)
+}
+
+func TestCheckpointReadyRequiresValidComputerDisk(t *testing.T) {
+	request := validCheckpointReadyRequest()
+	request.Manifest.RuntimeState.Computer = &workerapi.CheckpointComputer{}
+	if _, _, err := parseCheckpointReadyRequest(request); err == nil {
+		t.Fatalf("invalid Computer disk accepted: %v", err)
+	}
 }

@@ -36,7 +36,7 @@ let
   direnvPackage = pkgs.direnv.overrideAttrs (_: {
     doCheck = false;
   });
-  substrateGenerator = pkgs.pkgsStatic.e2fsprogs;
+  substrateGenerator = pkgs.pkgsStatic.callPackage ../../packages/substrate-generator.nix { };
 in
 {
   options.services.helmr.firecrackerHost = {

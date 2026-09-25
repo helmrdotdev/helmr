@@ -36,7 +36,7 @@ func TestSessionInputDeliveryReconcilesIntent(t *testing.T) {
 	}
 	if len(store.claim.Topics) != 2 ||
 		store.claim.Topics[0] != "session.input.reconcile" ||
-		store.claim.Topics[1] != "session.close.reconcile" {
+		store.claim.Topics[1] != "session.lifecycle.reconcile" {
 		t.Fatalf("claim = %+v", store.claim)
 	}
 	if gotEnvironmentID != environmentID || gotSessionID != sessionID || gotTurnID != turnID {
@@ -221,7 +221,7 @@ func sessionInputReconcileMessage(environmentID, sessionID, turnID uuid.UUID) db
 func sessionCloseReconcileMessage(environmentID, sessionID uuid.UUID) db.ControlOutbox {
 	return db.ControlOutbox{
 		ID:      pgvalue.UUID(uuid.NewV7()),
-		Topic:   "session.close.reconcile",
+		Topic:   "session.lifecycle.reconcile",
 		Payload: []byte(`{"environmentId":"` + environmentID.String() + `","sessionId":"` + sessionID.String() + `"}`),
 		Status:  "claimed", Attempts: 1, ClaimedBy: pgvalue.Text("worker"),
 		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Minute)),

@@ -53,7 +53,8 @@ func (e Executor) ExecuteRunLease(
 	current := claim.Lease
 	result, current, err := e.awaitRunLeaseTask(ctx, task, current)
 	if err != nil {
-		if errors.Is(err, ErrDetached) {
+		var releaseErr *checkpointSourceReleaseError
+		if errors.Is(err, ErrDetached) && !errors.As(err, &releaseErr) {
 			return nil
 		}
 		return err
@@ -63,8 +64,12 @@ func (e Executor) ExecuteRunLease(
 		return fmt.Errorf("renew run lease before finalization: %w", err)
 	}
 
+	if err := task.QuiesceComputerSaves(ctx); err != nil {
+		return fmt.Errorf("settle Computer saves before run finalization: %w", err)
+	}
+
 	operationID := uuid.NewV7()
-	kind := runFinalizationKind(result)
+	kind := workerapi.RunFinalizationCapture
 	beginRequest := workerapi.BeginRunFinalizationRequest{
 		Lease: current.Fence(), ProgramQuiesced: result.ProgramQuiesced,
 		OperationID: operationID.String(), Kind: kind,
@@ -122,29 +127,13 @@ func (e Executor) ExecuteRunLease(
 	if result.ActorOutcome != nil {
 		actorCompletion.Outcome = *result.ActorOutcome
 	}
-	if kind == workerapi.RunFinalizationCapture {
-		var capture workerapi.TaskWorkspaceCapture
-		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
-			var requestErr error
-			capture, requestErr = task.CaptureWorkspace(requestCtx)
-			return requestErr
-		}); err != nil {
-			return fmt.Errorf("capture task workspace: %w", err)
-		}
-		completion.Workspace.Captured = &capture
-		actorCompletion.Workspace.Captured = &capture
-	} else {
-		var rollback workerapi.TaskWorkspaceRollback
-		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
-			var requestErr error
-			rollback, requestErr = task.ResetWorkspace(requestCtx)
-			return requestErr
-		}); err != nil {
-			return fmt.Errorf("reset task workspace: %w", err)
-		}
-		completion.Workspace.RolledBack = &rollback
-		actorCompletion.Workspace.RolledBack = &rollback
+	capture, err := task.CaptureWorkspace(stageCtx)
+	if err != nil {
+		return fmt.Errorf("capture task Computer: %w", err)
 	}
+	completion.Workspace.Captured = &capture
+	actorCompletion.Workspace.Captured = &capture
+
 	if err := retryRunLeaseCompletion(completeCtx, replayTail, func(requestCtx context.Context) error {
 		if result.ActorOutcome != nil {
 			return e.RunLeases.CompleteActor(requestCtx, actorCompletion)
@@ -297,19 +286,6 @@ func (e Executor) renewRunLease(
 	return renewal.Lease, nil
 }
 
-func runFinalizationKind(result RunLeaseTaskResult) workerapi.RunFinalizationKind {
-	if result.ActorOutcome != nil {
-		if result.ActorOutcome.Succeeded != nil || result.ActorOutcome.Interrupted != nil {
-			return workerapi.RunFinalizationCapture
-		}
-		return workerapi.RunFinalizationReset
-	}
-	if result.Outcome.Succeeded != nil {
-		return workerapi.RunFinalizationCapture
-	}
-	return workerapi.RunFinalizationReset
-}
-
 func retryRunLeaseRequest(
 	ctx context.Context,
 	request func(context.Context) error,
@@ -363,32 +339,4 @@ func permanentRunLeaseRequestError(err error) bool {
 		}
 	}
 	return false
-}
-
-func retryRunLeaseOperation(
-	ctx context.Context,
-	operation func(context.Context) error,
-) error {
-	delay := runLeaseRetryEvery
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := operation(ctx); err == nil {
-			return nil
-		}
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-		if delay < time.Second {
-			delay *= 2
-			if delay > time.Second {
-				delay = time.Second
-			}
-		}
-	}
 }

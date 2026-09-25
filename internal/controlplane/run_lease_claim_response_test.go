@@ -104,7 +104,7 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) 
 		}
 	}
 	if len(decoded.Workspace) != 2 || decoded.Workspace["write_capability"] == nil ||
-		decoded.Workspace["reset_target"] == nil {
+		decoded.Workspace["target"] == nil {
 		t.Fatalf("workspace attachment = %s", raw)
 	}
 }
@@ -144,7 +144,7 @@ func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
 		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
 	}
-	authority.checkpoint.RestoreManifest = testCheckpointManifest(
+	authority.checkpoint.Manifest = testCheckpointManifest(
 		t,
 		authority.checkpoint.ID,
 		authority.run.ID,
@@ -212,7 +212,7 @@ func validRunLeaseClaimResponse(
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition:  definition,
-		resetTarget: validWorkspaceResetTargetAuthority(physical),
+		resetTarget: validComputerMountTargetAuthority(physical),
 	}
 	return runLeaseClaimResponseAuthority{
 		mode:           runLeaseClaimFresh,

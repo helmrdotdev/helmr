@@ -2,19 +2,20 @@ package executor
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"sync"
-	"time"
 
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
@@ -22,55 +23,42 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
-	"golang.org/x/sync/errgroup"
 	"google.golang.org/protobuf/proto"
 )
 
-func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, digest string, suffix string) (string, error) {
-	return r.materializeEncryptedObject(ctx, digest, suffix, checkpointPurpose(suffix))
-}
-
-func (r ProgramRunner) materializeEncryptedObject(ctx context.Context, digest string, suffix string, purpose string) (string, error) {
-	if r.CheckpointEncryptor == nil {
-		return "", errors.New("checkpoint encryption is required")
+func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, artifact workerapi.CheckpointArtifact, suffix, directory string) (string, error) {
+	if r.CAS == nil || r.CheckpointEncryptor == nil {
+		return "", errors.New("checkpoint storage and encryption are required")
 	}
-	body, err := r.CAS.Get(ctx, digest)
+	descriptor := cas.Descriptor{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType}
+	if err := cas.ValidateDescriptor(descriptor); err != nil {
+		return "", err
+	}
+	if artifact.SizeBytes == math.MaxInt64 {
+		return "", errors.New("checkpoint object size overflow")
+	}
+	body, err := r.CAS.Get(ctx, artifact.Digest)
 	if err != nil {
-		return "", fmt.Errorf("get checkpoint object %s: %w", digest, err)
+		return "", err
 	}
-	if err := os.MkdirAll(r.tempDir(), 0o755); err != nil {
-		_ = body.Close()
-		return "", fmt.Errorf("create checkpoint temp dir: %w", err)
-	}
-	file, err := os.CreateTemp(r.tempDir(), "checkpoint-*."+suffix)
+	file, err := os.CreateTemp(directory, "checkpoint-*."+suffix)
 	if err != nil {
-		_ = body.Close()
-		return "", fmt.Errorf("create checkpoint temp file: %w", err)
+		return "", errors.Join(err, body.Close())
 	}
-	path := file.Name()
 	hash := sha256.New()
-	copyErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(body, hash), file, purpose)
-	bodyCloseErr := body.Close()
-	closeErr := file.Close()
-	if copyErr != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("decrypt checkpoint object %s: %w", digest, copyErr)
+	limited := &io.LimitedReader{R: body, N: artifact.SizeBytes + 1}
+	// Ciphertext framing is larger than plaintext. Bound both the storage stream
+	// and filesystem writes before trusting the source's advertised length.
+	bounded := &checkpointBoundedWriter{writer: file, remaining: artifact.SizeBytes}
+	decryptErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(limited, hash), bounded, checkpointPurpose(suffix))
+	closeErr := errors.Join(body.Close(), file.Close())
+	if decryptErr == nil && (limited.N != 1 || sha256sum.DigestHash(hash) != artifact.Digest) {
+		decryptErr = errors.New("checkpoint object descriptor mismatch")
 	}
-	if bodyCloseErr != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close checkpoint object %s: %w", digest, bodyCloseErr)
+	if err := errors.Join(decryptErr, closeErr); err != nil {
+		return "", err
 	}
-	if closeErr != nil {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("close checkpoint object %s: %w", digest, closeErr)
-	}
-	actual := sha256sum.DigestHash(hash)
-	if actual != digest {
-		_ = os.Remove(path)
-		return "", fmt.Errorf("checkpoint object digest mismatch: expected %s, got %s", digest, actual)
-	}
-	return path, nil
+	return file.Name(), nil
 }
 
 func validateRestoreIdentity(
@@ -145,73 +133,31 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 	return nil
 }
 
-type runtimeCheckpointer struct {
-	protocol   *programProtocol
-	session    vm.CheckpointableSession
-	cas        cas.Store
-	encryptor  *checkpoint.Encryptor
-	tempDir    string
-	stream     io.ReadWriteCloser
-	workspace  workerapi.CheckpointWorkspaceBase
-	runEvent   func(context.Context, *programv0.RunEvent) error
-	freezeGate *sync.Mutex
-	onFrozen   func()
+// checkpointSourceReleaseError keeps physical cleanup uncertainty distinct from
+// a checkpoint failure that the Control Plane has already acknowledged.
+type checkpointSourceReleaseError struct {
+	err error
 }
 
-func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (result CheckpointResult, err error) {
-	if c.session == nil {
-		return CheckpointResult{}, errors.New("checkpoint source session is required")
-	}
-	defer func() {
-		if err == nil {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		_ = c.ReleaseCheckpointSource(cleanupCtx)
-	}()
-	if c.cas == nil {
-		return CheckpointResult{}, errors.New("checkpoint CAS is required")
-	}
-	if c.encryptor == nil {
-		return CheckpointResult{}, errors.New("checkpoint encryption is required")
-	}
-	if c.stream == nil {
-		return CheckpointResult{}, errors.New("checkpoint control stream is required")
-	}
-	phases := []workerapi.CheckpointPhase{}
-	recordPhase := func(name string, started time.Time) {
-		phases = append(phases, workerapi.CheckpointPhase{Name: name, DurationMs: durationMilliseconds(time.Since(started))})
-	}
-	started := time.Now()
-	workspaceCapture, err := c.suspendGuestForCheckpoint(ctx, request)
-	if err != nil {
-		return CheckpointResult{}, err
-	}
-	recordPhase("suspend_guest", started)
-	started = time.Now()
-	if err := c.stream.Close(); err != nil {
-		return CheckpointResult{}, fmt.Errorf("close checkpoint control stream: %w", err)
-	}
-	recordPhase("close_control_stream", started)
-	started = time.Now()
-	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
-	if err != nil {
-		return CheckpointResult{}, err
-	}
-	recordPhase("create_runtime_snapshot", started)
-	phases = append(phases, workerCheckpointPhases(artifact.Phases)...)
-	defer func() {
-		cleanupSnapshotArtifact(artifact)
-	}()
-	started = time.Now()
-	manifest, err := c.storeSnapshotArtifact(ctx, request, artifact)
-	if err != nil {
-		return CheckpointResult{}, err
-	}
-	recordPhase("store_checkpoint_artifacts", started)
-	manifest.Phases = phases
-	return CheckpointResult{Manifest: manifest, WorkspaceCapture: workspaceCapture}, nil
+func (e *checkpointSourceReleaseError) Error() string {
+	return "release checkpoint source: " + e.err.Error()
+}
+
+func (e *checkpointSourceReleaseError) Unwrap() error { return e.err }
+
+type runtimeCheckpointer struct {
+	publication func(CheckpointRequest) computer.ContinuationPublication
+	capacity    *capacity.Ledger
+	objects     cas.ImmutableStore
+	protocol    *programProtocol
+	session     vm.CheckpointableSession
+	encryptor   *checkpoint.Encryptor
+	tempDir     string
+	stream      io.ReadWriteCloser
+	workspace   workerapi.CheckpointWorkspaceBase
+	runEvent    func(context.Context, *programv0.RunEvent) error
+	freezeGate  *sync.Mutex
+	onFrozen    func()
 }
 
 func (c runtimeCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
@@ -221,236 +167,89 @@ func (c runtimeCheckpointer) ReleaseCheckpointSource(ctx context.Context) error 
 	return c.session.Close(ctx)
 }
 
-func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) (*CheckpointWorkspaceCapture, error) {
+func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) error {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := wire.WriteCheckpointPauseRequest(c.stream, &programv0.CheckpointPauseRequest{
-		Execution: request.Execution, TurnId: request.TurnID,
-		RunId:                    request.RunID,
-		AttemptNumber:            uint32(request.AttemptNumber),
-		RunLeaseId:               request.RunLeaseID,
-		RunWaitId:                request.RunWaitID,
-		CorrelationId:            request.CorrelationID,
-		CheckpointId:             request.CheckpointID,
-		ResumeAttachId:           request.ResumeAttachID,
-		CheckpointRequestVersion: request.CheckpointRequestVersion,
-		CaptureWorkspace:         request.CaptureWorkspace,
+		Execution: request.Execution, TurnId: request.TurnID, RunId: request.RunID, AttemptNumber: uint32(request.AttemptNumber), RunLeaseId: request.RunLeaseID, RunWaitId: request.RunWaitID, CorrelationId: request.CorrelationID, CheckpointId: request.CheckpointID, ResumeAttachId: request.ResumeAttachID, CheckpointRequestVersion: request.CheckpointRequestVersion,
 	}); err != nil {
-		return nil, fmt.Errorf("write checkpoint suspend: %w", err)
+		return fmt.Errorf("write checkpoint suspend: %w", err)
 	}
 	if c.protocol != nil {
 		if err := c.protocol.takePhysical(ctx, c.runEvent); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	reader := bufio.NewReader(c.stream)
 	if c.protocol != nil {
 		reader = c.protocol.reader
 	}
-	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	workspaceArtifact, err := c.readPauseReadyContext(pauseCtx, reader, request)
-	cancelPause()
+	pauseCtx, cancel := context.WithTimeout(ctx, checkpointSuspendTimeout)
+	err := c.readPauseReadyContext(pauseCtx, reader, request)
+	cancel()
 	if err != nil {
-		return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
+		return fmt.Errorf("read checkpoint pause ready: %w", err)
 	}
 	if c.freezeGate != nil {
 		c.freezeGate.Lock()
+		defer c.freezeGate.Unlock()
 	}
 	if c.onFrozen != nil {
 		c.onFrozen()
 	}
-	if c.freezeGate != nil {
-		c.freezeGate.Unlock()
-	}
-	if request.CaptureWorkspace && workspaceArtifact == nil {
-		return nil, errors.New("checkpoint pause did not return required workspace capture")
-	}
-	if workspaceArtifact == nil {
-		return nil, nil
-	}
-	body, err := c.cas.Get(ctx, workspaceArtifact.Digest)
-	if err != nil {
-		return nil, fmt.Errorf("reopen checkpoint workspace artifact: %w", err)
-	}
-	tree, inspectErr := workspace.InspectArtifact(body, *workspaceArtifact)
-	closeErr := body.Close()
-	if inspectErr != nil {
-		return nil, fmt.Errorf("inspect checkpoint workspace artifact: %w", inspectErr)
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close checkpoint workspace artifact: %w", closeErr)
-	}
-	return &CheckpointWorkspaceCapture{Tree: tree, Artifact: *workspaceArtifact}, nil
+	return nil
 }
 
-func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
-	type pauseReadyResult struct {
-		workspaceCapture *workspace.WorkspaceArtifact
-		err              error
-	}
-	result := make(chan pauseReadyResult, 1)
-	go func() {
-		workspaceCapture, err := c.readPauseReady(ctx, reader, request)
-		result <- pauseReadyResult{
-			workspaceCapture: workspaceCapture,
-			err:              err,
-		}
-	}()
+func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) error {
+	result := make(chan error, 1)
+	go func() { result <- c.readPauseReady(ctx, reader, request) }()
 	select {
-	case result := <-result:
-		if result.err != nil {
-			return nil, result.err
-		}
-		return result.workspaceCapture, nil
+	case err := <-result:
+		return err
 	case <-ctx.Done():
 		_ = c.stream.Close()
-		return nil, ctx.Err()
+		<-result
+		return ctx.Err()
 	}
 }
-
-func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
-	var workspaceCapture *workspace.WorkspaceArtifact
+func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) error {
 	for {
 		prefix, err := reader.Peek(4)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if frameio.IsStreamFramePrefix(prefix) {
 			header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			switch header.Type {
-			case wire.StreamTypeCheckpointPauseReady:
-				if header.RunWaitID != request.RunWaitID || header.CheckpointID != request.CheckpointID {
-					return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", header.RunWaitID, header.CheckpointID)
-				}
-				if bodyLen != 0 {
-					return nil, fmt.Errorf("checkpoint pause ready body length must be zero, got %d", bodyLen)
-				}
-				return workspaceCapture, nil
-			case wire.StreamTypeWorkspaceArtifact:
-				if !request.CaptureWorkspace {
-					return nil, errors.New("checkpoint pause returned unexpected workspace capture")
-				}
-				if workspaceCapture != nil {
-					return nil, errors.New("checkpoint pause returned multiple workspace captures")
-				}
-				artifact, err := storeWorkspaceArtifactFrame(ctx, c.cas, reader, header, bodyLen, request.RunID)
-				if err != nil {
-					return nil, err
-				}
-				workspaceCapture = &artifact
-			default:
-				return nil, fmt.Errorf("unsupported checkpoint stream type %q", header.Type)
+			if header.Type != wire.StreamTypeCheckpointPauseReady {
+				return fmt.Errorf("unsupported checkpoint stream type %q", header.Type)
 			}
-			continue
+			if header.RunWaitID != request.RunWaitID || header.CheckpointID != request.CheckpointID {
+				return fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", header.RunWaitID, header.CheckpointID)
+			}
+			if bodyLen != 0 {
+				return fmt.Errorf("checkpoint pause ready body length must be zero, got %d", bodyLen)
+			}
+			return nil
 		}
 		body, err := frameio.ReadMessageFrame(reader)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		var event programv0.RunEvent
 		if err := proto.Unmarshal(body, &event); err != nil {
-			return nil, fmt.Errorf("unmarshal checkpoint interleaved run event: %w", err)
+			return err
 		}
 		if c.runEvent == nil {
-			return nil, errors.New("received run event while checkpoint pause ready is pending")
+			return errors.New("received run event while checkpoint pause ready is pending")
 		}
 		if err := c.runEvent(ctx, &event); err != nil {
-			return nil, err
+			return err
 		}
 	}
-}
-
-func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request CheckpointRequest, artifact vm.SnapshotArtifact) (workerapi.CheckpointManifest, error) {
-	if artifact.VMVCPUCount <= 0 {
-		return workerapi.CheckpointManifest{}, errors.New("checkpoint snapshot VM vCPU count must be positive")
-	}
-	if !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
-		return workerapi.CheckpointManifest{}, errors.New("checkpoint snapshot CPU configuration digest must be canonical")
-	}
-	var manifest storedCheckpointArtifact
-	var state storedCheckpointArtifact
-	var scratchDisk storedCheckpointArtifact
-	memory := make([]workerapi.CheckpointArtifact, len(artifact.Memory))
-	group, groupCtx := errgroup.WithContext(ctx)
-	group.SetLimit(4)
-	group.Go(func() error {
-		stored, err := c.storeSnapshotReader(groupCtx, bytes.NewReader(artifact.Manifest), cas.CheckpointRuntimeConfigMediaType, "manifest")
-		if err != nil {
-			return fmt.Errorf("store checkpoint manifest: %w", err)
-		}
-		manifest = stored
-		return nil
-	})
-	group.Go(func() error {
-		stored, err := c.storeSnapshotFile(groupCtx, artifact.VMState, "vmstate")
-		if err != nil {
-			return fmt.Errorf("store checkpoint vm state: %w", err)
-		}
-		state = stored
-		return nil
-	})
-	group.Go(func() error {
-		stored, err := c.storeSnapshotFile(groupCtx, artifact.ScratchDisk, "scratch-disk")
-		if err != nil {
-			return fmt.Errorf("store checkpoint scratch disk: %w", err)
-		}
-		scratchDisk = stored
-		return nil
-	})
-	for i, file := range artifact.Memory {
-		group.Go(func() error {
-			stored, err := c.storeSnapshotFile(groupCtx, file, "memory")
-			if err != nil {
-				return fmt.Errorf("store checkpoint memory: %w", err)
-			}
-			memory[i] = stored.artifact
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return workerapi.CheckpointManifest{}, err
-	}
-	for _, artifact := range memory {
-		if strings.TrimSpace(artifact.Digest) == "" {
-			return workerapi.CheckpointManifest{}, errors.New("stored checkpoint memory artifact is missing digest")
-		}
-	}
-	return workerapi.CheckpointManifest{
-		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
-			ID:            request.CheckpointID,
-			RunID:         request.RunID,
-			AttemptNumber: request.AttemptNumber,
-			RunWaitID:     request.RunWaitID,
-			CorrelationID: request.CorrelationID,
-			Runtime: workerapi.CheckpointRuntime{
-				Backend:         artifact.RuntimeBackend,
-				ID:              artifact.RuntimeID,
-				Arch:            artifact.RuntimeArch,
-				Contract:        artifact.VMRuntimeContract,
-				KernelDigest:    artifact.KernelDigest,
-				InitramfsDigest: artifact.InitramfsDigest,
-				RootfsDigest:    artifact.RootfsDigest,
-				ConfigDigest:    artifact.RuntimeConfigDigest,
-				VMVCPUCount:     artifact.VMVCPUCount,
-				CPUConfigDigest: artifact.CPUConfigDigest,
-				Substrate:       checkpointRuntimeSubstrate(artifact.Substrate),
-			},
-		},
-		RuntimeState: workerapi.CheckpointRuntimeState{
-			ConfigArtifact:      manifest.artifact,
-			VMStateArtifact:     state.artifact,
-			ScratchDiskArtifact: scratchDisk.artifact,
-			MemoryArtifacts:     memory,
-			Config:              artifact.Manifest,
-		},
-		WorkspaceState: workerapi.CheckpointWorkspaceState{
-			Base: c.workspace,
-		},
-	}, nil
 }
 
 func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *workerapi.CheckpointRuntimeSubstrate {
@@ -463,43 +262,6 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *workerapi.Check
 		Contract:  strings.TrimSpace(substrate.Contract),
 		SizeBytes: substrate.SizeBytes,
 	}
-}
-
-type storedCheckpointArtifact struct {
-	artifact workerapi.CheckpointArtifact
-}
-
-func (c runtimeCheckpointer) storeSnapshotFile(ctx context.Context, file vm.SnapshotFile, suffix string) (storedCheckpointArtifact, error) {
-	if strings.TrimSpace(file.Path) == "" {
-		return storedCheckpointArtifact{}, fmt.Errorf("checkpoint %s path is required", suffix)
-	}
-	body, err := os.Open(file.Path)
-	if err != nil {
-		return storedCheckpointArtifact{}, err
-	}
-	defer body.Close()
-	return c.storeSnapshotReader(ctx, body, file.MediaType, suffix)
-}
-
-func (c runtimeCheckpointer) storeSnapshotReader(ctx context.Context, body io.Reader, mediaType string, suffix string) (storedCheckpointArtifact, error) {
-	stage, err := c.cas.Stage(ctx, mediaType)
-	if err != nil {
-		return storedCheckpointArtifact{}, err
-	}
-	if err := c.encryptor.Encrypt(ctx, body, stage, checkpointPurpose(suffix)); err != nil {
-		_ = stage.Abort(context.Background())
-		return storedCheckpointArtifact{}, err
-	}
-	object, err := stage.Commit(ctx)
-	if err != nil {
-		_ = stage.Abort(context.Background())
-		return storedCheckpointArtifact{}, err
-	}
-	return storedCheckpointArtifact{artifact: workerapi.CheckpointArtifact{
-		Digest:    object.Digest,
-		SizeBytes: object.SizeBytes,
-		MediaType: object.MediaType,
-	}}, nil
 }
 
 func checkpointPurpose(suffix string) string {
@@ -536,13 +298,5 @@ func workerCheckpointFilepackStats(stats *vm.FilepackStats) *workerapi.Checkpoin
 		LogicalBytes:       stats.LogicalBytes,
 		EncodedChunks:      stats.EncodedChunks,
 		UnpackWrittenBytes: stats.UnpackWrittenBytes,
-	}
-}
-
-func cleanupSnapshotArtifact(artifact vm.SnapshotArtifact) {
-	_ = os.Remove(artifact.VMState.Path)
-	_ = os.Remove(artifact.ScratchDisk.Path)
-	for _, file := range artifact.Memory {
-		_ = os.Remove(file.Path)
 	}
 }

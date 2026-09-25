@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestWorkerDeleteWorkspaceReplaysAfterTombstone(t *testing.T) {
@@ -47,18 +46,13 @@ UPDATE run_attempts SET entrypoint_entered_at = now()
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id, sandbox_declared_id,
     deployment_definition_id, key, head_version_id
 ) VALUES ($1, $2, $3, 'test-workspace', $4, 'worker-delete-replay', $5)`,
 		workspaceID, fixture.EnvironmentID, runtest.Region,
 		fixture.WorkspaceDefinitionID, versionID)
-	dbtest.MustExec(t, t.Context(), tx, `
-INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest, status,
-    ownership_generation, writer_generation, published_at
-) VALUES ($1, $2, $3, $4, 'committed', 0, 0, now())`,
-		versionID, fixture.EnvironmentID, workspaceID, workspace.CanonicalEmptyTreeDigest)
+	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.EnvironmentID, workspaceID)
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

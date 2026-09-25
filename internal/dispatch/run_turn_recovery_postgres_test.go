@@ -61,7 +61,7 @@ func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
 			case "resume invalid checkpoint", "resume invalid checkpoint null Turn":
 				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE run_checkpoints SET status='invalid',ready_at=NULL,invalidated_at=now(),invalidation_reason_code='test_invalid' WHERE id=$1`, checkpointID)
 			case "resume discarded private version":
-				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE workspace_versions SET status='discarded',discarded_at=now() WHERE id=(SELECT private_workspace_version_id FROM run_checkpoints WHERE id=$1)`, checkpointID)
+				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE computer_versions SET status='discarded',discarded_at=now() WHERE id=(SELECT private_workspace_version_id FROM run_checkpoints WHERE id=$1)`, checkpointID)
 			case "resume exhausted budget":
 				dbtest.MustExec(t, actor.ctx, actor.pool, `UPDATE runs SET max_active_duration_ms=5000,active_started_at=now()-interval '1 minute' WHERE id=$1`, actor.runID)
 			}
@@ -110,14 +110,10 @@ func TestTurnRecoveryCandidatesDoNotStarveTasks(t *testing.T) {
 					t.Fatalf("expected Run did not recover: %s %v %s", want, current, status)
 				}
 			}
-			if mode == "resume valid checkpoint" {
-				recoverOne(actor.runID)
-			} else {
-				// Uncertain Actors leave the live Lease lane after one bounded
-				// cleanup. They cannot repeatedly consume the Task's next pass.
-				if n, err := actor.authority.RecoverRunExecutionLeases(actor.ctx, 1); err != nil || n != 1 {
-					t.Fatalf("Actor cleanup: %d %v", n, err)
-				}
+			// Uncertain Actors leave the live Lease lane after one bounded
+			// cleanup. They cannot repeatedly consume the Task's next pass.
+			if n, err := actor.authority.RecoverRunExecutionLeases(actor.ctx, 1); err != nil || n != 1 {
+				t.Fatalf("Actor cleanup: %d %v", n, err)
 			}
 			for _, task := range tasks {
 				recoverOne(task.runID)
@@ -131,7 +127,7 @@ SELECT s.active_turn_id,s.committed_input_sequence,l.status,coalesce(i.status,''
  w.owner_session_id,s.current_run_id,s.dispatch_hold_id,s.run_generation,r.status,s.status,
  coalesce(s.dispatch_hold_reason,''),wl.status,ri.desired_state,coalesce(i.interrupt_requested_at IS NOT NULL,false)
 FROM sessions s JOIN runs r ON r.id=$3 JOIN run_leases l ON l.id=$2
-LEFT JOIN session_turns i ON i.id=s.active_turn_id JOIN workspaces w ON w.id=s.workspace_id
+LEFT JOIN session_turns i ON i.id=s.active_turn_id JOIN computers w ON w.id=s.workspace_id
 JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances ri ON ri.id=l.runtime_instance_id
 WHERE s.id=$1`, actorID, actorLeaseID, actor.runID).Scan(&active, &cursor, &leaseStatus, &turnStatus, &heldRun, &owner, &currentRun, &hold, &generation, &runStatus, &sessionStatus, &holdReason, &physicalLease, &desired, &stopIntent); err != nil {
 				t.Fatal(err)
@@ -147,11 +143,7 @@ WHERE s.id=$1`, actorID, actorLeaseID, actor.runID).Scan(&active, &cursor, &leas
 			if stopIntent != (mode == "fresh held" || mode == "resume held") {
 				t.Fatalf("loss changed Turn interrupt intent: %t", stopIntent)
 			}
-			if mode == "resume valid checkpoint" {
-				if hold.Valid || runStatus != "queued" {
-					t.Fatalf("valid checkpoint held: %v/%s", hold, runStatus)
-				}
-			} else if !hold.Valid || heldRun != currentRun || holdReason != "recovery_required" ||
+			if !hold.Valid || heldRun != currentRun || holdReason != "recovery_required" ||
 				(runStatus != "system_failed" && runStatus != "expired") || physicalLease != "fenced" || desired != "closed" {
 				t.Fatalf("uncertain Actor did not hold and fence: hold=%v bound=%v reason=%s run=%s workspace_lease=%s desired=%s", hold, heldRun, holdReason, runStatus, physicalLease, desired)
 			}
@@ -228,10 +220,10 @@ func addRecoveryTask(t *testing.T, source runPlacementFixture, runID uuid.UUID) 
 	}
 	defer tx.Rollback(f.ctx)
 	dbtest.MustExec(t, f.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, f.ctx, tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,owner_run_id,ownership_generation,head_version_id)
- SELECT $1,environment_id,region_id,sandbox_declared_id,deployment_definition_id,$2,1,$3 FROM workspaces WHERE id=$4`, f.workspaceID, f.runID, version, source.workspaceID)
-	dbtest.MustExec(t, f.ctx, tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,content_digest,status,ownership_generation,writer_generation,published_at)
- SELECT $1,environment_id,$2,content_digest,'committed',0,0,now() FROM workspace_versions WHERE id=(SELECT head_version_id FROM workspaces WHERE id=$3)`, version, f.workspaceID, source.workspaceID)
+	dbtest.MustExec(t, f.ctx, tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,owner_run_id,ownership_generation,head_version_id)
+ SELECT $1,environment_id,region_id,sandbox_declared_id,deployment_definition_id,$2,1,$3 FROM computers WHERE id=$4`, f.workspaceID, f.runID, version, source.workspaceID)
+	dbtest.InsertCommittedComputerRoot(t, f.ctx, tx, version, f.environmentID, f.workspaceID)
+	insertPlacementGeneration(t, f.ctx, tx, f.environmentID, f.workspaceID, version)
 	dbtest.MustExec(t, f.ctx, tx, `INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,workspace_id,base_workspace_version_id,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,trace_id,root_span_id)
  SELECT $1,org_id,project_id,environment_id,deployment_id,deployment_definition_id,'task',entrypoint_declared_id,'api',$2,$3,'{}',queue_name,now(),now(),max_active_duration_ms,retry_policy,trace_id,root_span_id FROM runs WHERE id=$4`, f.runID, f.workspaceID, version, source.runID)
 	dbtest.MustExec(t, f.ctx, tx, `INSERT INTO run_attempts(run_id,number,entrypoint_kind,workspace_id,base_workspace_version_id) VALUES($1,1,'task',$2,$3)`, f.runID, f.workspaceID, version)

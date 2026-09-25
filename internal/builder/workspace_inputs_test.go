@@ -7,8 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -16,6 +20,7 @@ import (
 )
 
 func TestReadWorkspaceImageInputsDerivesFinalArtifactIdentity(t *testing.T) {
+	mkfs, config := workspaceTestTools(t)
 	root := t.TempDir()
 	imagePath := filepath.Join(root, "workspace.oci.tar")
 	image := workspaceOCIFixture(t)
@@ -30,21 +35,30 @@ func TestReadWorkspaceImageInputsDerivesFinalArtifactIdentity(t *testing.T) {
 	if err := os.WriteFile(documentPath, document, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	images, objects, err := ReadWorkspaceImageInputs(context.Background(), documentPath)
+	images, objects, err := ReadWorkspaceImageInputs(context.Background(), documentPath, root, mkfs, config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
+	if len(objects) != 1 {
+		t.Fatal(objects)
+	}
+	packed, err := os.ReadFile(objects[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(packed))
 	if len(images) != 1 || images[0].DeclaredID != "sandbox" ||
 		images[0].Artifact.Digest != digest ||
 		images[0].Artifact.MediaType != deployment.WorkspaceImageArtifactMediaType ||
+		images[0].Artifact.Profile != computer.SeedProfile || images[0].Artifact.Config.WorkingDir != "/workspace" ||
 		images[0].Artifact.Architecture != deployment.ArchitectureX8664 ||
-		len(objects) != 1 || objects[0].Digest != digest || objects[0].Path != imagePath {
+		len(objects) != 1 || objects[0].Digest != digest || objects[0].Path == imagePath {
 		t.Fatalf("images = %+v objects = %+v", images, objects)
 	}
 }
 
 func TestReadWorkspaceImageInputsDeduplicatesSharedObjectBytes(t *testing.T) {
+	mkfs, config := workspaceTestTools(t)
 	root := t.TempDir()
 	image := workspaceOCIFixture(t)
 	firstPath := filepath.Join(root, "first.oci.tar")
@@ -66,19 +80,20 @@ func TestReadWorkspaceImageInputsDeduplicatesSharedObjectBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	images, objects, err := ReadWorkspaceImageInputs(context.Background(), documentPath)
+	images, objects, err := ReadWorkspaceImageInputs(context.Background(), documentPath, root, mkfs, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(images) != 2 || len(objects) != 1 {
 		t.Fatalf("images = %+v objects = %+v", images, objects)
 	}
-	if images[0].Artifact != images[1].Artifact || objects[0].Digest != images[0].Artifact.Digest {
+	if !reflect.DeepEqual(images[0].Artifact, images[1].Artifact) || objects[0].Digest != images[0].Artifact.Digest {
 		t.Fatalf("images = %+v objects = %+v", images, objects)
 	}
 }
 
 func TestReadWorkspaceImageInputsAcceptsSharedPath(t *testing.T) {
+	mkfs, config := workspaceTestTools(t)
 	root := t.TempDir()
 	imagePath := filepath.Join(root, "shared.oci.tar")
 	if err := os.WriteFile(imagePath, workspaceOCIFixture(t), 0o644); err != nil {
@@ -97,14 +112,16 @@ func TestReadWorkspaceImageInputsAcceptsSharedPath(t *testing.T) {
 	}
 
 	inspectCount := 0
-	images, objects, err := readWorkspaceImageInputs(context.Background(), documentPath, func(path string) (deployment.BundleWorkspaceImageArtifact, error) {
+	images, objects, err := readWorkspaceImageInputs(context.Background(), documentPath, func(path string) (deployment.BundleWorkspaceImageArtifact, string, error) {
 		inspectCount++
-		return inspectWorkspaceImageInput(path)
+		target := filepath.Join(root, "disk.filepack")
+		artifact, err := buildWorkspaceDisk(t.Context(), path, target, root, mkfs, config)
+		return artifact, target, err
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspectCount != 1 || len(images) != 2 || len(objects) != 1 || images[0].Artifact != images[1].Artifact || objects[0].Path != imagePath {
+	if inspectCount != 1 || len(images) != 2 || len(objects) != 1 || !reflect.DeepEqual(images[0].Artifact, images[1].Artifact) || objects[0].Path == imagePath {
 		t.Fatalf("inspect count = %d images = %+v objects = %+v", inspectCount, images, objects)
 	}
 }
@@ -160,4 +177,73 @@ func tarFixture(t *testing.T, name string, body []byte) []byte {
 		t.Fatal(err)
 	}
 	return output.Bytes()
+}
+
+func workspaceTestTools(t *testing.T) (string, string) {
+	t.Helper()
+	mkfs, config := os.Getenv("HELMR_SUBSTRATE_MKFS_EXT4"), os.Getenv("HELMR_SUBSTRATE_MKE2FS_CONFIG")
+	if runtime.GOOS != "linux" || mkfs == "" || config == "" {
+		t.Skip("requires pinned Linux builder tools")
+	}
+	return mkfs, config
+}
+
+func TestDiskBuildFinalizeAndUpload(t *testing.T) {
+	mkfs, config := workspaceTestTools(t)
+	root := t.TempDir()
+	source := filepath.Join(root, "source.oci.tar")
+	if err := os.WriteFile(source, workspaceOCIFixture(t), 0600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal([]workspaceImageInput{{DeclaredID: "sandbox", Path: source}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := filepath.Join(root, "images.json")
+	if err := os.WriteFile(document, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	images, objects, err := ReadWorkspaceImageInputs(t.Context(), document, root, mkfs, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	programPath, programBytes, index := writeVerifiedProgramFixture(t, root, images...)
+	input := testBundleInput(programPath, programBytes)
+	input.Program.Index = index
+	input.WorkspaceImages = images
+	input.Objects = append(input.Objects, objects...)
+	result, err := FinalizeBundle(t.Context(), filepath.Join(root, "bundle"), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.Bundle.WorkspaceImages, images) {
+		t.Fatal("disk contract changed during finalization")
+	}
+	store, err := cas.NewFile(filepath.Join(root, "cas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range result.Bundle.Objects {
+		file, err := os.Open(result.Objects[object.Digest])
+		if err != nil {
+			t.Fatal(err)
+		}
+		uploaded, err := store.Put(t.Context(), object.MediaType, file)
+		file.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if uploaded.Digest != object.Digest || uploaded.SizeBytes != object.SizeBytes {
+			t.Fatal("uploaded bytes differ")
+		}
+	}
+	image := images[0].Artifact
+	body, err := store.Get(t.Context(), image.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer body.Close()
+	if err := computer.VerifySeed(t.Context(), body, computer.SeedArtifact{Object: cas.Descriptor{Digest: image.Digest, SizeBytes: image.SizeBytes, MediaType: image.MediaType}, LogicalBytes: computer.SeedCapacity}, computer.SeedCapacity); err != nil {
+		t.Fatal(err)
+	}
 }

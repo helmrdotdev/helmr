@@ -359,7 +359,7 @@ func TestWorkspaceFinalizationBeginFreezesAuthorityAndReplays(t *testing.T) {
 	}
 
 	changed := proto.Clone(request).(*workspacev0.BeginWorkspaceFinalizationRequest)
-	changed.Kind = workspace.FinalizationResetKind
+	changed.Kind = "reset"
 	if _, err := beginTestWorkspaceFinalizationRequest(context.Background(), registry, changed, now.Add(time.Second)); err == nil {
 		t.Fatal("changed Begin replay was accepted")
 	}
@@ -373,7 +373,7 @@ func TestWorkspaceFinalizationBeginFreezesAuthorityAndReplays(t *testing.T) {
 
 func TestWorkspaceFinalizationBeginRecoversDurableBeginBeforeAck(t *testing.T) {
 	entry, registry, authority := testWorkspaceFinalizationMount(t)
-	request := testWorkspaceFinalizationBeginRequest(authority, "11111111-1111-4111-8111-111111111111", workspace.FinalizationResetKind)
+	request := testWorkspaceFinalizationBeginRequest(authority, "11111111-1111-4111-8111-111111111111", workspace.FinalizationCaptureKind)
 	frozen := proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
 	frozen.GetFence().ExpiresAtUnixNano = request.GetFinalizationExpiresAtUnixNano()
 	if err := entry.writeWorkspaceFinalizationJournal(workspaceFinalizationJournal{

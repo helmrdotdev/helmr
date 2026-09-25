@@ -91,8 +91,8 @@ func acceptActorRunCancellation(ctx context.Context, tx pgx.Tx, request Cancella
 
 // HoldSessionExecution records loss before the caller fences physical resources.
 // The caller must hold the Session row lock and supply its current Run attempt.
-// It retains Session/input/head authority and Turn interrupt intent for explicit
-// convergence or privileged recovery; the hold itself proves no physical stop.
+// It retains Session/input/head authority and durable interrupt intent for
+// lifecycle convergence; the hold itself proves no physical stop.
 func HoldSessionExecution(ctx context.Context, q db.Querier, actor db.Session, attempt int32, reason string) (db.Session, error) {
 	if actor.DispatchHoldID.Valid && actor.DispatchHoldReason.String == reason {
 		return actor, nil
@@ -104,6 +104,9 @@ func HoldSessionExecution(ctx context.Context, q db.Querier, actor db.Session, a
 	}
 	body, _ := json.Marshal(map[string]any{"hold_id": hold, "reason": reason})
 	_, err = q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: actor.ActiveTurnID, Kind: "session.held", Data: body, ProducerRunID: actor.CurrentRunID, ProducerAttemptNumber: pgtype.Int4{Int32: attempt, Valid: true}, RunGeneration: pgtype.Int8{Int64: actor.RunGeneration, Valid: true}})
+	if err == nil && (reason == "recovery_required" || reason == "interrupt_requested") {
+		err = q.CreateSessionLifecycleReconcileOutbox(ctx, db.CreateSessionLifecycleReconcileOutboxParams{ID: pgvalue.UUID(hold), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
+	}
 	return actor, err
 }
 

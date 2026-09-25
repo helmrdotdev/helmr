@@ -49,7 +49,8 @@ WITH selected_shape AS MATERIALIZED (
         reserved_run_id,
         reserved_attempt_number,
         reserved_workspace_version_id,
-        reservation_expires_at,
+        computer_source_version_id,
+        preparation_expires_at,
         desired_reason
     ) SELECT
         sqlc.arg(id),
@@ -74,9 +75,23 @@ WITH selected_shape AS MATERIALIZED (
         sqlc.arg(run_id),
         sqlc.arg(attempt_number),
         sqlc.arg(base_workspace_version_id),
-        sqlc.arg(reservation_expires_at),
+        CASE WHEN source.status = 'initializing' THEN NULL
+             ELSE source.id END,
+        transaction_timestamp() + sqlc.arg(preparation_seconds)::bigint * interval '1 second',
         'run_reservation'
       FROM selected_shape
+      JOIN computer_versions AS source
+        ON source.id = sqlc.arg(base_workspace_version_id)
+       AND source.environment_id = sqlc.arg(environment_id)
+       AND source.computer_id = sqlc.arg(workspace_id)
+       AND source.status IN ('initializing', 'committed', 'private')
+       AND (source.status = 'initializing' OR EXISTS (
+           SELECT 1 FROM computer_version_roots AS root
+            WHERE root.environment_id = source.environment_id
+              AND root.computer_id = source.computer_id
+              AND root.version_id = source.id
+              AND root.logical_bytes = sqlc.arg(reserved_guest_ephemeral_disk_bytes)
+       ))
     RETURNING *
 )
 SELECT created_runtime.*
@@ -137,23 +152,23 @@ INSERT INTO run_leases (
 RETURNING *;
 
 -- name: AdvanceRunWorkspaceWriter :one
-UPDATE workspaces
+UPDATE computers
    SET writer_generation = sqlc.arg(writer_generation),
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.environment_id = sqlc.arg(environment_id)
+ WHERE computers.environment_id = sqlc.arg(environment_id)
    AND EXISTS (
        SELECT 1 FROM environments
-        WHERE environments.id = workspaces.environment_id
+        WHERE environments.id = computers.environment_id
           AND environments.org_id = sqlc.arg(org_id)
           AND environments.project_id = sqlc.arg(project_id)
    )
-   AND workspaces.id = sqlc.arg(workspace_id)
-   AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
-   AND workspaces.writer_generation = sqlc.arg(expected_writer_generation)
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at;
+   AND computers.id = sqlc.arg(workspace_id)
+   AND computers.ownership_generation = sqlc.arg(ownership_generation)
+   AND computers.writer_generation = sqlc.arg(expected_writer_generation)
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: AdvanceRunWorkspaceMountFence :one
 UPDATE workspace_mounts
@@ -216,6 +231,8 @@ INSERT INTO workspace_leases (
 )
 RETURNING *;
 
+-- Caller holds the Runtime row lock; recheck time at consumption because other
+-- grant operations may have waited since the initial locked authority check.
 -- name: ConsumeRunRuntimeReservation :execrows
 UPDATE runtime_instances
    SET reserved_run_id = NULL,
@@ -229,8 +246,10 @@ UPDATE runtime_instances
    AND reserved_attempt_number = sqlc.arg(attempt_number)
    AND reserved_workspace_version_id = sqlc.arg(base_workspace_version_id)
    AND restore_checkpoint_id IS NOT DISTINCT FROM sqlc.narg(restore_checkpoint_id)
-   AND reservation_expires_at > transaction_timestamp();
+   AND reservation_expires_at > clock_timestamp();
 
+-- The grant owner already holds Run and any restore checkpoint locks. Recheck
+-- deadlines after potentially blocking grant writes, before publishing the lease.
 -- name: SetRunCurrentLease :one
 UPDATE runs
    SET current_run_lease_id = sqlc.arg(run_lease_id),
@@ -239,7 +258,7 @@ UPDATE runs
        next_runtime_preparation_at = NULL,
        revision = revision + 1,
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(id)
+ WHERE runs.id = sqlc.arg(id)
    AND org_id = sqlc.arg(org_id)
    AND revision = sqlc.arg(expected_revision)
    AND status = 'queued'
@@ -247,5 +266,29 @@ UPDATE runs
    AND current_run_lease_id IS NULL
    AND (next_runtime_preparation_at IS NULL
         OR next_runtime_preparation_at <= transaction_timestamp())
-   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > transaction_timestamp())
-RETURNING *;
+   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > clock_timestamp())
+   AND (sqlc.narg(restore_checkpoint_id)::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_checkpoints
+        WHERE run_checkpoints.id = sqlc.narg(restore_checkpoint_id)
+          AND run_checkpoints.run_id = runs.id
+          AND run_checkpoints.attempt_number = runs.current_attempt_number
+          AND run_checkpoints.workspace_id = runs.workspace_id
+          AND run_checkpoints.status = 'ready'
+          AND (run_checkpoints.expires_at IS NULL
+               OR run_checkpoints.expires_at > clock_timestamp())
+   ))
+   AND (sqlc.narg(same_workspace_child_wait_id)::uuid IS NULL OR EXISTS (
+       SELECT 1 FROM run_waits AS parent_wait
+       JOIN run_checkpoints AS parent_checkpoint
+         ON parent_checkpoint.id = parent_wait.suspend_checkpoint_id
+        AND parent_checkpoint.run_id = parent_wait.run_id
+        AND parent_checkpoint.attempt_number = parent_wait.attempt_number
+        AND parent_checkpoint.workspace_id = parent_wait.workspace_id
+        AND parent_checkpoint.status = 'ready'
+        WHERE parent_wait.id = sqlc.narg(same_workspace_child_wait_id)
+          AND parent_wait.child_run_id = runs.id
+          AND parent_wait.workspace_id = runs.workspace_id
+          AND (parent_checkpoint.expires_at IS NULL
+               OR parent_checkpoint.expires_at > clock_timestamp())
+   ))
+RETURNING runs.*;

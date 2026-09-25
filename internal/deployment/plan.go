@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
@@ -99,8 +100,10 @@ func ParseSandboxManifest(manifestVersion int32, raw []byte) (SandboxManifest, e
 }
 
 type SandboxImageManifest struct {
-	ArtifactDigest string `json:"artifactDigest"`
-	MediaType      string `json:"mediaType"`
+	Profile        string            `json:"profile"`
+	Config         oci.RuntimeConfig `json:"config"`
+	ArtifactDigest string            `json:"artifactDigest"`
+	MediaType      string            `json:"mediaType"`
 }
 
 type SchemaManifest struct {

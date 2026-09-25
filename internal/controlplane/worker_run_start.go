@@ -317,6 +317,7 @@ func lockRunStartAuthority(
 		authority.enclosingWait = enclosingWait
 		if authority.runLease.Status == db.RunLeaseStatusStarting {
 			if err := validateActiveEnclosingWait(
+				ctx, q,
 				enclosingWait, authority.run, authority.workspace.WriterGeneration, authority,
 			); err != nil {
 				return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureEnclosingWait, err)

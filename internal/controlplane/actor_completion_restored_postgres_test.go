@@ -1,14 +1,11 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
-	"os"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -16,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-func TestRestoredActorCompletionAdvancesFromPrivateLeaseBase(t *testing.T) {
+func TestRestoredActorCompletionPreservesLeaseBaseAndAdvancesSavedHead(t *testing.T) {
 	fixture := newRestoredActorCompletionPostgresFixture(t, false)
 	completion, err := parseActorCompletionRequest(fixture.request)
 	if err != nil {
@@ -27,29 +24,29 @@ func TestRestoredActorCompletionAdvancesFromPrivateLeaseBase(t *testing.T) {
 	}
 
 	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus string
-	var headVersionID, mountVersionID, publishedParentID uuid.UUID
+	var headVersionID, mountVersionID, publishedParentID, leaseBaseID uuid.UUID
 	var committedInput, terminalInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
 SELECT runs.status,
        run_leases.status,
        run_attempts.terminal_outcome,
        workspace_leases.status,
-       workspaces.head_version_id,
+       computers.head_version_id,
        workspace_mounts.materialized_version_id,
-       published.parent_version_id,
+       published.parent_version_id, workspace_leases.base_workspace_version_id,
        sessions.committed_input_sequence,
        run_attempts.terminal_session_input_sequence
   FROM runs
   JOIN run_leases ON run_leases.id = $2
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
   JOIN sessions ON sessions.id = runs.session_id
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
-  JOIN workspace_versions AS published ON published.id = workspaces.head_version_id
+  JOIN computer_versions AS published ON published.id = computers.head_version_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
 		&runStatus, &leaseStatus, &attemptOutcome, &workspaceLeaseStatus,
-		&headVersionID, &mountVersionID, &publishedParentID,
+		&headVersionID, &mountVersionID, &publishedParentID, &leaseBaseID,
 		&committedInput, &terminalInput,
 	); err != nil {
 		t.Fatal(err)
@@ -59,16 +56,16 @@ SELECT runs.status,
 			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus)
 	}
 	if headVersionID == fixture.headVersionID || headVersionID == fixture.privateVersionID ||
-		mountVersionID != headVersionID || publishedParentID != fixture.privateVersionID {
-		t.Fatalf("Workspace frontier = head:%s mount:%s parent:%s; want new D mounted with parent C:%s",
-			headVersionID, mountVersionID, publishedParentID, fixture.privateVersionID)
+		mountVersionID != headVersionID || publishedParentID != fixture.headVersionID || leaseBaseID != fixture.privateVersionID {
+		t.Fatalf("Workspace frontier = head:%s mount:%s parent:%s; want new D mounted with saved predecessor:%s",
+			headVersionID, mountVersionID, publishedParentID, fixture.headVersionID)
 	}
 	if committedInput != 1 || terminalInput != 1 {
 		t.Fatalf("Actor cursor = committed:%d terminal:%d", committedInput, terminalInput)
 	}
 }
 
-func TestRestoredActorFailureRollsMountBackToDurableHead(t *testing.T) {
+func TestRestoredActorFailureRetainsCapturedFrontier(t *testing.T) {
 	fixture := newRestoredActorCompletionPostgresFixture(t, true)
 	completion, err := parseActorCompletionRequest(fixture.request)
 	if err != nil {
@@ -78,7 +75,8 @@ func TestRestoredActorFailureRollsMountBackToDurableHead(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus, holdReason string
+	var runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus string
+	var holdReason *string
 	var headVersionID, mountVersionID uuid.UUID
 	var committedInput int64
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -87,7 +85,7 @@ SELECT runs.status,
        run_attempts.terminal_outcome,
        workspace_leases.status,
        sessions.status,
-       workspaces.head_version_id,
+       computers.head_version_id,
        workspace_mounts.materialized_version_id,
        sessions.committed_input_sequence,
        sessions.dispatch_hold_reason
@@ -95,7 +93,7 @@ SELECT runs.status,
   JOIN run_leases ON run_leases.id = $2
   JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = 1
   JOIN sessions ON sessions.id = runs.session_id
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.id = $1`, fixture.runID, fixture.leaseID).Scan(
@@ -105,12 +103,33 @@ SELECT runs.status,
 		t.Fatal(err)
 	}
 	if runStatus != "failed" || leaseStatus != "failed" || attemptOutcome != "failed" ||
-		workspaceLeaseStatus != "released" || actorStatus != "open" || holdReason != "recovery_required" {
+		workspaceLeaseStatus != "released" || actorStatus != "failed" || holdReason != nil {
 		t.Fatalf("terminal state = run:%s lease:%s attempt:%s workspace lease:%s Actor:%s",
 			runStatus, leaseStatus, attemptOutcome, workspaceLeaseStatus, actorStatus)
 	}
-	if headVersionID != fixture.headVersionID || mountVersionID != fixture.headVersionID {
-		t.Fatalf("rollback frontier = head:%s mount:%s, want B:%s", headVersionID, mountVersionID, fixture.headVersionID)
+	if headVersionID == fixture.headVersionID || headVersionID == fixture.privateVersionID || mountVersionID != headVersionID {
+		t.Fatalf("retained frontier = head:%s mount:%s", headVersionID, mountVersionID)
+	}
+	var digest string
+	var parent uuid.UUID
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT r.root_pack_digest,v.parent_version_id FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id WHERE v.id=$1`, headVersionID).Scan(&digest, &parent); err != nil {
+		t.Fatal(err)
+	}
+	if digest != fixture.request.Workspace.Captured.Disk.Root.Pack.Digest || parent != fixture.headVersionID {
+		t.Fatalf("failure capture identity = %s parent=%s", digest, parent)
+	}
+	var countBefore, countAfter int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE computer_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countBefore); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.server.completeActor(t.Context(), fixture.worker, fixture.request, completion); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE computer_id=(SELECT workspace_id FROM runs WHERE id=$1)`, fixture.runID).Scan(&countAfter); err != nil {
+		t.Fatal(err)
+	}
+	if countAfter != countBefore {
+		t.Fatal("replay created another version")
 	}
 	if committedInput != 1 {
 		t.Fatalf("failed Actor advanced committed input to %d", committedInput)
@@ -128,13 +147,13 @@ type restoredActorCompletionPostgresFixture struct {
 	privateVersionID uuid.UUID
 }
 
-func newRestoredActorCompletionPostgresFixture(t *testing.T, rollback bool) restoredActorCompletionPostgresFixture {
+func newRestoredActorCompletionPostgresFixture(t *testing.T, failed bool) restoredActorCompletionPostgresFixture {
 	t.Helper()
 	base := runtest.New(t)
 	work := base.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	ctx := t.Context()
 	base.ConvertToActor(t, ctx, work, `{"enabled":false}`)
-	if !rollback {
+	if !failed {
 		// The successful return is drained; backlog without progress is a held failure.
 		dbtest.MustExec(t, ctx, base.Pool, `UPDATE sessions SET next_input_sequence=2 WHERE current_run_id=$1`, work.RunID)
 		dbtest.MustExec(t, ctx, base.Pool, `UPDATE runs SET session_input_high_watermark=1 WHERE id=$1`, work.RunID)
@@ -144,15 +163,15 @@ func newRestoredActorCompletionPostgresFixture(t *testing.T, rollback bool) rest
 	var ownershipGeneration, writerGeneration, mountGeneration int64
 	if err := base.Pool.QueryRow(ctx, `
 SELECT runs.workspace_id,
-       workspaces.head_version_id,
+       computers.head_version_id,
        run_leases.runtime_instance_id,
        workspace_leases.workspace_mount_id,
        workspace_leases.id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
+       computers.ownership_generation,
+       computers.writer_generation,
        workspace_mounts.fencing_generation
   FROM runs
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
   JOIN run_leases ON run_leases.id = $2 AND run_leases.run_id = runs.id
   JOIN workspace_leases ON workspace_leases.owner_run_lease_id = run_leases.id
   JOIN workspace_mounts ON workspace_mounts.id = workspace_leases.workspace_mount_id
@@ -189,14 +208,14 @@ SELECT runs.workspace_id,
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, ctx, tx, `
-UPDATE workspaces SET writer_generation = 3 WHERE id = $1`, workspaceID)
+UPDATE computers SET writer_generation = 3 WHERE id = $1`, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases SET writer_generation = 3 WHERE id = $1`, workspaceLeaseID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases SET lease_sequence = 2 WHERE id = $1`, work.LeaseID)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
@@ -207,7 +226,7 @@ INSERT INTO runtime_instances (
     reclaimed_at, reclaim_evidence, terminal_at,
     terminal_reason_code
 )
-SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
+SELECT $2, transaction_timestamp() + interval '5 minutes', org_id, worker_group_id, project_id, environment_id, region_id,
        worker_instance_id, runtime_identity_id, deployment_definition_id,
        runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
        reserved_cpu_millis, reserved_memory_bytes,
@@ -271,7 +290,7 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
   FROM workspace_leases WHERE id = $1`, workspaceLeaseID, sourceWorkspaceLeaseID,
 		sourceRuntimeID, sourceMountID, sourceLeaseID, headVersionID)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, base.OrgID, checkpointDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO artifacts (
@@ -280,15 +299,13 @@ INSERT INTO artifacts (
 		checkpointArtifactID, base.OrgID, base.ProjectID, base.EnvironmentID,
 		checkpointDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    artifact_id, content_digest, size_bytes, entry_count,
+INSERT INTO computer_versions (
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes,
     status, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 1, 1,
-    'private', $7, $8, 1
-)`, checkpointVersionID, base.EnvironmentID, workspaceID, headVersionID,
-		checkpointArtifactID, checkpointDigest, sourceWorkspaceLeaseID, ownershipGeneration)
+    $1, $2, $3, $4, $5, 1,
+    'private', $6, $7, 1
+)`, checkpointVersionID, base.EnvironmentID, workspaceID, headVersionID, checkpointDigest, sourceWorkspaceLeaseID, ownershipGeneration)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO idempotency_claims (
     id, environment_id, operation, slot_hash, request_fingerprint, accepted_at
@@ -357,7 +374,7 @@ SELECT $2, org_id, worker_group_id, project_id, environment_id, region_id,
   FROM workspace_leases WHERE id = $1`, workspaceLeaseID, childWorkspaceLeaseID,
 		sourceRuntimeID, sourceMountID, childLeaseID, checkpointVersionID)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES ($1, $2, 1, $3)`, base.OrgID, privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO artifacts (
@@ -366,15 +383,13 @@ INSERT INTO artifacts (
 		privateArtifactID, base.OrgID, base.ProjectID, base.EnvironmentID,
 		privateDigest, workspace.ArtifactMediaType)
 	dbtest.MustExec(t, ctx, tx, `
-INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, parent_version_id,
-    artifact_id, content_digest, size_bytes, entry_count,
+INSERT INTO computer_versions (
+    id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes,
     status, source_workspace_lease_id, ownership_generation, writer_generation
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, 1, 1,
-    'private', $7, $8, $9
-)`, privateVersionID, base.EnvironmentID, workspaceID, checkpointVersionID,
-		privateArtifactID, privateDigest, childWorkspaceLeaseID, ownershipGeneration, int64(2))
+    $1, $2, $3, $4, $5, 1,
+    'private', $6, $7, $8
+)`, privateVersionID, base.EnvironmentID, workspaceID, checkpointVersionID, privateDigest, childWorkspaceLeaseID, ownershipGeneration, int64(2))
 	dbtest.MustExec(t, ctx, tx, `
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind,
@@ -396,7 +411,7 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id, actor_speculative_input_sequence,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    status, restore_manifest,
+    status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $8,
@@ -435,11 +450,10 @@ UPDATE run_leases
        started_at = COALESCE(started_at, claimed_at, created_at),
        expires_at = $2,
        finalization_operation_id = $3,
-       finalization_kind = $4,
+
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'sha256:62a2fed3d6e08c44835fce71f02210b1ddabfb066e39edf1e6c261988f824dd3'
- WHERE id = $1`, work.LeaseID, expiresAt, operationID,
-		map[bool]string{false: string(workerapi.RunFinalizationCapture), true: string(workerapi.RunFinalizationReset)}[rollback])
+ WHERE id = $1`, work.LeaseID, expiresAt, operationID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET base_workspace_version_id = $2, expires_at = $3
@@ -474,68 +488,23 @@ UPDATE workspace_mounts SET materialized_version_id = $2 WHERE id = $1`, mountID
 			Captured: validTaskWorkspaceCapture(t, assignment),
 		},
 	}
-	artifact, cleanupArtifact, err := workspace.CreateEmptyWorkspaceArtifact(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanupArtifact)
-	body, err := os.ReadFile(artifact.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := workspace.InspectArtifact(bytes.NewReader(body), artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Workspace.Captured.Tree = workerapi.WorkspaceTreeIdentity{
-		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
-	}
-	request.Workspace.Captured.Artifact = workerapi.WorkspaceArtifact{
-		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
-		SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
-	}
 	request.Workspace.Captured.Receipt.OperationID = operationID.String()
 	setCaptureFingerprint(t, request.Workspace.Captured)
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
-	if rollback {
+	if failed {
 		request.Outcome = workerapi.ActorOutcome{
 			RunGeneration: runGeneration,
 			Failed:        &workerapi.TaskFailure{Message: "actor failed"},
 		}
-		rolledBack := validTaskWorkspaceRollback(t, request.Workspace.Captured)
-		rolledBack.Receipt.OperationID = operationID.String()
-		rolledBack.Target.BaseWorkspaceVersionID = headVersionID.String()
-		rolledBack.Receipt.RequestFingerprint = ""
-		target := workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: headVersionID.String(),
-			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		}
-		fingerprint, err := workspace.FinalizationFingerprint(
-			workspace.FinalizationResetKind,
-			workspace.FinalizationRequest{
-				OperationID: operationID.String(),
-				Fence:       testFinalizationFence(rolledBack.Receipt.Fence),
-				Target:      target,
-			},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rolledBack.Receipt.RequestFingerprint = fingerprint
-		request.Workspace = workerapi.TaskWorkspaceProof{RolledBack: rolledBack}
-		finalizationFingerprint = fingerprint
 	}
 	dbtest.MustExec(t, ctx, base.Pool, `
 UPDATE run_leases SET finalization_request_fingerprint = $2 WHERE id = $1`,
 		work.LeaseID, finalizationFingerprint)
 
-	return restoredActorCompletionPostgresFixture{
+	fixture := restoredActorCompletionPostgresFixture{
 		server: &Server{
 			db: db.New(base.Pool), tx: base.Pool,
-			cas: actorTurnCAS{
-				object: cas.Object{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType},
-				body:   body,
-			},
+			cas: finalizationTestCAS(t),
 		},
 		pool: base.Pool,
 		worker: workerActor{
@@ -545,4 +514,6 @@ UPDATE run_leases SET finalization_request_fingerprint = $2 WHERE id = $1`,
 		request: request, runID: work.RunID, leaseID: work.LeaseID,
 		headVersionID: headVersionID, privateVersionID: privateVersionID,
 	}
+	registerFinalizationTestDisk(t, base.Pool, fixture.server, fixture.worker, request.Lease, request.Workspace.Captured, operationID.String())
+	return fixture
 }

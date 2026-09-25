@@ -183,7 +183,7 @@ func TestCacheKeyMatchesGoldenSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "sha256:f9ddca7796d2ecee7007b44e4d934261caf450e9dd26f73d4dd0c3e0eeb8a486"
+	const want = "sha256:82c7c38799fe561a7b58db1836365f97f99eca552cc16206577860ef64c45e2e"
 	if key != want {
 		t.Fatalf("cache key = %s, want %s", key, want)
 	}
@@ -316,9 +316,9 @@ set -eu
 [ "${LC_ALL}" = "C.UTF-8" ]
 [ "${LANG}" = "C.UTF-8" ]
 [ "${TZ}" = "UTC" ]
-[ "${SOURCE_DATE_EPOCH}" = "0" ]
+[ -z "${SOURCE_DATE_EPOCH+x}" ]
 [ -n "${MKE2FS_CONFIG}" ]
-[ -z "${E2FSPROGS_FAKE_TIME+x}" ]
+[ "${E2FSPROGS_FAKE_TIME}" = "1" ]
 [ -z "${MKE2FS_SYNC+x}" ]
 last=""
 for arg in "$@"; do
@@ -389,6 +389,7 @@ func ociTarFromLayers(t *testing.T, layers ...[]byte) []byte {
 	index := mustJSON(t, oci.Index{Manifests: []oci.Descriptor{{
 		MediaType: "application/vnd.oci.image.manifest.v1+json",
 		Digest:    "sha256:" + manifestDigest,
+		Platform:  &oci.Platform{OS: "linux", Architecture: "amd64"},
 	}}})
 	var buf bytes.Buffer
 	writer := tar.NewWriter(&buf)

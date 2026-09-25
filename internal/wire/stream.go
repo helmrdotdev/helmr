@@ -16,9 +16,6 @@ const (
 	StreamTypeWorkspaceArtifact          StreamType = "workspace-artifact"
 	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"
 	StreamTypeCheckpointPauseReady       StreamType = "checkpoint-pause-ready"
-	StreamTypeTurnSettlePause            StreamType = "turn-settle-pause"
-	StreamTypeTurnSettleReady            StreamType = "turn-settle-ready"
-	StreamTypeTurnSettleApplied          StreamType = "turn-settle-applied"
 	StreamTypeResumeDecision             StreamType = "resume-decision"
 	StreamTypeWorkspaceMaterialize       StreamType = "workspace-materialize"
 	StreamTypeWorkspaceRuntimePrepare    StreamType = "workspace-runtime-prepare"
@@ -30,7 +27,6 @@ const (
 	StreamTypeProgramRestoreVerify       StreamType = "program-restore-verify"
 	StreamTypeWorkspaceFinalizationBegin StreamType = "workspace-finalization-begin"
 	StreamTypeWorkspaceCapture           StreamType = "workspace-capture"
-	StreamTypeWorkspaceReset             StreamType = "workspace-reset"
 )
 
 type StreamHeader struct {

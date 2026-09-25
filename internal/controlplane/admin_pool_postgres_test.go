@@ -687,14 +687,14 @@ INSERT INTO worker_instances (
 		dbtest.Digest("live-runtime-cpu-environment"))
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
     reserved_guest_ephemeral_disk_bytes, reserved_execution_slots,
     workspace_id, desired_reason
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
+    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
     1, 1, $10, 1000, 1073741824, 4294967296, 1, $11, 'placed'
 )`, live.runtimeID, product.orgID, fixture.group.ID, product.projectID,
 		product.environmentID, live.workerID, fixture.runtimeIdentityID,
@@ -755,7 +755,7 @@ SELECT id
 	}
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT deployment_definition_id, head_version_id
-  FROM workspaces
+  FROM computers
  WHERE id = $1`, product.workspaceIDs[0]).Scan(&sandboxDefinitionID, &baseWorkspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +811,7 @@ INSERT INTO run_attempts (
 	}
 	dbtest.MustExec(t, t.Context(), product.pool, `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
@@ -821,7 +821,7 @@ INSERT INTO runtime_instances (
     reclaimed_at, reclaim_evidence,
     terminal_at, terminal_reason_code
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
+    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
     1, 1, $10, 1000, 1073741824, 4294967296, 1, $11,
     'closed', 2, 'checkpointed', 'closed', 2, 2,
     now(), '{"method":"checkpointed"}'::jsonb,
@@ -889,7 +889,7 @@ INSERT INTO run_checkpoints (
     base_workspace_version_id, private_workspace_version_id,
     runtime_config_artifact_id, vm_state_artifact_id,
     memory_artifact_id, scratch_disk_artifact_id,
-    status, restore_manifest, ready_request_fingerprint, ready_at
+    status, manifest, ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7,
     $8, $9, $10, $11,

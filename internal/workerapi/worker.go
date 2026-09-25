@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/runtimeid"
 )
 
@@ -161,22 +162,22 @@ type RuntimeInstance struct {
 }
 
 type RuntimeSource struct {
-	DeploymentDefinitionID string                `json:"deployment_definition_id"`
-	WorkspaceID            string                `json:"workspace_id"`
-	RuntimeIdentityID      string                `json:"runtime_identity_id"`
-	VMVCPUCount            int32                 `json:"vm_vcpu_count"`
-	CPUConfigDigest        string                `json:"cpu_config_digest"`
-	WorkspaceImage         CASObject             `json:"workspace_image"`
-	WorkspaceArchitecture  string                `json:"workspace_architecture"`
-	WorkspaceTarget        *WorkspaceResetTarget `json:"workspace_target,omitempty"`
-	RootfsDigest           string                `json:"rootfs_digest"`
-	ReservedCPUMillis      int32                 `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB      int32                 `json:"reserved_memory_mib"`
-	ReservedDiskMiB        int64                 `json:"reserved_disk_mib"`
-	ReservedExecutionSlots int32                 `json:"reserved_execution_slots"`
-	VMRuntimeContract      string                `json:"vm_runtime_contract"`
-	Program                *RuntimeProgram       `json:"program,omitempty"`
-	Restore                *RuntimeRestore       `json:"restore,omitempty"`
+	Computer               *RuntimeComputerSource `json:"computer,omitempty"`
+	DeploymentDefinitionID string                 `json:"deployment_definition_id"`
+	WorkspaceID            string                 `json:"workspace_id"`
+	RuntimeIdentityID      string                 `json:"runtime_identity_id"`
+	VMVCPUCount            int32                  `json:"vm_vcpu_count"`
+	CPUConfigDigest        string                 `json:"cpu_config_digest"`
+	WorkspaceImage         CASObject              `json:"workspace_image"`
+	WorkspaceArchitecture  string                 `json:"workspace_architecture"`
+	RootfsDigest           string                 `json:"rootfs_digest"`
+	ReservedCPUMillis      int32                  `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32                  `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64                  `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32                  `json:"reserved_execution_slots"`
+	VMRuntimeContract      string                 `json:"vm_runtime_contract"`
+	Program                *RuntimeProgram        `json:"program,omitempty"`
+	Restore                *RuntimeRestore        `json:"restore,omitempty"`
 }
 
 type RuntimeRestore struct {
@@ -209,8 +210,9 @@ type RuntimeInstanceStateRequest struct {
 }
 
 const (
-	RuntimeFailureReconcile     = "runtime_reconcile_failed"
-	RuntimeFailureWorkerInvalid = "worker_runtime_invalid"
+	RuntimeFailureComputerSource = "computer_source_unavailable"
+	RuntimeFailureReconcile      = "runtime_reconcile_failed"
+	RuntimeFailureWorkerInvalid  = "worker_runtime_invalid"
 )
 
 type RuntimeCleanupProof struct {
@@ -231,12 +233,13 @@ type RuntimeReconcileResponse struct {
 }
 
 type RuntimeReconcileTarget struct {
-	ID              string        `json:"id"`
-	WorkerEpoch     int64         `json:"worker_epoch"`
-	DesiredVersion  int64         `json:"desired_version"`
-	ObservedVersion int64         `json:"observed_version"`
-	Action          string        `json:"action"`
-	Source          RuntimeSource `json:"source"`
+	ID                   string        `json:"id"`
+	WorkerEpoch          int64         `json:"worker_epoch"`
+	DesiredVersion       int64         `json:"desired_version"`
+	ObservedVersion      int64         `json:"observed_version"`
+	Action               string        `json:"action"`
+	PreparationExpiresAt time.Time     `json:"preparation_expires_at"`
+	Source               RuntimeSource `json:"source"`
 }
 
 const (
@@ -309,7 +312,6 @@ type RunFinalizationKind string
 
 const (
 	RunFinalizationCapture RunFinalizationKind = "capture"
-	RunFinalizationReset   RunFinalizationKind = "reset"
 )
 
 type RunQuiescenceProof struct {
@@ -340,6 +342,13 @@ type RunEntrypointRequest struct {
 	EntrypointDeclaredID string        `json:"entrypoint_declared_id"`
 }
 
+// RegisterRunFinalizationRequest pins one immutable Computer disk before upload.
+type RegisterRunFinalizationRequest struct {
+	Lease       RunLeaseFence      `json:"lease"`
+	OperationID string             `json:"operation_id"`
+	Disk        CheckpointComputer `json:"disk"`
+}
+
 type CompleteTaskRequest struct {
 	Lease     RunLeaseFence      `json:"lease"`
 	Outcome   TaskOutcome        `json:"outcome"`
@@ -353,26 +362,21 @@ type CompleteActorRequest struct {
 }
 
 type CommitActorTurnRequest struct {
-	TurnID                 string                `json:"turn_id"`
-	RunGeneration          int64                 `json:"run_generation"`
-	Disposition            string                `json:"disposition"`
-	Result                 json.RawMessage       `json:"result,omitempty"`
-	Error                  json.RawMessage       `json:"error,omitempty"`
-	Lease                  RunLeaseFence         `json:"lease"`
-	CorrelationID          string                `json:"correlation_id"`
-	TargetInputSequence    int64                 `json:"target_input_sequence"`
-	BaseWorkspaceVersionID string                `json:"base_workspace_version_id"`
-	Tree                   WorkspaceTreeIdentity `json:"tree"`
-	Artifact               *WorkspaceArtifact    `json:"artifact,omitempty"`
+	TurnID              string          `json:"turn_id"`
+	RunGeneration       int64           `json:"run_generation"`
+	Disposition         string          `json:"disposition"`
+	Result              json.RawMessage `json:"result,omitempty"`
+	Error               json.RawMessage `json:"error,omitempty"`
+	Lease               RunLeaseFence   `json:"lease"`
+	CorrelationID       string          `json:"correlation_id"`
+	TargetInputSequence int64           `json:"target_input_sequence"`
 }
 
 type CommitActorTurnResponse struct {
-	EventID                string                `json:"event_id"`
-	Lease                  RunLeaseFence         `json:"lease"`
-	CorrelationID          string                `json:"correlation_id"`
-	CommittedInputSequence int64                 `json:"committed_input_sequence"`
-	WorkspaceVersionID     string                `json:"workspace_version_id"`
-	Tree                   WorkspaceTreeIdentity `json:"tree"`
+	EventID                string        `json:"event_id"`
+	Lease                  RunLeaseFence `json:"lease"`
+	CorrelationID          string        `json:"correlation_id"`
+	CommittedInputSequence int64         `json:"committed_input_sequence"`
 }
 
 type SubmitSessionDataRequest struct {
@@ -640,19 +644,12 @@ type TaskFailure struct {
 }
 
 type TaskWorkspaceProof struct {
-	Captured   *TaskWorkspaceCapture  `json:"captured,omitempty"`
-	RolledBack *TaskWorkspaceRollback `json:"rolled_back,omitempty"`
+	Captured *TaskWorkspaceCapture `json:"captured,omitempty"`
 }
 
 type TaskWorkspaceCapture struct {
-	Receipt  WorkspaceFinalizationReceipt `json:"receipt"`
-	Tree     WorkspaceTreeIdentity        `json:"tree"`
-	Artifact WorkspaceArtifact            `json:"artifact"`
-}
-
-type TaskWorkspaceRollback struct {
 	Receipt WorkspaceFinalizationReceipt `json:"receipt"`
-	Target  WorkspaceResetTarget         `json:"target"`
+	Disk    CheckpointComputer           `json:"disk"`
 }
 
 type WorkspaceFinalizationReceipt struct {
@@ -686,14 +683,9 @@ type WorkspaceTreeIdentity struct {
 	EntryCount int32  `json:"entry_count"`
 }
 
-type WorkspaceResetTarget struct {
-	BaseWorkspaceVersionID string                `json:"base_workspace_version_id"`
-	Tree                   WorkspaceTreeIdentity `json:"tree"`
-	Empty                  *EmptyWorkspace       `json:"empty,omitempty"`
-	Artifact               *WorkspaceArtifact    `json:"artifact,omitempty"`
-}
-
-type EmptyWorkspace struct {
+// ComputerMountTarget binds guest authority to an already prepared Computer.
+type ComputerMountTarget struct {
+	BaseWorkspaceVersionID string `json:"base_workspace_version_id"`
 }
 
 type RunLeaseFence struct {
@@ -737,8 +729,8 @@ func (assignment RunLeaseAssignment) Fence() RunLeaseFence {
 }
 
 type WorkspaceAttachment struct {
-	WriteCapability string               `json:"write_capability"`
-	ResetTarget     WorkspaceResetTarget `json:"reset_target"`
+	WriteCapability string              `json:"write_capability"`
+	Target          ComputerMountTarget `json:"target"`
 }
 
 type SecretDelivery struct {
@@ -985,15 +977,14 @@ const (
 )
 
 type RunWaitPollResponse struct {
-	RunID            string            `json:"run_id"`
-	RunWaitID        string            `json:"run_wait_id"`
-	Status           RunWaitPollStatus `json:"status"`
-	RequestVersion   int64             `json:"request_version,omitempty"`
-	CheckpointID     string            `json:"checkpoint_id,omitempty"`
-	CaptureWorkspace bool              `json:"capture_workspace,omitempty"`
-	ResumeKind       string            `json:"resume_kind,omitempty"`
-	ResumePayload    json.RawMessage   `json:"resume_payload,omitempty"`
-	RequireAck       bool              `json:"require_ack,omitempty"`
+	RunID          string            `json:"run_id"`
+	RunWaitID      string            `json:"run_wait_id"`
+	Status         RunWaitPollStatus `json:"status"`
+	RequestVersion int64             `json:"request_version,omitempty"`
+	CheckpointID   string            `json:"checkpoint_id,omitempty"`
+	ResumeKind     string            `json:"resume_kind,omitempty"`
+	ResumePayload  json.RawMessage   `json:"resume_payload,omitempty"`
+	RequireAck     bool              `json:"require_ack,omitempty"`
 }
 
 type RunWaitResumeAckRequest struct {
@@ -1052,7 +1043,16 @@ type CheckpointRuntimeSubstrate struct {
 	SizeBytes int64  `json:"size_bytes"`
 }
 
+// CheckpointComputer binds the writable disk captured with the VM state and RAM.
+// Its exact authenticated generation also serves as a cold continuation.
+type CheckpointComputer struct {
+	ComputerID   string                  `json:"computer_id"`
+	LogicalBytes int64                   `json:"logical_bytes"`
+	Root         computer.GenerationRoot `json:"root"`
+}
+
 type CheckpointRuntimeState struct {
+	Computer            *CheckpointComputer  `json:"computer,omitempty"`
 	ConfigArtifact      CheckpointArtifact   `json:"config_artifact"`
 	VMStateArtifact     CheckpointArtifact   `json:"vm_state_artifact"`
 	ScratchDiskArtifact CheckpointArtifact   `json:"scratch_disk_artifact"`
@@ -1065,20 +1065,10 @@ type CheckpointWorkspaceState struct {
 }
 
 type CheckpointWorkspaceBase struct {
-	ArtifactDigest    string `json:"artifact_digest"`
-	ArtifactSizeBytes int64  `json:"artifact_size_bytes"`
-	ArtifactMediaType string `json:"artifact_media_type"`
-	ArtifactEncoding  string `json:"artifact_encoding"`
-	MountPath         string `json:"mount_path"`
+	MountPath string `json:"mount_path"`
 }
 
-func CheckpointWorkspaceBaseEqual(left, right CheckpointWorkspaceBase) bool {
-	return left.ArtifactDigest == right.ArtifactDigest &&
-		left.ArtifactSizeBytes == right.ArtifactSizeBytes &&
-		left.ArtifactMediaType == right.ArtifactMediaType &&
-		left.ArtifactEncoding == right.ArtifactEncoding &&
-		left.MountPath == right.MountPath
-}
+func CheckpointWorkspaceBaseEqual(left, right CheckpointWorkspaceBase) bool { return left == right }
 
 type CheckpointArtifact struct {
 	Digest    string `json:"digest"`
@@ -1107,18 +1097,22 @@ type CASObject struct {
 	MediaType string `json:"media_type"`
 }
 
-type CheckpointReadyRequest struct {
-	Lease            RunLeaseFence              `json:"lease"`
-	RequestVersion   int64                      `json:"request_version"`
-	RunWaitID        string                     `json:"run_wait_id"`
-	CheckpointID     string                     `json:"checkpoint_id"`
-	WorkspaceCapture CheckpointWorkspaceCapture `json:"workspace_capture"`
-	Manifest         CheckpointManifest         `json:"manifest"`
+// RegisterCheckpointRequest pins the exact encrypted snapshot before any upload.
+// It does not claim that the objects exist or that the checkpoint is restorable.
+type RegisterCheckpointRequest struct {
+	Lease          RunLeaseFence      `json:"lease"`
+	RequestVersion int64              `json:"request_version"`
+	RunWaitID      string             `json:"run_wait_id"`
+	CheckpointID   string             `json:"checkpoint_id"`
+	Manifest       CheckpointManifest `json:"manifest"`
 }
 
-type CheckpointWorkspaceCapture struct {
-	Tree     WorkspaceTreeIdentity `json:"tree"`
-	Artifact WorkspaceArtifact     `json:"artifact"`
+type CheckpointReadyRequest struct {
+	Lease          RunLeaseFence      `json:"lease"`
+	RequestVersion int64              `json:"request_version"`
+	RunWaitID      string             `json:"run_wait_id"`
+	CheckpointID   string             `json:"checkpoint_id"`
+	Manifest       CheckpointManifest `json:"manifest"`
 }
 
 type CheckpointFailedRequest struct {

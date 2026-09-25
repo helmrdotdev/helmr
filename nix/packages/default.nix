@@ -78,6 +78,7 @@ let
     buildGoModule = buildGo127Module;
   };
   bundleBuilderImage = pkgs.callPackage ./bundle-builder-image.nix {
+ inherit substrateGenerator;
     inherit
       bundleBuilder
       compiler
@@ -188,7 +189,7 @@ let
       runHook postInstall
     '';
   };
-  substrateGenerator = pkgs.pkgsStatic.e2fsprogs;
+  substrateGenerator = pkgs.pkgsStatic.callPackage ./substrate-generator.nix { };
 in
 {
   inherit
@@ -209,6 +210,7 @@ in
 }
 // lib.optionalAttrs (system == "x86_64-linux") (rec {
   inherit
+    substrateGenerator
     compiler
     bundleBuilder
     bundleBuilderImage

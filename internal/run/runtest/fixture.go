@@ -92,7 +92,7 @@ func New(t *testing.T) Fixture {
 	`, fixture.EnvironmentID, fixture.OrgID, fixture.ProjectID,
 		"run-lease-"+dbtest.ShortID(fixture.EnvironmentID))
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES
 			($1, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 			($1, $3, 1, 'application/octet-stream')
@@ -210,7 +210,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspaces (
+		INSERT INTO computers (
 			id, environment_id, region_id,
 			sandbox_declared_id, deployment_definition_id,
 			owner_run_id, ownership_generation, writer_generation, head_version_id
@@ -220,16 +220,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 		)
 	`, workspaceID, fixture.EnvironmentID, Region,
 		fixture.WorkspaceDefinitionID, runID, versionID)
-	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id,
-			content_digest, status, ownership_generation, writer_generation, published_at
-		) VALUES (
-			$1, $2, $3,
-			'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			'committed', 0, 0, now()
-		)
-	`, versionID, fixture.EnvironmentID, workspaceID)
+	dbtest.InsertCommittedComputerRoot(t, ctx, tx, versionID, fixture.EnvironmentID, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runs (
 			id, org_id, project_id, environment_id, deployment_id,
@@ -253,7 +244,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 	`, runID, workspaceID, versionID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
 			worker_instance_id, runtime_identity_id, deployment_definition_id,
 			worker_epoch, vm_vcpu_count, cpu_config_digest,
 			reserved_cpu_millis, reserved_memory_bytes,
@@ -261,7 +252,7 @@ func (fixture Fixture) AddRunLease(t *testing.T, state string, createdAt time.Ti
 			workspace_id, program_deployment_id, desired_reason, observed_state,
 			observed_version, observed_desired_version, ready_at
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 1, $12,
+			$1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, $6, $7, $8, $9, 1, 1, $12,
 			1000, 1073741824, 2147483648, 1,
 			$10, $11, 'test', 'ready', 1, 1, now()
 		)
@@ -373,7 +364,7 @@ INSERT INTO sessions (
     3, 1, 'default', 300000, $6::jsonb
 )`, actorID, fixture.EnvironmentID, actorDefinitionID, workspaceID, work.RunID, retryPolicy)
 	dbtest.MustExec(t, ctx, tx, `
-UPDATE workspaces
+UPDATE computers
    SET owner_session_id = $1, owner_run_id = NULL
  WHERE id = $2`, actorID, workspaceID)
 	dbtest.MustExec(t, ctx, tx, `

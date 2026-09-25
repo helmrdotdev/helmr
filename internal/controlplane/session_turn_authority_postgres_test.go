@@ -20,14 +20,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func turnCommitRequest(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture workerapi.CheckpointWorkspaceCapture) workerapi.CommitActorTurnRequest {
+func turnCommitRequest(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope) workerapi.CommitActorTurnRequest {
 	t.Helper()
-	var base uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$1`, f.claim.runLease.ID).Scan(&base); err != nil {
-		t.Fatal(err)
-	}
 	f.beginSettlement(t, scope)
-	return workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`{"answer":42}`), TargetInputSequence: 1, BaseWorkspaceVersionID: base.String(), Tree: capture.Tree, Artifact: &capture.Artifact}
+	return workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`{"answer":42}`), TargetInputSequence: 1}
 }
 func interruptTurn(ctx context.Context, f *actorCheckpointFixture, scope session.TurnScope, key string) (session.InterruptReceipt, error) {
 	var receipt session.InterruptReceipt
@@ -46,7 +42,7 @@ func assertTurnStopped(t *testing.T, f *actorCheckpointFixture, scope session.Tu
 	var status, hold, runStatus string
 	var active, head uuid.UUID
 	var cursor, terminals int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence,w.head_version_id,x.status,(SELECT count(*) FROM session_events e WHERE e.session_id=s.id AND e.kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id JOIN runs x ON x.id=s.current_run_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &hold, &active, &cursor, &head, &runStatus, &terminals); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence,w.head_version_id,x.status,(SELECT count(*) FROM session_events e WHERE e.session_id=s.id AND e.kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id JOIN runs x ON x.id=s.current_run_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &hold, &active, &cursor, &head, &runStatus, &terminals); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || hold != "interrupt_requested" || active != scope.TurnID || cursor != 0 || head != f.rootID || runStatus != "running" || terminals != 0 {
@@ -85,7 +81,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 	t.Run("stop wins", func(t *testing.T) {
 		f := newActorCheckpointFixture(t)
 		scope := f.receiveTurn(t, 1)
-		req := turnCommitRequest(t, f, scope, f.capture(t, "not committed"))
+		req := turnCommitRequest(t, f, scope)
 		parsed, err := parseActorTurnCommitRequest(req)
 		if err != nil {
 			t.Fatal(err)
@@ -133,7 +129,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 	t.Run("settlement wins", func(t *testing.T) {
 		f := newActorCheckpointFixture(t)
 		scope := f.receiveTurn(t, 1)
-		req := turnCommitRequest(t, f, scope, f.capture(t, "committed"))
+		req := turnCommitRequest(t, f, scope)
 		parsed, err := parseActorTurnCommitRequest(req)
 		if err != nil {
 			t.Fatal(err)
@@ -162,10 +158,10 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 		var cursor, terminal int
 		var hold bool
 		var head uuid.UUID
-		if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.dispatch_hold_id IS NOT NULL,w.head_version_id,(SELECT count(*) FROM session_events WHERE turn_id=r.id AND kind='turn.completed') FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &hold, &head, &terminal); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.dispatch_hold_id IS NOT NULL,w.head_version_id,(SELECT count(*) FROM session_events WHERE turn_id=r.id AND kind='turn.completed') FROM sessions s JOIN session_turns r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &hold, &head, &terminal); err != nil {
 			t.Fatal(err)
 		}
-		if status != "completed" || cursor != 1 || hold || head == f.rootID || terminal != 1 {
+		if status != "completed" || cursor != 1 || hold || head != f.rootID || terminal != 1 {
 			t.Fatalf("settlement state: %s %d %v %s %d", status, cursor, hold, head, terminal)
 		}
 	})
@@ -297,7 +293,7 @@ func TestSessionTurnDelayedOutputResponsePostgres(t *testing.T) {
 func TestSessionTurnSettlementRollbackPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	scope := f.receiveTurn(t, 1)
-	req := turnCommitRequest(t, f, scope, f.capture(t, "rollback"))
+	req := turnCommitRequest(t, f, scope)
 	req.Disposition = "failed"
 	req.Result = nil
 	req.Error = json.RawMessage(`{"code":"rejected","message":"failed by application"}`)
@@ -313,7 +309,7 @@ func TestSessionTurnSettlementRollbackPostgres(t *testing.T) {
 	var status string
 	var cursor, events int
 	var head, active uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.active_turn_id,w.head_version_id,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &active, &head, &events); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status,s.committed_input_sequence,s.active_turn_id,w.head_version_id,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed')) FROM sessions s JOIN session_turns r ON r.id=$2 JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&status, &cursor, &active, &head, &events); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" || cursor != 0 || active != scope.TurnID || head != f.rootID || events != 0 {
@@ -347,7 +343,7 @@ func TestSessionTurnIdentityAndRejectedReceiptPostgres(t *testing.T) {
 	if response := appendOutput(t, f, req); response.Completed == nil {
 		t.Fatalf("first output: %+v", response)
 	}
-	f.turn(t, 1, f.capture(t, "first"), true)
+	f.turn(t, 1)
 	second = f.receiveTurn(t, 2)
 	if second.TurnID == first.TurnID || second.RunGeneration != first.RunGeneration || second.RunID != first.RunID {
 		t.Fatalf("ordinary next input incorrectly changes execution: %+v %+v", first, second)
@@ -389,7 +385,7 @@ func TestSessionTurnHoldRejectsLegacyLifecyclePostgres(t *testing.T) {
 	var active, head uuid.UUID
 	var status, reason, runStatus string
 	var cursor, terminals int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_reason,s.committed_input_sequence,t.status,w.head_version_id,r.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed','turn.interrupted')) FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id JOIN workspaces w ON w.id=s.workspace_id JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&active, &reason, &cursor, &status, &head, &runStatus, &terminals); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT s.active_turn_id,s.dispatch_hold_reason,s.committed_input_sequence,t.status,w.head_version_id,r.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind IN ('turn.completed','turn.failed','turn.interrupted')) FROM sessions s JOIN session_turns t ON t.id=s.active_turn_id JOIN computers w ON w.id=s.workspace_id JOIN runs r ON r.id=s.current_run_id WHERE s.id=$1`, f.sessionID).Scan(&active, &reason, &cursor, &status, &head, &runStatus, &terminals); err != nil {
 		t.Fatal(err)
 	}
 	if active != scope.TurnID || reason != "recovery_required" || cursor != 0 || status != "running" || head != f.rootID || runStatus != "system_failed" || terminals != 0 {
@@ -406,7 +402,7 @@ func TestSessionTurnCompletionResultPresencePostgres(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			scope := f.receiveTurn(t, 1)
-			req := turnCommitRequest(t, f, scope, f.capture(t, "result"))
+			req := turnCommitRequest(t, f, scope)
 			req.Result = nil
 			if present {
 				req.Result = json.RawMessage(`null`)
@@ -426,7 +422,7 @@ func TestSessionTurnCompletionResultPresencePostgres(t *testing.T) {
 			if ok != present || (present && string(value) != "null") {
 				t.Fatalf("result presence lost: %s", event.Data)
 			}
-			if string(data["workspace_version_id"]) != `"`+response.WorkspaceVersionID+`"` || len(data["error"]) != 0 {
+			if len(data["workspace_version_id"]) != 0 || event.WorkspaceVersionID.Valid || len(data["error"]) != 0 {
 				t.Fatalf("terminal envelope: %s", event.Data)
 			}
 		})

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -17,8 +18,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/ids"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -38,6 +42,13 @@ type PreparedRuntimeInstanceClient interface {
 	MarkRuntimeInstanceFailed(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error)
 }
 
+type ComputerPreparationClient interface {
+	InitialGenerationClient
+	InitialComputerKey(context.Context, workerapi.InitialComputerKeyRequest) (workerapi.ComputerKeyMaterial, error)
+	PublishInitialComputerGeneration(context.Context, workerapi.InitialComputerGenerationRequest) (workerapi.InitialComputerGenerationResponse, error)
+	ComputerSource(context.Context, workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error)
+}
+
 type RuntimeReconcileClient interface {
 	PreparedRuntimeInstanceClient
 	ListRuntimeReconcileTargets(context.Context) (workerapi.RuntimeReconcileResponse, error)
@@ -51,6 +62,12 @@ type runtimeReconcileResult struct {
 type PreparedRuntimePool struct {
 	Connector             vm.Cleaner
 	CAS                   cas.Store
+	ComputerObjects       cas.ImmutableStore
+	ComputerPreparation   ComputerPreparationClient
+	ComputerRanges        blockformat.RangeSource
+	ComputerHelper        string
+	ComputerDevices       []string
+	ComputerStagingBytes  int64
 	TempDir               string
 	ArtifactCacheDir      string
 	ArtifactCacheMaxBytes int64
@@ -66,6 +83,7 @@ type PreparedRuntimePool struct {
 	RuntimeArchitecture   deployment.RuntimeArchitecture
 	VerifierCgroupRoot    string
 
+	computerDevices   map[preparedRuntimeRef]vm.ComputerDevice
 	mu                sync.Mutex
 	closeMu           sync.Mutex
 	entries           map[string][]preparedRuntimeEntry
@@ -203,6 +221,12 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount workerapi.Work
 		return nil, key, false
 	}
 	entry := entries[index]
+	if entry.target.Source.Computer == nil || entry.target.Source.WorkspaceID != mount.WorkspaceID ||
+		entry.target.Source.Computer.VersionID != mount.Target.BaseWorkspaceVersionID || strings.TrimSpace(mount.Target.BaseWorkspaceVersionID) == "" {
+		p.mu.Unlock()
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "computer_source_mismatch")
+		return nil, key, false
+	}
 	if err, exited := entry.exit.finished(); exited {
 		p.mu.Unlock()
 		p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), true)
@@ -506,9 +530,19 @@ func (p *PreparedRuntimePool) warmRuntimeTarget(
 	if client == nil {
 		return errors.New("prepared runtime instance client is required")
 	}
-	if target.Source.WorkspaceTarget == nil {
-		return errors.New("prepared runtime warm command workspace target is required")
+	if err := validateComputerPreparationSource(target); err != nil {
+		return err
 	}
+	if target.Source.Restore != nil {
+		if _, err := validatePreparedRuntimeRestore(target, p.RuntimeArchitecture); err != nil {
+			return err
+		}
+	}
+	if target.PreparationExpiresAt.IsZero() {
+		return errors.New("runtime preparation deadline is required")
+	}
+	ctx, cancelPrepare := context.WithDeadline(ctx, target.PreparationExpiresAt)
+	defer cancelPrepare()
 	if p.AdmitRuntimeStart != nil {
 		if err := p.AdmitRuntimeStart(ctx); err != nil {
 			return err
@@ -673,6 +707,10 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		defer cancelState()
 		proofMethod := ""
 		if !materializeAttempted {
+			if closeErr := p.releaseComputerDevice(runtimeInstanceID, runtimeEpoch); closeErr != nil {
+				failure := errors.Join(err, closeErr)
+				return errors.Join(failure, p.reportRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, failure, ""))
+			}
 			proofMethod = workerapi.RuntimeCleanupNotMaterialized
 		}
 		if markErr := p.reportRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
@@ -685,39 +723,39 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		}
 		return nil
 	}
-	materializer := WorkspaceMaterializer{
-		CAS:                   p.CAS,
-		TempDir:               p.TempDir,
-		ArtifactCacheDir:      p.ArtifactCacheDir,
-		ArtifactCacheMaxBytes: p.ArtifactCacheMaxBytes,
-		Log:                   p.Log,
+	topology := vm.RuntimeTopology{Computer: &vm.RuntimeComputer{
+		ComputerID: target.Source.WorkspaceID,
+		VersionID:  target.Source.Computer.VersionID, SizeBytes: target.Source.Computer.LogicalBytes,
+	}}
+	if err := p.reserveRuntimeCapacity(target, topology); err != nil {
+		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
+			return err
+		}
+		return failInstance(err)
 	}
+	defer func() {
+		if !materializeAttempted {
+			retErr = errors.Join(retErr, p.releaseRuntimeCapacity(runtimeInstanceID, runtimeEpoch))
+		}
+	}()
+	admitted()
 	tempDir := strings.TrimSpace(p.TempDir)
 	if tempDir == "" {
 		tempDir = os.TempDir()
 	}
-	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+	if err := os.MkdirAll(tempDir, 0700); err != nil {
 		return failInstance(err)
 	}
-	workspaceImagePath, cleanupWorkspaceImage, topology, err := p.restoreWorkspaceImageAndRuntimeSubstrate(ctx, materializer, tempDir, mount,
-		"prepared runtime pool workspace image restored",
-		"prepared runtime pool substrate resolved",
-		"runtime_instance_id", runtimeInstanceID,
-	)
+	device, err := p.prepareComputerDevice(ctx, target)
 	if err != nil {
-		return failInstance(err)
-	}
-	defer cleanupWorkspaceImage()
-	var mountedImageConfig *workspacev0.RuntimeImageConfig
-	if topology.Substrate != nil && target.Source.Restore == nil {
-		mountedImageConfig, err = readPreparedImageConfig(ctx, workspaceImagePath, mount.WorkspaceImage)
-		if err != nil {
-			return failInstance(err)
+		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
+			return err
 		}
-	}
-	if err := p.verifyReservedWorkspaceVersion(ctx, materializer, tempDir, mount); err != nil {
 		return failInstance(err)
 	}
+	topology.Computer.Device = device
+	config := target.Source.Computer.Config
+	mountedImageConfig := &workspacev0.RuntimeImageConfig{Env: config.Env, WorkingDir: config.WorkingDir, User: config.User, Entrypoint: config.Entrypoint, Cmd: config.Cmd}
 	readOnlyDrives, closeProgram, err := p.prepareProgram(
 		ctx,
 		tempDir,
@@ -732,30 +770,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 			retErr = errors.Join(retErr, closeProgram())
 		}
 	}()
-	var runtimeSubstrateIDValue string
-	if topology.Substrate != nil {
-		started := time.Now()
-		registered, err := registerRuntimeSubstrate(
-			ctx,
-			p.RuntimeSubstrates,
-			mount.DeploymentDefinitionID,
-			topology.Substrate,
-		)
-		p.logInfo("prepared runtime pool substrate resolved", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
-		if err != nil {
-			return failInstance(err)
-		}
-		runtimeSubstrateIDValue = runtimeSubstrateID(registered)
-	}
 	started := time.Now()
-	if err := p.reserveRuntimeCapacity(target, topology); err != nil {
-		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
-			p.logInfo("prepared runtime warm deferred", "runtime_instance_id", runtimeInstanceID, "reason", err.Error())
-			return err
-		}
-		return failInstance(err)
-	}
-	admitted()
 	materializeAttempted = true
 	var session vm.Session
 	var materializeErr error
@@ -786,6 +801,9 @@ func (p *PreparedRuntimePool) prepareAndStore(
 	closeProgramErr := closeProgram()
 	programArtifactsOpen = false
 	err = errors.Join(materializeErr, closeProgramErr)
+	if err != nil && session != nil {
+		err = errors.Join(err, p.closeSession(ctx, session))
+	}
 	p.logInfo("prepared runtime pool session materialized", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return failInstance(err)
@@ -799,7 +817,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		}
 	}()
 	if target.Source.Restore == nil {
-		if err := p.prepareGuestRuntime(ctx, session, key, mount, workspaceImagePath, mountedImageConfig); err != nil {
+		if err := p.prepareGuestRuntime(ctx, session, key, mount, "", mountedImageConfig); err != nil {
 			p.logInfo("prepared runtime pool guest prepare failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 			return failInstance(err)
 		}
@@ -852,10 +870,12 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		return nil
 	}
 	readyRequest := runtimeTargetStatusRequest(target, nil)
-	readyRequest.RuntimeSubstrateID = runtimeSubstrateIDValue
 	readyRequest.VMVCPUCount = target.Source.VMVCPUCount
 	readyRequest.CPUConfigDigest = target.Source.CPUConfigDigest
-	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, readyRequest); err != nil {
+	readyCtx, cancelReady := preparedRuntimeControlContext(ctx)
+	_, readyErr := p.RuntimeInstances.MarkRuntimeInstanceReady(readyCtx, readyRequest)
+	cancelReady()
+	if err := readyErr; err != nil {
 		entry.ready.finish(err)
 		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 		if failErr := p.removeReadyEntryAndFail(key, entry, err, true); failErr != nil {
@@ -890,36 +910,6 @@ func runtimeTargetWorkloadBinding(target workerapi.RuntimeReconcileTarget) vm.Wo
 		RuntimeInstanceID: target.ID,
 		RuntimeIdentityID: target.Source.RuntimeIdentityID,
 	}
-}
-
-func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
-	ctx context.Context,
-	materializer WorkspaceMaterializer,
-	tempDir string,
-	mount workerapi.WorkspaceMount,
-) error {
-	if strings.TrimSpace(mount.Target.BaseWorkspaceVersionID) == "" {
-		return errors.New("runtime reservation base workspace version is required")
-	}
-	if _, err := workspaceTargetFromWorker(mount.Target); err != nil {
-		return fmt.Errorf("runtime reservation workspace target: %w", err)
-	}
-	if mount.Target.Empty != nil {
-		return nil
-	}
-	artifact := mount.Target.Artifact
-	_, cleanup, err := materializer.restoreCASObject(
-		ctx,
-		tempDir,
-		"workspace-version",
-		workerapi.CASObject{
-			Digest:    artifact.Digest,
-			SizeBytes: artifact.SizeBytes,
-			MediaType: artifact.MediaType,
-		},
-	)
-	cleanup()
-	return err
 }
 
 func (p *PreparedRuntimePool) prepareProgram(
@@ -1347,7 +1337,7 @@ func preparedRuntimeWorkspaceMountFromSource(source workerapi.RuntimeSource) wor
 		ID:                      uuid.NewV7().String(),
 		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
-		Target:                  *source.WorkspaceTarget,
+		Target:                  workerapi.ComputerMountTarget{BaseWorkspaceVersionID: source.Computer.VersionID},
 		RuntimeIdentityID:       strings.TrimSpace(source.RuntimeIdentityID),
 		WorkspaceImage:          source.WorkspaceImage,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
@@ -1478,6 +1468,20 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 	if len(topologies) == 1 && topologies[0].Substrate != nil {
 		projectionBytes = topologies[0].Substrate.SizeBytes
 	}
+	if len(topologies) == 1 && topologies[0].Computer != nil {
+		if topologies[0].Substrate != nil {
+			return errors.New("computer and substrate cannot share a runtime topology")
+		}
+		projectionBytes = topologies[0].Computer.SizeBytes
+	}
+	retained, staging, err := p.checkpointRestoreCapacity(target)
+	if err != nil {
+		return err
+	}
+	if retained > math.MaxInt64-projectionBytes {
+		return capacity.ErrOverflow
+	}
+	projectionBytes += retained
 	request, err := runtimeCapacityVectorWithProjection(
 		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
@@ -1491,14 +1495,50 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 	if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil && !created {
 		return errPreparedRuntimeCapacityBusy
 	}
+	if err != nil {
+		return err
+	}
+	if staging > 0 {
+		created, err = p.Capacity.Reserve(restoreStagingKey(target.ID, target.WorkerEpoch), capacity.Vector{GuestEphemeralDiskBytes: staging})
+		if err != nil || !created {
+			releaseErr := p.Capacity.Release(runtimeCapacityKey(target.ID, target.WorkerEpoch))
+			if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil {
+				err = errPreparedRuntimeCapacityBusy
+			}
+			return errors.Join(err, releaseErr)
+		}
+	}
 	return err
 }
 
 func (p *PreparedRuntimePool) releaseRuntimeCapacity(runtimeInstanceID string, runtimeEpoch int64) error {
+	if err := p.releaseComputerDevice(runtimeInstanceID, runtimeEpoch); err != nil {
+		return err
+	}
 	if p == nil || p.Capacity == nil {
 		return nil
 	}
-	return p.Capacity.Release(runtimeCapacityKey(runtimeInstanceID, runtimeEpoch))
+	if ids.Validate(runtimeInstanceID) == nil && runtimeEpoch > 0 {
+		if err := os.RemoveAll(p.computerPreparationDirectory(runtimeInstanceID, runtimeEpoch)); err != nil {
+			return err
+		}
+		if err := os.RemoveAll(p.restorePreparationDirectory(runtimeInstanceID, runtimeEpoch)); err != nil {
+			return err
+		}
+	}
+	if err := p.Capacity.Release(computerStagingKey(runtimeInstanceID, runtimeEpoch)); err != nil {
+		return err
+	}
+	if err := p.Capacity.Release(restoreStagingKey(runtimeInstanceID, runtimeEpoch)); err != nil {
+		return err
+	}
+	if err := p.Capacity.Release(runtimeCapacityKey(runtimeInstanceID, runtimeEpoch)); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	delete(p.computerDevices, preparedRuntimeRef{id: runtimeInstanceID, epoch: runtimeEpoch})
+	p.mu.Unlock()
+	return nil
 }
 
 func (p *PreparedRuntimePool) releaseRuntimeAfterPhysicalCleanup(runtimeInstanceID string, runtimeEpoch int64) error {
@@ -1529,6 +1569,10 @@ func runtimeTargetStatusRequest(target workerapi.RuntimeReconcileTarget, failure
 	if failure != nil {
 		request.ReasonCode = workerapi.RuntimeFailureReconcile
 		message := failure.Error()
+		var sourceFailure *computer.SourceFailure
+		if errors.As(failure, &sourceFailure) {
+			request.ReasonCode = workerapi.RuntimeFailureComputerSource
+		}
 		var fatal interface{ FatalWorker() bool }
 		if errors.As(failure, &fatal) && fatal.FatalWorker() {
 			request.ReasonCode = workerapi.RuntimeFailureWorkerInvalid

@@ -92,7 +92,7 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 		t.Fatalf("creation snapshot = %+v", created.Snapshot)
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces
+		UPDATE computers
 		   SET status = 'deleting', desired_state = 'deleted', updated_at = now() + interval '1 minute'
 		 WHERE id = $1
 	`, created.WorkspaceID); err != nil {
@@ -134,12 +134,12 @@ func TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim(t *tes
 	var versionCount, secretPlacementCount int
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT deployment_definitions.deployment_id,
-		       (SELECT count(*) FROM workspace_versions WHERE workspace_id = workspaces.id),
-		       (SELECT count(*) FROM workspace_secrets WHERE workspace_id = workspaces.id)
-		  FROM workspaces
+		       (SELECT count(*) FROM computer_versions WHERE computer_id = computers.id),
+		       (SELECT count(*) FROM workspace_secrets WHERE workspace_id = computers.id)
+		  FROM computers
 		  JOIN deployment_definitions
-		    ON deployment_definitions.id = workspaces.deployment_definition_id
-		 WHERE workspaces.id = $1
+		    ON deployment_definitions.id = computers.deployment_definition_id
+		 WHERE computers.id = $1
 	`, created.WorkspaceID).Scan(&deploymentID, &versionCount, &secretPlacementCount); err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects(t *testin
 	}
 	var state db.WorkspaceStatus
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT status FROM workspaces WHERE id = $1
+		SELECT status FROM computers WHERE id = $1
 	`, pgvalue.MustUUIDValue(record.ID)).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
@@ -269,13 +269,14 @@ func testWorkspaceDeleteWithoutActiveMountSucceeds(t *testing.T, recoveryRequire
 	workspaceID := product.workspaceIDs[0]
 	if recoveryRequired {
 		dbtest.MustExec(t, t.Context(), product.pool, `
-UPDATE workspaces
-   SET status = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost'
- WHERE id = $1`, workspaceID)
+UPDATE computers
+   SET status = 'recovery_required', desired_state = 'stopped', dirty_state = 'dirty_state_lost',
+       recovery_id=$2, recovery_version_id=head_version_id, recovery_reason='worker_lost', recovery_started_at=now()
+ WHERE id = $1`, workspaceID, uuid.NewV7())
 	}
 	var originalKey, originalDeclaredID string
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT key, sandbox_declared_id FROM workspaces WHERE id = $1`, workspaceID).Scan(
+SELECT key, sandbox_declared_id FROM computers WHERE id = $1`, workspaceID).Scan(
 		&originalKey, &originalDeclaredID,
 	); err != nil {
 		t.Fatal(err)
@@ -295,7 +296,7 @@ SELECT key, sandbox_declared_id FROM workspaces WHERE id = $1`, workspaceID).Sca
 	var state db.WorkspaceStatus
 	var desiredState, dirtyState string
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT status, desired_state, dirty_state FROM workspaces WHERE id = $1`, workspaceID).Scan(
+SELECT status, desired_state, dirty_state FROM computers WHERE id = $1`, workspaceID).Scan(
 		&state, &desiredState, &dirtyState,
 	); err != nil {
 		t.Fatal(err)
@@ -308,7 +309,7 @@ SELECT status, desired_state, dirty_state FROM workspaces WHERE id = $1`, worksp
 		t.Fatal(err)
 	}
 	if len(finalized) != 1 || pgvalue.MustUUIDValue(finalized[0]) != workspaceID {
-		t.Fatalf("finalized workspaces = %+v, want %s", finalized, workspaceID)
+		t.Fatalf("finalized computers = %+v, want %s", finalized, workspaceID)
 	}
 	var tombstone struct {
 		state                  db.WorkspaceStatus
@@ -322,7 +323,7 @@ SELECT status, desired_state, dirty_state FROM workspaces WHERE id = $1`, worksp
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT status, revision, deployment_definition_id, key,
        sandbox_declared_id, head_version_id, deleted_at
-  FROM workspaces WHERE id = $1`, workspaceID).Scan(
+  FROM computers WHERE id = $1`, workspaceID).Scan(
 		&tombstone.state, &tombstone.revision, &tombstone.deploymentDefinitionID,
 		&tombstone.key, &tombstone.sandboxDeclaredID, &tombstone.headVersionID,
 		&tombstone.deletedAt,
@@ -384,7 +385,7 @@ func TestWorkspaceDeleteFinalizationSkipsBlockedRowsAndIsConcurrent(t *testing.T
 		t.Fatal(err)
 	}
 	if _, err := product.pool.Exec(t.Context(), `
-UPDATE workspaces
+UPDATE computers
    SET status = 'deleting', desired_state = 'deleted', updated_at = now() - interval '1 hour'
  WHERE id = $1`, blockedWorkspaceID); err != nil {
 		t.Fatal(err)
@@ -398,7 +399,7 @@ UPDATE workspaces
 			t.Fatal(err)
 		}
 		if _, err := product.pool.Exec(t.Context(), `
-UPDATE workspaces SET updated_at = now() - ($2::int * interval '10 minutes')
+UPDATE computers SET updated_at = now() - ($2::int * interval '10 minutes')
  WHERE id = $1`, workspaceID, 3-index); err != nil {
 			t.Fatal(err)
 		}
@@ -441,11 +442,11 @@ UPDATE workspaces SET updated_at = now() - ($2::int * interval '10 minutes')
 		}
 	}
 	if len(seen) != 3 {
-		t.Fatalf("finalized workspaces = %v, want three eligible rows", seen)
+		t.Fatalf("finalized computers = %v, want three eligible rows", seen)
 	}
 	var blockedStatus db.WorkspaceStatus
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT status FROM workspaces WHERE id = $1`, blockedWorkspaceID).Scan(&blockedStatus); err != nil {
+SELECT status FROM computers WHERE id = $1`, blockedWorkspaceID).Scan(&blockedStatus); err != nil {
 		t.Fatal(err)
 	}
 	if blockedStatus != db.WorkspaceStatusDeleting {
@@ -462,7 +463,7 @@ func testWorkspaceDeletePublishesOwnerlessMountCleanupOnce(t *testing.T, initial
 	var headVersionID, sandboxDefinitionID uuid.UUID
 	if err := product.pool.QueryRow(t.Context(), `
 SELECT head_version_id, deployment_definition_id
-  FROM workspaces WHERE id = $1`, workspaceID).Scan(&headVersionID, &sandboxDefinitionID); err != nil {
+  FROM computers WHERE id = $1`, workspaceID).Scan(&headVersionID, &sandboxDefinitionID); err != nil {
 		t.Fatal(err)
 	}
 	workerID := uuid.NewV7()
@@ -503,7 +504,7 @@ INSERT INTO worker_instances (
 	}
 	if _, err := product.pool.Exec(t.Context(), `
 INSERT INTO runtime_instances (
-    id, org_id, worker_group_id, project_id, environment_id, region_id,
+    id, preparation_expires_at, org_id, worker_group_id, project_id, environment_id, region_id,
     worker_instance_id, runtime_identity_id, deployment_definition_id,
     runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest,
     reserved_cpu_millis, reserved_memory_bytes,
@@ -512,7 +513,7 @@ INSERT INTO runtime_instances (
     observed_state, observed_version, observed_desired_version,
     ready_at
 ) VALUES (
-    $1, $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
+    $1, transaction_timestamp() + interval '5 minutes', $2, $3, $4, $5, 'us-east-1', $6, $7, $8, $9,
     1, 1, $10, 1000, 1073741824, 4294967296, 1,
     $11, 'placed', 'ready', 1, 1, now()
 )`, runtimeID, product.orgID, poolFixture.group.ID, product.projectID,
@@ -555,16 +556,16 @@ INSERT INTO workspace_mounts (
 		var desiredVersion int64
 		var stoppedAtValid bool
 		if err := product.pool.QueryRow(t.Context(), `
-SELECT workspaces.status, workspace_mounts.status,
-       workspace_mounts.finalization_kind,
+SELECT computers.status, workspace_mounts.status,
+       workspace_mounts.finalization_action,
        workspace_mounts.finalization_reason_code,
        workspace_mounts.stopped_at IS NOT NULL,
        runtime_instances.desired_state, runtime_instances.desired_version,
        runtime_instances.desired_reason
-  FROM workspaces
-  JOIN workspace_mounts ON workspace_mounts.workspace_id = workspaces.id
+  FROM computers
+  JOIN workspace_mounts ON workspace_mounts.workspace_id = computers.id
   JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
- WHERE workspaces.id = $1 AND workspace_mounts.id = $2`,
+ WHERE computers.id = $1 AND workspace_mounts.id = $2`,
 			workspaceID, mountID,
 		).Scan(
 			&workspaceStatus, &mountStatus, &finalizationKind, &finalizationReason,
@@ -607,7 +608,7 @@ SELECT workspaces.status, workspace_mounts.status,
 
 	if _, err := product.pool.Exec(t.Context(), `
 UPDATE workspace_mounts
-   SET finalization_kind = 'capture',
+   SET finalization_action = 'capture',
        finalization_reason_code = 'workspace_exec_completed'
  WHERE id = $1`, mountID); err != nil {
 		t.Fatal(err)
@@ -625,7 +626,7 @@ UPDATE runtime_instances
 	var finalizationKind, finalizationReason, desiredState, desiredReason string
 	var desiredVersion int64
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT workspace_mounts.finalization_kind,
+SELECT workspace_mounts.finalization_action,
        workspace_mounts.finalization_reason_code,
        runtime_instances.desired_state,
        runtime_instances.desired_version,
@@ -682,18 +683,18 @@ UPDATE runtime_instances
 	var retainedDefinitionID uuid.UUID
 	var retainedRuntimeCount int
 	if err := product.pool.QueryRow(t.Context(), `
-SELECT workspaces.status, workspaces.deployment_definition_id,
+SELECT computers.status, computers.deployment_definition_id,
        count(runtime_instances.id)
-  FROM workspaces
-  LEFT JOIN runtime_instances ON runtime_instances.workspace_id = workspaces.id
- WHERE workspaces.id = $1
- GROUP BY workspaces.id`, workspaceID).Scan(
+  FROM computers
+  LEFT JOIN runtime_instances ON runtime_instances.workspace_id = computers.id
+ WHERE computers.id = $1
+ GROUP BY computers.id`, workspaceID).Scan(
 		&workspaceStatus, &retainedDefinitionID, &retainedRuntimeCount,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if workspaceStatus != db.WorkspaceStatusDeleted ||
-		retainedDefinitionID != sandboxDefinitionID || retainedRuntimeCount != 1 {
+		retainedDefinitionID != sandboxDefinitionID || retainedRuntimeCount != 2 {
 		t.Fatalf(
 			"workspace=%s definition=%s runtimes=%d",
 			workspaceStatus, retainedDefinitionID, retainedRuntimeCount,

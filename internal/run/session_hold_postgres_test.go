@@ -170,7 +170,7 @@ func TestForcedActorFailurePreservesRecoveryAuthority(t *testing.T) {
 			var current, heldRun, heldTurn, owner pgtype.UUID
 			var cursor, events int64
 			if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_reason,r.status,l.status,wl.status,ri.desired_state,s.current_run_id,s.dispatch_hold_run_id,s.active_turn_id,w.owner_session_id,s.committed_input_sequence,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.held')
-FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN run_leases l ON l.id=$2 JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances ri ON ri.id=l.runtime_instance_id JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, actor, work.leaseID).Scan(&sessionStatus, &reason, &runStatus, &leaseStatus, &physicalStatus, &desired, &current, &heldRun, &heldTurn, &owner, &cursor, &events); err != nil {
+FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN run_leases l ON l.id=$2 JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances ri ON ri.id=l.runtime_instance_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, actor, work.leaseID).Scan(&sessionStatus, &reason, &runStatus, &leaseStatus, &physicalStatus, &desired, &current, &heldRun, &heldTurn, &owner, &cursor, &events); err != nil {
 				t.Fatal(err)
 			}
 			wantLease := "rejected"

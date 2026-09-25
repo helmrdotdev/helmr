@@ -11,20 +11,33 @@ import (
 )
 
 type Querier interface {
+	// Worker/lease expiry alone is not exclusion evidence. Only physical reclaim
+	// abandons an unpublished lost operation. Preserve the sequence. A committed
+	// pending slot is not cleared: physical reclaim is not evidence of local adoption.
+	// Its object pins are released separately after the same exclusion boundary.
+	AbandonReclaimedComputerSaves(ctx context.Context, rowLimit int32) (int64, error)
+	// Abandon only an unpublished operation after its owner has joined producers. Keep the sequence watermark
+	// so a delayed admission cannot resurrect a cleared operation.
+	AbandonRuntimeComputerSave(ctx context.Context, arg AbandonRuntimeComputerSaveParams) (int64, error)
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	ActivateSessionTurn(ctx context.Context, arg ActivateSessionTurnParams) (SessionTurn, error)
 	ActivateWorkerInstance(ctx context.Context, arg ActivateWorkerInstanceParams) (WorkerInstance, error)
+	// Anchor to the immutable Attempt origin, never the moving saved Computer head.
 	// Existing checkpoint and acknowledged handback receipts prove the private chain.
 	// The source writer strictly decreases on every edge, so cycles cannot qualify.
 	// Historical expiry is irrelevant after an acknowledged restore; callers retain
 	// the latest candidate's expiry and live execution checks under owner locks.
 	ActorCheckpointLineageIsValid(ctx context.Context, arg ActorCheckpointLineageIsValidParams) (bool, error)
-	AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, arg AdvanceActorTurnWorkspaceLeaseFrontierParams) (WorkspaceLease, error)
+	// Host acknowledgement follows durable local adoption and producer quiescence.
+	// Move only read-source retention; reservation/Run/Attempt/lease origins stay fixed.
+	// The caller holds the live owner locks and validates the immutable receipt.
+	AdoptRuntimeComputerSave(ctx context.Context, arg AdoptRuntimeComputerSaveParams) (int64, error)
 	AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActorWorkspaceHeadParams) (AdvanceActorWorkspaceHeadRow, error)
 	AdvanceCancelledSessionInputs(ctx context.Context, arg AdvanceCancelledSessionInputsParams) (Session, error)
 	AdvanceRunWorkspaceMountFence(ctx context.Context, arg AdvanceRunWorkspaceMountFenceParams) (WorkspaceMount, error)
 	AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunWorkspaceWriterParams) (AdvanceRunWorkspaceWriterRow, error)
 	AdvanceScheduleCursor(ctx context.Context, arg AdvanceScheduleCursorParams) (Schedule, error)
+	AdvanceTaskRetryWorkspaceHead(ctx context.Context, arg AdvanceTaskRetryWorkspaceHeadParams) (pgtype.UUID, error)
 	AdvanceWorkspaceExecMountFence(ctx context.Context, arg AdvanceWorkspaceExecMountFenceParams) (WorkspaceMount, error)
 	AdvanceWorkspaceExecWriter(ctx context.Context, arg AdvanceWorkspaceExecWriterParams) (AdvanceWorkspaceExecWriterRow, error)
 	AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (AppendDeploymentEventRow, error)
@@ -43,6 +56,10 @@ type Querier interface {
 	BeginRunLeaseCheckpoint(ctx context.Context, arg BeginRunLeaseCheckpointParams) (RunLease, error)
 	BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLeaseFinalizationParams) (RunLease, error)
 	BeginRunWorkspaceLeaseFinalization(ctx context.Context, arg BeginRunWorkspaceLeaseFinalizationParams) (WorkspaceLease, error)
+	// The publication owner holds secret, Computer and execution locks and validates
+	// live Run/process deadlines before calling these state transitions. These queries
+	// do not authenticate Workers or authorize publication of bytes.
+	BeginRuntimeComputerSave(ctx context.Context, arg BeginRuntimeComputerSaveParams) (BeginRuntimeComputerSaveRow, error)
 	BeginSessionCancellation(ctx context.Context, arg BeginSessionCancellationParams) (Session, error)
 	BeginSessionTurnSettlement(ctx context.Context, arg BeginSessionTurnSettlementParams) (SessionTurn, error)
 	BindRunWaitTurn(ctx context.Context, arg BindRunWaitTurnParams) (BindRunWaitTurnRow, error)
@@ -55,27 +72,34 @@ type Querier interface {
 	// TLS preparation is reservation-or-live, distinct from credential use.
 	// The root is persisted at Workspace creation; preparation only captures existing material.
 	CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error)
+	// The data-modifying CTE always runs in the same statement. Certification does
+	// not depend on its inserted row count: every inherited key may already be direct.
+	CertifyComputerObject(ctx context.Context, arg CertifyComputerObjectParams) (int64, error)
 	ChargeRunRuntimePreparationFailure(ctx context.Context, arg ChargeRunRuntimePreparationFailureParams) (Run, error)
 	CheckpointRunLease(ctx context.Context, arg CheckpointRunLeaseParams) (RunLease, error)
 	ClaimControlOutbox(ctx context.Context, arg ClaimControlOutboxParams) ([]ControlOutbox, error)
 	ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesParams) ([]Schedule, error)
 	ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error)
 	ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTelemetryOutboxParams) ([]ClaimLiveTelemetryOutboxRow, error)
+	// Claim only scheduling responsibility, not permission to adopt the digest.
+	// A crashed sweeper becomes eligible again; repeated deletion is idempotent.
+	ClaimRetiredCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
+	// Retained upload IDs get independent, fair retry scheduling. Historical IDs
+	// must not monopolize the digest's deadline or starve completed-version cleanup.
+	ClaimRetiredCasUploads(ctx context.Context, arg ClaimRetiredCasUploadsParams) ([]string, error)
 	ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIngestBatchParams) ([]ClaimRunLogIngestBatchRow, error)
 	ClaimSessionMessage(ctx context.Context, arg ClaimSessionMessageParams) (SessionMessage, error)
 	ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error)
 	ClearFreshPrestartRunLease(ctx context.Context, arg ClearFreshPrestartRunLeaseParams) (Run, error)
 	ClearSessionDispatchHold(ctx context.Context, arg ClearSessionDispatchHoldParams) (Session, error)
-	CloseCheckpointSourceRuntime(ctx context.Context, arg CloseCheckpointSourceRuntimeParams) (CloseCheckpointSourceRuntimeRow, error)
-	CloseExpiredWorkspaceExecReservation(ctx context.Context, arg CloseExpiredWorkspaceExecReservationParams) (int64, error)
+	CloseExpiredRuntimeReservation(ctx context.Context, arg CloseExpiredRuntimeReservationParams) (CloseExpiredRuntimeReservationRow, error)
 	CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error)
-	CloseRunActiveIntervalForCheckpointFailure(ctx context.Context, arg CloseRunActiveIntervalForCheckpointFailureParams) (int64, error)
 	CloseRunActiveIntervalForFinalization(ctx context.Context, arg CloseRunActiveIntervalForFinalizationParams) (Run, error)
 	CloseRunRuntimes(ctx context.Context, arg CloseRunRuntimesParams) error
 	CloseWorkspaceExecRuntime(ctx context.Context, arg CloseWorkspaceExecRuntimeParams) (int64, error)
 	CommitPendingCheckpointReady(ctx context.Context, arg CommitPendingCheckpointReadyParams) (RunWait, error)
 	CommitSameWorkspaceChildCheckpointReady(ctx context.Context, arg CommitSameWorkspaceChildCheckpointReadyParams) (RunWait, error)
-	CommitStagedWorkspaceExecVersion(ctx context.Context, arg CommitStagedWorkspaceExecVersionParams) (WorkspaceVersion, error)
+	CommitStagedWorkspaceExecVersion(ctx context.Context, arg CommitStagedWorkspaceExecVersionParams) (ComputerVersion, error)
 	CommitTerminalCheckpointReady(ctx context.Context, arg CommitTerminalCheckpointReadyParams) (RunWait, error)
 	CompleteActorAttempt(ctx context.Context, arg CompleteActorAttemptParams) (RunAttempt, error)
 	CompleteCheckpointingChildRunWait(ctx context.Context, arg CompleteCheckpointingChildRunWaitParams) (RunWait, error)
@@ -89,7 +113,6 @@ type Querier interface {
 	CompleteSameWorkspaceChildFailure(ctx context.Context, arg CompleteSameWorkspaceChildFailureParams) (RunWait, error)
 	CompleteSameWorkspaceChildSuccess(ctx context.Context, arg CompleteSameWorkspaceChildSuccessParams) (RunWait, error)
 	CompleteSessionInterruption(ctx context.Context, arg CompleteSessionInterruptionParams) (Session, error)
-	CompleteSessionRecovery(ctx context.Context, arg CompleteSessionRecoveryParams) (Session, error)
 	CompleteTaskAttempt(ctx context.Context, arg CompleteTaskAttemptParams) (RunAttempt, error)
 	CompleteTaskRunLease(ctx context.Context, arg CompleteTaskRunLeaseParams) (RunLease, error)
 	CompleteToken(ctx context.Context, arg CompleteTokenParams) (CompleteTokenRow, error)
@@ -98,13 +121,16 @@ type Querier interface {
 	ConfirmWorkerInstanceProviderAbsent(ctx context.Context, workerInstanceID pgtype.UUID) (ConfirmWorkerInstanceProviderAbsentRow, error)
 	ConsumeDeviceCode(ctx context.Context, deviceCodeHash []byte) (DeviceCode, error)
 	ConsumeMagicLink(ctx context.Context, arg ConsumeMagicLinkParams) (int64, error)
+	// Caller holds the Runtime row lock; recheck time at consumption because other
+	// grant operations may have waited since the initial locked authority check.
 	ConsumeRunRuntimeReservation(ctx context.Context, arg ConsumeRunRuntimeReservationParams) (int64, error)
+	// Caller holds the Runtime row lock; recheck time at consumption because other
+	// grant operations may have waited since the initial locked authority check.
 	ConsumeWorkspaceExecRuntimeReservation(ctx context.Context, arg ConsumeWorkspaceExecRuntimeReservationParams) (int64, error)
 	ControlOutboxLifecycle(ctx context.Context, deadLetterLimit int64) (ControlOutboxLifecycleRow, error)
 	CountOrganizations(ctx context.Context) (int64, error)
 	CountRecentMagicLinks(ctx context.Context, arg CountRecentMagicLinksParams) (int64, error)
 	CreateActor(ctx context.Context, arg CreateActorParams) (Session, error)
-	CreateActorCloseReconcileOutbox(ctx context.Context, arg CreateActorCloseReconcileOutboxParams) error
 	CreateActorContinuationRun(ctx context.Context, arg CreateActorContinuationRunParams) (CreateActorContinuationRunRow, error)
 	CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error
 	CreateActorStartRun(ctx context.Context, arg CreateActorStartRunParams) (CreateActorStartRunRow, error)
@@ -112,8 +138,11 @@ type Querier interface {
 	CreateArtifact(ctx context.Context, arg CreateArtifactParams) (Artifact, error)
 	CreateAttemptSecretResolutions(ctx context.Context, arg CreateAttemptSecretResolutionsParams) (int64, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
-	CreateCheckpointFailureRetryAttempt(ctx context.Context, arg CreateCheckpointFailureRetryAttemptParams) (RunAttempt, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
+	CreateComputerKey(ctx context.Context, arg CreateComputerKeyParams) (ComputerDataKey, error)
+	// These operations run only under the owning Computer/Runtime fence. Locator
+	// framing, authenticated page membership and upload correspondence are prerequisites.
+	CreateComputerVersionRoot(ctx context.Context, arg CreateComputerVersionRootParams) error
 	CreateControlOutbox(ctx context.Context, arg CreateControlOutboxParams) (ControlOutbox, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error)
@@ -124,7 +153,7 @@ type Querier interface {
 	CreateMagicLink(ctx context.Context, arg CreateMagicLinkParams) (MagicLink, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
 	CreatePendingWorkerPool(ctx context.Context, arg CreatePendingWorkerPoolParams) (WorkerPool, error)
-	CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, arg CreatePrivateCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
+	CreatePrivateCheckpointWorkspaceVersion(ctx context.Context, arg CreatePrivateCheckpointWorkspaceVersionParams) (ComputerVersion, error)
 	CreateProcessSecretResolutions(ctx context.Context, arg CreateProcessSecretResolutionsParams) (int64, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateProjectWithDefaultEnvironment(ctx context.Context, arg CreateProjectWithDefaultEnvironmentParams) (CreateProjectWithDefaultEnvironmentRow, error)
@@ -137,6 +166,7 @@ type Querier interface {
 	CreateRunRuntimeReservation(ctx context.Context, arg CreateRunRuntimeReservationParams) (CreateRunRuntimeReservationRow, error)
 	CreateSameWorkspaceChildRunFromParentDeployment(ctx context.Context, arg CreateSameWorkspaceChildRunFromParentDeploymentParams) (CreateSameWorkspaceChildRunFromParentDeploymentRow, error)
 	CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error)
+	CreateSessionLifecycleReconcileOutbox(ctx context.Context, arg CreateSessionLifecycleReconcileOutboxParams) error
 	CreateSessionMessage(ctx context.Context, arg CreateSessionMessageParams) (SessionMessage, error)
 	CreateTaskRetryAttempt(ctx context.Context, arg CreateTaskRetryAttemptParams) (RunAttempt, error)
 	CreateToken(ctx context.Context, arg CreateTokenParams) (Token, error)
@@ -149,11 +179,16 @@ type Querier interface {
 	CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspaceSecretParams) (WorkspaceSecret, error)
 	DeadLetterControlOutbox(ctx context.Context, arg DeadLetterControlOutboxParams) (ControlOutbox, error)
 	DeadLetterUnsupportedControlOutbox(ctx context.Context, arg DeadLetterUnsupportedControlOutboxParams) ([]ControlOutbox, error)
-	DelayCheckpointFailureRetry(ctx context.Context, arg DelayCheckpointFailureRetryParams) (Run, error)
 	DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error)
 	DeleteScheduleSecretsForSchedules(ctx context.Context, arg DeleteScheduleSecretsForSchedulesParams) error
+	// Run only after deleting the selected Computer object in the same transaction.
+	// Other Computers and artifact kinds may still own the shared physical bytes.
+	DeleteUnreferencedComputerCasMembership(ctx context.Context, arg DeleteUnreferencedComputerCasMembershipParams) (int64, error)
+	DeleteUnreferencedComputerObject(ctx context.Context, arg DeleteUnreferencedComputerObjectParams) (int64, error)
+	DeleteUnreferencedComputerVersionRoot(ctx context.Context, arg DeleteUnreferencedComputerVersionRootParams) (int64, error)
 	DeliverControlOutbox(ctx context.Context, arg DeliverControlOutboxParams) (ControlOutbox, error)
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
+	DetachCheckpointSource(ctx context.Context, arg DetachCheckpointSourceParams) (DetachCheckpointSourceRow, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
 	DiscardStagedWorkspaceExecVersion(ctx context.Context, arg DiscardStagedWorkspaceExecVersionParams) (int64, error)
 	DiscoverWorkerRunLeaseWork(ctx context.Context, arg DiscoverWorkerRunLeaseWorkParams) ([]DiscoverWorkerRunLeaseWorkRow, error)
@@ -169,15 +204,14 @@ type Querier interface {
 	ExpireQueuedRun(ctx context.Context, arg ExpireQueuedRunParams) (int64, error)
 	ExpireQueuedRunAttempt(ctx context.Context, arg ExpireQueuedRunAttemptParams) (int64, error)
 	ExpireWorkspaceExecLease(ctx context.Context, arg ExpireWorkspaceExecLeaseParams) (WorkspaceLease, error)
-	FailCheckpointRunLease(ctx context.Context, arg FailCheckpointRunLeaseParams) (RunLease, error)
-	FailCheckpointRunWait(ctx context.Context, arg FailCheckpointRunWaitParams) (RunWait, error)
+	FailActorSession(ctx context.Context, arg FailActorSessionParams) (Session, error)
 	FailCheckpointingRunWait(ctx context.Context, arg FailCheckpointingRunWaitParams) (RunWait, error)
 	FailHotRunWait(ctx context.Context, arg FailHotRunWaitParams) (RunWait, error)
 	FailIdempotencyClaim(ctx context.Context, arg FailIdempotencyClaimParams) (IdempotencyClaim, error)
 	FailParkedRunWait(ctx context.Context, arg FailParkedRunWaitParams) (RunWait, error)
 	FailPendingWorkspaceExecProcess(ctx context.Context, arg FailPendingWorkspaceExecProcessParams) (WorkspaceProcess, error)
 	FailWorkspaceExecProcess(ctx context.Context, arg FailWorkspaceExecProcessParams) (WorkspaceProcess, error)
-	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (WorkspaceMount, error)
+	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (FailWorkspaceMountRow, error)
 	FenceRunWorkspaceLease(ctx context.Context, arg FenceRunWorkspaceLeaseParams) (int64, error)
 	FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error)
 	FenceWorkspaceExecLeaseForSecretRevocation(ctx context.Context, arg FenceWorkspaceExecLeaseForSecretRevocationParams) (WorkspaceLease, error)
@@ -186,8 +220,6 @@ type Querier interface {
 	FinalizeWorkspaceExecWorkspace(ctx context.Context, arg FinalizeWorkspaceExecWorkspaceParams) (FinalizeWorkspaceExecWorkspaceRow, error)
 	FindCancellationTarget(ctx context.Context, arg FindCancellationTargetParams) (pgtype.UUID, error)
 	FinishActorRun(ctx context.Context, arg FinishActorRunParams) (Run, error)
-	FinishCheckpointFailedActorRun(ctx context.Context, arg FinishCheckpointFailedActorRunParams) (Run, error)
-	FinishCheckpointFailedTaskRun(ctx context.Context, arg FinishCheckpointFailedTaskRunParams) (Run, error)
 	FinishSessionMessage(ctx context.Context, arg FinishSessionMessageParams) (SessionMessage, error)
 	FinishTaskRun(ctx context.Context, arg FinishTaskRunParams) (Run, error)
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
@@ -205,8 +237,10 @@ type Querier interface {
 	GetCasObject(ctx context.Context, arg GetCasObjectParams) (CasObject, error)
 	GetCheckpointFailedReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointFailedReplayRow, error)
 	GetCheckpointReadyReplay(ctx context.Context, id pgtype.UUID) (GetCheckpointReadyReplayRow, error)
-	GetCheckpointWorkspaceBaseAuthority(ctx context.Context, arg GetCheckpointWorkspaceBaseAuthorityParams) (GetCheckpointWorkspaceBaseAuthorityRow, error)
+	GetChildCallAttemptWait(ctx context.Context, arg GetChildCallAttemptWaitParams) (RunWait, error)
 	GetChildCallRunWaitReplay(ctx context.Context, arg GetChildCallRunWaitReplayParams) (RunWait, error)
+	GetComputerVersionAuthority(ctx context.Context, arg GetComputerVersionAuthorityParams) (GetComputerVersionAuthorityRow, error)
+	GetComputerVersionRoot(ctx context.Context, arg GetComputerVersionRootParams) ([]byte, error)
 	GetCurrentDeployment(ctx context.Context, arg GetCurrentDeploymentParams) (Deployment, error)
 	GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurrentDeploymentForRouteParams) (Deployment, error)
 	GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error)
@@ -245,6 +279,13 @@ type Querier interface {
 	GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) (GetRunSnapshotRow, error)
 	GetRunTelemetryFrontier(ctx context.Context, arg GetRunTelemetryFrontierParams) (GetRunTelemetryFrontierRow, error)
 	GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait, error)
+	// Resolve the retained source, never the current Computer head or reservation.
+	// This is retention evidence, not live authorization; callers hold/recheck their
+	// Runtime and Worker fences before granting source or key access.
+	GetRuntimeComputerSourceRoot(ctx context.Context, runtimeInstanceID pgtype.UUID) (GetRuntimeComputerSourceRootRow, error)
+	// The owning operation holds Computer and Runtime authority. No caller-provided
+	// key selection is accepted. Provider I/O happens only after committing these pins.
+	GetRuntimeComputerWriteKey(ctx context.Context, arg GetRuntimeComputerWriteKeyParams) (ComputerDataKey, error)
 	GetRuntimeIdentityForCheckpoint(ctx context.Context, id string) (RuntimeIdentity, error)
 	GetRuntimePreparationFailureAuthority(ctx context.Context, arg GetRuntimePreparationFailureAuthorityParams) (GetRuntimePreparationFailureAuthorityRow, error)
 	GetRuntimeSubstrateForCheckpoint(ctx context.Context, id pgtype.UUID) (RuntimeSubstrate, error)
@@ -264,10 +305,8 @@ type Querier interface {
 	GetSessionTurn(ctx context.Context, arg GetSessionTurnParams) (SessionTurn, error)
 	GetSessionTurnAtSequenceForUpdate(ctx context.Context, arg GetSessionTurnAtSequenceForUpdateParams) (SessionTurn, error)
 	GetSessionTurnByIDForUpdate(ctx context.Context, arg GetSessionTurnByIDForUpdateParams) (SessionTurn, error)
-	GetStagedWorkspaceExecCapture(ctx context.Context, arg GetStagedWorkspaceExecCaptureParams) (WorkspaceVersion, error)
 	GetTaskCompletionReplay(ctx context.Context, arg GetTaskCompletionReplayParams) (pgtype.Text, error)
 	GetTaskCompletionTime(ctx context.Context) (pgtype.Timestamptz, error)
-	GetTaskWorkspaceResetVersion(ctx context.Context, arg GetTaskWorkspaceResetVersionParams) (WorkspaceVersion, error)
 	GetTelemetryOutboxLifecycle(ctx context.Context, retainFor pgtype.Interval) (GetTelemetryOutboxLifecycleRow, error)
 	GetTimerRunWaitRegistrationReplay(ctx context.Context, arg GetTimerRunWaitRegistrationReplayParams) (RunWait, error)
 	GetToken(ctx context.Context, arg GetTokenParams) (Token, error)
@@ -280,9 +319,14 @@ type Querier interface {
 	// read-only replay before lineage locks.
 	GetTokenWaitRegistrationReplay(ctx context.Context, arg GetTokenWaitRegistrationReplayParams) (GetTokenWaitRegistrationReplayRow, error)
 	GetUserOnboardingState(ctx context.Context, arg GetUserOnboardingStateParams) (GetUserOnboardingStateRow, error)
+	// Replay uses immutable publication facts, not the current head or pending slot.
+	GetWorkerComputerSave(ctx context.Context, arg GetWorkerComputerSaveParams) (ComputerVersion, error)
 	GetWorkerGroup(ctx context.Context, id pgtype.UUID) (WorkerGroup, error)
 	GetWorkerGroupByRegionName(ctx context.Context, arg GetWorkerGroupByRegionNameParams) (WorkerGroup, error)
 	GetWorkerGroupStatus(ctx context.Context, workerGroupID pgtype.UUID) (GetWorkerGroupStatusRow, error)
+	// Authentication supplies the original Worker identity. Historical success is
+	// independent of current head/config, desired state and retained payload lifetime.
+	GetWorkerInitialComputerVersion(ctx context.Context, arg GetWorkerInitialComputerVersionParams) (ComputerVersion, error)
 	GetWorkerInstancePoolID(ctx context.Context, arg GetWorkerInstancePoolIDParams) (pgtype.UUID, error)
 	GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInstanceStatusParams) (GetWorkerInstanceStatusRow, error)
 	GetWorkerInstanceStatusByResource(ctx context.Context, arg GetWorkerInstanceStatusByResourceParams) (GetWorkerInstanceStatusByResourceRow, error)
@@ -295,11 +339,12 @@ type Querier interface {
 	GetWorkspaceExecLocatorForMount(ctx context.Context, arg GetWorkspaceExecLocatorForMountParams) (GetWorkspaceExecLocatorForMountRow, error)
 	GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error)
 	GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error)
-	GetWorkspaceMountForWorkerTransition(ctx context.Context, arg GetWorkspaceMountForWorkerTransitionParams) (WorkspaceMount, error)
-	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
+	GetWorkspaceMountForWorker(ctx context.Context, arg GetWorkspaceMountForWorkerParams) (WorkspaceMount, error)
 	GetWorkspaceSecretCAPublic(ctx context.Context, arg GetWorkspaceSecretCAPublicParams) (GetWorkspaceSecretCAPublicRow, error)
 	GrantUserAdmin(ctx context.Context, userID pgtype.UUID) error
+	HasRegisteredInitialComputerObject(ctx context.Context, arg HasRegisteredInitialComputerObjectParams) (bool, error)
 	HoldSessionExecution(ctx context.Context, arg HoldSessionExecutionParams) (Session, error)
+	InitializeComputerWriteKey(ctx context.Context, arg InitializeComputerWriteKeyParams) (int64, error)
 	// Creation-only: caller owns the insert transaction and uses inserted created_at.
 	// No preparation or later lifecycle operation may initialize or replace a CA.
 	InitializeWorkspaceSecretCA(ctx context.Context, arg InitializeWorkspaceSecretCAParams) (int64, error)
@@ -310,18 +355,31 @@ type Querier interface {
 	InsertWorkerPoolCPUShape(ctx context.Context, arg InsertWorkerPoolCPUShapeParams) (int64, error)
 	InsertWorkspaceExecLease(ctx context.Context, arg InsertWorkspaceExecLeaseParams) (WorkspaceLease, error)
 	InvalidateFailedRunCheckpoint(ctx context.Context, arg InvalidateFailedRunCheckpointParams) (RunCheckpoint, error)
-	InvalidateRestoredActorCheckpoint(ctx context.Context, arg InvalidateRestoredActorCheckpointParams) (RunCheckpoint, error)
 	InvalidateRunCheckpoints(ctx context.Context, arg InvalidateRunCheckpointsParams) error
+	// Stable absence, not a historical receipt: this sequence cannot be admitted
+	// again and no committed save at that sequence exists. Read-only history remains
+	// scoped to the authenticated Worker and the original execution identity.
+	IsComputerSaveAbandoned(ctx context.Context, arg IsComputerSaveAbandonedParams) (pgtype.Bool, error)
+	// Historical acknowledgement: a committed operation cannot be abandoned.
+	IsRuntimeComputerSaveAdopted(ctx context.Context, arg IsRuntimeComputerSaveAdoptedParams) (pgtype.Bool, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	ListAPIKeys(ctx context.Context, arg ListAPIKeysParams) ([]ListAPIKeysRow, error)
+	// Only abandoned uploads are retirement candidates. Memberships in any org and
+	// registered owners pin availability with FKs; these NOT EXISTS clauses avoid
+	// routine conflicts but are not the concurrency barrier.
+	ListAbandonedCasBlobs(ctx context.Context, rowLimit int32) ([]string, error)
 	ListCancellationLineage(ctx context.Context, arg ListCancellationLineageParams) ([]ListCancellationLineageRow, error)
 	ListCapacityWorkerInstances(ctx context.Context, arg ListCapacityWorkerInstancesParams) ([]ListCapacityWorkerInstancesRow, error)
 	ListCapacityWorkerPools(ctx context.Context, arg ListCapacityWorkerPoolsParams) ([]ListCapacityWorkerPoolsRow, error)
+	ListCheckpointObjects(ctx context.Context, checkpointID pgtype.UUID) ([]RunCheckpointObject, error)
+	// The root comes from the exact retained owner, never an arbitrary HTTP key list.
+	ListComputerObjectReadKeys(ctx context.Context, arg ListComputerObjectReadKeysParams) ([]ComputerDataKey, error)
 	ListDefinitionSnapshots(ctx context.Context, arg ListDefinitionSnapshotsParams) ([]string, error)
 	ListDeploymentDefinitionsForDeployment(ctx context.Context, arg ListDeploymentDefinitionsForDeploymentParams) ([]DeploymentDefinition, error)
 	ListDueTimerRunWaits(ctx context.Context, limitCount int32) ([]RunWait, error)
 	ListEnvironments(ctx context.Context, arg ListEnvironmentsParams) ([]Environment, error)
 	ListExpiredParentOwnedChildRuns(ctx context.Context, limitCount int32) ([]ListExpiredParentOwnedChildRunsRow, error)
+	ListExpiredRuntimeReservations(ctx context.Context, rowLimit int32) ([]RuntimeInstance, error)
 	ListInvitations(ctx context.Context, arg ListInvitationsParams) ([]ListInvitationsRow, error)
 	ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]ListOrgMembersRow, error)
 	ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
@@ -336,9 +394,13 @@ type Querier interface {
 	ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueuedRunPlanningUsageParams) ([]ListQueuedRunPlanningUsageRow, error)
 	ListRecoverableWorkspaceExecCandidates(ctx context.Context, rowLimit int32) ([]ListRecoverableWorkspaceExecCandidatesRow, error)
 	ListRegions(ctx context.Context) ([]Region, error)
+	ListRetiredCasUploads(ctx context.Context, digest string) ([]string, error)
 	ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, limitCount int32) ([]ListRunExecutionLeaseRecoveryCandidatesRow, error)
 	ListRunListItems(ctx context.Context, arg ListRunListItemsParams) ([]ListRunListItemsRow, error)
 	ListRunWorkerCapacityPressureCandidates(ctx context.Context, arg ListRunWorkerCapacityPressureCandidatesParams) ([]ListRunWorkerCapacityPressureCandidatesRow, error)
+	// Derive keys from the Runtime's pinned source, not from a caller-supplied root.
+	// The broker must revalidate its full live authority before/after provider I/O.
+	ListRuntimeComputerSourceKeys(ctx context.Context, runtimeInstanceID pgtype.UUID) ([]ComputerDataKey, error)
 	ListRuntimeReconcileTargets(ctx context.Context, arg ListRuntimeReconcileTargetsParams) ([]ListRuntimeReconcileTargetsRow, error)
 	ListSameWorkspaceAncestorRuns(ctx context.Context, arg ListSameWorkspaceAncestorRunsParams) ([]ListSameWorkspaceAncestorRunsRow, error)
 	ListScheduleSecrets(ctx context.Context, arg ListScheduleSecretsParams) ([]ScheduleSecret, error)
@@ -353,6 +415,16 @@ type Querier interface {
 	ListTimedOutTokenWaitCandidates(ctx context.Context, rowLimit int32) ([]ListTimedOutTokenWaitCandidatesRow, error)
 	ListTokenWaitCandidates(ctx context.Context, arg ListTokenWaitCandidatesParams) ([]ListTokenWaitCandidatesRow, error)
 	ListTokens(ctx context.Context, arg ListTokensParams) ([]ListTokensRow, error)
+	// A key remains available while any object, current writer or unreclaimed
+	// Runtime needs it. Restrictive availability FKs arbitrate concurrent adoption.
+	ListUnreferencedComputerKeys(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
+	// Roots, active publications and parent objects are the availability owners.
+	// Version history is not deleted. The final DELETE's FKs arbitrate concurrent
+	// adoption after this discovery snapshot.
+	ListUnreferencedComputerObjects(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerObjectsRow, error)
+	// Native owners arbitrate retirement with restrictive availability FKs. This
+	// discovery only avoids repeatedly selecting retained roots in the bounded sweep.
+	ListUnreferencedComputerVersionRoots(ctx context.Context, rowLimit int32) ([]ListUnreferencedComputerVersionRootsRow, error)
 	ListUnsettledSessionMessages(ctx context.Context, arg ListUnsettledSessionMessagesParams) ([]SessionMessage, error)
 	ListWorkerCapacityBins(ctx context.Context, arg ListWorkerCapacityBinsParams) ([]ListWorkerCapacityBinsRow, error)
 	ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsParams) ([]WorkerGroup, error)
@@ -369,7 +441,6 @@ type Querier interface {
 	LockActorStartDeploymentAuthority(ctx context.Context, arg LockActorStartDeploymentAuthorityParams) (LockActorStartDeploymentAuthorityRow, error)
 	LockActorStartKey(ctx context.Context, arg LockActorStartKeyParams) error
 	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
-	LockAttemptSecretResolutionMetadata(ctx context.Context, arg LockAttemptSecretResolutionMetadataParams) ([]LockAttemptSecretResolutionMetadataRow, error)
 	LockCancellationActors(ctx context.Context, arg LockCancellationActorsParams) ([]LockCancellationActorsRow, error)
 	LockCancellationAttempts(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockCancellationCheckpoints(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
@@ -382,6 +453,16 @@ type Querier interface {
 	LockCancellationWorkspaces(ctx context.Context, runIds []pgtype.UUID) ([]pgtype.UUID, error)
 	LockChildWorkspacePair(ctx context.Context, arg LockChildWorkspacePairParams) ([]LockChildWorkspacePairRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (LockClaimedScheduleRow, error)
+	// Collectors deleting different logical owners of the same physical digest must
+	// serialize membership cleanup. Acquire in a separate statement after object
+	// deletion; subsequent statements then see the previous collector's commit.
+	// NO KEY UPDATE avoids blocking ordinary FK acquisition until actual retirement.
+	LockCollectedComputerBlob(ctx context.Context, digest string) (string, error)
+	// The caller owns the fenced publication transaction. These storage operations
+	// neither authenticate a Worker nor accept an unverified ciphertext declaration.
+	// Admission/edge/key mutation must lock the parent and reject certified objects;
+	// descriptors and immediate dependencies are immutable after certification.
+	LockComputerObject(ctx context.Context, arg LockComputerObjectParams) (ComputerObject, error)
 	LockCreatingRunCheckpoint(ctx context.Context, arg LockCreatingRunCheckpointParams) (RunCheckpoint, error)
 	LockDeploymentBundle(ctx context.Context, arg LockDeploymentBundleParams) error
 	LockDeploymentPromotionTarget(ctx context.Context, arg LockDeploymentPromotionTargetParams) (Deployment, error)
@@ -469,14 +550,23 @@ type Querier interface {
 	MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDeletingParams) (MarkWorkspaceDeletingRow, error)
 	MarkWorkspaceExecRecoveryRequired(ctx context.Context, arg MarkWorkspaceExecRecoveryRequiredParams) (MarkWorkspaceExecRecoveryRequiredRow, error)
 	MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspaceMountMountedParams) (WorkspaceMount, error)
+	PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error)
+	PinRuntimeComputerSource(ctx context.Context, arg PinRuntimeComputerSourceParams) (int64, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneTelemetryOutboxWritten(ctx context.Context, arg PruneTelemetryOutboxWrittenParams) (int64, error)
-	PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error)
-	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (WorkspaceVersion, error)
+	// The owner validates the exact certified root page and holds the preparation
+	// locks. Publication records success once; pending uploads remain Runtime pins.
+	PublishInitialComputerVersion(ctx context.Context, arg PublishInitialComputerVersionParams) (PublishInitialComputerVersionRow, error)
+	// All objects are certified and retained by the exact operation before this
+	// transaction. The caller holds Computer/execution/Runtime locks and rechecks
+	// deadlines before commit. Pending ownership remains until source adoption.
+	PublishRuntimeComputerSave(ctx context.Context, arg PublishRuntimeComputerSaveParams) (PublishRuntimeComputerSaveRow, error)
+	PublishTaskWorkspaceVersion(ctx context.Context, arg PublishTaskWorkspaceVersionParams) (ComputerVersion, error)
 	ReadWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error)
 	ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSessionControlParams) (ReadWorkerSessionControlRow, error)
 	ReadyRunRetries(ctx context.Context, rowLimit int32) ([]ReadyRunRetriesRow, error)
+	RebindSharedChildAttempt(ctx context.Context, arg RebindSharedChildAttemptParams) (Run, error)
 	// Immediate fencing revokes credentials and terminalizes mount/runtime
 	// observations. Run/build/workspace authority is recovered by its canonical
 	// expiry and recovery loops; this transition does not imply zero authority.
@@ -485,19 +575,32 @@ type Querier interface {
 	ReconcileActorTerminalRun(ctx context.Context, arg ReconcileActorTerminalRunParams) (Session, error)
 	ReconcileProviderAbsentWorkerRuntimes(ctx context.Context, workerInstanceID pgtype.UUID) (int64, error)
 	ReconcileSchedules(ctx context.Context, arg ReconcileSchedulesParams) ([]ReconcileSchedulesRow, error)
+	RecordCasBlobReclamation(ctx context.Context, arg RecordCasBlobReclamationParams) error
 	RecordRunTerminalEvent(ctx context.Context, arg RecordRunTerminalEventParams) error
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerInstance, error)
 	RecoverExpiredRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRunResumesRow, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RegisterActorInputRunWait(ctx context.Context, arg RegisterActorInputRunWaitParams) (RunWait, error)
+	RegisterCheckpointManifest(ctx context.Context, arg RegisterCheckpointManifestParams) (int64, error)
+	// Caller locks the current checkpoint source and owns the enclosing transaction.
+	// Registration never observes remote existence or grants guest execution. The
+	// entire four-object set must succeed or roll back; exact replays preserve candidate identity.
+	RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error)
 	RegisterDifferentWorkspaceChildCall(ctx context.Context, arg RegisterDifferentWorkspaceChildCallParams) (RunWait, error)
-	RegisterResolvedDifferentWorkspaceChildCall(ctx context.Context, arg RegisterResolvedDifferentWorkspaceChildCallParams) (RunWait, error)
+	RegisterResolvedChildCall(ctx context.Context, arg RegisterResolvedChildCallParams) (RunWait, error)
+	RegisterRetiredCasUpload(ctx context.Context, arg RegisterRetiredCasUploadParams) error
+	// Register the immutable generation identity before its objects are uploaded.
+	// The lease owns candidate identity and retains it as terminal retry evidence.
+	RegisterRunFinalizationRoot(ctx context.Context, arg RegisterRunFinalizationRootParams) (pgtype.UUID, error)
 	RegisterSameWorkspaceChildCall(ctx context.Context, arg RegisterSameWorkspaceChildCallParams) (RunWait, error)
 	RegisterTimerRunWait(ctx context.Context, arg RegisterTimerRunWaitParams) (RunWait, error)
 	RegisterTokenWait(ctx context.Context, arg RegisterTokenWaitParams) (RunWait, error)
 	ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseActorWorkspaceOwnerParams) (ReleaseActorWorkspaceOwnerRow, error)
 	ReleaseCheckpointWorkspaceLease(ctx context.Context, arg ReleaseCheckpointWorkspaceLeaseParams) (WorkspaceLease, error)
 	ReleaseQueuedRunWorkspace(ctx context.Context, arg ReleaseQueuedRunWorkspaceParams) (int64, error)
+	// Physical reclamation is monotonic and already requires exclusion evidence.
+	// Bound cleanup independently of remote storage; graph/object FKs remain intact.
+	ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit int32) (int64, error)
 	ReleaseRunResumeWait(ctx context.Context, arg ReleaseRunResumeWaitParams) (RunWait, error)
 	ReleaseTaskWorkspace(ctx context.Context, arg ReleaseTaskWorkspaceParams) error
 	ReleaseTaskWorkspaceLease(ctx context.Context, arg ReleaseTaskWorkspaceLeaseParams) (WorkspaceLease, error)
@@ -508,7 +611,6 @@ type Querier interface {
 	RenewWorkspaceExecLeaseForMount(ctx context.Context, arg RenewWorkspaceExecLeaseForMountParams) (int64, error)
 	RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMountParams) (WorkspaceMount, error)
 	RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx context.Context, arg RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams) ([]WorkspaceMount, error)
-	RequestCheckpointFailureRuntimeClose(ctx context.Context, arg RequestCheckpointFailureRuntimeCloseParams) (WorkspaceMount, error)
 	RequestQueuedRunRuntimeCleanup(ctx context.Context, runID pgtype.UUID) error
 	RequestRunWaitCheckpoint(ctx context.Context, arg RequestRunWaitCheckpointParams) (RunWait, error)
 	RequestSameWorkspaceChildAttemptRuntimeDiscard(ctx context.Context, arg RequestSameWorkspaceChildAttemptRuntimeDiscardParams) (WorkspaceMount, error)
@@ -516,6 +618,10 @@ type Querier interface {
 	RequestWorkspaceDeleteMountStop(ctx context.Context, arg RequestWorkspaceDeleteMountStopParams) (RequestWorkspaceDeleteMountStopRow, error)
 	RequestWorkspaceExecMountFinalization(ctx context.Context, arg RequestWorkspaceExecMountFinalizationParams) (RequestWorkspaceExecMountFinalizationRow, error)
 	RequireCheckpointRestoreSupplier(ctx context.Context, arg RequireCheckpointRestoreSupplierParams) (pgtype.UUID, error)
+	RequireLostRunComputerRecovery(ctx context.Context, arg RequireLostRunComputerRecoveryParams) (int64, error)
+	RequireRegisteredCheckpointManifest(ctx context.Context, arg RequireRegisteredCheckpointManifestParams) (pgtype.UUID, error)
+	RequireRunFinalizationRoot(ctx context.Context, arg RequireRunFinalizationRootParams) (pgtype.UUID, error)
+	RequireRuntimeComputerObjectPin(ctx context.Context, arg RequireRuntimeComputerObjectPinParams) (string, error)
 	ReserveReadyRuntimeForWorkspaceExec(ctx context.Context, arg ReserveReadyRuntimeForWorkspaceExecParams) (RuntimeInstance, error)
 	ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (ReserveWorkspaceForActorRow, error)
 	ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (ReserveWorkspaceForRunRow, error)
@@ -527,7 +633,19 @@ type Querier interface {
 	ResolveParkedTerminalChildWait(ctx context.Context, arg ResolveParkedTerminalChildWaitParams) (ResolveParkedTerminalChildWaitRow, error)
 	ResolveParkedTokenWait(ctx context.Context, arg ResolveParkedTokenWaitParams) (pgtype.UUID, error)
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
+	// Commit before making any remote calls. Never clear retired_at or remove this
+	// row: an in-flight upload can finish after a successful empty sweep.
+	RetireAbandonedCasBlob(ctx context.Context, digest string) (int64, error)
+	// The caller has removed an abandoned graph owner in this transaction, not
+	// merely observed an arbitrary temporarily unowned upload. Permanent retirement
+	// prevents late upload/adoption from reviving the same physical key.
+	RetireCollectedComputerObject(ctx context.Context, digest string) (int64, error)
+	// Called after deleting the exact root in the same transaction. A concurrent
+	// owner acquisition rejects this update and rolls root removal back as well.
+	RetireComputerVersionPayload(ctx context.Context, arg RetireComputerVersionPayloadParams) (int64, error)
 	RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireExpiredIdempotencyClaimParams) (IdempotencyClaim, error)
+	// Erase wrapped material, preserving the irreversible key identity/audit row.
+	RetireUnreferencedComputerKey(ctx context.Context, id pgtype.UUID) (int64, error)
 	RetryControlOutbox(ctx context.Context, arg RetryControlOutboxParams) (ControlOutbox, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeAuthSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)
@@ -554,6 +672,8 @@ type Querier interface {
 	SessionWriterExcluded(ctx context.Context, workspaceID pgtype.UUID) (pgtype.Bool, error)
 	SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRunParams) (Session, error)
 	SetInitialWorkerGroupPrimaryPool(ctx context.Context, arg SetInitialWorkerGroupPrimaryPoolParams) (WorkerGroup, error)
+	// The grant owner already holds Run and any restore checkpoint locks. Recheck
+	// deadlines after potentially blocking grant writes, before publishing the lease.
 	SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error)
 	SetSessionTurnMessageReady(ctx context.Context, arg SetSessionTurnMessageReadyParams) (SessionTurn, error)
 	SetWorkerGroupPrimaryPool(ctx context.Context, arg SetWorkerGroupPrimaryPoolParams) (WorkerGroup, error)

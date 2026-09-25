@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -391,9 +392,12 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		!authority.run.ParentOwnsLifecycle.Valid ||
 		!authority.run.ParentOwnsLifecycle.Bool ||
 		authority.run.DeploymentID != authority.parentRun.DeploymentID ||
-		authority.run.WorkspaceID != authority.parentRun.WorkspaceID ||
-		authority.run.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
+		authority.run.WorkspaceID != authority.parentRun.WorkspaceID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	if err := validateChildCheckpointOrigin(ctx, q, authority.run, locators.EnclosingBaseWorkspaceVersionID); err != nil {
+		return runLeaseClaimAuthority{}, err
 	}
 
 	authority.workspace, err = q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
@@ -469,7 +473,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.EntrypointKind != "task" ||
 		authority.attempt.SessionInputStartSequence.Valid ||
-		authority.attempt.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
+		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -480,7 +484,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		leaseID,
 		leaseSequence,
 		locators,
-		locators.EnclosingBaseWorkspaceVersionID,
+		authority.attempt.BaseWorkspaceVersionID,
 		authority,
 	)
 	if err != nil {
@@ -497,6 +501,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 		}
 		if err := validateActiveEnclosingWait(
+			ctx, q,
 			enclosingWait,
 			authority.parentRun,
 			locators.EnclosingParentWriterGeneration.Int64,
@@ -535,7 +540,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		valid, err := q.ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 			RunID: authority.parentRun.ID, AttemptNumber: authority.parentAttempt.Number,
 			WorkspaceID: authority.workspace.ID, CheckpointID: checkpoint.RunCheckpoint.ID,
-			CommittedHeadVersionID: authority.workspace.HeadVersionID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		})
 		if err != nil {
 			return runLeaseClaimAuthority{}, err
@@ -731,6 +736,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 		}
 		if err := validateActiveEnclosingWait(
+			ctx, q,
 			authority.enclosingWait,
 			authority.run,
 			authority.workspace.WriterGeneration,
@@ -803,7 +809,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 		valid, err := q.ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 			RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
 			WorkspaceID: authority.workspace.ID, CheckpointID: authority.checkpoint.ID,
-			CommittedHeadVersionID: authority.workspace.HeadVersionID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			OwnershipGeneration: authority.workspace.OwnershipGeneration,
 		})
 		if err != nil {
 			return runLeaseClaimAuthority{}, err
@@ -978,6 +984,16 @@ func validateClaimWorker(authenticated workerActor, worker db.WorkerInstance) er
 }
 
 func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimAuthority) error {
+	if authority.runtime.DesiredState != db.RuntimeDesiredStateReady ||
+		authority.runtime.ObservedState != db.RuntimeObservedStateReady ||
+		authority.runtime.ObservedDesiredVersion != authority.runtime.DesiredVersion ||
+		authority.runtime.ReclaimedAt.Valid {
+		return errStaleRunLeaseClaim
+	}
+	return validateClaimPhysicalIdentity(worker, authority)
+}
+
+func validateClaimPhysicalIdentity(worker workerActor, authority runLeaseClaimAuthority) error {
 	lease := authority.runLease
 	runtime := authority.runtime
 	if lease.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) ||
@@ -990,11 +1006,7 @@ func validateClaimPhysicalAuthority(worker workerActor, authority runLeaseClaimA
 	if lease.Status == db.RunLeaseStatusAssigned && !authority.workerRunReady {
 		return errStaleRunLeaseClaim
 	}
-	if runtime.DesiredState != db.RuntimeDesiredStateReady ||
-		runtime.ObservedState != db.RuntimeObservedStateReady ||
-		runtime.ObservedDesiredVersion != runtime.DesiredVersion ||
-		runtime.ReclaimedAt.Valid ||
-		runtime.ProgramDeploymentID != authority.run.DeploymentID ||
+	if runtime.ProgramDeploymentID != authority.run.DeploymentID ||
 		runtime.DeploymentDefinitionID != authority.workspace.DeploymentDefinitionID ||
 		runtime.ReservedRunID.Valid ||
 		runtime.ReservedAttemptNumber.Valid ||
@@ -1031,10 +1043,16 @@ func validateClaimWorkspaceAuthority(
 }
 
 func validateRunLeaseWorkspaceAuthority(authority runLeaseClaimAuthority) error {
+	if authority.workspaceMount.Status != db.WorkspaceMountStatusMounted {
+		return errStaleRunLeaseClaim
+	}
+	return validateRunLeaseWorkspaceIdentity(authority)
+}
+
+func validateRunLeaseWorkspaceIdentity(authority runLeaseClaimAuthority) error {
 	mount := authority.workspaceMount
 	lease := authority.workspaceLease
-	if mount.Status != db.WorkspaceMountStatusMounted ||
-		lease.Status != db.WorkspaceLeaseStatusActive ||
+	if lease.Status != db.WorkspaceLeaseStatusActive ||
 		lease.OwnerRunLeaseID != authority.runLease.ID ||
 		lease.OwnerProcessID.Valid ||
 		lease.BaseWorkspaceVersionID != mount.MaterializedVersionID ||
@@ -1143,7 +1161,8 @@ func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 	sourceRuntime := authority.sourceRuntime
 	currentLease := authority.runLease
 	currentRuntime := authority.runtime
-	if sourceLease.ID != authority.checkpoint.SourceRunLeaseID ||
+	if !runtimeHasExclusionProof(sourceRuntime) ||
+		sourceLease.ID != authority.checkpoint.SourceRunLeaseID ||
 		sourceLease.Status != db.RunLeaseStatusCheckpointed ||
 		sourceWorkspaceLease.ID != authority.checkpoint.SourceWorkspaceLeaseID ||
 		sourceWorkspaceLease.OwnerRunLeaseID != sourceLease.ID ||
@@ -1198,6 +1217,8 @@ func hasCompleteEnclosingSameWorkspaceLocator(locators db.GetRunLeaseClaimLocato
 }
 
 func validateActiveEnclosingWait(
+	ctx context.Context,
+	store db.Querier,
 	wait db.RunWait,
 	child db.Run,
 	expectedWriterGeneration int64,
@@ -1219,7 +1240,6 @@ func validateActiveEnclosingWait(
 		wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
 		wait.ResumeRequestVersion != wait.ResumeAckVersion ||
 		!wait.BaseWorkspaceVersionID.Valid ||
-		wait.BaseWorkspaceVersionID != child.BaseWorkspaceVersionID ||
 		!wait.BaseWorkspaceContentDigest.Valid ||
 		wait.ResumeWorkspaceVersionID.Valid ||
 		!wait.OwnershipGeneration.Valid ||
@@ -1231,7 +1251,7 @@ func validateActiveEnclosingWait(
 		wait.ChildWriterGeneration.Int64 != expectedWriterGeneration {
 		return errStaleRunLeaseClaim
 	}
-	return nil
+	return validateChildCheckpointOrigin(ctx, store, child, wait.BaseWorkspaceVersionID)
 }
 
 func validateSameWorkspaceChildWait(
@@ -1299,4 +1319,39 @@ func staleRunLeaseClaim(err error) error {
 		return errStaleRunLeaseClaim
 	}
 	return err
+}
+
+// A source can fail and still be safely reclaimed. A never-materialized receipt
+// cannot establish exclusion of an execution that produced durable state.
+func runtimeHasExclusionProof(runtime db.RuntimeInstance) bool {
+	if !runtime.ReclaimedAt.Valid {
+		return false
+	}
+	var evidence struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(runtime.ReclaimEvidence, &evidence) != nil {
+		return false
+	}
+	switch evidence.Method {
+	case workerapi.RuntimeCleanupSessionClosed, workerapi.RuntimeCleanupHostReconciled, "provider_absent":
+		return true
+	default:
+		return false
+	}
+}
+
+// The owning Run is already locked. Its first attempt preserves the parent
+// checkpoint identity even when later retries advance the Run's current base.
+func validateChildCheckpointOrigin(ctx context.Context, store db.Querier, child db.Run, base pgtype.UUID) error {
+	origin, err := store.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
+		RunID: child.ID, Number: 1, WorkspaceID: child.WorkspaceID,
+	})
+	if err != nil {
+		return staleRunLeaseClaim(err)
+	}
+	if !base.Valid || origin.BaseWorkspaceVersionID != base || origin.EntrypointKind != "task" {
+		return errStaleRunLeaseClaim
+	}
+	return nil
 }

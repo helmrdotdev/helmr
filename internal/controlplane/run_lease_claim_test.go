@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -761,7 +762,7 @@ func TestClaimCheckpointRestoreRejectsDifferentRuntimeProvenance(t *testing.T) {
 
 func TestClaimCheckpointRestoreRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
 	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(true)
-	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetWorkspaceResetTargetAuthorityRow{
+	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetComputerVersionAuthorityRow{
 		VersionID:              authority.checkpoint.PrivateWorkspaceVersionID,
 		ParentVersionID:        authority.workspace.HeadVersionID,
 		SourceWorkspaceLeaseID: authority.sourceWorkspaceLease.ID,
@@ -852,7 +853,7 @@ func TestClaimCheckpointRestoreRunLeaseInTxAcceptsCommittedActorTurns(t *testing
 	authority.actor.CommittedInputSequence = 2
 	authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	authority.runWait.ActorSpeculativeInputSequence = authority.checkpoint.ActorSpeculativeInputSequence
-	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetWorkspaceResetTargetAuthorityRow{
+	store := &runLeaseClaimStore{authority: authority, resetTarget: db.GetComputerVersionAuthorityRow{
 		VersionID:              authority.checkpoint.PrivateWorkspaceVersionID,
 		ParentVersionID:        authority.workspace.HeadVersionID,
 		SourceWorkspaceLeaseID: authority.sourceWorkspaceLease.ID,
@@ -922,6 +923,7 @@ func TestClaimSameWorkspaceChildRunLeaseInTxLocksParentBeforeChild(t *testing.T)
 		wantOrder := []string{
 			"parent_run",
 			"run",
+			"attempt", // Immutable child origin, after its owning Run.
 			"workspace",
 			"parent_attempt",
 			"attempt",
@@ -1065,9 +1067,9 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingWait(t *testing.T) {
 		)
 	}
 	if !slices.Equal(store.calls, []string{
-		"parent_run", "run", "workspace", "parent_attempt", "attempt",
+		"parent_run", "run", "attempt", "workspace", "parent_attempt", "attempt",
 		"worker_group", "worker", "runtime", "run_lease",
-		"workspace_mount", "workspace_lease", "enclosing_wait", "same_workspace_wait",
+		"workspace_mount", "workspace_lease", "enclosing_wait", "parent_attempt", "same_workspace_wait",
 		"checkpoint", "mark_starting",
 	}) {
 		t.Fatalf("lock order = %v", store.calls)
@@ -1136,9 +1138,9 @@ type runLeaseClaimStore struct {
 	secretVersion        db.SecretVersion
 	program              db.GetDeploymentProgramAuthorityRow
 	definition           db.DeploymentDefinition
-	resetTarget          db.GetWorkspaceResetTargetAuthorityRow
-	resetTargets         map[pgtype.UUID]db.GetWorkspaceResetTargetAuthorityRow
-	resetTargetParams    db.GetWorkspaceResetTargetAuthorityParams
+	resetTarget          db.GetComputerVersionAuthorityRow
+	resetTargets         map[pgtype.UUID]db.GetComputerVersionAuthorityRow
+	resetTargetParams    db.GetComputerVersionAuthorityParams
 	readyCheckpoint      db.RunCheckpoint
 	runWait              db.RunWait
 	workspaceLeases      map[pgtype.UUID]db.WorkspaceLease
@@ -1234,14 +1236,14 @@ func (s *runLeaseClaimStore) GetDeploymentDefinition(
 	return s.definition, nil
 }
 
-func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
+func (s *runLeaseClaimStore) GetComputerVersionAuthority(
 	_ context.Context,
-	params db.GetWorkspaceResetTargetAuthorityParams,
-) (db.GetWorkspaceResetTargetAuthorityRow, error) {
-	s.calls = append(s.calls, "reset_target")
+	params db.GetComputerVersionAuthorityParams,
+) (db.GetComputerVersionAuthorityRow, error) {
+	s.calls = append(s.calls, "computer_version")
 	s.resetTargetParams = params
 	if s.projectionErr != nil {
-		return db.GetWorkspaceResetTargetAuthorityRow{}, s.projectionErr
+		return db.GetComputerVersionAuthorityRow{}, s.projectionErr
 	}
 	if target, ok := s.resetTargets[params.VersionID]; ok {
 		return target, nil
@@ -1699,11 +1701,11 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 		authority.runWait.Kind = db.WaitKindToken
 	}
 	authority.sourceRuntime = authority.runtime
+	authority.sourceRuntime.ReclaimedAt = pgvalue.Timestamptz(time.Now())
+	authority.sourceRuntime.ReclaimEvidence = []byte(`{"method":"session_closed"}`)
 	authority.sourceRuntime.ID = pgvalue.UUID(uuid.New())
-	if actor {
-		authority.sourceRuntime.DesiredState = db.RuntimeDesiredStateClosed
-		authority.sourceRuntime.ObservedState = db.RuntimeObservedStateClosed
-	}
+	authority.sourceRuntime.DesiredState = db.RuntimeDesiredStateClosed
+	authority.sourceRuntime.ObservedState = db.RuntimeObservedStateClosed
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
 	authority.sourceRunLease.RuntimeInstanceID = authority.sourceRuntime.ID
@@ -1814,6 +1816,8 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		Status:                    db.RunCheckpointStatusReady,
 	}
 	authority.sourceRuntime = authority.runtime
+	authority.sourceRuntime.ReclaimedAt = pgvalue.Timestamptz(time.Now())
+	authority.sourceRuntime.ReclaimEvidence = []byte(`{"method":"session_closed"}`)
 	authority.sourceRunLease = authority.runLease
 	authority.sourceRunLease.ID = sourceRunLeaseID
 	authority.sourceRunLease.Status = db.RunLeaseStatusCheckpointed

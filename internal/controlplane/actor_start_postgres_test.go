@@ -92,7 +92,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces SET dirty_state = 'dirty' WHERE id = $1
+		UPDATE computers SET dirty_state = 'dirty' WHERE id = $1
 	`, fixture.workspaceIDs[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestActorStartPostgresCommitsReplaysAndRejectsConflicts(t *testing.T) {
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
-		UPDATE workspaces SET dirty_state = 'clean' WHERE id = $1
+		UPDATE computers SET dirty_state = 'clean' WHERE id = $1
 	`, fixture.workspaceIDs[1]); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestActorStartPostgresKeylessRequestsRemainAtLeastOnce(t *testing.T) {
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
 		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL)
+		    (SELECT count(*) FROM computers WHERE owner_session_id IS NOT NULL)
 	`).Scan(&claims, &sessions, &runs, &owned); err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestActorStartPostgresConcurrentKeyCollisionCreatesOneIdentity(t *testing.T
 		    (SELECT count(*) FROM idempotency_claims WHERE operation = 'actor.start'),
 		    (SELECT count(*) FROM sessions),
 		    (SELECT count(*) FROM runs WHERE cause_kind = 'actor_start'),
-		    (SELECT count(*) FROM workspaces WHERE owner_session_id IS NOT NULL)
+		    (SELECT count(*) FROM computers WHERE owner_session_id IS NOT NULL)
 	`).Scan(&claimCount, &actorCount, &runCount, &ownedCount); err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +382,7 @@ func assertActorStartTupleWithQueue(
 		t.Fatal(err)
 	}
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT owner_session_id FROM workspaces WHERE id = $1
+		SELECT owner_session_id FROM computers WHERE id = $1
 	`, fixture.workspaceIDs[0]).Scan(&workspaceOwner); err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		`{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`,
 	)
 	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1), ($4, 1), ($5, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $3, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
 		       ($1, $4, 1, 'application/octet-stream'),
@@ -550,20 +550,13 @@ func newActorStartPostgresFixture(t *testing.T, workspaceCount int) actorStartPo
 		fixture.workspaceRefs[index] = workspaceID.String()
 		fixture.workspaceKeys[index] = fmt.Sprintf("workspace:%d", index)
 		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO workspaces (
+			INSERT INTO computers (
 			    id, environment_id, region_id,
 			    sandbox_declared_id, deployment_definition_id, head_version_id, key
 			) VALUES ($1, $2, 'us-east-1', 'workspace.v1', $3, $4, $5)
 		`, workspaceID, fixture.environmentID, workspaceDefinitionID, versionID,
 			fixture.workspaceKeys[index])
-		dbtest.MustExec(t, t.Context(), tx, `
-			INSERT INTO workspace_versions (
-			    id, environment_id, workspace_id, status, content_digest, size_bytes, entry_count,
-			    ownership_generation, writer_generation, published_at
-			) VALUES ($1, $2, $3, 'committed',
-			          'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
-			          0, 0, 0, 0, now())
-		`, versionID, fixture.environmentID, workspaceID)
+		dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, versionID, fixture.environmentID, workspaceID)
 		dbtest.MustExec(t, t.Context(), tx, `
 			INSERT INTO workspace_secrets (mode,
 			    workspace_id, environment_id, placement_kind, placement_target, secret_id

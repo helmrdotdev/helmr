@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -45,15 +43,6 @@ type ResumeSessionRequest struct {
 	HoldID         string `json:"hold_id"`
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
-type RecoverSessionRequest struct {
-	HoldID string `json:"hold_id"`
-	// Required in JSON, including when null for an out-of-Turn recovery.
-	TurnID             *string `json:"turn_id"`
-	WorkspaceVersionID string  `json:"workspace_version_id"`
-	ReconciliationRef  string  `json:"reconciliation_ref"`
-	Disposition        string  `json:"disposition,omitempty"`
-	IdempotencyKey     string  `json:"idempotency_key,omitempty"`
-}
 
 type SessionCloseReceipt struct {
 	ID        string `json:"id"`
@@ -77,13 +66,6 @@ type SessionResumeReceipt struct {
 	SessionID string `json:"session_id"`
 	HoldID    string `json:"hold_id"`
 	Status    string `json:"status"`
-}
-type SessionRecoveryReceipt struct {
-	ID        string  `json:"id"`
-	SessionID string  `json:"session_id"`
-	TurnID    *string `json:"turn_id"`
-	HoldID    string  `json:"hold_id"`
-	Status    string  `json:"status"`
 }
 
 type CancelRunRequest struct {
@@ -199,30 +181,6 @@ func ValidateSessionDataRequest(request SessionDataRequest) error {
 	}
 	if _, err := jsoncanon.Transform(request.Data); err != nil {
 		return fmt.Errorf("data must be unambiguous I-JSON: %w", err)
-	}
-	return nil
-}
-func ValidateRecoverSessionRequest(request RecoverSessionRequest) error {
-	if err := ids.Validate(request.HoldID); err != nil {
-		return fmt.Errorf("invalid hold_id: %w", err)
-	}
-	if err := ids.Validate(request.WorkspaceVersionID); err != nil {
-		return fmt.Errorf("invalid workspace_version_id: %w", err)
-	}
-	if strings.TrimSpace(request.ReconciliationRef) == "" {
-		return errors.New("reconciliation_ref is required")
-	}
-	if request.TurnID == nil {
-		if request.Disposition != "" {
-			return errors.New("null turn_id forbids disposition")
-		}
-		return nil
-	}
-	if err := ids.Validate(*request.TurnID); err != nil {
-		return fmt.Errorf("invalid turn_id: %w", err)
-	}
-	if request.Disposition != "failed" && request.Disposition != "interrupted" {
-		return errors.New("disposition must be failed or interrupted")
 	}
 	return nil
 }

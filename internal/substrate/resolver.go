@@ -130,7 +130,7 @@ func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source S
 	if err != nil {
 		return Result{}, fmt.Errorf("open substrate image: %w", err)
 	}
-	_, unpackErr := oci.Unpack(imageFile, rootfsDir)
+	_, filesystem, unpackErr := oci.UnpackFilesystem(imageFile, rootfsDir)
 	closeErr := imageFile.Close()
 	if unpackErr != nil {
 		return Result{}, fmt.Errorf("unpack substrate image: %w", unpackErr)
@@ -138,12 +138,12 @@ func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source S
 	if closeErr != nil {
 		return Result{}, fmt.Errorf("close substrate image: %w", closeErr)
 	}
-	diskSize, err := substrateDiskSize(rootfsDir)
+	diskSize, err := substrateDiskSize(filesystem)
 	if err != nil {
 		return Result{}, err
 	}
 	stagedPath := filepath.Join(buildDir, "substrate.ext4")
-	if err := createExt4(ctx, mkfs, mke2fsConfig, rootfsDir, stagedPath, diskSize, key); err != nil {
+	if err := createExt4(ctx, mkfs, mke2fsConfig, filesystem, stagedPath, diskSize, key); err != nil {
 		return Result{}, err
 	}
 	digest, sizeBytes, err := fileDigest(stagedPath)

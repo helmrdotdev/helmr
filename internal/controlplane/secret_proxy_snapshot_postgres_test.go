@@ -126,7 +126,7 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 					case "group":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_groups SET claim_version=2 WHERE id=$1", f.worker.WorkerGroupID)
 					case "workspace":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET desired_state='deleted' WHERE id=$1", f.workspace)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET desired_state='deleted' WHERE id=$1", f.workspace)
 					case "runtime":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1", f.runtime)
 					case "lease":
@@ -136,7 +136,7 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 					case "fence":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspace_mounts SET fencing_generation=fencing_generation+1 WHERE id=$1", f.mount)
 					case "writer":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET writer_generation=writer_generation+1 WHERE id=$1", f.workspace)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1", f.workspace)
 					}
 				}
 				hook := &snapshotCaptureHook{q: f.q}
@@ -541,7 +541,7 @@ func TestProtectedSnapshotCurrentProcessOwnerIgnoresLiveRunHistory(t *testing.T)
 func TestProtectedSnapshotRootExpiryUsesCapturedStatementTime(t *testing.T) {
 	f := newSnapshotFixture(t, 1, false)
 	created := time.Now().AddDate(-10, 0, 0).Add(2 * time.Second)
-	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET created_at=$2 WHERE id=$1", f.workspace, created)
+	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET created_at=$2 WHERE id=$1", f.workspace, created)
 	root := createTestWorkspaceCA(t, f.fixture.Pool, f.store, f.fixture.EnvironmentID, f.workspace)
 	rows, err := f.q.CaptureProtectedSecretEnvelopes(t.Context(), f.params())
 	if err != nil || len(rows) != 1 {

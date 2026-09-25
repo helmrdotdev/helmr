@@ -58,7 +58,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		SELECT
 		    (SELECT count(*) FROM deployment_definitions WHERE environment_id = $1),
 		    (SELECT count(*) FROM schedules WHERE environment_id = $1),
-		    (SELECT count(*) FROM workspaces WHERE environment_id = $1 AND deleted_at IS NULL),
+		    (SELECT count(*) FROM computers WHERE environment_id = $1 AND deleted_at IS NULL),
 		    (SELECT count(*) FROM sessions WHERE environment_id = $1),
 		    (SELECT count(*) FROM runs WHERE environment_id = $1),
 		    (SELECT count(*) FROM runs WHERE environment_id = $1 AND status = 'queued'),

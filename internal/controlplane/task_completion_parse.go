@@ -36,21 +36,8 @@ type parsedTaskCompletion struct {
 	kind        taskCompletionKind
 	output      json.RawMessage
 	errorObject json.RawMessage
-	capture     *parsedTaskWorkspaceCapture
-	rollback    *parsedTaskWorkspaceRollback
+	capture     *parsedTaskComputerCapture
 	fingerprint string
-}
-
-type parsedTaskWorkspaceCapture struct {
-	receipt  workspace.FinalizationRequest
-	tree     workspace.TreeIdentity
-	artifact workerapi.WorkspaceArtifact
-}
-
-type parsedTaskWorkspaceRollback struct {
-	receipt workspace.FinalizationRequest
-	target  workspace.ResetTarget
-	baseID  uuid.UUID
 }
 
 func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTaskCompletion, error) {
@@ -100,34 +87,16 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 		return parsedTaskCompletion{}, errors.New("outcome must contain exactly one variant")
 	}
 
-	proofs := 0
-	if request.Workspace.Captured != nil {
-		proofs++
-		capture, normalizedCapture, err := parseTaskWorkspaceCapture(*request.Workspace.Captured)
-		if err != nil {
-			return parsedTaskCompletion{}, err
-		}
-		parsed.capture = &capture
-		normalized.Workspace.Captured = &normalizedCapture
+	if request.Workspace.Captured == nil {
+		return parsedTaskCompletion{}, errors.New("workspace capture is required for every terminal outcome")
 	}
-	if request.Workspace.RolledBack != nil {
-		proofs++
-		rollback, normalizedRollback, err := parseTaskWorkspaceRollback(*request.Workspace.RolledBack)
-		if err != nil {
-			return parsedTaskCompletion{}, err
-		}
-		parsed.rollback = &rollback
-		normalized.Workspace.RolledBack = &normalizedRollback
+	capture, normalizedCapture, err := parseTaskWorkspaceCapture(*request.Workspace.Captured)
+	if err != nil {
+		return parsedTaskCompletion{}, err
 	}
-	if proofs != 1 {
-		return parsedTaskCompletion{}, errors.New("workspace must contain exactly one proof")
-	}
-	if parsed.kind == taskCompletionSucceeded && parsed.capture == nil {
-		return parsedTaskCompletion{}, errors.New("a successful task requires a captured workspace")
-	}
-	if parsed.kind != taskCompletionSucceeded && parsed.rollback == nil {
-		return parsedTaskCompletion{}, errors.New("a failed task requires a workspace rollback")
-	}
+	parsed.capture = &capture
+	normalized.Workspace.Captured = &normalizedCapture
+
 	parsed.fingerprint, err = terminalRequestFingerprint("task.complete.v0", normalized)
 	if err != nil {
 		return parsedTaskCompletion{}, fmt.Errorf("fingerprint task completion: %w", err)
@@ -135,79 +104,22 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 	return parsed, nil
 }
 
-func parseTaskWorkspaceCapture(
-	capture workerapi.TaskWorkspaceCapture,
-) (parsedTaskWorkspaceCapture, workerapi.TaskWorkspaceCapture, error) {
-	tree, err := parseTaskWorkspaceTree("workspace.captured.tree", capture.Tree)
+func parseTaskWorkspaceCapture(capture workerapi.TaskWorkspaceCapture) (parsedTaskComputerCapture, workerapi.TaskWorkspaceCapture, error) {
+	if _, err := parseCanonicalUUID("workspace.captured.disk.computer_id", capture.Disk.ComputerID); err != nil {
+		return parsedTaskComputerCapture{}, capture, err
+	}
+	if err := capture.Disk.Root.Validate(capture.Disk.LogicalBytes); err != nil {
+		return parsedTaskComputerCapture{}, capture, err
+	}
+	receipt, normalized, err := parseWorkspaceFinalizationReceipt("workspace.captured.receipt", workspace.FinalizationCaptureKind, capture.Receipt, nil)
 	if err != nil {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, err
+		return parsedTaskComputerCapture{}, capture, err
 	}
-	if err := validateTaskWorkspaceArtifact("workspace.captured.artifact", capture.Artifact); err != nil {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, err
+	if capture.Disk.ComputerID != receipt.Fence.WorkspaceID {
+		return parsedTaskComputerCapture{}, capture, errors.New("captured Computer differs from finalization authority")
 	}
-	if int64(capture.Artifact.EntryCount) != int64(tree.EntryCount) {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, errors.New("workspace.captured artifact and tree entry counts differ")
-	}
-	receipt, normalizedReceipt, err := parseWorkspaceFinalizationReceipt(
-		"workspace.captured.receipt",
-		workspace.FinalizationCaptureKind,
-		capture.Receipt,
-		nil,
-	)
-	if err != nil {
-		return parsedTaskWorkspaceCapture{}, workerapi.TaskWorkspaceCapture{}, err
-	}
-	capture.Receipt = normalizedReceipt
-	return parsedTaskWorkspaceCapture{receipt: receipt, tree: tree, artifact: capture.Artifact}, capture, nil
-}
-
-func parseTaskWorkspaceRollback(
-	rollback workerapi.TaskWorkspaceRollback,
-) (parsedTaskWorkspaceRollback, workerapi.TaskWorkspaceRollback, error) {
-	tree, err := parseTaskWorkspaceTree("workspace.rolled_back.target.tree", rollback.Target.Tree)
-	if err != nil {
-		return parsedTaskWorkspaceRollback{}, workerapi.TaskWorkspaceRollback{}, err
-	}
-	baseID, err := parseCanonicalUUID(
-		"workspace.rolled_back.target.base_workspace_version_id",
-		rollback.Target.BaseWorkspaceVersionID,
-	)
-	if err != nil {
-		return parsedTaskWorkspaceRollback{}, workerapi.TaskWorkspaceRollback{}, err
-	}
-	var target workspace.ResetTarget
-	switch {
-	case rollback.Target.Empty != nil && rollback.Target.Artifact == nil:
-		target, err = workspace.EmptyResetTarget(baseID.String(), tree)
-	case rollback.Target.Empty == nil && rollback.Target.Artifact != nil:
-		if err = validateTaskWorkspaceArtifact("workspace.rolled_back.target.artifact", *rollback.Target.Artifact); err == nil {
-			artifact := rollback.Target.Artifact
-			if int64(artifact.EntryCount) != int64(tree.EntryCount) {
-				err = errors.New("workspace.rolled_back target artifact and tree entry counts differ")
-			} else {
-				target, err = workspace.ArtifactResetTarget(baseID.String(), tree, workspace.ArtifactIdentity{
-					Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
-					SizeBytes: artifact.SizeBytes, EntryCount: int(artifact.EntryCount),
-				})
-			}
-		}
-	default:
-		err = errors.New("workspace.rolled_back target must contain exactly one source")
-	}
-	if err != nil {
-		return parsedTaskWorkspaceRollback{}, workerapi.TaskWorkspaceRollback{}, err
-	}
-	receipt, normalizedReceipt, err := parseWorkspaceFinalizationReceipt(
-		"workspace.rolled_back.receipt",
-		workspace.FinalizationResetKind,
-		rollback.Receipt,
-		target,
-	)
-	if err != nil {
-		return parsedTaskWorkspaceRollback{}, workerapi.TaskWorkspaceRollback{}, err
-	}
-	rollback.Receipt = normalizedReceipt
-	return parsedTaskWorkspaceRollback{receipt: receipt, target: target, baseID: baseID}, rollback, nil
+	capture.Receipt = normalized
+	return parsedTaskComputerCapture{receipt: receipt, disk: capture.Disk}, capture, nil
 }
 
 func parseWorkspaceFinalizationReceipt(
@@ -295,15 +207,6 @@ func finalizationFenceMatchesLease(fence workspace.FinalizationFence, lease work
 		fence.BaseWorkspaceVersionID == lease.BaseWorkspaceVersionID
 }
 
-func parseTaskWorkspaceTree(label string, tree workerapi.WorkspaceTreeIdentity) (workspace.TreeIdentity, error) {
-	if !taskWorkspaceDigestPattern.MatchString(tree.Digest) || tree.SizeBytes < 0 ||
-		tree.SizeBytes > workspace.MaxArtifactExtractedBytes || tree.EntryCount < 0 ||
-		int64(tree.EntryCount) > int64(workspace.MaxArtifactEntries) {
-		return workspace.TreeIdentity{}, fmt.Errorf("%s is invalid", label)
-	}
-	return workspace.TreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int(tree.EntryCount)}, nil
-}
-
 func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.RawMessage, *workerapi.TaskFailure, error) {
 	if failure.Message == "" || failure.Message != strings.TrimSpace(failure.Message) ||
 		!utf8.ValidString(failure.Message) || len(failure.Message) > maxTaskCompletionMessageBytes {
@@ -341,25 +244,6 @@ func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.Ra
 		return nil, nil, fmt.Errorf("%s exceeds %d bytes", label, maxTaskCompletionErrorBytes)
 	}
 	return errorObject, &workerapi.TaskFailure{Message: failure.Message, Details: details}, nil
-}
-
-func validateTaskWorkspaceArtifact(label string, artifact workerapi.WorkspaceArtifact) error {
-	if !taskWorkspaceDigestPattern.MatchString(artifact.Digest) {
-		return fmt.Errorf("%s.digest must be a SHA-256 digest", label)
-	}
-	if artifact.MediaType != workspace.ArtifactMediaType {
-		return fmt.Errorf("%s.media_type is unsupported", label)
-	}
-	if artifact.Encoding != workspace.ArtifactEncoding {
-		return fmt.Errorf("%s.encoding is unsupported", label)
-	}
-	if artifact.SizeBytes <= 0 || artifact.SizeBytes > workspace.MaxArtifactArchiveBytes {
-		return fmt.Errorf("%s.size_bytes must be between 1 and %d", label, workspace.MaxArtifactArchiveBytes)
-	}
-	if artifact.EntryCount < 0 || artifact.EntryCount > workspace.MaxArtifactEntries {
-		return fmt.Errorf("%s.entry_count must be between 0 and %d", label, workspace.MaxArtifactEntries)
-	}
-	return nil
 }
 
 func parseCanonicalUUID(name, value string) (uuid.UUID, error) {

@@ -16,11 +16,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func checkpointTokenAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, cursor int64, capture workerapi.CheckpointWorkspaceCapture) workerapi.CheckpointResponse {
+func checkpointTokenAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, cursor int64, capture testWorkspaceCapture) workerapi.CheckpointResponse {
 	t.Helper()
 	reconciler, registration := actorTokenWait(t, f, scope)
 	registration.ActorSpeculativeInputSequence.Int64 = cursor
@@ -49,7 +48,7 @@ func checkpointTokenAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "committed and private contents")
-	first := f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -61,17 +60,17 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT base_workspace_version_id FROM run_checkpoints WHERE id=$1`, uuid.MustParse(c2.CheckpointID)).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
-	if base.String() != c1.WorkspaceVersionID || base.String() == first.WorkspaceVersionID {
-		t.Fatalf("second checkpoint base=%s first=%s head=%s", base, c1.WorkspaceVersionID, first.WorkspaceVersionID)
+	if base.String() != c1.WorkspaceVersionID || base.String() == f.rootID.String() {
+		t.Fatalf("second checkpoint base=%s first=%s head=%s", base, c1.WorkspaceVersionID, f.rootID.String())
 	}
-	params := db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(c2.CheckpointID)), CommittedHeadVersionID: pgvalue.UUID(uuid.MustParse(first.WorkspaceVersionID)), OwnershipGeneration: f.claim.workspace.OwnershipGeneration}
+	params := db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(c2.CheckpointID)), OwnershipGeneration: f.claim.workspace.OwnershipGeneration}
 	for _, test := range []struct {
 		name, query string
 		arg         uuid.UUID
 	}{
 		{"broken restore pointer", `UPDATE runtime_instances SET restore_checkpoint_id=NULL WHERE id=(SELECT runtime_instance_id FROM run_leases WHERE id=(SELECT source_run_lease_id FROM run_checkpoints WHERE id=$1))`, uuid.MustParse(c2.CheckpointID)},
 		{"unacknowledged prior restore", `UPDATE run_waits SET resume_ack_version=0 WHERE id=(SELECT run_wait_id FROM run_checkpoints WHERE id=$1)`, uuid.MustParse(c1.CheckpointID)},
-		{"wrong private parent", `UPDATE workspace_versions SET parent_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_versions.workspace_id) WHERE id=$1`, uuid.MustParse(c2.WorkspaceVersionID)},
+		{"wrong private parent", `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.computer_id) WHERE id=$1`, uuid.MustParse(c2.WorkspaceVersionID)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			tx, err := f.Pool.Begin(t.Context())
@@ -93,29 +92,33 @@ func TestSessionRepeatedCheckpointLineagePostgres(t *testing.T) {
 	if valid, err := f.server.db.ActorCheckpointLineageIsValid(t.Context(), wrongRun); err != nil || valid {
 		t.Fatalf("wrong execution accepted=%v err=%v", valid, err)
 	}
-	settled := f.turn(t, 2, capture, false)
-	if settled.WorkspaceVersionID != c2.WorkspaceVersionID {
-		t.Fatalf("unchanged settlement=%s want %s", settled.WorkspaceVersionID, c2.WorkspaceVersionID)
-	}
+	f.turn(t, 2)
 }
 
 func TestSessionOutsideTurnCheckpointThenTurnSettlementPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "between turns")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	checkpointTokenAndResume(t, f, session.TurnScope{}, 1, capture)
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 		t.Fatal(err)
 	}
 	f.receiveTurn(t, 2)
-	f.turn(t, 2, capture, false)
+	f.turn(t, 2)
 }
 
-func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture workerapi.CheckpointWorkspaceCapture, outcome string) workerapi.CheckpointWorkspaceCapture {
+func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope session.TurnScope, capture testWorkspaceCapture, outcome string) testWorkspaceCapture {
 	t.Helper()
+	maxAttempts := 2
+	if outcome == "repeated retry exhaustion" {
+		maxAttempts = 3
+	}
 	manifestInput := `{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`
-	if outcome == "retry cancellation" || outcome == "retry exhaustion" {
+	if outcome == "retry cancellation" || strings.HasSuffix(outcome, "retry exhaustion") {
 		manifestInput = `{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":true,"maxAttempts":2,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}}}`
+	}
+	if maxAttempts == 3 {
+		manifestInput = strings.Replace(manifestInput, `"maxAttempts":2`, `"maxAttempts":3`, 1)
 	}
 	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(manifestInput))
 	if err != nil {
@@ -221,7 +224,7 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 						t.Fatal(err)
 					}
 				}
-			} else if outcome == "retry cancellation" || outcome == "retry exhaustion" {
+			} else if outcome == "retry cancellation" || strings.HasSuffix(outcome, "retry exhaustion") {
 				content = finishCheckpointChild(t, f, capture, "failure")
 				var status string
 				var attempt int32
@@ -235,18 +238,21 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 				if outcome == "retry cancellation" {
 					cancelChild()
 				} else {
-					f.workerCall(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{
-						OrgID: f.OrgID.String(), WorkspaceMountID: pgvalue.UUIDString(f.claim.workspaceMount.ID),
-						CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now()},
-					}, nil)
-					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET retry_at=transaction_timestamp()-interval '1 second' WHERE id=$1`, f.runID)
-					if readied, err := f.server.db.ReadyRunRetries(t.Context(), 1); err != nil || len(readied) != 1 {
-						t.Fatalf("ready retry: %+v %v", readied, err)
+					for nextAttempt := 2; nextAttempt <= maxAttempts; nextAttempt++ {
+						f.workerCall(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{
+							OrgID: f.OrgID.String(), WorkspaceMountID: pgvalue.UUIDString(f.claim.workspaceMount.ID),
+							CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now()},
+						}, nil)
+						dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET retry_at=transaction_timestamp()-interval '1 second' WHERE id=$1`, f.runID)
+						if readied, err := f.server.db.ReadyRunRetries(t.Context(), 1); err != nil || len(readied) != 1 {
+							t.Fatalf("ready retry: %+v %v", readied, err)
+						}
+						assertChildRetrySource(t, f, nextAttempt)
+						f.placeAndClaim(t)
+						f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence(), Fresh: &workerapi.RunStartFresh{}}, nil)
+						f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "task", EntrypointDeclaredID: "test-task"}, nil)
+						content = finishCheckpointChild(t, f, capture, "failure")
 					}
-					f.placeAndClaim(t)
-					f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence(), Fresh: &workerapi.RunStartFresh{}}, nil)
-					f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "task", EntrypointDeclaredID: "test-task"}, nil)
-					content = finishCheckpointChild(t, f, capture, "failure")
 				}
 			} else if outcome == "cancellation" || parked {
 				cancelChild()
@@ -268,7 +274,7 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 	t.Logf("restoring parent %s after child %s", parentID, outcome)
 
 	f.runID = parentID
-	if outcome == "retry exhaustion" {
+	if strings.HasSuffix(outcome, "retry exhaustion") {
 		var reclaimedAt time.Time
 		var reclaimEvidence []byte
 		var revision int64
@@ -284,15 +290,15 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 	if outcome == "success" && scope.TurnID != uuid.Nil() {
 		var childVersion, parentVersion pgtype.UUID
 		var revision int64
-		if err := f.Pool.QueryRow(t.Context(), `SELECT w.resume_workspace_version_id,v.parent_version_id,r.revision FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN workspace_versions v ON v.id=w.resume_workspace_version_id WHERE w.id=$1`, uuid.MustParse(req.RunWaitID)).Scan(&childVersion, &parentVersion, &revision); err != nil {
+		if err := f.Pool.QueryRow(t.Context(), `SELECT w.resume_workspace_version_id,v.parent_version_id,r.revision FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN computer_versions v ON v.id=w.resume_workspace_version_id WHERE w.id=$1`, uuid.MustParse(req.RunWaitID)).Scan(&childVersion, &parentVersion, &revision); err != nil {
 			t.Fatal(err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions SET parent_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_versions.workspace_id) WHERE id=$1`, childVersion)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET parent_version_id=(SELECT head_version_id FROM computers WHERE id=computer_versions.computer_id) WHERE id=$1`, childVersion)
 		_, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(parentID), ExpectedRunRevision: revision})
 		if !errors.Is(err, dispatch.ErrCandidateChanged) {
 			t.Fatalf("wrong latest child output parent placement: %v", err)
 		}
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_versions SET parent_version_id=$2 WHERE id=$1`, childVersion, parentVersion)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_versions SET parent_version_id=$2 WHERE id=$1`, childVersion, parentVersion)
 	}
 	f.placeAndClaim(t)
 	if outcome == "descendant cancellation" {
@@ -312,12 +318,56 @@ func checkpointChildAndResume(t *testing.T, f *actorCheckpointFixture, scope ses
 	return content
 }
 
+// Retry discovery and reservation must agree on both the original parent
+// checkpoint and the exact output captured by the previous failed attempt.
+func assertChildRetrySource(t *testing.T, f *actorCheckpointFixture, attempt int) {
+	t.Helper()
+	var revision int64
+	var base, origin pgtype.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.revision,r.base_workspace_version_id,a.base_workspace_version_id FROM runs r JOIN run_attempts a ON a.run_id=r.id AND a.number=1 WHERE r.id=$1`, f.runID).Scan(&revision, &base, &origin); err != nil {
+		t.Fatal(err)
+	}
+	assertDiscovery := func(want int) {
+		t.Helper()
+		scopes, err := f.server.db.ListQueuedRunEligibleScopes(t.Context(), db.ListQueuedRunEligibleScopesParams{RowLimit: 10, ScanSeed: "child-retry"})
+		if err != nil || len(scopes) != want {
+			t.Fatalf("retry %d discovery: scopes=%d want=%d err=%v", attempt, len(scopes), want, err)
+		}
+	}
+	assertDiscovery(1)
+	for _, test := range []struct {
+		name, corrupt, restore string
+		value                  pgtype.UUID
+	}{
+		{"substituted retry output", `UPDATE runs SET base_workspace_version_id=$2 WHERE id=$1`, `UPDATE runs SET base_workspace_version_id=$2 WHERE id=$1`, base},
+		{"wrong child origin", `UPDATE run_attempts SET base_workspace_version_id=$2 WHERE run_id=$1 AND number=1`, `UPDATE run_attempts SET base_workspace_version_id=$2 WHERE run_id=$1 AND number=1`, origin},
+	} {
+		substitute := origin
+		if test.name == "wrong child origin" {
+			substitute = pgvalue.UUID(f.rootID)
+		}
+		dbtest.MustExec(t, t.Context(), f.Pool, test.corrupt, f.runID, substitute)
+		if test.name == "substituted retry output" {
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET base_workspace_version_id=$2 WHERE run_id=$1 AND number=$3`, f.runID, origin, attempt)
+		}
+		assertDiscovery(0)
+		if _, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}); !errors.Is(err, dispatch.ErrCandidateChanged) {
+			t.Fatalf("%s accepted at retry %d: %v", test.name, attempt, err)
+		}
+		dbtest.MustExec(t, t.Context(), f.Pool, test.restore, f.runID, test.value)
+		if test.name == "substituted retry output" {
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET base_workspace_version_id=$2 WHERE run_id=$1 AND number=$3`, f.runID, base, attempt)
+		}
+		assertDiscovery(1)
+	}
+}
+
 func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 	for _, test := range []struct {
 		outcome string
 		again   bool
 	}{
-		{"success", false}, {"success", true}, {"failure", false}, {"failure", true}, {"cancellation", false}, {"cancellation", true}, {"queued cancellation", false}, {"nested success", true}, {"nested failure", true}, {"parked cancellation", true}, {"parked ready cancellation", true}, {"parked preparation failure", true}, {"descendant cancellation", true}, {"nested descendant cancellation", true}, {"retry cancellation", true}, {"nested retry cancellation", true}, {"retry exhaustion", true},
+		{"success", false}, {"success", true}, {"failure", false}, {"failure", true}, {"cancellation", false}, {"cancellation", true}, {"queued cancellation", false}, {"nested success", true}, {"nested failure", true}, {"parked cancellation", true}, {"parked ready cancellation", true}, {"parked preparation failure", true}, {"descendant cancellation", true}, {"nested descendant cancellation", true}, {"retry cancellation", true}, {"nested retry cancellation", true}, {"retry exhaustion", true}, {"repeated retry exhaustion", true},
 	} {
 		name := test.outcome + "/direct settlement"
 		if test.again {
@@ -326,7 +376,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			capture := f.capture(t, "parent frontier")
-			f.turn(t, 1, capture, true)
+			f.turn(t, 1)
 			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"sequence":2}`)}); err != nil {
 				t.Fatal(err)
 			}
@@ -335,11 +385,6 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 			child := checkpointChildAndResume(t, f, scope, capture, test.outcome)
 			if test.again {
 				checkpoint := checkpointTokenAndResume(t, f, scope, 2, child)
-
-				var head pgtype.UUID
-				if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM workspaces WHERE id=$1`, f.workspaceID).Scan(&head); err != nil {
-					t.Fatal(err)
-				}
 				tx, err := f.Pool.Begin(t.Context())
 				if err != nil {
 					t.Fatal(err)
@@ -350,7 +395,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 					corrupt = `UPDATE run_waits SET condition_status=CASE WHEN condition_status='failed' THEN 'cancelled' ELSE 'failed' END WHERE id=(SELECT prior.run_wait_id FROM run_checkpoints current JOIN run_leases source ON source.id=current.source_run_lease_id JOIN runtime_instances runtime ON runtime.id=source.runtime_instance_id JOIN run_checkpoints prior ON prior.id=runtime.restore_checkpoint_id WHERE current.id=$1)`
 				}
 				if strings.HasPrefix(test.outcome, "nested ") {
-					corrupt = `UPDATE runs SET base_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=runs.workspace_id) WHERE id=(SELECT w.child_run_id FROM run_checkpoints current JOIN run_leases source ON source.id=current.source_run_lease_id JOIN runtime_instances runtime ON runtime.id=source.runtime_instance_id JOIN run_checkpoints prior ON prior.id=runtime.restore_checkpoint_id JOIN run_waits w ON w.id=prior.run_wait_id WHERE current.id=$1)`
+					corrupt = `UPDATE runs SET base_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=runs.workspace_id) WHERE id=(SELECT w.child_run_id FROM run_checkpoints current JOIN run_leases source ON source.id=current.source_run_lease_id JOIN runtime_instances runtime ON runtime.id=source.runtime_instance_id JOIN run_checkpoints prior ON prior.id=runtime.restore_checkpoint_id JOIN run_waits w ON w.id=prior.run_wait_id WHERE current.id=$1)`
 				}
 
 				if strings.HasPrefix(test.outcome, "parked ") {
@@ -360,7 +405,7 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 				if _, err = tx.Exec(t.Context(), corrupt, uuid.MustParse(checkpoint.CheckpointID)); err != nil {
 					t.Fatal(err)
 				}
-				valid, err := db.New(tx).ActorCheckpointLineageIsValid(t.Context(), db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(checkpoint.CheckpointID)), CommittedHeadVersionID: head, OwnershipGeneration: f.claim.workspace.OwnershipGeneration})
+				valid, err := db.New(tx).ActorCheckpointLineageIsValid(t.Context(), db.ActorCheckpointLineageIsValidParams{RunID: pgvalue.UUID(f.runID), AttemptNumber: 1, WorkspaceID: pgvalue.UUID(f.workspaceID), CheckpointID: pgvalue.UUID(uuid.MustParse(checkpoint.CheckpointID)), OwnershipGeneration: f.claim.workspace.OwnershipGeneration})
 				if err != nil || valid {
 					t.Fatalf("wrong child handback accepted=%v err=%v", valid, err)
 				}
@@ -368,19 +413,16 @@ func TestSessionChildHandbackCheckpointLineagePostgres(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			f.turn(t, 2, child, false)
+			f.turn(t, 2)
 		})
 	}
 }
 
-func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture workerapi.CheckpointWorkspaceCapture, outcome string) workerapi.CheckpointWorkspaceCapture {
+func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture testWorkspaceCapture, outcome string) testWorkspaceCapture {
 	t.Helper()
 	content := capture
 	operation := uuid.NewV7().String()
 	kind := workerapi.RunFinalizationCapture
-	if outcome == "failure" {
-		kind = workerapi.RunFinalizationReset
-	}
 	var began workerapi.BeginRunFinalizationResponse
 	f.workerCall(t, f.server.workerBeginRunFinalization, workerapi.BeginRunFinalizationRequest{Lease: f.fence(), ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: f.claim.attempt.Number, RunLeaseID: f.fence().ID}, OperationID: operation, Kind: kind}, &began)
 	a := f.claim
@@ -393,25 +435,19 @@ func finishCheckpointChild(t *testing.T, f *actorCheckpointFixture, capture work
 	proof.Receipt.OperationID = operation
 	if outcome == "success" {
 		content = f.capture(t, "child handback")
-		proof.Tree, proof.Artifact = content.Tree, content.Artifact
 		setCaptureFingerprint(t, proof)
+		f.registerFinalizationDisk(t, proof, content.Artifact.Digest)
 		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{Output: json.RawMessage(`true`)}}, Workspace: workerapi.TaskWorkspaceProof{Captured: proof}}, nil)
 	} else {
-		target := workspace.ResetTarget{Kind: workspace.ResetTargetArtifact, BaseWorkspaceVersionID: pgvalue.UUIDString(f.claim.attempt.BaseWorkspaceVersionID),
-			Tree:     workspace.TreeIdentity{Digest: capture.Tree.Digest, SizeBytes: capture.Tree.SizeBytes, EntryCount: int(capture.Tree.EntryCount)},
-			Artifact: &workspace.ArtifactIdentity{Digest: capture.Artifact.Digest, MediaType: capture.Artifact.MediaType, Encoding: capture.Artifact.Encoding, SizeBytes: capture.Artifact.SizeBytes, EntryCount: int(capture.Artifact.EntryCount)}}
-		fingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationResetKind, workspace.FinalizationRequest{OperationID: operation, Fence: testFinalizationFence(proof.Receipt.Fence), Target: target})
-		if err != nil {
-			t.Fatal(err)
-		}
-		proof.Receipt.RequestFingerprint = fingerprint
-		rollback := &workerapi.TaskWorkspaceRollback{Receipt: proof.Receipt, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: pgvalue.UUIDString(f.claim.attempt.BaseWorkspaceVersionID), Tree: capture.Tree, Artifact: &capture.Artifact}}
-		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "child failed"}}, Workspace: workerapi.TaskWorkspaceProof{RolledBack: rollback}}, nil)
+		content = f.capture(t, "failed child retained changes")
+		setCaptureFingerprint(t, proof)
+		f.registerFinalizationDisk(t, proof, content.Artifact.Digest)
+		f.workerCall(t, f.server.workerCompleteTask, workerapi.CompleteTaskRequest{Lease: f.fence(), Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "child failed"}}, Workspace: workerapi.TaskWorkspaceProof{Captured: proof}}, nil)
 	}
 	return content
 }
 
-func cancelChildWithAdmittedDescendant(t *testing.T, f *actorCheckpointFixture, waitingParent uuid.UUID, capture workerapi.CheckpointWorkspaceCapture) {
+func cancelChildWithAdmittedDescendant(t *testing.T, f *actorCheckpointFixture, waitingParent uuid.UUID, capture testWorkspaceCapture) {
 	t.Helper()
 	cancelledChild := f.runID
 	target, _ := json.Marshal(map[string]string{"id": f.workspaceID.String()})

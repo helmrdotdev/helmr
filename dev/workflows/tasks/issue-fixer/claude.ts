@@ -82,8 +82,8 @@ export const claudeIssueFixer = actor({
           const data = parsed.data
           if (!accepting) throw new MessageRejected("Native processing has finished")
           if ("issue" in data || data.type === "update_constraints") {
-            // Serialize native calls ourselves; do not assume one native result per
-            // rapidly submitted input or describe this as Codex-style steering.
+            // Queue follow-ups and submit them after the current native result.
+            // Several inputs may arrive before that result.
             followups.push("issue" in data ? data.issue : data.text)
           } else await human.reply(data)
         })

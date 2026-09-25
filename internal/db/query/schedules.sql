@@ -272,7 +272,7 @@ WITH selected_definition AS (
        AND schedules.generation = sqlc.arg(expected_generation)
        AND schedules.status = 'active'
 ), created_workspace AS (
-    INSERT INTO workspaces (
+    INSERT INTO computers (
         id,
         environment_id,
         region_id,
@@ -289,16 +289,15 @@ WITH selected_definition AS (
            sqlc.arg(initial_version_id),
            NULL
       FROM selected_definition
-    RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 ), created_version AS (
-    INSERT INTO workspace_versions (
+    INSERT INTO computer_versions (
         id,
         environment_id,
-        workspace_id,
+        computer_id,
         status,
-        content_digest,
-        size_bytes,
-        entry_count,
+        root_pack_digest,
+        logical_bytes,
         ownership_generation,
         writer_generation,
         published_at
@@ -306,19 +305,18 @@ WITH selected_definition AS (
     SELECT sqlc.arg(initial_version_id),
            created_workspace.environment_id,
            created_workspace.id,
-           'committed',
-           'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
+           'initializing',
+           NULL,
            0,
            0,
            0,
-           0,
-           now()
+           NULL
       FROM created_workspace
-    RETURNING workspace_id
+    RETURNING computer_id
 )
 SELECT created_workspace.*
   FROM created_workspace
-  JOIN created_version ON created_version.workspace_id = created_workspace.id;
+  JOIN created_version ON created_version.computer_id = created_workspace.id;
 
 -- name: ClaimDueSchedules :many
 WITH candidates AS (

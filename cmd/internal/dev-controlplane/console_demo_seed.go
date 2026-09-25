@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -72,6 +71,10 @@ func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	queueConfig := `{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`
 
 	if _, err := tx.Exec(ctx, `
+WITH lifetimes AS (
+    INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1), ($3, 1)
+    ON CONFLICT (digest) DO NOTHING
+)
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
     ($1::uuid, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
@@ -133,7 +136,7 @@ INSERT INTO schedules (
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO workspaces (
+INSERT INTO computers (
     id, environment_id, region_id, sandbox_declared_id, deployment_definition_id,
     head_version_id, key, owner_session_id
 ) VALUES
@@ -145,14 +148,14 @@ INSERT INTO workspaces (
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO workspace_versions (
-    id, environment_id, workspace_id, content_digest, status,
-    ownership_generation, writer_generation, published_at, size_bytes, entry_count
+INSERT INTO computer_versions (
+    id, environment_id, computer_id, root_pack_digest, status,
+    ownership_generation, writer_generation, published_at, logical_bytes
 ) VALUES
-    ($1::uuid, $3::uuid, $4::uuid, $5, 'committed', 0, 0, now() - interval '2 hours', 0, 0),
-    ($2::uuid, $3::uuid, $6::uuid, $5, 'committed', 0, 0, now() - interval '90 minutes', 0, 0)
+    ($1::uuid, $3::uuid, $4::uuid, NULL, 'initializing', 0, 0, NULL, 0),
+    ($2::uuid, $3::uuid, $5::uuid, NULL, 'initializing', 0, 0, NULL, 0)
 `, demoSeedWorkspaceActorVersionID, demoSeedWorkspaceTaskVersionID, demoSeedEnvironmentID,
-		demoSeedWorkspaceActorID, workspace.CanonicalEmptyTreeDigest, demoSeedWorkspaceTaskID); err != nil {
+		demoSeedWorkspaceActorID, demoSeedWorkspaceTaskID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

@@ -11,6 +11,7 @@ import (
 )
 
 type RunWaitClient interface {
+	RegisterCheckpoint(context.Context, workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error)
 	CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error)
 	PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error)
 	AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error)
@@ -171,7 +172,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	failCheckpoint := func(err error) error {
 		lease, leaseErr := request.currentLeaseAssignment()
 		if leaseErr != nil {
-			return leaseErr
+			return errors.Join(err, leaseErr)
 		}
 		failedRequest := workerapi.CheckpointFailedRequest{
 			Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
@@ -179,6 +180,10 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		}
 		for {
 			if _, failErr := w.Client.MarkCheckpointFailed(ctx, failedRequest); failErr == nil {
+				var releaseErr *checkpointSourceReleaseError
+				if errors.As(err, &releaseErr) {
+					return errors.Join(ErrDetached, err)
+				}
 				return ErrDetached
 			} else if !checkpointReadyRetryable(failErr) {
 				return errors.Join(err, failErr)
@@ -196,17 +201,29 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	}
 	checkpointRequest := CheckpointRequest{
 		Execution: request.Execution, TurnID: request.TurnID,
-		RunID:            lease.RunID,
-		RunWaitID:        intent.RunWaitID,
-		CorrelationID:    request.CorrelationID,
-		CheckpointID:     intent.CheckpointID,
-		CaptureWorkspace: intent.CaptureWorkspace,
+		RunID:         lease.RunID,
+		RunWaitID:     intent.RunWaitID,
+		CorrelationID: request.CorrelationID,
+		CheckpointID:  intent.CheckpointID,
 	}
-	if request.ResumeAttachID != "" {
-		checkpointRequest.AttemptNumber = lease.AttemptNumber
-		checkpointRequest.RunLeaseID = lease.ID
-		checkpointRequest.ResumeAttachID = request.ResumeAttachID
-		checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
+	checkpointRequest.AttemptNumber = lease.AttemptNumber
+	checkpointRequest.RunLeaseID = lease.ID
+	checkpointRequest.ResumeAttachID = request.ResumeAttachID
+	checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
+	checkpointRequest.Register = func(ctx context.Context, manifest workerapi.CheckpointManifest) error {
+		registration := workerapi.RegisterCheckpointRequest{Lease: lease.Fence(), RequestVersion: intent.RequestVersion, RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Manifest: manifest}
+		for {
+			_, err := w.Client.RegisterCheckpoint(ctx, registration)
+			if err == nil {
+				return nil
+			}
+			if !checkpointReadyRetryable(err) {
+				return err
+			}
+			if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
+				return err
+			}
+		}
 	}
 	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, checkpointRequest)
 	if err != nil {
@@ -216,11 +233,11 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := request.Checkpointer.ReleaseCheckpointSource(cleanupCtx); err != nil {
-			resultErr = errors.Join(resultErr, fmt.Errorf("release checkpoint source: %w", err))
+			resultErr = errors.Join(resultErr, &checkpointSourceReleaseError{err: err})
 		}
 	}()
-	if checkpoint.WorkspaceCapture == nil {
-		err := errors.New("workspace capture is required before parking")
+	if checkpoint.Manifest.RuntimeState.Computer == nil {
+		err := errors.New("paired Computer disk is required before parking")
 		return failCheckpoint(err)
 	}
 	lease, err = request.currentLeaseAssignment()
@@ -230,8 +247,7 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 	readyRequest := workerapi.CheckpointReadyRequest{
 		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
-		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
-		Manifest:         checkpoint.Manifest,
+		Manifest: checkpoint.Manifest,
 	}
 	for {
 		if _, err := w.Client.MarkCheckpointReady(ctx, readyRequest); err == nil {
@@ -241,22 +257,6 @@ func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, requ
 		} else if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
 			return err
 		}
-	}
-}
-
-func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *workerapi.CheckpointWorkspaceCapture {
-	if capture == nil {
-		return nil
-	}
-	return &workerapi.CheckpointWorkspaceCapture{
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: capture.Tree.Digest, SizeBytes: capture.Tree.SizeBytes, EntryCount: int32(capture.Tree.EntryCount),
-		},
-		Artifact: workerapi.WorkspaceArtifact{
-			Digest: capture.Artifact.Digest, MediaType: capture.Artifact.MediaType,
-			Encoding: capture.Artifact.Encoding, SizeBytes: capture.Artifact.SizeBytes,
-			EntryCount: int32(capture.Artifact.EntryCount),
-		},
 	}
 }
 

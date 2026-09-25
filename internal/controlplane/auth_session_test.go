@@ -22,7 +22,7 @@ func TestSessionPermissionsAdvertiseEveryRoleGrant(t *testing.T) {
 	}
 	for _, permission := range []string{
 		"tokens.create", "tokens.read", "tokens.complete", "tokens.cancel",
-		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "sessions.recover", "actors.start",
+		"sessions.read", "sessions.send", "sessions.close", "sessions.interrupt", "sessions.resume", "actors.start",
 	} {
 		if !slices.Contains(owner, permission) {
 			t.Fatalf("owner permissions omit %s: %v", permission, owner)

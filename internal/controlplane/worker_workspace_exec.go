@@ -275,12 +275,12 @@ func (s *Server) workerCompleteWorkspaceExec(w http.ResponseWriter, r *http.Requ
 		requested, err := work.q.RequestWorkspaceExecMountFinalization(
 			r.Context(),
 			db.RequestWorkspaceExecMountFinalizationParams{
-				FinalizationKind: pgvalue.Text(finalizationKind),
-				ReasonCode:       pgvalue.Text(reasonCode),
-				Error:            resultError,
-				WorkspaceMountID: authority.WorkspaceMount.ID,
-				WorkerInstanceID: authority.WorkspaceMount.WorkerInstanceID,
-				WorkerEpoch:      authority.WorkspaceMount.WorkerEpoch,
+				FinalizationAction: pgvalue.Text(finalizationKind),
+				ReasonCode:         pgvalue.Text(reasonCode),
+				Error:              resultError,
+				WorkspaceMountID:   authority.WorkspaceMount.ID,
+				WorkerInstanceID:   authority.WorkspaceMount.WorkerInstanceID,
+				WorkerEpoch:        authority.WorkspaceMount.WorkerEpoch,
 			},
 		)
 		if err != nil {

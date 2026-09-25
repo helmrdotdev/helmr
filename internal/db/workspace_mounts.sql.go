@@ -38,9 +38,9 @@ WITH candidate AS (
            updated_at = now()
       FROM candidate
      WHERE workspace_mounts.id = candidate.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.materialized_version_id, claimed.runtime_instance_id, claimed.guest_channel_token_hash, claimed.guest_channel_token_expires_at, claimed.status, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.finalization_kind, claimed.finalization_reason_code, claimed.finalization_error, claimed.staged_version_id, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
+SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.materialized_version_id, claimed.runtime_instance_id, claimed.guest_channel_token_hash, claimed.guest_channel_token_expires_at, claimed.status, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.finalization_action, claimed.finalization_reason_code, claimed.finalization_error, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
 	   runtime_instances.restore_checkpoint_id,
 	   restore_checkpoint.base_workspace_version_id AS restore_source_version_id,
        runtime_instances.deployment_definition_id,
@@ -53,14 +53,7 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
        image_artifacts.id AS image_artifact_id,
        image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
-       image_artifacts.media_type AS image_artifact_media_type,
-       workspace_versions.artifact_id AS workspace_artifact_id,
-       COALESCE(workspace_artifacts.digest, '') AS workspace_artifact_digest,
-       COALESCE(workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
-       COALESCE(workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
-	   workspace_versions.content_digest AS workspace_content_digest,
-	   workspace_versions.size_bytes AS workspace_logical_size_bytes,
-       workspace_versions.entry_count AS workspace_entry_count
+       image_artifacts.media_type AS image_artifact_media_type
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
@@ -73,12 +66,9 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
    AND deployment_definitions.kind = 'sandbox'
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = claimed.workspace_id
-   AND workspace_versions.id = claimed.materialized_version_id
-  LEFT JOIN artifacts AS workspace_artifacts
-    ON workspace_artifacts.environment_id = workspace_versions.environment_id
-   AND workspace_artifacts.id = workspace_versions.artifact_id
+  JOIN computer_versions
+    ON computer_versions.computer_id = claimed.workspace_id
+   AND computer_versions.id = claimed.materialized_version_id
   JOIN artifacts AS image_artifacts
     ON image_artifacts.environment_id = deployment_definitions.environment_id
    AND image_artifacts.id = deployment_definitions.artifact_id
@@ -109,10 +99,9 @@ type ClaimWorkspaceMountRow struct {
 	Request                         []byte             `json:"request"`
 	DirtyGeneration                 int64              `json:"dirty_generation"`
 	FencingGeneration               int64              `json:"fencing_generation"`
-	FinalizationKind                pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction              pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode          pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError               []byte             `json:"finalization_error"`
-	StagedVersionID                 pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                       pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                     pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                       pgtype.Timestamptz `json:"stopped_at"`
@@ -137,13 +126,6 @@ type ClaimWorkspaceMountRow struct {
 	ImageArtifactDigest             string             `json:"image_artifact_digest"`
 	ImageArtifactSizeBytes          int64              `json:"image_artifact_size_bytes"`
 	ImageArtifactMediaType          string             `json:"image_artifact_media_type"`
-	WorkspaceArtifactID             pgtype.UUID        `json:"workspace_artifact_id"`
-	WorkspaceArtifactDigest         string             `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes      int64              `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType      string             `json:"workspace_artifact_media_type"`
-	WorkspaceContentDigest          string             `json:"workspace_content_digest"`
-	WorkspaceLogicalSizeBytes       int64              `json:"workspace_logical_size_bytes"`
-	WorkspaceEntryCount             int32              `json:"workspace_entry_count"`
 }
 
 func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error) {
@@ -172,10 +154,9 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -200,13 +181,6 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.ImageArtifactDigest,
 		&i.ImageArtifactSizeBytes,
 		&i.ImageArtifactMediaType,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceContentDigest,
-		&i.WorkspaceLogicalSizeBytes,
-		&i.WorkspaceEntryCount,
 	)
 	return i, err
 }
@@ -228,10 +202,10 @@ SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
     ON workspace_processes.id = runtime_instances.reserved_process_id
    AND workspace_processes.workspace_id = runtime_instances.workspace_id
    AND workspace_processes.status = 'pending'
-  JOIN workspace_versions
-    ON workspace_versions.workspace_id = runtime_instances.workspace_id
-   AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND workspace_versions.status = 'committed'
+  JOIN computer_versions
+    ON computer_versions.computer_id = runtime_instances.workspace_id
+   AND computer_versions.id = runtime_instances.reserved_workspace_version_id
+   AND computer_versions.status = 'committed'
  WHERE runtime_instances.org_id = $3
    AND runtime_instances.workspace_id = $4
    AND runtime_instances.id = $5
@@ -244,7 +218,7 @@ ON CONFLICT (workspace_id) WHERE status IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
   AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision
 `
 
@@ -276,10 +250,9 @@ type EnsureProcessWorkspaceMountRequestedRow struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -323,10 +296,9 @@ func (q *Queries) EnsureProcessWorkspaceMountRequested(ctx context.Context, arg 
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -358,7 +330,10 @@ WITH same_workspace_child_authority AS MATERIALIZED (
        AND edge.kind = 'child'
        AND edge.condition_status = 'pending'
        AND edge.suspension_status = 'parked'
-       AND edge.base_workspace_version_id = child.base_workspace_version_id
+       AND EXISTS (SELECT 1 FROM run_attempts origin
+           WHERE origin.run_id = child.id AND origin.number <= child.current_attempt_number
+             AND origin.workspace_id = edge.workspace_id
+             AND origin.base_workspace_version_id = edge.base_workspace_version_id)
        AND edge.ownership_generation IS NOT NULL
        AND edge.parent_writer_generation IS NOT NULL
       JOIN runs AS parent
@@ -378,12 +353,12 @@ WITH same_workspace_child_authority AS MATERIALIZED (
        AND checkpoint.status = 'ready'
        AND (checkpoint.expires_at IS NULL
             OR checkpoint.expires_at > transaction_timestamp())
-      JOIN workspaces
-        ON workspaces.id = edge.workspace_id
-       AND workspaces.environment_id = edge.environment_id
-       AND workspaces.ownership_generation = edge.ownership_generation
+      JOIN computers
+        ON computers.id = edge.workspace_id
+       AND computers.environment_id = edge.environment_id
+       AND computers.ownership_generation = edge.ownership_generation
        AND (
-           workspaces.writer_generation = coalesce(
+           computers.writer_generation = coalesce(
                edge.child_writer_generation,
                edge.parent_writer_generation
            )
@@ -396,7 +371,7 @@ WITH same_workspace_child_authority AS MATERIALIZED (
                   AND resume_edge.suspension_status = 'resume_pending'
                   AND resume_edge.ownership_generation = edge.ownership_generation
                   AND resume_edge.parent_writer_generation = edge.child_writer_generation
-                  AND resume_edge.child_writer_generation = workspaces.writer_generation
+                  AND resume_edge.child_writer_generation = computers.writer_generation
                   AND resume_edge.resume_writer_generation IS NULL
                   AND resume_edge.resume_workspace_version_id = $9
            )
@@ -408,11 +383,33 @@ WITH same_workspace_child_authority AS MATERIALIZED (
               ON child_workspace_lease.owner_run_lease_id = child_lease.id
              AND child_workspace_lease.workspace_id = child_lease.workspace_id
              AND (
-                 child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+                 (child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+                     AND child.base_workspace_version_id = edge.base_workspace_version_id
+                     AND child_lease.attempt_number = child.current_attempt_number)
+                 OR EXISTS (
+                     SELECT 1
+                       FROM computer_versions AS retry_version
+                       JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
+                       AND child_lease.finalization_root = retry_root.locator
+                      WHERE retry_version.id = child.base_workspace_version_id
+                        AND retry_version.computer_id = child.workspace_id
+                        AND retry_version.status = 'private'
+                        AND retry_version.source_workspace_lease_id = child_workspace_lease.id
+                        AND retry_version.parent_version_id = child_workspace_lease.base_workspace_version_id
+                        AND retry_version.ownership_generation = child_workspace_lease.ownership_generation
+                        AND retry_version.writer_generation = child_workspace_lease.writer_generation
+                        AND child_lease.attempt_number = child.current_attempt_number - 1
+                        AND child_lease.status = 'failed'
+                        AND child_lease.terminal_at IS NOT NULL
+                        AND child_lease.terminal_request_fingerprint IS NOT NULL
+                        AND child_lease.finalization_operation_id IS NOT NULL
+                 )
                  OR EXISTS (
                      SELECT 1
                        FROM run_waits AS prior_resume_edge
                       WHERE prior_resume_edge.run_id = child.id
+                        AND prior_resume_edge.attempt_number = child_lease.attempt_number
+                        AND child_lease.attempt_number = child.current_attempt_number
                         AND prior_resume_edge.workspace_id = child.workspace_id
                         AND prior_resume_edge.suspension_status = 'resume_pending'
                         AND prior_resume_edge.ownership_generation = edge.ownership_generation
@@ -429,12 +426,13 @@ WITH same_workspace_child_authority AS MATERIALIZED (
              AND (
                  child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
                  OR (
-                     child_lease.status = 'checkpointed'
+                     (child_lease.status = 'checkpointed' AND child_lease.attempt_number = child.current_attempt_number)
                      AND EXISTS (
                          SELECT 1
                           FROM run_waits AS resume_edge
                           WHERE resume_edge.run_id = child.id
                             AND resume_edge.attempt_number = child_lease.attempt_number
+                            AND child_lease.attempt_number = child.current_attempt_number
                             AND resume_edge.workspace_id = child.workspace_id
                             AND resume_edge.suspension_status = 'resume_pending'
                             AND resume_edge.prior_run_lease_id = child_lease.id
@@ -476,17 +474,17 @@ SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
   JOIN run_attempts ON run_attempts.run_id = runtime_instances.reserved_run_id
                    AND run_attempts.number = runtime_instances.reserved_attempt_number
                    AND run_attempts.workspace_id = runtime_instances.workspace_id
-  JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
-                         AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+  JOIN computer_versions ON computer_versions.computer_id = runtime_instances.workspace_id
+                         AND computer_versions.id = runtime_instances.reserved_workspace_version_id
                          AND (
                              (runtime_instances.restore_checkpoint_id IS NOT NULL
-                              AND workspace_versions.status = 'private')
+                              AND computer_versions.status = 'private')
                              OR
                              (runtime_instances.restore_checkpoint_id IS NULL
-                              AND workspace_versions.status = 'committed')
+                              AND computer_versions.status = 'committed')
                              OR
                              (runtime_instances.restore_checkpoint_id IS NULL
-                              AND workspace_versions.status = 'private'
+                              AND computer_versions.status = 'private'
                               AND EXISTS (
                                   SELECT 1
                                     FROM same_workspace_child_authority
@@ -507,7 +505,7 @@ DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
   AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
   AND workspace_mounts.fencing_generation = excluded.fencing_generation
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision
 `
 
@@ -541,10 +539,9 @@ type EnsureRunWorkspaceMountRequestedRow struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -590,10 +587,9 @@ func (q *Queries) EnsureRunWorkspaceMountRequested(ctx context.Context, arg Ensu
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -611,74 +607,115 @@ func (q *Queries) EnsureRunWorkspaceMountRequested(ctx context.Context, arg Ensu
 }
 
 const failWorkspaceMount = `-- name: FailWorkspaceMount :one
-WITH target AS (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+WITH source_runtime AS MATERIALIZED (
+    SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_instance_id, runtime_instances.worker_epoch
+      FROM runtime_instances
+     WHERE runtime_instances.id = $1 AND runtime_instances.org_id = $2
+       AND runtime_instances.worker_instance_id = $3 AND runtime_instances.worker_epoch = $4
+       AND runtime_instances.observed_state IN ('allocated', 'ready', 'failed') AND reclaimed_at IS NULL
+     FOR UPDATE
+), target AS (
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
-      JOIN runtime_instances
-        ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.id = workspace_mounts.runtime_instance_id
-       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
-       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
-       AND runtime_instances.observed_state IN ('allocated','ready')
-       AND runtime_instances.reclaimed_at IS NULL
-     WHERE workspace_mounts.org_id = $3
-       AND workspace_mounts.id = $4
-       AND workspace_mounts.worker_instance_id = $5
-       AND workspace_mounts.worker_epoch = $6
-       AND workspace_mounts.runtime_instance_id = $7
-       AND workspace_mounts.fencing_generation = $8
-       AND workspace_mounts.status IN ('mounting','mounted','unmounting')
-     FOR UPDATE OF workspace_mounts, runtime_instances
+      JOIN source_runtime
+        ON source_runtime.org_id = workspace_mounts.org_id
+       AND source_runtime.id = workspace_mounts.runtime_instance_id
+       AND source_runtime.worker_instance_id = workspace_mounts.worker_instance_id
+       AND source_runtime.worker_epoch = workspace_mounts.worker_epoch
+     WHERE workspace_mounts.org_id = $2
+       AND workspace_mounts.id = $5
+       AND workspace_mounts.worker_instance_id = $3
+       AND workspace_mounts.worker_epoch = $4
+       AND workspace_mounts.runtime_instance_id = $1
+       AND workspace_mounts.fencing_generation = $6
+       AND (workspace_mounts.status IN ('mounting', 'mounted', 'unmounting', 'failed')
+            OR (workspace_mounts.status = 'unmounted' AND workspace_mounts.terminal_reason_code = 'checkpointed'))
+     FOR UPDATE OF workspace_mounts
 ), failed_runtime AS (
     UPDATE runtime_instances
        SET observed_state = 'failed', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
-           terminal_reason_code = 'workspace_mount_failed',
-           terminal_error = $2,
+           terminal_reason_code = CASE WHEN target.status = 'unmounted'
+               THEN 'checkpoint_source_stop_failed' ELSE 'workspace_mount_failed' END,
+           terminal_error = $7,
            reserved_run_id = NULL, reserved_attempt_number = NULL,
            reserved_process_id = NULL, reserved_workspace_version_id = NULL,
            reservation_expires_at = NULL, updated_at = now()
       FROM target
-     WHERE runtime_instances.org_id = target.org_id
-       AND runtime_instances.id = target.runtime_instance_id
-       AND runtime_instances.worker_instance_id = target.worker_instance_id
-       AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+     WHERE runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.observed_state IN ('allocated', 'ready')
+    RETURNING runtime_instances.id
+), failed_mount AS (
+    UPDATE workspace_mounts
+       SET status = 'failed', failed_at = now(), terminal_at = now(),
+           terminal_reason_code = $8, terminal_error = $7,
+           updated_at = now()
+      FROM target
+     WHERE workspace_mounts.id = target.id
+       AND target.status IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-UPDATE workspace_mounts
-   SET status = 'failed', failed_at = now(), terminal_at = now(),
-       terminal_reason_code = $1, terminal_error = $2,
-       updated_at = now()
-  FROM target, failed_runtime
- WHERE workspace_mounts.org_id = target.org_id
-   AND workspace_mounts.id = target.id
-   AND failed_runtime.id = target.runtime_instance_id
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM failed_mount
+UNION ALL
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM target WHERE status IN ('failed', 'unmounted')
 `
 
 type FailWorkspaceMountParams struct {
-	ReasonCode        pgtype.Text `json:"reason_code"`
-	Error             []byte      `json:"error"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
 	OrgID             pgtype.UUID `json:"org_id"`
-	ID                pgtype.UUID `json:"id"`
 	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch       int64       `json:"worker_epoch"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+	ID                pgtype.UUID `json:"id"`
 	FencingGeneration int64       `json:"fencing_generation"`
+	Error             []byte      `json:"error"`
+	ReasonCode        pgtype.Text `json:"reason_code"`
 }
 
-func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (WorkspaceMount, error) {
+type FailWorkspaceMountRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	Status                     string             `json:"status"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (FailWorkspaceMountRow, error) {
 	row := q.db.QueryRow(ctx, failWorkspaceMount,
-		arg.ReasonCode,
-		arg.Error,
+		arg.RuntimeInstanceID,
 		arg.OrgID,
-		arg.ID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.RuntimeInstanceID,
+		arg.ID,
 		arg.FencingGeneration,
+		arg.Error,
+		arg.ReasonCode,
 	)
-	var i WorkspaceMount
+	var i FailWorkspaceMountRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -697,10 +734,9 @@ func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMount
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -715,23 +751,22 @@ func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMount
 	return i, err
 }
 
-const getWorkspaceMountForWorkerTransition = `-- name: GetWorkspaceMountForWorkerTransition :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
+const getWorkspaceMountForWorker = `-- name: GetWorkspaceMountForWorker :one
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
  WHERE org_id = $1 AND id = $2
    AND worker_instance_id = $3
    AND worker_epoch = $4
-   AND status IN ('mounting','mounted','unmounting')
 `
 
-type GetWorkspaceMountForWorkerTransitionParams struct {
+type GetWorkspaceMountForWorkerParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
 	ID               pgtype.UUID `json:"id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch      int64       `json:"worker_epoch"`
 }
 
-func (q *Queries) GetWorkspaceMountForWorkerTransition(ctx context.Context, arg GetWorkspaceMountForWorkerTransitionParams) (WorkspaceMount, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceMountForWorkerTransition,
+func (q *Queries) GetWorkspaceMountForWorker(ctx context.Context, arg GetWorkspaceMountForWorkerParams) (WorkspaceMount, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceMountForWorker,
 		arg.OrgID,
 		arg.ID,
 		arg.WorkerInstanceID,
@@ -756,10 +791,9 @@ func (q *Queries) GetWorkspaceMountForWorkerTransition(ctx context.Context, arg 
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -801,7 +835,7 @@ WITH candidates AS (
            updated_at = transaction_timestamp()
       FROM candidates
      WHERE workspace_mounts.id = candidates.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
 UPDATE runtime_instances
    SET desired_state = 'closed',
@@ -815,7 +849,7 @@ UPDATE runtime_instances
        updated_at = transaction_timestamp()
   FROM lost_mounts
  WHERE runtime_instances.id = lost_mounts.runtime_instance_id
-RETURNING lost_mounts.id, lost_mounts.org_id, lost_mounts.worker_group_id, lost_mounts.project_id, lost_mounts.environment_id, lost_mounts.region_id, lost_mounts.worker_instance_id, lost_mounts.worker_epoch, lost_mounts.workspace_id, lost_mounts.materialized_version_id, lost_mounts.runtime_instance_id, lost_mounts.guest_channel_token_hash, lost_mounts.guest_channel_token_expires_at, lost_mounts.status, lost_mounts.request, lost_mounts.dirty_generation, lost_mounts.fencing_generation, lost_mounts.finalization_kind, lost_mounts.finalization_reason_code, lost_mounts.finalization_error, lost_mounts.staged_version_id, lost_mounts.mounted_at, lost_mounts.unmounted_at, lost_mounts.stopped_at, lost_mounts.lost_at, lost_mounts.failed_at, lost_mounts.terminal_at, lost_mounts.terminal_reason_code, lost_mounts.terminal_error, lost_mounts.created_at, lost_mounts.updated_at
+RETURNING lost_mounts.id, lost_mounts.org_id, lost_mounts.worker_group_id, lost_mounts.project_id, lost_mounts.environment_id, lost_mounts.region_id, lost_mounts.worker_instance_id, lost_mounts.worker_epoch, lost_mounts.workspace_id, lost_mounts.materialized_version_id, lost_mounts.runtime_instance_id, lost_mounts.guest_channel_token_hash, lost_mounts.guest_channel_token_expires_at, lost_mounts.status, lost_mounts.request, lost_mounts.dirty_generation, lost_mounts.fencing_generation, lost_mounts.finalization_action, lost_mounts.finalization_reason_code, lost_mounts.finalization_error, lost_mounts.mounted_at, lost_mounts.unmounted_at, lost_mounts.stopped_at, lost_mounts.lost_at, lost_mounts.failed_at, lost_mounts.terminal_at, lost_mounts.terminal_reason_code, lost_mounts.terminal_error, lost_mounts.created_at, lost_mounts.updated_at
 `
 
 type LoseExpiredWorkspaceMountClaimsRow struct {
@@ -836,10 +870,9 @@ type LoseExpiredWorkspaceMountClaimsRow struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -879,10 +912,9 @@ func (q *Queries) LoseExpiredWorkspaceMountClaims(ctx context.Context, limitCoun
 			&i.Request,
 			&i.DirtyGeneration,
 			&i.FencingGeneration,
-			&i.FinalizationKind,
+			&i.FinalizationAction,
 			&i.FinalizationReasonCode,
 			&i.FinalizationError,
-			&i.StagedVersionID,
 			&i.MountedAt,
 			&i.UnmountedAt,
 			&i.StoppedAt,
@@ -911,7 +943,7 @@ UPDATE workspace_mounts
    AND worker_instance_id = $3 AND worker_epoch = $4
    AND runtime_instance_id = $5
    AND fencing_generation = $6 AND status = 'mounting'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type MarkWorkspaceMountMountedParams struct {
@@ -951,10 +983,9 @@ func (q *Queries) MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspa
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -977,7 +1008,7 @@ UPDATE workspace_mounts
    AND worker_instance_id = $4
    AND worker_epoch = $5 AND runtime_instance_id = $6
    AND status IN ('mounting','mounted','unmounting')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type RenewWorkspaceMountParams struct {
@@ -1017,10 +1048,9 @@ func (q *Queries) RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMou
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -1039,15 +1069,15 @@ const requestCapacityPressureIdleWorkspaceMountStopsForWorker = `-- name: Reques
 WITH candidates AS (
     SELECT workspace_mounts.id
       FROM workspace_mounts
-      JOIN workspaces
-        ON workspaces.environment_id = workspace_mounts.environment_id
-       AND workspaces.id = workspace_mounts.workspace_id
+      JOIN computers
+        ON computers.environment_id = workspace_mounts.environment_id
+       AND computers.id = workspace_mounts.workspace_id
      WHERE workspace_mounts.worker_instance_id = $1
        AND workspace_mounts.worker_epoch = $2 AND workspace_mounts.status = 'mounted'
-       AND workspaces.status = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.dirty_state = 'clean'
-       AND workspaces.head_version_id = workspace_mounts.materialized_version_id
+       AND computers.status = 'active'
+       AND computers.desired_state = 'active'
+       AND computers.dirty_state = 'clean'
+       AND computers.head_version_id = workspace_mounts.materialized_version_id
        AND NOT EXISTS (SELECT 1 FROM workspace_leases
                         WHERE workspace_mount_id = workspace_mounts.id AND status IN ('active','releasing'))
        AND NOT EXISTS (SELECT 1 FROM workspace_processes
@@ -1059,13 +1089,13 @@ WITH candidates AS (
 )
 UPDATE workspace_mounts
    SET status = 'unmounting',
-       finalization_kind = 'discard',
+       finalization_action = 'discard',
        finalization_reason_code = 'capacity_pressure',
        finalization_error = NULL,
        stopped_at = now(),
        updated_at = now()
   FROM candidates WHERE workspace_mounts.id = candidates.id
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams struct {
@@ -1101,10 +1131,9 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 			&i.Request,
 			&i.DirtyGeneration,
 			&i.FencingGeneration,
-			&i.FinalizationKind,
+			&i.FinalizationAction,
 			&i.FinalizationReasonCode,
 			&i.FinalizationError,
-			&i.StagedVersionID,
 			&i.MountedAt,
 			&i.UnmountedAt,
 			&i.StoppedAt,
@@ -1130,7 +1159,7 @@ const requestWorkspaceDeleteMountStop = `-- name: RequestWorkspaceDeleteMountSto
 WITH mount AS (
     UPDATE workspace_mounts
        SET status = 'unmounting',
-           finalization_kind = 'discard',
+           finalization_action = 'discard',
            finalization_reason_code = 'workspace_deleted',
            finalization_error = NULL,
            stopped_at = COALESCE(stopped_at, transaction_timestamp()),
@@ -1144,16 +1173,16 @@ WITH mount AS (
            OR (
                workspace_mounts.status = 'unmounting'
                AND (
-                   workspace_mounts.finalization_kind IS NULL
+                   workspace_mounts.finalization_action IS NULL
                    OR (
-                       workspace_mounts.finalization_kind = 'discard'
+                       workspace_mounts.finalization_action = 'discard'
                        AND workspace_mounts.finalization_reason_code = 'workspace_deleted'
                        AND workspace_mounts.finalization_error IS NULL
                    )
                )
            )
        )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 )
 UPDATE runtime_instances
    SET desired_state = 'closed',
@@ -1167,7 +1196,7 @@ UPDATE runtime_instances
        updated_at = transaction_timestamp()
   FROM mount
  WHERE runtime_instances.id = mount.runtime_instance_id
-RETURNING mount.id, mount.org_id, mount.worker_group_id, mount.project_id, mount.environment_id, mount.region_id, mount.worker_instance_id, mount.worker_epoch, mount.workspace_id, mount.materialized_version_id, mount.runtime_instance_id, mount.guest_channel_token_hash, mount.guest_channel_token_expires_at, mount.status, mount.request, mount.dirty_generation, mount.fencing_generation, mount.finalization_kind, mount.finalization_reason_code, mount.finalization_error, mount.staged_version_id, mount.mounted_at, mount.unmounted_at, mount.stopped_at, mount.lost_at, mount.failed_at, mount.terminal_at, mount.terminal_reason_code, mount.terminal_error, mount.created_at, mount.updated_at
+RETURNING mount.id, mount.org_id, mount.worker_group_id, mount.project_id, mount.environment_id, mount.region_id, mount.worker_instance_id, mount.worker_epoch, mount.workspace_id, mount.materialized_version_id, mount.runtime_instance_id, mount.guest_channel_token_hash, mount.guest_channel_token_expires_at, mount.status, mount.request, mount.dirty_generation, mount.fencing_generation, mount.finalization_action, mount.finalization_reason_code, mount.finalization_error, mount.mounted_at, mount.unmounted_at, mount.stopped_at, mount.lost_at, mount.failed_at, mount.terminal_at, mount.terminal_reason_code, mount.terminal_error, mount.created_at, mount.updated_at
 `
 
 type RequestWorkspaceDeleteMountStopParams struct {
@@ -1195,10 +1224,9 @@ type RequestWorkspaceDeleteMountStopRow struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -1237,10 +1265,9 @@ func (q *Queries) RequestWorkspaceDeleteMountStop(ctx context.Context, arg Reque
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -1266,7 +1293,7 @@ WITH stopped AS (
        AND workspace_mounts.worker_epoch = $5
        AND workspace_mounts.runtime_instance_id = $6
        AND workspace_mounts.fencing_generation = $7
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_kind, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.staged_version_id, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 ), closed_runtime AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
@@ -1290,9 +1317,9 @@ WITH stopped AS (
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','ready')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.computer_source_version_id, runtime_instances.computer_save_sequence, runtime_instances.computer_save_version_id, runtime_instances.computer_save_lease_id, runtime_instances.computer_save_base_version_id, runtime_instances.computer_payload_required, runtime_instances.retained_computer_source_version_id, runtime_instances.computer_write_key_id, runtime_instances.retained_computer_write_key_id, runtime_instances.computer_key_available, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
 )
-SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.materialized_version_id, stopped.runtime_instance_id, stopped.guest_channel_token_hash, stopped.guest_channel_token_expires_at, stopped.status, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.finalization_kind, stopped.finalization_reason_code, stopped.finalization_error, stopped.staged_version_id, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
+SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.materialized_version_id, stopped.runtime_instance_id, stopped.guest_channel_token_hash, stopped.guest_channel_token_expires_at, stopped.status, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.finalization_action, stopped.finalization_reason_code, stopped.finalization_error, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
   JOIN closed_runtime ON closed_runtime.id = stopped.runtime_instance_id
 `
 
@@ -1325,10 +1352,9 @@ type StopWorkspaceMountRow struct {
 	Request                    []byte             `json:"request"`
 	DirtyGeneration            int64              `json:"dirty_generation"`
 	FencingGeneration          int64              `json:"fencing_generation"`
-	FinalizationKind           pgtype.Text        `json:"finalization_kind"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
 	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
 	FinalizationError          []byte             `json:"finalization_error"`
-	StagedVersionID            pgtype.UUID        `json:"staged_version_id"`
 	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
 	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
 	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
@@ -1371,10 +1397,9 @@ func (q *Queries) StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMount
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,

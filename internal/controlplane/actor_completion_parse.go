@@ -24,8 +24,7 @@ type parsedActorCompletion struct {
 	holdID        uuid.UUID
 	turnID        *uuid.UUID
 	errorObject   json.RawMessage
-	capture       *parsedTaskWorkspaceCapture
-	rollback      *parsedTaskWorkspaceRollback
+	capture       *parsedTaskComputerCapture
 	fingerprint   string
 }
 
@@ -76,34 +75,16 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 		return parsedActorCompletion{}, errors.New("outcome must contain exactly one variant")
 	}
 
-	proofs := 0
-	if request.Workspace.Captured != nil {
-		proofs++
-		capture, normalizedCapture, parseErr := parseTaskWorkspaceCapture(*request.Workspace.Captured)
-		if parseErr != nil {
-			return parsedActorCompletion{}, parseErr
-		}
-		parsed.capture = &capture
-		normalized.Workspace.Captured = &normalizedCapture
+	if request.Workspace.Captured == nil {
+		return parsedActorCompletion{}, errors.New("workspace capture is required for every terminal outcome")
 	}
-	if request.Workspace.RolledBack != nil {
-		proofs++
-		rollback, normalizedRollback, parseErr := parseTaskWorkspaceRollback(*request.Workspace.RolledBack)
-		if parseErr != nil {
-			return parsedActorCompletion{}, parseErr
-		}
-		parsed.rollback = &rollback
-		normalized.Workspace.RolledBack = &normalizedRollback
+	capture, normalizedCapture, err := parseTaskWorkspaceCapture(*request.Workspace.Captured)
+	if err != nil {
+		return parsedActorCompletion{}, err
 	}
-	if proofs != 1 {
-		return parsedActorCompletion{}, errors.New("workspace must contain exactly one proof")
-	}
-	if (parsed.kind == actorCompletionSucceeded || parsed.kind == actorCompletionInterrupted) && parsed.capture == nil {
-		return parsedActorCompletion{}, errors.New("a successful or cooperatively interrupted actor requires a captured workspace")
-	}
-	if parsed.kind == actorCompletionFailed && parsed.rollback == nil {
-		return parsedActorCompletion{}, errors.New("a failed actor requires a workspace rollback")
-	}
+	parsed.capture = &capture
+	normalized.Workspace.Captured = &normalizedCapture
+
 	parsed.fingerprint, err = terminalRequestFingerprint("actor.complete.v0", normalized)
 	if err != nil {
 		return parsedActorCompletion{}, fmt.Errorf("fingerprint actor completion: %w", err)

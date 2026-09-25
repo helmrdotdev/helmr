@@ -86,9 +86,9 @@ func TestSchemaCanonicalContentAndRequestDigests(t *testing.T) {
 		rejectSchemaRow(t, tx, "23514", `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, f.orgID, value)
 		rejectSchemaRow(t, tx, "23514", `UPDATE runtime_substrates SET substrate_digest=$2 WHERE id=$1`, substrateID, value)
 		rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET terminal_request_fingerprint=$2 WHERE id=$1`, work.leaseID, value)
-		rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET status='finalizing',started_at=claimed_at,finalization_operation_id=$2,finalization_kind='capture',finalization_started_at=now(),finalization_request_fingerprint=$3 WHERE id=$1`, work.leaseID, uuid.NewV7(), value)
+		rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET status='finalizing',started_at=claimed_at,finalization_operation_id=$2,finalization_started_at=now(),finalization_request_fingerprint=$3 WHERE id=$1`, work.leaseID, uuid.NewV7(), value)
 	}
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, f.orgID, dbtest.Digest("content"))
+	dbtest.MustExec(t, ctx, tx, `WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, f.orgID, dbtest.Digest("content"))
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET terminal_request_fingerprint=$2 WHERE id=$1`, work.leaseID, dbtest.Digest("terminal"))
 }
 

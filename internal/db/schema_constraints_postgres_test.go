@@ -91,7 +91,7 @@ func TestSchemaFailurePayloadsRejectNullAndPreserveLifecycle(t *testing.T) {
 	dbtest.MustExec(t, ctx, tx, `UPDATE schedules SET last_failure=NULL WHERE id=$1`, scheduleID)
 }
 
-func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
+func TestSchemaComputerVersionAndFinalizationAuthority(t *testing.T) {
 	ctx := t.Context()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
@@ -100,32 +100,26 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	artifactID, versionID := uuid.NewV7(), uuid.NewV7()
+	versionID := uuid.NewV7()
 	digest := dbtest.Digest("schema-workspace-version")
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,1,'application/octet-stream')`, fixture.orgID, digest)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest)
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_versions (id,environment_id,workspace_id,parent_version_id,
-		 artifact_id,content_digest,source_workspace_lease_id,ownership_generation,writer_generation)
-		SELECT $1,environment_id,workspace_id,base_workspace_version_id,$2,$3,id,ownership_generation,writer_generation
-		FROM workspace_leases WHERE owner_run_lease_id=$4
-	`, versionID, artifactID, digest, work.leaseID)
+		INSERT INTO computer_versions (id,environment_id,computer_id,parent_version_id,root_pack_digest,source_workspace_lease_id,ownership_generation,writer_generation)
+		SELECT $1,environment_id,workspace_id,base_workspace_version_id,$2,id,ownership_generation,writer_generation
+		FROM workspace_leases WHERE owner_run_lease_id=$3
+	`, versionID, digest, work.leaseID)
 	for _, set := range []string{
-		"parent_version_id=NULL", "artifact_id=NULL",
+		"parent_version_id=NULL",
 		"source_workspace_lease_id=NULL",
 	} {
 		t.Run(set, func(t *testing.T) {
-			rejectSchemaRow(t, tx, "23514", "UPDATE workspace_versions SET "+set+" WHERE id=$1", versionID)
+			rejectSchemaRow(t, tx, "23514", "UPDATE computer_versions SET "+set+" WHERE id=$1", versionID)
 		})
 	}
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET artifact_id=$2 WHERE id=$1`, versionID, uuid.NewV7())
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET writer_generation=writer_generation+1 WHERE id=$1`, versionID)
+	rejectSchemaRow(t, tx, "23503", `UPDATE computer_versions SET writer_generation=writer_generation+1 WHERE id=$1`, versionID)
 
-	// A same-kind artifact in another environment must not cross the composite FK.
-	otherEnvironment, crossScopeArtifact := uuid.NewV7(), uuid.NewV7()
+	// Checkpoint artifacts must remain in the same environment.
+	otherEnvironment := uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO environments (id,org_id,project_id,slug,name,color_hex) VALUES ($1,$2,$3,'other','Other','#123456')`, otherEnvironment, fixture.orgID, fixture.projectID)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO artifacts (id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) VALUES ($1,$2,$3,$4,$5,'workspace_version',1,'application/octet-stream')`, crossScopeArtifact, fixture.orgID, fixture.projectID, otherEnvironment, digest)
-	rejectSchemaRow(t, tx, "23503", `UPDATE workspace_versions SET artifact_id=$2 WHERE id=$1`, versionID, crossScopeArtifact)
 	dbtest.MustExec(t, ctx, tx, "SAVEPOINT checkpoint_boundaries")
 	assertCheckpointArtifactBoundaries(t, tx, fixture, work, versionID, otherEnvironment)
 	dbtest.MustExec(t, ctx, tx, "ROLLBACK TO SAVEPOINT checkpoint_boundaries")
@@ -134,18 +128,17 @@ func TestSchemaWorkspaceVersionArtifactAndFinalizationAuthority(t *testing.T) {
 	if err := tx.QueryRow(ctx, `SELECT workspace_mount_id FROM workspace_leases WHERE owner_run_lease_id=$1`, work.leaseID).Scan(&mountID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounting', finalization_kind='capture', finalization_reason_code='workspace_exec_completed', staged_version_id=$2 WHERE id=$1`, mountID, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounting', finalization_action='capture', finalization_reason_code='workspace_exec_completed' WHERE id=$1`, mountID)
 	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_reason_code=NULL WHERE id=$1`, mountID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL WHERE id=$1`, mountID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL WHERE id=$1`, mountID)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET staged_version_id=NULL, finalization_kind='discard', finalization_reason_code='exec_failed' WHERE id=$1`, mountID)
-	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_kind=NULL, finalization_reason_code=NULL, finalization_error='{}' WHERE id=$1`, mountID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_action=NULL WHERE id=$1`, mountID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET finalization_action='discard', finalization_reason_code='exec_failed' WHERE id=$1`, mountID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE workspace_mounts SET finalization_action=NULL, finalization_reason_code=NULL, finalization_error='{}' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_mounts SET status='unmounted', unmounted_at=now(), terminal_at=now(), terminal_reason_code='exec_failed' WHERE id=$1`, mountID)
 	dbtest.MustExec(t, ctx, tx, `SAVEPOINT private_version`)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET status='discarded', discarded_at=now() WHERE id=$1`, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE computer_versions SET status='discarded', discarded_at=now() WHERE id=$1`, versionID)
 	// Restore the private row before checking its alternate publication path.
 	dbtest.MustExec(t, ctx, tx, `ROLLBACK TO SAVEPOINT private_version`)
-	dbtest.MustExec(t, ctx, tx, `UPDATE workspace_versions SET status='committed', discarded_at=NULL, published_at=now() WHERE id=$1`, versionID)
+	dbtest.MustExec(t, ctx, tx, `UPDATE computer_versions SET status='committed', discarded_at=NULL, published_at=now() WHERE id=$1`, versionID)
 }
 
 func TestSchemaProvenanceAndExpiryRejectPartialTuples(t *testing.T) {
@@ -198,14 +191,20 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, fixture runLeas
 	`, checkpointID, work.runID, waitID, work.leaseID)
 	artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, work.runID, "schema-checkpoint")
 	rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET runtime_config_artifact_id=$2 WHERE id=$1`, checkpointID, artifacts.RuntimeConfig)
-	rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET status='ready', private_workspace_version_id=$2, ready_at=now(), ready_request_fingerprint='sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6', restore_manifest='{"version":0}' WHERE id=$1`, checkpointID, privateVersionID)
+	rejectSchemaRow(t, tx, "23514", `UPDATE run_checkpoints SET status='ready', private_workspace_version_id=$2, ready_at=now(), ready_request_fingerprint='sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6', manifest='{"version":0}' WHERE id=$1`, checkpointID, privateVersionID)
 	params := MarkRunCheckpointReadyParams{
 		ID: pgvalue.UUID(checkpointID), RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
 		PrivateWorkspaceVersionID: pgvalue.UUID(privateVersionID), RuntimeConfigArtifactID: pgvalue.UUID(artifacts.RuntimeConfig),
 		VMStateArtifactID: pgvalue.UUID(artifacts.VMState), MemoryArtifactID: pgvalue.UUID(artifacts.Memory), ScratchDiskArtifactID: pgvalue.UUID(artifacts.ScratchDisk),
-		RestoreManifest: []byte(`{"version":0}`), ReadyRequestFingerprint: pgvalue.Text("sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6"),
+		Manifest: []byte(`{"version":0}`), ReadyRequestFingerprint: pgvalue.Text("sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6"),
 	}
 	queries := New(tx)
+	if _, err := queries.MarkRunCheckpointReady(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("unregistered manifest: %v", err)
+	}
+	if _, err := queries.RegisterCheckpointManifest(ctx, RegisterCheckpointManifestParams{ID: params.ID, Manifest: params.Manifest}); err != nil {
+		t.Fatal(err)
+	}
 	dbtest.MustExec(t, ctx, tx, `UPDATE run_checkpoints SET runtime_config_artifact_id=$2, vm_state_artifact_id=$3, memory_artifact_id=$4, scratch_disk_artifact_id=$5 WHERE id=$1`, checkpointID, artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
 	for _, column := range []string{"runtime_config_artifact_id", "vm_state_artifact_id", "memory_artifact_id", "scratch_disk_artifact_id"} {
 		t.Run(column, func(t *testing.T) {
@@ -228,6 +227,8 @@ func assertCheckpointArtifactBoundaries(t *testing.T, tx pgx.Tx, fixture runLeas
 	if _, err := queries.MarkRunCheckpointReady(ctx, params); err != nil {
 		t.Fatal(err)
 	}
+	rejectSchemaRow(t, tx, "23514", "UPDATE run_checkpoints SET manifest=NULL WHERE id=$1", checkpointID)
+	rejectSchemaRow(t, tx, "23514", "UPDATE run_checkpoints SET manifest='{}' WHERE id=$1", checkpointID)
 	for _, column := range []string{"runtime_config_artifact_id", "vm_state_artifact_id", "memory_artifact_id", "scratch_disk_artifact_id"} {
 		rejectSchemaRow(t, tx, "23514", "UPDATE run_checkpoints SET "+column+"=NULL WHERE id=$1", checkpointID)
 	}

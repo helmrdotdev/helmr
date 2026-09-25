@@ -12,7 +12,6 @@ import type {
   SessionCancelReceipt,
   TurnInterruptReceipt,
   SessionResumeReceipt,
-  SessionRecoveryReceipt,
   SessionEvent,
   SessionEventKind,
   SessionEventPage,
@@ -59,7 +58,6 @@ function parseDispatch(value: unknown): SessionDispatch {
       "interrupt_requested",
       "interrupted",
       "recovery_required",
-      "recovered",
     ].includes(v["reason"] as string)
   )
     throw new Error("Session.dispatch is invalid")
@@ -203,20 +201,6 @@ export function parseSessionResumeReceipt(
     status: v["status"],
   })
 }
-export function parseSessionRecoveryReceipt(
-  value: unknown,
-): SessionRecoveryReceipt {
-  const v = objectValue(value, "Recovery receipt")
-  if (v["status"] !== "accepted")
-    throw new Error("Recovery receipt.status is invalid")
-  return Object.freeze({
-    id: resourceID(v["id"], "Recovery receipt.id"),
-    sessionId: resourceID(v["session_id"], "Recovery receipt.session_id"),
-    turnId: nullableID(v["turn_id"], "Recovery receipt.turn_id"),
-    holdId: resourceID(v["hold_id"], "Recovery receipt.hold_id"),
-    status: v["status"],
-  })
-}
 export function parseOutputReceipt(value: unknown): OutputReceipt {
   const v = objectValue(value, "Output receipt")
   return Object.freeze({
@@ -254,7 +238,7 @@ const eventKinds: readonly SessionEventKind[] = [
   "session.failed",
   "session.held",
   "session.resumed",
-  "session.recovered",
+  "session.execution_lost",
 ]
 export function parseSessionEvent(value: unknown): SessionEvent {
   const v = objectValue(value, "Session event")

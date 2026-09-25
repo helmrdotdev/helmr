@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type runLeaseExecutionProjection struct {
@@ -126,7 +125,7 @@ func checkpointCorrelationID(
 	wait db.RunWait,
 ) (string, error) {
 	var manifest workerapi.CheckpointManifest
-	if err := json.Unmarshal(checkpoint.RestoreManifest, &manifest); err != nil {
+	if err := json.Unmarshal(checkpoint.Manifest, &manifest); err != nil {
 		return "", fmt.Errorf("decode run checkpoint correlation authority: %w", err)
 	}
 	correlationID := strings.TrimSpace(manifest.RecoveryPoint.CorrelationID)
@@ -294,7 +293,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 func projectWorkspaceAttachment(
 	authority runLeaseProjectionAuthority,
 	writeCapability string,
-	resetAuthority db.GetWorkspaceResetTargetAuthorityRow,
+	resetAuthority db.GetComputerVersionAuthorityRow,
 ) (workerapi.WorkspaceAttachment, error) {
 	lease := authority.workspaceLease
 	if lease.OwnerRunLeaseID != authority.runLease.ID ||
@@ -311,69 +310,22 @@ func projectWorkspaceAttachment(
 		strings.TrimSpace(writeCapability) == "" {
 		return workerapi.WorkspaceAttachment{}, errors.New("workspace attachment authority is inconsistent")
 	}
-	resetTarget, err := projectWorkspaceResetTarget(lease, resetAuthority)
+	resetTarget, err := projectComputerMountTarget(lease, resetAuthority)
 	if err != nil {
 		return workerapi.WorkspaceAttachment{}, err
 	}
-	return workerapi.WorkspaceAttachment{WriteCapability: writeCapability, ResetTarget: resetTarget}, nil
+	return workerapi.WorkspaceAttachment{WriteCapability: writeCapability, Target: resetTarget}, nil
 }
 
-func projectWorkspaceResetTarget(
-	lease db.WorkspaceLease,
-	authority db.GetWorkspaceResetTargetAuthorityRow,
-) (workerapi.WorkspaceResetTarget, error) {
+func projectComputerMountTarget(lease db.WorkspaceLease, authority db.GetComputerVersionAuthorityRow) (workerapi.ComputerMountTarget, error) {
 	if authority.VersionID != lease.BaseWorkspaceVersionID {
-		return workerapi.WorkspaceResetTarget{}, errors.New("workspace reset target does not match the workspace lease base")
+		return workerapi.ComputerMountTarget{}, errors.New("computer mount version does not match lease base")
 	}
-	baseWorkspaceVersionID, err := requiredClaimUUIDString("workspace reset base version ID", authority.VersionID)
+	id, err := requiredClaimUUIDString("computer mount version ID", authority.VersionID)
 	if err != nil {
-		return workerapi.WorkspaceResetTarget{}, err
+		return workerapi.ComputerMountTarget{}, err
 	}
-	tree := workspace.TreeIdentity{
-		Digest: authority.ContentDigest, SizeBytes: authority.LogicalSizeBytes,
-		EntryCount: int(authority.EntryCount),
-	}
-	projectedTree := workerapi.WorkspaceTreeIdentity{
-		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: authority.EntryCount,
-	}
-	emptyShape := !authority.ParentVersionID.Valid && !authority.ArtifactID.Valid &&
-		!authority.SourceWorkspaceLeaseID.Valid && authority.OwnershipGeneration == 0 &&
-		authority.WriterGeneration == 0 && !authority.ArtifactRowKind.Valid &&
-		!authority.ArtifactDigest.Valid && !authority.ArtifactSizeBytes.Valid &&
-		!authority.ArtifactMediaType.Valid
-	if emptyShape {
-		if _, err := workspace.EmptyResetTarget(baseWorkspaceVersionID, tree); err != nil {
-			return workerapi.WorkspaceResetTarget{}, fmt.Errorf("invalid empty workspace reset target authority: %w", err)
-		}
-		return workerapi.WorkspaceResetTarget{
-			BaseWorkspaceVersionID: baseWorkspaceVersionID, Tree: projectedTree,
-			Empty: &workerapi.EmptyWorkspace{},
-		}, nil
-	}
-	artifactShape := authority.ParentVersionID.Valid && authority.ArtifactID.Valid &&
-		authority.SourceWorkspaceLeaseID.Valid &&
-		authority.OwnershipGeneration > 0 && authority.WriterGeneration > 0 &&
-		authority.ArtifactRowKind.Valid && authority.ArtifactRowKind.ArtifactKind == db.ArtifactKindWorkspaceVersion &&
-		authority.ArtifactDigest.Valid && authority.ArtifactSizeBytes.Valid && authority.ArtifactMediaType.Valid
-	if !artifactShape {
-		return workerapi.WorkspaceResetTarget{}, errors.New("workspace reset target authority has an invalid version/artifact relation")
-	}
-	artifact := workspace.ArtifactIdentity{
-		Digest: authority.ArtifactDigest.String, MediaType: authority.ArtifactMediaType.String,
-		Encoding: workspace.ArtifactEncoding, SizeBytes: authority.ArtifactSizeBytes.Int64,
-		EntryCount: int(authority.EntryCount),
-	}
-	if _, err := workspace.ArtifactResetTarget(baseWorkspaceVersionID, tree, artifact); err != nil {
-		return workerapi.WorkspaceResetTarget{}, fmt.Errorf("invalid artifact workspace reset target authority: %w", err)
-	}
-	return workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: baseWorkspaceVersionID,
-		Tree:                   projectedTree,
-		Artifact: &workerapi.WorkspaceArtifact{
-			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
-			SizeBytes: artifact.SizeBytes, EntryCount: authority.EntryCount,
-		},
-	}, nil
+	return workerapi.ComputerMountTarget{BaseWorkspaceVersionID: id}, nil
 }
 
 func projectRunWaitDecision(wait db.RunWait) (workerapi.RunLeaseDecision, error) {
@@ -486,7 +438,7 @@ func projectRunLeaseCheckpoint(
 	checkpoint db.RunCheckpoint,
 	authority checkpointArtifactAuthority,
 ) (runLeaseCheckpointProjection, error) {
-	if checkpoint.Status != db.RunCheckpointStatusReady || !json.Valid(checkpoint.RestoreManifest) {
+	if checkpoint.Status != db.RunCheckpointStatusReady || !json.Valid(checkpoint.Manifest) {
 		return runLeaseCheckpointProjection{}, errors.New("run checkpoint authority is invalid")
 	}
 	descriptors := [4]struct {
@@ -514,7 +466,7 @@ func projectRunLeaseCheckpoint(
 		})
 	}
 	return runLeaseCheckpointProjection{
-		Manifest:  append(json.RawMessage(nil), checkpoint.RestoreManifest...),
+		Manifest:  append(json.RawMessage(nil), checkpoint.Manifest...),
 		Artifacts: artifacts,
 	}, nil
 }

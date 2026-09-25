@@ -244,22 +244,6 @@ func (c *Client) ResumeSession(ctx context.Context, sessionID string, input api.
 	return response, nil
 }
 
-func (c *Client) RecoverSession(ctx context.Context, sessionID string, input api.RecoverSessionRequest, opts EnvironmentScopeOptions) (api.SessionRecoveryReceipt, error) {
-	if err := api.ValidateRecoverSessionRequest(input); err != nil {
-		return api.SessionRecoveryReceipt{}, err
-	}
-	path, err := c.sessionPath(sessionID, "/recover", opts)
-	if err != nil {
-		return api.SessionRecoveryReceipt{}, err
-	}
-	input.IdempotencyKey = invocationKey(input.IdempotencyKey)
-	var response api.SessionRecoveryReceipt
-	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.SessionRecoveryReceipt{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) RetrieveSessionTurn(ctx context.Context, sessionID, turnID string, opts EnvironmentScopeOptions) (api.SessionTurn, error) {
 	if err := ids.Validate(turnID); err != nil {
 		return api.SessionTurn{}, err

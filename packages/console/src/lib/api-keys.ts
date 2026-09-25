@@ -11,7 +11,6 @@ export type ApiKeyScope =
   | "sessions:send"
   | "sessions:interrupt"
   | "sessions:resume"
-  | "sessions:recover"
   | "sessions:close"
   | "sessions:cancel"
   | "tokens:create"

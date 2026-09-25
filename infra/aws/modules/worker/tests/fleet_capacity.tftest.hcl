@@ -21,24 +21,26 @@ mock_provider "aws" {
 }
 
 variables {
-  name                       = "helmr-test-worker"
-  worker_pool_name           = "execution-v1"
-  network_blocked_ipv4_cidrs = ["10.0.0.0/8", "169.254.0.0/16"]
-  network_link_pool          = "169.254.64.0/18"
-  network_translation_pool   = "100.96.0.0/16"
-  vpc_id                     = "vpc-00000000000000000"
-  subnet_ids                 = ["subnet-00000000000000000"]
-  ami_id                     = "ami-00000000000000000"
-  worker_controlplane_url    = "https://controlplane.example.test"
-  cas_uri                    = "s3://helmr-test-cas"
-  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
-  kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  platform_store_uri         = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  min_size                   = 0
-  max_size                   = 1
-  root_volume_size_gb        = 120
+  computer_save_interval_seconds = 60
+  computer_devices               = ["/dev/nbd0", "/dev/nbd1"]
+  name                           = "helmr-test-worker"
+  worker_pool_name               = "execution-v1"
+  network_blocked_ipv4_cidrs     = ["10.0.0.0/8", "169.254.0.0/16"]
+  network_link_pool              = "169.254.64.0/18"
+  network_translation_pool       = "100.96.0.0/16"
+  vpc_id                         = "vpc-00000000000000000"
+  subnet_ids                     = ["subnet-00000000000000000"]
+  ami_id                         = "ami-00000000000000000"
+  worker_controlplane_url        = "https://controlplane.example.test"
+  cas_uri                        = "s3://helmr-test-cas"
+  cas_bucket_arn                 = "arn:aws:s3:::helmr-test-cas"
+  kms_key_arn                    = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+  platform_store_uri             = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn      = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn     = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  min_size                       = 0
+  max_size                       = 1
+  root_volume_size_gb            = 120
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
     worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"
@@ -78,6 +80,10 @@ run "execution_worker_is_immutable_and_launch_gated" {
       strcontains(base64decode(aws_launch_template.worker.user_data), "/usr/local/sbin/helmr-prepare-root '128849018880'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "ExecStart=/usr/local/bin/worker") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_POOL_NAME=execution-v1") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_COMPUTER_SAVE_EVERY=60s") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_COMPUTER_DEVICES=/dev/nbd0 /dev/nbd1") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "modprobe nbd nbds_max='2' max_part=0") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "test ! -e '/sys/block/nbd1/pid'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "CPU_TEMPLATE_HELPER_PATH=/usr/local/bin/cpu-template-helper") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "WORKER_NETWORK_RESOLVER_IPV4=10.20.0.2") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "drain-complete")
@@ -148,4 +154,15 @@ run "additional_worker_environment_is_rendered" {
     )
     error_message = "non-reserved operator environment must be rendered"
   }
+}
+
+run "reject_zero_save_interval" {
+  command = plan
+  variables { computer_save_interval_seconds = 0 }
+  expect_failures = [var.computer_save_interval_seconds]
+}
+run "reject_duplicate_computer_device" {
+  command = plan
+  variables { computer_devices = ["/dev/nbd0", "/dev/nbd0"] }
+  expect_failures = [var.computer_devices]
 }

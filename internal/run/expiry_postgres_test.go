@@ -141,9 +141,9 @@ UPDATE run_waits
 			var failureCode string
 			var ownerRunID *uuid.UUID
 			if err := fixture.pool.QueryRow(ctx, `
-SELECT runs.status, runs.failure->>'code', workspaces.owner_run_id
+SELECT runs.status, runs.failure->>'code', computers.owner_run_id
   FROM runs
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
  WHERE runs.id = $1`,
 				child.runID,
 			).Scan(&childStatus, &failureCode, &ownerRunID); err != nil {
@@ -292,7 +292,7 @@ func newQueuedChildParent(
 			    base_workspace_version_id, private_workspace_version_id,
 			    runtime_config_artifact_id, vm_state_artifact_id,
 			    memory_artifact_id, scratch_disk_artifact_id,
-			    status, restore_manifest, ready_request_fingerprint, ready_at
+			    status, manifest, ready_request_fingerprint, ready_at
 			) VALUES (
 			    $1, $2, 1, $3, $4, $5, $6, $7, $7,
 			    $8, $9, $10, $11,

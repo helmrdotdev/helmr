@@ -14,11 +14,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws/arn"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/helmrdotdev/helmr/internal/artifactgc"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -180,6 +185,10 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
+	artifactReclaimer, err := artifactgc.New(pool, casStore, log)
+	if err != nil {
+		return fmt.Errorf("configure artifact reclamation: %w", err)
+	}
 	platformStore, err := cass3.NewImmutable(ctx, cfg.PlatformStoreURI)
 	if err != nil {
 		return fmt.Errorf("configure platform artifact store: %w", err)
@@ -188,7 +197,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = controlplane.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
-	runRetryReady, err := run.NewRetryReadyWorker(log, queries)
+	runRetryReady, err := run.NewRetryReadyWorker(log, run.NewRetryReconciler(pool))
 	if err != nil {
 		return fmt.Errorf("configure run retry readiness: %w", err)
 	}
@@ -196,7 +205,12 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queued child run expiry: %w", err)
 	}
+	computerKeys, err := configuredComputerKeys(ctx, cfg)
+	if err != nil {
+		return err
+	}
 	handler, err := controlplane.NewServer(controlplane.ServerConfig{
+		ComputerKeys:          computerKeys,
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
 		DB:                    queries,
@@ -238,6 +252,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	workflows := []backgroundWorkflow{
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
 		{name: "Run retry readiness", run: runRetryReady.Run},
+		{name: "artifact reclamation", run: artifactReclaimer.Run},
 		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}
@@ -359,4 +374,25 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}
 	log.Info("database migrations are up to date")
 	return nil
+}
+
+// Provider selection is explicit; a managed provider failure never selects local
+// wrapping material. The key ARN fixes the regional KMS endpoint.
+func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (controlplane.ComputerKeyWrapper, error) {
+	switch cfg.DeploymentMode {
+	case config.DeploymentModeSelfHosted:
+		return computerkey.NewLocal(cfg.ComputerWrappingKeyID, cfg.ComputerWrappingKey)
+	case config.DeploymentModeManagedCloud:
+		key, err := arn.Parse(cfg.ComputerKMSKeyARN)
+		if err != nil || key.Service != "kms" || key.Region == "" {
+			return nil, errors.New("invalid computer KMS key ARN")
+		}
+		provider, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(key.Region))
+		if err != nil {
+			return nil, errors.New("load computer KMS configuration")
+		}
+		return computerkey.NewKMS(kms.NewFromConfig(provider), cfg.ComputerKMSKeyARN)
+	default:
+		return nil, errors.New("computer key provider requires a deployment mode")
+	}
 }

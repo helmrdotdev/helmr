@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -33,15 +34,18 @@ func TestOwnershipDelayedChildBindingUsesLastEligibleWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id) SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4`, checkpointID, work.runID, w.ID, work.leaseID)
+	if _, err := f.queries.RegisterCheckpointManifest(ctx, RegisterCheckpointManifestParams{ID: pgvalue.UUID(checkpointID), Manifest: []byte(`{"version":0}`)}); err != nil {
+		t.Fatal(err)
+	}
 	a := dbtest.InsertCheckpointArtifacts(t, ctx, f.pool, work.runID, "delayed-child")
-	if _, err := f.queries.MarkRunCheckpointReady(ctx, MarkRunCheckpointReadyParams{ID: pgvalue.UUID(checkpointID), RunID: w.RunID, AttemptNumber: 1, PrivateWorkspaceVersionID: v.ID, RuntimeConfigArtifactID: pgvalue.UUID(a.RuntimeConfig), VMStateArtifactID: pgvalue.UUID(a.VMState), MemoryArtifactID: pgvalue.UUID(a.Memory), ScratchDiskArtifactID: pgvalue.UUID(a.ScratchDisk), RestoreManifest: []byte(`{"version":0}`), ReadyRequestFingerprint: pgvalue.Text("sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6")}); err != nil {
+	if _, err := f.queries.MarkRunCheckpointReady(ctx, MarkRunCheckpointReadyParams{ID: pgvalue.UUID(checkpointID), RunID: w.RunID, AttemptNumber: 1, PrivateWorkspaceVersionID: v.ID, RuntimeConfigArtifactID: pgvalue.UUID(a.RuntimeConfig), VMStateArtifactID: pgvalue.UUID(a.VMState), MemoryArtifactID: pgvalue.UUID(a.Memory), ScratchDiskArtifactID: pgvalue.UUID(a.ScratchDisk), Manifest: []byte(`{"version":0}`), ReadyRequestFingerprint: pgvalue.Text("sha256:b24d6d33736ecd5604a4b17bc9c6481039fac362bb7df044ef1c10a2bfd21db6")}); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, f.pool, "UPDATE run_waits SET suspension_status='checkpointing',suspend_checkpoint_id=$2,checkpoint_request_version=1 WHERE id=$1", w.ID, checkpointID)
 	dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET active_started_at=NULL WHERE id=$1", w.RunID)
 	dbtest.MustExec(t, ctx, f.pool, `WITH child AS (INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,parent_run_id,parent_owns_lifecycle,claim_id,workspace_id,base_workspace_version_id,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id)
  SELECT $1,org_id,project_id,environment_id,deployment_id,deployment_definition_id,'task',entrypoint_declared_id,'child',id,true,$2,workspace_id,$3,'{}',queue_name,now(),now(),max_active_duration_ms,retry_policy,root_span_id FROM runs WHERE id=$4 RETURNING id,workspace_id,base_workspace_version_id) INSERT INTO run_attempts(run_id,number,entrypoint_kind,workspace_id,base_workspace_version_id) SELECT id,1,'task',workspace_id,base_workspace_version_id FROM child`, childID, claimID, v.ID, w.RunID)
-	p := CommitSameWorkspaceChildCheckpointReadyParams{CheckpointRequestVersion: 1, BaseWorkspaceVersionID: v.ID, BaseWorkspaceContentDigest: pgvalue.Text(v.ContentDigest), OwnershipGeneration: pgtype.Int8{Int64: v.OwnershipGeneration, Valid: true}, ParentWriterGeneration: pgtype.Int8{Int64: v.WriterGeneration, Valid: true}, CheckpointedAt: pgvalue.Timestamptz(time.Now()), RunWaitID: w.ID, EnvironmentID: pgvalue.UUID(f.environmentID), ParentRunID: w.RunID, WorkspaceID: v.WorkspaceID, ParentAttemptNumber: 1, ChildClaimID: pgvalue.UUID(claimID), ParentRunLeaseID: w.CurrentRunLeaseID, SuspendCheckpointID: pgvalue.UUID(checkpointID), ExpectedRunRevision: w.ExpectedRunRevision, ChildRunID: pgvalue.UUID(childID)}
+	p := CommitSameWorkspaceChildCheckpointReadyParams{CheckpointRequestVersion: 1, BaseWorkspaceVersionID: v.ID, BaseWorkspaceContentDigest: v.RootPackDigest, OwnershipGeneration: pgtype.Int8{Int64: v.OwnershipGeneration, Valid: true}, ParentWriterGeneration: pgtype.Int8{Int64: v.WriterGeneration, Valid: true}, CheckpointedAt: pgvalue.Timestamptz(time.Now()), RunWaitID: w.ID, EnvironmentID: pgvalue.UUID(f.environmentID), ParentRunID: w.RunID, WorkspaceID: v.WorkspaceID, ParentAttemptNumber: 1, ChildClaimID: pgvalue.UUID(claimID), ParentRunLeaseID: w.CurrentRunLeaseID, SuspendCheckpointID: pgvalue.UUID(checkpointID), ExpectedRunRevision: w.ExpectedRunRevision, ChildRunID: pgvalue.UUID(childID)}
 	for _, test := range []struct {
 		name   string
 		mutate func(*CommitSameWorkspaceChildCheckpointReadyParams)
@@ -95,5 +99,26 @@ func TestOwnershipDelayedChildBindingUsesLastEligibleWait(t *testing.T) {
 	}
 	if got.ChildRunID != p.ChildRunID || got.SuspensionStatus != RunWaitStatusParked {
 		t.Fatalf("binding=%+v", got)
+	}
+	// The child's handback can be distinct from every parent/checkpoint origin.
+	// Its active wait is then the sole payload owner until resume transfers it.
+	resultVersion := v
+	resultVersion.ID = pgvalue.UUID(uuid.NewV7())
+	if _, err := f.queries.CreatePrivateCheckpointWorkspaceVersion(ctx, resultVersion); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE run_waits SET condition_status='completed',condition_result='{}',condition_terminal_at=now(),suspension_status='resume_pending',child_writer_generation=parent_writer_generation+1,resume_workspace_version_id=$2 WHERE id=$1`, w.ID, resultVersion.ID)
+	retire := RetireComputerVersionPayloadParams{EnvironmentID: pgvalue.UUID(f.environmentID), ComputerID: v.WorkspaceID, VersionID: resultVersion.ID}
+	if _, err := f.queries.RetireComputerVersionPayload(ctx, retire); err == nil {
+		t.Fatal("collected pending child handback")
+	} else {
+		var constraint *pgconn.PgError
+		if !errors.As(err, &constraint) || constraint.Code != "23503" {
+			t.Fatal(err)
+		}
+	}
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE run_waits SET suspension_status='released',suspension_terminal_at=now() WHERE id=$1`, w.ID)
+	if n, err := f.queries.RetireComputerVersionPayload(ctx, retire); err != nil || n != 1 {
+		t.Fatalf("released handback: %d %v", n, err)
 	}
 }

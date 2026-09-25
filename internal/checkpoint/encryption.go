@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -46,6 +47,28 @@ func KeyFromBase64(raw string) ([]byte, error) {
 		return nil, fmt.Errorf("checkpoint encryption key must decode to 32 bytes, got %d", len(decoded))
 	}
 	return decoded, nil
+}
+
+// EncryptedSize returns the exact framed size for this plaintext length. The
+// authenticated end record is included, even for an empty plaintext stream.
+func (c *Encryptor) EncryptedSize(plaintextBytes int64) (int64, error) {
+	if c == nil || c.aead == nil || plaintextBytes < 0 {
+		return 0, errors.New("invalid checkpoint encryption size request")
+	}
+	records := plaintextBytes / chunkSize
+	if plaintextBytes%chunkSize != 0 {
+		records++
+	}
+	records++ // authenticated end
+	overhead := int64(8 + c.aead.NonceSize() + c.aead.Overhead())
+	if plaintextBytes > math.MaxInt64-int64(len(magic)) {
+		return 0, errors.New("checkpoint encrypted size overflow")
+	}
+	base := plaintextBytes + int64(len(magic))
+	if records > (math.MaxInt64-base)/overhead {
+		return 0, errors.New("checkpoint encrypted size overflow")
+	}
+	return base + records*overhead, nil
 }
 
 func (c *Encryptor) Encrypt(ctx context.Context, plaintext io.Reader, ciphertext io.Writer, purpose string) error {

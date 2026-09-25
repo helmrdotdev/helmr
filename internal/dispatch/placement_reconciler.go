@@ -434,7 +434,7 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 func (r *PlacementReconciler) ReconcileWorkspaceDeletes(ctx context.Context) error {
 	_, err := r.workspaceFinalizer.FinalizeDeletingWorkspaces(ctx, r.workspaceDeletePolicy.limit)
 	if err != nil {
-		return fmt.Errorf("finalize deleting workspaces: %w", err)
+		return fmt.Errorf("finalize deleting computers: %w", err)
 	}
 	return nil
 }

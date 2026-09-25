@@ -235,7 +235,6 @@ func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 				UPDATE run_leases
 				   SET status = $2,
 				       finalization_operation_id = CASE WHEN $2 = 'finalizing' THEN $3::uuid ELSE NULL END,
-				       finalization_kind = CASE WHEN $2 = 'finalizing' THEN 'capture' ELSE NULL END,
 				       finalization_started_at = CASE WHEN $2 = 'finalizing' THEN now() ELSE NULL END,
 				       finalization_request_fingerprint = CASE WHEN $2 = 'finalizing' THEN 'sha256:5199bc398e4c7cd105844a304c91893e87eb9c3bd9ad9d74ea66a6de3632b9b4' ELSE NULL END
 				 WHERE id = $1

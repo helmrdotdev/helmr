@@ -415,7 +415,7 @@ func testWorkerActivationParams(workerID uuid.UUID, epoch pgtype.Int8) db.Activa
 		WorkerInstanceID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID, WorkerEpoch: epoch,
 		EpochCPUMillis: 2000, EpochMemoryBytes: 2 << 30, EpochGuestEphemeralDiskBytes: 64 << 30,
 		MaxVMSlots: 1, RuntimeIdentityID: pgtype.Text{String: dbtest.DefaultRuntimeID, Valid: true},
-		SubstrateFormat: "ext4", SubstrateContract: "helmr.substrate.ext4.v0",
+		SubstrateFormat: "ext4", SubstrateContract: "helmr.substrate.ext4.v1",
 		PerVMCPUMillis: 1000, PerVMMemoryBytes: 1 << 30, PerVMGuestEphemeralDiskBytes: 32 << 30,
 		MaxRuntimeStarts:     1,
 		CPUEnvironment:       []byte(`{}`),

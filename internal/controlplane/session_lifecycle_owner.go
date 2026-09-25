@@ -54,22 +54,6 @@ func (s *Server) applySessionResume(ctx context.Context, request session.ResumeR
 	return receipt, err
 }
 
-func (s *Server) applySessionRecovery(ctx context.Context, request session.RecoverRequest) (session.ControlReceipt, error) {
-	var receipt session.ControlReceipt
-	err := s.inTx(ctx, func(work *txWork) error {
-		graph, err := lockSessionControlGraph(ctx, work, request.Target)
-		if err != nil {
-			return err
-		}
-		receipt, err = session.Recover(ctx, work.q, request, graph)
-		return err
-	})
-	if err == nil && receipt.Code != "" {
-		err = &session.OperationError{Code: receipt.Code}
-	}
-	return receipt, err
-}
-
 func (s *Server) applySessionCancel(ctx context.Context, request session.ControlRequest) (session.ControlReceipt, error) {
 	var receipt session.ControlReceipt
 	err := s.inTx(ctx, func(work *txWork) error {
@@ -141,6 +125,19 @@ func lockSessionControlGraph(ctx context.Context, work *txWork, target session.T
 		return graph, err
 	}
 	locked, err := work.q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+	if err == nil && !locked.CurrentRunID.Valid {
+		// A concurrent control retired the Run while this graph was locking.
+		// Lock the Session before returning an empty graph so Resume cannot
+		// admit a new Run between this check and the control operation.
+		locked, err = work.q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
+		if err != nil {
+			return graph, err
+		}
+		if locked.CurrentRunID.Valid {
+			return graph, session.ErrAuthority
+		}
+		return run.OwnedFinalization{}, nil
+	}
 	if err == nil && (locked.CurrentRunID != actor.CurrentRunID || locked.RunGeneration != actor.RunGeneration) {
 		err = session.ErrAuthority
 	}

@@ -16,29 +16,26 @@ UPDATE run_leases
    SET status = 'finalizing',
        expires_at = $1,
        finalization_operation_id = $2,
-       finalization_kind = $3,
-       finalization_started_at = $4,
-       finalization_request_fingerprint = $5,
-       updated_at = $4
- WHERE id = $6
-   AND run_id = $7
-   AND workspace_id = $8
-   AND attempt_number = $9
-   AND lease_sequence = $10
+       finalization_started_at = $3,
+       finalization_request_fingerprint = $4,
+       updated_at = $3
+ WHERE id = $5
+   AND run_id = $6
+   AND workspace_id = $7
+   AND attempt_number = $8
+   AND lease_sequence = $9
    AND status = 'running'
-   AND expires_at = $11
+   AND expires_at = $10
    AND $1::timestamptz > expires_at
    AND finalization_operation_id IS NULL
-   AND finalization_kind IS NULL
    AND finalization_started_at IS NULL
    AND finalization_request_fingerprint IS NULL
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type BeginRunLeaseFinalizationParams struct {
 	ExpiresAt                      pgtype.Timestamptz `json:"expires_at"`
 	FinalizationOperationID        pgtype.UUID        `json:"finalization_operation_id"`
-	FinalizationKind               pgtype.Text        `json:"finalization_kind"`
 	FinalizationStartedAt          pgtype.Timestamptz `json:"finalization_started_at"`
 	FinalizationRequestFingerprint pgtype.Text        `json:"finalization_request_fingerprint"`
 	ID                             pgtype.UUID        `json:"id"`
@@ -53,7 +50,6 @@ func (q *Queries) BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLea
 	row := q.db.QueryRow(ctx, beginRunLeaseFinalization,
 		arg.ExpiresAt,
 		arg.FinalizationOperationID,
-		arg.FinalizationKind,
 		arg.FinalizationStartedAt,
 		arg.FinalizationRequestFingerprint,
 		arg.ID,
@@ -95,9 +91,9 @@ func (q *Queries) BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLea
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -208,7 +204,7 @@ UPDATE runs
    AND $1::timestamptz >= active_started_at
    AND $1::timestamptz < active_started_at
        + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type CloseRunActiveIntervalForFinalizationParams struct {
@@ -289,6 +285,7 @@ func (q *Queries) CloseRunActiveIntervalForFinalization(ctx context.Context, arg
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1077,7 +1074,6 @@ SELECT runs.org_id,
             AND runs.status = 'running'
             AND runs.active_started_at IS NULL
             AND run_leases.finalization_operation_id IS NOT NULL
-            AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
    -- Recover uncertain Actors once through Session hold and physical cleanup.
@@ -1094,6 +1090,7 @@ SELECT runs.org_id,
           AND run_waits.attempt_number = runs.current_attempt_number
           AND run_waits.current_run_lease_id = run_leases.id
           AND run_waits.suspension_status = 'resuming'
+          AND run_leases.status IN ('assigned', 'starting')
           AND (runs.entrypoint_kind = 'task' OR EXISTS (
               SELECT 1 FROM sessions
               JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -1101,8 +1098,8 @@ SELECT runs.org_id,
                AND run_checkpoints.attempt_number = runs.current_attempt_number
                AND run_checkpoints.run_wait_id = run_waits.id
                AND run_checkpoints.workspace_id = runs.workspace_id
-              JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+              JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
+               AND computer_versions.computer_id = run_checkpoints.workspace_id
               JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
                AND source_run_leases.run_id = runs.id
                AND source_run_leases.attempt_number = runs.current_attempt_number
@@ -1111,23 +1108,11 @@ SELECT runs.org_id,
                 AND sessions.dispatch_hold_id IS NULL
                 AND run_checkpoints.status = 'ready'
                 AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                AND workspace_versions.status = 'private'
+                AND computer_versions.status = 'private'
                 AND source_run_leases.status = 'checkpointed'
                 AND run_checkpoints.actor_speculative_input_sequence
                     BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
-                AND (run_leases.status <> 'running' OR runs.active_started_at IS NULL
-                     OR runs.active_started_at
-                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text || ' milliseconds')::interval
-                        > LEAST(run_leases.expires_at,
-                            COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-                            COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-                            CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-                                 THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
-                                 ELSE 'infinity'::timestamptz END,
-                            CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
-                                 THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
-                            COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
-                            COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)))
+
           ))
    )
    AND (run_leases.expires_at <= transaction_timestamp()
@@ -1205,7 +1190,7 @@ func (q *Queries) ListRunExecutionLeaseRecoveryCandidates(ctx context.Context, l
 }
 
 const lockLiveRunLease = `-- name: LockLiveRunLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -1265,9 +1250,9 @@ func (q *Queries) LockLiveRunLease(ctx context.Context, arg LockLiveRunLeasePara
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1280,7 +1265,7 @@ func (q *Queries) LockLiveRunLease(ctx context.Context, arg LockLiveRunLeasePara
 }
 
 const lockReadyRunCheckpoint = `-- name: LockReadyRunCheckpoint :one
-SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, restore_manifest, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+SELECT id, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id, memory_artifact_id, scratch_disk_artifact_id, actor_speculative_input_sequence, status, manifest, phase_timings, ready_request_fingerprint, failed_request_fingerprint, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code, computer_payload_required
   FROM run_checkpoints
  WHERE id = $1
    AND run_id = $2
@@ -1325,7 +1310,8 @@ func (q *Queries) LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCh
 		&i.ScratchDiskArtifactID,
 		&i.ActorSpeculativeInputSequence,
 		&i.Status,
-		&i.RestoreManifest,
+		&i.Manifest,
+		&i.PhaseTimings,
 		&i.ReadyRequestFingerprint,
 		&i.FailedRequestFingerprint,
 		&i.ExpiresAt,
@@ -1333,12 +1319,13 @@ func (q *Queries) LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCh
 		&i.ReadyAt,
 		&i.InvalidatedAt,
 		&i.InvalidationReasonCode,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunEntrypointLease = `-- name: LockRunEntrypointLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -1398,9 +1385,9 @@ func (q *Queries) LockRunEntrypointLease(ctx context.Context, arg LockRunEntrypo
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1413,7 +1400,7 @@ func (q *Queries) LockRunEntrypointLease(ctx context.Context, arg LockRunEntrypo
 }
 
 const lockRunFinalizationParentRun = `-- name: LockRunFinalizationParentRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE id = $1
    AND org_id = $2
@@ -1490,12 +1477,13 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE id = $1
    AND workspace_id = $2
@@ -1518,6 +1506,7 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -1552,7 +1541,7 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 }
 
 const lockRunLeaseClaimAttempt = `-- name: LockRunLeaseClaimAttempt :one
-SELECT run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+SELECT run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
   FROM run_attempts
  WHERE run_id = $1
    AND number = $2
@@ -1583,12 +1572,13 @@ func (q *Queries) LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLease
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunLeaseClaimLease = `-- name: LockRunLeaseClaimLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
  FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -1649,9 +1639,9 @@ func (q *Queries) LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseCl
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -1664,7 +1654,7 @@ func (q *Queries) LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseCl
 }
 
 const lockRunLeaseClaimMount = `-- name: LockRunLeaseClaimMount :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_kind, finalization_reason_code, finalization_error, staged_version_id, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
   FROM workspace_mounts
  WHERE id = $1
    AND org_id = $2
@@ -1724,10 +1714,9 @@ func (q *Queries) LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseCl
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.FinalizationKind,
+		&i.FinalizationAction,
 		&i.FinalizationReasonCode,
 		&i.FinalizationError,
-		&i.StagedVersionID,
 		&i.MountedAt,
 		&i.UnmountedAt,
 		&i.StoppedAt,
@@ -1805,7 +1794,7 @@ func (q *Queries) LockRunLeaseClaimReadyWorker(ctx context.Context, arg LockRunL
 }
 
 const lockRunLeaseClaimRun = `-- name: LockRunLeaseClaimRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE id = $1
    AND org_id = $2
@@ -1885,12 +1874,13 @@ func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClai
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
 
 const lockRunLeaseClaimRuntime = `-- name: LockRunLeaseClaimRuntime :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, computer_save_sequence, computer_save_version_id, computer_save_lease_id, computer_save_base_version_id, computer_payload_required, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
   FROM runtime_instances
  WHERE id = $1
    AND org_id = $2
@@ -1954,6 +1944,17 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.ReservedAttemptNumber,
 		&i.ReservedProcessID,
 		&i.ReservedWorkspaceVersionID,
+		&i.ComputerSourceVersionID,
+		&i.ComputerSaveSequence,
+		&i.ComputerSaveVersionID,
+		&i.ComputerSaveLeaseID,
+		&i.ComputerSaveBaseVersionID,
+		&i.ComputerPayloadRequired,
+		&i.RetainedComputerSourceVersionID,
+		&i.ComputerWriteKeyID,
+		&i.RetainedComputerWriteKeyID,
+		&i.ComputerKeyAvailable,
+		&i.PreparationExpiresAt,
 		&i.ReservationExpiresAt,
 		&i.DesiredState,
 		&i.DesiredVersion,
@@ -1976,7 +1977,7 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 }
 
 const lockRunLeaseClaimWait = `-- name: LockRunLeaseClaimWait :one
-SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2060,6 +2061,7 @@ func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseCla
 		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2148,32 +2150,32 @@ func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunL
 }
 
 const lockRunLeaseClaimWorkspace = `-- name: LockRunLeaseClaimWorkspace :one
-SELECT workspaces.id,
-       workspaces.environment_id,
-       workspaces.region_id,
-       workspaces.sandbox_declared_id,
-       workspaces.deployment_definition_id,
-       workspaces.key,
-       workspaces.revision,
-       workspaces.owner_session_id,
-       workspaces.owner_run_id,
-       workspaces.ownership_generation,
-       workspaces.writer_generation,
-       workspaces.head_version_id,
-       workspaces.status,
-       workspaces.desired_state,
-       workspaces.dirty_state,
-       workspaces.last_activity_at,
-       workspaces.created_at,
-       workspaces.updated_at,
-       workspaces.deleted_at
-  FROM workspaces
-  JOIN environments ON environments.id = workspaces.environment_id
- WHERE workspaces.id = $1
+SELECT computers.id,
+       computers.environment_id,
+       computers.region_id,
+       computers.sandbox_declared_id,
+       computers.deployment_definition_id,
+       computers.key,
+       computers.revision,
+       computers.owner_session_id,
+       computers.owner_run_id,
+       computers.ownership_generation,
+       computers.writer_generation,
+       computers.head_version_id,
+       computers.status,
+       computers.desired_state,
+       computers.dirty_state,
+       computers.last_activity_at,
+       computers.created_at,
+       computers.updated_at,
+       computers.deleted_at
+  FROM computers
+  JOIN environments ON environments.id = computers.environment_id
+ WHERE computers.id = $1
    AND environments.org_id = $2
    AND environments.project_id = $3
-   AND workspaces.environment_id = $4
-   AND workspaces.region_id = $5
+   AND computers.environment_id = $4
+   AND computers.region_id = $5
  FOR UPDATE
 `
 
@@ -2321,7 +2323,7 @@ func (q *Queries) LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockR
 }
 
 const lockRunStartLease = `-- name: LockRunStartLease :one
-SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
  WHERE id = $1
    AND run_id = $2
@@ -2382,9 +2384,9 @@ func (q *Queries) LockRunStartLease(ctx context.Context, arg LockRunStartLeasePa
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -2397,7 +2399,7 @@ func (q *Queries) LockRunStartLease(ctx context.Context, arg LockRunStartLeasePa
 }
 
 const lockRunStartWait = `-- name: LockRunStartWait :one
-SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+SELECT id, environment_id, run_id, workspace_id, turn_session_id, turn_id, turn_run_generation, kind, condition_status, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_target_declared_id, child_claim_id, child_request, session_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_turn_id, suspension_status, token_registration_run_revision, registration_request_fingerprint, expected_run_revision, attempt_number, actor_speculative_input_sequence, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, resume_workspace_version_id, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at, computer_payload_required
   FROM run_waits
  WHERE id = $1
    AND environment_id = $2
@@ -2475,6 +2477,7 @@ func (q *Queries) LockRunStartWait(ctx context.Context, arg LockRunStartWaitPara
 		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2487,7 +2490,7 @@ UPDATE run_attempts
    AND workspace_id = $3
    AND entrypoint_entered_at IS NULL
    AND terminal_at IS NULL
-RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
 `
 
 type MarkRunEntrypointEnteredParams struct {
@@ -2513,6 +2516,7 @@ func (q *Queries) MarkRunEntrypointEntered(ctx context.Context, arg MarkRunEntry
 		&i.TerminalError,
 		&i.CreatedAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2535,7 +2539,7 @@ UPDATE run_leases
    AND status = 'starting'
    AND start_deadline_at > transaction_timestamp()
    AND expires_at > transaction_timestamp()
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type MarkRunLeaseRunningParams struct {
@@ -2596,9 +2600,9 @@ func (q *Queries) MarkRunLeaseRunning(ctx context.Context, arg MarkRunLeaseRunni
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -2623,7 +2627,7 @@ UPDATE run_leases
    AND status = 'assigned'
    AND start_deadline_at > transaction_timestamp()
    AND expires_at > transaction_timestamp()
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type MarkRunLeaseStartingParams struct {
@@ -2674,9 +2678,9 @@ func (q *Queries) MarkRunLeaseStarting(ctx context.Context, arg MarkRunLeaseStar
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -2705,7 +2709,7 @@ UPDATE runs
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 `
 
 type MarkRunRunningParams struct {
@@ -2784,6 +2788,7 @@ func (q *Queries) MarkRunRunning(ctx context.Context, arg MarkRunRunningParams) 
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -2808,7 +2813,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_leases.run_id = runs.id
        AND run_leases.attempt_number = runs.current_attempt_number
        AND run_leases.workspace_id = runs.workspace_id
-       AND run_leases.status IN ('assigned', 'starting', 'running')
+       AND run_leases.status IN ('assigned', 'starting')
       JOIN workspace_leases
         ON workspace_leases.owner_run_lease_id = run_leases.id
        AND workspace_leases.workspace_id = runs.workspace_id
@@ -2833,13 +2838,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
       JOIN worker_instances
         ON worker_instances.id = run_leases.worker_instance_id
      WHERE (run_leases.expires_at <= transaction_timestamp()
-            OR (run_leases.status IN ('assigned', 'starting')
-                AND run_leases.start_deadline_at <= transaction_timestamp())
-            OR (run_leases.status = 'running'
-                AND runs.active_started_at IS NOT NULL
-                AND transaction_timestamp() >= runs.active_started_at
-                    + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
-                       || ' milliseconds')::interval)
+            OR run_leases.start_deadline_at <= transaction_timestamp()
             OR (runtime_instances.observed_state = 'lost' AND runtime_instances.terminal_at <= transaction_timestamp())
             OR (runtime_instances.observed_state = 'failed' AND runtime_instances.terminal_at <= transaction_timestamp())
             OR worker_instances.lost_at <= transaction_timestamp()
@@ -2862,9 +2861,9 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                    AND EXISTS (
                             SELECT 1
                               FROM run_checkpoints
-                              JOIN workspace_versions
-                                ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-                               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+                              JOIN computer_versions
+                                ON computer_versions.id = run_checkpoints.private_workspace_version_id
+                               AND computer_versions.computer_id = run_checkpoints.workspace_id
                               JOIN run_leases AS source_run_leases
                                 ON source_run_leases.id = run_checkpoints.source_run_lease_id
                                AND source_run_leases.run_id = run_checkpoints.run_id
@@ -2878,28 +2877,11 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                                AND run_checkpoints.status = 'ready'
                                AND (run_checkpoints.expires_at IS NULL
                                     OR run_checkpoints.expires_at > transaction_timestamp())
-                               AND workspace_versions.status = 'private'
+                               AND computer_versions.status = 'private'
                                AND source_run_leases.status = 'checkpointed'
                                AND run_checkpoints.actor_speculative_input_sequence
                                    BETWEEN sessions.committed_input_sequence
                                        AND sessions.next_input_sequence - 1
-                               AND (run_leases.status <> 'running'
-                                    OR runs.active_started_at IS NULL
-                                    OR runs.active_started_at
-                                       + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text
-                                          || ' milliseconds')::interval
-                                       > LEAST(
-                                           run_leases.expires_at,
-                                           COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-                                           COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-                                           CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-                                                THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
-                                                ELSE 'infinity'::timestamptz END,
-                                           CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
-                                                THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
-                                           COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
-                                           COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)
-                                       ))
                         )
             ))
      ORDER BY runs.id
@@ -2939,9 +2921,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
            runs.current_attempt_number,
            runs.session_input_start_sequence,
            runs.session_input_high_watermark,
-           runs.max_active_duration_ms,
-           runs.active_elapsed_ms,
-           runs.active_started_at,
            placement_candidates.entrypoint_kind,
            placement_candidates.session_id,
            placement_candidates.actor_run_generation,
@@ -2965,8 +2944,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                 AND runs.session_id = placement_candidates.session_id
                 AND runs.cause_kind IN ('actor_start', 'continuation')
                 AND placement_candidates.entrypoint_kind = 'actor'))
-       AND ((runs.status = 'queued' AND runs.active_started_at IS NULL)
-            OR (runs.status = 'running' AND runs.active_started_at IS NOT NULL))
+       AND runs.status = 'queued' AND runs.active_started_at IS NULL
        AND runs.current_run_lease_id = placement_candidates.run_lease_id
      ORDER BY runs.id
      FOR UPDATE OF runs SKIP LOCKED
@@ -3054,9 +3032,9 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY ancestors.run_id, ancestors.depth DESC
      FOR UPDATE OF edge, parent
 ), locked_workspaces AS MATERIALIZED (
-    SELECT locked_runs.org_id, locked_runs.project_id, locked_runs.environment_id, locked_runs.workspace_id, locked_runs.run_id, locked_runs.revision, locked_runs.current_attempt_number, locked_runs.session_input_start_sequence, locked_runs.session_input_high_watermark, locked_runs.max_active_duration_ms, locked_runs.active_elapsed_ms, locked_runs.active_started_at, locked_runs.entrypoint_kind, locked_runs.session_id, locked_runs.actor_run_generation, locked_runs.actor_committed_input_sequence, locked_runs.actor_next_input_sequence, locked_runs.run_lease_id, locked_runs.worker_instance_id, locked_runs.worker_epoch, locked_runs.runtime_instance_id, locked_runs.workspace_lease_id, locked_runs.workspace_mount_id, locked_runs.run_wait_id, locked_runs.restore_checkpoint_id, locked_runs.condition_status,
-           workspaces.ownership_generation,
-           workspaces.writer_generation,
+    SELECT locked_runs.org_id, locked_runs.project_id, locked_runs.environment_id, locked_runs.workspace_id, locked_runs.run_id, locked_runs.revision, locked_runs.current_attempt_number, locked_runs.session_input_start_sequence, locked_runs.session_input_high_watermark, locked_runs.entrypoint_kind, locked_runs.session_id, locked_runs.actor_run_generation, locked_runs.actor_committed_input_sequence, locked_runs.actor_next_input_sequence, locked_runs.run_lease_id, locked_runs.worker_instance_id, locked_runs.worker_epoch, locked_runs.runtime_instance_id, locked_runs.workspace_lease_id, locked_runs.workspace_mount_id, locked_runs.run_wait_id, locked_runs.restore_checkpoint_id, locked_runs.condition_status,
+           computers.ownership_generation,
+           computers.writer_generation,
            EXISTS (
                SELECT 1
                  FROM locked_same_workspace_ancestors AS nested
@@ -3112,35 +3090,35 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                   AND nested.depth = 0
            ) AS enclosing_child_writer_generation
       FROM locked_runs
-      JOIN workspaces ON workspaces.id = locked_runs.workspace_id
-     WHERE workspaces.environment_id = locked_runs.environment_id
+      JOIN computers ON computers.id = locked_runs.workspace_id
+     WHERE computers.environment_id = locked_runs.environment_id
        AND ((locked_runs.entrypoint_kind = 'task'
-             AND ((workspaces.owner_run_id = locked_runs.run_id
-                   AND workspaces.owner_session_id IS NULL)
+             AND ((computers.owner_run_id = locked_runs.run_id
+                   AND computers.owner_session_id IS NULL)
                   OR EXISTS (
                           SELECT 1
                             FROM locked_same_workspace_ancestors AS root
                            WHERE root.run_id = locked_runs.run_id
                              AND (root.next_parent_run_id IS NULL
                                   OR root.parent_owns_lifecycle IS NOT TRUE)
-                             AND root.ownership_generation = workspaces.ownership_generation
+                             AND root.ownership_generation = computers.ownership_generation
                              AND ((root.parent_session_id IS NULL
-                                   AND workspaces.owner_run_id = root.parent_run_id
-                                   AND workspaces.owner_session_id IS NULL)
+                                   AND computers.owner_run_id = root.parent_run_id
+                                   AND computers.owner_session_id IS NULL)
                                   OR (root.parent_session_id IS NOT NULL
-                                      AND workspaces.owner_session_id = root.parent_session_id
-                                      AND workspaces.owner_run_id IS NULL))
+                                      AND computers.owner_session_id = root.parent_session_id
+                                      AND computers.owner_run_id IS NULL))
                       )))
             OR (locked_runs.entrypoint_kind = 'actor'
-                AND workspaces.owner_session_id = locked_runs.session_id
-                AND workspaces.owner_run_id IS NULL))
-       AND workspaces.status = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.dirty_state = 'clean'
-     ORDER BY workspaces.id
-     FOR UPDATE OF workspaces
+                AND computers.owner_session_id = locked_runs.session_id
+                AND computers.owner_run_id IS NULL))
+       AND computers.status = 'active'
+       AND computers.desired_state = 'active'
+       AND computers.dirty_state = 'clean'
+     ORDER BY computers.id
+     FOR UPDATE OF computers
 ), locked_attempts AS MATERIALIZED (
-    SELECT locked_workspaces.org_id, locked_workspaces.project_id, locked_workspaces.environment_id, locked_workspaces.workspace_id, locked_workspaces.run_id, locked_workspaces.revision, locked_workspaces.current_attempt_number, locked_workspaces.session_input_start_sequence, locked_workspaces.session_input_high_watermark, locked_workspaces.max_active_duration_ms, locked_workspaces.active_elapsed_ms, locked_workspaces.active_started_at, locked_workspaces.entrypoint_kind, locked_workspaces.session_id, locked_workspaces.actor_run_generation, locked_workspaces.actor_committed_input_sequence, locked_workspaces.actor_next_input_sequence, locked_workspaces.run_lease_id, locked_workspaces.worker_instance_id, locked_workspaces.worker_epoch, locked_workspaces.runtime_instance_id, locked_workspaces.workspace_lease_id, locked_workspaces.workspace_mount_id, locked_workspaces.run_wait_id, locked_workspaces.restore_checkpoint_id, locked_workspaces.condition_status, locked_workspaces.ownership_generation, locked_workspaces.writer_generation, locked_workspaces.nested_same_workspace, locked_workspaces.enclosing_wait_id, locked_workspaces.enclosing_parent_run_id, locked_workspaces.enclosing_parent_attempt_number, locked_workspaces.enclosing_expected_parent_revision, locked_workspaces.enclosing_parent_run_lease_id, locked_workspaces.enclosing_suspend_checkpoint_id, locked_workspaces.enclosing_base_workspace_version_id, locked_workspaces.enclosing_child_writer_generation
+    SELECT locked_workspaces.org_id, locked_workspaces.project_id, locked_workspaces.environment_id, locked_workspaces.workspace_id, locked_workspaces.run_id, locked_workspaces.revision, locked_workspaces.current_attempt_number, locked_workspaces.session_input_start_sequence, locked_workspaces.session_input_high_watermark, locked_workspaces.entrypoint_kind, locked_workspaces.session_id, locked_workspaces.actor_run_generation, locked_workspaces.actor_committed_input_sequence, locked_workspaces.actor_next_input_sequence, locked_workspaces.run_lease_id, locked_workspaces.worker_instance_id, locked_workspaces.worker_epoch, locked_workspaces.runtime_instance_id, locked_workspaces.workspace_lease_id, locked_workspaces.workspace_mount_id, locked_workspaces.run_wait_id, locked_workspaces.restore_checkpoint_id, locked_workspaces.condition_status, locked_workspaces.ownership_generation, locked_workspaces.writer_generation, locked_workspaces.nested_same_workspace, locked_workspaces.enclosing_wait_id, locked_workspaces.enclosing_parent_run_id, locked_workspaces.enclosing_parent_attempt_number, locked_workspaces.enclosing_expected_parent_revision, locked_workspaces.enclosing_parent_run_lease_id, locked_workspaces.enclosing_suspend_checkpoint_id, locked_workspaces.enclosing_base_workspace_version_id, locked_workspaces.enclosing_child_writer_generation
       FROM locked_workspaces
       JOIN run_attempts
         ON run_attempts.run_id = locked_workspaces.run_id
@@ -3160,7 +3138,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY run_attempts.run_id, run_attempts.number
      FOR UPDATE OF run_attempts
 ), locked_workers AS MATERIALIZED (
-    SELECT locked_attempts.org_id, locked_attempts.project_id, locked_attempts.environment_id, locked_attempts.workspace_id, locked_attempts.run_id, locked_attempts.revision, locked_attempts.current_attempt_number, locked_attempts.session_input_start_sequence, locked_attempts.session_input_high_watermark, locked_attempts.max_active_duration_ms, locked_attempts.active_elapsed_ms, locked_attempts.active_started_at, locked_attempts.entrypoint_kind, locked_attempts.session_id, locked_attempts.actor_run_generation, locked_attempts.actor_committed_input_sequence, locked_attempts.actor_next_input_sequence, locked_attempts.run_lease_id, locked_attempts.worker_instance_id, locked_attempts.worker_epoch, locked_attempts.runtime_instance_id, locked_attempts.workspace_lease_id, locked_attempts.workspace_mount_id, locked_attempts.run_wait_id, locked_attempts.restore_checkpoint_id, locked_attempts.condition_status, locked_attempts.ownership_generation, locked_attempts.writer_generation, locked_attempts.nested_same_workspace, locked_attempts.enclosing_wait_id, locked_attempts.enclosing_parent_run_id, locked_attempts.enclosing_parent_attempt_number, locked_attempts.enclosing_expected_parent_revision, locked_attempts.enclosing_parent_run_lease_id, locked_attempts.enclosing_suspend_checkpoint_id, locked_attempts.enclosing_base_workspace_version_id, locked_attempts.enclosing_child_writer_generation,
+    SELECT locked_attempts.org_id, locked_attempts.project_id, locked_attempts.environment_id, locked_attempts.workspace_id, locked_attempts.run_id, locked_attempts.revision, locked_attempts.current_attempt_number, locked_attempts.session_input_start_sequence, locked_attempts.session_input_high_watermark, locked_attempts.entrypoint_kind, locked_attempts.session_id, locked_attempts.actor_run_generation, locked_attempts.actor_committed_input_sequence, locked_attempts.actor_next_input_sequence, locked_attempts.run_lease_id, locked_attempts.worker_instance_id, locked_attempts.worker_epoch, locked_attempts.runtime_instance_id, locked_attempts.workspace_lease_id, locked_attempts.workspace_mount_id, locked_attempts.run_wait_id, locked_attempts.restore_checkpoint_id, locked_attempts.condition_status, locked_attempts.ownership_generation, locked_attempts.writer_generation, locked_attempts.nested_same_workspace, locked_attempts.enclosing_wait_id, locked_attempts.enclosing_parent_run_id, locked_attempts.enclosing_parent_attempt_number, locked_attempts.enclosing_expected_parent_revision, locked_attempts.enclosing_parent_run_lease_id, locked_attempts.enclosing_suspend_checkpoint_id, locked_attempts.enclosing_base_workspace_version_id, locked_attempts.enclosing_child_writer_generation,
            LEAST(
                COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
                COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
@@ -3176,7 +3154,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY worker_instances.id
      FOR UPDATE OF worker_instances
 ), locked_runtimes AS MATERIALIZED (
-    SELECT locked_workers.org_id, locked_workers.project_id, locked_workers.environment_id, locked_workers.workspace_id, locked_workers.run_id, locked_workers.revision, locked_workers.current_attempt_number, locked_workers.session_input_start_sequence, locked_workers.session_input_high_watermark, locked_workers.max_active_duration_ms, locked_workers.active_elapsed_ms, locked_workers.active_started_at, locked_workers.entrypoint_kind, locked_workers.session_id, locked_workers.actor_run_generation, locked_workers.actor_committed_input_sequence, locked_workers.actor_next_input_sequence, locked_workers.run_lease_id, locked_workers.worker_instance_id, locked_workers.worker_epoch, locked_workers.runtime_instance_id, locked_workers.workspace_lease_id, locked_workers.workspace_mount_id, locked_workers.run_wait_id, locked_workers.restore_checkpoint_id, locked_workers.condition_status, locked_workers.ownership_generation, locked_workers.writer_generation, locked_workers.nested_same_workspace, locked_workers.enclosing_wait_id, locked_workers.enclosing_parent_run_id, locked_workers.enclosing_parent_attempt_number, locked_workers.enclosing_expected_parent_revision, locked_workers.enclosing_parent_run_lease_id, locked_workers.enclosing_suspend_checkpoint_id, locked_workers.enclosing_base_workspace_version_id, locked_workers.enclosing_child_writer_generation, locked_workers.worker_lost_at,
+    SELECT locked_workers.org_id, locked_workers.project_id, locked_workers.environment_id, locked_workers.workspace_id, locked_workers.run_id, locked_workers.revision, locked_workers.current_attempt_number, locked_workers.session_input_start_sequence, locked_workers.session_input_high_watermark, locked_workers.entrypoint_kind, locked_workers.session_id, locked_workers.actor_run_generation, locked_workers.actor_committed_input_sequence, locked_workers.actor_next_input_sequence, locked_workers.run_lease_id, locked_workers.worker_instance_id, locked_workers.worker_epoch, locked_workers.runtime_instance_id, locked_workers.workspace_lease_id, locked_workers.workspace_mount_id, locked_workers.run_wait_id, locked_workers.restore_checkpoint_id, locked_workers.condition_status, locked_workers.ownership_generation, locked_workers.writer_generation, locked_workers.nested_same_workspace, locked_workers.enclosing_wait_id, locked_workers.enclosing_parent_run_id, locked_workers.enclosing_parent_attempt_number, locked_workers.enclosing_expected_parent_revision, locked_workers.enclosing_parent_run_lease_id, locked_workers.enclosing_suspend_checkpoint_id, locked_workers.enclosing_base_workspace_version_id, locked_workers.enclosing_child_writer_generation, locked_workers.worker_lost_at,
            CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at END::timestamptz AS runtime_lost_at,
            CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at END::timestamptz AS runtime_failed_at
       FROM locked_workers
@@ -3191,7 +3169,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY runtime_instances.id
      FOR UPDATE OF runtime_instances
 ), locked_run_leases AS MATERIALIZED (
-    SELECT locked_runtimes.org_id, locked_runtimes.project_id, locked_runtimes.environment_id, locked_runtimes.workspace_id, locked_runtimes.run_id, locked_runtimes.revision, locked_runtimes.current_attempt_number, locked_runtimes.session_input_start_sequence, locked_runtimes.session_input_high_watermark, locked_runtimes.max_active_duration_ms, locked_runtimes.active_elapsed_ms, locked_runtimes.active_started_at, locked_runtimes.entrypoint_kind, locked_runtimes.session_id, locked_runtimes.actor_run_generation, locked_runtimes.actor_committed_input_sequence, locked_runtimes.actor_next_input_sequence, locked_runtimes.run_lease_id, locked_runtimes.worker_instance_id, locked_runtimes.worker_epoch, locked_runtimes.runtime_instance_id, locked_runtimes.workspace_lease_id, locked_runtimes.workspace_mount_id, locked_runtimes.run_wait_id, locked_runtimes.restore_checkpoint_id, locked_runtimes.condition_status, locked_runtimes.ownership_generation, locked_runtimes.writer_generation, locked_runtimes.nested_same_workspace, locked_runtimes.enclosing_wait_id, locked_runtimes.enclosing_parent_run_id, locked_runtimes.enclosing_parent_attempt_number, locked_runtimes.enclosing_expected_parent_revision, locked_runtimes.enclosing_parent_run_lease_id, locked_runtimes.enclosing_suspend_checkpoint_id, locked_runtimes.enclosing_base_workspace_version_id, locked_runtimes.enclosing_child_writer_generation, locked_runtimes.worker_lost_at, locked_runtimes.runtime_lost_at, locked_runtimes.runtime_failed_at,
+    SELECT locked_runtimes.org_id, locked_runtimes.project_id, locked_runtimes.environment_id, locked_runtimes.workspace_id, locked_runtimes.run_id, locked_runtimes.revision, locked_runtimes.current_attempt_number, locked_runtimes.session_input_start_sequence, locked_runtimes.session_input_high_watermark, locked_runtimes.entrypoint_kind, locked_runtimes.session_id, locked_runtimes.actor_run_generation, locked_runtimes.actor_committed_input_sequence, locked_runtimes.actor_next_input_sequence, locked_runtimes.run_lease_id, locked_runtimes.worker_instance_id, locked_runtimes.worker_epoch, locked_runtimes.runtime_instance_id, locked_runtimes.workspace_lease_id, locked_runtimes.workspace_mount_id, locked_runtimes.run_wait_id, locked_runtimes.restore_checkpoint_id, locked_runtimes.condition_status, locked_runtimes.ownership_generation, locked_runtimes.writer_generation, locked_runtimes.nested_same_workspace, locked_runtimes.enclosing_wait_id, locked_runtimes.enclosing_parent_run_id, locked_runtimes.enclosing_parent_attempt_number, locked_runtimes.enclosing_expected_parent_revision, locked_runtimes.enclosing_parent_run_lease_id, locked_runtimes.enclosing_suspend_checkpoint_id, locked_runtimes.enclosing_base_workspace_version_id, locked_runtimes.enclosing_child_writer_generation, locked_runtimes.worker_lost_at, locked_runtimes.runtime_lost_at, locked_runtimes.runtime_failed_at,
            run_leases.status AS run_lease_status,
            run_leases.expires_at AS run_lease_expires_at,
            run_leases.start_deadline_at
@@ -3205,11 +3183,11 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_leases.worker_instance_id = locked_runtimes.worker_instance_id
        AND run_leases.worker_epoch = locked_runtimes.worker_epoch
        AND run_leases.runtime_instance_id = locked_runtimes.runtime_instance_id
-       AND run_leases.status IN ('assigned', 'starting', 'running')
+       AND run_leases.status IN ('assigned', 'starting')
      ORDER BY run_leases.id
      FOR UPDATE OF run_leases
 ), locked_mounts AS MATERIALIZED (
-    SELECT locked_run_leases.org_id, locked_run_leases.project_id, locked_run_leases.environment_id, locked_run_leases.workspace_id, locked_run_leases.run_id, locked_run_leases.revision, locked_run_leases.current_attempt_number, locked_run_leases.session_input_start_sequence, locked_run_leases.session_input_high_watermark, locked_run_leases.max_active_duration_ms, locked_run_leases.active_elapsed_ms, locked_run_leases.active_started_at, locked_run_leases.entrypoint_kind, locked_run_leases.session_id, locked_run_leases.actor_run_generation, locked_run_leases.actor_committed_input_sequence, locked_run_leases.actor_next_input_sequence, locked_run_leases.run_lease_id, locked_run_leases.worker_instance_id, locked_run_leases.worker_epoch, locked_run_leases.runtime_instance_id, locked_run_leases.workspace_lease_id, locked_run_leases.workspace_mount_id, locked_run_leases.run_wait_id, locked_run_leases.restore_checkpoint_id, locked_run_leases.condition_status, locked_run_leases.ownership_generation, locked_run_leases.writer_generation, locked_run_leases.nested_same_workspace, locked_run_leases.enclosing_wait_id, locked_run_leases.enclosing_parent_run_id, locked_run_leases.enclosing_parent_attempt_number, locked_run_leases.enclosing_expected_parent_revision, locked_run_leases.enclosing_parent_run_lease_id, locked_run_leases.enclosing_suspend_checkpoint_id, locked_run_leases.enclosing_base_workspace_version_id, locked_run_leases.enclosing_child_writer_generation, locked_run_leases.worker_lost_at, locked_run_leases.runtime_lost_at, locked_run_leases.runtime_failed_at, locked_run_leases.run_lease_status, locked_run_leases.run_lease_expires_at, locked_run_leases.start_deadline_at,
+    SELECT locked_run_leases.org_id, locked_run_leases.project_id, locked_run_leases.environment_id, locked_run_leases.workspace_id, locked_run_leases.run_id, locked_run_leases.revision, locked_run_leases.current_attempt_number, locked_run_leases.session_input_start_sequence, locked_run_leases.session_input_high_watermark, locked_run_leases.entrypoint_kind, locked_run_leases.session_id, locked_run_leases.actor_run_generation, locked_run_leases.actor_committed_input_sequence, locked_run_leases.actor_next_input_sequence, locked_run_leases.run_lease_id, locked_run_leases.worker_instance_id, locked_run_leases.worker_epoch, locked_run_leases.runtime_instance_id, locked_run_leases.workspace_lease_id, locked_run_leases.workspace_mount_id, locked_run_leases.run_wait_id, locked_run_leases.restore_checkpoint_id, locked_run_leases.condition_status, locked_run_leases.ownership_generation, locked_run_leases.writer_generation, locked_run_leases.nested_same_workspace, locked_run_leases.enclosing_wait_id, locked_run_leases.enclosing_parent_run_id, locked_run_leases.enclosing_parent_attempt_number, locked_run_leases.enclosing_expected_parent_revision, locked_run_leases.enclosing_parent_run_lease_id, locked_run_leases.enclosing_suspend_checkpoint_id, locked_run_leases.enclosing_base_workspace_version_id, locked_run_leases.enclosing_child_writer_generation, locked_run_leases.worker_lost_at, locked_run_leases.runtime_lost_at, locked_run_leases.runtime_failed_at, locked_run_leases.run_lease_status, locked_run_leases.run_lease_expires_at, locked_run_leases.start_deadline_at,
            workspace_mounts.lost_at AS mount_lost_at,
            workspace_mounts.failed_at AS mount_failed_at
       FROM locked_run_leases
@@ -3223,7 +3201,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY workspace_mounts.id
      FOR UPDATE OF workspace_mounts
 ), locked_workspace_leases AS MATERIALIZED (
-    SELECT locked_mounts.org_id, locked_mounts.project_id, locked_mounts.environment_id, locked_mounts.workspace_id, locked_mounts.run_id, locked_mounts.revision, locked_mounts.current_attempt_number, locked_mounts.session_input_start_sequence, locked_mounts.session_input_high_watermark, locked_mounts.max_active_duration_ms, locked_mounts.active_elapsed_ms, locked_mounts.active_started_at, locked_mounts.entrypoint_kind, locked_mounts.session_id, locked_mounts.actor_run_generation, locked_mounts.actor_committed_input_sequence, locked_mounts.actor_next_input_sequence, locked_mounts.run_lease_id, locked_mounts.worker_instance_id, locked_mounts.worker_epoch, locked_mounts.runtime_instance_id, locked_mounts.workspace_lease_id, locked_mounts.workspace_mount_id, locked_mounts.run_wait_id, locked_mounts.restore_checkpoint_id, locked_mounts.condition_status, locked_mounts.ownership_generation, locked_mounts.writer_generation, locked_mounts.nested_same_workspace, locked_mounts.enclosing_wait_id, locked_mounts.enclosing_parent_run_id, locked_mounts.enclosing_parent_attempt_number, locked_mounts.enclosing_expected_parent_revision, locked_mounts.enclosing_parent_run_lease_id, locked_mounts.enclosing_suspend_checkpoint_id, locked_mounts.enclosing_base_workspace_version_id, locked_mounts.enclosing_child_writer_generation, locked_mounts.worker_lost_at, locked_mounts.runtime_lost_at, locked_mounts.runtime_failed_at, locked_mounts.run_lease_status, locked_mounts.run_lease_expires_at, locked_mounts.start_deadline_at, locked_mounts.mount_lost_at, locked_mounts.mount_failed_at,
+    SELECT locked_mounts.org_id, locked_mounts.project_id, locked_mounts.environment_id, locked_mounts.workspace_id, locked_mounts.run_id, locked_mounts.revision, locked_mounts.current_attempt_number, locked_mounts.session_input_start_sequence, locked_mounts.session_input_high_watermark, locked_mounts.entrypoint_kind, locked_mounts.session_id, locked_mounts.actor_run_generation, locked_mounts.actor_committed_input_sequence, locked_mounts.actor_next_input_sequence, locked_mounts.run_lease_id, locked_mounts.worker_instance_id, locked_mounts.worker_epoch, locked_mounts.runtime_instance_id, locked_mounts.workspace_lease_id, locked_mounts.workspace_mount_id, locked_mounts.run_wait_id, locked_mounts.restore_checkpoint_id, locked_mounts.condition_status, locked_mounts.ownership_generation, locked_mounts.writer_generation, locked_mounts.nested_same_workspace, locked_mounts.enclosing_wait_id, locked_mounts.enclosing_parent_run_id, locked_mounts.enclosing_parent_attempt_number, locked_mounts.enclosing_expected_parent_revision, locked_mounts.enclosing_parent_run_lease_id, locked_mounts.enclosing_suspend_checkpoint_id, locked_mounts.enclosing_base_workspace_version_id, locked_mounts.enclosing_child_writer_generation, locked_mounts.worker_lost_at, locked_mounts.runtime_lost_at, locked_mounts.runtime_failed_at, locked_mounts.run_lease_status, locked_mounts.run_lease_expires_at, locked_mounts.start_deadline_at, locked_mounts.mount_lost_at, locked_mounts.mount_failed_at,
            workspace_leases.expires_at AS workspace_lease_expires_at,
            workspace_leases.base_workspace_version_id AS restore_workspace_version_id
       FROM locked_mounts
@@ -3240,7 +3218,7 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY workspace_leases.id
      FOR UPDATE OF workspace_leases
 ), locked_waits AS MATERIALIZED (
-    SELECT locked_workspace_leases.org_id, locked_workspace_leases.project_id, locked_workspace_leases.environment_id, locked_workspace_leases.workspace_id, locked_workspace_leases.run_id, locked_workspace_leases.revision, locked_workspace_leases.current_attempt_number, locked_workspace_leases.session_input_start_sequence, locked_workspace_leases.session_input_high_watermark, locked_workspace_leases.max_active_duration_ms, locked_workspace_leases.active_elapsed_ms, locked_workspace_leases.active_started_at, locked_workspace_leases.entrypoint_kind, locked_workspace_leases.session_id, locked_workspace_leases.actor_run_generation, locked_workspace_leases.actor_committed_input_sequence, locked_workspace_leases.actor_next_input_sequence, locked_workspace_leases.run_lease_id, locked_workspace_leases.worker_instance_id, locked_workspace_leases.worker_epoch, locked_workspace_leases.runtime_instance_id, locked_workspace_leases.workspace_lease_id, locked_workspace_leases.workspace_mount_id, locked_workspace_leases.run_wait_id, locked_workspace_leases.restore_checkpoint_id, locked_workspace_leases.condition_status, locked_workspace_leases.ownership_generation, locked_workspace_leases.writer_generation, locked_workspace_leases.nested_same_workspace, locked_workspace_leases.enclosing_wait_id, locked_workspace_leases.enclosing_parent_run_id, locked_workspace_leases.enclosing_parent_attempt_number, locked_workspace_leases.enclosing_expected_parent_revision, locked_workspace_leases.enclosing_parent_run_lease_id, locked_workspace_leases.enclosing_suspend_checkpoint_id, locked_workspace_leases.enclosing_base_workspace_version_id, locked_workspace_leases.enclosing_child_writer_generation, locked_workspace_leases.worker_lost_at, locked_workspace_leases.runtime_lost_at, locked_workspace_leases.runtime_failed_at, locked_workspace_leases.run_lease_status, locked_workspace_leases.run_lease_expires_at, locked_workspace_leases.start_deadline_at, locked_workspace_leases.mount_lost_at, locked_workspace_leases.mount_failed_at, locked_workspace_leases.workspace_lease_expires_at, locked_workspace_leases.restore_workspace_version_id,
+    SELECT locked_workspace_leases.org_id, locked_workspace_leases.project_id, locked_workspace_leases.environment_id, locked_workspace_leases.workspace_id, locked_workspace_leases.run_id, locked_workspace_leases.revision, locked_workspace_leases.current_attempt_number, locked_workspace_leases.session_input_start_sequence, locked_workspace_leases.session_input_high_watermark, locked_workspace_leases.entrypoint_kind, locked_workspace_leases.session_id, locked_workspace_leases.actor_run_generation, locked_workspace_leases.actor_committed_input_sequence, locked_workspace_leases.actor_next_input_sequence, locked_workspace_leases.run_lease_id, locked_workspace_leases.worker_instance_id, locked_workspace_leases.worker_epoch, locked_workspace_leases.runtime_instance_id, locked_workspace_leases.workspace_lease_id, locked_workspace_leases.workspace_mount_id, locked_workspace_leases.run_wait_id, locked_workspace_leases.restore_checkpoint_id, locked_workspace_leases.condition_status, locked_workspace_leases.ownership_generation, locked_workspace_leases.writer_generation, locked_workspace_leases.nested_same_workspace, locked_workspace_leases.enclosing_wait_id, locked_workspace_leases.enclosing_parent_run_id, locked_workspace_leases.enclosing_parent_attempt_number, locked_workspace_leases.enclosing_expected_parent_revision, locked_workspace_leases.enclosing_parent_run_lease_id, locked_workspace_leases.enclosing_suspend_checkpoint_id, locked_workspace_leases.enclosing_base_workspace_version_id, locked_workspace_leases.enclosing_child_writer_generation, locked_workspace_leases.worker_lost_at, locked_workspace_leases.runtime_lost_at, locked_workspace_leases.runtime_failed_at, locked_workspace_leases.run_lease_status, locked_workspace_leases.run_lease_expires_at, locked_workspace_leases.start_deadline_at, locked_workspace_leases.mount_lost_at, locked_workspace_leases.mount_failed_at, locked_workspace_leases.workspace_lease_expires_at, locked_workspace_leases.restore_workspace_version_id,
            run_waits.resume_request_version
       FROM locked_workspace_leases
       JOIN run_waits
@@ -3260,38 +3238,16 @@ WITH RECURSIVE candidates AS MATERIALIZED (
      ORDER BY run_waits.id
      FOR UPDATE OF run_waits
 ), loss_authority AS MATERIALIZED (
-    SELECT locked_waits.org_id, locked_waits.project_id, locked_waits.environment_id, locked_waits.workspace_id, locked_waits.run_id, locked_waits.revision, locked_waits.current_attempt_number, locked_waits.session_input_start_sequence, locked_waits.session_input_high_watermark, locked_waits.max_active_duration_ms, locked_waits.active_elapsed_ms, locked_waits.active_started_at, locked_waits.entrypoint_kind, locked_waits.session_id, locked_waits.actor_run_generation, locked_waits.actor_committed_input_sequence, locked_waits.actor_next_input_sequence, locked_waits.run_lease_id, locked_waits.worker_instance_id, locked_waits.worker_epoch, locked_waits.runtime_instance_id, locked_waits.workspace_lease_id, locked_waits.workspace_mount_id, locked_waits.run_wait_id, locked_waits.restore_checkpoint_id, locked_waits.condition_status, locked_waits.ownership_generation, locked_waits.writer_generation, locked_waits.nested_same_workspace, locked_waits.enclosing_wait_id, locked_waits.enclosing_parent_run_id, locked_waits.enclosing_parent_attempt_number, locked_waits.enclosing_expected_parent_revision, locked_waits.enclosing_parent_run_lease_id, locked_waits.enclosing_suspend_checkpoint_id, locked_waits.enclosing_base_workspace_version_id, locked_waits.enclosing_child_writer_generation, locked_waits.worker_lost_at, locked_waits.runtime_lost_at, locked_waits.runtime_failed_at, locked_waits.run_lease_status, locked_waits.run_lease_expires_at, locked_waits.start_deadline_at, locked_waits.mount_lost_at, locked_waits.mount_failed_at, locked_waits.workspace_lease_expires_at, locked_waits.restore_workspace_version_id, locked_waits.resume_request_version,
-           hard_deadline.hard_deadline_at,
+    SELECT locked_waits.org_id, locked_waits.project_id, locked_waits.environment_id, locked_waits.workspace_id, locked_waits.run_id, locked_waits.revision, locked_waits.current_attempt_number, locked_waits.session_input_start_sequence, locked_waits.session_input_high_watermark, locked_waits.entrypoint_kind, locked_waits.session_id, locked_waits.actor_run_generation, locked_waits.actor_committed_input_sequence, locked_waits.actor_next_input_sequence, locked_waits.run_lease_id, locked_waits.worker_instance_id, locked_waits.worker_epoch, locked_waits.runtime_instance_id, locked_waits.workspace_lease_id, locked_waits.workspace_mount_id, locked_waits.run_wait_id, locked_waits.restore_checkpoint_id, locked_waits.condition_status, locked_waits.ownership_generation, locked_waits.writer_generation, locked_waits.nested_same_workspace, locked_waits.enclosing_wait_id, locked_waits.enclosing_parent_run_id, locked_waits.enclosing_parent_attempt_number, locked_waits.enclosing_expected_parent_revision, locked_waits.enclosing_parent_run_lease_id, locked_waits.enclosing_suspend_checkpoint_id, locked_waits.enclosing_base_workspace_version_id, locked_waits.enclosing_child_writer_generation, locked_waits.worker_lost_at, locked_waits.runtime_lost_at, locked_waits.runtime_failed_at, locked_waits.run_lease_status, locked_waits.run_lease_expires_at, locked_waits.start_deadline_at, locked_waits.mount_lost_at, locked_waits.mount_failed_at, locked_waits.workspace_lease_expires_at, locked_waits.restore_workspace_version_id, locked_waits.resume_request_version,
            physical_loss.physical_loss_at,
            physical_failure.physical_failure_at,
-           CASE
-               WHEN locked_waits.run_lease_status = 'running'
-               THEN LEAST(
-                   locked_waits.run_lease_expires_at,
-                   hard_deadline.hard_deadline_at,
-                   physical_loss.physical_loss_at,
-                   physical_failure.physical_failure_at
-               )
-               ELSE LEAST(
-                   locked_waits.run_lease_expires_at,
-                   locked_waits.start_deadline_at,
-                   physical_loss.physical_loss_at,
-                   physical_failure.physical_failure_at
-               )
-           END AS authority_loss_at
+           LEAST(
+               locked_waits.run_lease_expires_at,
+               locked_waits.start_deadline_at,
+               physical_loss.physical_loss_at,
+               physical_failure.physical_failure_at
+           ) AS authority_loss_at
       FROM locked_waits
-      CROSS JOIN LATERAL (
-          SELECT CASE
-              WHEN locked_waits.run_lease_status = 'running'
-               AND locked_waits.active_started_at IS NOT NULL
-              THEN locked_waits.active_started_at
-                   + (GREATEST(
-                          locked_waits.max_active_duration_ms - locked_waits.active_elapsed_ms,
-                          0
-                      )::text || ' milliseconds')::interval
-              ELSE 'infinity'::timestamptz
-          END AS hard_deadline_at
-      ) AS hard_deadline
       CROSS JOIN LATERAL (
           SELECT LEAST(
               COALESCE(locked_waits.worker_lost_at, 'infinity'::timestamptz),
@@ -3306,13 +3262,11 @@ WITH RECURSIVE candidates AS MATERIALIZED (
           ) AS physical_failure_at
       ) AS physical_failure
 ), locked_checkpoints AS MATERIALIZED (
-    SELECT loss_authority.org_id, loss_authority.project_id, loss_authority.environment_id, loss_authority.workspace_id, loss_authority.run_id, loss_authority.revision, loss_authority.current_attempt_number, loss_authority.session_input_start_sequence, loss_authority.session_input_high_watermark, loss_authority.max_active_duration_ms, loss_authority.active_elapsed_ms, loss_authority.active_started_at, loss_authority.entrypoint_kind, loss_authority.session_id, loss_authority.actor_run_generation, loss_authority.actor_committed_input_sequence, loss_authority.actor_next_input_sequence, loss_authority.run_lease_id, loss_authority.worker_instance_id, loss_authority.worker_epoch, loss_authority.runtime_instance_id, loss_authority.workspace_lease_id, loss_authority.workspace_mount_id, loss_authority.run_wait_id, loss_authority.restore_checkpoint_id, loss_authority.condition_status, loss_authority.ownership_generation, loss_authority.writer_generation, loss_authority.nested_same_workspace, loss_authority.enclosing_wait_id, loss_authority.enclosing_parent_run_id, loss_authority.enclosing_parent_attempt_number, loss_authority.enclosing_expected_parent_revision, loss_authority.enclosing_parent_run_lease_id, loss_authority.enclosing_suspend_checkpoint_id, loss_authority.enclosing_base_workspace_version_id, loss_authority.enclosing_child_writer_generation, loss_authority.worker_lost_at, loss_authority.runtime_lost_at, loss_authority.runtime_failed_at, loss_authority.run_lease_status, loss_authority.run_lease_expires_at, loss_authority.start_deadline_at, loss_authority.mount_lost_at, loss_authority.mount_failed_at, loss_authority.workspace_lease_expires_at, loss_authority.restore_workspace_version_id, loss_authority.resume_request_version, loss_authority.hard_deadline_at, loss_authority.physical_loss_at, loss_authority.physical_failure_at, loss_authority.authority_loss_at,
-           (loss_authority.run_lease_status = 'running'
-            AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at) AS active_budget_exhausted,
+    SELECT loss_authority.org_id, loss_authority.project_id, loss_authority.environment_id, loss_authority.workspace_id, loss_authority.run_id, loss_authority.revision, loss_authority.current_attempt_number, loss_authority.session_input_start_sequence, loss_authority.session_input_high_watermark, loss_authority.entrypoint_kind, loss_authority.session_id, loss_authority.actor_run_generation, loss_authority.actor_committed_input_sequence, loss_authority.actor_next_input_sequence, loss_authority.run_lease_id, loss_authority.worker_instance_id, loss_authority.worker_epoch, loss_authority.runtime_instance_id, loss_authority.workspace_lease_id, loss_authority.workspace_mount_id, loss_authority.run_wait_id, loss_authority.restore_checkpoint_id, loss_authority.condition_status, loss_authority.ownership_generation, loss_authority.writer_generation, loss_authority.nested_same_workspace, loss_authority.enclosing_wait_id, loss_authority.enclosing_parent_run_id, loss_authority.enclosing_parent_attempt_number, loss_authority.enclosing_expected_parent_revision, loss_authority.enclosing_parent_run_lease_id, loss_authority.enclosing_suspend_checkpoint_id, loss_authority.enclosing_base_workspace_version_id, loss_authority.enclosing_child_writer_generation, loss_authority.worker_lost_at, loss_authority.runtime_lost_at, loss_authority.runtime_failed_at, loss_authority.run_lease_status, loss_authority.run_lease_expires_at, loss_authority.start_deadline_at, loss_authority.mount_lost_at, loss_authority.mount_failed_at, loss_authority.workspace_lease_expires_at, loss_authority.restore_workspace_version_id, loss_authority.resume_request_version, loss_authority.physical_loss_at, loss_authority.physical_failure_at, loss_authority.authority_loss_at,
            (run_checkpoints.status = 'ready'
             AND (run_checkpoints.expires_at IS NULL
                  OR run_checkpoints.expires_at > transaction_timestamp())
-            AND workspace_versions.status = 'private'
+            AND computer_versions.status = 'private'
             AND source_run_leases.status = 'checkpointed'
             AND ((loss_authority.entrypoint_kind = 'task'
                   AND run_checkpoints.actor_speculative_input_sequence IS NULL)
@@ -3320,16 +3274,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
                      AND run_checkpoints.actor_speculative_input_sequence
                          BETWEEN loss_authority.actor_committed_input_sequence
                              AND loss_authority.actor_next_input_sequence - 1))
-            AND NOT (
-                loss_authority.run_lease_status = 'running'
-                AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at
-            )) AS checkpoint_recoverable,
-           CASE
-               WHEN loss_authority.run_lease_status = 'running'
-                AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at
-               THEN 'max_active_duration_exceeded'
-               ELSE 'restore_checkpoint_unavailable'
-           END AS recovery_terminal_reason_code
+            ) AS checkpoint_recoverable,
+           'restore_checkpoint_unavailable' AS recovery_terminal_reason_code
       FROM loss_authority
       JOIN run_checkpoints
         ON run_checkpoints.id = loss_authority.restore_checkpoint_id
@@ -3337,23 +3283,21 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND run_checkpoints.attempt_number = loss_authority.current_attempt_number
        AND run_checkpoints.run_wait_id = loss_authority.run_wait_id
        AND run_checkpoints.workspace_id = loss_authority.workspace_id
-      JOIN workspace_versions
-        ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-       AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+      JOIN computer_versions
+        ON computer_versions.id = run_checkpoints.private_workspace_version_id
+       AND computer_versions.computer_id = run_checkpoints.workspace_id
       JOIN run_leases AS source_run_leases
         ON source_run_leases.id = run_checkpoints.source_run_lease_id
        AND source_run_leases.run_id = run_checkpoints.run_id
        AND source_run_leases.attempt_number = run_checkpoints.attempt_number
        AND source_run_leases.workspace_id = run_checkpoints.workspace_id
      ORDER BY run_checkpoints.id
-     FOR UPDATE OF run_checkpoints, workspace_versions
+     FOR UPDATE OF run_checkpoints, computer_versions
 ), expired_run_leases AS (
     UPDATE run_leases
        SET status = 'expired',
            terminal_at = transaction_timestamp(),
            terminal_reason_code = CASE
-               WHEN locked_checkpoints.active_budget_exhausted
-               THEN 'max_active_duration_exceeded'
                WHEN locked_checkpoints.authority_loss_at = locked_checkpoints.physical_failure_at
                THEN 'runtime_failed'
                WHEN locked_checkpoints.authority_loss_at = locked_checkpoints.physical_loss_at
@@ -3395,14 +3339,6 @@ WITH RECURSIVE candidates AS MATERIALIZED (
     UPDATE runs
        SET status = 'queued',
            current_run_lease_id = NULL,
-           active_elapsed_ms = LEAST(runs.max_active_duration_ms, runs.active_elapsed_ms + CASE
-               WHEN runs.active_started_at IS NULL THEN 0
-               ELSE GREATEST(
-                   floor(extract(epoch FROM (locked_checkpoints.authority_loss_at - runs.active_started_at)) * 1000)::bigint,
-                   0
-               )
-           END),
-           active_started_at = NULL,
            revision = runs.revision + 1,
            updated_at = transaction_timestamp()
       FROM locked_checkpoints, expired_workspace_leases
@@ -3410,12 +3346,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND runs.org_id = locked_checkpoints.org_id
        AND runs.current_run_lease_id = locked_checkpoints.run_lease_id
        AND runs.revision = locked_checkpoints.revision
-       AND ((locked_checkpoints.run_lease_status IN ('assigned', 'starting')
-             AND runs.status = 'queued'
-             AND runs.active_started_at IS NULL)
-            OR (locked_checkpoints.run_lease_status = 'running'
-                AND runs.status = 'running'
-                AND runs.active_started_at IS NOT NULL))
+       AND runs.status = 'queued'
+       AND runs.active_started_at IS NULL
        AND expired_workspace_leases.id = locked_checkpoints.workspace_lease_id
        AND expired_workspace_leases.checkpoint_recoverable
     RETURNING runs.org_id, runs.id, runs.revision
@@ -3449,30 +3381,13 @@ WITH RECURSIVE candidates AS MATERIALIZED (
     RETURNING run_attempts.run_id, run_attempts.number
 ), failed_runs AS (
     UPDATE runs
-       SET status = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'expired'
-               ELSE 'system_failed'
-           END,
+       SET status = 'system_failed',
 	       failure = jsonb_build_object(
 	           'code', locked_checkpoints.recovery_terminal_reason_code,
-	           'message', CASE
-	               WHEN locked_checkpoints.active_budget_exhausted THEN 'Run maximum active duration was exceeded'
-	               ELSE 'Run recovery failed'
-	           END,
+	           'message', 'Run recovery failed',
 	           'details', jsonb_build_object()
 	       ),
            current_run_lease_id = NULL,
-           active_elapsed_ms = CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN runs.max_active_duration_ms
-               ELSE LEAST(runs.max_active_duration_ms, runs.active_elapsed_ms + CASE
-                   WHEN runs.active_started_at IS NULL THEN 0
-                   ELSE GREATEST(
-                       floor(extract(epoch FROM (locked_checkpoints.authority_loss_at - runs.active_started_at)) * 1000)::bigint,
-                       0
-                   )
-               END)
-           END,
-           active_started_at = NULL,
            revision = runs.revision + 1,
            terminal_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
@@ -3481,12 +3396,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND runs.org_id = locked_checkpoints.org_id
        AND runs.current_run_lease_id = locked_checkpoints.run_lease_id
        AND runs.revision = locked_checkpoints.revision
-       AND ((locked_checkpoints.run_lease_status IN ('assigned', 'starting')
-             AND runs.status = 'queued'
-             AND runs.active_started_at IS NULL)
-            OR (locked_checkpoints.run_lease_status = 'running'
-                AND runs.status = 'running'
-                AND runs.active_started_at IS NOT NULL))
+       AND runs.status = 'queued'
+       AND runs.active_started_at IS NULL
        AND failed_attempts.run_id = locked_checkpoints.run_id
        AND failed_attempts.number = locked_checkpoints.current_attempt_number
     RETURNING runs.id,
@@ -3560,22 +3471,22 @@ WITH RECURSIVE candidates AS MATERIALIZED (
        AND failed_waits.run_id = failed_runs.id
     RETURNING run_waits.id, failed_runs.id AS run_id
 ), released_owners AS (
-    UPDATE workspaces
+    UPDATE computers
        SET owner_run_id = NULL,
-           ownership_generation = workspaces.ownership_generation + 1,
-           revision = workspaces.revision + 1,
+           ownership_generation = computers.ownership_generation + 1,
+           revision = computers.revision + 1,
            last_activity_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
       FROM locked_checkpoints
       JOIN failed_waits ON failed_waits.run_id = locked_checkpoints.run_id
-     WHERE workspaces.id = locked_checkpoints.workspace_id
+     WHERE computers.id = locked_checkpoints.workspace_id
        AND NOT locked_checkpoints.nested_same_workspace
        AND locked_checkpoints.entrypoint_kind = 'task'
-       AND workspaces.owner_run_id = failed_waits.run_id
-       AND workspaces.owner_session_id IS NULL
-       AND workspaces.ownership_generation = locked_checkpoints.ownership_generation
-       AND workspaces.writer_generation = locked_checkpoints.writer_generation
-    RETURNING workspaces.id
+       AND computers.owner_run_id = failed_waits.run_id
+       AND computers.owner_session_id IS NULL
+       AND computers.ownership_generation = locked_checkpoints.ownership_generation
+       AND computers.writer_generation = locked_checkpoints.writer_generation
+    RETURNING computers.id
 ), terminal_events AS (
     INSERT INTO telemetry_outbox (
         org_id,
@@ -3613,14 +3524,8 @@ WITH RECURSIVE candidates AS MATERIALIZED (
            'lifecycle',
            'error',
            'control',
-           CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'run.expired'
-               ELSE 'run.system_failed'
-           END,
-           CASE
-               WHEN locked_checkpoints.active_budget_exhausted THEN 'Run maximum active duration exceeded'
-               ELSE 'Run restore Checkpoint became unavailable'
-           END,
+           'run.system_failed',
+           'Run restore Checkpoint became unavailable',
            jsonb_build_object('reasonCode', locked_checkpoints.recovery_terminal_reason_code),
            'internal',
            failed_runs.revision,
@@ -3705,7 +3610,7 @@ UPDATE run_leases
    AND lease_sequence = $7
    AND expires_at = $8
    AND status IN ('running', 'checkpointing')
- RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+ RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type RenewRunLeaseExpiryParams struct {
@@ -3762,9 +3667,9 @@ func (q *Queries) RenewRunLeaseExpiry(ctx context.Context, arg RenewRunLeaseExpi
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
 		&i.FinalizationOperationID,
-		&i.FinalizationKind,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
+		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -3886,22 +3791,22 @@ func (q *Queries) RunFinalizationScopeIsClear(ctx context.Context, arg RunFinali
 }
 
 const touchRunWorkspaceActivity = `-- name: TouchRunWorkspaceActivity :one
-UPDATE workspaces
+UPDATE computers
    SET last_activity_at = greatest(last_activity_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
- WHERE workspaces.id = $1
-   AND workspaces.environment_id = $2
+ WHERE computers.id = $1
+   AND computers.environment_id = $2
    AND EXISTS (
        SELECT 1 FROM environments
-        WHERE environments.id = workspaces.environment_id
+        WHERE environments.id = computers.environment_id
           AND environments.org_id = $3
           AND environments.project_id = $4
    )
-   AND workspaces.ownership_generation = $5
-   AND workspaces.writer_generation = $6
-   AND workspaces.status = 'active'
-   AND workspaces.desired_state = 'active'
-RETURNING workspaces.id, workspaces.environment_id, workspaces.region_id, workspaces.sandbox_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.revision, workspaces.owner_session_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.status, workspaces.desired_state, workspaces.dirty_state, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
+   AND computers.ownership_generation = $5
+   AND computers.writer_generation = $6
+   AND computers.status = 'active'
+   AND computers.desired_state = 'active'
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 `
 
 type TouchRunWorkspaceActivityParams struct {

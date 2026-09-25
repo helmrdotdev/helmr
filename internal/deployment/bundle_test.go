@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -244,6 +245,7 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	workspaceImage := BundleWorkspaceImage{
 		DeclaredID: "repo",
 		Artifact: BundleWorkspaceImageArtifact{
+			Profile:      computer.SeedProfile,
 			Architecture: ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("d", 64),
 			MediaType:    WorkspaceImageArtifactMediaType,
@@ -321,4 +323,23 @@ func deploymentBundleJSONDefinition(
 	}
 	t.Fatalf("deployment bundle has no %s definition", kind)
 	return nil
+}
+
+func TestDeploymentBundleBindsDiskProfileAndConfig(t *testing.T) {
+	for _, kind := range []string{"profile", "config", "legacy-format"} {
+		t.Run(kind, func(t *testing.T) {
+			bundle := testDeploymentBundle(t)
+			switch kind {
+			case "profile":
+				bundle.WorkspaceImages[0].Artifact.Profile = "other"
+			case "config":
+				bundle.WorkspaceImages[0].Artifact.Config.User = "root"
+			case "legacy-format":
+				bundle.WorkspaceImages[0].Artifact.MediaType = "application/vnd.helmr.workspace-image.v0.oci-tar"
+			}
+			if err := ValidateDeploymentBundle(bundle); err == nil {
+				t.Fatal("mismatched disk contract accepted")
+			}
+		})
+	}
 }

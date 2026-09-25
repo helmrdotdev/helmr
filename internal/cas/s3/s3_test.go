@@ -1257,3 +1257,14 @@ func sealedPublicationFile(t *testing.T, content []byte) (cas.Descriptor, *os.Fi
 		MediaType: "application/vnd.helmr.runtime.v0+squashfs",
 	}, file
 }
+
+func (f *fakeS3Client) ListObjectVersions(context.Context, *awss3.ListObjectVersionsInput, ...func(*awss3.Options)) (*awss3.ListObjectVersionsOutput, error) {
+	return &awss3.ListObjectVersionsOutput{}, nil
+}
+
+func (f *fakeS3Client) ListMultipartUploads(context.Context, *awss3.ListMultipartUploadsInput, ...func(*awss3.Options)) (*awss3.ListMultipartUploadsOutput, error) {
+	return &awss3.ListMultipartUploadsOutput{}, nil
+}
+func (f *fakeS3Client) ListParts(context.Context, *awss3.ListPartsInput, ...func(*awss3.Options)) (*awss3.ListPartsOutput, error) {
+	return &awss3.ListPartsOutput{}, nil
+}

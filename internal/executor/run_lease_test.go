@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"slices"
 	"sync"
@@ -60,13 +61,12 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
 	if controlPlane.completed.Workspace.Captured == nil ||
-		controlPlane.completed.Workspace.RolledBack != nil ||
 		controlPlane.completed.Outcome.Succeeded == nil {
 		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
 }
 
-func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
+func TestExecutorCapturesFailedRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
 	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
@@ -86,7 +86,7 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 		trace:   trace,
 		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationReset),
+		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
 	}
 	executor := Executor{
 		RunLeases:     controlPlane,
@@ -100,12 +100,11 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "guest-begin", "reset", "complete",
+		"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if controlPlane.completed.Workspace.Captured != nil ||
-		controlPlane.completed.Workspace.RolledBack == nil ||
+	if controlPlane.completed.Workspace.Captured == nil ||
 		controlPlane.completed.Outcome.Failed == nil {
 		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
@@ -162,8 +161,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 				RunLeaseID: lease.ID,
 			},
 		},
-		beginFailures:   1,
-		captureFailures: 1,
+		beginFailures: 1,
 	}
 	controlPlane := &testRunLeaseControlPlane{
 		trace:            trace,
@@ -187,7 +185,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	}
 	if !slices.Equal(trace.calls, []string{
 		"claim", "start", "wait", "renew", "begin", "begin", "guest-begin",
-		"guest-begin", "capture", "capture", "complete", "complete",
+		"guest-begin", "capture", "complete", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
@@ -228,7 +226,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	registry := NewWorkspaceMountSessions()
 	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
 		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 4, Target: workerapi.WorkspaceResetTarget{BaseWorkspaceVersionID: "version-1"},
+		FencingGeneration: 4, Target: workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}, "channel-1")
 	authority := &workspacev0.WorkspaceRunAuthority{
 		Fence: &workspacev0.WorkspaceAuthorityFence{
@@ -381,7 +379,7 @@ func TestGuestRunLeaseTaskSerializesRenewalWithCheckpointFreeze(t *testing.T) {
 	frozen := make(chan struct{})
 	checkpointDone := make(chan error, 1)
 	go func() {
-		_, err := runtimeCheckpointer{
+		err := runtimeCheckpointer{
 			stream: stream, freezeGate: &task.renewalGate,
 			onFrozen: func() {
 				task.markCheckpointFrozen()
@@ -553,6 +551,8 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 }
 
 type testRunLeaseTask struct {
+	quiesceErr      error
+	waitErr         error
 	trace           *runLeaseTrace
 	result          RunLeaseTaskResult
 	previous        workerapi.RunLeaseAssignment
@@ -561,11 +561,12 @@ type testRunLeaseTask struct {
 	captureFailures int
 }
 
-func (task *testRunLeaseTask) Close() {}
+func (task *testRunLeaseTask) Close()                                     {}
+func (task *testRunLeaseTask) QuiesceComputerSaves(context.Context) error { return task.quiesceErr }
 
 func (task *testRunLeaseTask) Wait(context.Context) (RunLeaseTaskResult, error) {
 	task.trace.add("wait")
-	return task.result, nil
+	return task.result, task.waitErr
 }
 
 func (task *testRunLeaseTask) RenewRunLease(
@@ -597,11 +598,6 @@ func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (workerapi.TaskW
 		return workerapi.TaskWorkspaceCapture{}, errors.New("transient capture failure")
 	}
 	return workerapi.TaskWorkspaceCapture{}, nil
-}
-
-func (task *testRunLeaseTask) ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error) {
-	task.trace.add("reset")
-	return workerapi.TaskWorkspaceRollback{}, nil
 }
 
 type testRunLeaseControlPlane struct {
@@ -737,5 +733,64 @@ func testRunFinalizationResponse(
 		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
 		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
 		Kind:                   kind,
+	}
+}
+
+func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failed), func(t *testing.T) {
+			trace := &runLeaseTrace{}
+			lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
+			releaseErr := errors.New("physical stop uncertain")
+			waitErr := ErrDetached
+			if failed {
+				waitErr = errors.Join(ErrDetached, &checkpointSourceReleaseError{err: releaseErr})
+			}
+			task := &testRunLeaseTask{trace: trace, waitErr: waitErr}
+			client := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}}
+			e := Executor{RunLeases: client, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
+			err := e.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence})
+			if failed && !errors.Is(err, releaseErr) {
+				t.Fatalf("lost release failure: %v", err)
+			}
+			if !failed && err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(trace.calls, []string{"claim", "start", "wait"}) {
+				t.Fatalf("finalized detached run: %v", trace.calls)
+			}
+		})
+	}
+}
+
+func (*testRunLeaseControlPlane) RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error {
+	return nil
+}
+
+func (*testRunLeaseControlPlane) RegisterRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func (*testRunLeaseControlPlane) CertifyRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func (*testRunLeaseControlPlane) ReuseRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
+	return nil
+}
+
+func TestRunFinalizationWaitsForComputerSaveSettlement(t *testing.T) {
+	trace := &runLeaseTrace{}
+	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
+	failure := errors.New("save receipt unresolved")
+	task := &testRunLeaseTask{trace: trace, renewed: lease, quiesceErr: failure}
+	cp := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}, renewed: testRunLeaseRenewResponse(lease)}
+	executor := Executor{RunLeases: cp, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
+	err := executor.ExecuteRunLease(t.Context(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence})
+	if !errors.Is(err, failure) {
+		t.Fatalf("settlement error: %v", err)
+	}
+	if slices.Contains(trace.calls, "begin") {
+		t.Fatalf("revoked save authority before settlement: %v", trace.calls)
 	}
 }

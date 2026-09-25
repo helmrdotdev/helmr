@@ -87,44 +87,7 @@ func placeWorkspaceExecForClaim(
 	fixture runPlacementFixture,
 ) (uuid.UUID, uuid.UUID) {
 	t.Helper()
-	claimID := uuid.NewV7()
-	processID := uuid.NewV7()
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE workspaces
-   SET owner_run_id = NULL
- WHERE id = $1`,
-		fixture.workspaceID,
-	)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO idempotency_claims (
-    id, environment_id, operation, slot_hash,
-    request_fingerprint, accepted_at, expires_at
-) VALUES (
-    $1, $2, 'workspace.exec', decode(repeat('51', 32), 'hex'),
-    decode(repeat('52', 32), 'hex'), now(), now() + interval '30 days'
-)`,
-		claimID,
-		fixture.environmentID,
-	)
-	if _, err := db.New(fixture.pool).CreateWorkspaceExec(
-		fixture.ctx,
-		db.CreateWorkspaceExecParams{
-			ID:                     pgvalue.UUID(processID),
-			OrgID:                  pgvalue.UUID(fixture.orgID),
-			ProjectID:              pgvalue.UUID(fixture.projectID),
-			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
-			WorkspaceID:            pgvalue.UUID(fixture.workspaceID),
-			BaseWorkspaceVersionID: workspaceHeadVersion(t, fixture),
-			RestoreDesiredState:    "active",
-			Request:                []byte(`{"command":["echo","ready"]}`),
-			Stdin:                  []byte{},
-			ClaimID:                pgvalue.UUID(claimID),
-			CreatedBySubjectType:   "user",
-			CreatedBySubjectID:     "test-user",
-		},
-	); err != nil {
-		t.Fatal(err)
-	}
+	processID := createPendingWorkspaceExec(t, fixture)
 	candidate := ReadyWorkspaceExecCandidate{
 		OrgID:            pgvalue.UUID(fixture.orgID),
 		ProcessID:        pgvalue.UUID(processID),
@@ -167,7 +130,7 @@ func workspaceHeadVersion(t *testing.T, fixture runPlacementFixture) pgtype.UUID
 	var versionID pgtype.UUID
 	if err := fixture.pool.QueryRow(fixture.ctx, `
 SELECT head_version_id
-  FROM workspaces
+  FROM computers
  WHERE id = $1`,
 		fixture.workspaceID,
 	).Scan(&versionID); err != nil {
@@ -177,4 +140,47 @@ SELECT head_version_id
 		t.Fatal("Workspace head version is missing")
 	}
 	return versionID
+}
+
+func createPendingWorkspaceExec(t *testing.T, fixture runPlacementFixture) uuid.UUID {
+	t.Helper()
+	claimID := uuid.NewV7()
+	processID := uuid.NewV7()
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+UPDATE computers
+   SET owner_run_id = NULL
+ WHERE id = $1`,
+		fixture.workspaceID,
+	)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO idempotency_claims (
+    id, environment_id, operation, slot_hash,
+    request_fingerprint, accepted_at, expires_at
+) VALUES (
+    $1, $2, 'workspace.exec', decode(repeat('51', 32), 'hex'),
+    decode(repeat('52', 32), 'hex'), now(), now() + interval '30 days'
+)`,
+		claimID,
+		fixture.environmentID,
+	)
+	if _, err := db.New(fixture.pool).CreateWorkspaceExec(
+		fixture.ctx,
+		db.CreateWorkspaceExecParams{
+			ID:                     pgvalue.UUID(processID),
+			OrgID:                  pgvalue.UUID(fixture.orgID),
+			ProjectID:              pgvalue.UUID(fixture.projectID),
+			EnvironmentID:          pgvalue.UUID(fixture.environmentID),
+			WorkspaceID:            pgvalue.UUID(fixture.workspaceID),
+			BaseWorkspaceVersionID: workspaceHeadVersion(t, fixture),
+			RestoreDesiredState:    "active",
+			Request:                []byte(`{"command":["echo","ready"]}`),
+			Stdin:                  []byte{},
+			ClaimID:                pgvalue.UUID(claimID),
+			CreatedBySubjectType:   "user",
+			CreatedBySubjectID:     "test-user",
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	return processID
 }

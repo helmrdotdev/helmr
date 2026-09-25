@@ -31,7 +31,7 @@ func ReconcileClose(
 		return actor, false, nil
 	}
 	if actor.DispatchHoldID.Valid && (actor.CurrentRunID.Valid || actor.CommittedInputSequence < actor.CloseSequence.Int64 ||
-		(actor.DispatchHoldReason.String != "recovered" && actor.DispatchHoldReason.String != "interrupted")) {
+		actor.DispatchHoldReason.String != "interrupted") {
 		return actor, false, nil
 	}
 	if actor.CurrentRunID.Valid {
@@ -74,10 +74,10 @@ func ReconcileClose(
 		})
 		return updated, false, err
 	}
-	if !workspaceCanAdmit(workspace, activity) {
+	if !workspaceCanAdmit(workspace, activity) && !(actor.CancelRequestedAt.Valid && len(workspace.RecoveryFailure) > 0 && !activity.HasActiveLease && !activity.HasActiveProcess && !activity.HasActiveChild) {
 		return actor, true, nil
 	}
-	if actor.DispatchHoldID.Valid {
+	if actor.DispatchHoldID.Valid || len(workspace.RecoveryFailure) > 0 {
 		// Closing a drained, settled hold does not resume customer code. Keep
 		// its physical exclusion check even if another writer appeared since repair.
 		excluded, err := store.SessionWriterExcluded(ctx, actor.WorkspaceID)
@@ -261,7 +261,7 @@ func reconcileCancellation(ctx context.Context, q db.Querier, actor db.Session) 
 			return actor, false, err
 		}
 	}
-	if actor.DispatchHoldID.Valid && actor.DispatchHoldReason.String != "interrupted" && actor.DispatchHoldReason.String != "recovered" {
+	if actor.DispatchHoldID.Valid && actor.DispatchHoldReason.String != "interrupted" {
 		return actor, true, nil
 	}
 	actor, err := q.AdvanceCancelledSessionInputs(ctx, db.AdvanceCancelledSessionInputsParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})

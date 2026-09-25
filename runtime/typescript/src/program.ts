@@ -473,22 +473,6 @@ export async function runProgram(
   const declaration = located[0]!
   const locator = declaration.locator!
   const moduleURL = resolveModuleURL(locatorURL, locator.sourcePath)
-  const imported = io.importModule === undefined
-    ? await (await import("@helmr/module-execution")).importSourceExports(moduleURL)
-    : await io.importModule(moduleURL)
-  const definition = inspectDefinition(imported[locator.exportName])
-  if (
-    definition === undefined ||
-    definition.kind !== declaration.kind ||
-    definition.id !== declaration.declaredId ||
-    (definition.kind !== "task" && definition.kind !== "actor")
-  ) {
-    throw new Error(
-      `Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`,
-    )
-  }
-  validateEntrypointContract(start, definition)
-
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId)
   await writeRunEvent(io, {
     case: "entrypointReady",
@@ -504,6 +488,35 @@ export async function runProgram(
     await reader.read(),
   )
   validateEntrypointRelease(release, start, kind)
+  // The release acknowledges customer execution, including module-level code.
+  // Import failures are application outcomes, never pre-execution preparation.
+  let definition: InternalTaskDefinition | InternalActorDefinition
+  try {
+    const imported = io.importModule === undefined
+      ? await (await import("@helmr/module-execution")).importSourceExports(moduleURL)
+      : await io.importModule(moduleURL)
+    const inspected = inspectDefinition(imported[locator.exportName])
+    if (
+      inspected === undefined ||
+      inspected.kind !== declaration.kind ||
+      inspected.id !== declaration.declaredId ||
+      (inspected.kind !== "task" && inspected.kind !== "actor")
+    ) {
+      throw new Error(
+        `Program export ${JSON.stringify(locator.exportName)} does not match ${kind}:${JSON.stringify(start.entrypointDeclaredId)}`,
+      )
+    }
+    validateEntrypointContract(start, inspected)
+    definition = inspected
+  } catch (error) {
+    if (kind === "task") {
+      await writeTaskFailure(io, "failed", errorMessage(error), { phase: "initialization" })
+    } else if (start.entrypoint.case === "actor") {
+      await writeActorFailure(io, start.entrypoint.value.runGeneration, errorMessage(error))
+    }
+    await reader.close()
+    return
+  }
   const decisions = new ResumeDecisionRouter(reader)
 
   if (definition.kind === "task") {
@@ -2431,8 +2444,6 @@ class ActorRuntime {
           throw new RuntimeProtocolError(
             "Null-Turn stop was not confirmed by settlement",
           )
-        if (response.kind === "failed")
-          throw runtimeOperationFailure("Turn settlement", response.dataJson)
         if (
           response.correlationId !== correlationId ||
           response.kind !== "committed"

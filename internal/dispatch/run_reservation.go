@@ -60,7 +60,7 @@ func (d *Authority) prepareRunWorkspace(
 	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
-	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
+	authority, err := lockRunPlacementAuthority(ctx, tx, candidate, true)
 	if err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
@@ -78,6 +78,9 @@ func (d *Authority) prepareRunWorkspace(
 			runtime,
 		)
 		if err != nil {
+			return runWorkspaceMount{}, err
+		}
+		if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
 			return runWorkspaceMount{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
@@ -103,6 +106,9 @@ func (d *Authority) prepareRunWorkspace(
 				return runWorkspaceMount{}, pressureErr
 			}
 			if pressured {
+				if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
+					return runWorkspaceMount{}, err
+				}
 				if err := tx.Commit(ctx); err != nil {
 					return runWorkspaceMount{}, fmt.Errorf("commit run capacity pressure: %w", err)
 				}
@@ -125,10 +131,6 @@ func (d *Authority) prepareRunWorkspace(
 		return runWorkspaceMount{}, err
 	}
 	runtimeID := pgvalue.UUID(uuid.NewV7())
-	var reservedAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT transaction_timestamp()`).Scan(&reservedAt); err != nil {
-		return runWorkspaceMount{}, fmt.Errorf("sample run reservation time: %w", err)
-	}
 	row, err := db.New(tx).CreateRunRuntimeReservation(
 		ctx,
 		db.CreateRunRuntimeReservationParams{
@@ -159,10 +161,7 @@ func (d *Authority) prepareRunWorkspace(
 				Valid: true,
 			},
 			BaseWorkspaceVersionID: authority.baseWorkspaceVersionID,
-			ReservationExpiresAt: pgtype.Timestamptz{
-				Time:  reservedAt.Add(run.ReservationTTL),
-				Valid: true,
-			},
+			PreparationSeconds:     int64(run.PreparationTTL / time.Second),
 		},
 	)
 	if err != nil {
@@ -170,6 +169,12 @@ func (d *Authority) prepareRunWorkspace(
 			return runWorkspaceMount{}, ErrCapacityUnavailable
 		}
 		return runWorkspaceMount{}, fmt.Errorf("create run runtime reservation: %w", err)
+	}
+	if err := admitComputerRecoveryPreparation(ctx, tx, authority.workspaceID, row.ID, authority.baseWorkspaceVersionID); err != nil {
+		return runWorkspaceMount{}, err
+	}
+	if err := checkRunPreparationDeadlines(ctx, tx, authority); err != nil {
+		return runWorkspaceMount{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return runWorkspaceMount{}, fmt.Errorf("commit run runtime reservation: %w", err)
@@ -300,7 +305,9 @@ SELECT runtime_instances.id,
        runtime_instances.reserved_workspace_version_id,
        runtime_instances.reservation_expires_at,
        coalesce(
-           runtime_instances.reservation_expires_at > transaction_timestamp(),
+           CASE WHEN runtime_instances.observed_state = 'allocated'
+                THEN runtime_instances.preparation_expires_at
+                ELSE runtime_instances.reservation_expires_at END > transaction_timestamp(),
            false
        ),
        runtime_instances.desired_state,
@@ -318,34 +325,12 @@ SELECT runtime_instances.id,
  WHERE runtime_instances.workspace_id = $1
    AND runtime_instances.reclaimed_at IS NULL`
 	}
-	return `
-SELECT runtime_instances.id,
-       runtime_instances.worker_group_id,
-       runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch,
-       runtime_instances.runtime_identity_id,
-       runtime_instances.runtime_substrate_id,
-       runtime_instances.deployment_definition_id,
-       runtime_instances.program_deployment_id,
-       runtime_instances.restore_checkpoint_id,
-       runtime_instances.reserved_run_id,
-       runtime_instances.reserved_attempt_number,
-       runtime_instances.reserved_process_id,
-       runtime_instances.reserved_workspace_version_id,
-       runtime_instances.reservation_expires_at,
-       coalesce(
-           runtime_instances.reservation_expires_at > transaction_timestamp(),
-           false
-       ),
-       runtime_instances.desired_state,
-       runtime_instances.desired_version,
-       runtime_instances.observed_state,
-       runtime_instances.observed_desired_version,
-       runtime_instances.reserved_cpu_millis,
-       runtime_instances.reserved_memory_bytes,
-       runtime_instances.reserved_guest_ephemeral_disk_bytes,
-       runtime_instances.reserved_execution_slots
-  FROM runtime_instances
+	// Materialize the row lock before evaluating the wall clock. SELECT FOR
+	// UPDATE may evaluate its target list before waiting for the row lock.
+	// Transaction-start time is also stale after a long-running transaction.
+	return `WITH locked AS MATERIALIZED (
+    SELECT runtime_instances.*
+      FROM runtime_instances
   JOIN worker_instances
     ON worker_instances.id = runtime_instances.worker_instance_id
    AND worker_instances.worker_group_id = runtime_instances.worker_group_id
@@ -353,7 +338,37 @@ SELECT runtime_instances.id,
    AND runtime_instances.worker_instance_id = $2
    AND runtime_instances.worker_epoch = $3
    AND runtime_instances.reclaimed_at IS NULL
- FOR UPDATE OF runtime_instances`
+ FOR UPDATE OF runtime_instances
+)
+SELECT locked.id,
+       locked.worker_group_id,
+       locked.worker_instance_id,
+       locked.worker_epoch,
+       locked.runtime_identity_id,
+       locked.runtime_substrate_id,
+       locked.deployment_definition_id,
+       locked.program_deployment_id,
+       locked.restore_checkpoint_id,
+       locked.reserved_run_id,
+       locked.reserved_attempt_number,
+       locked.reserved_process_id,
+       locked.reserved_workspace_version_id,
+       locked.reservation_expires_at,
+       coalesce(
+           CASE WHEN locked.observed_state = 'allocated'
+                THEN locked.preparation_expires_at
+                ELSE locked.reservation_expires_at END > clock_timestamp(),
+           false
+       ),
+       locked.desired_state,
+       locked.desired_version,
+       locked.observed_state,
+       locked.observed_desired_version,
+       locked.reserved_cpu_millis,
+       locked.reserved_memory_bytes,
+       locked.reserved_guest_ephemeral_disk_bytes,
+       locked.reserved_execution_slots
+  FROM locked`
 }
 
 type rowScanner interface {
@@ -423,7 +438,6 @@ func validateRunRuntime(
 			!runtime.reservedAttempt.Valid ||
 			runtime.reservedAttempt.Int32 != authority.attemptNumber ||
 			runtime.reservedVersionID != authority.baseWorkspaceVersionID ||
-			!runtime.reservationExpiresAt.Valid ||
 			!runtime.reservationActive {
 			return errors.New("workspace runtime reservation does not match run")
 		}

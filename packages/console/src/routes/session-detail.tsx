@@ -337,11 +337,11 @@ function SessionDetailContent() {
                   <DetailItem label="Status"><StatusBadge resource="session" status={current().status} /></DetailItem>
                   <DetailItem label="Dispatch">{current().dispatch.state}</DetailItem>
                   <Show when={current().dispatch.hold_id}>{(hold) => <>
-                    <DetailItem label="Waiting">{current().dispatch.reason === "recovery_required" ? "Recovery required" : current().dispatch.reason === "interrupt_requested" ? "Stopping" : "Paused"}</DetailItem>
+                    <DetailItem label="Waiting">{current().dispatch.reason === "recovery_required" ? "Recovering" : current().dispatch.reason === "interrupt_requested" ? "Stopping" : "Paused"}</DetailItem>
                     <DetailItem label="Hold"><code class="break-all">{hold()}</code></DetailItem>
                     <Show when={current().dispatch.reason === "recovery_required"} fallback={
                       <Show when={can("sessions.resume") && current().dispatch.reason !== "interrupt_requested"}><button class={ui.button} onClick={() => setControl({ kind: "resume", target: hold(), key: crypto.randomUUID() })}>Resume queued work</button></Show>
-                    }><p class={ui.muted}>An owner or admin must reconcile external effects and the Workspace version using actor recover before queued work can resume.</p></Show>
+                    }><p class={ui.muted}>Helmr is waiting for the previous execution to stop before restoring the saved environment. Uncertain external effects are not replayed.</p></Show>
                   </>}</Show>
                   <DetailItem label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />

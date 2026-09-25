@@ -26,8 +26,8 @@ UPDATE sessions
 RETURNING *;
 
 -- name: LockActorCloseWorkspace :one
-SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
-  FROM workspaces
+SELECT recovery_failure, id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
+  FROM computers
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(workspace_id)
    AND owner_session_id = sqlc.arg(session_id)
@@ -73,11 +73,11 @@ UPDATE sessions
    AND committed_input_sequence >= close_sequence
 RETURNING *;
 
--- name: CreateActorCloseReconcileOutbox :exec
+-- name: CreateSessionLifecycleReconcileOutbox :exec
 INSERT INTO control_outbox (id, topic, payload, available_at)
 VALUES (
     sqlc.arg(id),
-    'session.close.reconcile',
+    'session.lifecycle.reconcile',
     jsonb_build_object(
         'environmentId', sqlc.arg(environment_id)::uuid::text,
         'sessionId', sqlc.arg(session_id)::uuid::text

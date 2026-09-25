@@ -35,7 +35,7 @@ func testWorkspaceCAStore(t *testing.T, pool *pgxpool.Pool) *secret.Store {
 func createTestWorkspaceCA(t *testing.T, pool *pgxpool.Pool, store *secret.Store, environmentID, workspaceID uuid.UUID) secret.ProxyTrust {
 	t.Helper()
 	var created time.Time
-	if err := pool.QueryRow(t.Context(), "SELECT created_at FROM workspaces WHERE id=$1", workspaceID).Scan(&created); err != nil {
+	if err := pool.QueryRow(t.Context(), "SELECT created_at FROM computers WHERE id=$1", workspaceID).Scan(&created); err != nil {
 		t.Fatal(err)
 	}
 	trust, err := store.GenerateProxyTrust(environmentID, workspaceID, created)
@@ -87,12 +87,12 @@ func TestWorkspaceCACreationRoutesAndRollback(t *testing.T) {
 				}
 				if mode == "after-generation-failure" {
 					dbtest.MustExec(t, t.Context(), f.pool, `CREATE FUNCTION reject_ca_binding() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM workspaces WHERE id=NEW.workspace_id AND secret_ca_certificate IS NOT NULL) THEN RAISE EXCEPTION 'CA not generated'; END IF;
+        IF NOT EXISTS (SELECT 1 FROM computers WHERE id=NEW.workspace_id AND secret_ca_certificate IS NOT NULL) THEN RAISE EXCEPTION 'CA not generated'; END IF;
         RAISE EXCEPTION 'synthetic post-generation failure'; END $$;
         CREATE TRIGGER reject_ca_binding BEFORE INSERT ON workspace_secrets FOR EACH ROW EXECUTE FUNCTION reject_ca_binding();`)
 				}
 				var before int
-				if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM workspaces").Scan(&before); err != nil {
+				if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&before); err != nil {
 					t.Fatal(err)
 				}
 				result, err := f.server.createWorkspace(t.Context(), request)
@@ -105,7 +105,7 @@ func TestWorkspaceCACreationRoutesAndRollback(t *testing.T) {
 						t.Fatal(err)
 					}
 					var after int
-					if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM workspaces").Scan(&after); err != nil {
+					if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM computers").Scan(&after); err != nil {
 						t.Fatal(err)
 					}
 					if before != after {
@@ -176,7 +176,7 @@ func TestWorkspaceCAConcurrentIdempotentCreation(t *testing.T) {
 		}
 	}
 	var count int
-	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM workspaces WHERE secret_ca_certificate IS NOT NULL").Scan(&count); err != nil || count != 1 {
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM computers WHERE secret_ca_certificate IS NOT NULL").Scan(&count); err != nil || count != 1 {
 		t.Fatalf("CA count %d: %v", count, err)
 	}
 }
@@ -187,16 +187,16 @@ func TestWorkspaceCAMalformedPreparationFailsWithoutWrites(t *testing.T) {
 			f := newSnapshotFixture(t, 1, true)
 			switch mutation {
 			case "missing":
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET secret_ca_certificate=NULL,secret_ca_not_after=NULL,secret_ca_private_key_nonce=NULL,secret_ca_private_key_ciphertext=NULL WHERE id=$1", f.workspace)
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET secret_ca_certificate=NULL,secret_ca_not_after=NULL,secret_ca_private_key_nonce=NULL,secret_ca_private_key_ciphertext=NULL WHERE id=$1", f.workspace)
 			case "certificate":
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET secret_ca_certificate=$2 WHERE id=$1", f.workspace, []byte("invalid"))
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET secret_ca_certificate=$2 WHERE id=$1", f.workspace, []byte("invalid"))
 			case "nonce":
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET secret_ca_private_key_nonce=$2 WHERE id=$1", f.workspace, []byte("invalid"))
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET secret_ca_private_key_nonce=$2 WHERE id=$1", f.workspace, []byte("invalid"))
 			case "ciphertext":
-				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE workspaces SET secret_ca_private_key_ciphertext=$2 WHERE id=$1", f.workspace, []byte("invalid"))
+				dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET secret_ca_private_key_ciphertext=$2 WHERE id=$1", f.workspace, []byte("invalid"))
 			}
 			var before, after string
-			if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT xmin::text FROM workspaces WHERE id=$1", f.workspace).Scan(&before); err != nil {
+			if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT xmin::text FROM computers WHERE id=$1", f.workspace).Scan(&before); err != nil {
 				t.Fatal(err)
 			}
 			for range 2 {
@@ -204,7 +204,7 @@ func TestWorkspaceCAMalformedPreparationFailsWithoutWrites(t *testing.T) {
 					t.Fatal("malformed CA prepared")
 				}
 			}
-			if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT xmin::text FROM workspaces WHERE id=$1", f.workspace).Scan(&after); err != nil {
+			if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT xmin::text FROM computers WHERE id=$1", f.workspace).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
 			if before != after {
@@ -214,8 +214,8 @@ func TestWorkspaceCAMalformedPreparationFailsWithoutWrites(t *testing.T) {
 	}
 	f := newSnapshotFixture(t, 1, false)
 	for i, statement := range []string{
-		"UPDATE workspaces SET secret_ca_certificate=$2 WHERE id=$1",
-		"UPDATE workspaces SET secret_ca_certificate=$2,secret_ca_private_key_nonce=$2,secret_ca_private_key_ciphertext=$2,secret_ca_not_after=now() WHERE id=$1",
+		"UPDATE computers SET secret_ca_certificate=$2 WHERE id=$1",
+		"UPDATE computers SET secret_ca_certificate=$2,secret_ca_private_key_nonce=$2,secret_ca_private_key_ciphertext=$2,secret_ca_not_after=now() WHERE id=$1",
 	} {
 		material := []byte("nonempty partial material")
 		if i == 1 {

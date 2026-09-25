@@ -10,6 +10,7 @@
   compiler,
   runtimeRelease,
   squashfsTools,
+  substrateGenerator,
 }:
 
 let
@@ -30,6 +31,8 @@ let
     cp ${compiler}/compiler.descriptor.json "$out/nix/helmr/compiler.descriptor.json"
     chmod u-w "$out/nix/helmr"
 
+    ln -s ${lib.getBin substrateGenerator}/bin/mke2fs "$out/opt/helmr/bin/mke2fs"
+    cp ${./mke2fs.conf} "$out/opt/helmr/release/mke2fs.conf"
     ln -s ${bundleBuilder}/bin/bundle-builder "$out/opt/helmr/bin/bundle-builder"
     ln -s ${squashfsTools}/bin/mksquashfs "$out/opt/helmr/bin/mksquashfs"
     ln -s /workspace/project "$out/opt/helmr/program"

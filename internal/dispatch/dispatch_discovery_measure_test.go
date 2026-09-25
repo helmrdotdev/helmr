@@ -54,6 +54,13 @@ UPDATE runs
 		t.Fatal(err)
 	}
 
+	var publisherID uuid.UUID
+	var rootDigest string
+	var rootBytes int64
+	if err := tx.QueryRow(fixture.ctx, `SELECT v.publisher_runtime_instance_id,v.root_pack_digest,v.logical_bytes FROM computer_versions v
+JOIN computers w ON w.head_version_id=v.id WHERE w.id=$1`, fixture.workspaceID).Scan(&publisherID, &rootDigest, &rootBytes); err != nil {
+		t.Fatal(err)
+	}
 	workspaces := make([][]any, 0, rows-1)
 	versions := make([][]any, 0, rows-1)
 	runs := make([][]any, 0, rows-1)
@@ -79,8 +86,8 @@ UPDATE runs
 		})
 		versions = append(versions, []any{
 			versionID, fixture.environmentID, workspaceID,
-			"sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96",
-			"committed", int64(0), int64(0), base,
+			rootDigest, rootBytes,
+			"committed", int64(0), int64(0), base, versionID, int64(1), dbtest.Hash(versionID.String()),
 		})
 		runs = append(runs, []any{
 			runID, fixture.orgID, fixture.projectID, fixture.environmentID,
@@ -91,14 +98,25 @@ UPDATE runs
 		attempts = append(attempts, []any{runID, int32(1), "task", workspaceID, versionID})
 	}
 
-	copyRows(t, fixture.ctx, tx, "workspaces", []string{
+	copyRows(t, fixture.ctx, tx, "computers", []string{
 		"id", "environment_id", "region_id", "sandbox_declared_id", "deployment_definition_id",
 		"owner_run_id", "ownership_generation", "writer_generation", "head_version_id",
 	}, workspaces)
-	copyRows(t, fixture.ctx, tx, "workspace_versions", []string{
-		"id", "environment_id", "workspace_id", "content_digest", "status",
-		"ownership_generation", "writer_generation", "published_at",
+	dbtest.MustExec(t, fixture.ctx, tx, `INSERT INTO runtime_instances(id,org_id,project_id,environment_id,region_id,worker_group_id,worker_instance_id,
+ runtime_identity_id,deployment_definition_id,worker_epoch,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,
+ reserved_guest_ephemeral_disk_bytes,reserved_execution_slots,workspace_id,preparation_expires_at,desired_state,desired_version,desired_reason,
+ observed_state,terminal_at,reclaimed_at,reclaim_evidence,terminal_reason_code)
+ SELECT c.head_version_id,r.org_id,r.project_id,c.environment_id,c.region_id,r.worker_group_id,r.worker_instance_id,
+ r.runtime_identity_id,c.deployment_definition_id,r.worker_epoch,r.vm_vcpu_count,r.cpu_config_digest,r.reserved_cpu_millis,r.reserved_memory_bytes,
+ r.reserved_guest_ephemeral_disk_bytes,r.reserved_execution_slots,c.id,now(),'closed',2,'initialization_completed','closed',now(),now(),'{}','initialization_completed'
+ FROM computers c CROSS JOIN runtime_instances r WHERE c.environment_id=$1 AND c.id<>$2 AND r.id=$3`, fixture.environmentID, fixture.workspaceID, publisherID)
+	copyRows(t, fixture.ctx, tx, "computer_versions", []string{
+		"id", "environment_id", "computer_id", "root_pack_digest", "logical_bytes", "status",
+		"ownership_generation", "writer_generation", "published_at", "publisher_runtime_instance_id", "publisher_desired_version", "publication_request_fingerprint",
 	}, versions)
+	for index := 1; index < rows; index++ {
+		insertPlacementGeneration(t, fixture.ctx, tx, fixture.environmentID, measurementUUID("workspace", index), measurementUUID("version", index))
+	}
 	copyRows(t, fixture.ctx, tx, "runs", []string{
 		"id", "org_id", "project_id", "environment_id", "deployment_id",
 		"deployment_definition_id", "entrypoint_kind", "entrypoint_declared_id", "cause_kind",
@@ -113,7 +131,7 @@ UPDATE runs
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, fixture.ctx, fixture.pool, `ANALYZE runs`)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `ANALYZE workspaces`)
+	dbtest.MustExec(t, fixture.ctx, fixture.pool, `ANALYZE computers`)
 }
 
 func copyRows(t *testing.T, ctx context.Context, tx pgx.Tx, table string, columns []string, rows [][]any) {

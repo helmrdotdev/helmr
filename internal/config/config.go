@@ -43,6 +43,9 @@ type ControlPlane struct {
 	SetupToken                      string
 	AuthKey                         []byte
 	EncryptionKey                   []byte
+	ComputerWrappingKey             []byte
+	ComputerWrappingKeyID           string
+	ComputerKMSKeyARN               string
 	WorkspaceFencingKey             []byte
 	TokenCredentialKey              []byte
 	PublicURL                       string
@@ -88,6 +91,9 @@ type ClickHouse struct {
 }
 
 type Worker struct {
+	ComputerSaveEvery            time.Duration
+	ComputerDevices              []string
+	ComputerStagingMiB           int64
 	ControlPlaneURL              string
 	WorkerResourceID             string
 	WorkerPoolName               string

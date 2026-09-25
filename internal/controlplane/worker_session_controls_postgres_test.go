@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -30,8 +29,9 @@ func secondWorkerControlActor(t *testing.T, first *actorCheckpointFixture) *acto
 	}
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,status,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, f.rootID, f.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
+	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.workspaceID)
+	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.workspaceID, f.rootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -178,8 +178,9 @@ func TestWorkerSessionControlLocksChildBeforeWorkerGroupPostgres(t *testing.T) {
 	}
 	defer setup.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), setup, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), setup, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, ws, a.EnvironmentID, a.WorkspaceDefinitionID, version)
-	dbtest.MustExec(t, t.Context(), setup, `INSERT INTO workspace_versions(id,environment_id,workspace_id,status,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, version, a.EnvironmentID, ws, workspace.CanonicalEmptyTreeDigest)
+	dbtest.MustExec(t, t.Context(), setup, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, ws, a.EnvironmentID, a.WorkspaceDefinitionID, version)
+	dbtest.InsertCommittedComputerRoot(t, t.Context(), setup, version, a.EnvironmentID, ws)
+	dbtest.InsertComputerGeneration(t, t.Context(), setup, a.EnvironmentID, ws, version)
 	if err = setup.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +242,7 @@ func TestWorkerSessionControlResumeSettledTargetPostgres(t *testing.T) {
 			b := secondWorkerControlActor(t, a)
 			addWorkerControlSecret(t, b)
 			capture := b.capture(t, "settled target")
-			b.turn(t, 1, capture, true)
+			b.turn(t, 1)
 			b.suspend(t, capture)
 			canceler, err := run.NewCanceler(b.Pool)
 			if err != nil {
@@ -251,19 +252,19 @@ func TestWorkerSessionControlResumeSettledTargetPostgres(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var hold, head uuid.UUID
-			if err = b.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,w.head_version_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, b.sessionID).Scan(&hold, &head); err != nil {
-				t.Fatal(err)
+			lifecycle, _ := session.NewReconciler(b.Pool)
+			if deferred, err := lifecycle.ReconcileLifecycle(t.Context(), b.EnvironmentID, b.sessionID); err != nil || deferred {
+				t.Fatalf("stop reconciliation=%v %v", deferred, err)
 			}
-			recovered, err := b.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: b.EnvironmentID, SessionID: b.sessionID}}, HoldID: hold}, WorkspaceVersionID: head, ReconciliationRef: "parked execution excluded"})
-			if err != nil {
+			var hold uuid.UUID
+			if err := b.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, b.sessionID).Scan(&hold); err != nil {
 				t.Fatal(err)
 			}
 			if revoked {
 				dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=now(),revocation_generation=revocation_generation+1 WHERE id IN(SELECT secret_id FROM workspace_secrets WHERE workspace_id=$1)`, b.workspaceID)
 			}
 			var response workerapi.ResumeSessionResponse
-			a.workerCall(t, a.server.workerResumeSession, workerapi.ResumeSessionRequest{SessionReferenceRequest: workerapi.SessionReferenceRequest{Lease: a.fence(), CorrelationID: uuid.NewV7().String(), SessionID: b.sessionID.String()}, HoldID: recovered.HoldID.String()}, &response)
+			a.workerCall(t, a.server.workerResumeSession, workerapi.ResumeSessionRequest{SessionReferenceRequest: workerapi.SessionReferenceRequest{Lease: a.fence(), CorrelationID: uuid.NewV7().String(), SessionID: b.sessionID.String()}, HoldID: hold.String()}, &response)
 			if revoked {
 				if response.Failed == nil || response.Failed.Code != "not_settled" {
 					t.Fatalf("revoked=%+v", response)
@@ -333,8 +334,9 @@ func workerControlChild(t *testing.T, parent *actorCheckpointFixture, detached b
 	}
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspaces(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_versions(id,environment_id,workspace_id,status,content_digest,size_bytes,entry_count,ownership_generation,writer_generation,published_at) VALUES($1,$2,$3,'committed',$4,0,0,0,0,now())`, f.rootID, f.EnvironmentID, f.workspaceID, workspace.CanonicalEmptyTreeDigest)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
+	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.workspaceID)
+	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.workspaceID, f.rootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

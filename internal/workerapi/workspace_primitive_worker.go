@@ -50,6 +50,9 @@ type WorkspaceExecCompleteRequest struct {
 }
 
 type WorkspaceMaterializerControlPlaneClient interface {
+	RegisterExecComputerObject(context.Context, ExecComputerObjectRequest) error
+	CertifyExecComputerObject(context.Context, ExecComputerObjectRequest) error
+	ReuseExecComputerObject(context.Context, ExecComputerObjectRequest) error
 	RenewWorkspaceMount(context.Context, WorkspaceMountRenewRequest) (WorkspaceMountResponse, error)
 	MarkWorkspaceMountMounted(context.Context, WorkspaceMountMountedRequest) (WorkspaceMountResponse, error)
 	CaptureWorkspaceMount(context.Context, WorkspaceMountCaptureRequest) (WorkspaceMountCaptureResponse, error)

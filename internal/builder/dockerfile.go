@@ -110,6 +110,8 @@ func Dockerfile() ([]byte, error) {
 		"--work", "/workspace/work",
 		"--bundle-output", "/workspace/output/bundle",
 		"--workspace-images", "/workspace/images/images.json",
+		"--mkfs", "/opt/helmr/bin/mke2fs",
+		"--filesystem-config", "/opt/helmr/release/mke2fs.conf",
 		"--expected-plan", "/workspace/images/build-plan.json",
 		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",

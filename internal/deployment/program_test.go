@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 )
 
 type contractFixture struct {
@@ -186,6 +188,7 @@ func testProgramIndex(t *testing.T) ProgramIndex {
 		[]BundleWorkspaceImage{{
 			DeclaredID: "repo",
 			Artifact: BundleWorkspaceImageArtifact{
+				Profile:      computer.SeedProfile,
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,
 				MediaType:    WorkspaceImageArtifactMediaType,

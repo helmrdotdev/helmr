@@ -56,60 +56,9 @@ func (q *Queries) CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg C
 	return active_elapsed_ms, err
 }
 
-const closeRunActiveIntervalForCheckpointFailure = `-- name: CloseRunActiveIntervalForCheckpointFailure :one
-UPDATE runs
-   SET active_elapsed_ms = LEAST(
-           max_active_duration_ms,
-           active_elapsed_ms
-             + GREATEST(
-                 floor(extract(epoch FROM ($1 - active_started_at)) * 1000)::bigint,
-                 0
-               )
-       ),
-       active_started_at = NULL,
-       updated_at = $1
- WHERE id = $2
-   AND org_id = $3
-   AND project_id = $4
-   AND environment_id = $5
-   AND workspace_id = $6
-   AND current_attempt_number = $7
-   AND current_run_lease_id = $8
-   AND status = 'waiting'
-   AND active_started_at IS NOT NULL
-RETURNING active_elapsed_ms
-`
-
-type CloseRunActiveIntervalForCheckpointFailureParams struct {
-	FailedAt      pgtype.Timestamptz `json:"failed_at"`
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	AttemptNumber int32              `json:"attempt_number"`
-	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
-}
-
-func (q *Queries) CloseRunActiveIntervalForCheckpointFailure(ctx context.Context, arg CloseRunActiveIntervalForCheckpointFailureParams) (int64, error) {
-	row := q.db.QueryRow(ctx, closeRunActiveIntervalForCheckpointFailure,
-		arg.FailedAt,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.WorkspaceID,
-		arg.AttemptNumber,
-		arg.RunLeaseID,
-	)
-	var active_elapsed_ms int64
-	err := row.Scan(&active_elapsed_ms)
-	return active_elapsed_ms, err
-}
-
 const createActorStartRun = `-- name: CreateActorStartRun :one
 WITH selected_actor AS MATERIALIZED (
-    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+    SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.consecutive_execution_losses, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
            environments.org_id,
            environments.project_id,
            deployment_definitions.deployment_id
@@ -201,7 +150,7 @@ WITH selected_actor AS MATERIALIZED (
            $9,
            $4
       FROM selected_actor
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
         run_id,
@@ -220,7 +169,7 @@ WITH selected_actor AS MATERIALIZED (
       FROM created_run
     RETURNING run_id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id
 `
@@ -290,6 +239,7 @@ type CreateActorStartRunRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateActorStartRun(ctx context.Context, arg CreateActorStartRunParams) (CreateActorStartRunRow, error) {
@@ -358,6 +308,7 @@ func (q *Queries) CreateActorStartRun(ctx context.Context, arg CreateActorStartR
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -433,7 +384,7 @@ WITH created_run AS (
         $27,
         $28
     )
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
         run_id,
@@ -450,7 +401,7 @@ WITH created_run AS (
       FROM created_run
     RETURNING run_id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id
 `
@@ -539,6 +490,7 @@ type CreateAdmittedRootTaskRunRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateAdmittedRootTaskRun(ctx context.Context, arg CreateAdmittedRootTaskRunParams) (CreateAdmittedRootTaskRunRow, error) {
@@ -626,6 +578,7 @@ func (q *Queries) CreateAdmittedRootTaskRun(ctx context.Context, arg CreateAdmit
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -639,20 +592,20 @@ WITH selected_target AS MATERIALIZED (
            parent.org_id,
            parent.project_id,
            parent.id AS parent_run_id,
-           workspaces.id AS workspace_id
+           computers.id AS workspace_id
       FROM runs AS parent
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = parent.environment_id
        AND definitions.deployment_id = parent.deployment_id
        AND definitions.kind = 'task'
        AND definitions.declared_id = $1
-      JOIN workspaces
-        ON workspaces.environment_id = parent.environment_id
-       AND workspaces.id = $2
-      JOIN workspace_versions
-        ON workspace_versions.workspace_id = workspaces.id
-       AND workspace_versions.id = $3
-       AND workspace_versions.status = 'committed'
+      JOIN computers
+        ON computers.environment_id = parent.environment_id
+       AND computers.id = $2
+      JOIN computer_versions
+        ON computer_versions.computer_id = computers.id
+       AND computer_versions.id = $3
+       AND computer_versions.status = 'committed'
       LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = $4
@@ -727,7 +680,7 @@ WITH selected_target AS MATERIALIZED (
            $22,
            $4
       FROM selected_target
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
         run_id,
@@ -744,7 +697,7 @@ WITH selected_target AS MATERIALIZED (
       FROM created_run
     RETURNING run_id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id
 `
@@ -827,6 +780,7 @@ type CreateChildRunFromParentDeploymentRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error) {
@@ -908,6 +862,7 @@ func (q *Queries) CreateChildRunFromParentDeployment(ctx context.Context, arg Cr
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -940,7 +895,7 @@ WITH selected_target AS MATERIALIZED (
            definitions.declared_id AS entrypoint_declared_id,
            environments.org_id,
            environments.project_id,
-           workspaces.id AS workspace_id
+           computers.id AS workspace_id
       FROM environments
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = environments.id
@@ -950,13 +905,13 @@ WITH selected_target AS MATERIALIZED (
       JOIN deployments
         ON deployments.environment_id = definitions.environment_id
        AND deployments.id = definitions.deployment_id
-      JOIN workspaces
-        ON workspaces.environment_id = environments.id
-       AND workspaces.id = $2
-      JOIN workspace_versions
-        ON workspace_versions.workspace_id = workspaces.id
-       AND workspace_versions.id = $3
-       AND workspace_versions.status = 'committed'
+      JOIN computers
+        ON computers.environment_id = environments.id
+       AND computers.id = $2
+      JOIN computer_versions
+        ON computer_versions.computer_id = computers.id
+       AND computer_versions.id = $3
+       AND computer_versions.status = 'committed'
      WHERE environments.id = $4
        AND environments.org_id = $5
        AND environments.project_id = $6
@@ -1030,7 +985,7 @@ WITH selected_target AS MATERIALIZED (
            $23,
            $7
       FROM selected_target
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
         run_id,
@@ -1047,7 +1002,7 @@ WITH selected_target AS MATERIALIZED (
       FROM created_run
     RETURNING run_id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id
 `
@@ -1131,6 +1086,7 @@ type CreateRootRunFromCurrentDeploymentRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateRootRunFromCurrentDeployment(ctx context.Context, arg CreateRootRunFromCurrentDeploymentParams) (CreateRootRunFromCurrentDeploymentRow, error) {
@@ -1213,6 +1169,7 @@ func (q *Queries) CreateRootRunFromCurrentDeployment(ctx context.Context, arg Cr
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1251,8 +1208,8 @@ WITH selected_target AS MATERIALIZED (
        AND checkpoint.status = 'ready'
        AND checkpoint.private_workspace_version_id =
            $6
-      JOIN workspace_versions AS base
-        ON base.workspace_id = parent.workspace_id
+      JOIN computer_versions AS base
+        ON base.computer_id = parent.workspace_id
        AND base.id = checkpoint.private_workspace_version_id
        AND base.status = 'private'
       JOIN deployment_definitions AS definitions
@@ -1332,7 +1289,7 @@ WITH selected_target AS MATERIALIZED (
            $24,
            $3
       FROM selected_target
-    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at
+    RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
         run_id,
@@ -1349,7 +1306,7 @@ WITH selected_target AS MATERIALIZED (
       FROM created_run
     RETURNING run_id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id
 `
@@ -1434,6 +1391,7 @@ type CreateSameWorkspaceChildRunFromParentDeploymentRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
 
 func (q *Queries) CreateSameWorkspaceChildRunFromParentDeployment(ctx context.Context, arg CreateSameWorkspaceChildRunFromParentDeploymentParams) (CreateSameWorkspaceChildRunFromParentDeploymentRow, error) {
@@ -1517,6 +1475,7 @@ func (q *Queries) CreateSameWorkspaceChildRunFromParentDeployment(ctx context.Co
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1578,7 +1537,7 @@ func (q *Queries) ExpireQueuedRunAttempt(ctx context.Context, arg ExpireQueuedRu
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE environment_id = $1
    AND id = $2
@@ -1645,6 +1604,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 	)
 	return i, err
 }
@@ -1661,7 +1621,7 @@ func (q *Queries) GetRunAdmissionTime(ctx context.Context) (pgtype.Timestamptz, 
 }
 
 const getRunSnapshot = `-- name: GetRunSnapshot :one
-SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at,
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required,
        deployments.version AS deployment_version
   FROM runs
   JOIN deployments
@@ -1733,6 +1693,7 @@ type GetRunSnapshotRow struct {
 	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
 	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
+	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 	DeploymentVersion         string             `json:"deployment_version"`
 }
 
@@ -1797,6 +1758,7 @@ func (q *Queries) GetRunSnapshot(ctx context.Context, arg GetRunSnapshotParams) 
 		&i.RuntimePreparationCount,
 		&i.NextRuntimePreparationAt,
 		&i.TerminalAt,
+		&i.ComputerPayloadRequired,
 		&i.DeploymentVersion,
 	)
 	return i, err
@@ -2047,19 +2009,19 @@ func (q *Queries) LockTaskStartDeploymentAuthority(ctx context.Context, arg Lock
 }
 
 const releaseQueuedRunWorkspace = `-- name: ReleaseQueuedRunWorkspace :execrows
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL,
        ownership_generation = ownership_generation + 1,
        revision = revision + 1,
        last_activity_at = transaction_timestamp(),
        updated_at = transaction_timestamp()
- WHERE workspaces.id = $1
-   AND workspaces.owner_run_id = $2
-   AND workspaces.owner_session_id IS NULL
+ WHERE computers.id = $1
+   AND computers.owner_run_id = $2
+   AND computers.owner_session_id IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_leases
-        WHERE workspace_leases.workspace_id = workspaces.id
+        WHERE workspace_leases.workspace_id = computers.id
           AND workspace_leases.status IN ('active', 'releasing')
    )
 `

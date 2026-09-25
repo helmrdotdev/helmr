@@ -3,7 +3,6 @@ package builder
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
@@ -23,19 +21,28 @@ type workspaceImageInput struct {
 	Path       string `json:"path"`
 }
 
-// ReadWorkspaceImageInputs turns producer-local OCI outputs into the neutral
-// finalized-image contract. Paths and BuildKit details never enter the bundle.
-func ReadWorkspaceImageInputs(
-	ctx context.Context,
-	path string,
-) ([]deployment.BundleWorkspaceImage, []ObjectSource, error) {
-	return readWorkspaceImageInputs(ctx, path, inspectWorkspaceImageInput)
+// ReadWorkspaceImageInputs builds final-capacity disks inside the pinned Linux
+// builder. work is owned by the build invocation until bundle publication ends.
+func ReadWorkspaceImageInputs(ctx context.Context, path, work, mkfs, config string) ([]deployment.BundleWorkspaceImage, []ObjectSource, error) {
+	return readWorkspaceImageInputs(ctx, path, func(source string) (deployment.BundleWorkspaceImageArtifact, string, error) {
+		dir, err := os.MkdirTemp(work, "image-*")
+		if err != nil {
+			return deployment.BundleWorkspaceImageArtifact{}, "", err
+		}
+		target := filepath.Join(dir, "disk.filepack")
+		artifact, err := buildWorkspaceDisk(ctx, source, target, dir, mkfs, config)
+		if err != nil {
+			_ = os.RemoveAll(dir)
+			return deployment.BundleWorkspaceImageArtifact{}, "", err
+		}
+		return artifact, target, nil
+	})
 }
 
 func readWorkspaceImageInputs(
 	ctx context.Context,
 	path string,
-	inspect func(string) (deployment.BundleWorkspaceImageArtifact, error),
+	inspect func(string) (deployment.BundleWorkspaceImageArtifact, string, error),
 ) ([]deployment.BundleWorkspaceImage, []ObjectSource, error) {
 	if path == "" {
 		return []deployment.BundleWorkspaceImage{}, []ObjectSource{}, nil
@@ -66,6 +73,7 @@ func readWorkspaceImageInputs(
 	objects := make([]ObjectSource, 0, len(inputs))
 	objectDigests := make(map[string]struct{}, len(inputs))
 	artifactsByPath := make(map[string]deployment.BundleWorkspaceImageArtifact, len(inputs))
+	pathsByInput := make(map[string]string, len(inputs))
 	for index, input := range inputs {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
@@ -78,7 +86,9 @@ func readWorkspaceImageInputs(
 		}
 		artifact, inspected := artifactsByPath[input.Path]
 		if !inspected {
-			artifact, err = inspect(input.Path)
+			var output string
+			artifact, output, err = inspect(input.Path)
+			pathsByInput[input.Path] = output
 			if err != nil {
 				return nil, nil, fmt.Errorf("workspace image %q: %w", input.DeclaredID, err)
 			}
@@ -86,47 +96,9 @@ func readWorkspaceImageInputs(
 		}
 		images[index] = deployment.BundleWorkspaceImage{DeclaredID: input.DeclaredID, Artifact: artifact}
 		if _, exists := objectDigests[artifact.Digest]; !exists {
-			objects = append(objects, ObjectSource{Digest: artifact.Digest, Path: input.Path})
+			objects = append(objects, ObjectSource{Digest: artifact.Digest, Path: pathsByInput[input.Path]})
 			objectDigests[artifact.Digest] = struct{}{}
 		}
 	}
 	return images, objects, nil
-}
-
-func inspectWorkspaceImageInput(path string) (deployment.BundleWorkspaceImageArtifact, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return deployment.BundleWorkspaceImageArtifact{}, err
-	}
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Size() < 1 || info.Size() > deployment.MaxDeploymentBundleObjectBytes {
-		_ = file.Close()
-		return deployment.BundleWorkspaceImageArtifact{}, errors.New("OCI output is not a bounded regular file")
-	}
-	metadata, inspectErr := oci.Inspect(file)
-	closeErr := file.Close()
-	if err := errors.Join(inspectErr, closeErr); err != nil {
-		return deployment.BundleWorkspaceImageArtifact{}, err
-	}
-	if metadata.ManifestCount != 1 || metadata.Platform == nil ||
-		metadata.Platform.OS != deployment.DeploymentBundleTargetOS ||
-		metadata.Platform.Architecture != "amd64" {
-		return deployment.BundleWorkspaceImageArtifact{}, errors.New("OCI output platform does not match linux/amd64")
-	}
-	file, err = os.Open(path)
-	if err != nil {
-		return deployment.BundleWorkspaceImageArtifact{}, err
-	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, file)
-	closeErr = file.Close()
-	if err := errors.Join(copyErr, closeErr); err != nil {
-		return deployment.BundleWorkspaceImageArtifact{}, err
-	}
-	return deployment.BundleWorkspaceImageArtifact{
-		Architecture: deployment.ArchitectureX8664,
-		Digest:       fmt.Sprintf("sha256:%x", hash.Sum(nil)),
-		MediaType:    deployment.WorkspaceImageArtifactMediaType,
-		SizeBytes:    info.Size(),
-	}, nil
 }

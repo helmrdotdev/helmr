@@ -33,7 +33,7 @@ SELECT $1,
        actor_definition.environment_id,
        actor_definition.declared_id,
        actor_definition.id,
-       workspaces.id,
+       computers.id,
        $2,
        $3,
        $4,
@@ -54,23 +54,23 @@ SELECT $1,
    AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL
    AND deployments.runtime_artifact_digest IS NOT NULL
-  JOIN workspaces
-    ON workspaces.environment_id = actor_definition.environment_id
-   AND workspaces.id = $12
+  JOIN computers
+    ON computers.environment_id = actor_definition.environment_id
+   AND computers.id = $12
   JOIN environments AS actor_environment
-    ON actor_environment.id = workspaces.environment_id
+    ON actor_environment.id = computers.environment_id
    AND actor_environment.org_id = $13
    AND actor_environment.project_id = $14
   JOIN deployment_definitions AS workspace_definition
-    ON workspace_definition.environment_id = workspaces.environment_id
-   AND workspace_definition.id = workspaces.deployment_definition_id
+    ON workspace_definition.environment_id = computers.environment_id
+   AND workspace_definition.id = computers.deployment_definition_id
    AND workspace_definition.kind = 'sandbox'
-   AND workspace_definition.declared_id = workspaces.sandbox_declared_id
+   AND workspace_definition.declared_id = computers.sandbox_declared_id
  WHERE actor_definition.environment_id = $15
    AND actor_definition.id = $16
    AND actor_definition.kind = 'actor'
    AND actor_definition.declared_id = $17
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type CreateActorParams struct {
@@ -122,6 +122,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -156,7 +157,7 @@ func (q *Queries) CreateActor(ctx context.Context, arg CreateActorParams) (Sessi
 }
 
 const getActor = `-- name: GetActor :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND id = $2
@@ -178,6 +179,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -212,7 +214,7 @@ func (q *Queries) GetActor(ctx context.Context, arg GetActorParams) (Session, er
 }
 
 const getActorByKey = `-- name: GetActorByKey :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
   FROM sessions
  WHERE environment_id = $1
    AND actor_declared_id = $2
@@ -236,6 +238,7 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -270,7 +273,7 @@ func (q *Queries) GetActorByKey(ctx context.Context, arg GetActorByKeyParams) (S
 }
 
 const getSessionSnapshot = `-- name: GetSessionSnapshot :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.consecutive_execution_losses, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -294,43 +297,44 @@ type GetSessionSnapshotParams struct {
 }
 
 type GetSessionSnapshotRow struct {
-	ID                        pgtype.UUID        `json:"id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	ActorDeclaredID           string             `json:"actor_declared_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	Key                       pgtype.Text        `json:"key"`
-	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
-	RunGeneration             int64              `json:"run_generation"`
-	Revision                  int64              `json:"revision"`
-	ActiveTurnID              pgtype.UUID        `json:"active_turn_id"`
-	DispatchHoldID            pgtype.UUID        `json:"dispatch_hold_id"`
-	DispatchHoldRunID         pgtype.UUID        `json:"dispatch_hold_run_id"`
-	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
-	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
-	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	Failure                   []byte             `json:"failure"`
-	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
-	NextInputSequence         int64              `json:"next_input_sequence"`
-	CommittedInputSequence    int64              `json:"committed_input_sequence"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
-	RunQueueName              string             `json:"run_queue_name"`
-	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
-	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
-	RunPriority               int32              `json:"run_priority"`
-	RunQueueTtlMs             pgtype.Int8        `json:"run_queue_ttl_ms"`
-	RunMaxActiveDurationMs    int64              `json:"run_max_active_duration_ms"`
-	RunRetryPolicy            []byte             `json:"run_retry_policy"`
-	RunMetadata               []byte             `json:"run_metadata"`
-	RunTags                   []string           `json:"run_tags"`
-	Status                    string             `json:"status"`
-	CloseSequence             pgtype.Int8        `json:"close_sequence"`
-	CancelRequestedAt         pgtype.Timestamptz `json:"cancel_requested_at"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
-	FailedAt                  pgtype.Timestamptz `json:"failed_at"`
-	DeploymentID              pgtype.UUID        `json:"deployment_id"`
+	ID                         pgtype.UUID        `json:"id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID            string             `json:"actor_declared_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	Key                        pgtype.Text        `json:"key"`
+	CurrentRunID               pgtype.UUID        `json:"current_run_id"`
+	ConsecutiveExecutionLosses int32              `json:"consecutive_execution_losses"`
+	RunGeneration              int64              `json:"run_generation"`
+	Revision                   int64              `json:"revision"`
+	ActiveTurnID               pgtype.UUID        `json:"active_turn_id"`
+	DispatchHoldID             pgtype.UUID        `json:"dispatch_hold_id"`
+	DispatchHoldRunID          pgtype.UUID        `json:"dispatch_hold_run_id"`
+	DispatchHoldAttemptNumber  pgtype.Int4        `json:"dispatch_hold_attempt_number"`
+	DispatchHoldRunGeneration  pgtype.Int8        `json:"dispatch_hold_run_generation"`
+	DispatchHoldReason         pgtype.Text        `json:"dispatch_hold_reason"`
+	Failure                    []byte             `json:"failure"`
+	FailureRunID               pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence          int64              `json:"next_input_sequence"`
+	CommittedInputSequence     int64              `json:"committed_input_sequence"`
+	NextEventSequence          int64              `json:"next_event_sequence"`
+	RunQueueName               string             `json:"run_queue_name"`
+	RunConcurrencyKey          pgtype.Text        `json:"run_concurrency_key"`
+	RunQueueConcurrencyLimit   pgtype.Int8        `json:"run_queue_concurrency_limit"`
+	RunPriority                int32              `json:"run_priority"`
+	RunQueueTtlMs              pgtype.Int8        `json:"run_queue_ttl_ms"`
+	RunMaxActiveDurationMs     int64              `json:"run_max_active_duration_ms"`
+	RunRetryPolicy             []byte             `json:"run_retry_policy"`
+	RunMetadata                []byte             `json:"run_metadata"`
+	RunTags                    []string           `json:"run_tags"`
+	Status                     string             `json:"status"`
+	CloseSequence              pgtype.Int8        `json:"close_sequence"`
+	CancelRequestedAt          pgtype.Timestamptz `json:"cancel_requested_at"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                   pgtype.Timestamptz `json:"closed_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	DeploymentID               pgtype.UUID        `json:"deployment_id"`
 }
 
 func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshotParams) (GetSessionSnapshotRow, error) {
@@ -349,6 +353,7 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -384,7 +389,7 @@ func (q *Queries) GetSessionSnapshot(ctx context.Context, arg GetSessionSnapshot
 }
 
 const getSessionSnapshotByKey = `-- name: GetSessionSnapshotByKey :one
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.consecutive_execution_losses, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -410,43 +415,44 @@ type GetSessionSnapshotByKeyParams struct {
 }
 
 type GetSessionSnapshotByKeyRow struct {
-	ID                        pgtype.UUID        `json:"id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	ActorDeclaredID           string             `json:"actor_declared_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	Key                       pgtype.Text        `json:"key"`
-	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
-	RunGeneration             int64              `json:"run_generation"`
-	Revision                  int64              `json:"revision"`
-	ActiveTurnID              pgtype.UUID        `json:"active_turn_id"`
-	DispatchHoldID            pgtype.UUID        `json:"dispatch_hold_id"`
-	DispatchHoldRunID         pgtype.UUID        `json:"dispatch_hold_run_id"`
-	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
-	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
-	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	Failure                   []byte             `json:"failure"`
-	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
-	NextInputSequence         int64              `json:"next_input_sequence"`
-	CommittedInputSequence    int64              `json:"committed_input_sequence"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
-	RunQueueName              string             `json:"run_queue_name"`
-	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
-	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
-	RunPriority               int32              `json:"run_priority"`
-	RunQueueTtlMs             pgtype.Int8        `json:"run_queue_ttl_ms"`
-	RunMaxActiveDurationMs    int64              `json:"run_max_active_duration_ms"`
-	RunRetryPolicy            []byte             `json:"run_retry_policy"`
-	RunMetadata               []byte             `json:"run_metadata"`
-	RunTags                   []string           `json:"run_tags"`
-	Status                    string             `json:"status"`
-	CloseSequence             pgtype.Int8        `json:"close_sequence"`
-	CancelRequestedAt         pgtype.Timestamptz `json:"cancel_requested_at"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
-	FailedAt                  pgtype.Timestamptz `json:"failed_at"`
-	DeploymentID              pgtype.UUID        `json:"deployment_id"`
+	ID                         pgtype.UUID        `json:"id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID            string             `json:"actor_declared_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	Key                        pgtype.Text        `json:"key"`
+	CurrentRunID               pgtype.UUID        `json:"current_run_id"`
+	ConsecutiveExecutionLosses int32              `json:"consecutive_execution_losses"`
+	RunGeneration              int64              `json:"run_generation"`
+	Revision                   int64              `json:"revision"`
+	ActiveTurnID               pgtype.UUID        `json:"active_turn_id"`
+	DispatchHoldID             pgtype.UUID        `json:"dispatch_hold_id"`
+	DispatchHoldRunID          pgtype.UUID        `json:"dispatch_hold_run_id"`
+	DispatchHoldAttemptNumber  pgtype.Int4        `json:"dispatch_hold_attempt_number"`
+	DispatchHoldRunGeneration  pgtype.Int8        `json:"dispatch_hold_run_generation"`
+	DispatchHoldReason         pgtype.Text        `json:"dispatch_hold_reason"`
+	Failure                    []byte             `json:"failure"`
+	FailureRunID               pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence          int64              `json:"next_input_sequence"`
+	CommittedInputSequence     int64              `json:"committed_input_sequence"`
+	NextEventSequence          int64              `json:"next_event_sequence"`
+	RunQueueName               string             `json:"run_queue_name"`
+	RunConcurrencyKey          pgtype.Text        `json:"run_concurrency_key"`
+	RunQueueConcurrencyLimit   pgtype.Int8        `json:"run_queue_concurrency_limit"`
+	RunPriority                int32              `json:"run_priority"`
+	RunQueueTtlMs              pgtype.Int8        `json:"run_queue_ttl_ms"`
+	RunMaxActiveDurationMs     int64              `json:"run_max_active_duration_ms"`
+	RunRetryPolicy             []byte             `json:"run_retry_policy"`
+	RunMetadata                []byte             `json:"run_metadata"`
+	RunTags                    []string           `json:"run_tags"`
+	Status                     string             `json:"status"`
+	CloseSequence              pgtype.Int8        `json:"close_sequence"`
+	CancelRequestedAt          pgtype.Timestamptz `json:"cancel_requested_at"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                   pgtype.Timestamptz `json:"closed_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	DeploymentID               pgtype.UUID        `json:"deployment_id"`
 }
 
 func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSnapshotByKeyParams) (GetSessionSnapshotByKeyRow, error) {
@@ -466,6 +472,7 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,
@@ -501,7 +508,7 @@ func (q *Queries) GetSessionSnapshotByKey(ctx context.Context, arg GetSessionSna
 }
 
 const listSessionSnapshots = `-- name: ListSessionSnapshots :many
-SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
+SELECT sessions.id, sessions.environment_id, sessions.actor_declared_id, sessions.deployment_definition_id, sessions.workspace_id, sessions.key, sessions.current_run_id, sessions.consecutive_execution_losses, sessions.run_generation, sessions.revision, sessions.active_turn_id, sessions.dispatch_hold_id, sessions.dispatch_hold_run_id, sessions.dispatch_hold_attempt_number, sessions.dispatch_hold_run_generation, sessions.dispatch_hold_reason, sessions.failure, sessions.failure_run_id, sessions.next_input_sequence, sessions.committed_input_sequence, sessions.next_event_sequence, sessions.run_queue_name, sessions.run_concurrency_key, sessions.run_queue_concurrency_limit, sessions.run_priority, sessions.run_queue_ttl_ms, sessions.run_max_active_duration_ms, sessions.run_retry_policy, sessions.run_metadata, sessions.run_tags, sessions.status, sessions.close_sequence, sessions.cancel_requested_at, sessions.created_at, sessions.updated_at, sessions.closed_at, sessions.failed_at,
        deployment_definitions.deployment_id
   FROM sessions
   JOIN environments
@@ -540,43 +547,44 @@ type ListSessionSnapshotsParams struct {
 }
 
 type ListSessionSnapshotsRow struct {
-	ID                        pgtype.UUID        `json:"id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	ActorDeclaredID           string             `json:"actor_declared_id"`
-	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	Key                       pgtype.Text        `json:"key"`
-	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
-	RunGeneration             int64              `json:"run_generation"`
-	Revision                  int64              `json:"revision"`
-	ActiveTurnID              pgtype.UUID        `json:"active_turn_id"`
-	DispatchHoldID            pgtype.UUID        `json:"dispatch_hold_id"`
-	DispatchHoldRunID         pgtype.UUID        `json:"dispatch_hold_run_id"`
-	DispatchHoldAttemptNumber pgtype.Int4        `json:"dispatch_hold_attempt_number"`
-	DispatchHoldRunGeneration pgtype.Int8        `json:"dispatch_hold_run_generation"`
-	DispatchHoldReason        pgtype.Text        `json:"dispatch_hold_reason"`
-	Failure                   []byte             `json:"failure"`
-	FailureRunID              pgtype.UUID        `json:"failure_run_id"`
-	NextInputSequence         int64              `json:"next_input_sequence"`
-	CommittedInputSequence    int64              `json:"committed_input_sequence"`
-	NextEventSequence         int64              `json:"next_event_sequence"`
-	RunQueueName              string             `json:"run_queue_name"`
-	RunConcurrencyKey         pgtype.Text        `json:"run_concurrency_key"`
-	RunQueueConcurrencyLimit  pgtype.Int8        `json:"run_queue_concurrency_limit"`
-	RunPriority               int32              `json:"run_priority"`
-	RunQueueTtlMs             pgtype.Int8        `json:"run_queue_ttl_ms"`
-	RunMaxActiveDurationMs    int64              `json:"run_max_active_duration_ms"`
-	RunRetryPolicy            []byte             `json:"run_retry_policy"`
-	RunMetadata               []byte             `json:"run_metadata"`
-	RunTags                   []string           `json:"run_tags"`
-	Status                    string             `json:"status"`
-	CloseSequence             pgtype.Int8        `json:"close_sequence"`
-	CancelRequestedAt         pgtype.Timestamptz `json:"cancel_requested_at"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
-	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
-	FailedAt                  pgtype.Timestamptz `json:"failed_at"`
-	DeploymentID              pgtype.UUID        `json:"deployment_id"`
+	ID                         pgtype.UUID        `json:"id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	ActorDeclaredID            string             `json:"actor_declared_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	Key                        pgtype.Text        `json:"key"`
+	CurrentRunID               pgtype.UUID        `json:"current_run_id"`
+	ConsecutiveExecutionLosses int32              `json:"consecutive_execution_losses"`
+	RunGeneration              int64              `json:"run_generation"`
+	Revision                   int64              `json:"revision"`
+	ActiveTurnID               pgtype.UUID        `json:"active_turn_id"`
+	DispatchHoldID             pgtype.UUID        `json:"dispatch_hold_id"`
+	DispatchHoldRunID          pgtype.UUID        `json:"dispatch_hold_run_id"`
+	DispatchHoldAttemptNumber  pgtype.Int4        `json:"dispatch_hold_attempt_number"`
+	DispatchHoldRunGeneration  pgtype.Int8        `json:"dispatch_hold_run_generation"`
+	DispatchHoldReason         pgtype.Text        `json:"dispatch_hold_reason"`
+	Failure                    []byte             `json:"failure"`
+	FailureRunID               pgtype.UUID        `json:"failure_run_id"`
+	NextInputSequence          int64              `json:"next_input_sequence"`
+	CommittedInputSequence     int64              `json:"committed_input_sequence"`
+	NextEventSequence          int64              `json:"next_event_sequence"`
+	RunQueueName               string             `json:"run_queue_name"`
+	RunConcurrencyKey          pgtype.Text        `json:"run_concurrency_key"`
+	RunQueueConcurrencyLimit   pgtype.Int8        `json:"run_queue_concurrency_limit"`
+	RunPriority                int32              `json:"run_priority"`
+	RunQueueTtlMs              pgtype.Int8        `json:"run_queue_ttl_ms"`
+	RunMaxActiveDurationMs     int64              `json:"run_max_active_duration_ms"`
+	RunRetryPolicy             []byte             `json:"run_retry_policy"`
+	RunMetadata                []byte             `json:"run_metadata"`
+	RunTags                    []string           `json:"run_tags"`
+	Status                     string             `json:"status"`
+	CloseSequence              pgtype.Int8        `json:"close_sequence"`
+	CancelRequestedAt          pgtype.Timestamptz `json:"cancel_requested_at"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ClosedAt                   pgtype.Timestamptz `json:"closed_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	DeploymentID               pgtype.UUID        `json:"deployment_id"`
 }
 
 func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnapshotsParams) ([]ListSessionSnapshotsRow, error) {
@@ -604,6 +612,7 @@ func (q *Queries) ListSessionSnapshots(ctx context.Context, arg ListSessionSnaps
 			&i.WorkspaceID,
 			&i.Key,
 			&i.CurrentRunID,
+			&i.ConsecutiveExecutionLosses,
 			&i.RunGeneration,
 			&i.Revision,
 			&i.ActiveTurnID,
@@ -744,7 +753,7 @@ UPDATE sessions
    AND current_run_id IS NULL
    AND run_generation = 1
    AND revision = 1
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type SetActorCurrentRunParams struct {
@@ -770,6 +779,7 @@ func (q *Queries) SetActorCurrentRun(ctx context.Context, arg SetActorCurrentRun
 		&i.WorkspaceID,
 		&i.Key,
 		&i.CurrentRunID,
+		&i.ConsecutiveExecutionLosses,
 		&i.RunGeneration,
 		&i.Revision,
 		&i.ActiveTurnID,

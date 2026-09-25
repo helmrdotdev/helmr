@@ -11,7 +11,6 @@ INSERT INTO run_checkpoints (
     private_workspace_version_id,
     actor_speculative_input_sequence,
     status,
-    restore_manifest,
     expires_at
 )
 VALUES (
@@ -26,7 +25,6 @@ VALUES (
     sqlc.narg(private_workspace_version_id),
     sqlc.narg(actor_speculative_input_sequence),
     'creating',
-    sqlc.arg(restore_manifest),
     sqlc.narg(expires_at)
 )
 RETURNING run_checkpoints.*;
@@ -39,7 +37,7 @@ UPDATE run_checkpoints
        vm_state_artifact_id = sqlc.arg(vm_state_artifact_id),
        memory_artifact_id = sqlc.arg(memory_artifact_id),
        scratch_disk_artifact_id = sqlc.arg(scratch_disk_artifact_id),
-       restore_manifest = sqlc.arg(restore_manifest),
+       phase_timings = sqlc.narg(phase_timings),
        ready_request_fingerprint = sqlc.arg(ready_request_fingerprint),
        ready_at = now()
   FROM runs,
@@ -51,6 +49,7 @@ UPDATE run_checkpoints
    AND run_checkpoints.attempt_number = sqlc.arg(attempt_number)
    AND run_checkpoints.id = sqlc.arg(id)
    AND run_checkpoints.status = 'creating'
+   AND run_checkpoints.manifest = sqlc.arg(manifest)
    AND runs.id = run_checkpoints.run_id
    AND runtime_config_artifact.id = sqlc.arg(runtime_config_artifact_id)
    AND runtime_config_artifact.environment_id = runs.environment_id
@@ -107,23 +106,19 @@ SELECT *
  WHERE id = sqlc.arg(id);
 
 -- name: CreatePrivateCheckpointWorkspaceVersion :one
-INSERT INTO workspace_versions (
-    id, environment_id, workspace_id,
-    parent_version_id, artifact_id, content_digest,
-    size_bytes, entry_count, status, source_workspace_lease_id,
+INSERT INTO computer_versions (
+    id, environment_id, computer_id,
+    parent_version_id, root_pack_digest,
+    logical_bytes, status, source_workspace_lease_id,
     ownership_generation, writer_generation
 )
 SELECT
     sqlc.arg(id), sqlc.arg(environment_id),
     sqlc.arg(workspace_id), sqlc.arg(parent_version_id),
-    sqlc.arg(artifact_id), sqlc.arg(content_digest),
-    sqlc.arg(size_bytes), sqlc.arg(entry_count), 'private',
+    sqlc.arg(root_pack_digest),
+    sqlc.arg(logical_bytes), 'private',
     sqlc.arg(source_workspace_lease_id), sqlc.arg(ownership_generation),
     sqlc.arg(writer_generation)
-  FROM artifacts
- WHERE artifacts.environment_id = sqlc.arg(environment_id)
-   AND artifacts.id = sqlc.arg(artifact_id)
-   AND artifacts.kind = 'workspace_version'
 RETURNING *;
 
 -- name: CheckpointRunLease :one
@@ -162,11 +157,10 @@ UPDATE workspace_leases
    AND expires_at > sqlc.arg(checkpointed_at)
 RETURNING *;
 
--- name: CloseCheckpointSourceRuntime :one
+-- name: DetachCheckpointSource :one
 WITH closed_mount AS (
     UPDATE workspace_mounts
        SET status = 'unmounted',
-           stopped_at = COALESCE(stopped_at, sqlc.arg(checkpointed_at)),
            unmounted_at = sqlc.arg(checkpointed_at),
            terminal_at = sqlc.arg(checkpointed_at),
            terminal_reason_code = 'checkpointed',
@@ -286,7 +280,7 @@ WITH locked_parent AS MATERIALIZED (
        AND child.base_workspace_version_id =
            sqlc.arg(base_workspace_version_id)
        AND child.claim_id = sqlc.arg(child_claim_id)
-       AND child.status = 'queued'
+       AND child.status IN ('queued', 'retry_delayed')
      FOR UPDATE OF child
 ), updated_run AS (
     UPDATE runs
@@ -363,7 +357,7 @@ RETURNING run_waits.*;
 -- name: InvalidateFailedRunCheckpoint :one
 UPDATE run_checkpoints
    SET status = 'invalid',
-       invalidated_at = sqlc.arg(failed_at),
+       invalidated_at = transaction_timestamp(),
        invalidation_reason_code = 'checkpoint_failed',
        failed_request_fingerprint = sqlc.arg(failed_request_fingerprint)
  WHERE id = sqlc.arg(checkpoint_id)
@@ -374,93 +368,6 @@ UPDATE run_checkpoints
    AND workspace_id = sqlc.arg(workspace_id)
    AND status = 'creating'
 RETURNING *;
-
--- name: FailCheckpointRunLease :one
-UPDATE run_leases
-   SET status = 'failed',
-       terminal_at = sqlc.arg(failed_at),
-       terminal_reason_code = 'checkpoint_failed',
-       terminal_error = sqlc.arg(error)::jsonb,
-       terminal_request_fingerprint = sqlc.arg(failed_request_fingerprint),
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(run_lease_id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND lease_sequence = sqlc.arg(lease_sequence)
-   AND status = 'checkpointing'
-   AND terminal_request_fingerprint IS NULL
-   AND expires_at > sqlc.arg(failed_at)
-RETURNING *;
-
--- name: FailCheckpointRunWait :one
-UPDATE run_waits
-   SET condition_status = CASE
-           WHEN condition_status = 'pending' THEN 'cancelled'
-           ELSE condition_status
-       END,
-       condition_terminal_at = CASE
-           WHEN condition_status = 'pending' THEN sqlc.arg(failed_at)
-           ELSE condition_terminal_at
-       END,
-       condition_reason_code = CASE
-           WHEN condition_status = 'pending' THEN 'run_checkpoint_failed'
-           ELSE condition_reason_code
-       END,
-       suspension_status = 'failed',
-       checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
-       prior_run_lease_id = current_run_lease_id,
-       current_run_lease_id = NULL,
-       suspension_terminal_at = sqlc.arg(failed_at),
-       suspension_reason_code = 'checkpoint_failed',
-       suspension_error = sqlc.arg(error)::jsonb,
-       updated_at = sqlc.arg(failed_at)
- WHERE id = sqlc.arg(run_wait_id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND suspend_checkpoint_id = sqlc.arg(checkpoint_id)
-   AND suspension_status = 'checkpointing'
-   AND checkpoint_request_version = sqlc.arg(checkpoint_request_version)
-RETURNING *;
-
--- name: RequestCheckpointFailureRuntimeClose :one
-WITH close_runtime AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = desired_version + 1,
-           desired_at = sqlc.arg(failed_at),
-           desired_reason = 'checkpoint_failed',
-           updated_at = sqlc.arg(failed_at)
-     WHERE runtime_instances.id = sqlc.arg(runtime_instance_id)
-       AND runtime_instances.org_id = sqlc.arg(org_id)
-       AND runtime_instances.project_id = sqlc.arg(project_id)
-       AND runtime_instances.environment_id = sqlc.arg(environment_id)
-       AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
-       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-       AND runtime_instances.desired_state = 'ready'
-       AND runtime_instances.observed_state = 'ready'
-       AND runtime_instances.reclaimed_at IS NULL
-    RETURNING id
-)
-UPDATE workspace_mounts
-   SET status = 'unmounting',
-       stopped_at = COALESCE(stopped_at, sqlc.arg(failed_at)),
-       updated_at = sqlc.arg(failed_at)
-  FROM close_runtime
- WHERE workspace_mounts.id = sqlc.arg(workspace_mount_id)
-   AND workspace_mounts.org_id = sqlc.arg(org_id)
-   AND workspace_mounts.project_id = sqlc.arg(project_id)
-   AND workspace_mounts.environment_id = sqlc.arg(environment_id)
-   AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_mounts.runtime_instance_id = close_runtime.id
-   AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
-   AND workspace_mounts.fencing_generation = sqlc.arg(mount_fencing_generation)
-   AND workspace_mounts.status = 'mounted'
-RETURNING workspace_mounts.*;
 
 -- name: GetReadyRunCheckpoint :one
 SELECT sqlc.embed(run_checkpoints),
@@ -568,11 +475,20 @@ SELECT sqlc.embed(run_leases),
    AND run_leases.workspace_id = sqlc.arg(workspace_id);
 
 -- name: ActorCheckpointLineageIsValid :one
+-- Anchor to the immutable Attempt origin, never the moving saved Computer head.
 -- Existing checkpoint and acknowledged handback receipts prove the private chain.
 -- The source writer strictly decreases on every edge, so cycles cannot qualify.
 -- Historical expiry is irrelevant after an acknowledged restore; callers retain
 -- the latest candidate's expiry and live execution checks under owner locks.
-WITH RECURSIVE proven AS NOT MATERIALIZED (
+WITH RECURSIVE origin AS MATERIALIZED (
+ SELECT a.base_workspace_version_id FROM run_attempts a
+ JOIN computers c ON c.id=a.workspace_id
+ JOIN computer_versions saved ON saved.id=c.head_version_id
+   AND saved.computer_id=c.id AND saved.environment_id=c.environment_id
+   AND saved.status='committed'
+ WHERE a.run_id=sqlc.arg(run_id)::uuid AND a.number=sqlc.arg(attempt_number)::integer
+ AND a.workspace_id=sqlc.arg(workspace_id)::uuid AND a.entrypoint_kind='actor'
+), proven AS NOT MATERIALIZED (
     SELECT c.id, c.base_workspace_version_id, c.private_workspace_version_id,
            source.writer_generation, runtime.restore_checkpoint_id,
            w.kind, w.child_run_id, w.condition_status, w.suspension_status,
@@ -588,8 +504,8 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        AND w.suspend_checkpoint_id = c.id AND w.prior_run_lease_id = c.source_run_lease_id
        AND w.checkpoint_request_version > 0 AND w.checkpoint_ack_version = w.checkpoint_request_version
        AND w.actor_speculative_input_sequence = c.actor_speculative_input_sequence
-      JOIN workspace_versions v ON v.id = c.private_workspace_version_id
-       AND v.workspace_id = c.workspace_id AND v.status = 'private'
+      JOIN computer_versions v ON v.id = c.private_workspace_version_id
+       AND v.computer_id = c.workspace_id AND v.status = 'private'
        AND v.parent_version_id = c.base_workspace_version_id
       JOIN workspace_leases source ON source.id = c.source_workspace_lease_id
        AND source.id = v.source_workspace_lease_id AND source.workspace_id = c.workspace_id
@@ -604,7 +520,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
       JOIN runtime_instances runtime ON runtime.id = lease.runtime_instance_id
        AND runtime.workspace_id = c.workspace_id AND runtime.runtime_identity_id = lease.runtime_identity_id
        AND runtime.program_deployment_id = r.deployment_id
-       AND runtime.desired_state = 'closed' AND runtime.observed_state = 'closed'
+       AND runtime.reclaimed_at IS NOT NULL AND runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
      WHERE c.run_id = sqlc.arg(run_id)::uuid AND c.attempt_number = sqlc.arg(attempt_number)::integer
        AND c.workspace_id = sqlc.arg(workspace_id)::uuid AND c.status = 'ready'
        AND c.actor_speculative_input_sequence IS NOT NULL
@@ -624,7 +540,7 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        AND prior.writer_generation < current.writer_generation
        AND prior.suspension_status = 'released'
        AND prior.resume_request_version > 0 AND prior.resume_ack_version = prior.resume_request_version
-     WHERE current.base_workspace_version_id <> sqlc.arg(committed_head_version_id)::uuid
+     WHERE current.base_workspace_version_id <> (SELECT base_workspace_version_id FROM origin)
        AND (
            (prior.resume_workspace_version_id IS NULL
             AND prior.handoff_base_version_id IS NULL
@@ -642,25 +558,37 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
                    WHERE child.id = prior.child_run_id AND child.parent_run_id = sqlc.arg(run_id)::uuid
                      AND child.workspace_id = sqlc.arg(workspace_id)::uuid
                      AND child.parent_owns_lifecycle AND child.entrypoint_kind = 'task'
-                     AND child.base_workspace_version_id = prior.private_workspace_version_id
+                     AND EXISTS (
+                         SELECT 1 FROM run_attempts origin
+                          WHERE origin.run_id = child.id AND origin.number <= child.current_attempt_number
+                            AND origin.workspace_id = child.workspace_id
+                            AND origin.base_workspace_version_id = prior.private_workspace_version_id
+                     )
                      AND child.current_run_lease_id IS NULL
                      AND (
                        (prior.condition_status = 'completed' AND child.status = 'succeeded'
+                  AND EXISTS (SELECT 1 FROM run_attempts terminal_attempt
+                      WHERE terminal_attempt.run_id = child.id
+                        AND terminal_attempt.number = child.current_attempt_number
+                        AND terminal_attempt.workspace_id = child.workspace_id
+                        AND terminal_attempt.base_workspace_version_id = child.base_workspace_version_id
+                        AND terminal_attempt.terminal_at IS NOT NULL
+                        AND terminal_attempt.terminal_outcome = 'succeeded')
                         AND EXISTS (
-                          SELECT 1 FROM workspace_versions child_version
+                          SELECT 1 FROM computer_versions child_version
                           JOIN workspace_leases child_source ON child_source.id = child_version.source_workspace_lease_id
-                           AND child_source.workspace_id = child_version.workspace_id
+                           AND child_source.workspace_id = child_version.computer_id
                            AND child_source.base_workspace_version_id = child_version.parent_version_id
                            AND child_source.ownership_generation = child_version.ownership_generation
                            AND child_source.writer_generation = child_version.writer_generation
                            AND child_source.status IN ('released', 'fenced') AND child_source.owner_process_id IS NULL
                           JOIN run_leases child_lease ON child_lease.id = child_source.owner_run_lease_id
                            AND child_lease.run_id = child.id AND child_lease.attempt_number = child.current_attempt_number
-                           AND child_lease.workspace_id = child_version.workspace_id AND child_lease.status = 'completed'
+                           AND child_lease.workspace_id = child_version.computer_id AND child_lease.status = 'completed'
                           JOIN runtime_instances child_runtime ON child_runtime.id = child_lease.runtime_instance_id
-                           AND child_runtime.desired_state = 'closed' AND child_runtime.observed_state = 'closed'
+                           AND child_runtime.reclaimed_at IS NOT NULL AND child_runtime.reclaim_evidence->>'method' IN ('session_closed', 'host_reconciled', 'provider_absent')
                           WHERE child_version.id = current.base_workspace_version_id
-                            AND child_version.workspace_id = sqlc.arg(workspace_id)::uuid AND child_version.status = 'private'
+                            AND child_version.computer_id = sqlc.arg(workspace_id)::uuid AND child_version.status = 'private'
                             AND child_version.ownership_generation = sqlc.arg(ownership_generation)::bigint
                             AND child_version.writer_generation = prior.child_writer_generation
                             AND prior.parent_writer_generation < prior.child_writer_generation
@@ -689,9 +617,9 @@ WITH RECURSIVE proven AS NOT MATERIALIZED (
        )
 )
 SELECT EXISTS (
-    SELECT 1 FROM lineage JOIN workspace_versions head ON head.id = lineage.base_workspace_version_id
-     WHERE head.id = sqlc.arg(committed_head_version_id)::uuid
-       AND head.workspace_id = sqlc.arg(workspace_id)::uuid AND head.status = 'committed'
+    SELECT 1 FROM lineage JOIN computer_versions head ON head.id = lineage.base_workspace_version_id
+     WHERE head.id = (SELECT base_workspace_version_id FROM origin)
+       AND head.computer_id = sqlc.arg(workspace_id)::uuid AND head.status = 'committed'
 );
 
 -- name: SameWorkspaceChildHasNoExecution :one
@@ -704,7 +632,10 @@ SELECT EXISTS (
       AND child.base_workspace_version_id = sqlc.arg(base_workspace_version_id)
       AND child.entrypoint_kind = 'task' AND child.parent_owns_lifecycle
       AND child.status IN ('failed', 'cancelled', 'expired', 'system_failed') AND child.current_run_lease_id IS NULL
-      AND NOT EXISTS (SELECT 1 FROM run_leases lease WHERE lease.run_id = child.id)
+      AND NOT EXISTS (SELECT 1 FROM run_leases lease WHERE lease.run_id = child.id
+        AND (lease.attempt_number = child.current_attempt_number
+          OR EXISTS(SELECT 1 FROM runtime_instances runtime WHERE runtime.id=lease.runtime_instance_id AND runtime.reclaimed_at IS NULL)
+          OR EXISTS(SELECT 1 FROM workspace_leases writer WHERE writer.owner_run_lease_id=lease.id AND writer.status IN ('active','releasing'))))
       AND NOT EXISTS (
           SELECT 1 FROM runtime_instances runtime WHERE runtime.reserved_run_id = child.id
           AND (runtime.desired_state <> 'closed' OR runtime.observed_state <> 'closed'
@@ -712,3 +643,22 @@ SELECT EXISTS (
                    AND mount.status IN ('mounting', 'mounted', 'unmounting')))
       )
 );
+
+-- name: RebindSharedChildAttempt :one
+WITH child AS MATERIALIZED (
+ SELECT r.id,r.current_attempt_number FROM runs r
+ WHERE r.id=sqlc.arg(child_run_id) AND r.environment_id=sqlc.arg(environment_id)
+ AND r.parent_run_id=sqlc.arg(parent_run_id) AND r.parent_owns_lifecycle IS TRUE
+ AND r.workspace_id=sqlc.arg(workspace_id) AND r.claim_id=sqlc.arg(claim_id)
+ AND r.status='retry_delayed' AND r.current_run_lease_id IS NULL
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=r.id AND l.status IN ('assigned','starting','running','checkpointing','finalizing'))
+ FOR UPDATE OF r
+), rebound AS (
+ UPDATE run_attempts a SET base_workspace_version_id=sqlc.arg(base_workspace_version_id)
+ FROM child WHERE a.run_id=child.id AND a.number=child.current_attempt_number
+ AND a.entrypoint_entered_at IS NULL AND a.terminal_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=a.run_id AND l.attempt_number=a.number AND l.started_at IS NOT NULL)
+ RETURNING a.run_id
+)
+UPDATE runs r SET base_workspace_version_id=sqlc.arg(base_workspace_version_id),revision=r.revision+1,updated_at=now()
+FROM rebound WHERE r.id=rebound.run_id RETURNING r.*;

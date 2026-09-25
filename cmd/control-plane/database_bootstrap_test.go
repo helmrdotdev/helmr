@@ -199,7 +199,7 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	// A reset followed by migration must install today's schema, not merely a
 	// version-1 marker from an older initial schema.
 	for _, query := range []string{
-		"SELECT secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after FROM workspaces LIMIT 0",
+		"SELECT secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after FROM computers LIMIT 0",
 		"SELECT current_version_id, revocation_generation FROM secrets LIMIT 0",
 		"SELECT nonce, ciphertext FROM secret_versions LIMIT 0",
 	} {

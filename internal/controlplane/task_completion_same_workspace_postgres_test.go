@@ -6,14 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -87,6 +86,11 @@ SELECT parent.status, edge.condition_status, edge.suspension_status
 				}
 				if parentStatus != "waiting" || waitCondition != "pending" || waitSuspension != "parked" {
 					t.Fatalf("retry changed parent edge = %s %s/%s", parentStatus, waitCondition, waitSuspension)
+				}
+				dbtest.MustExec(t, t.Context(), fixture.pool, `UPDATE runs SET retry_at=now()-interval '1 second' WHERE id=$1`, fixture.childRunID)
+				rows, err := db.New(fixture.pool).ReadyRunRetries(t.Context(), 10)
+				if err != nil || len(rows) != 1 || rows[0].ID != pgvalue.UUID(fixture.childRunID) {
+					t.Fatalf("ordinary shared retry blocked: %+v %v", rows, err)
 				}
 			} else if runStatus != "succeeded" || currentAttempt != 1 {
 				t.Fatalf("success state = %s attempt %d", runStatus, currentAttempt)
@@ -282,7 +286,7 @@ INSERT INTO run_checkpoints (
     id, run_id, attempt_number, run_wait_id, source_run_lease_id,
     source_workspace_lease_id, workspace_id, base_workspace_version_id,
     private_workspace_version_id, runtime_config_artifact_id, vm_state_artifact_id,
-    memory_artifact_id, scratch_disk_artifact_id, status, restore_manifest,
+    memory_artifact_id, scratch_disk_artifact_id, status, manifest,
     ready_request_fingerprint, ready_at
 ) VALUES (
     $1, $2, 1, $3, $4, $5, $6, $7, $7, $8, $9, $10, $11, 'ready',
@@ -301,7 +305,7 @@ UPDATE run_waits
  WHERE id = $1`, waitID, checkpointID, baseWorkspaceVersionID,
 		workspace.CanonicalEmptyTreeDigest)
 	dbtest.MustExec(t, ctx, tx, `
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = $2, owner_session_id = NULL,
        ownership_generation = 1, writer_generation = 2
  WHERE id = $1`, workspaceID, parentRunID)
@@ -313,11 +317,10 @@ UPDATE run_attempts
 UPDATE run_leases
    SET status = 'finalizing', claimed_at = COALESCE(claimed_at, created_at),
        started_at = COALESCE(started_at, claimed_at, created_at), expires_at = $2,
-       finalization_operation_id = $3, finalization_kind = $4,
+       finalization_operation_id = $3,
        finalization_started_at = transaction_timestamp(),
        finalization_request_fingerprint = 'sha256:8b0d6826f8d226df300af31f6dfde06263d999e8851e8f452624c3b5d0dd09a7'
- WHERE id = $1`, work.LeaseID, expiresAt, operationID,
-		map[bool]string{true: string(workerapi.RunFinalizationReset), false: string(workerapi.RunFinalizationCapture)}[retry])
+ WHERE id = $1`, work.LeaseID, expiresAt, operationID)
 	dbtest.MustExec(t, ctx, tx, `
 UPDATE workspace_leases
    SET writer_generation = 2, expires_at = $2
@@ -345,54 +348,11 @@ UPDATE workspace_leases
 			Captured: validTaskWorkspaceCapture(t, assignment),
 		},
 	}
-	artifact, cleanupArtifact, err := workspace.CreateEmptyWorkspaceArtifact(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanupArtifact()
-	body, err := os.ReadFile(artifact.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := workspace.InspectArtifact(bytes.NewReader(body), artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Workspace.Captured.Tree = workerapi.WorkspaceTreeIdentity{
-		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
-	}
-	request.Workspace.Captured.Artifact = workerapi.WorkspaceArtifact{
-		Digest: artifact.Digest, MediaType: artifact.MediaType,
-		Encoding: artifact.Encoding, SizeBytes: artifact.SizeBytes,
-		EntryCount: int32(artifact.EntryCount),
-	}
 	request.Workspace.Captured.Receipt.OperationID = operationID.String()
 	setCaptureFingerprint(t, request.Workspace.Captured)
 	finalizationFingerprint := request.Workspace.Captured.Receipt.RequestFingerprint
 	if retry {
 		request.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "retry"}}
-		request.Workspace = workerapi.TaskWorkspaceProof{
-			RolledBack: validTaskWorkspaceRollback(t, request.Workspace.Captured),
-		}
-		request.Workspace.RolledBack.Receipt.OperationID = operationID.String()
-		request.Workspace.RolledBack.Receipt.RequestFingerprint = ""
-		target := workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: baseWorkspaceVersionID.String(),
-			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		}
-		fingerprint, err := workspace.FinalizationFingerprint(
-			workspace.FinalizationResetKind,
-			workspace.FinalizationRequest{
-				OperationID: operationID.String(),
-				Fence:       testFinalizationFence(request.Workspace.RolledBack.Receipt.Fence),
-				Target:      target,
-			},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Workspace.RolledBack.Receipt.RequestFingerprint = fingerprint
-		finalizationFingerprint = fingerprint
 	}
 	dbtest.MustExec(t, ctx, base.Pool, `
 UPDATE run_leases
@@ -400,16 +360,10 @@ UPDATE run_leases
  WHERE id = $1`, work.LeaseID, finalizationFingerprint)
 
 	queries := db.New(base.Pool)
-	return sameWorkspaceCompletionPostgresFixture{
+	fixture := sameWorkspaceCompletionPostgresFixture{
 		server: &Server{
 			db: queries, tx: base.Pool,
-			cas: actorTurnCAS{
-				object: cas.Object{
-					Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,
-					MediaType: artifact.MediaType,
-				},
-				body: body,
-			},
+			cas: finalizationTestCAS(t),
 		}, pool: base.Pool,
 		worker: workerActor{
 			WorkerInstanceID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
@@ -419,4 +373,6 @@ UPDATE run_leases
 		waitID: waitID, runtimeID: runtimeID, mountID: mountID,
 		workspaceLeaseID: workspaceLeaseID,
 	}
+	registerFinalizationTestDisk(t, base.Pool, fixture.server, fixture.worker, request.Lease, request.Workspace.Captured, operationID.String())
+	return fixture
 }

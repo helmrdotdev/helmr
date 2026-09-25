@@ -3,11 +3,11 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
-	"uuid"
 )
 
 func validateOutput(ctx context.Context, q db.Querier, actor db.Session, turn db.SessionTurn, scope TurnScope) error {
@@ -90,7 +90,7 @@ func AppendSessionOutput(ctx context.Context, q db.Querier, scope TurnScope, key
 		receipt.Event, err = q.GetSessionEvent(ctx, db.GetSessionEventParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(receipt.EventID)})
 		return receipt, err
 	}
-	event, err := appendEvent(ctx, q, scope, "output", data, pgtype.UUID{})
+	event, err := appendEvent(ctx, q, scope, "output", data)
 	if err != nil {
 		return receipt, err
 	}

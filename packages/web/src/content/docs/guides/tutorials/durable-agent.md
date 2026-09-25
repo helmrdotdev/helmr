@@ -31,9 +31,10 @@ export const assistant = actor({
 })
 ```
 
-The Actor-level `idleTimeout` is the default for Session input receives. It can
-shorten how long an idle Run stays warm before Helmr checkpoints and suspends
-it; Helmr may suspend earlier. `receive()` can therefore durably park the
+The Actor-level `idleTimeout` supplies the default hot-wait duration for Session
+input, Token, and timer waits inside the Actor. An individual wait can override
+it where its API accepts `idleTimeout`. It is separate from a response timeout
+and is not a billing cap. `receive()` can durably park the
 managed Run without closing the Session. New input resumes work without
 discarding the Session's identity or ordered history. A later continuation may
 use a different Run ID.

@@ -268,6 +268,7 @@ export interface WaitTimeoutError extends HelmrError {
 
 export interface ActorSessionReceiveOptions {
   readonly timeout?: Duration
+  /** Hot managed-wait duration before suspension is eligible; not a response deadline or billing cap. */
   readonly idleTimeout?: Duration
   readonly metadata?: Metadata
   readonly tags?: readonly string[]
@@ -311,6 +312,7 @@ export interface Turn {
   onMessage(
     handler: (message: Message) => MaybePromise<void>,
   ): Promise<void>
+  /** Commit the Turn result without checkpointing the Computer. */
   complete(result?: JsonValue): Promise<void>
   fail(error: unknown): Promise<void>
 }
@@ -326,6 +328,7 @@ export interface ActorSession {
 
 export interface ActorConfig extends RunDefaults {
   readonly id: string
+  /** Hot managed-wait duration before suspension is eligible; not a response deadline or billing cap. */
   readonly idleTimeout?: Duration
   readonly run: (session: ActorSession, ctx: ActorContext) => MaybePromise<void>
 }
@@ -354,7 +357,6 @@ export type SessionDispatch =
         | "interrupt_requested"
         | "interrupted"
         | "recovery_required"
-        | "recovered"
     }>
 
 export interface Session {
@@ -419,27 +421,9 @@ export interface SessionResumeReceipt {
   readonly holdId: string
   readonly status: "accepted"
 }
-export interface SessionRecoveryReceipt {
-  readonly id: string
-  readonly sessionId: string
-  readonly turnId: string | null
-  readonly holdId: string
-  readonly status: "accepted"
-}
 export interface SessionResumeRequest extends SessionOperationOptions {
   readonly holdId: string
 }
-export type SessionRecoverRequest = SessionOperationOptions &
-  Readonly<{
-    holdId: string
-    workspaceVersionId: string
-    reconciliationRef: string
-  }> &
-  (
-    | Readonly<{ turnId: string; disposition: "failed" | "interrupted" }>
-    | Readonly<{ turnId: null; disposition?: never }>
-  )
-
 export type SessionAdmissionReceipt =
   | Readonly<{ id: string; kind: "enqueued"; turnId: string }>
   | Readonly<{
@@ -478,7 +462,7 @@ export type SessionEventKind =
   | "session.failed"
   | "session.held"
   | "session.resumed"
-  | "session.recovered"
+  | "session.execution_lost"
 export interface SessionEvent {
   readonly id: string
   readonly sessionId: string

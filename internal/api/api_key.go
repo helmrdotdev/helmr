@@ -55,7 +55,6 @@ const (
 	APIKeyScopeSessionsSend        APIKeyScope = "sessions:send"
 	APIKeyScopeSessionsInterrupt   APIKeyScope = "sessions:interrupt"
 	APIKeyScopeSessionsResume      APIKeyScope = "sessions:resume"
-	APIKeyScopeSessionsRecover     APIKeyScope = "sessions:recover"
 	APIKeyScopeSessionsClose       APIKeyScope = "sessions:close"
 	APIKeyScopeSessionsCancel      APIKeyScope = "sessions:cancel"
 	APIKeyScopeTokensCreate        APIKeyScope = "tokens:create"

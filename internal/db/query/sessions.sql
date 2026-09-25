@@ -20,7 +20,7 @@ SELECT sqlc.arg(id),
        actor_definition.environment_id,
        actor_definition.declared_id,
        actor_definition.id,
-       workspaces.id,
+       computers.id,
        sqlc.narg(key),
        sqlc.arg(run_queue_name),
        sqlc.narg(run_concurrency_key),
@@ -41,18 +41,18 @@ SELECT sqlc.arg(id),
    AND deployments.program_artifact_id IS NOT NULL
    AND deployments.program_index_digest IS NOT NULL
    AND deployments.runtime_artifact_digest IS NOT NULL
-  JOIN workspaces
-    ON workspaces.environment_id = actor_definition.environment_id
-   AND workspaces.id = sqlc.arg(workspace_id)
+  JOIN computers
+    ON computers.environment_id = actor_definition.environment_id
+   AND computers.id = sqlc.arg(workspace_id)
   JOIN environments AS actor_environment
-    ON actor_environment.id = workspaces.environment_id
+    ON actor_environment.id = computers.environment_id
    AND actor_environment.org_id = sqlc.arg(org_id)
    AND actor_environment.project_id = sqlc.arg(project_id)
   JOIN deployment_definitions AS workspace_definition
-    ON workspace_definition.environment_id = workspaces.environment_id
-   AND workspace_definition.id = workspaces.deployment_definition_id
+    ON workspace_definition.environment_id = computers.environment_id
+   AND workspace_definition.id = computers.deployment_definition_id
    AND workspace_definition.kind = 'sandbox'
-   AND workspace_definition.declared_id = workspaces.sandbox_declared_id
+   AND workspace_definition.declared_id = computers.sandbox_declared_id
  WHERE actor_definition.environment_id = sqlc.arg(environment_id)
    AND actor_definition.id = sqlc.arg(deployment_definition_id)
    AND actor_definition.kind = 'actor'

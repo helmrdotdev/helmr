@@ -49,7 +49,7 @@ SELECT * FROM session_events WHERE environment_id = $1 AND session_id = $2 AND i
 
 -- name: SettleSessionTurn :one
 WITH advanced AS (
- UPDATE sessions SET committed_input_sequence = sqlc.arg(input_sequence), active_turn_id = NULL,
+ UPDATE sessions SET committed_input_sequence = sqlc.arg(input_sequence), active_turn_id = NULL, consecutive_execution_losses = 0,
         revision = revision + 1, updated_at = now()
  WHERE sessions.environment_id = sqlc.arg(environment_id) AND sessions.id = sqlc.arg(session_id)
    AND active_turn_id = sqlc.arg(turn_id) AND sessions.run_generation = sqlc.arg(run_generation)

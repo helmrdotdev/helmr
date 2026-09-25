@@ -87,7 +87,7 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 	if delivered.MessageID != first.MessageID.String() {
 		t.Fatalf("delivery order: %+v", delivered)
 	}
-	commit := turnCommitRequest(t, f, scope, f.capture(t, "message result")) // Begins settlement before the physical commit.
+	commit := turnCommitRequest(t, f, scope) // Begins settlement before committing the result.
 	request.IdempotencyKey = "settling"
 	var operation *session.OperationError
 	if _, err = f.server.applySessionAdmission(t.Context(), request); !errors.As(err, &operation) || operation.Code != "turn_settling" {
@@ -127,26 +127,83 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 		t.Fatalf("queued identity changed: %+v %+v", next, queued)
 	}
 }
-func TestSessionUnknownMessageRetainsActiveTurnPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
-	scope := f.receiveTurn(t, 1)
-	readyMessages(t, f, scope)
-	admitMessage(t, f, "unknown")
-	delivery := claimMessage(t, f, scope)
-	finishDelivery(t, f, scope, delivery, "unknown", "handler_failed")
-	var status, reason string
-	var active uuid.UUID
-	var cursor int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT m.status,s.dispatch_hold_reason,s.active_turn_id,s.committed_input_sequence FROM sessions s JOIN session_messages m ON m.session_id=s.id WHERE s.id=$1`, f.sessionID).Scan(&status, &reason, &active, &cursor); err != nil {
-		t.Fatal(err)
-	}
-	if status != "unknown" || reason != "recovery_required" || active != scope.TurnID || cursor != 0 {
-		t.Fatalf("unknown outcome: %s %s %s %d", status, reason, active, cursor)
-	}
-	var r workerapi.ClaimTurnMessageResponse
-	f.workerCall(t, f.server.workerClaimTurnMessage, workerapi.ClaimTurnMessageRequest{TurnExecutionRequest: turnCommand(f, scope), DeliveryID: delivery.DeliveryID}, &r)
-	if r.Failed == nil || r.Failed.Code != "turn_stopping" || r.Delivery != nil {
-		t.Fatalf("unknown delivery replay: %+v", r)
+func TestSessionUnknownMessageTerminatesExecutionPostgres(t *testing.T) {
+	for _, stop := range []string{"none", "cancel", "interrupt", "cancel before ack", "interrupt before ack"} {
+		t.Run(stop, func(t *testing.T) {
+			f := newActorCheckpointFixture(t)
+			scope := f.receiveTurn(t, 1)
+			readyMessages(t, f, scope)
+			admitMessage(t, f, "unknown")
+			delivery := claimMessage(t, f, scope)
+			queued := admitMessage(t, f, "undelivered")
+			target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
+			beforeAck := stop == "cancel before ack" || stop == "interrupt before ack"
+			if beforeAck {
+				var err error
+				if stop == "cancel before ack" {
+					_, err = f.server.applySessionCancel(t.Context(), session.ControlRequest{Target: target})
+				} else {
+					_, err = f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: target}, TurnID: scope.TurnID})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			finishDelivery(t, f, scope, delivery, "unknown", "handler_failed")
+			finishDelivery(t, f, scope, delivery, "unknown", "handler_failed")
+			var status, queuedStatus string
+			var hold *uuid.UUID
+			var active uuid.UUID
+			var settling bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT m.status,s.dispatch_hold_id,s.active_turn_id,t.settlement_started_at IS NOT NULL,q.status FROM sessions s JOIN session_messages m ON m.id=$2 JOIN session_turns t ON t.id=s.active_turn_id JOIN session_messages q ON q.id=$3 WHERE s.id=$1`, f.sessionID, delivery.MessageID, *queued.MessageID).Scan(&status, &hold, &active, &settling, &queuedStatus); err != nil {
+				t.Fatal(err)
+			}
+			if status != "unknown" || (hold != nil) != beforeAck || active != scope.TurnID || (!beforeAck && !settling) || queuedStatus != "rejected" {
+				t.Fatalf("unknown outcome: %s hold=%v active=%s settling=%v queued=%s", status, hold, active, settling, queuedStatus)
+			}
+			var r workerapi.ClaimTurnMessageResponse
+			f.workerCall(t, f.server.workerClaimTurnMessage, workerapi.ClaimTurnMessageRequest{TurnExecutionRequest: turnCommand(f, scope), DeliveryID: delivery.DeliveryID}, &r)
+			wantCode := "turn_unsettled"
+			if beforeAck {
+				wantCode = "turn_stopping"
+			}
+			if r.Failed == nil || r.Failed.Code != wantCode || r.Delivery != nil {
+				t.Fatalf("unknown delivery replay: %+v", r)
+			}
+			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`null`)}); err == nil {
+				t.Fatal("failed callback accepted more Turn input")
+			}
+			commit := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: 1}
+			parsedCommit, err := parseActorTurnCommitRequest(commit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := f.server.commitActorTurn(t.Context(), f.worker, commit, parsedCommit); err == nil {
+				t.Fatal("unknown callback became successful Turn")
+			}
+			req, parsed := failedActorCompletion(t, f)
+			switch stop {
+			case "cancel":
+				_, err = f.server.applySessionCancel(t.Context(), session.ControlRequest{Target: target})
+			case "interrupt":
+				_, err = f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: target}, TurnID: scope.TurnID})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
+				t.Fatal(err)
+			}
+			if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
+				t.Fatal(err)
+			}
+			if stop == "none" {
+				assertFailedActorSession(t, f, true)
+			}
+			if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, delivery.MessageID).Scan(&status); err != nil || status != "unknown" {
+				t.Fatalf("message outcome=%s err=%v", status, err)
+			}
+		})
 	}
 }
 func actorTokenWait(t *testing.T, f *actorCheckpointFixture, s session.TurnScope) (*token.WaitReconciler, token.WaitRegistration) {
@@ -285,7 +342,7 @@ func TestSessionTokenWaitStopOrderingPostgres(t *testing.T) {
 func TestSessionParkedTurnInterruptRecoveryPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "retained committed head")
-	committed := f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)})
 	if err != nil {
 		t.Fatal(err)
@@ -313,23 +370,21 @@ func TestSessionParkedTurnInterruptRecoveryPostgres(t *testing.T) {
 	}
 	var status, reason string
 	var held, active, head, owner uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_id,s.dispatch_hold_reason,s.active_turn_id,w.head_version_id,w.owner_session_id FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &held, &reason, &active, &head, &owner); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_id,s.dispatch_hold_reason,s.active_turn_id,w.head_version_id,w.owner_session_id FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &held, &reason, &active, &head, &owner); err != nil {
 		t.Fatal(err)
 	}
-	if status != "cancelled" || held != *stopped.HoldID || reason != "interrupt_requested" || active != scope.TurnID || head.String() != committed.WorkspaceVersionID || owner != f.sessionID {
+	if status != "cancelled" || held != *stopped.HoldID || reason != "interrupt_requested" || active != scope.TurnID || head.String() != f.rootID.String() || owner != f.sessionID {
 		t.Fatalf("parked retirement changed authority: %s %s %s %s %s %s", status, held, reason, active, head, owner)
 	}
-	request := session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, IdempotencyKey: "parked-recovery"}, HoldID: held}, TurnID: &scope.TurnID, WorkspaceVersionID: head, ReconciliationRef: "test-retained-head", Disposition: "interrupted"}
-	recovered, err := f.server.applySessionRecovery(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
+	lifecycle, _ := session.NewReconciler(f.Pool)
+	for range 2 {
+		if waiting, e := lifecycle.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); e != nil || waiting {
+			t.Fatalf("parked stop=%v %v", waiting, e)
+		}
 	}
-	if recovered.HoldID == nil || *recovered.HoldID == held {
-		t.Fatalf("recovery did not issue exact new hold: %+v", recovered)
-	}
-	again, err := f.server.applySessionRecovery(t.Context(), request)
-	if err != nil || again.ID != recovered.ID || *again.HoldID != *recovered.HoldID {
-		t.Fatalf("recovery replay: %+v %v", again, err)
+	var settledHold uuid.UUID
+	if err = f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&settledHold); err != nil || settledHold == held {
+		t.Fatalf("new hold=%s %v", settledHold, err)
 	}
 	var messageStatus string
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, uuid.MustParse(delivery.MessageID)).Scan(&messageStatus); err != nil || messageStatus != "unknown" {
@@ -343,10 +398,10 @@ func TestSessionParkedTurnInterruptRecoveryPostgres(t *testing.T) {
 	if cursor != 2 || activeAfter.Valid || current.Valid || status != "interrupted" {
 		t.Fatalf("recovered state: %d %v %v %s", cursor, activeAfter, current, status)
 	}
-	if _, err = f.server.applySessionResume(t.Context(), session.ResumeRequest{ControlRequest: session.ControlRequest{Target: request.Target, IdempotencyKey: "parked-resume"}, HoldID: *recovered.HoldID}); err != nil {
+	if _, err = f.server.applySessionResume(t.Context(), session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, IdempotencyKey: "parked-resume"}, HoldID: settledHold}); err != nil {
 		t.Fatal(err)
 	}
-	if err = f.Pool.QueryRow(t.Context(), `SELECT current_run_id,dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&current, &activeAfter); err != nil || !current.Valid || current == pgvalue.UUID(f.runID) || activeAfter.Valid {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT current_run_id,dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&current, &activeAfter); err != nil || current.Valid || activeAfter.Valid {
 		t.Fatalf("explicit resume: %v %v %v", current, activeAfter, err)
 	}
 }
@@ -356,7 +411,7 @@ func TestSessionTokenResumeStopAuthorityPostgres(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
 			capture := f.capture(t, "checkpoint head")
-			f.turn(t, 1, capture, true)
+			f.turn(t, 1)
 			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
 				t.Fatal(err)
 			}
@@ -375,13 +430,14 @@ func TestSessionTokenResumeStopAuthorityPostgres(t *testing.T) {
 			}
 			var checkpointBase, attemptBase, head uuid.UUID
 			var waitKind string
-			if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,rw.kind FROM run_waits rw JOIN run_checkpoints c ON c.id=rw.suspend_checkpoint_id JOIN run_attempts a ON a.run_id=rw.run_id AND a.number=rw.attempt_number JOIN workspaces w ON w.id=rw.workspace_id WHERE rw.id=$1`, registration.WaitID).Scan(&checkpointBase, &attemptBase, &head, &waitKind); err != nil {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,rw.kind FROM run_waits rw JOIN run_checkpoints c ON c.id=rw.suspend_checkpoint_id JOIN run_attempts a ON a.run_id=rw.run_id AND a.number=rw.attempt_number JOIN computers w ON w.id=rw.workspace_id WHERE rw.id=$1`, registration.WaitID).Scan(&checkpointBase, &attemptBase, &head, &waitKind); err != nil {
 				t.Fatal(err)
 			}
-			if checkpointBase != head || checkpointBase == attemptBase || waitKind != "token" {
+			// Turn completion does not save the disk or advance the attempt base.
+			if checkpointBase != head || checkpointBase != attemptBase || head != f.rootID || waitKind != "token" {
 				t.Fatalf("invalid active checkpoint fixture: %s %s %s %s", checkpointBase, attemptBase, head, waitKind)
 			}
-			t.Logf("active Token checkpoint uses committed head %s, attempt origin %s", checkpointBase, attemptBase)
+			t.Logf("Turn settlement preserved head %s and attempt origin %s before Token suspension", checkpointBase, attemptBase)
 			f.placeAndClaim(t)
 			wait := f.claim.runWait
 			start := workerapi.RunStartRequest{Lease: f.fence(), Restore: &workerapi.RunStartRestore{RunWaitID: pgvalue.UUIDString(wait.ID), CheckpointID: pgvalue.UUIDString(wait.SuspendCheckpointID), ResumeAttachID: pgvalue.UUIDString(wait.ResumeAttachID), ResumeRequestVersion: wait.ResumeRequestVersion}}
@@ -467,7 +523,7 @@ func TestSessionActiveTurnChildCallBindsWaitPostgres(t *testing.T) {
 func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "Actor committed frontier")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -490,10 +546,12 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	}
 	childCheckpoint := f.suspendWait(t, uuid.MustParse(request.RunWaitID), capture)
 	var checkpointBase, attemptBase, committedHead, childBase pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,c.private_workspace_version_id FROM run_checkpoints c JOIN run_attempts a ON a.run_id=c.run_id AND a.number=c.attempt_number JOIN workspaces w ON w.id=c.workspace_id WHERE c.id=$1`, uuid.MustParse(childCheckpoint.CheckpointID)).Scan(&checkpointBase, &attemptBase, &committedHead, &childBase); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,c.private_workspace_version_id FROM run_checkpoints c JOIN run_attempts a ON a.run_id=c.run_id AND a.number=c.attempt_number JOIN computers w ON w.id=c.workspace_id WHERE c.id=$1`, uuid.MustParse(childCheckpoint.CheckpointID)).Scan(&checkpointBase, &attemptBase, &committedHead, &childBase); err != nil {
 		t.Fatal(err)
 	}
-	if checkpointBase != committedHead || checkpointBase == attemptBase || childBase != pgvalue.UUID(uuid.MustParse(childCheckpoint.WorkspaceVersionID)) || childBase == committedHead {
+	// The first managed suspension creates the child's private disk frontier;
+	// the preceding Turn completion left the committed head and attempt unchanged.
+	if checkpointBase != committedHead || checkpointBase != attemptBase || committedHead != pgvalue.UUID(f.rootID) || childBase != pgvalue.UUID(uuid.MustParse(childCheckpoint.WorkspaceVersionID)) || childBase == committedHead {
 		t.Fatalf("Actor parent/Task child frontier: checkpoint=%v attempt=%v committed=%v child=%v", checkpointBase, attemptBase, committedHead, childBase)
 	}
 	parentID := f.runID
@@ -523,7 +581,7 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,r.revision FROM run_checkpoints c JOIN runs r ON r.id=c.run_id WHERE c.id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID)).Scan(&originalBase, &revision); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET base_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=run_checkpoints.workspace_id) WHERE id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET base_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=run_checkpoints.workspace_id) WHERE id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID))
 	if _, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}); !errors.Is(err, dispatch.ErrCandidateChanged) {
 		t.Fatalf("corrupt Task checkpoint source base placement: %v", err)
 	}
@@ -547,25 +605,25 @@ func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
 
 	var bound, owner, active pgtype.UUID
 	var childStatus string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT rw.turn_id,w.owner_session_id,s.active_turn_id,r.status FROM run_waits rw JOIN runs r ON r.id=rw.run_id JOIN workspaces w ON w.id=r.workspace_id JOIN sessions s ON s.current_run_id=$2 WHERE rw.id=$1`, registration.WaitID, parentID).Scan(&bound, &owner, &active, &childStatus); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT rw.turn_id,w.owner_session_id,s.active_turn_id,r.status FROM run_waits rw JOIN runs r ON r.id=rw.run_id JOIN computers w ON w.id=r.workspace_id JOIN sessions s ON s.current_run_id=$2 WHERE rw.id=$1`, registration.WaitID, parentID).Scan(&bound, &owner, &active, &childStatus); err != nil {
 		t.Fatal(err)
 	}
 	if bound.Valid || owner != pgvalue.UUID(f.sessionID) || active != pgvalue.UUID(scope.TurnID) || childStatus != "running" {
 		t.Fatalf("Task inherited Actor consumption: %v %v %v %s", bound, owner, active, childStatus)
 	}
-	content := finishCheckpointChild(t, f, capture, "success")
+	finishCheckpointChild(t, f, capture, "success")
 	f.workerCall(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{OrgID: f.OrgID.String(), WorkspaceMountID: pgvalue.UUIDString(f.claim.workspaceMount.ID), CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now()}}, nil)
 	f.runID = parentID
 	f.placeAndClaim(t)
 	f.startClaim(t)
-	f.turn(t, 2, content, false)
+	f.turn(t, 2)
 
 }
 
 func TestSessionMessagesSurviveParkUntilOriginalWaitResumesPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "checkpoint head")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
 		t.Fatal(err)
@@ -609,7 +667,7 @@ func TestSessionMessageWithoutHandlerRejectedAtSettlementPostgres(t *testing.T) 
 	f := newActorCheckpointFixture(t)
 	scope := f.receiveTurn(t, 1)
 	accepted := admitMessage(t, f, "no-handler")
-	turnCommitRequest(t, f, scope, f.capture(t, "completed without a handler"))
+	turnCommitRequest(t, f, scope)
 	var status string
 	var outcome []byte
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status,outcome FROM session_messages WHERE id=$1`, *accepted.MessageID).Scan(&status, &outcome); err != nil {

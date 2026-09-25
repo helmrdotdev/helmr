@@ -4,8 +4,6 @@ import type {
   TurnRef,
   Session,
   SessionStatus,
-  SessionRecoverRequest,
-  SessionRecoveryReceipt,
 } from "./contract"
 import { resourceID } from "./internal/id"
 import { canonicalizeJsonValue } from "./internal/jsoncanon"
@@ -17,7 +15,6 @@ import {
   parseSessionCloseReceipt, parseSessionCancelReceipt,
   parseTurnInterruptReceipt,
   parseSessionResumeReceipt,
-  parseSessionRecoveryReceipt,
   parseSessionEventPage,
   sessionStatus,
 } from "./internal/session"
@@ -41,20 +38,13 @@ export type SessionListQuery =
       limit?: never
     }>
 
-/** Authenticated client references include privileged, server-authorized recovery. */
-export interface ClientSessionRef extends SessionRef {
-  recover(
-    request: SessionRecoverRequest,
-    options?: RequestOptions,
-  ): Promise<SessionRecoveryReceipt>
-}
 export interface ClientSessionsApi {
   retrieve(id: string, options?: RequestOptions): Promise<Session>
   list(
     query?: SessionListQuery,
     options?: RequestOptions,
   ): Promise<CursorPage<Session>>
-  ref(id: string): ClientSessionRef
+  ref(id: string): SessionRef
 }
 interface SessionTransport {
   request(
@@ -97,7 +87,7 @@ export function createClientSessions(
 export function createSessionRef(
   id: string,
   transport: SessionTransport,
-): ClientSessionRef {
+): SessionRef {
   const sessionId = resourceID(id, "Session ID"),
     basePath = `/v1/sessions/${encodeURIComponent(sessionId)}`
   const post = (suffix: string, body: unknown, options?: RequestOptions) =>
@@ -237,43 +227,7 @@ export function createSessionRef(
         ),
       )
     },
-    async recover(request, options) {
-      if (request.turnId !== null) resourceID(request.turnId, "turnId")
-      if (
-        request.turnId === null
-          ? request.disposition !== undefined
-          : request.disposition !== "failed" &&
-            request.disposition !== "interrupted"
-      )
-        throw new Error(
-          "Recovery disposition must match the nullable Turn target",
-        )
-      if (
-        typeof request.reconciliationRef !== "string" ||
-        request.reconciliationRef.trim() === ""
-      )
-        throw new Error("reconciliationRef is required")
-      return parseSessionRecoveryReceipt(
-        await post(
-          "/recover",
-          {
-            hold_id: resourceID(request.holdId, "holdId"),
-            turn_id: request.turnId,
-            workspace_version_id: resourceID(
-              request.workspaceVersionId,
-              "workspaceVersionId",
-            ),
-            reconciliation_ref: request.reconciliationRef,
-            ...(request.disposition === undefined
-              ? {}
-              : { disposition: request.disposition }),
-            idempotency_key: sessionOperationOptions(request).idempotencyKey,
-          },
-          options,
-        ),
-      )
-    },
-  } satisfies ClientSessionRef)
+  } satisfies SessionRef)
 }
 
 function sessionListQuery(queryInput: SessionListQuery): string {

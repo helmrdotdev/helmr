@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -12,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -129,35 +127,6 @@ func TestTaskCompletionDeadlineUsesFrozenFinalizationExpiry(t *testing.T) {
 	}
 }
 
-func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
-	runBase := pgvalue.UUID(uuid.NewV7())
-	authority := runLeaseClaimAuthority{
-		run: db.Run{EntrypointKind: "task", BaseWorkspaceVersionID: runBase},
-		attempt: db.RunAttempt{
-			EntrypointEnteredAt:    pgvalue.Timestamptz(time.Now()),
-			BaseWorkspaceVersionID: runBase,
-		},
-		runLease: db.RunLease{Status: db.RunLeaseStatusFinalizing},
-		workspace: db.LockRunLeaseClaimWorkspaceRow{
-			HeadVersionID: runBase,
-		},
-	}
-	completion := parsedTaskCompletion{
-		kind: taskCompletionFailed,
-		rollback: &parsedTaskWorkspaceRollback{
-			baseID: uuid.NewV7(),
-		},
-	}
-	if err := validateTaskCompletionAuthority(
-		context.Background(),
-		nil,
-		completion,
-		authority,
-	); !errors.Is(err, errStaleTaskCompletion) {
-		t.Fatalf("error = %v, want stale completion", err)
-	}
-}
-
 func TestTaskCompletionRejectsRunningLease(t *testing.T) {
 	if err := validateTaskCompletionAuthority(
 		context.Background(),
@@ -167,37 +136,6 @@ func TestTaskCompletionRejectsRunningLease(t *testing.T) {
 			run:      db.Run{EntrypointKind: "task"},
 			runLease: db.RunLease{Status: db.RunLeaseStatusRunning},
 		},
-	); !errors.Is(err, errStaleTaskCompletion) {
-		t.Fatalf("error = %v, want stale completion", err)
-	}
-}
-
-func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
-	request := validTaskCompletionRequest(t)
-	completion, err := parseTaskCompletionRequest(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baseID := pgvalue.UUID(uuid.MustParse(request.Workspace.Captured.Receipt.Fence.BaseWorkspaceVersionID))
-	operationID := pgvalue.UUID(uuid.MustParse(completion.capture.receipt.OperationID))
-	authority := runLeaseClaimAuthority{
-		run: db.Run{
-			EntrypointKind: "task", BaseWorkspaceVersionID: baseID,
-		},
-		attempt: db.RunAttempt{
-			EntrypointKind: "task", EntrypointEnteredAt: pgvalue.Timestamptz(time.Now()),
-			BaseWorkspaceVersionID: baseID,
-		},
-		runLease: db.RunLease{
-			Status: db.RunLeaseStatusFinalizing, FinalizationOperationID: operationID,
-			FinalizationKind:               pgvalue.Text(string(workerapi.RunFinalizationReset)),
-			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
-			FinalizationRequestFingerprint: pgvalue.Text("sha256:a798aa14ee85550172dc7b9e352e89bb54a1bdd6c44282ec539f1d6cfd323b6e"),
-		},
-		workspace: db.LockRunLeaseClaimWorkspaceRow{HeadVersionID: baseID},
-	}
-	if err := validateTaskCompletionAuthority(
-		context.Background(), nil, completion, authority,
 	); !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("error = %v, want stale completion", err)
 	}
@@ -226,83 +164,14 @@ func TestTaskCompletionMountUpdateUsesLeaseFrontier(t *testing.T) {
 	}
 }
 
-func TestTaskWorkspaceRollbackMatchesCanonicalRootVersion(t *testing.T) {
-	baseID := pgvalue.UUID(uuid.NewV7())
-	workspaceID := pgvalue.UUID(uuid.NewV7())
-	authority := runLeaseClaimAuthority{
-		run:       db.Run{BaseWorkspaceVersionID: baseID},
-		workspace: db.LockRunLeaseClaimWorkspaceRow{ID: workspaceID},
-	}
-	store := &taskWorkspaceRollbackFixture{version: db.WorkspaceVersion{
-		ID: baseID, WorkspaceID: workspaceID, ContentDigest: workspace.CanonicalEmptyTreeDigest, Status: db.WorkspaceVersionStatusCommitted,
-	}}
-	rollback := parsedTaskWorkspaceRollback{
-		baseID: pgvalue.MustUUIDValue(baseID),
-		target: workspace.ResetTarget{
-			Kind: workspace.ResetTargetEmpty, BaseWorkspaceVersionID: pgvalue.UUIDString(baseID),
-			Tree: workspace.TreeIdentity{Digest: workspace.CanonicalEmptyTreeDigest},
-		},
-	}
-	if err := validateTaskWorkspaceRollback(context.Background(), store, authority, rollback); err != nil {
-		t.Fatal(err)
-	}
-	store.version.ArtifactID = pgvalue.UUID(uuid.NewV7())
-	if err := validateTaskWorkspaceRollback(context.Background(), store, authority, rollback); !errors.Is(err, errStaleTaskCompletion) {
-		t.Fatalf("root with Artifact error = %v", err)
-	}
-}
-
-func TestTaskWorkspaceRollbackMatchesVersionArtifact(t *testing.T) {
-	baseID := pgvalue.UUID(uuid.NewV7())
-	workspaceID := pgvalue.UUID(uuid.NewV7())
-	artifactID := pgvalue.UUID(uuid.NewV7())
-	parentID := pgvalue.UUID(uuid.NewV7())
-	sourceLeaseID := pgvalue.UUID(uuid.NewV7())
-	tree := workspace.TreeIdentity{Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 12, EntryCount: 2}
-	artifact := workspace.ArtifactIdentity{
-		Digest: "sha256:" + strings.Repeat("a", 64), MediaType: workspace.ArtifactMediaType,
-		Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: tree.EntryCount,
-	}
-	authority := runLeaseClaimAuthority{
-		run:       db.Run{BaseWorkspaceVersionID: baseID},
-		workspace: db.LockRunLeaseClaimWorkspaceRow{ID: workspaceID},
-	}
-	store := &taskWorkspaceRollbackFixture{
-		version: db.WorkspaceVersion{
-			ID: baseID, WorkspaceID: workspaceID, ParentVersionID: parentID, ArtifactID: artifactID,
-			ContentDigest: tree.Digest, SizeBytes: tree.SizeBytes,
-			EntryCount: int32(tree.EntryCount), Status: db.WorkspaceVersionStatusCommitted,
-			SourceWorkspaceLeaseID: sourceLeaseID,
-		},
-		artifact: db.Artifact{
-			ID: artifactID, Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion,
-			SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
-		},
-	}
-	rollback := parsedTaskWorkspaceRollback{
-		baseID: pgvalue.MustUUIDValue(baseID),
-		target: workspace.ResetTarget{
-			Kind: workspace.ResetTargetArtifact, BaseWorkspaceVersionID: pgvalue.UUIDString(baseID),
-			Tree: tree, Artifact: &artifact,
-		},
-	}
-	if err := validateTaskWorkspaceRollback(context.Background(), store, authority, rollback); err != nil {
-		t.Fatal(err)
-	}
-	store.artifact.Digest = "sha256:" + strings.Repeat("c", 64)
-	if err := validateTaskWorkspaceRollback(context.Background(), store, authority, rollback); !errors.Is(err, errStaleTaskCompletion) {
-		t.Fatalf("retargeted Artifact error = %v", err)
-	}
-}
-
-func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T) {
+func TestRecordTaskWorkspaceVersionRecordsGenerationIdentity(t *testing.T) {
 	authority := runLeaseClaimAuthority{
 		run: db.Run{
 			OrgID: pgvalue.UUID(uuid.NewV7()), ProjectID: pgvalue.UUID(uuid.NewV7()),
 			EnvironmentID: pgvalue.UUID(uuid.NewV7()),
 		},
 		workspace: db.LockRunLeaseClaimWorkspaceRow{
-			ID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
+			ID: pgvalue.UUID(uuid.NewV7()), HeadVersionID: pgvalue.UUID(uuid.NewV7()), OwnershipGeneration: 1, WriterGeneration: 2,
 		},
 		workspaceLease: db.WorkspaceLease{
 			ID: pgvalue.UUID(uuid.NewV7()), BaseWorkspaceVersionID: pgvalue.UUID(uuid.NewV7()),
@@ -315,26 +184,20 @@ func TestRecordTaskWorkspaceVersionSeparatesTreeAndArtifactIdentity(t *testing.T
 	}
 	versionID := pgvalue.UUID(uuid.NewV7())
 	store := &taskWorkspaceVersionFixture{versionID: versionID}
-	capture := parsedTaskWorkspaceCapture{
-		tree: workspace.TreeIdentity{
-			Digest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 12, EntryCount: 2,
-		},
-		artifact: workerapi.WorkspaceArtifact{
-			Digest: "sha256:" + strings.Repeat("a", 64), MediaType: workspace.ArtifactMediaType,
-			Encoding: workspace.ArtifactEncoding, SizeBytes: 1024, EntryCount: 2,
-		},
-	}
+	capture := workspaceVersionCapture{root: testGenerationRoot(4096)}
 	got, err := recordTaskWorkspaceVersion(
-		context.Background(), store, workerActor{WorkerInstanceID: uuid.NewV7()},
+		context.Background(), store,
 		authority, capture, pgvalue.Timestamptz(time.Now()),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != versionID || store.publish.ContentDigest != capture.tree.Digest ||
-		store.publish.SizeBytes != capture.tree.SizeBytes || store.publish.EntryCount != int32(capture.tree.EntryCount) ||
-		store.artifact.Digest != capture.artifact.Digest || store.artifact.SizeBytes != capture.artifact.SizeBytes {
-		t.Fatalf("published version = %+v, Artifact = %+v", store.publish, store.artifact)
+	if store.publish.ParentVersionID != authority.workspace.HeadVersionID {
+		t.Fatal("publication used execution baseline as predecessor")
+	}
+	if got != versionID || store.publish.RootPackDigest.String != capture.root.Pack.Digest ||
+		store.publish.LogicalBytes != capture.root.LogicalBytes {
+		t.Fatalf("published version = %+v", store.publish)
 	}
 }
 
@@ -346,11 +209,6 @@ type taskCompletionReplayFixture struct {
 
 type taskWorkspaceMountFixture struct {
 	params db.UpdateTaskWorkspaceMountFrontierParams
-}
-
-type taskWorkspaceRollbackFixture struct {
-	version  db.WorkspaceVersion
-	artifact db.Artifact
 }
 
 type taskWorkspaceVersionFixture struct {
@@ -377,9 +235,9 @@ func (f *taskWorkspaceVersionFixture) CreateArtifact(
 func (f *taskWorkspaceVersionFixture) PublishTaskWorkspaceVersion(
 	_ context.Context,
 	params db.PublishTaskWorkspaceVersionParams,
-) (db.WorkspaceVersion, error) {
+) (db.ComputerVersion, error) {
 	f.publish = params
-	return db.WorkspaceVersion{ID: f.versionID}, nil
+	return db.ComputerVersion{ID: f.versionID}, nil
 }
 
 func (f *taskWorkspaceVersionFixture) UpdateTaskWorkspaceMountFrontier(
@@ -387,20 +245,6 @@ func (f *taskWorkspaceVersionFixture) UpdateTaskWorkspaceMountFrontier(
 	_ db.UpdateTaskWorkspaceMountFrontierParams,
 ) (db.WorkspaceMount, error) {
 	return db.WorkspaceMount{}, nil
-}
-
-func (f *taskWorkspaceRollbackFixture) GetTaskWorkspaceResetVersion(
-	_ context.Context,
-	_ db.GetTaskWorkspaceResetVersionParams,
-) (db.WorkspaceVersion, error) {
-	return f.version, nil
-}
-
-func (f *taskWorkspaceRollbackFixture) GetArtifact(
-	_ context.Context,
-	_ db.GetArtifactParams,
-) (db.Artifact, error) {
-	return f.artifact, nil
 }
 
 func (f *taskWorkspaceMountFixture) UpdateTaskWorkspaceMountFrontier(
@@ -417,4 +261,8 @@ func (fixture *taskCompletionReplayFixture) GetTaskCompletionReplay(
 ) (pgtype.Text, error) {
 	fixture.last = params
 	return fixture.fingerprint, fixture.err
+}
+
+func (f *taskWorkspaceVersionFixture) CreateComputerVersionRoot(context.Context, db.CreateComputerVersionRootParams) error {
+	return nil
 }

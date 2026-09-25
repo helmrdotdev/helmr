@@ -214,7 +214,7 @@ describe("Session lifecycle client", () => {
       dispatch: { state: "held", holdId, reason: "recovery_required" },
     })
   })
-  test("controls carry exact target identities and nullable recovery without disposition", async () => {
+  test("controls carry exact target identities", async () => {
     const receipt = {
       id: operationId,
       session_id: sessionId,
@@ -225,7 +225,6 @@ describe("Session lifecycle client", () => {
       { ...receipt, hold_id: holdId },
       receipt,
       receipt,
-      { ...receipt, turn_id: null, hold_id: holdId },
     ])
     const ref = client.sessions.ref(sessionId)
     expect(
@@ -234,27 +233,11 @@ describe("Session lifecycle client", () => {
     await ref.resume({ holdId, idempotencyKey: "resume-1" })
     await ref.close({ idempotencyKey: "close-1" })
     await ref.cancel({ idempotencyKey: "cancel-1" })
-    expect(
-      await ref.recover({
-        holdId,
-        turnId: null,
-        workspaceVersionId: holdId,
-        reconciliationRef: "incident:1",
-        idempotencyKey: "recover-1",
-      }),
-    ).toMatchObject({ turnId: null, holdId, status: "accepted" })
     expect(requests.map((r) => JSON.parse(String(r.init?.body)))).toEqual([
       { idempotency_key: "stop-1" },
       { hold_id: holdId, idempotency_key: "resume-1" },
       { idempotency_key: "close-1" },
       { idempotency_key: "cancel-1" },
-      {
-        hold_id: holdId,
-        turn_id: null,
-        workspace_version_id: holdId,
-        reconciliation_ref: "incident:1",
-        idempotency_key: "recover-1",
-      },
     ])
   })
   test("Run cancellation preserves Actor acceptance instead of claiming a terminal Run", async () => {

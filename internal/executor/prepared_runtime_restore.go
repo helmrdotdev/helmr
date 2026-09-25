@@ -5,9 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -21,7 +27,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	topology vm.RuntimeTopology,
 	readOnlyDrives []vm.ReadOnlyDrive,
 	record func(vm.RuntimePhase),
-) (vm.Session, error) {
+) (result vm.Session, retErr error) {
 	restore := target.Source.Restore
 	if restore == nil {
 		return nil, errors.New("prepared runtime restore authority is required")
@@ -37,6 +43,34 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	if p.CAS == nil || p.CheckpointEncryptor == nil {
 		return nil, errors.New("prepared runtime restore CAS and encryption are required")
 	}
+	if p.Capacity == nil {
+		return nil, errors.New("restore capacity ledger is required")
+	}
+	_, staging, err := p.checkpointRestoreCapacity(target)
+	if err != nil {
+		return nil, err
+	}
+	key := restoreStagingKey(target.ID, target.WorkerEpoch)
+	if p.Capacity.Snapshot().Reservations[key].GuestEphemeralDiskBytes != staging {
+		return nil, errors.New("checkpoint restore staging was not reserved")
+	}
+	directory := p.restorePreparationDirectory(target.ID, target.WorkerEpoch)
+	if err := os.Mkdir(directory, 0700); err != nil {
+		return nil, err
+	}
+	defer func() {
+		cleanupErr := os.RemoveAll(directory)
+		if cleanupErr == nil {
+			cleanupErr = p.Capacity.Release(key)
+		}
+		if cleanupErr != nil {
+			if result != nil {
+				cleanupErr = errors.Join(cleanupErr, p.closeSession(ctx, result))
+				result = nil
+			}
+			retErr = errors.Join(retErr, cleanupErr)
+		}
+	}()
 	runner := ProgramRunner{CAS: p.CAS, CheckpointEncryptor: p.CheckpointEncryptor, TempDir: p.TempDir}
 	runtimeState := checkpoint.RuntimeState
 	paths := make([]string, 4)
@@ -53,7 +87,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	}
 	for _, artifact := range artifacts {
 		group.Go(func() error {
-			path, err := runner.materializeCheckpointObject(groupCtx, artifact.value.Digest, artifact.suffix)
+			path, err := runner.materializeCheckpointObject(groupCtx, artifact.value, artifact.suffix, directory)
 			if err != nil {
 				return err
 			}
@@ -62,10 +96,8 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		})
 	}
 	if err := group.Wait(); err != nil {
-		removeFiles(paths)
 		return nil, err
 	}
-	defer removeFiles(paths)
 	manifest, err := os.ReadFile(paths[0])
 	if err != nil {
 		return nil, fmt.Errorf("read restored runtime manifest: %w", err)
@@ -73,8 +105,9 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	session, err := restoring.Restore(ctx, vm.RestoreRequest{
 		ID: restore.CheckpointID, RuntimeInstanceID: target.ID, OwnerKind: vm.OwnerRuntime,
-		Binding: runtimeTargetWorkloadBinding(target),
-		VMState: paths[1], VMStateMediaType: runtimeState.VMStateArtifact.MediaType,
+		Resources: compute.ResourceVector{MilliCPU: int64(target.Source.ReservedCPUMillis), MemoryMiB: int64(target.Source.ReservedMemoryMiB), DiskMiB: target.Source.ReservedDiskMiB, Slots: target.Source.ReservedExecutionSlots},
+		Binding:   runtimeTargetWorkloadBinding(target),
+		VMState:   paths[1], VMStateMediaType: runtimeState.VMStateArtifact.MediaType,
 		Memory: []string{paths[2]}, MemoryMediaTypes: []string{runtimeState.MemoryArtifacts[0].MediaType},
 		ScratchDisk: paths[3], ScratchDiskMediaType: runtimeState.ScratchDiskArtifact.MediaType,
 		Manifest: manifest,
@@ -96,7 +129,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		CheckpointId: restore.CheckpointID, CorrelationId: checkpoint.RecoveryPoint.CorrelationID,
 	}
 	if err := verifyRestoredProgramOnSession(ctx, session, verify); err != nil {
-		return nil, errors.Join(fmt.Errorf("verify restored frozen program: %w", err), session.Close(context.Background()))
+		return nil, errors.Join(fmt.Errorf("verify restored frozen program: %w", err), p.closeSession(ctx, session))
 	}
 	return session, nil
 }
@@ -128,6 +161,11 @@ func validatePreparedRuntimeRestore(
 		strings.TrimSpace(checkpoint.RecoveryPoint.CorrelationID) == "" {
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest identity is inconsistent")
 	}
+	// A reserved disk is not interchangeable with the one paired with this RAM.
+	// Check the tuple before any disk expansion, downloads or VM materialization.
+	if err := validateCheckpointComputerSource(target.Source, checkpoint.RuntimeState.Computer); err != nil {
+		return workerapi.CheckpointManifest{}, err
+	}
 	if len(checkpoint.RuntimeState.MemoryArtifacts) != 1 {
 		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore requires exactly one memory artifact")
 	}
@@ -152,8 +190,70 @@ func validatePreparedRuntimeRestore(
 			return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore artifact membership does not match its manifest")
 		}
 	}
-	if strings.TrimSpace(checkpoint.WorkspaceState.Base.MountPath) != "/workspace" {
-		return workerapi.CheckpointManifest{}, errors.New("prepared runtime restore manifest Workspace base mount is invalid")
-	}
 	return checkpoint, nil
+}
+
+func validateCheckpointComputerSource(source workerapi.RuntimeSource, captured *workerapi.CheckpointComputer) error {
+	reserved := source.Computer
+	if reserved == nil || reserved.Seed != nil || reserved.Root == nil || captured == nil {
+		return errors.New("checkpoint restore requires a paired Computer generation")
+	}
+	if captured.ComputerID != source.WorkspaceID || captured.LogicalBytes != reserved.LogicalBytes || captured.Root != *reserved.Root {
+		return errors.New("checkpoint generation differs from retained Computer source")
+	}
+	return captured.Root.Validate(reserved.LogicalBytes)
+}
+
+func restoreStagingKey(id string, epoch int64) capacity.Key {
+	return capacity.Key{Kind: "checkpoint-restore", ID: id, Epoch: epoch}
+}
+func (p *PreparedRuntimePool) restorePreparationDirectory(id string, epoch int64) string {
+	root := strings.TrimSpace(p.TempDir)
+	if root == "" {
+		root = os.TempDir()
+	}
+	return filepath.Join(root, "restore-"+id+"-"+strconv.FormatInt(epoch, 10))
+}
+
+// Retain raw RAM and state with the runtime; decrypted packed inputs live only
+// through materialization. Ciphertext sizes safely bound their plaintext files.
+func (p *PreparedRuntimePool) checkpointRestoreCapacity(target workerapi.RuntimeReconcileTarget) (retained, staging int64, err error) {
+	restore := target.Source.Restore
+	if restore == nil {
+		return 0, 0, nil
+	}
+	if target.Source.ReservedMemoryMiB <= 0 {
+		return 0, 0, errors.New("restore memory reservation is required")
+	}
+	retained = int64(target.Source.ReservedMemoryMiB) * mebibyte
+	var checkpoint workerapi.CheckpointManifest
+	if err = json.Unmarshal(restore.Manifest, &checkpoint); err != nil {
+		return 0, 0, err
+	}
+	if len(checkpoint.RuntimeState.MemoryArtifacts) != 1 {
+		return 0, 0, errors.New("restore requires one memory artifact")
+	}
+	artifacts := []workerapi.CheckpointArtifact{checkpoint.RuntimeState.ConfigArtifact, checkpoint.RuntimeState.VMStateArtifact, checkpoint.RuntimeState.ScratchDiskArtifact, checkpoint.RuntimeState.MemoryArtifacts[0]}
+	for _, artifact := range artifacts {
+		if err = cas.ValidateDescriptor(cas.Descriptor{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType}); err != nil {
+			return 0, 0, err
+		}
+		if artifact.SizeBytes >= math.MaxInt64-staging {
+			return 0, 0, capacity.ErrOverflow
+		}
+		staging += artifact.SizeBytes
+	}
+	configLimit, err := p.CheckpointEncryptor.EncryptedSize(64 << 10)
+	if err != nil {
+		return 0, 0, err
+	}
+	if checkpoint.RuntimeState.ConfigArtifact.SizeBytes > configLimit {
+		return 0, 0, errors.New("restore config artifact exceeds supported size")
+	}
+	state := checkpoint.RuntimeState.VMStateArtifact.SizeBytes
+	if state > math.MaxInt64-retained {
+		return 0, 0, capacity.ErrOverflow
+	}
+	retained += state
+	return retained, staging, nil
 }

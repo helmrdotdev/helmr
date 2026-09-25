@@ -4,66 +4,34 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-	"uuid"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+	"uuid"
 )
 
-func TestWorkerCaptureWorkspaceMountRejectsLegacyAndInvalidIdentityShapes(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("a", 64)
-	tests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{
-			name: "legacy flat artifact",
-			body: `{"org_id":"org-1","workspace_mount_id":"mount-1","artifact_digest":"` + digest + `","artifact_size_bytes":1024,"artifact_media_type":"application/vnd.helmr.workspace.v0.tar","artifact_encoding":"tar","artifact_entry_count":1}`,
-			want: "unknown field",
-		},
-		{
-			name: "missing tree",
-			body: `{"org_id":"org-1","workspace_mount_id":"mount-1","artifact":{"digest":"` + digest + `","media_type":"application/vnd.helmr.workspace.v0.tar","encoding":"tar","size_bytes":1024,"entry_count":1}}`,
-			want: "tree is invalid",
-		},
-		{
-			name: "tree artifact entry count mismatch",
-			body: `{"org_id":"org-1","workspace_mount_id":"mount-1","tree":{"digest":"` + digest + `","size_bytes":4,"entry_count":2},"artifact":{"digest":"` + digest + `","media_type":"application/vnd.helmr.workspace.v0.tar","encoding":"tar","size_bytes":1024,"entry_count":1}}`,
-			want: "tree and artifact entry counts differ",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/workspace-mounts/capture", strings.NewReader(test.body))
-			response := httptest.NewRecorder()
-			(&Server{}).workerCaptureWorkspaceMount(response, request)
-			if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), test.want) {
-				t.Fatalf("response = %d %s, want 400 containing %q", response.Code, response.Body.String(), test.want)
-			}
-		})
-	}
+type execGenerationFixture struct {
+	runtest.Fixture
+	server                                            *Server
+	worker                                            workerActor
+	computerID, baseID, runtimeID, mountID, processID uuid.UUID
+	root                                              computer.GenerationRoot
 }
 
-func TestWorkerCaptureWorkspaceMountPersistsTreeAndArtifactIdentities(t *testing.T) {
+func newExecGenerationFixture(t *testing.T) *execGenerationFixture {
+	t.Helper()
 	fixture := runtest.New(t)
 	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	var workspaceID, baseWorkspaceVersionID, runtimeID, mountID, workspaceLeaseID uuid.UUID
@@ -109,172 +77,191 @@ UPDATE workspace_leases
  WHERE id = $2`, processID, workspaceLeaseID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `
 UPDATE workspace_mounts
-   SET status = 'unmounting', finalization_kind = 'capture',
+   SET status = 'unmounting', finalization_action = 'capture',
        finalization_reason_code = 'workspace_exec_completed', stopped_at = now()
  WHERE id = $1`, mountID)
 
+	substrateID := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) SELECT $2,org_id,project_id,environment_id,deployment_definition_id,'sha256:82a76312340ff2dc8b52b1e6ff24308d9d9f54c3cb94e5957660b94afc53bc2d','squashfs','builder-v0',1 FROM runtime_instances WHERE id=$1`, runtimeID, substrateID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET runtime_substrate_id=$2 WHERE id=$1`, runtimeID, substrateID)
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	makeCapture := func(name, content string) workerapi.WorkspaceMountCaptureRequest {
-		t.Helper()
-		trustedRoot := t.TempDir()
-		root := filepath.Join(trustedRoot, "root")
-		if err := os.Mkdir(root, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o640); err != nil {
-			t.Fatal(err)
-		}
-		artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRoot(root, trustedRoot, trustedRoot)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer cleanup()
-		tree, err := workspace.InspectArtifactTreeContext(t.Context(), artifact.Path, artifact.SizeBytes)
-		if err != nil {
-			t.Fatal(err)
-		}
-		file, err := os.Open(artifact.Path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer file.Close()
-		object, err := store.Put(t.Context(), workspace.ArtifactMediaType, file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes {
-			t.Fatalf("stored object = %+v, artifact = %+v", object, artifact)
-		}
-		return workerapi.WorkspaceMountCaptureRequest{
-			OrgID: fixture.OrgID.String(), WorkspaceMountID: mountID.String(),
-			Tree: workerapi.WorkspaceTreeIdentity{
-				Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
-			},
-			Artifact: workerapi.WorkspaceArtifact{
-				Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
-				SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
-			},
-		}
-	}
-	first := makeCapture("marker.txt", "first logical workspace")
-	if first.Tree.Digest == first.Artifact.Digest || first.Tree.SizeBytes == first.Artifact.SizeBytes {
-		t.Fatalf("fixture conflates tree and artifact: %+v", first)
-	}
-	server := &Server{
-		db: db.New(fixture.Pool), tx: fixture.Pool, cas: store,
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
-	capture := func(request workerapi.WorkspaceMountCaptureRequest) *httptest.ResponseRecorder {
-		t.Helper()
-		body, err := json.Marshal(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/workspace-mounts/capture", strings.NewReader(string(body)))
-		httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
-			WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1,
-		}))
-		response := httptest.NewRecorder()
-		server.workerCaptureWorkspaceMount(response, httpRequest)
-		return response
-	}
-
-	var wrongArtifact pgtype.UUID
-	if err := fixture.Pool.QueryRow(t.Context(), "SELECT program_artifact_id FROM deployments WHERE id=$1", fixture.DeploymentID).Scan(&wrongArtifact); err != nil {
+	server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool, cas: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	worker := workerActor{WorkerInstanceID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1}
+	if err := fixture.Pool.QueryRow(t.Context(), `SELECT w.claim_version,g.claim_version FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1`, fixture.WorkerID).Scan(&worker.ClaimVersion, &worker.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	snapshotCapture := func() []byte {
-		var b []byte
-		if err := fixture.Pool.QueryRow(t.Context(), "SELECT jsonb_build_array(to_jsonb(m),to_jsonb(p),(SELECT jsonb_agg(to_jsonb(v) ORDER BY v.id) FROM workspace_versions v WHERE v.workspace_id=m.workspace_id)) FROM workspace_mounts m JOIN workspace_processes p ON p.workspace_mount_id=m.id WHERE m.id=$1", mountID).Scan(&b); err != nil {
-			t.Fatal(err)
-		}
-		return b
+	root := retainedTestGeneration(t, fixture.Pool, server, runtimeID.String(), computerPublicationKey("exec", pgvalue.UUID(processID), pgvalue.UUID(processID)))
+	return &execGenerationFixture{fixture, server, worker, workspaceID, baseWorkspaceVersionID, runtimeID, mountID, processID, root}
+}
+func (f *execGenerationFixture) call(t *testing.T, handler http.HandlerFunc, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, badArtifact := range []pgtype.UUID{{}, wrongArtifact, pgvalue.UUID(uuid.NewV7())} {
-		before := snapshotCapture()
-		tx, err := fixture.Pool.Begin(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = db.New(tx).StageWorkspaceExecCapture(t.Context(), db.StageWorkspaceExecCaptureParams{
-			WorkspaceMountID: pgvalue.UUID(mountID), WorkerInstanceID: pgvalue.UUID(fixture.WorkerID), WorkerEpoch: 1,
-			WorkspaceVersionID: pgvalue.UUID(uuid.NewV7()), ArtifactID: badArtifact, ContentDigest: first.Tree.Digest, SizeBytes: first.Tree.SizeBytes, EntryCount: first.Tree.EntryCount,
-		})
-		if !errors.Is(err, pgx.ErrNoRows) {
-			_ = tx.Rollback(t.Context())
-			t.Fatalf("invalid capture artifact: %v", err)
-		}
-		if err := tx.Commit(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(before, snapshotCapture()) {
-			t.Fatal("rejected capture mutated mount, process or versions")
-		}
-	}
-
-	response := capture(first)
-	if response.Code != http.StatusOK {
-		t.Fatalf("first capture = %d %s", response.Code, response.Body.String())
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw)).WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
+	w := httptest.NewRecorder()
+	handler(w, r)
+	return w
+}
+func (f *execGenerationFixture) capture() workerapi.WorkspaceMountCaptureRequest {
+	return workerapi.WorkspaceMountCaptureRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), Computer: workerapi.CheckpointComputer{ComputerID: f.computerID.String(), LogicalBytes: f.root.LogicalBytes, Root: f.root}}
+}
+func TestExecGenerationCaptureAndSettlement(t *testing.T) {
+	f := newExecGenerationFixture(t)
+	first := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture())
+	if first.Code != 200 {
+		t.Fatalf("capture: %d %s", first.Code, first.Body)
 	}
 	var receipt workerapi.WorkspaceMountCaptureResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &receipt); err != nil {
+	if err := json.Unmarshal(first.Body.Bytes(), &receipt); err != nil {
 		t.Fatal(err)
 	}
-	versionID := uuid.MustParse(receipt.VersionID)
-	var parentVersionID pgtype.UUID
-	var versionDigest, artifactDigest string
-	var versionSize, artifactSize int64
-	var versionEntries int32
-	if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT workspace_versions.parent_version_id, workspace_versions.content_digest, workspace_versions.size_bytes,
-       workspace_versions.entry_count, artifacts.digest, artifacts.size_bytes
-  FROM workspace_versions
-  JOIN artifacts ON artifacts.id = workspace_versions.artifact_id
- WHERE workspace_versions.id = $1`, versionID).Scan(
-		&parentVersionID, &versionDigest, &versionSize, &versionEntries, &artifactDigest, &artifactSize,
-	); err != nil {
+	replay := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture())
+	if replay.Code != 200 || !bytes.Equal(first.Body.Bytes(), replay.Body.Bytes()) {
+		t.Fatalf("replay: %d %s", replay.Code, replay.Body)
+	}
+	var head uuid.UUID
+	var status string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT head_version_id FROM computers WHERE id=$1`, f.computerID).Scan(&head); err != nil {
 		t.Fatal(err)
 	}
-	if !parentVersionID.Valid ||
-		versionDigest != first.Tree.Digest || versionSize != first.Tree.SizeBytes || versionEntries != first.Tree.EntryCount ||
-		artifactDigest != first.Artifact.Digest || artifactSize != first.Artifact.SizeBytes {
-		t.Fatalf("version=%v/%s/%d/%d artifact=%s/%d", parentVersionID, versionDigest, versionSize, versionEntries, artifactDigest, artifactSize)
+	if head != f.baseID {
+		t.Fatal("capture advanced head before physical close")
 	}
-	authority, err := server.db.GetWorkspaceResetTargetAuthority(t.Context(), db.GetWorkspaceResetTargetAuthorityParams{
-		OrgID: pgvalue.UUID(fixture.OrgID), ProjectID: pgvalue.UUID(fixture.ProjectID),
-		EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), WorkspaceID: pgvalue.UUID(workspaceID),
-		VersionID: pgvalue.UUID(versionID),
-	})
+	stop := workerapi.WorkspaceMountStopRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC()}}
+	result := f.call(t, f.server.workerStopWorkspaceMount, stop)
+	if result.Code != 200 {
+		t.Fatalf("stop: %d %s", result.Code, result.Body)
+	}
+	replayStop := f.call(t, f.server.workerStopWorkspaceMount, stop)
+	if replayStop.Code != 200 || !bytes.Equal(replayStop.Body.Bytes(), result.Body.Bytes()) {
+		t.Fatalf("stop replay %d %s", replayStop.Code, replayStop.Body)
+	}
+	var raw []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_version_id,p.status,r.locator FROM computers c JOIN workspace_processes p ON p.workspace_id=c.id JOIN computer_version_roots r ON r.computer_id=c.id AND r.version_id=c.head_version_id WHERE c.id=$1`, f.computerID).Scan(&head, &status, &raw); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := computer.ParseGenerationRoot(raw, f.root.LogicalBytes)
+	if err != nil || restored != f.root || head.String() != receipt.VersionID || status != "exited" {
+		t.Fatalf("settled %s %s %v", head, status, err)
+	}
+	authority, err := f.server.db.GetComputerVersionAuthority(t.Context(), db.GetComputerVersionAuthorityParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), WorkspaceID: pgvalue.UUID(f.computerID), VersionID: pgvalue.UUID(head)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	resetTarget, err := projectWorkspaceResetTarget(db.WorkspaceLease{BaseWorkspaceVersionID: pgvalue.UUID(versionID)}, authority)
-	if err != nil {
-		t.Fatalf("captured version is not a valid reset target: %v", err)
-	}
-	if resetTarget.BaseWorkspaceVersionID != versionID.String() || resetTarget.Artifact == nil ||
-		resetTarget.Artifact.Digest != first.Artifact.Digest || resetTarget.Tree.Digest != first.Tree.Digest {
-		t.Fatalf("captured reset target = %+v", resetTarget)
-	}
-
-	replayed := capture(first)
-	if replayed.Code != http.StatusOK || !strings.Contains(replayed.Body.String(), versionID.String()) {
-		t.Fatalf("same-tree replay = %d %s", replayed.Code, replayed.Body.String())
-	}
-	second := makeCapture("marker.txt", "different logical workspace")
-	conflicted := capture(second)
-	if conflicted.Code != http.StatusConflict || !strings.Contains(conflicted.Body.String(), "workspace capture replay differs") {
-		t.Fatalf("different-tree replay = %d %s", conflicted.Code, conflicted.Body.String())
-	}
-
-	var stagedID uuid.UUID
-	if err := fixture.Pool.QueryRow(t.Context(), `SELECT staged_version_id FROM workspace_mounts WHERE id = $1`, mountID).Scan(&stagedID); err != nil {
+	if _, err := projectComputerMountTarget(db.WorkspaceLease{BaseWorkspaceVersionID: pgvalue.UUID(head)}, authority); err != nil {
 		t.Fatal(err)
 	}
-	if stagedID != versionID {
-		t.Fatalf("staged version = %s, want %s", stagedID, versionID)
+}
+func TestExecGenerationRejectsUnpublishedAndChangedCapture(t *testing.T) {
+	f := newExecGenerationFixture(t)
+	request := f.capture()
+	request.Computer.Root.Pack.Digest = "sha256:" + string(bytes.Repeat([]byte{'f'}, 64))
+	if w := f.call(t, f.server.workerCaptureWorkspaceMount, request); w.Code != 409 {
+		t.Fatalf("unpublished %d %s", w.Code, w.Body)
+	}
+	if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 200 {
+		t.Fatalf("capture %d %s", w.Code, w.Body)
+	}
+	f.root = retainedTestGeneration(t, f.Pool, f.server, f.runtimeID.String(), computerPublicationKey("exec", pgvalue.UUID(f.processID), pgvalue.UUID(f.processID)))
+	if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 409 {
+		t.Fatalf("changed capture %d %s", w.Code, w.Body)
+	}
+}
+
+// Models an already committed save; live save admission is outside this fixture.
+func (f *execGenerationFixture) advanceSavedHead(t *testing.T) uuid.UUID {
+	t.Helper()
+	id := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,published_at)
+ SELECT $2,v.environment_id,v.computer_id,v.id,v.root_pack_digest,v.logical_bytes,'committed',(SELECT id FROM workspace_leases WHERE owner_process_id=$3),c.ownership_generation,c.writer_generation,now()
+ FROM computers c JOIN computer_versions v ON v.id=c.head_version_id WHERE c.id=$1`, f.computerID, id, f.processID)
+	raw, err := json.Marshal(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator) VALUES($1,$2,$3,$4)`, f.EnvironmentID, f.computerID, id, raw)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET head_version_id=$2 WHERE id=$1`, f.computerID, id)
+	return id
+}
+
+func TestExecSettlementAfterSavedHeadAdvancement(t *testing.T) {
+	for _, mode := range []string{"complete", "recovered complete", "failure", "recovered failure", "changed staged predecessor"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newExecGenerationFixture(t)
+			head := f.advanceSavedHead(t)
+			if mode == "recovered failure" {
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE workspace_mounts SET finalization_action=NULL, finalization_reason_code=NULL WHERE id=$1`, f.mountID)
+				f.recoverExec(t)
+			} else if mode == "failure" {
+				w := f.call(t, f.server.workerFailWorkspaceMount, workerapi.WorkspaceMountFailRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), Error: json.RawMessage(`{"code":"fixture_failure"}`)})
+				if w.Code != 200 {
+					t.Fatalf("failure: %d %s", w.Code, w.Body)
+				}
+			} else {
+				if w := f.call(t, f.server.workerCaptureWorkspaceMount, f.capture()); w.Code != 200 {
+					t.Fatalf("capture: %d %s", w.Code, w.Body)
+				}
+				if mode == "changed staged predecessor" {
+					head = f.advanceSavedHead(t)
+				}
+				if mode == "recovered complete" {
+					f.recoverExec(t)
+				} else {
+					w := f.call(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{OrgID: f.OrgID.String(), WorkspaceMountID: f.mountID.String(), CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC()}})
+					if mode == "complete" && w.Code != 200 {
+						t.Fatalf("stop: %d %s", w.Code, w.Body)
+					}
+					if mode == "changed staged predecessor" && w.Code == 200 {
+						t.Fatal("stale publication replaced newer saved head")
+					}
+				}
+			}
+			var origin, saved uuid.UUID
+			var parent *uuid.UUID
+			var status string
+			if err := f.Pool.QueryRow(t.Context(), `SELECT p.base_workspace_version_id,c.head_version_id,v.parent_version_id,c.status FROM workspace_processes p JOIN computers c ON c.id=p.workspace_id JOIN computer_versions v ON v.id=c.head_version_id WHERE p.id=$1`, f.processID).Scan(&origin, &saved, &parent, &status); err != nil {
+				t.Fatal(err)
+			}
+			if origin != f.baseID {
+				t.Fatal("execution origin changed")
+			}
+			if mode == "complete" || mode == "recovered complete" {
+				if saved == head || parent == nil || *parent != head {
+					t.Fatal("completion did not follow saved predecessor")
+				}
+			} else if saved != head {
+				t.Fatal("failure replaced saved head")
+			}
+			if (mode == "failure" || mode == "recovered failure") && status != "recovery_required" {
+				t.Fatalf("status %s", status)
+			}
+		})
+	}
+}
+
+func (f *execGenerationFixture) recoverExec(t *testing.T) {
+	t.Helper()
+	if _, err := f.server.db.LoseWorkspaceExecMount(t.Context(), db.LoseWorkspaceExecMountParams{WorkspaceMountID: pgvalue.UUID(f.mountID), WorkspaceID: pgvalue.UUID(f.computerID), ReasonCode: pgvalue.Text("fixture_loss")}); err != nil {
+		t.Fatal(err)
+	}
+	key, err := workspace.NewFencingKey(bytes.Repeat([]byte{9}, workspace.FencingKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := dispatch.NewRunAuthority(f.Pool, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revision int64
+	if err := f.Pool.QueryRow(t.Context(), `SELECT revision FROM workspace_processes WHERE id=$1`, f.processID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if err := authority.RecoverWorkspaceExec(t.Context(), dispatch.RecoverableWorkspaceExecCandidate{OrgID: pgvalue.UUID(f.OrgID), ProcessID: pgvalue.UUID(f.processID), WorkspaceID: pgvalue.UUID(f.computerID), ExpectedRevision: revision}); err != nil {
+		t.Fatal(err)
 	}
 }

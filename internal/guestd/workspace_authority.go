@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"uuid"
 
@@ -86,8 +87,8 @@ func handleProgramResumeGrantConnection(
 	if clock == nil {
 		clock = time.Now
 	}
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	if err := mounts.installResumedProgramAuthorityLocked(entry, authority, clock()); err != nil {
@@ -208,8 +209,8 @@ func handleProgramRestoreVerifyConnection(
 }
 
 func (entry *workspaceMountEntry) installWorkspaceRunAuthority(authority *workspacev0.WorkspaceRunAuthority, now time.Time) error {
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	return entry.installWorkspaceRunAuthorityLocked(authority, now)
@@ -274,21 +275,8 @@ func (entry *workspaceMountEntry) pruneWorkspaceFinalizationState() error {
 	if entry.finalizationRoot == "" {
 		return nil
 	}
-	journal, found, err := entry.readWorkspaceFinalizationJournal()
-	if err != nil {
+	if _, _, err := entry.readWorkspaceFinalizationJournal(); err != nil {
 		return fmt.Errorf("read workspace finalization state for pruning: %w", err)
-	}
-	if found && journal.Kind == workspace.FinalizationResetKind && strings.TrimSpace(journal.OperationID) != "" {
-		operationID, err := uuid.Parse(journal.OperationID)
-		if err != nil || operationID.String() != journal.OperationID {
-			return errors.New("workspace reset journal operation ID is invalid")
-		}
-		if err := os.RemoveAll(entry.workspaceResetStagingPath(journal.OperationID)); err != nil {
-			return fmt.Errorf("prune workspace reset staging tree: %w", err)
-		}
-		if err := syncDirectory(filepath.Dir(entry.workspaceRoot)); err != nil {
-			return fmt.Errorf("sync pruned workspace reset staging tree: %w", err)
-		}
 	}
 	for _, name := range []string{workspaceCaptureArtifactName, workspaceFinalizationJournalName} {
 		if err := os.Remove(filepath.Join(entry.finalizationRoot, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -390,8 +378,8 @@ func (r *workspaceOperationRegistry) beginCurrentWorkspaceFinalization(
 	}
 	previous := request.GetPrevious()
 	fence := previous.GetFence()
-	entry.turnCommitMu.Lock()
-	defer entry.turnCommitMu.Unlock()
+	entry.lifecycleMu.Lock()
+	defer entry.lifecycleMu.Unlock()
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
 	if !r.currentExactLocked(
@@ -423,8 +411,8 @@ func (entry *workspaceMountEntry) beginWorkspaceFinalizationLocked(
 		return nil, errors.New("workspace finalization operation_id must be a canonical UUID")
 	}
 	kind := request.GetKind()
-	if kind != workspace.FinalizationCaptureKind && kind != workspace.FinalizationResetKind {
-		return nil, errors.New("workspace finalization kind must be capture or reset")
+	if kind != workspace.FinalizationCaptureKind {
+		return nil, errors.New("workspace finalization kind must be capture")
 	}
 	previous := request.GetPrevious()
 	previousExpiry := previous.GetFence().GetExpiresAtUnixNano()
@@ -505,6 +493,9 @@ func (entry *workspaceMountEntry) beginWorkspaceFinalizationLocked(
 		return nil, errors.New("workspace run authority state is invalid")
 	}
 
+	// Flush completed guest writes before the host establishes its disk-only hold.
+	// This is cooperative quiescence, not a root-resistant storage receipt.
+	syscall.Sync()
 	return &workspacev0.BeginWorkspaceFinalizationResponse{
 		Fence:       proto.Clone(entry.authority.GetFence()).(*workspacev0.WorkspaceAuthorityFence),
 		OperationId: operationID,

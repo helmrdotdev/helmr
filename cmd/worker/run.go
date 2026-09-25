@@ -35,6 +35,9 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
+	if len(cfg.ComputerDevices) == 0 {
+		return errors.New("WORKER_COMPUTER_DEVICES requires an operator-owned NBD allowlist")
+	}
 	physicalMemoryMiB, err := physicalWorkerMemoryMiB()
 	if err != nil {
 		return fmt.Errorf("inspect worker host memory: %w", err)
@@ -243,6 +246,15 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.Substrates = substrateResolver
 		preparedRuntimePool.RuntimeSubstrates = controlPlaneClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
+		preparedRuntimePool.ComputerObjects = store
+		preparedRuntimePool.ComputerPreparation = controlPlaneClient
+		preparedRuntimePool.ComputerRanges = store
+		preparedRuntimePool.ComputerDevices = cfg.ComputerDevices
+		preparedRuntimePool.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)
+		preparedRuntimePool.ComputerHelper, err = os.Executable()
+		if err != nil {
+			return err
+		}
 		preparedRuntimePool.RuntimeInstances = controlPlaneClient
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.PlatformStore = platformStore
@@ -251,6 +263,7 @@ func run(log *slog.Logger) error {
 		log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
 	}
 	runLeaseTasks := executor.ProgramRunner{
+		CheckpointObjects: store, Capacity: hostCapacity,
 		CAS:                 store,
 		CheckpointEncryptor: checkpointEncryptor,
 		WorkspaceMounts:     workspaceMountSessions,
@@ -268,6 +281,9 @@ func run(log *slog.Logger) error {
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
 		worker.WithMaterializer(executor.WorkspaceMaterializer{
+			ComputerSaves:         controlPlaneClient,
+			ComputerSaveEvery:     cfg.ComputerSaveEvery,
+			ComputerObjects:       platformStore,
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),

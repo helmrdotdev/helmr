@@ -219,19 +219,11 @@ func TestBeginRunFinalizationAcceptsDifferentWorkspaceParentOwnedChild(t *testin
 	}
 }
 
-func TestBeginRunFinalizationAcceptsReset(t *testing.T) {
-	server, _, worker, request, _ := validRunFinalizationFixture(t)
-	request.Kind = workerapi.RunFinalizationReset
-	parsed, err := parseRunFinalization(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := server.beginRunFinalization(context.Background(), worker, request, parsed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Kind != workerapi.RunFinalizationReset {
-		t.Fatalf("kind = %q, want reset", response.Kind)
+func TestBeginRunFinalizationRejectsReset(t *testing.T) {
+	_, _, _, request, _ := validRunFinalizationFixture(t)
+	request.Kind = "reset"
+	if _, err := parseRunFinalization(request); err == nil {
+		t.Fatal("removed reset operation accepted")
 	}
 }
 
@@ -273,13 +265,14 @@ func TestLockLiveRunFinalizationAuthorityLocksLineageBeforePhysicalAuthority(t *
 		{Run: lineageRun(parentID, middleID), Depth: 0},
 	}
 	store.calls = nil
-	authority, err := lockLiveRunFinalizationAuthority(
+	authority, err := lockRunPublicationAuthority(
 		context.Background(),
 		store,
 		worker,
 		pgvalue.UUID(uuid.MustParse(receipt.ID)),
 		receipt.LeaseSequence,
 		store.renewal,
+		db.RunStatusRunning,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -428,7 +421,6 @@ func (s *runLeaseClaimStore) BeginRunLeaseFinalization(
 	s.authority.runLease.Status = db.RunLeaseStatusFinalizing
 	s.authority.runLease.ExpiresAt = params.ExpiresAt
 	s.authority.runLease.FinalizationOperationID = params.FinalizationOperationID
-	s.authority.runLease.FinalizationKind = params.FinalizationKind
 	s.authority.runLease.FinalizationStartedAt = params.FinalizationStartedAt
 	s.authority.runLease.FinalizationRequestFingerprint = params.FinalizationRequestFingerprint
 	s.finalizationWrites++

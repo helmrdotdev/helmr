@@ -1,7 +1,12 @@
 package deployment
 
+import (
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/oci"
+)
+
 const (
-	WorkspaceImageArtifactMediaType       = "application/vnd.helmr.workspace-image.v0.oci-tar"
+	WorkspaceImageArtifactMediaType       = computer.SeedMediaType
 	MaxWorkspaceImageBytes          int64 = 17179869184
 )
 
@@ -13,6 +18,8 @@ type WorkspaceImage struct {
 }
 
 type WorkspaceImageArtifact struct {
+	Profile      string              `json:"profile"`
+	Config       oci.RuntimeConfig   `json:"config"`
 	Digest       string              `json:"digest"`
 	SizeBytes    int64               `json:"sizeBytes"`
 	MediaType    string              `json:"mediaType"`

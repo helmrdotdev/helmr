@@ -526,3 +526,15 @@ func TestRunConsumerReservesInitiatorBeforePublishingToWaiters(t *testing.T) {
 		}
 	})
 }
+
+func (*runConsumerTestClient) RegisterExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+	return nil
+}
+
+func (*runConsumerTestClient) CertifyExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+	return nil
+}
+
+func (*runConsumerTestClient) ReuseExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+	return nil
+}

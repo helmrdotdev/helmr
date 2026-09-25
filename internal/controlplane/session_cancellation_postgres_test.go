@@ -45,7 +45,7 @@ func TestSessionCancellationBeforeStartPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
 		t.Fatalf("close: pending=%v err=%v", pending, err)
 	}
 	for _, turnID := range queuedIDs {
@@ -56,7 +56,7 @@ func TestSessionCancellationBeforeStartPostgres(t *testing.T) {
 	var status string
 	var owner *uuid.UUID
 	var cursor, turns, runs, events int
-	err = f.pool.QueryRow(t.Context(), `SELECT s.status,w.owner_session_id,s.committed_input_sequence,(SELECT count(*) FROM session_turns WHERE session_id=s.id AND status='cancelled' AND run_id IS NULL AND terminal_event_id IS NOT NULL),(SELECT count(*) FROM runs WHERE session_id=s.id),(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.cancelled') FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &owner, &cursor, &turns, &runs, &events)
+	err = f.pool.QueryRow(t.Context(), `SELECT s.status,w.owner_session_id,s.committed_input_sequence,(SELECT count(*) FROM session_turns WHERE session_id=s.id AND status='cancelled' AND run_id IS NULL AND terminal_event_id IS NOT NULL),(SELECT count(*) FROM runs WHERE session_id=s.id),(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.cancelled') FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &owner, &cursor, &turns, &runs, &events)
 	if err != nil || status != "closed" || owner != nil || cursor != 2 || turns != 2 || events != 2 || runs != 1 {
 		t.Fatalf("state=%s owner=%v cursor=%d turns=%d events=%d runs=%d err=%v", status, owner, cursor, turns, events, runs, err)
 	}
@@ -83,7 +83,7 @@ func TestSessionCancellationWaitsForPhysicalStopPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
 		t.Fatalf("active close: %v %v", pending, err)
 	}
 	var hold uuid.UUID
@@ -102,16 +102,16 @@ func TestSessionCancellationWaitsForPhysicalStopPostgres(t *testing.T) {
 	if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !pending {
 		t.Fatalf("closed before physical cleanup: %v %v", pending, err)
 	}
 	f.reportRuntimeClosed(t)
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || pending {
 		t.Fatalf("settled close: %v %v", pending, err)
 	}
 	var status string
 	var owner *uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT s.status,s.committed_input_sequence,w.owner_session_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &cursor, &owner); err != nil || status != "closed" || cursor != 3 || owner != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT s.status,s.committed_input_sequence,w.owner_session_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &cursor, &owner); err != nil || status != "closed" || cursor != 3 || owner != nil {
 		t.Fatalf("state=%s cursor=%d owner=%v err=%v", status, cursor, owner, err)
 	}
 }
@@ -119,7 +119,7 @@ func TestSessionCancellationWaitsForPhysicalStopPostgres(t *testing.T) {
 func TestSessionCancellationParkedRecoveryPostgres(t *testing.T) {
 	f := newActorCheckpointFixture(t)
 	capture := f.capture(t, "retained head")
-	f.turn(t, 1, capture, true)
+	f.turn(t, 1)
 	target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
 	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`"active"`)}); err != nil {
 		t.Fatal(err)
@@ -141,18 +141,8 @@ func TestSessionCancellationParkedRecoveryPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if waiting, err := closeReconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || !waiting {
-		t.Fatalf("parked close=%v %v", waiting, err)
-	}
-	var hold, head uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,w.head_version_id FROM sessions s JOIN workspaces w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&hold, &head); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.server.applySessionRecovery(t.Context(), session.RecoverRequest{ResumeRequest: session.ResumeRequest{ControlRequest: session.ControlRequest{Target: target, IdempotencyKey: "recover"}, HoldID: hold}, TurnID: &scope.TurnID, WorkspaceVersionID: head, ReconciliationRef: "test:parked-cleanup", Disposition: "interrupted"}); err != nil {
-		t.Fatal(err)
-	}
-	if waiting, err := closeReconciler.ReconcileClose(t.Context(), f.EnvironmentID, f.sessionID); err != nil || waiting {
-		t.Fatalf("recovered close=%v %v", waiting, err)
+	if waiting, err := closeReconciler.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); err != nil || waiting {
+		t.Fatalf("parked cancel=%v %v", waiting, err)
 	}
 	var status string
 	var cursor int
@@ -195,7 +185,7 @@ func TestSessionCancellationRacingAdmissionPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := reconciler.ReconcileClose(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
+	if pending, err := reconciler.ReconcileLifecycle(t.Context(), f.environmentID, started.SessionID); err != nil || pending {
 		t.Fatalf("close=%v %v", pending, err)
 	}
 	var status string

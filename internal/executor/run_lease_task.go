@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -28,11 +29,13 @@ var (
 )
 
 type RunLeaseControlPlane interface {
+	RunComputerPublicationClient
 	ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error)
 	AcknowledgeRunStart(context.Context, workerapi.RunStartRequest) (workerapi.RunStartResponse, error)
 	AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error
 	RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
 	BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error)
+	RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error
 	CompleteTask(context.Context, workerapi.CompleteTaskRequest) error
 	CompleteActor(context.Context, workerapi.CompleteActorRequest) error
 	CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error)
@@ -68,15 +71,18 @@ type RunLeaseTaskRenewal struct {
 }
 
 type RunLeaseTask interface {
+	QuiesceComputerSaves(context.Context) error
 	Close()
 	Wait(context.Context) (RunLeaseTaskResult, error)
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
 	BeginWorkspaceFinalization(context.Context, workerapi.RunLeaseAssignment, workerapi.RunLeaseAssignment, string, workerapi.RunFinalizationKind) error
 	CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error)
-	ResetWorkspace(context.Context) (workerapi.TaskWorkspaceRollback, error)
 }
 
 func (task *guestRunLeaseTask) Close() {
+	if task.saveDetach != nil {
+		task.saveDetach()
+	}
 	if task.program.protocol != nil {
 		_ = task.program.protocol.Close()
 	}
@@ -90,17 +96,19 @@ type RunLeaseTaskRunner interface {
 }
 
 type guestRunLeaseTask struct {
-	stopMu        sync.Mutex
-	stopDeadline  time.Time
-	program       freshProgram
-	mounts        WorkspaceMountSessionRegistry
-	store         cas.Store
-	controlPlane  RunLeaseControlPlane
-	resetTarget   workspace.ResetTarget
-	waits         *ControlPlaneRunWaits
-	checkpointer  Checkpointer
-	waitWorkspace workerapi.Workspace
-	orgID         string
+	saveDetach      func()
+	saveWaiting     int
+	stopMu          sync.Mutex
+	stopDeadline    time.Time
+	program         freshProgram
+	mounts          WorkspaceMountSessionRegistry
+	store           cas.Store
+	controlPlane    RunLeaseControlPlane
+	waits           *ControlPlaneRunWaits
+	checkpointer    Checkpointer
+	terminalCapture *terminalComputerCapturer
+	waitWorkspace   workerapi.Workspace
+	orgID           string
 
 	renewalGate      sync.Mutex
 	mu               sync.Mutex
@@ -148,7 +156,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 	if r.CAS == nil {
 		return nil, errors.New("run lease task CAS is required")
 	}
-	target, err := runLeaseResetTarget(claim)
+	target, err := runLeaseMountTarget(claim)
 	if err != nil {
 		return nil, err
 	}
@@ -177,15 +185,19 @@ func (r ProgramRunner) StartRunLeaseTask(
 		mounts:       r.WorkspaceMounts,
 		store:        r.CAS,
 		controlPlane: controlPlane,
-		resetTarget:  target,
 		lease:        program.lease,
 		authority:    authority,
 		orgID:        program.mount.OrgID,
 		waitWorkspace: waitWorkspaceForRun(
 			program.mount,
 			claim.Lease,
-			claim.Workspace.ResetTarget,
+			claim.Workspace.Target,
 		),
+	}
+	if session, ok := program.session.(vm.ComputerCaptureSession); ok {
+		task.terminalCapture = &terminalComputerCapturer{session: session, publication: func(lease workerapi.RunLeaseAssignment, op string) computer.ContinuationPublication {
+			return runComputerPublisher{client: controlPlane, objects: r.CheckpointObjects, request: workerapi.RunComputerObjectRequest{Lease: lease.Fence(), OperationID: op}}
+		}}
 	}
 	task.program.protocol = newProgramProtocol(program.session.Stream())
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
@@ -193,8 +205,11 @@ func (r ProgramRunner) StartRunLeaseTask(
 	}
 	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
 		task.checkpointer = &runtimeCheckpointer{
+			publication: func(req CheckpointRequest) computer.ContinuationPublication {
+				return runComputerPublisher{client: controlPlane, objects: r.CheckpointObjects, request: workerapi.RunComputerObjectRequest{Lease: program.lease.Fence(), Checkpoint: &workerapi.ComputerCheckpointPublication{ID: req.CheckpointID, RunWaitID: req.RunWaitID, RequestVersion: req.CheckpointRequestVersion}}}
+			},
+			objects: r.CheckpointObjects, capacity: r.Capacity,
 			session:    checkpointable,
-			cas:        r.CAS,
 			encryptor:  r.CheckpointEncryptor,
 			tempDir:    r.tempDir(),
 			stream:     task.programStream(),
@@ -205,13 +220,25 @@ func (r ProgramRunner) StartRunLeaseTask(
 			onFrozen:   task.markCheckpointFrozen,
 		}
 	}
+	owner, ok := program.session.(interface {
+		AttachComputerSaveAuthority(string, string, func() *workerapi.ComputerSaveBeginRequest) (func(), error)
+	})
+	if !ok {
+		task.Close()
+		return nil, errors.New("run physical mount save owner is missing")
+	}
+	task.saveDetach, err = owner.AttachComputerSaveAuthority(program.lease.RuntimeInstanceID, program.mount.WorkspaceID, task.computerSaveAuthority)
+	if err != nil {
+		task.Close()
+		return nil, err
+	}
 	return task, nil
 }
 
 func waitWorkspaceForRun(
 	mount workerapi.WorkspaceMount,
 	lease workerapi.RunLeaseAssignment,
-	target workerapi.WorkspaceResetTarget,
+	target workerapi.ComputerMountTarget,
 ) workerapi.Workspace {
 	return workerapi.Workspace{
 		ID:                     mount.WorkspaceID,
@@ -219,7 +246,6 @@ func waitWorkspaceForRun(
 		FencingGeneration:      lease.MountFencingGeneration,
 		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
 		MountPath:              mount.WorkspaceMountPath,
-		Artifact:               target.Artifact,
 	}
 }
 
@@ -710,7 +736,7 @@ func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
 		return errors.New("workspace finalization expiry did not advance")
 	}
 	if strings.TrimSpace(operationID) == "" ||
-		(kind != workerapi.RunFinalizationCapture && kind != workerapi.RunFinalizationReset) {
+		kind != workerapi.RunFinalizationCapture {
 		return errors.New("workspace finalization identity is invalid")
 	}
 	response, err := task.mounts.BeginWorkspaceFinalization(
@@ -744,59 +770,16 @@ func (task *guestRunLeaseTask) CaptureWorkspace(
 	if err != nil {
 		return workerapi.TaskWorkspaceCapture{}, err
 	}
-	result, err := task.mounts.CaptureWorkspace(
-		ctx,
-		&workspacev0.CaptureWorkspaceRequest{Envelope: envelope},
-		task.store,
-	)
+	if task.terminalCapture == nil {
+		return workerapi.TaskWorkspaceCapture{}, errors.New("host Computer finalization is unavailable")
+	}
+	disk, err := task.terminalCapture.capture(ctx, task.lease, task.operationID, task.controlPlane.RegisterRunFinalization)
 	if err != nil {
 		return workerapi.TaskWorkspaceCapture{}, err
 	}
 	task.finished = true
 	task.clearCapabilities()
-	return workerapi.TaskWorkspaceCapture{
-		Receipt: workerWorkspaceFinalizationReceipt(result.Receipt),
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: result.ReportedTree.Digest, SizeBytes: result.ReportedTree.SizeBytes,
-			EntryCount: int32(result.ReportedTree.EntryCount),
-		},
-		Artifact: workerapi.WorkspaceArtifact{
-			Digest: result.Artifact.Digest, MediaType: result.Artifact.MediaType,
-			Encoding: result.Artifact.Encoding, SizeBytes: result.Artifact.SizeBytes,
-			EntryCount: int32(result.Artifact.EntryCount),
-		},
-	}, nil
-}
-
-func (task *guestRunLeaseTask) ResetWorkspace(
-	ctx context.Context,
-) (workerapi.TaskWorkspaceRollback, error) {
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != workerapi.RunFinalizationReset {
-		return workerapi.TaskWorkspaceRollback{}, errors.New("run lease task is not resetting")
-	}
-	envelope, err := task.finalizationEnvelope(workspace.FinalizationResetKind, task.resetTarget)
-	if err != nil {
-		return workerapi.TaskWorkspaceRollback{}, err
-	}
-	result, err := task.mounts.ResetWorkspace(
-		ctx,
-		&workspacev0.ResetWorkspaceRequest{
-			Envelope: envelope,
-			Target:   workspace.ResetTargetProto(task.resetTarget),
-		},
-		task.store,
-	)
-	if err != nil {
-		return workerapi.TaskWorkspaceRollback{}, err
-	}
-	task.finished = true
-	task.clearCapabilities()
-	return workerapi.TaskWorkspaceRollback{
-		Receipt: workerWorkspaceFinalizationReceipt(result.Receipt),
-		Target:  workerWorkspaceResetTarget(result.Target),
-	}, nil
+	return workerapi.TaskWorkspaceCapture{Receipt: workerWorkspaceFinalizationReceipt(&workspacev0.WorkspaceFinalizationReceipt{OperationId: envelope.OperationId, RequestFingerprint: envelope.RequestFingerprint, Fence: envelope.Authority.Fence}), Disk: disk}, nil
 }
 
 func (task *guestRunLeaseTask) finalizationEnvelope(
@@ -843,51 +826,22 @@ func validateRunLeaseExpiryAdvance(
 	return nil
 }
 
-func runLeaseResetTarget(
-	claim *workerapi.RunLeaseClaimResponse,
-) (workspace.ResetTarget, error) {
+func runLeaseMountTarget(claim *workerapi.RunLeaseClaimResponse) (workerapi.ComputerMountTarget, error) {
 	if claim == nil {
-		return workspace.ResetTarget{}, errors.New("run lease claim is required")
+		return workerapi.ComputerMountTarget{}, errors.New("run lease claim is required")
 	}
-	target := claim.Workspace.ResetTarget
+	target := claim.Workspace.Target
 	if target.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID {
-		return workspace.ResetTarget{}, errors.New("run lease workspace reset target does not match its base version")
+		return workerapi.ComputerMountTarget{}, errors.New("computer mount target does not match lease base")
 	}
-	tree := workspace.TreeIdentity{
-		Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
-		EntryCount: int(target.Tree.EntryCount),
-	}
-	switch {
-	case target.Empty != nil && target.Artifact == nil:
-		return workspace.EmptyResetTarget(target.BaseWorkspaceVersionID, tree)
-	case target.Empty == nil && target.Artifact != nil:
-		return workspace.ArtifactResetTarget(
-			target.BaseWorkspaceVersionID,
-			tree,
-			workspace.ArtifactIdentity{
-				Digest: target.Artifact.Digest, MediaType: target.Artifact.MediaType,
-				Encoding: target.Artifact.Encoding, SizeBytes: target.Artifact.SizeBytes,
-				EntryCount: int(target.Artifact.EntryCount),
-			},
-		)
-	default:
-		return workspace.ResetTarget{}, errors.New("run lease workspace reset target is invalid")
-	}
+	return target, validateComputerMountTarget(target)
 }
 
-func checkpointWorkspaceBase(target workspace.ResetTarget) (workerapi.CheckpointWorkspaceBase, error) {
-	if err := workspace.ValidateResetTarget(target); err != nil {
-		return workerapi.CheckpointWorkspaceBase{}, fmt.Errorf("validate checkpoint workspace base: %w", err)
+func checkpointWorkspaceBase(target workerapi.ComputerMountTarget) (workerapi.CheckpointWorkspaceBase, error) {
+	if err := validateComputerMountTarget(target); err != nil {
+		return workerapi.CheckpointWorkspaceBase{}, err
 	}
-	base := workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}
-	if target.Artifact == nil {
-		return base, nil
-	}
-	base.ArtifactDigest = target.Artifact.Digest
-	base.ArtifactSizeBytes = target.Artifact.SizeBytes
-	base.ArtifactMediaType = target.Artifact.MediaType
-	base.ArtifactEncoding = target.Artifact.Encoding
-	return base, nil
+	return workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}, nil
 }
 
 func workerTaskOutcome(outcome *programv0.TaskOutcome) (workerapi.TaskOutcome, error) {
@@ -936,26 +890,6 @@ func workerWorkspaceFinalizationReceipt(
 	}
 }
 
-func workerWorkspaceResetTarget(target workspace.ResetTarget) workerapi.WorkspaceResetTarget {
-	result := workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
-		Tree: workerapi.WorkspaceTreeIdentity{
-			Digest: target.Tree.Digest, SizeBytes: target.Tree.SizeBytes,
-			EntryCount: int32(target.Tree.EntryCount),
-		},
-	}
-	if target.Kind == workspace.ResetTargetEmpty {
-		result.Empty = &workerapi.EmptyWorkspace{}
-	} else {
-		result.Artifact = &workerapi.WorkspaceArtifact{
-			Digest: target.Artifact.Digest, MediaType: target.Artifact.MediaType,
-			Encoding: target.Artifact.Encoding, SizeBytes: target.Artifact.SizeBytes,
-			EntryCount: int32(target.Artifact.EntryCount),
-		}
-	}
-	return result
-}
-
 func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure {
 	failure := workerapi.TaskFailure{Message: message}
 	if details != nil {
@@ -965,3 +899,21 @@ func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure
 }
 
 var _ RunLeaseTaskRunner = ProgramRunner{}
+
+func (task *guestRunLeaseTask) QuiesceComputerSaves(ctx context.Context) error {
+	owner, ok := task.program.session.(interface{ QuiesceComputerSaves(context.Context) error })
+	if !ok {
+		return errors.New("run physical mount save owner is missing")
+	}
+	return owner.QuiesceComputerSaves(ctx)
+}
+
+func (task *guestRunLeaseTask) computerSaveAuthority() *workerapi.ComputerSaveBeginRequest {
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	if task.finished || task.checkpointFrozen || task.finalizingKind != "" || task.saveWaiting > 0 || !task.lease.ExpiresAt.After(time.Now()) {
+		return nil
+	}
+	fence := task.lease.Fence()
+	return &workerapi.ComputerSaveBeginRequest{Lease: &fence}
+}

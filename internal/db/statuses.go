@@ -163,9 +163,10 @@ const (
 type WorkspaceVersionStatus = string
 
 const (
-	WorkspaceVersionStatusPrivate   WorkspaceVersionStatus = "private"
-	WorkspaceVersionStatusCommitted WorkspaceVersionStatus = "committed"
-	WorkspaceVersionStatusDiscarded WorkspaceVersionStatus = "discarded"
+	WorkspaceVersionStatusInitializing WorkspaceVersionStatus = "initializing"
+	WorkspaceVersionStatusPrivate      WorkspaceVersionStatus = "private"
+	WorkspaceVersionStatusCommitted    WorkspaceVersionStatus = "committed"
+	WorkspaceVersionStatusDiscarded    WorkspaceVersionStatus = "discarded"
 )
 
 type WorkspaceMountStatus = string

@@ -37,7 +37,7 @@ WITH transitioned AS (
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET status = 'unmounting',
-           finalization_kind = 'discard',
+           finalization_action = 'discard',
            finalization_reason_code = 'worker_draining',
            finalization_error = NULL,
            stopped_at = COALESCE(stopped_at, now()), updated_at = now()
@@ -48,7 +48,7 @@ WITH transitioned AS (
            workspace_mounts.status IN ('mounting', 'mounted')
            OR (
                workspace_mounts.status = 'unmounting'
-               AND workspace_mounts.finalization_kind IS NULL
+               AND workspace_mounts.finalization_action IS NULL
            )
        )
        AND NOT EXISTS (
@@ -466,16 +466,16 @@ func (q *Queries) GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInst
 
 const listQueuedRunEligibleScopes = `-- name: ListQueuedRunEligibleScopes :many
 WITH candidate_scopes AS (
-    SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+    SELECT runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
            coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
-               runs.environment_id::text || ':' || workspaces.region_id || ':' ||
+               runs.environment_id::text || ':' || computers.region_id || ':' ||
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $9::text) AS sort_key
       FROM runs
-      JOIN workspaces ON workspaces.environment_id = runs.environment_id
-                     AND workspaces.id = runs.workspace_id
+      JOIN computers ON computers.environment_id = runs.environment_id
+                     AND computers.id = runs.workspace_id
      WHERE runs.status = 'queued'
-       AND ($10::text = '' OR workspaces.region_id = $10)
+       AND ($10::text = '' OR computers.region_id = $10)
        AND runs.current_run_lease_id IS NULL
        AND (runs.next_runtime_preparation_at IS NULL
             OR runs.next_runtime_preparation_at <= transaction_timestamp())
@@ -484,8 +484,8 @@ WITH candidate_scopes AS (
             AND runs.session_id IS NULL
             AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
             AND (
-              (workspaces.owner_run_id = runs.id
-               AND workspaces.owner_session_id IS NULL
+              (computers.owner_run_id = runs.id
+               AND computers.owner_session_id IS NULL
                AND (NOT EXISTS (
                SELECT 1
                  FROM run_waits
@@ -504,10 +504,10 @@ WITH candidate_scopes AS (
                   AND run_checkpoints.workspace_id = run_waits.workspace_id
                   AND run_checkpoints.status = 'ready'
                   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-                 JOIN workspace_versions
-                   ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-                  AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-                  AND workspace_versions.status = 'private'
+                 JOIN computer_versions
+                   ON computer_versions.computer_id = run_checkpoints.workspace_id
+                  AND computer_versions.id = run_checkpoints.private_workspace_version_id
+                  AND computer_versions.status = 'private'
                 WHERE run_waits.run_id = runs.id
                   AND run_waits.suspension_status = 'resume_pending'
               )))
@@ -528,8 +528,8 @@ WITH candidate_scopes AS (
                      AND checkpoint.run_wait_id = edge.id
                      AND checkpoint.workspace_id = edge.workspace_id
                      AND checkpoint.status = 'ready'
-                    JOIN workspace_versions AS base
-                      ON base.workspace_id = edge.workspace_id
+                    JOIN computer_versions AS base
+                      ON base.computer_id = edge.workspace_id
                      AND base.id = edge.base_workspace_version_id
                      AND base.status = 'private'
                    WHERE edge.child_run_id = runs.id
@@ -539,8 +539,10 @@ WITH candidate_scopes AS (
                      AND edge.workspace_id = runs.workspace_id
                      AND edge.condition_status = 'pending'
                      AND edge.suspension_status = 'parked'
-                     AND edge.base_workspace_version_id =
-                         runs.base_workspace_version_id
+                     AND EXISTS (SELECT 1 FROM run_attempts origin
+                         WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
+                           AND origin.workspace_id = edge.workspace_id
+                           AND origin.base_workspace_version_id = edge.base_workspace_version_id)
                      AND edge.ownership_generation IS NOT NULL
                      AND edge.parent_writer_generation IS NOT NULL
                      AND (
@@ -552,7 +554,7 @@ WITH candidate_scopes AS (
                                  ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
                                 AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
                                 AND (
-                                    prior_child_lease.status = 'checkpointed'
+                                    (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
                                     OR (
                                         prior_child_lease.status = 'expired'
                                         AND prior_child_workspace_lease.status = 'expired'
@@ -588,11 +590,33 @@ WITH candidate_scopes AS (
                                                  COALESCE(resume_edge.resume_workspace_version_id, resume_checkpoint.private_workspace_version_id)
                                         )
                                     )
-                                    OR prior_child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+                                    OR (prior_child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+                                        AND runs.base_workspace_version_id = edge.base_workspace_version_id
+                                        AND prior_child_lease.attempt_number = runs.current_attempt_number)
+                                    OR EXISTS (
+                                        SELECT 1
+                                          FROM computer_versions AS retry_version
+                                          JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
+                                          AND prior_child_lease.finalization_root = retry_root.locator
+                                         WHERE retry_version.id = runs.base_workspace_version_id
+                                           AND retry_version.computer_id = runs.workspace_id
+                                           AND retry_version.status = 'private'
+                                           AND retry_version.source_workspace_lease_id = prior_child_workspace_lease.id
+                                           AND retry_version.parent_version_id = prior_child_workspace_lease.base_workspace_version_id
+                                           AND retry_version.ownership_generation = prior_child_workspace_lease.ownership_generation
+                                           AND retry_version.writer_generation = prior_child_workspace_lease.writer_generation
+                                           AND prior_child_lease.attempt_number = runs.current_attempt_number - 1
+                                           AND prior_child_lease.status = 'failed'
+                                           AND prior_child_lease.terminal_at IS NOT NULL
+                                           AND prior_child_lease.terminal_request_fingerprint IS NOT NULL
+                                           AND prior_child_lease.finalization_operation_id IS NOT NULL
+                                    )
                                     OR EXISTS (
                                         SELECT 1
                                           FROM run_waits AS prior_resume_edge
                                          WHERE prior_resume_edge.run_id = runs.id
+                                           AND prior_resume_edge.attempt_number = prior_child_lease.attempt_number
+                                           AND prior_child_lease.attempt_number = runs.current_attempt_number
                                            AND prior_resume_edge.workspace_id = runs.workspace_id
                                            AND prior_resume_edge.suspension_status = 'resume_pending'
                                            AND prior_resume_edge.ownership_generation = edge.ownership_generation
@@ -609,7 +633,7 @@ WITH candidate_scopes AS (
                                 AND (
                                     prior_child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
                                     OR (
-                                        prior_child_lease.status = 'checkpointed'
+                                        (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
                                         AND EXISTS (
                                             SELECT 1
                                               FROM run_waits AS resume_edge
@@ -626,6 +650,7 @@ WITH candidate_scopes AS (
                                                AND resume_checkpoint.base_workspace_version_id = prior_child_workspace_lease.base_workspace_version_id
                                              WHERE resume_edge.run_id = runs.id
                                                AND resume_edge.attempt_number = prior_child_lease.attempt_number
+                                               AND prior_child_lease.attempt_number = runs.current_attempt_number
                                                AND resume_edge.workspace_id = runs.workspace_id
                                                AND resume_edge.suspension_status = 'resume_pending'
                                                AND resume_edge.prior_run_lease_id = prior_child_lease.id
@@ -644,8 +669,8 @@ WITH candidate_scopes AS (
             AND runs.session_id IS NOT NULL
             AND runs.cause_kind IN ('actor_start', 'continuation')
             AND runs.parent_run_id IS NULL
-            AND workspaces.owner_session_id = runs.session_id
-            AND workspaces.owner_run_id IS NULL
+            AND computers.owner_session_id = runs.session_id
+            AND computers.owner_run_id IS NULL
             AND EXISTS (
                 SELECT 1 FROM sessions
                  WHERE sessions.id = runs.session_id
@@ -691,10 +716,10 @@ WITH candidate_scopes AS (
                    AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
                    AND run_checkpoints.status = 'ready'
                    AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-                  JOIN workspace_versions
-                    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-                   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-                   AND workspace_versions.status = 'private'
+                  JOIN computer_versions
+                    ON computer_versions.computer_id = run_checkpoints.workspace_id
+                   AND computer_versions.id = run_checkpoints.private_workspace_version_id
+                   AND computer_versions.status = 'private'
                   JOIN run_leases AS restore_source_lease
                     ON restore_source_lease.id = run_checkpoints.source_run_lease_id
                    AND restore_source_lease.run_id = runs.id
@@ -726,7 +751,7 @@ WITH candidate_scopes AS (
             )))
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-     GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+     GROUP BY runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
               coalesce(runs.concurrency_key, ''), runs.queue_name
 )
 SELECT candidate_scopes.org_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.region_id, candidate_scopes.concurrency_key, candidate_scopes.queue_name, candidate_scopes.sort_key
@@ -886,8 +911,8 @@ SELECT input_scopes.scope_ordinal,
                           AND run_checkpoints.attempt_number = runs.current_attempt_number
                           AND run_checkpoints.run_wait_id = run_waits.id
                           AND run_checkpoints.workspace_id = runs.workspace_id
-                         JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-                          AND workspace_versions.workspace_id = runs.workspace_id
+                         JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
+                          AND computer_versions.computer_id = runs.workspace_id
                          JOIN run_leases AS source_lease ON source_lease.id = run_checkpoints.source_run_lease_id
                           AND source_lease.run_id = runs.id
                           AND source_lease.attempt_number = runs.current_attempt_number
@@ -898,7 +923,7 @@ SELECT input_scopes.scope_ordinal,
                            AND run_waits.suspension_status = 'resume_pending'
                            AND run_checkpoints.status = 'ready'
                            AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                           AND workspace_versions.status = 'private'
+                           AND computer_versions.status = 'private'
                            AND source_lease.status = 'checkpointed'
                            AND run_checkpoints.actor_speculative_input_sequence
                                BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
@@ -1040,11 +1065,11 @@ SELECT runs.org_id,
        COALESCE(capacity_restore.substrate_contract, '') AS required_substrate_contract,
        runs.queue_score_at AS candidate_score_at
   FROM runs
-  JOIN workspaces ON workspaces.environment_id = runs.environment_id
-                 AND workspaces.id = runs.workspace_id
+  JOIN computers ON computers.environment_id = runs.environment_id
+                 AND computers.id = runs.workspace_id
   JOIN deployment_definitions AS workspace_definitions
-    ON workspace_definitions.environment_id = workspaces.environment_id
-   AND workspace_definitions.id = workspaces.deployment_definition_id
+    ON workspace_definitions.environment_id = computers.environment_id
+   AND workspace_definitions.id = computers.deployment_definition_id
    AND workspace_definitions.kind = 'sandbox'
   LEFT JOIN LATERAL (
       SELECT source_lease.worker_group_id,
@@ -1093,7 +1118,7 @@ SELECT runs.org_id,
        (get_byte(uuid_send(input_scopes.org_id), 15) & 63)
    AND runs.project_id = input_scopes.project_id
    AND runs.environment_id = input_scopes.environment_id
-   AND workspaces.region_id = input_scopes.region_id
+   AND computers.region_id = input_scopes.region_id
    AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
    AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
@@ -1105,8 +1130,8 @@ SELECT runs.org_id,
         AND runs.session_id IS NULL
         AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
         AND (
-          (workspaces.owner_run_id = runs.id
-           AND workspaces.owner_session_id IS NULL
+          (computers.owner_run_id = runs.id
+           AND computers.owner_session_id IS NULL
            AND (NOT EXISTS (
            SELECT 1
              FROM run_waits
@@ -1125,10 +1150,10 @@ SELECT runs.org_id,
               AND run_checkpoints.workspace_id = run_waits.workspace_id
               AND run_checkpoints.status = 'ready'
               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-             JOIN workspace_versions
-               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-              AND workspace_versions.status = 'private'
+             JOIN computer_versions
+               ON computer_versions.computer_id = run_checkpoints.workspace_id
+              AND computer_versions.id = run_checkpoints.private_workspace_version_id
+              AND computer_versions.status = 'private'
             WHERE run_waits.run_id = runs.id
               AND run_waits.suspension_status = 'resume_pending'
           )))
@@ -1148,8 +1173,8 @@ SELECT runs.org_id,
                  AND checkpoint.run_wait_id = edge.id
                  AND checkpoint.workspace_id = edge.workspace_id
                  AND checkpoint.status = 'ready'
-                JOIN workspace_versions AS base
-                  ON base.workspace_id = edge.workspace_id
+                JOIN computer_versions AS base
+                  ON base.computer_id = edge.workspace_id
                  AND base.id = edge.base_workspace_version_id
                  AND base.status = 'private'
                WHERE edge.child_run_id = runs.id
@@ -1159,8 +1184,10 @@ SELECT runs.org_id,
                  AND edge.workspace_id = runs.workspace_id
                  AND edge.condition_status = 'pending'
                  AND edge.suspension_status = 'parked'
-                 AND edge.base_workspace_version_id =
-                     runs.base_workspace_version_id
+                 AND EXISTS (SELECT 1 FROM run_attempts origin
+                         WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
+                           AND origin.workspace_id = edge.workspace_id
+                           AND origin.base_workspace_version_id = edge.base_workspace_version_id)
                  AND edge.ownership_generation IS NOT NULL
                  AND edge.parent_writer_generation IS NOT NULL
                  AND (
@@ -1172,7 +1199,7 @@ SELECT runs.org_id,
                              ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
                             AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
                             AND (
-                                prior_child_lease.status = 'checkpointed'
+                                (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
                                 OR (
                                     prior_child_lease.status = 'expired'
                                     AND prior_child_workspace_lease.status = 'expired'
@@ -1208,11 +1235,33 @@ SELECT runs.org_id,
                                              COALESCE(resume_edge.resume_workspace_version_id, resume_checkpoint.private_workspace_version_id)
                                     )
                                 )
-                                OR prior_child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+                                OR (prior_child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
+                                    AND runs.base_workspace_version_id = edge.base_workspace_version_id
+                                    AND prior_child_lease.attempt_number = runs.current_attempt_number)
+                                OR EXISTS (
+                                    SELECT 1
+                                      FROM computer_versions AS retry_version
+                                      JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
+                                      AND prior_child_lease.finalization_root = retry_root.locator
+                                     WHERE retry_version.id = runs.base_workspace_version_id
+                                       AND retry_version.computer_id = runs.workspace_id
+                                       AND retry_version.status = 'private'
+                                       AND retry_version.source_workspace_lease_id = prior_child_workspace_lease.id
+                                       AND retry_version.parent_version_id = prior_child_workspace_lease.base_workspace_version_id
+                                       AND retry_version.ownership_generation = prior_child_workspace_lease.ownership_generation
+                                       AND retry_version.writer_generation = prior_child_workspace_lease.writer_generation
+                                       AND prior_child_lease.attempt_number = runs.current_attempt_number - 1
+                                       AND prior_child_lease.status = 'failed'
+                                       AND prior_child_lease.terminal_at IS NOT NULL
+                                       AND prior_child_lease.terminal_request_fingerprint IS NOT NULL
+                                       AND prior_child_lease.finalization_operation_id IS NOT NULL
+                                )
                                 OR EXISTS (
                                     SELECT 1
                                       FROM run_waits AS prior_resume_edge
                                      WHERE prior_resume_edge.run_id = runs.id
+                                       AND prior_resume_edge.attempt_number = prior_child_lease.attempt_number
+                                       AND prior_child_lease.attempt_number = runs.current_attempt_number
                                        AND prior_resume_edge.workspace_id = runs.workspace_id
                                        AND prior_resume_edge.suspension_status = 'resume_pending'
                                        AND prior_resume_edge.ownership_generation = edge.ownership_generation
@@ -1229,7 +1278,7 @@ SELECT runs.org_id,
                             AND (
                                 prior_child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
                                 OR (
-                                    prior_child_lease.status = 'checkpointed'
+                                    (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
                                     AND EXISTS (
                                         SELECT 1
                                           FROM run_waits AS resume_edge
@@ -1246,6 +1295,7 @@ SELECT runs.org_id,
                                            AND resume_checkpoint.base_workspace_version_id = prior_child_workspace_lease.base_workspace_version_id
                                          WHERE resume_edge.run_id = runs.id
                                            AND resume_edge.attempt_number = prior_child_lease.attempt_number
+                                           AND prior_child_lease.attempt_number = runs.current_attempt_number
                                            AND resume_edge.workspace_id = runs.workspace_id
                                            AND resume_edge.suspension_status = 'resume_pending'
                                            AND resume_edge.prior_run_lease_id = prior_child_lease.id
@@ -1264,8 +1314,8 @@ SELECT runs.org_id,
         AND runs.session_id IS NOT NULL
         AND runs.cause_kind IN ('actor_start', 'continuation')
         AND runs.parent_run_id IS NULL
-        AND workspaces.owner_session_id = runs.session_id
-        AND workspaces.owner_run_id IS NULL
+        AND computers.owner_session_id = runs.session_id
+        AND computers.owner_run_id IS NULL
         AND EXISTS (
             SELECT 1 FROM sessions
              WHERE sessions.id = runs.session_id
@@ -1311,10 +1361,10 @@ SELECT runs.org_id,
                AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
                AND run_checkpoints.status = 'ready'
                AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-              JOIN workspace_versions
-                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
-               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.status = 'private'
+              JOIN computer_versions
+                ON computer_versions.computer_id = run_checkpoints.workspace_id
+               AND computer_versions.id = run_checkpoints.private_workspace_version_id
+               AND computer_versions.status = 'private'
               JOIN run_leases AS restore_source_lease
                     ON restore_source_lease.id = run_checkpoints.source_run_lease_id
                    AND restore_source_lease.run_id = runs.id

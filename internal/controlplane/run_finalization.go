@@ -35,8 +35,8 @@ func parseRunFinalization(request workerapi.BeginRunFinalizationRequest) (parsed
 	if err != nil {
 		return parsedRunFinalization{}, err
 	}
-	if request.Kind != workerapi.RunFinalizationCapture && request.Kind != workerapi.RunFinalizationReset {
-		return parsedRunFinalization{}, errors.New("kind must be capture or reset")
+	if request.Kind != workerapi.RunFinalizationCapture {
+		return parsedRunFinalization{}, errors.New("kind must be capture")
 	}
 	quiescedRunID, err := parseCanonicalUUID("program_quiesced.run_id", request.ProgramQuiesced.RunID)
 	if err != nil {
@@ -92,13 +92,14 @@ func (s *Server) beginRunFinalization(
 		); err != nil {
 			return fmt.Errorf("lock run finalization secret authority: %w", err)
 		}
-		authority, err := lockLiveRunFinalizationAuthority(
+		authority, err := lockRunPublicationAuthority(
 			ctx,
 			work.q,
 			worker,
 			pgvalue.UUID(parsed.lease.leaseID),
 			request.Lease.LeaseSequence,
 			locators,
+			db.RunStatusRunning,
 		)
 		if err != nil {
 			return staleRunFinalization(err)
@@ -125,7 +126,6 @@ func (s *Server) beginRunFinalization(
 			if authority.run.ActiveStartedAt.Valid ||
 				!authority.runLease.FinalizationOperationID.Valid ||
 				authority.runLease.FinalizationOperationID != pgvalue.UUID(parsed.operationID) ||
-				authority.runLease.FinalizationKind.String != string(parsed.kind) ||
 				authority.runLease.FinalizationRequestFingerprint.String != parsed.fingerprint ||
 				!authority.runLease.FinalizationStartedAt.Valid {
 				return errStaleRunFinalization
@@ -140,7 +140,6 @@ func (s *Server) beginRunFinalization(
 		if authority.runLease.Status != db.RunLeaseStatusRunning ||
 			!authority.run.ActiveStartedAt.Valid ||
 			authority.runLease.FinalizationOperationID.Valid ||
-			authority.runLease.FinalizationKind.Valid ||
 			authority.runLease.FinalizationStartedAt.Valid ||
 			authority.runLease.FinalizationRequestFingerprint.Valid {
 			return errStaleRunFinalization
@@ -191,7 +190,7 @@ func (s *Server) beginRunFinalization(
 		previousExpiry := authority.runLease.ExpiresAt
 		authority.runLease, err = work.q.BeginRunLeaseFinalization(ctx, db.BeginRunLeaseFinalizationParams{
 			ExpiresAt: pgvalue.Timestamptz(expiresAt), FinalizationOperationID: pgvalue.UUID(parsed.operationID),
-			FinalizationKind: pgvalue.Text(string(parsed.kind)), FinalizationStartedAt: startedAt,
+			FinalizationStartedAt:          startedAt,
 			FinalizationRequestFingerprint: pgvalue.Text(parsed.fingerprint), ID: authority.runLease.ID,
 			RunID: authority.run.ID, WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
 			LeaseSequence: authority.runLease.LeaseSequence, PreviousExpiresAt: previousExpiry,
@@ -264,13 +263,14 @@ func lockRunFinalizationOwner(
 	return owner, nil
 }
 
-func lockLiveRunFinalizationAuthority(
+func lockRunPublicationAuthority(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
 	leaseID pgtype.UUID,
 	leaseSequence int64,
 	locators db.GetLiveRunLeaseLocatorsRow,
+	allowedStatuses ...db.RunStatus,
 ) (runLeaseClaimAuthority, error) {
 	var authority runLeaseClaimAuthority
 	var lineage []db.ListSameWorkspaceAncestorRunsRow
@@ -360,7 +360,7 @@ func lockLiveRunFinalizationAuthority(
 		return authority, staleRunFinalization(err)
 	}
 	if err := validateLockedRunLeaseRun(
-		authority.run, leaseID, locators, db.RunStatusRunning,
+		authority.run, leaseID, locators, allowedStatuses...,
 	); err != nil {
 		return authority, staleRunFinalization(err)
 	}
@@ -476,6 +476,9 @@ func lockSameWorkspaceChildFinalization(
 	if err != nil {
 		return staleRunFinalization(err)
 	}
+	if err := validateChildCheckpointOrigin(ctx, store, authority.run, wait.BaseWorkspaceVersionID); err != nil {
+		return staleRunFinalization(err)
+	}
 	authority.runWait = wait
 	authority.enclosingWait = wait
 	if err := validateSameWorkspaceChildFinalization(*authority); err != nil {
@@ -507,7 +510,6 @@ func validateSameWorkspaceChildFinalization(authority runLeaseClaimAuthority) er
 		wait.CheckpointRequestVersion <= 0 ||
 		wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
 		wait.ResumeRequestVersion != wait.ResumeAckVersion ||
-		wait.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
 		!wait.BaseWorkspaceContentDigest.Valid ||
 		wait.ResumeWorkspaceVersionID.Valid ||
 		!wait.OwnershipGeneration.Valid ||

@@ -161,7 +161,6 @@ POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/r
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/enqueue
-POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/recover
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/send
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/interrupt
@@ -188,7 +187,6 @@ POST /v1/secrets/{secretID}/rotate
 POST /v1/sessions/{sessionID}/cancel
 POST /v1/sessions/{sessionID}/close
 POST /v1/sessions/{sessionID}/enqueue
-POST /v1/sessions/{sessionID}/recover
 POST /v1/sessions/{sessionID}/resume
 POST /v1/sessions/{sessionID}/send
 POST /v1/sessions/{sessionID}/turns/{turnID}/interrupt
@@ -209,7 +207,19 @@ POST /worker/v1/instance/token
 POST /worker/v1/run/actors/start
 POST /worker/v1/run/checkpoints/failed
 POST /worker/v1/run/checkpoints/ready
+POST /worker/v1/run/checkpoints/register
+POST /worker/v1/run/computer-objects/certify
+POST /worker/v1/run/computer-objects/register
+POST /worker/v1/run/computer-objects/reuse
+POST /worker/v1/run/computer-saves/abandon
+POST /worker/v1/run/computer-saves/adopt
+POST /worker/v1/run/computer-saves/begin
+POST /worker/v1/run/computer-saves/objects/certify
+POST /worker/v1/run/computer-saves/objects/register
+POST /worker/v1/run/computer-saves/objects/reuse
+POST /worker/v1/run/computer-saves/publish
 POST /worker/v1/run/finalization/begin
+POST /worker/v1/run/finalization/register
 POST /worker/v1/run/leases/claim
 POST /worker/v1/run/leases/discover
 POST /worker/v1/run/leases/entrypoint
@@ -219,7 +229,12 @@ POST /worker/v1/run/leases/start
 POST /worker/v1/run/logs/append
 POST /worker/v1/run/metadata/update
 POST /worker/v1/run/runtime-instances/closed
+POST /worker/v1/run/runtime-instances/computer-source
 POST /worker/v1/run/runtime-instances/failed
+POST /worker/v1/run/runtime-instances/initialization/generation
+POST /worker/v1/run/runtime-instances/initialization/key
+POST /worker/v1/run/runtime-instances/initialization/objects/certify
+POST /worker/v1/run/runtime-instances/initialization/objects/register
 POST /worker/v1/run/runtime-instances/ready
 POST /worker/v1/run/runtime-instances/reconcile
 POST /worker/v1/run/runtime-substrates/register
@@ -255,6 +270,9 @@ POST /worker/v1/run/workspace-execs/claim
 POST /worker/v1/run/workspace-execs/complete
 POST /worker/v1/run/workspace-mounts/capture
 POST /worker/v1/run/workspace-mounts/claim
+POST /worker/v1/run/workspace-mounts/computer-objects/certify
+POST /worker/v1/run/workspace-mounts/computer-objects/register
+POST /worker/v1/run/workspace-mounts/computer-objects/reuse
 POST /worker/v1/run/workspace-mounts/fail
 POST /worker/v1/run/workspace-mounts/mounted
 POST /worker/v1/run/workspace-mounts/renew
@@ -342,6 +360,8 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 	}{
 		{name: "Capacity missing", path: "/capacity/v1/worker-instances", status: http.StatusUnauthorized},
 		{name: "Capacity foreign", path: "/capacity/v1/worker-instances", authorization: "Bearer hlmr_test_product", status: http.StatusUnauthorized},
+		{name: "Save missing", path: "/worker/v1/run/computer-saves/begin", status: http.StatusUnauthorized},
+		{name: "Save foreign", path: "/worker/v1/run/computer-saves/publish", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
 		{name: "Worker missing", path: "/worker/v1/instance", status: http.StatusUnauthorized},
 		{name: "Worker foreign", path: "/worker/v1/instance", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
 		{name: "Worker enrollment bootstrap", path: "/worker/v1/enrollment", status: http.StatusBadRequest},

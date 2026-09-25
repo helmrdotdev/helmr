@@ -28,7 +28,6 @@ import (
 type runtimeRestoreProjectionStore struct {
 	db.Querier
 	checkpoint db.GetReadyRunCheckpointRow
-	baseCalls  int
 }
 
 type runtimeReconcileTargetStore struct {
@@ -62,15 +61,10 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			row := db.ListRuntimeReconcileTargetsRow{
-				ID: runtimeID, WorkerEpoch: 7,
-				DesiredState: test.desired, ObservedState: test.observed,
-				BaseWorkspaceVersionID:    baseWorkspaceVersionID,
-				WorkspaceContentDigest:    pgvalue.Text(workspace.CanonicalEmptyTreeDigest),
-				WorkspaceLogicalSizeBytes: pgtype.Int8{Int64: 0, Valid: true},
-				WorkspaceEntryCount:       pgtype.Int4{Int32: 0, Valid: true},
-				WorkspaceArchitecture:     "x86_64",
-			}
+			row := initializingComputerSourceRow(t)
+			row.ID, row.WorkerEpoch = runtimeID, 7
+			row.DesiredState, row.ObservedState = test.desired, test.observed
+			row.BaseWorkspaceVersionID = baseWorkspaceVersionID
 			server := &Server{log: discardTestLogger(), db: &runtimeReconcileTargetStore{rows: []db.ListRuntimeReconcileTargetsRow{row}}}
 			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/runtime-instances/reconcile", strings.NewReader(`{}`))
 			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
@@ -90,7 +84,7 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionWorkspaceAuthority(t *testi
 				t.Fatalf("decode response %s: %v", response.Body, err)
 			}
 			if len(decoded.Items) != 1 || decoded.Items[0].Action != test.wantAction ||
-				(decoded.Items[0].Source.WorkspaceTarget != nil) != test.wantTarget {
+				(decoded.Items[0].Source.Computer != nil) != test.wantTarget {
 				t.Fatalf("items = %#v", decoded.Items)
 			}
 		})
@@ -132,15 +126,7 @@ func (s *runtimeRestoreProjectionStore) GetReadyRunCheckpoint(
 	return s.checkpoint, nil
 }
 
-func (s *runtimeRestoreProjectionStore) GetCheckpointWorkspaceBaseAuthority(
-	_ context.Context,
-	_ db.GetCheckpointWorkspaceBaseAuthorityParams,
-) (db.GetCheckpointWorkspaceBaseAuthorityRow, error) {
-	s.baseCalls++
-	return db.GetCheckpointWorkspaceBaseAuthorityRow{}, errors.New("restore projection queried Workspace base authority")
-}
-
-func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(t *testing.T) {
+func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontier(t *testing.T) {
 	checkpointID := pgvalue.UUID(uuid.NewV7())
 	runID := pgvalue.UUID(uuid.NewV7())
 	waitID := pgvalue.UUID(uuid.NewV7())
@@ -148,10 +134,8 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 	capturedVersionID := pgvalue.UUID(uuid.NewV7())
 	manifest, err := json.Marshal(workerapi.CheckpointManifest{
 		WorkspaceState: workerapi.CheckpointWorkspaceState{Base: workerapi.CheckpointWorkspaceBase{
-			ArtifactDigest: validDigest('e'), ArtifactSizeBytes: 512,
-			ArtifactMediaType: workspace.ArtifactMediaType,
-			ArtifactEncoding:  workspace.ArtifactEncoding,
-			MountPath:         "/workspace",
+
+			MountPath: "/workspace",
 		}},
 	})
 	if err != nil {
@@ -164,7 +148,7 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 				Status: db.RunCheckpointStatusReady, BaseWorkspaceVersionID: sourceVersionID,
 				RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
 				MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-				RestoreManifest: manifest,
+				Manifest: manifest,
 			},
 			RuntimeConfigDigest: validDigest('a'), RuntimeConfigSizeBytes: 1, RuntimeConfigMediaType: "application/example",
 			VMStateDigest: validDigest('b'), VMStateSizeBytes: 2, VMStateMediaType: "application/example",
@@ -172,14 +156,8 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 			ScratchDiskDigest: validDigest('d'), ScratchDiskSizeBytes: 4, ScratchDiskMediaType: "application/example",
 		},
 	}
-	targetArtifact := workerapi.WorkspaceArtifact{
-		Digest: validDigest('9'), SizeBytes: 1024,
-		MediaType: workspace.ArtifactMediaType, Encoding: workspace.ArtifactEncoding,
-	}
-	source := workerapi.RuntimeSource{WorkspaceTarget: &workerapi.WorkspaceResetTarget{
-		BaseWorkspaceVersionID: pgvalue.UUIDString(capturedVersionID),
-		Tree:                   workerapi.WorkspaceTreeIdentity{Digest: validDigest('8'), SizeBytes: 2048, EntryCount: 2},
-		Artifact:               &targetArtifact,
+	source := workerapi.RuntimeSource{Computer: &workerapi.RuntimeComputerSource{
+		VersionID: pgvalue.UUIDString(capturedVersionID),
 	}}
 	row := db.ListRuntimeReconcileTargetsRow{
 		RestoreCheckpointID:   checkpointID,
@@ -189,13 +167,11 @@ func TestPopulateRuntimeRestoreSourceKeepsCapturedFrontierWithoutRequeryingBase(
 	if err := populateRuntimeRestoreSource(context.Background(), store, &source, row); err != nil {
 		t.Fatal(err)
 	}
-	if source.WorkspaceTarget.BaseWorkspaceVersionID != pgvalue.UUIDString(capturedVersionID) ||
-		source.WorkspaceTarget.Artifact == nil ||
-		source.WorkspaceTarget.Artifact.Digest != validDigest('9') {
+	if source.Computer.VersionID != pgvalue.UUIDString(capturedVersionID) {
 		t.Fatalf("captured frontier was rewritten: %+v", source)
 	}
-	if source.Restore == nil || store.baseCalls != 0 {
-		t.Fatalf("restore projection queried Workspace base authority: restore=%+v calls=%d", source.Restore, store.baseCalls)
+	if source.Restore == nil {
+		t.Fatal("restore projection omitted the captured checkpoint")
 	}
 }
 
@@ -400,7 +376,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.RunID)
 	return fixture, work, runtimeID
 }
@@ -453,7 +429,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.RunID)
 			test.stale(t, fixture, work)
 
@@ -548,7 +524,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.RunID)
 	server := &Server{db: db.New(fixture.Pool), tx: fixture.Pool}
 	start := make(chan struct{})

@@ -23,7 +23,6 @@ const (
 	PermissionSessionsCancel      Permission = "sessions.cancel"
 	PermissionSessionsInterrupt   Permission = "sessions.interrupt"
 	PermissionSessionsResume      Permission = "sessions.resume"
-	PermissionSessionsRecover     Permission = "sessions.recover"
 	PermissionTokensCreate        Permission = "tokens.create"
 	PermissionTokensRead          Permission = "tokens.read"
 	PermissionTokensComplete      Permission = "tokens.complete"
@@ -54,7 +53,6 @@ func AllPermissions() []Permission {
 		PermissionSessionsCancel,
 		PermissionSessionsInterrupt,
 		PermissionSessionsResume,
-		PermissionSessionsRecover,
 		PermissionTokensCreate,
 		PermissionTokensRead,
 		PermissionTokensComplete,
@@ -149,7 +147,6 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 		PermissionSessionsCancel,
 		PermissionSessionsInterrupt,
 		PermissionSessionsResume,
-		PermissionSessionsRecover,
 		PermissionTokensCreate,
 		PermissionTokensRead,
 		PermissionTokensComplete,

@@ -33,7 +33,7 @@ func (d *Authority) grantFreshRun(
 	if err := lockRunSecrets(ctx, tx, candidate); err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
-	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
+	authority, err := lockRunPlacementAuthority(ctx, tx, candidate, false)
 	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
@@ -247,11 +247,13 @@ SELECT transaction_timestamp(),
 	grantedRun, err := q.SetRunCurrentLease(
 		ctx,
 		db.SetRunCurrentLeaseParams{
-			RunLeaseID:       runLeaseID,
-			ID:               authority.runID,
-			OrgID:            authority.orgID,
-			ExpectedRevision: authority.revision,
-			AttemptNumber:    authority.attemptNumber,
+			RunLeaseID:               runLeaseID,
+			RestoreCheckpointID:      authority.restoreCheckpointID,
+			SameWorkspaceChildWaitID: authority.sameWorkspaceChildWaitID,
+			ID:                       authority.runID,
+			OrgID:                    authority.orgID,
+			ExpectedRevision:         authority.revision,
+			AttemptNumber:            authority.attemptNumber,
 		},
 	)
 	if err != nil {

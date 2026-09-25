@@ -39,7 +39,7 @@ func TestSecretPreparationRequiresActivatedWorker(t *testing.T) {
 	if err := fixture.Pool.QueryRow(t.Context(), `SELECT runtime_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&runtimeID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET reserved_run_id=$2,reserved_attempt_number=1,reserved_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_id),reservation_expires_at=now()+interval '10 minutes' WHERE id=$1`, runtimeID, work.RunID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET reserved_run_id=$2,reserved_attempt_number=1,reserved_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=workspace_id),reservation_expires_at=now()+interval '10 minutes' WHERE id=$1`, runtimeID, work.RunID)
 	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +83,19 @@ func TestSecretPreparationRequiresActivatedWorker(t *testing.T) {
 			t.Fatalf("%s worker empty-origin preparation = %+v, %v", state, prepared, err)
 		}
 	}
+	// Preparation has its own authority even before an execution reservation exists.
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET observed_state='allocated',ready_at=NULL,observed_desired_version=0,reservation_expires_at=NULL WHERE id=$1`, runtimeID)
+	if _, err := client.PrepareSecretProxy(t.Context(), request); err != nil {
+		t.Fatalf("allocated preparation: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET preparation_expires_at=now()-interval '1 second' WHERE id=$1`, runtimeID)
+	if _, err := client.PrepareSecretProxy(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {
+		t.Fatalf("expired preparation: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET preparation_expires_at=now()+interval '5 minutes',desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, runtimeID)
+	if _, err := client.PrepareSecretProxy(t.Context(), request); !httpclient.IsStatus(err, http.StatusConflict) {
+		t.Fatalf("closed preparation: %v", err)
+	}
 	// Even an authorized worker cannot prepare a synthetic, unreserved probe ID.
 	if _, err := client.PrepareSecretProxy(t.Context(), workerapi.SecretProxyRequest{RuntimeInstanceID: uuid.NewV7().String()}); !httpclient.IsStatus(err, http.StatusConflict) {
 		t.Fatalf("unreserved runtime preparation = %v, want conflict", err)
@@ -107,7 +120,7 @@ func TestSecretProxyLiveAuthorityAndWireRotation(t *testing.T) {
 	}
 	marker := "hlmr_protected_" + strings.Repeat("a", 64)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `INSERT INTO workspace_secrets(workspace_id,environment_id,secret_id,placement_kind,placement_target,mode,allowed_origins,placeholder) VALUES($1,$2,$3,'env','GH_TOKEN','protected',ARRAY['https://example.com'],$4)`, workspaceID, fixture.EnvironmentID, created.ID, marker)
-	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET reserved_run_id=$2,reserved_attempt_number=1,reserved_workspace_version_id=(SELECT head_version_id FROM workspaces WHERE id=workspace_id),reservation_expires_at=now()+interval '10 minutes' WHERE id=$1`, runtimeID, work.RunID)
+	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE runtime_instances SET reserved_run_id=$2,reserved_attempt_number=1,reserved_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=workspace_id),reservation_expires_at=now()+interval '10 minutes' WHERE id=$1`, runtimeID, work.RunID)
 	dbtest.MustExec(t, t.Context(), fixture.Pool, `UPDATE workspace_mounts SET guest_channel_token_hash='synthetic-channel',guest_channel_token_expires_at=now()+interval '10 minutes' WHERE id=$1`, mountID)
 	createTestWorkspaceCA(t, fixture.Pool, store, fixture.EnvironmentID, workspaceID)
 	server := &Server{db: q, tx: fixture.Pool, secretProxy: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}

@@ -37,8 +37,6 @@ type workspaceFinalizationJournal struct {
 	Phase              string                        `json:"phase"`
 	Tree               workspace.TreeIdentity        `json:"tree"`
 	Artifact           workspaceFinalizationArtifact `json:"artifact"`
-	PriorTree          *workspace.TreeIdentity       `json:"prior_tree,omitempty"`
-	ResetTarget        *workspace.ResetTarget        `json:"reset_target,omitempty"`
 }
 
 type workspaceFinalizationArtifact struct {
@@ -106,7 +104,7 @@ func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperat
 	if !ok {
 		return nil, func() {}, errors.New("workspace finalization does not match the mounted runtime")
 	}
-	entry.turnCommitMu.Lock()
+	entry.lifecycleMu.Lock()
 	entry.finalizationMu.Lock()
 	if !registry.currentExactLocked(
 		entry,
@@ -116,13 +114,13 @@ func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperat
 		uint64(fence.GetMountFencingGeneration()),
 	) {
 		entry.finalizationMu.Unlock()
-		entry.turnCommitMu.Unlock()
+		entry.lifecycleMu.Unlock()
 		releaseEntry()
 		return nil, func() {}, errors.New("workspace finalization authority is not current for the workspace mount")
 	}
 	release := func() {
 		entry.finalizationMu.Unlock()
-		entry.turnCommitMu.Unlock()
+		entry.lifecycleMu.Unlock()
 		releaseEntry()
 	}
 	if err := registry.waitForProgramRelease(ctx, entry, authority); err != nil {
@@ -250,18 +248,12 @@ func validateWorkspaceFinalizationBeginJournal(
 	}
 	if journal.Phase == "begun" && (journal.RequestFingerprint != "" ||
 		journal.Tree != (workspace.TreeIdentity{}) ||
-		journal.Artifact != (workspaceFinalizationArtifact{}) ||
-		journal.PriorTree != nil || journal.ResetTarget != nil) {
+		journal.Artifact != (workspaceFinalizationArtifact{})) {
 		return errors.New("workspace finalization begin journal contains operation output")
 	}
 	switch kind {
 	case workspace.FinalizationCaptureKind:
 		if journal.Phase == "begun" || journal.Phase == "committed" {
-			return nil
-		}
-	case workspace.FinalizationResetKind:
-		switch journal.Phase {
-		case "begun", "prepared", "exchanged", "committed":
 			return nil
 		}
 	}

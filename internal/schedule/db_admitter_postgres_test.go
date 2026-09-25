@@ -421,7 +421,7 @@ func seedScheduleArtifact(
 		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
 	}
 	dbtest.MustExec(t, t.Context(), pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, $3)
 	`, orgID, digest, mediaType)
 	dbtest.MustExec(t, t.Context(), pool, `
@@ -474,7 +474,7 @@ func assertScheduleAdmissionCounts(
 	}
 	var workspaceCount int
 	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*) FROM workspaces WHERE environment_id = $1
+		SELECT count(*) FROM computers WHERE environment_id = $1
 	`, value.EnvironmentID).Scan(&workspaceCount); err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func assertScheduleAdmissionCounts(
 		SELECT count(*) FILTER (WHERE owner_run_id IS NOT NULL),
 		       min(revision), max(revision),
 		       min(ownership_generation), max(ownership_generation)
-		  FROM workspaces
+		  FROM computers
 		 WHERE environment_id = $1
 	`, value.EnvironmentID).Scan(
 		&owned, &minRevision, &maxRevision,

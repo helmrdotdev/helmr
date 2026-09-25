@@ -179,3 +179,30 @@ there is no alias to monorepo SDK source outside this project. For local reposit
 checks, `dev/workflows/scripts/sync-local-sdk.sh` builds and installs the declared
 local packages for both samples before typechecking. Release consumers install
 the selected SDK/proto package bytes before building the unchanged sample config.
+
+
+## Computer durability qualification
+
+`computer-durability-task` and `computer-durability-actor` use the
+`computer-durability` sandbox. Each writes a marker and relative symlink under
+`/root/helmr-durability`, outside the working directory, then waits for a Token.
+Create a Token through the authenticated client and submit
+`{ marker, tokenId, idleTimeout: "2s" }`. The driver must observe a **ready
+checkpoint and physical VM release** before completing that Token; elapsed time
+or a waiting Run alone does not prove suspension. Compare the Task's logged nonce
+with its result, or the Actor's `durability_waiting` output nonce with the Turn
+result. Check the marker and symlink again through Workspace exec after the owner
+has released it. The test throws on filesystem mismatch.
+
+Repeat with a long idle timeout and an immediate Token response to cover hot waits.
+Send successive Actor Turns using separate Tokens; observe background saves through
+Control Plane evidence, independently from Turn completion. Do not require a save
+for each completed Turn. To test host loss, terminate only the campaign-owned Worker
+after confirming a committed saved generation, then inspect retry/loss events and
+restored files. A host-loss replay is distinct from the managed-wait nonce test.
+Use the existing child-task probes for shared/separate child reentry, recording Run,
+Attempt, child invocation and saved generation identities together.
+
+These probes are not evidence of a successful remote run until their deployment,
+physical transition and returned results have all been observed. Cancel unfinished
+Runs/Sessions, cancel outstanding Tokens and delete their Workspaces during cleanup.

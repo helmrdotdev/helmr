@@ -87,6 +87,11 @@ reject `send`; `enqueue` can still add work to an open held Session.
 consumer, and deduplicate remote effects using event IDs. A finite page is not a
 completion signal: inspect terminal Turn events or `turn.retrieve()`.
 
+`turn.complete(result?)` and `turn.fail(error)` commit the logical outcome without
+capturing the Computer. Their terminal records and Turn views do not attach a
+disk version. Disk preservation and restoration follow the Computer lifecycle;
+local files can be newer than the last saved disk even after a Turn completes.
+
 `turn.interrupt()` returns a stop receipt and hold identity. Acceptance may precede
 physical convergence. Queued work stays retained. `session.resume({ holdId })`
 releases that exact converged hold; it never replays the interrupted Turn.
@@ -107,24 +112,27 @@ if (state.status === "closed") {
 ```
 
 Cancellation can escalate a Session already closing. It cannot be undone with
-`resume()`. If execution or external effects are uncertain, the Session stays
-held and requires the existing privileged `recover()` operation. Closure never
-releases Workspace ownership until the old writer is excluded. Cancellation
-also works through a runtime Session reference inside an Actor or Task.
+`resume()`. Closure waits until the old execution and its owned work are physically
+excluded before releasing Workspace ownership. Cancellation also works through a
+runtime Session reference inside an Actor or Task.
 
 `session.close()` rejects new ordinary admission and drains accepted FIFO work.
-Existing holds survive closing, and exact interaction with active work may remain
-valid. Session statuses are `open`, `closing`, `closed`, and `failed`; a failed Turn
-does not by itself fail its Session.
+An explicit interruption still requires `resume({ holdId })`; resuming an empty
+Session leaves it idle until new input arrives. Session statuses are `open`,
+`closing`, `closed`, and `failed`.
 
-Only authenticated client references expose `recover`: owner/admin plus the
-recovery grant must supply an exact hold, Turn or explicit null, reconciled
-Workspace version and reconciliation reference. Recovery cannot declare uncertain
-work successful; it leaves a recovered hold for explicit resume. Runtime references
-have ordinary controls but no recovery privilege.
+Helmr automatically restores the last committed Computer version after execution
+loss, once the old writer is physically excluded. Unpublished files can be lost.
+Completed Turn results remain; the interrupted execution's active Turn fails and
+its memory and uncertain callbacks are not replayed. Never-started queued Turns
+retain their identity and order and can start in a new Actor Run. A
+`session.execution_lost` event records the loss and selected saved version.
+Repeated infrastructure loss or preparation exhaustion terminates the Session;
+known Actor application or initialization failure also terminates it. Restoring
+an environment does not prove whether an external API side effect happened.
 
 Message acceptance does not wait for handler registration. During a managed Token
 or child wait, messages remain pending until the original wait resumes; they do
 not unblock that wait. Settlement rejects new sends with `turn_settling` and emits
 rejections for accepted messages whose handlers never started. Acceptance is not
-proof of application or provider handling. Held Sessions still require explicit resume.
+proof of application or provider handling. Explicit interruption requires resume; infrastructure recovery is automatic.

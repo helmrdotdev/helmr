@@ -72,59 +72,28 @@ func (value *TaskOutcome) UnmarshalJSON(raw []byte) error {
 
 func (value *TaskWorkspaceProof) UnmarshalJSON(raw []byte) error {
 	*value = TaskWorkspaceProof{}
-	var envelope struct {
-		Captured   json.RawMessage `json:"captured"`
-		RolledBack json.RawMessage `json:"rolled_back"`
+	type proof TaskWorkspaceProof
+	var decoded proof
+	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
+		return err
 	}
-	if err := decodeClosedTaskCompletionJSON(raw, &envelope); err != nil {
-		return fmt.Errorf("decode task workspace proof: %w", err)
+	if decoded.Captured == nil {
+		return errors.New("task workspace capture is required")
 	}
-	variants := 0
-	if len(envelope.Captured) != 0 {
-		variants++
-		if isJSONNull(envelope.Captured) {
-			return errors.New("task workspace captured proof must not be null")
-		}
-		var captured TaskWorkspaceCapture
-		if err := decodeClosedTaskCompletionJSON(envelope.Captured, &captured); err != nil {
-			return fmt.Errorf("decode task workspace captured proof: %w", err)
-		}
-		value.Captured = &captured
-	}
-	if len(envelope.RolledBack) != 0 {
-		variants++
-		if isJSONNull(envelope.RolledBack) {
-			return errors.New("task workspace rolled_back proof must not be null")
-		}
-		var rolledBack TaskWorkspaceRollback
-		if err := decodeClosedTaskCompletionJSON(envelope.RolledBack, &rolledBack); err != nil {
-			return fmt.Errorf("decode task workspace rolled_back proof: %w", err)
-		}
-		value.RolledBack = &rolledBack
-	}
-	if variants != 1 {
-		return errors.New("task workspace proof must contain exactly one variant")
-	}
+	*value = TaskWorkspaceProof(decoded)
 	return nil
 }
 
-func (value *WorkspaceResetTarget) UnmarshalJSON(raw []byte) error {
-	type target WorkspaceResetTarget
+func (value *ComputerMountTarget) UnmarshalJSON(raw []byte) error {
+	type target ComputerMountTarget
 	var decoded target
 	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
-		return fmt.Errorf("decode workspace reset target: %w", err)
+		return fmt.Errorf("decode computer mount target: %w", err)
 	}
-	variants := 0
-	if decoded.Empty != nil {
-		variants++
+	if decoded.BaseWorkspaceVersionID == "" {
+		return errors.New("computer mount version is required")
 	}
-	if decoded.Artifact != nil {
-		variants++
-	}
-	if variants != 1 {
-		return errors.New("workspace reset target must contain exactly one source")
-	}
-	*value = WorkspaceResetTarget(decoded)
+	*value = ComputerMountTarget(decoded)
 	return nil
 }
 

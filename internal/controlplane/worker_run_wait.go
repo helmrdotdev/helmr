@@ -22,11 +22,9 @@ import (
 )
 
 const (
-	rootRunWaitHotWindow      = 2 * time.Minute
 	defaultRunWaitIdleTimeout = 30 * time.Second
 	maxRunWaitIdleTimeout     = time.Hour
 	maxRunWaitDuration        = 365 * 24 * time.Hour
-	shortWaitGrace            = time.Second
 )
 
 type workerTokenWaitParams struct {
@@ -104,17 +102,22 @@ func (s *Server) workerCreateTokenRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(request, defaultRunWaitIdleTimeout)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	normalized := request
 	normalized.Metadata = metadata
 	normalized.Tags = tags
-	parsed, worker, locators, _, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
+	parsed, worker, locators, run, err := s.loadRunWaitRegistrationAuthority(r.Context(), normalized.Lease)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	idleDefault, err := s.runWaitIdleDefault(r.Context(), run)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(request, idleDefault)
+	if err != nil {
+		writeError(w, badRequest(err))
 		return
 	}
 	tokenRow, err := s.db.GetTokenByID(r.Context(), pgvalue.UUID(tokenID))
@@ -218,9 +221,7 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load worker run wait"))
 		return
 	}
-	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindTimer && wait.Kind != db.WaitKindActorInput &&
-		wait.Kind != db.WaitKindChild) ||
-		wait.AttemptNumber != locators.AttemptNumber ||
+	if wait.AttemptNumber != locators.AttemptNumber ||
 		wait.WorkspaceID != locators.WorkspaceID ||
 		(wait.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) && wait.PriorRunLeaseID != pgvalue.UUID(parsed.leaseID)) {
 		writeError(w, conflict(errors.New("worker run wait fence is stale")))
@@ -298,7 +299,6 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.Status = workerapi.RunWaitPollStatusCheckpointRequested
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
-		response.CaptureWorkspace = true
 	case db.RunWaitStatusCheckpointing:
 		if !wait.SuspendCheckpointID.Valid || wait.CheckpointRequestVersion <= 0 {
 			writeError(w, errors.New("checkpointing run wait has incomplete authority"))
@@ -307,7 +307,6 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		response.Status = workerapi.RunWaitPollStatusCheckpointRequested
 		response.RequestVersion = wait.CheckpointRequestVersion
 		response.CheckpointID = pgvalue.UUIDString(wait.SuspendCheckpointID)
-		response.CaptureWorkspace = true
 	default:
 		response.Status = workerapi.RunWaitPollStatusTerminal
 	}
@@ -372,9 +371,7 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			updated = wait
 			return nil
 		}
-		if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
-			wait.Kind != db.WaitKindChild) ||
-			wait.ConditionStatus != db.WaitStatusPending ||
+		if wait.ConditionStatus != db.WaitStatusPending ||
 			wait.SuspensionStatus != db.RunWaitStatusHot || !wait.CheckpointDueAt.Valid {
 			return errStaleRunLeaseClaim
 		}
@@ -385,7 +382,6 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			SourceRunLeaseID: authority.runLease.ID, SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 			WorkspaceID: authority.workspace.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
 			ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
-			RestoreManifest:               []byte(`{}`),
 		}); err != nil {
 			return fmt.Errorf("create run checkpoint intent: %w", err)
 		}
@@ -500,7 +496,6 @@ func (s *Server) loadRunWaitLeaseAuthority(
 
 func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, error) {
 	now := time.Now().UTC()
-	checkpointDelay := rootRunWaitHotWindow
 	var timeoutAt pgtype.Timestamptz
 	if request.TimeoutMS != nil {
 		if *request.TimeoutMS <= 0 || *request.TimeoutMS > maxRunWaitDuration.Milliseconds() {
@@ -509,23 +504,36 @@ func runWaitDeadlines(request workerapi.CreateRunWaitRequest, defaultIdleTimeout
 		}
 		duration := time.Duration(*request.TimeoutMS) * time.Millisecond
 		timeoutAt = pgvalue.Timestamptz(now.Add(duration))
-		if duration <= checkpointDelay {
-			checkpointDelay = duration + shortWaitGrace
-		}
 	}
-	idleDuration := defaultIdleTimeout
-	if request.IdleTimeoutMS != nil {
-		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxRunWaitIdleTimeout.Milliseconds() {
-			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{},
-				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxRunWaitIdleTimeout.Milliseconds())
-		}
-		idleDuration = time.Duration(*request.IdleTimeoutMS) * time.Millisecond
+	idleDuration, err := runWaitIdleDuration(request.IdleTimeoutMS, defaultIdleTimeout)
+	if err != nil {
+		return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, err
 	}
-	idleTimeout := pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true}
-	if idleDuration < checkpointDelay {
-		checkpointDelay = idleDuration
+	return timeoutAt, pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true}, pgvalue.Timestamptz(now.Add(idleDuration)), nil
+}
+
+func runWaitIdleDuration(value *int64, defaultIdleTimeout time.Duration) (time.Duration, error) {
+	if value == nil {
+		return defaultIdleTimeout, nil
 	}
-	return timeoutAt, idleTimeout, pgvalue.Timestamptz(now.Add(checkpointDelay)), nil
+	if *value <= 0 || *value > maxRunWaitIdleTimeout.Milliseconds() {
+		return 0, fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxRunWaitIdleTimeout.Milliseconds())
+	}
+	return time.Duration(*value) * time.Millisecond, nil
+}
+
+func (s *Server) runWaitIdleDefault(ctx context.Context, run db.Run) (time.Duration, error) {
+	if run.EntrypointKind != "actor" {
+		return defaultRunWaitIdleTimeout, nil
+	}
+	definition, err := s.db.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
+		EnvironmentID: run.EnvironmentID, DeploymentID: run.DeploymentID,
+		Kind: run.EntrypointKind, DeclaredID: run.EntrypointDeclaredID,
+	})
+	if err != nil {
+		return 0, errors.New("load actor wait declaration")
+	}
+	return actorWaitIdleTimeout(definition.Manifest)
 }
 
 func tokenWaitDecision(state db.WaitStatus, result json.RawMessage, reason string) (string, json.RawMessage, error) {

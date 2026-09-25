@@ -57,6 +57,7 @@ type SubjectEventReader interface {
 }
 
 type Server struct {
+	computerKeys          *computerKeyBroker
 	log                   *slog.Logger
 	deploymentMode        string
 	db                    db.Querier
@@ -105,6 +106,7 @@ type TxBeginner interface {
 }
 
 type ServerConfig struct {
+	ComputerKeys   ComputerKeyWrapper
 	Log            *slog.Logger
 	DeploymentMode string
 
@@ -222,7 +224,12 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if apiOrigin == nil {
 		apiOrigin = cfg.PublicURL
 	}
+	computerKeys, err := newComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
+	if err != nil {
+		return nil, err
+	}
 	server := &Server{
+		computerKeys:          computerKeys,
 		log:                   log,
 		deploymentMode:        deploymentMode,
 		db:                    cfg.DB,
@@ -509,7 +516,6 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/close", s.closeSessionHTTP)
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/resume", s.resumeSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/recover", s.recoverSessionHTTP)
 		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionMessageHTTP)
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/turns/{turnID}/interrupt", s.interruptSessionTurnHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/sessions/{sessionID}/events", s.readSessionEventsHTTP)
@@ -586,7 +592,6 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/close", s.closeSessionHTTP)
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/cancel", s.cancelSessionHTTP)
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/resume", s.resumeSessionHTTP)
-		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/recover", s.recoverSessionHTTP)
 		r.With(limitRequestBody(sessionDataBodyLimit)).Post("/sessions/{sessionID}/turns/{turnID}/messages", s.sendSessionMessageHTTP)
 		r.With(limitRequestBody(sessionControlBodyLimit)).Post("/sessions/{sessionID}/turns/{turnID}/interrupt", s.interruptSessionTurnHTTP)
 		r.Get("/sessions/{sessionID}/events", s.readSessionEventsHTTP)
@@ -612,6 +617,21 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
 				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
 				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
+				r.With(limitRequestBody(1<<20)).Post("/run/runtime-instances/initialization/generation", s.workerPublishInitialComputerGeneration)
+				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/initialization/key", s.workerInitialComputerKey)
+				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/computer-source", s.workerComputerSource)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)
+				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/begin", s.workerBeginComputerSave)
+				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/abandon", s.workerAbandonComputerSave)
+				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/publish", s.workerPublishComputerSave)
+				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/adopt", s.workerAdoptComputerSave)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/register", s.workerRegisterComputerSaveObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/certify", s.workerCertifyComputerSaveObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/reuse", s.workerReuseComputerSaveObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-objects/register", s.workerRegisterRunComputerObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-objects/certify", s.workerCertifyRunComputerObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-objects/reuse", s.workerReuseRunComputerObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/certify", s.workerCertifyInitialComputerObject)
 				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
 				r.Post("/run/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/run/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
@@ -619,6 +639,10 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/run/workspace-mounts/renew", s.workerRenewWorkspaceMount)
 				r.Post("/run/workspace-mounts/mounted", s.workerMarkWorkspaceMountMounted)
 				r.Post("/run/workspace-mounts/capture", s.workerCaptureWorkspaceMount)
+				r.Post("/run/workspace-mounts/computer-objects/register", s.workerRegisterExecComputerObject)
+				r.Post("/run/workspace-mounts/computer-objects/certify", s.workerCertifyExecComputerObject)
+				r.Post("/run/workspace-mounts/computer-objects/reuse", s.workerReuseExecComputerObject)
+
 				r.Post("/run/workspace-mounts/stop", s.workerStopWorkspaceMount)
 				r.Post("/run/workspace-mounts/fail", s.workerFailWorkspaceMount)
 				r.Post("/run/workspace-execs/claim", s.workerClaimWorkspaceExec)
@@ -633,9 +657,11 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/create", s.workerCreateRunWait)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/poll", s.workerPollRunWait)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/resume-ack", s.workerAcknowledgeRunWaitResume)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/register", s.workerRegisterCheckpoint)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/ready", s.workerMarkCheckpointReady)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/failed", s.workerMarkCheckpointFailed)
 				r.Post("/run/finalization/begin", s.workerBeginRunFinalization)
+				r.Post("/run/finalization/register", s.workerRegisterRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/turns/commit", s.workerCommitActorTurn)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/actors/start", s.workerStartActor)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/retrieve", s.workerGetSessionStatus)

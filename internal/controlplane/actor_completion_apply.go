@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -33,13 +32,12 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 	if err != nil || replayed {
 		return err
 	}
-	if completion.capture != nil {
-		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
-		if err != nil {
-			return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
-		}
-		completion.capture = &verified
+	verified, err := s.verifyTaskComputerCapture(*completion.capture)
+	if err != nil {
+		return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 	}
+	completion.capture = &verified
+
 	err = s.inTx(ctx, func(work *txWork) error {
 		replayed, err := actorCompletionWasReplayed(ctx, work.q, worker, request, completion)
 		if err != nil || replayed {
@@ -83,6 +81,11 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		if err := validateActorCompletionAuthority(ctx, work.q, completion, authority); err != nil {
 			return err
 		}
+		// Stop admission can win after the worker has frozen its completion receipt.
+		// Keep that receipt's fingerprint, but honor the matching stop authority.
+		if completion.kind != actorCompletionInterrupted && authority.actor.DispatchHoldID.Valid {
+			completion.kind = actorCompletionInterrupted
+		}
 		if completion.kind == actorCompletionInterrupted {
 			excluded, err := work.q.SessionOwnedExecutionsExcluded(ctx, authority.run.ID)
 			if err != nil {
@@ -92,13 +95,7 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				return errActorStopCleanupPending
 			}
 		}
-		if completion.rollback != nil {
-			rollbackAuthority := authority
-			rollbackAuthority.run.BaseWorkspaceVersionID = authority.workspace.HeadVersionID
-			if err := validateTaskWorkspaceRollback(ctx, work.q, rollbackAuthority, *completion.rollback); err != nil {
-				return staleActorCompletion(err)
-			}
-		}
+
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
 		if err != nil || !completedAt.Valid {
 			if err == nil {
@@ -112,31 +109,24 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 		decision := decideActorRunTerminal(authority, completion)
 		failed := decision.runStatus == db.RunStatusFailed
 		if failed {
-			if _, err := run.HoldSessionExecution(ctx, work.q, authority.actor, authority.attempt.Number, "recovery_required"); err != nil {
-				return err
-			}
 			if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
 				return err
 			}
 		}
-		var versionID pgtype.UUID
-		if completion.capture != nil && !failed {
-			versionID, err = recordTaskWorkspaceVersion(ctx, work.q, worker, authority, *completion.capture, completedAt)
-			if err != nil {
-				return err
-			}
-			if _, err := work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
-				NewHeadVersionID: versionID, CompletedAt: completedAt, ID: authority.workspace.ID,
-				OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-				SessionID: authority.actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
-				WriterGeneration: authority.workspace.WriterGeneration, ExpectedHeadVersionID: authority.workspace.HeadVersionID,
-			}); err != nil {
-				return staleActorCompletion(err)
-			}
-		} else if completion.rollback != nil && authority.workspaceMount.MaterializedVersionID != authority.workspace.HeadVersionID {
-			if err := updateTaskWorkspaceMountFrontier(ctx, work.q, authority, authority.workspace.HeadVersionID, completedAt); err != nil {
-				return err
-			}
+		if err := requireFinalizationComputer(ctx, work.q, authority, *completion.capture); err != nil {
+			return staleActorCompletion(err)
+		}
+		versionID, err := recordTaskWorkspaceVersion(ctx, work.q, authority, completion.capture.version(), completedAt)
+		if err != nil {
+			return err
+		}
+		if _, err := work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
+			NewHeadVersionID: versionID, CompletedAt: completedAt, ID: authority.workspace.ID,
+			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
+			SessionID: authority.actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			WriterGeneration: authority.workspace.WriterGeneration, ExpectedHeadVersionID: authority.workspace.HeadVersionID,
+		}); err != nil {
+			return staleActorCompletion(err)
 		}
 		if completion.kind == actorCompletionInterrupted {
 			if err := session.CompleteInterruption(ctx, work.q, authority.actor, versionID, completion.fingerprint); err != nil {
@@ -160,7 +150,10 @@ func (s *Server) completeActor(ctx context.Context, worker workerActor, request 
 				return err
 			}
 		}
-		return finishActorRun(ctx, work.q, authority, secrets, completion, decision, completedAt)
+		if err := finishActorRun(ctx, work.q, authority, secrets, completion, decision, completedAt); err != nil {
+			return err
+		}
+		return staleActorCompletionPublicationDeadline(ctx, work.q, authority)
 	})
 	if err != nil {
 		return actorCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
@@ -229,22 +222,30 @@ func validateActorCompletionAuthority(
 				return errStaleActorCompletion
 			}
 		}
-	} else if (actor.ActiveTurnID.Valid && completion.kind != actorCompletionFailed) || actor.DispatchHoldID.Valid {
-		return errStaleActorCompletion
+	} else {
+		if actor.ActiveTurnID.Valid && completion.kind != actorCompletionFailed {
+			return errStaleActorCompletion
+		}
+		if actor.DispatchHoldID.Valid && (actor.DispatchHoldReason.String != "interrupt_requested" ||
+			actor.DispatchHoldRunID != authority.run.ID ||
+			!actor.DispatchHoldAttemptNumber.Valid || actor.DispatchHoldAttemptNumber.Int32 != authority.attempt.Number ||
+			!actor.DispatchHoldRunGeneration.Valid || actor.DispatchHoldRunGeneration.Int64 != completion.runGeneration) {
+			return errStaleActorCompletion
+		}
 	}
 	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid || authority.run.SessionID != actor.ID ||
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
 		authority.runLease.Status != db.RunLeaseStatusFinalizing || !authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.run.ActiveStartedAt.Valid || !authority.runLease.FinalizationOperationID.Valid ||
-		!authority.runLease.FinalizationKind.Valid || !authority.runLease.FinalizationStartedAt.Valid ||
+		!authority.runLease.FinalizationStartedAt.Valid ||
 		!authority.runLease.FinalizationRequestFingerprint.Valid || !actor.CurrentRunID.Valid || actor.CurrentRunID != authority.run.ID ||
 		(actor.Status != "open" && actor.Status != "closing") || authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
 		!authority.workspace.HeadVersionID.Valid ||
 		!authority.attempt.SessionInputStartSequence.Valid || !authority.run.SessionInputStartSequence.Valid || !authority.run.SessionInputHighWatermark.Valid {
 		return errStaleActorCompletion
 	}
-	if authority.workspaceLease.BaseWorkspaceVersionID != authority.workspace.HeadVersionID {
-		base, err := getActorTurnVersion(ctx, store, authority, authority.workspaceLease.BaseWorkspaceVersionID)
+	if authority.workspaceLease.BaseWorkspaceVersionID != authority.attempt.BaseWorkspaceVersionID {
+		base, err := getActorWorkspaceVersion(ctx, store, authority, authority.workspaceLease.BaseWorkspaceVersionID)
 		if err != nil {
 			return staleActorCompletion(err)
 		}
@@ -256,16 +257,12 @@ func validateActorCompletionAuthority(
 	if cursor < authority.attempt.SessionInputStartSequence.Int64 || cursor < actor.CommittedInputSequence || cursor >= actor.NextInputSequence {
 		return errStaleActorCompletion
 	}
-	var finalization workspace.FinalizationRequest
-	wantKind := string(workerapi.RunFinalizationReset)
-	if completion.capture != nil {
-		finalization = completion.capture.receipt
-		wantKind = string(workerapi.RunFinalizationCapture)
-	} else {
-		finalization = completion.rollback.receipt
+	if completion.capture == nil {
+		return errStaleActorCompletion
 	}
+	finalization := completion.capture.receipt
 	operationID, err := uuid.Parse(finalization.OperationID)
-	if err != nil || authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) || authority.runLease.FinalizationKind.String != wantKind {
+	if err != nil || authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) {
 		return errStaleActorCompletion
 	}
 	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
@@ -292,7 +289,7 @@ func validateRestoredActorBase(
 	ctx context.Context,
 	store db.Querier,
 	authority runLeaseClaimAuthority,
-	base db.GetWorkspaceResetTargetAuthorityRow,
+	base db.GetComputerVersionAuthorityRow,
 ) (db.RunCheckpoint, error) {
 	if !authority.runtime.RestoreCheckpointID.Valid ||
 		!base.SourceWorkspaceLeaseID.Valid ||
@@ -322,7 +319,7 @@ func validateRestoredActorBase(
 
 	validLineage, err := store.ActorCheckpointLineageIsValid(ctx, db.ActorCheckpointLineageIsValidParams{
 		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
-		CheckpointID: checkpoint.ID, CommittedHeadVersionID: authority.workspace.HeadVersionID,
+		CheckpointID:        checkpoint.ID,
 		OwnershipGeneration: authority.workspace.OwnershipGeneration,
 	})
 	if err != nil {
@@ -332,16 +329,17 @@ func validateRestoredActorBase(
 		return db.RunCheckpoint{}, errStaleActorCompletion
 	}
 
-	checkpointBase, err := getActorTurnVersion(ctx, store, authority, checkpoint.PrivateWorkspaceVersionID)
+	checkpointBase, err := getActorWorkspaceVersion(ctx, store, authority, checkpoint.PrivateWorkspaceVersionID)
 	if err != nil {
 		return db.RunCheckpoint{}, staleActorCompletion(err)
 	}
 
 	// The released wait describes the execution that produced the checkpoint.
-	// A later receive may have activated a Turn after an outside-Turn wait.
+	// Later Turns can commit results without publishing this private disk base.
+	// The upper bounds restate restore admission; both Session counters are monotonic.
 	cursor := wait.ActorSpeculativeInputSequence
 	if !cursor.Valid ||
-		cursor.Int64 < authority.actor.CommittedInputSequence || cursor.Int64 > authority.actor.CommittedInputSequence+1 ||
+		cursor.Int64 > authority.actor.CommittedInputSequence+1 ||
 		cursor.Int64 >= authority.actor.NextInputSequence || !authority.attempt.SessionInputStartSequence.Valid ||
 		cursor.Int64 < authority.attempt.SessionInputStartSequence.Int64 ||
 		(wait.TurnID.Valid && (wait.TurnSessionID != authority.actor.ID || !wait.TurnRunGeneration.Valid || wait.TurnRunGeneration.Int64 != authority.actor.RunGeneration)) {
@@ -359,8 +357,7 @@ func validateRestoredActorBase(
 	sourceAuthority.sourceRunLease = source.RunLease
 	sourceAuthority.sourceWorkspaceLease = source.WorkspaceLease
 	sourceAuthority.sourceRuntime = source.RuntimeInstance
-	if validateCheckpointSource(sourceAuthority) != nil || source.RuntimeInstance.DesiredState != db.RuntimeDesiredStateClosed ||
-		source.RuntimeInstance.ObservedState != db.RuntimeObservedStateClosed {
+	if validateCheckpointSource(sourceAuthority) != nil {
 		return db.RunCheckpoint{}, errStaleActorCompletion
 	}
 
@@ -433,8 +430,7 @@ func validateRestoredActorBase(
 		}
 		if childReceipt.RunLease.Status != db.RunLeaseStatusCompleted ||
 			childReceipt.RuntimeInstance.RuntimeIdentityID != childReceipt.RunLease.RuntimeIdentityID ||
-			childReceipt.RuntimeInstance.DesiredState != db.RuntimeDesiredStateClosed ||
-			childReceipt.RuntimeInstance.ObservedState != db.RuntimeObservedStateClosed {
+			!runtimeHasExclusionProof(childReceipt.RuntimeInstance) {
 			return db.RunCheckpoint{}, errStaleActorCompletion
 		}
 		return checkpoint, nil
@@ -453,7 +449,7 @@ func validateRestoredActorBase(
 }
 
 func validActorCompletionVersionSource(
-	version db.GetWorkspaceResetTargetAuthorityRow,
+	version db.GetComputerVersionAuthorityRow,
 	source db.WorkspaceLease,
 	expectedParent pgtype.UUID,
 	expectedOwnership int64,
@@ -524,7 +520,9 @@ func decideActorRunTerminal(authority runLeaseClaimAuthority, completion parsedA
 		decision.runReason = pgvalue.Text("actor_failed")
 		return decision
 	}
-	if authority.actor.NextInputSequence-1 > authority.actor.CommittedInputSequence &&
+	// Only work visible at admission can make a clean return a no-progress exit.
+	// Input arriving while the handler returns belongs to the next continuation.
+	if authority.run.SessionInputHighWatermark.Int64 > authority.run.SessionInputStartSequence.Int64 &&
 		authority.actor.CommittedInputSequence <= authority.run.SessionInputStartSequence.Int64 {
 		decision.runStatus = db.RunStatusFailed
 		decision.runReason = pgvalue.Text("no_progress")
@@ -564,6 +562,18 @@ func finishActorRun(ctx context.Context, store db.Querier, authority runLeaseCla
 		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
 	}); err != nil {
 		return staleActorCompletion(err)
+	}
+	if decision.runStatus == db.RunStatusFailed {
+		if err := session.FailExecution(ctx, store, authority.actor, failure, completion.fingerprint, completedAt); err != nil {
+			return err
+		}
+		if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
+			CompletedAt: completedAt, ID: authority.workspace.ID, EnvironmentID: authority.run.EnvironmentID,
+			SessionID: authority.actor.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
+			WriterGeneration: authority.workspace.WriterGeneration,
+		}); err != nil {
+			return staleActorCompletion(err)
+		}
 	}
 	if decision.runStatus == db.RunStatusSucceeded {
 		actor, err := store.ReconcileActorTerminalRun(ctx, db.ReconcileActorTerminalRunParams{
@@ -663,4 +673,16 @@ func staleActorCompletion(err error) error {
 		return errStaleActorCompletion
 	}
 	return err
+}
+
+func getActorWorkspaceVersion(
+	ctx context.Context,
+	store db.Querier,
+	authority runLeaseClaimAuthority,
+	versionID pgtype.UUID,
+) (db.GetComputerVersionAuthorityRow, error) {
+	return store.GetComputerVersionAuthority(ctx, db.GetComputerVersionAuthorityParams{
+		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID, VersionID: versionID,
+	})
 }

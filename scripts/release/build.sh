@@ -25,7 +25,8 @@ case "$part" in
     ;;
   builder)
     nix build .#bundleBuilderImage --out-link "$output/builder-docker"
-    skopeo --insecure-policy copy "docker-archive:$output/builder-docker" "dir:$output/builder-image"
+    # The directory transport must contain gzip bytes matching its layer media types.
+    skopeo --insecure-policy copy --dest-compress "docker-archive:$output/builder-docker" "dir:$output/builder-image"
     digest="sha256:$(sha256sum "$output/builder-image/manifest.json" | cut -d' ' -f1)"
     runtime=$(nix build .#runtimeRelease --no-link --print-out-paths)
     compiler=$(nix build .#compiler --no-link --print-out-paths)
@@ -51,7 +52,7 @@ case "$part" in
   controlplane)
     export CONTROLPLANE_IMAGE_CONTEXT="$output/context"
     HELMR_BUILD_VERSION=$RELEASE_TAG scripts/build-controlplane-image.sh control-plane:build
-    skopeo --insecure-policy copy docker-daemon:control-plane:build "dir:$output/controlplane-image"
+    skopeo --insecure-policy copy --dest-compress docker-daemon:control-plane:build "dir:$output/controlplane-image"
     digest="sha256:$(sha256sum "$output/controlplane-image/manifest.json" | cut -d' ' -f1)"
     image=$(python3 "$contract" control-plane)
     jq -cnS --arg image "$image@$digest" --arg sourceCommit "$RELEASE_SOURCE_COMMIT" \

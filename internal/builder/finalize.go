@@ -11,8 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -234,15 +235,11 @@ func verifyFinalObject(
 			return fmt.Errorf("verify finalized Program object: %w", err)
 		}
 	case deployment.WorkspaceImageArtifactMediaType:
-		metadata, err := oci.Inspect(file)
-		if err != nil {
+		artifact := computer.SeedArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: computer.SeedCapacity}
+		if err := computer.VerifySeed(ctx, file, artifact, computer.SeedCapacity); err != nil {
 			return fmt.Errorf("verify finalized workspace image object: %w", err)
 		}
-		if metadata.ManifestCount != 1 || metadata.Platform == nil ||
-			metadata.Platform.OS != deployment.DeploymentBundleTargetOS ||
-			metadata.Platform.Architecture != "amd64" {
-			return errors.New("finalized workspace image object platform does not match linux/amd64")
-		}
+
 	default:
 		return fmt.Errorf("finalized bundle object mediaType %q is unsupported", object.MediaType)
 	}

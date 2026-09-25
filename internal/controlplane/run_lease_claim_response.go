@@ -18,7 +18,7 @@ import (
 type runLeaseClaimProjection struct {
 	program     db.GetDeploymentProgramAuthorityRow
 	definition  db.DeploymentDefinition
-	resetTarget db.GetWorkspaceResetTargetAuthorityRow
+	resetTarget db.GetComputerVersionAuthorityRow
 }
 
 type runLeaseClaimResponseAuthority struct {
@@ -65,9 +65,9 @@ func loadRunLeaseClaimProjection(
 		program:    program,
 		definition: definition,
 	}
-	projection.resetTarget, err = store.GetWorkspaceResetTargetAuthority(
+	projection.resetTarget, err = store.GetComputerVersionAuthority(
 		ctx,
-		db.GetWorkspaceResetTargetAuthorityParams{
+		db.GetComputerVersionAuthorityParams{
 			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 			VersionID: authority.workspaceLease.BaseWorkspaceVersionID,

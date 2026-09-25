@@ -110,6 +110,21 @@ func LoadControlPlane() (ControlPlane, error) {
 	if cfg.DeploymentMode == DeploymentModeSelfHosted && cfg.SetupToken == "" {
 		return cfg, errors.New("SETUP_TOKEN is required when DEPLOYMENT_MODE is self-hosted")
 	}
+	if cfg.DeploymentMode == DeploymentModeManagedCloud {
+		cfg.ComputerKMSKeyARN = envText("COMPUTER_KMS_KEY_ARN")
+		if cfg.ComputerKMSKeyARN == "" {
+			return cfg, errors.New("COMPUTER_KMS_KEY_ARN is required when DEPLOYMENT_MODE is managed-cloud")
+		}
+	} else {
+		cfg.ComputerWrappingKeyID = envText("COMPUTER_WRAPPING_KEY_ID")
+		if cfg.ComputerWrappingKeyID == "" {
+			return cfg, errors.New("COMPUTER_WRAPPING_KEY_ID is required when DEPLOYMENT_MODE is self-hosted")
+		}
+		cfg.ComputerWrappingKey, err = rootKey("COMPUTER_WRAPPING_KEY")
+		if err != nil {
+			return cfg, err
+		}
+	}
 	return cfg, nil
 }
 

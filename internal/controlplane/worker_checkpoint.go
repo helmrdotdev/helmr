@@ -10,7 +10,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -18,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -29,8 +27,7 @@ type parsedCheckpointReady struct {
 	lease          parsedRunLeaseFence
 	waitID         uuid.UUID
 	checkpointID   uuid.UUID
-	capture        parsedTaskWorkspaceCapture
-	manifest       []byte
+	computer       workerapi.CheckpointComputer
 	fingerprint    string
 	artifacts      checkpointArtifactProofs
 	requestVersion int64
@@ -41,7 +38,6 @@ type parsedCheckpointFailed struct {
 	waitID         uuid.UUID
 	checkpointID   uuid.UUID
 	requestVersion int64
-	errorPayload   []byte
 	fingerprint    string
 }
 
@@ -94,17 +90,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
-	verified, err := s.verifyTaskWorkspaceCapture(r.Context(), parsed.capture)
-	if err != nil {
-		if response, replayed, replayErr := s.checkpointReadyReplay(r.Context(), parsed); replayErr == nil && replayed {
-			writeJSON(w, http.StatusOK, response)
-			return
-		}
-		writeError(w, badRequest(fmt.Errorf("verify checkpoint workspace capture: %w", err)))
-		return
-	}
-	parsed.capture = verified
-	if err := s.verifyCheckpointRuntimeArtifacts(r.Context(), parsed.artifacts); err != nil {
+	if err := s.verifyCheckpointArtifacts(r.Context(), parsed.artifacts); err != nil {
 		if response, replayed, replayErr := s.checkpointReadyReplay(r.Context(), parsed); replayErr == nil && replayed {
 			writeJSON(w, http.StatusOK, response)
 			return
@@ -164,7 +150,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		secrets, err := secret.LockAttemptDelivery(r.Context(), work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID)
+		_, err = secret.LockAttemptDelivery(r.Context(), work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID)
 		if err != nil {
 			return fmt.Errorf("lock checkpoint-failed secret authority: %w", err)
 		}
@@ -172,7 +158,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			return errors.New("checkpoint failure transaction does not expose PostgreSQL authority")
 		}
-		ownedGraph, err := run.LockOwnedFinalization(
+		ownedGraph, err := run.LockExecutionLeaseRecovery(
 			r.Context(),
 			tx,
 			run.OwnedFinalizationRequest{
@@ -189,7 +175,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		authority, err := lockRenewableRunLeaseAuthority(
+		authority, err := lockCheckpointFailureAuthority(
 			r.Context(), work.q, worker, pgvalue.UUID(parsed.lease.leaseID), normalized.Lease.LeaseSequence, locators,
 		)
 		if err != nil {
@@ -240,14 +226,20 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		if err != nil || checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence {
 			return staleRunLeaseClaim(err)
 		}
-		if authority.run.EntrypointKind == "actor" {
-			return failCheckpointActorAttempt(
-				r.Context(), work.q, ownedGraph, worker, authority, wait, parsed,
-			)
+		if _, err := work.q.InvalidateFailedRunCheckpoint(r.Context(), db.InvalidateFailedRunCheckpointParams{
+			FailedRequestFingerprint: pgvalue.Text(parsed.fingerprint),
+			CheckpointID:             checkpoint.ID, RunID: authority.run.ID,
+			AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,
+			RunLeaseID: authority.runLease.ID, WorkspaceID: authority.workspace.ID,
+		}); err != nil {
+			return staleRunLeaseClaim(err)
 		}
-		return failCheckpointTaskAttempt(
-			r.Context(), work.q, ownedGraph, worker, authority, wait, parsed, secrets,
-		)
+		return ownedGraph.FailCheckpointExecution(r.Context(), run.ExecutionLeaseRecoveryRequest{
+			RunID:         pgvalue.MustUUIDValue(authority.run.ID),
+			WorkspaceID:   pgvalue.MustUUIDValue(authority.workspace.ID),
+			AttemptNumber: authority.attempt.Number,
+			RunLeaseID:    pgvalue.MustUUIDValue(authority.runLease.ID),
+		}, normalized.Error)
 	})
 	if err != nil {
 		if response, replayed, replayErr := s.checkpointFailedReplay(r.Context(), parsed); replayErr == nil && replayed {
@@ -277,346 +269,6 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func failCheckpointTaskAttempt(
-	ctx context.Context,
-	store db.Querier,
-	ownedGraph run.OwnedFinalization,
-	worker workerActor,
-	authority runLeaseClaimAuthority,
-	wait db.RunWait,
-	failed parsedCheckpointFailed,
-	secrets []secret.DeliveryEnvelope,
-) error {
-	failedAt, err := store.GetTaskCompletionTime(ctx)
-	if err != nil || !failedAt.Valid {
-		if err == nil {
-			err = errors.New("database checkpoint failure time is unavailable")
-		}
-		return err
-	}
-	activeElapsed, err := store.CloseRunActiveIntervalForCheckpointFailure(ctx, db.CloseRunActiveIntervalForCheckpointFailureParams{
-		FailedAt: failedAt, ID: authority.run.ID, OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-		RunLeaseID: authority.runLease.ID,
-	})
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-
-	reason := "checkpoint_failed"
-	var retryAt time.Time
-	var retry bool
-	if activeElapsed >= authority.run.MaxActiveDurationMs {
-		reason = "max_active_duration_exceeded"
-	} else {
-		retryAt, retry, err = taskCompletionRetryAt(
-			authority.run,
-			authority.attempt,
-			parsedTaskCompletion{kind: taskCompletionFailed},
-			failedAt.Time,
-		)
-		if err != nil {
-			return deterministicWorkerAdmission(err)
-		}
-	}
-	if !retry {
-		if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
-			return fmt.Errorf(
-				"cancel child tasks after exhausted parent checkpoint failure: %w",
-				err,
-			)
-		}
-	}
-
-	if _, err := store.InvalidateFailedRunCheckpoint(ctx, db.InvalidateFailedRunCheckpointParams{
-		FailedAt: failedAt, FailedRequestFingerprint: pgvalue.Text(failed.fingerprint),
-		CheckpointID: pgvalue.UUID(failed.checkpointID), RunID: authority.run.ID,
-		AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,
-		RunLeaseID: authority.runLease.ID, WorkspaceID: authority.workspace.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.FailCheckpointRunLease(ctx, db.FailCheckpointRunLeaseParams{
-		FailedAt: failedAt, Error: failed.errorPayload,
-		FailedRequestFingerprint: pgvalue.Text(failed.fingerprint),
-		RunLeaseID:               authority.runLease.ID, RunID: authority.run.ID,
-		WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-		LeaseSequence: authority.runLease.LeaseSequence,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{
-		TerminalOutcome: pgvalue.Text("failed"), ReasonCode: pgvalue.Text(reason),
-		Error: failed.errorPayload, CompletedAt: failedAt, RunID: authority.run.ID,
-		Number: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.FailCheckpointRunWait(ctx, db.FailCheckpointRunWaitParams{
-		CheckpointRequestVersion: failed.requestVersion, FailedAt: failedAt,
-		Error: failed.errorPayload, RunWaitID: wait.ID, RunID: authority.run.ID,
-		WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-		RunLeaseID: authority.runLease.ID, CheckpointID: pgvalue.UUID(failed.checkpointID),
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.ReleaseTaskWorkspaceLease(ctx, db.ReleaseTaskWorkspaceLeaseParams{
-		CompletedAt: failedAt, ID: authority.workspaceLease.ID,
-		WorkspaceID: authority.workspace.ID, WorkspaceMountID: authority.workspaceMount.ID,
-		RuntimeInstanceID: authority.runtime.ID, OwnerRunLeaseID: authority.runLease.ID,
-		BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
-		WriterGeneration:       authority.workspace.WriterGeneration,
-		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.RequestCheckpointFailureRuntimeClose(ctx, db.RequestCheckpointFailureRuntimeCloseParams{
-		FailedAt: failedAt, WorkspaceMountID: authority.workspaceMount.ID,
-		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
-		RuntimeInstanceID:      authority.runtime.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if retry {
-		return scheduleCheckpointFailureRetry(ctx, store, authority, secrets, failedAt, retryAt)
-	}
-	return finishCheckpointFailedTask(ctx, store, authority, failedAt, reason)
-}
-
-func failCheckpointActorAttempt(
-	ctx context.Context,
-	store db.Querier,
-	ownedGraph run.OwnedFinalization,
-	worker workerActor,
-	authority runLeaseClaimAuthority,
-	wait db.RunWait,
-	failed parsedCheckpointFailed,
-) error {
-	failedAt, err := store.GetTaskCompletionTime(ctx)
-	if err != nil || !failedAt.Valid {
-		if err == nil {
-			err = errors.New("database actor checkpoint failure time is unavailable")
-		}
-		return err
-	}
-	activeElapsed, err := store.CloseRunActiveIntervalForCheckpointFailure(ctx, db.CloseRunActiveIntervalForCheckpointFailureParams{
-		FailedAt: failedAt, ID: authority.run.ID, OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-		RunLeaseID: authority.runLease.ID,
-	})
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-
-	reason := "checkpoint_failed"
-	if activeElapsed >= authority.run.MaxActiveDurationMs {
-		reason = "max_active_duration_exceeded"
-	}
-	if _, err := run.HoldSessionExecution(ctx, store, authority.actor, authority.attempt.Number, "recovery_required"); err != nil {
-		return err
-	}
-	if _, err := ownedGraph.CancelDescendants(ctx); err != nil {
-		return fmt.Errorf("cancel child tasks after actor checkpoint failure: %w", err)
-	}
-
-	if _, err := store.InvalidateFailedRunCheckpoint(ctx, db.InvalidateFailedRunCheckpointParams{
-		FailedAt: failedAt, FailedRequestFingerprint: pgvalue.Text(failed.fingerprint),
-		CheckpointID: pgvalue.UUID(failed.checkpointID), RunID: authority.run.ID,
-		AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,
-		RunLeaseID: authority.runLease.ID, WorkspaceID: authority.workspace.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.FailCheckpointRunLease(ctx, db.FailCheckpointRunLeaseParams{
-		FailedAt: failedAt, Error: failed.errorPayload,
-		FailedRequestFingerprint: pgvalue.Text(failed.fingerprint),
-		RunLeaseID:               authority.runLease.ID, RunID: authority.run.ID,
-		WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-		LeaseSequence: authority.runLease.LeaseSequence,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.CompleteActorAttempt(ctx, db.CompleteActorAttemptParams{
-		TerminalSessionInputSequence: pgtype.Int8{}, TerminalOutcome: pgvalue.Text("failed"),
-		ReasonCode: pgvalue.Text(reason), Error: failed.errorPayload, CompletedAt: failedAt,
-		RunID: authority.run.ID, Number: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.FailCheckpointRunWait(ctx, db.FailCheckpointRunWaitParams{
-		CheckpointRequestVersion: failed.requestVersion, FailedAt: failedAt,
-		Error: failed.errorPayload, RunWaitID: wait.ID, RunID: authority.run.ID,
-		WorkspaceID: authority.workspace.ID, AttemptNumber: authority.attempt.Number,
-		RunLeaseID: authority.runLease.ID, CheckpointID: pgvalue.UUID(failed.checkpointID),
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.ReleaseTaskWorkspaceLease(ctx, db.ReleaseTaskWorkspaceLeaseParams{
-		CompletedAt: failedAt, ID: authority.workspaceLease.ID,
-		WorkspaceID: authority.workspace.ID, WorkspaceMountID: authority.workspaceMount.ID,
-		RuntimeInstanceID: authority.runtime.ID, OwnerRunLeaseID: authority.runLease.ID,
-		BaseWorkspaceVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
-		WriterGeneration:       authority.workspace.WriterGeneration,
-		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if _, err := store.RequestCheckpointFailureRuntimeClose(ctx, db.RequestCheckpointFailureRuntimeCloseParams{
-		FailedAt: failedAt, WorkspaceMountID: authority.workspaceMount.ID,
-		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
-		RuntimeInstanceID:      authority.runtime.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	return finishCheckpointFailedActor(ctx, store, authority, failedAt, reason)
-}
-
-func finishCheckpointFailedActor(
-	ctx context.Context,
-	store db.Querier,
-	authority runLeaseClaimAuthority,
-	failedAt pgtype.Timestamptz,
-	reason string,
-) error {
-	status := db.RunStatusSystemFailed
-	eventKind := api.RunEventKindFailed
-	if reason == "max_active_duration_exceeded" {
-		status = db.RunStatusExpired
-		eventKind = api.RunEventKindExpired
-	}
-	runFailureValue, err := runFailure(reason, "Run failed during checkpoint recovery")
-	if err != nil {
-		return err
-	}
-	if _, err := store.FinishCheckpointFailedActorRun(ctx, db.FinishCheckpointFailedActorRunParams{
-		Status: status, Failure: runFailureValue, FailedAt: failedAt,
-		ID: authority.run.ID, WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
-		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	payload, err := json.Marshal(struct {
-		Reason string `json:"reason"`
-	}{Reason: reason})
-	if err != nil {
-		return err
-	}
-	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
-		return err
-	}
-	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
-		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
-	}); err != nil {
-		return fmt.Errorf("append checkpoint-failed actor terminal event: %w", err)
-	}
-	return nil
-}
-
-func scheduleCheckpointFailureRetry(
-	ctx context.Context,
-	store db.Querier,
-	authority runLeaseClaimAuthority,
-	secrets []secret.DeliveryEnvelope,
-	failedAt pgtype.Timestamptz,
-	retryAtTime time.Time,
-) error {
-	nextAttempt := authority.attempt.Number + 1
-	if _, err := store.CreateCheckpointFailureRetryAttempt(ctx, db.CreateCheckpointFailureRetryAttemptParams{
-		Number: nextAttempt, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	resolutions, err := activeSecretResolutions(secrets)
-	if err != nil {
-		return err
-	}
-	if err := secret.CreateAttemptResolutions(
-		ctx, store, authority.workspace.ID, authority.run.ID, nextAttempt, resolutions,
-	); err != nil {
-		return fmt.Errorf("record checkpoint retry secret resolutions: %w", err)
-	}
-	if _, err := store.DelayCheckpointFailureRetry(ctx, db.DelayCheckpointFailureRetryParams{
-		NextAttemptNumber: nextAttempt, RetryAt: pgvalue.Timestamptz(retryAtTime),
-		FailedAt: failedAt, ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-		PreviousAttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	return nil
-}
-
-func finishCheckpointFailedTask(
-	ctx context.Context,
-	store db.Querier,
-	authority runLeaseClaimAuthority,
-	failedAt pgtype.Timestamptz,
-	reason string,
-) error {
-	if _, err := store.ReleaseTaskWorkspaceOwner(ctx, db.ReleaseTaskWorkspaceOwnerParams{
-		CompletedAt: failedAt, ID: authority.workspace.ID, OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		RunID: authority.run.ID, OwnershipGeneration: authority.workspace.OwnershipGeneration,
-		WriterGeneration:      authority.workspace.WriterGeneration,
-		ExpectedHeadVersionID: authority.run.BaseWorkspaceVersionID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	status := db.RunStatusSystemFailed
-	eventKind := api.RunEventKindFailed
-	if reason == "max_active_duration_exceeded" {
-		status = db.RunStatusExpired
-		eventKind = api.RunEventKindExpired
-	}
-	failure, err := runFailure(reason, "Run failed during checkpoint recovery")
-	if err != nil {
-		return err
-	}
-	if _, err := store.FinishCheckpointFailedTaskRun(ctx, db.FinishCheckpointFailedTaskRunParams{
-		Status: status, Failure: failure,
-		FailedAt: failedAt, ID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-		AttemptNumber: authority.attempt.Number, RunLeaseID: authority.runLease.ID,
-	}); err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	payload, err := json.Marshal(struct {
-		Reason string `json:"reason"`
-	}{Reason: reason})
-	if err != nil {
-		return err
-	}
-	if err := telemetry.ValidateEvent(eventKind, payload); err != nil {
-		return err
-	}
-	if _, err := store.AppendRunEvent(ctx, db.AppendRunEventParams{
-		OrgID: authority.run.OrgID, RunID: authority.run.ID, Kind: eventKind, Payload: payload,
-	}); err != nil {
-		return fmt.Errorf("append checkpoint-failed task terminal event: %w", err)
-	}
-	if authority.run.ParentRunID.Valid && authority.run.ParentOwnsLifecycle.Valid &&
-		authority.run.ParentOwnsLifecycle.Bool && authority.enclosingWait.ID.Valid {
-		terminalRun := authority.run
-		terminalRun.Status = status
-		terminalRun.Failure = failure
-		if err := resolveParentOwnedChildWait(
-			ctx, store, authority, terminalRun,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func parseCheckpointFailedRequest(request workerapi.CheckpointFailedRequest) (parsedCheckpointFailed, workerapi.CheckpointFailedRequest, error) {
 	lease, err := parseRunLeaseFence(request.Lease)
 	if err != nil {
@@ -637,10 +289,6 @@ func parseCheckpointFailedRequest(request workerapi.CheckpointFailedRequest) (pa
 	if message == "" || len(message) > 1024 {
 		return parsedCheckpointFailed{}, request, errors.New("error must be nonempty and no larger than 1024 bytes")
 	}
-	errorPayload, err := json.Marshal(map[string]any{"code": "checkpoint_failed", "message": message, "retryable": false})
-	if err != nil {
-		return parsedCheckpointFailed{}, request, fmt.Errorf("encode checkpoint failure: %w", err)
-	}
 	normalized := request
 	normalized.Error = message
 	fingerprint, err := terminalRequestFingerprint("worker.checkpoint-failed.v1", normalized)
@@ -649,7 +297,7 @@ func parseCheckpointFailedRequest(request workerapi.CheckpointFailedRequest) (pa
 	}
 	return parsedCheckpointFailed{
 		lease: lease, waitID: waitID, checkpointID: checkpointID, requestVersion: request.RequestVersion,
-		errorPayload: errorPayload, fingerprint: fingerprint,
+		fingerprint: fingerprint,
 	}, normalized, nil
 }
 
@@ -669,14 +317,7 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
-	tree, err := parseTaskWorkspaceTree("workspace_capture.tree", request.WorkspaceCapture.Tree)
-	if err != nil {
-		return parsedCheckpointReady{}, request, err
-	}
-	if err := validateTaskWorkspaceArtifact("workspace_capture.artifact", request.WorkspaceCapture.Artifact); err != nil {
-		return parsedCheckpointReady{}, request, err
-	}
-	manifest, artifacts, err := validateCheckpointReadyManifest(request)
+	_, artifacts, err := validateCheckpointReadyManifest(request)
 	if err != nil {
 		return parsedCheckpointReady{}, request, err
 	}
@@ -688,13 +329,23 @@ func parseCheckpointReadyRequest(request workerapi.CheckpointReadyRequest) (pars
 	}
 	return parsedCheckpointReady{
 		lease: lease, waitID: waitID, checkpointID: checkpointID,
-		capture:  parsedTaskWorkspaceCapture{tree: tree, artifact: request.WorkspaceCapture.Artifact},
-		manifest: manifest, fingerprint: fingerprint, artifacts: artifacts,
+		computer:    *request.Manifest.RuntimeState.Computer,
+		fingerprint: fingerprint, artifacts: artifacts,
 		requestVersion: request.RequestVersion,
 	}, normalized, nil
 }
 
 func validateCheckpointReadyManifest(request workerapi.CheckpointReadyRequest) ([]byte, checkpointArtifactProofs, error) {
+	disk := request.Manifest.RuntimeState.Computer
+	if disk == nil {
+		return nil, checkpointArtifactProofs{}, errors.New("checkpoint requires a Computer disk")
+	}
+	if _, err := parseCanonicalUUID("computer_id", disk.ComputerID); err != nil {
+		return nil, checkpointArtifactProofs{}, err
+	}
+	if err := disk.Root.Validate(disk.LogicalBytes); err != nil {
+		return nil, checkpointArtifactProofs{}, err
+	}
 	return validateCheckpointManifest(
 		request.Manifest,
 		request.CheckpointID,
@@ -781,14 +432,17 @@ func validateCheckpointManifest(
 	return encoded, proofs, nil
 }
 
-func (s *Server) verifyCheckpointRuntimeArtifacts(
+func (s *Server) verifyCheckpointArtifacts(
 	ctx context.Context,
+
 	proofs checkpointArtifactProofs,
 ) error {
 	if s.cas == nil {
 		return errors.New("checkpoint CAS is not configured")
 	}
-	for _, proof := range proofs.all() {
+	runtime := proofs.all()
+	objects := runtime[:]
+	for _, proof := range objects {
 		object, err := s.cas.Stat(ctx, proof.artifact.Digest)
 		if err != nil {
 			return fmt.Errorf("checkpoint artifact %s is missing from CAS: %w", proof.role, err)
@@ -845,121 +499,25 @@ func (s *Server) commitCheckpointReady(
 ) (workerapi.CheckpointResponse, error) {
 	var response workerapi.CheckpointResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(ready.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
-			return fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
-		}
-		workspaceBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
-		if err != nil {
-			return fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
-		}
-		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+		source, err := lockCheckpointSource(ctx, work, worker, ready.lease, request.Lease.LeaseSequence,
+			ready.waitID, ready.checkpointID, request.RequestVersion, request.Manifest)
 		if err != nil {
 			return err
 		}
-		authority, err := lockRenewableRunLeaseAuthority(
-			ctx, work.q, worker, pgvalue.UUID(ready.lease.leaseID), request.Lease.LeaseSequence, locators,
-		)
-		if err != nil {
-			return err
-		}
-		sourcePoolID := authority.worker.WorkerPoolID
-		sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-			WorkerPoolID:  sourcePoolID,
-		})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if sourcePool.Status != "active" && sourcePool.Status != "draining" {
+		authority, wait, checkpointedAt := source.authority, source.wait, source.checkpointedAt
+		if ready.computer.ComputerID != pgvalue.UUIDString(authority.workspace.ID) || ready.computer.Root.Validate(authority.runtime.ReservedGuestEphemeralDiskBytes) != nil {
 			return errStaleRunLeaseClaim
 		}
-		authority.actor = owner.actor
-		authority.parentRun = owner.parent
-		if err := validateRunFinalizationOwner(authority, locators); err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if authority.run.Status != db.RunStatusWaiting ||
-			authority.runLease.Status != db.RunLeaseStatusCheckpointing {
-			return errStaleRunLeaseClaim
-		}
-		wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
-			ID: pgvalue.UUID(ready.waitID), EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
-			AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
-			CurrentRunLeaseID: authority.runLease.ID,
-		})
-		if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput &&
-			wait.Kind != db.WaitKindChild) ||
-			wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
-			wait.CheckpointRequestVersion != request.RequestVersion || wait.SuspendCheckpointID != pgvalue.UUID(ready.checkpointID) {
-			return staleRunLeaseClaim(err)
-		}
-		if err := validateRunWaitActorCursor(authority, wait); err != nil {
-			return err
-		}
-		checkpoint, err := work.q.LockCreatingRunCheckpoint(ctx, db.LockCreatingRunCheckpointParams{
-			ID: pgvalue.UUID(ready.checkpointID), RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
-			RunWaitID: wait.ID, SourceRunLeaseID: authority.runLease.ID,
-			SourceWorkspaceLeaseID: authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
-		})
-		if err != nil || checkpoint.BaseWorkspaceVersionID != authority.workspaceLease.BaseWorkspaceVersionID ||
-			checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence {
-			return staleRunLeaseClaim(err)
-		}
-		identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
-		if err != nil || identity.ID != request.Manifest.RecoveryPoint.Runtime.ID ||
-			identity.RuntimeArch != request.Manifest.RecoveryPoint.Runtime.Arch || identity.VMRuntimeContract != request.Manifest.RecoveryPoint.Runtime.Contract ||
-			identity.KernelDigest != request.Manifest.RecoveryPoint.Runtime.KernelDigest ||
-			identity.InitramfsDigest != request.Manifest.RecoveryPoint.Runtime.InitramfsDigest ||
-			identity.RootfsDigest != request.Manifest.RecoveryPoint.Runtime.RootfsDigest {
-			return staleRunLeaseClaim(err)
-		}
-		if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, request.Manifest); err != nil {
-			return err
-		}
-		baseAuthority, err := work.q.GetCheckpointWorkspaceBaseAuthority(ctx, db.GetCheckpointWorkspaceBaseAuthorityParams{
-			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-			VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		sourceBase, err := projectCheckpointWorkspaceBase(baseAuthority)
+		candidate := request.Manifest
+		candidate.Phases = nil
+		encoded, err := json.Marshal(candidate)
 		if err != nil {
 			return err
 		}
-		if err := validateCheckpointWorkspaceBaseAuthority(request.Manifest, sourceBase); err != nil {
-			return err
-		}
-		if err := validateCheckpointSubstrateAuthority(
-			ctx,
-			work.q,
-			authority,
-			request.Manifest,
-		); err != nil {
-			return err
-		}
-		if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
-			SourceRunLeaseID:   authority.runLease.ID,
-			WorkerGroupID:      pgvalue.UUID(worker.WorkerGroupID),
-			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:        worker.WorkerEpoch,
-			SourceWorkerPoolID: sourcePoolID,
-		}); err != nil {
+		if _, err := work.q.RequireRegisteredCheckpointManifest(ctx, db.RequireRegisteredCheckpointManifestParams{ID: pgvalue.UUID(ready.checkpointID), Manifest: encoded}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
-		if err != nil || !checkpointedAt.Valid || !checkpointedAt.Time.Before(authority.runLease.ExpiresAt.Time) {
-			return staleRunLeaseClaim(err)
-		}
-		workspaceVersionID, err := recordCheckpointWorkspaceVersion(ctx, work.q, worker, authority, ready.capture)
+		workspaceVersionID, err := recordCheckpointComputerVersion(ctx, work.q, authority, pgvalue.UUID(ready.checkpointID), ready.computer)
 		if err != nil {
 			return err
 		}
@@ -967,8 +525,15 @@ func (s *Server) commitCheckpointReady(
 		if err != nil {
 			return err
 		}
+		phases, err := json.Marshal(request.Manifest.Phases)
+		if err != nil {
+			return err
+		}
+		if request.Manifest.Phases == nil {
+			phases = nil
+		}
 		if _, err := work.q.MarkRunCheckpointReady(ctx, db.MarkRunCheckpointReadyParams{
-			PrivateWorkspaceVersionID: workspaceVersionID, RestoreManifest: ready.manifest,
+			PrivateWorkspaceVersionID: workspaceVersionID, Manifest: encoded, PhaseTimings: phases,
 			RuntimeConfigArtifactID: artifactIDs.runtimeConfig, VMStateArtifactID: artifactIDs.vmState,
 			MemoryArtifactID: artifactIDs.memory, ScratchDiskArtifactID: artifactIDs.scratchDisk,
 			ReadyRequestFingerprint: pgvalue.Text(ready.fingerprint), RunID: authority.run.ID,
@@ -1003,7 +568,7 @@ func (s *Server) commitCheckpointReady(
 		}); err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		if _, err := work.q.CloseCheckpointSourceRuntime(ctx, db.CloseCheckpointSourceRuntimeParams{
+		if _, err := work.q.DetachCheckpointSource(ctx, db.DetachCheckpointSourceParams{
 			CheckpointedAt:          checkpointedAt,
 			WorkspaceMountID:        authority.workspaceMount.ID,
 			RuntimeInstanceID:       authority.runtime.ID,
@@ -1025,10 +590,10 @@ func (s *Server) commitCheckpointReady(
 				authority,
 				wait,
 				workspaceVersionID,
-				ready.capture.tree.Digest,
+				ready.computer.Root.Pack.Digest,
 				checkpointedAt,
 				request.RequestVersion,
-				workspaceBindings,
+				source.workspaceBindings,
 			); err != nil {
 				return err
 			}
@@ -1051,6 +616,13 @@ func (s *Server) commitCheckpointReady(
 			if err != nil {
 				return staleRunLeaseClaim(err)
 			}
+		}
+		now, err := work.q.GetRunLeaseRenewalTime(ctx)
+		if err != nil {
+			return err
+		}
+		if !now.Valid || !now.Time.Before(authority.runLease.ExpiresAt.Time) || source.expiresAt.Valid && !now.Time.Before(source.expiresAt.Time) {
+			return errStaleRunLeaseClaim
 		}
 		response = workerapi.CheckpointResponse{
 			RunID: pgvalue.UUIDString(authority.run.ID), RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
@@ -1132,7 +704,7 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 	)
 	if err != nil ||
 		claim.Operation != "task.child.invoke" ||
-		claim.Status != "pending" ||
+		(claim.Status != "pending" && claim.Status != "completed") ||
 		claim.RetiredAt.Valid {
 		return staleRunLeaseClaim(err)
 	}
@@ -1152,50 +724,70 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			-time.Duration(request.Priority) * time.Second,
 		),
 	)
-	childRunID := uuid.NewV7()
-	rootSpanID, err := tracing.NewSpanID()
-	if err != nil {
-		return err
-	}
-	child, err := store.CreateSameWorkspaceChildRunFromParentDeployment(
-		ctx,
-		db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
-			RunWaitID:              wait.ID,
-			EntrypointDeclaredID:   wait.ChildTargetDeclaredID,
-			ClaimID:                wait.ChildClaimID,
-			ParentRunLeaseID:       authority.runLease.ID,
-			SuspendCheckpointID:    wait.SuspendCheckpointID,
-			BaseWorkspaceVersionID: baseWorkspaceVersionID,
-			EnvironmentID:          authority.run.EnvironmentID,
-			ParentRunID:            authority.run.ID,
-			ParentAttemptNumber:    authority.attempt.Number,
-			ID:                     pgvalue.UUID(childRunID),
-			Payload:                request.Payload,
-			Metadata:               request.Metadata,
-			Tags:                   request.Tags,
-			QueueName:              admission.QueueName,
-			ConcurrencyKey:         pgvalue.TextPtr(request.ConcurrencyKey),
-			QueueConcurrencyLimit:  int8Ptr(admission.QueueConcurrencyLimit),
-			Priority:               request.Priority,
-			QueueOriginAt:          authority.run.QueueOriginAt,
-			QueueScoreAt:           queueScoreAt,
-			QueuedExpiresAt:        queuedExpiresAt,
-			MaxActiveDurationMs:    admission.MaxActiveDurationMS,
-			RetryPolicy:            admission.RetryPolicy,
-			TraceID:                authority.run.TraceID,
-			RootSpanID:             rootSpanID,
-		},
-	)
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	if err := secret.CreateAttemptResolutions(
-		ctx, store, authority.workspace.ID, child.ID, 1, workspaceSecretResolutions(bindings),
-	); err != nil {
-		return fmt.Errorf(
-			"record same-workspace child task secret resolutions: %w",
-			err,
+	var childID pgtype.UUID
+	if claim.Status == "completed" {
+		receipt, err := decodeChildTaskReceipt(claim.Receipt)
+		if err != nil {
+			return err
+		}
+		if receipt.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) {
+			return errStaleRunLeaseClaim
+		}
+		child, err := store.RebindSharedChildAttempt(ctx, db.RebindSharedChildAttemptParams{
+			ChildRunID: pgvalue.UUID(uuid.MustParse(receipt.RunID)), EnvironmentID: authority.run.EnvironmentID,
+			ParentRunID: authority.run.ID, WorkspaceID: authority.workspace.ID, ClaimID: claim.ID, BaseWorkspaceVersionID: baseWorkspaceVersionID,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		childID = child.ID
+	} else {
+		childRunID := uuid.NewV7()
+		rootSpanID, err := tracing.NewSpanID()
+		if err != nil {
+			return err
+		}
+		child, err := store.CreateSameWorkspaceChildRunFromParentDeployment(
+			ctx,
+			db.CreateSameWorkspaceChildRunFromParentDeploymentParams{
+				RunWaitID:              wait.ID,
+				EntrypointDeclaredID:   wait.ChildTargetDeclaredID,
+				ClaimID:                wait.ChildClaimID,
+				ParentRunLeaseID:       authority.runLease.ID,
+				SuspendCheckpointID:    wait.SuspendCheckpointID,
+				BaseWorkspaceVersionID: baseWorkspaceVersionID,
+				EnvironmentID:          authority.run.EnvironmentID,
+				ParentRunID:            authority.run.ID,
+				ParentAttemptNumber:    authority.attempt.Number,
+				ID:                     pgvalue.UUID(childRunID),
+				Payload:                request.Payload,
+				Metadata:               request.Metadata,
+				Tags:                   request.Tags,
+				QueueName:              admission.QueueName,
+				ConcurrencyKey:         pgvalue.TextPtr(request.ConcurrencyKey),
+				QueueConcurrencyLimit:  int8Ptr(admission.QueueConcurrencyLimit),
+				Priority:               request.Priority,
+				QueueOriginAt:          authority.run.QueueOriginAt,
+				QueueScoreAt:           queueScoreAt,
+				QueuedExpiresAt:        queuedExpiresAt,
+				MaxActiveDurationMs:    admission.MaxActiveDurationMS,
+				RetryPolicy:            admission.RetryPolicy,
+				TraceID:                authority.run.TraceID,
+				RootSpanID:             rootSpanID,
+			},
 		)
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		childID = child.ID
+		if err := secret.CreateAttemptResolutions(
+			ctx, store, authority.workspace.ID, child.ID, 1, workspaceSecretResolutions(bindings),
+		); err != nil {
+			return fmt.Errorf(
+				"record same-workspace child task secret resolutions: %w",
+				err,
+			)
+		}
 	}
 	if _, err := store.CommitSameWorkspaceChildCheckpointReady(
 		ctx,
@@ -1220,19 +812,18 @@ func (s *Server) commitSameWorkspaceChildCheckpointReady(
 			ChildClaimID:        wait.ChildClaimID,
 			ParentRunLeaseID:    authority.runLease.ID,
 			SuspendCheckpointID: wait.SuspendCheckpointID,
-			ChildRunID:          child.ID,
+			ChildRunID:          childID,
 			ExpectedRunRevision: wait.ExpectedRunRevision,
 		},
 	); err != nil {
 		return staleRunLeaseClaim(err)
 	}
+	if claim.Status == "completed" {
+		return nil
+	}
 	receipt, err := json.Marshal(childTaskReceipt{
-		RunID:                  childRunID.String(),
-		WorkspaceID:            pgvalue.UUIDString(authority.workspace.ID),
-		RunWaitID:              pgvalue.UUIDString(wait.ID),
-		ResumeAttachID:         pgvalue.UUIDString(wait.ResumeAttachID),
-		BaseWorkspaceVersionID: pgvalue.UUIDString(baseWorkspaceVersionID),
-		BaseWorkspaceDigest:    baseWorkspaceContentDigest,
+		RunID:       pgvalue.UUIDString(childID),
+		WorkspaceID: pgvalue.UUIDString(authority.workspace.ID),
 	})
 	if err != nil {
 		return err
@@ -1299,41 +890,18 @@ func validateCheckpointRuntimeShapeAuthority(
 	return nil
 }
 
-func recordCheckpointWorkspaceVersion(
+func recordCheckpointComputerVersion(
 	ctx context.Context,
 	store db.Querier,
-	worker workerActor,
+
 	authority runLeaseClaimAuthority,
-	capture parsedTaskWorkspaceCapture,
+	publicationID pgtype.UUID,
+	disk workerapi.CheckpointComputer,
 ) (pgtype.UUID, error) {
-	artifact := capture.artifact
-	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID: authority.run.OrgID, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
-	}); err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace CAS object: %w", err)
+	if err := requireCertifiedComputerRoot(ctx, store, authority, computerPublicationKey("checkpoint", publicationID, publicationID), disk.Root); err != nil {
+		return pgtype.UUID{}, err
 	}
-	artifactRow, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID: pgvalue.UUID(uuid.NewV7()), OrgID: authority.run.OrgID,
-		ProjectID: authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-		Digest: artifact.Digest, Kind: db.ArtifactKindWorkspaceVersion, SizeBytes: artifact.SizeBytes,
-		MediaType: artifact.MediaType, CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
-	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record checkpoint workspace artifact: %w", err)
-	}
-	version, err := store.CreatePrivateCheckpointWorkspaceVersion(ctx, db.CreatePrivateCheckpointWorkspaceVersionParams{
-		ID:            pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID: authority.run.EnvironmentID,
-		WorkspaceID:   authority.workspace.ID, ParentVersionID: authority.workspaceLease.BaseWorkspaceVersionID,
-		ArtifactID: artifactRow.ID, ContentDigest: capture.tree.Digest,
-		SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
-		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
-		OwnershipGeneration:    authority.workspace.OwnershipGeneration, WriterGeneration: authority.workspace.WriterGeneration,
-	})
-	if err != nil {
-		return pgtype.UUID{}, fmt.Errorf("record private checkpoint workspace version: %w", err)
-	}
-	return version.ID, nil
+	return recordChildTaskWorkspaceVersion(ctx, store, authority, workspaceVersionCapture{root: disk.Root})
 }
 
 func recordCheckpointRuntimeArtifacts(
@@ -1386,4 +954,121 @@ func recordCheckpointRuntimeArtifact(
 		return pgtype.UUID{}, fmt.Errorf("record checkpoint artifact %s: %w", proof.role, err)
 	}
 	return artifact.ID, nil
+}
+
+type checkpointSource struct {
+	expiresAt         pgtype.Timestamptz
+	authority         runLeaseClaimAuthority
+	wait              db.RunWait
+	workspaceBindings []db.LockWorkspaceSecretsForAdmissionRow
+	checkpointedAt    pgtype.Timestamptz
+}
+
+func lockCheckpointSource(ctx context.Context, work *txWork, worker workerActor,
+	lease parsedRunLeaseFence, leaseSequence int64, waitID, checkpointID uuid.UUID,
+	requestVersion int64, manifest workerapi.CheckpointManifest,
+) (checkpointSource, error) {
+	locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
+		ID: pgvalue.UUID(lease.leaseID), LeaseSequence: leaseSequence,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch: worker.WorkerEpoch})
+	if err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if _, err := secret.LockAttemptDelivery(ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID); err != nil {
+		return checkpointSource{}, fmt.Errorf("lock checkpoint-ready secret authority: %w", err)
+	}
+	workspaceBindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, locators.WorkspaceID)
+	if err != nil {
+		return checkpointSource{}, fmt.Errorf("lock checkpoint-ready workspace secrets: %w", err)
+	}
+	owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+	if err != nil {
+		return checkpointSource{}, err
+	}
+	authority, err := lockRenewableRunLeaseAuthority(
+		ctx, work.q, worker, pgvalue.UUID(lease.leaseID), leaseSequence, locators,
+	)
+	if err != nil {
+		return checkpointSource{}, err
+	}
+	sourcePoolID := authority.worker.WorkerPoolID
+	sourcePool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		WorkerPoolID:  sourcePoolID,
+	})
+	if err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if sourcePool.Status != "active" && sourcePool.Status != "draining" {
+		return checkpointSource{}, errStaleRunLeaseClaim
+	}
+	authority.actor = owner.actor
+	authority.parentRun = owner.parent
+	if err := validateRunFinalizationOwner(authority, locators); err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if authority.run.Status != db.RunStatusWaiting ||
+		authority.runLease.Status != db.RunLeaseStatusCheckpointing {
+		return checkpointSource{}, errStaleRunLeaseClaim
+	}
+	wait, err := work.q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
+		ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
+		AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
+		CurrentRunLeaseID: authority.runLease.ID,
+	})
+	if err != nil || wait.SuspensionStatus != db.RunWaitStatusCheckpointing ||
+		wait.CheckpointRequestVersion != requestVersion || wait.SuspendCheckpointID != pgvalue.UUID(checkpointID) {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if err := validateRunWaitActorCursor(authority, wait); err != nil {
+		return checkpointSource{}, err
+	}
+	checkpoint, err := work.q.LockCreatingRunCheckpoint(ctx, db.LockCreatingRunCheckpointParams{
+		ID: pgvalue.UUID(checkpointID), RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
+		RunWaitID: wait.ID, SourceRunLeaseID: authority.runLease.ID,
+		SourceWorkspaceLeaseID: authority.workspaceLease.ID, WorkspaceID: authority.workspace.ID,
+	})
+	if err != nil || checkpoint.BaseWorkspaceVersionID != authority.workspaceLease.BaseWorkspaceVersionID ||
+		checkpoint.ActorSpeculativeInputSequence != wait.ActorSpeculativeInputSequence {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	identity, err := work.q.GetRuntimeIdentityForCheckpoint(ctx, authority.runtime.RuntimeIdentityID)
+	if err != nil || identity.ID != manifest.RecoveryPoint.Runtime.ID ||
+		identity.RuntimeArch != manifest.RecoveryPoint.Runtime.Arch || identity.VMRuntimeContract != manifest.RecoveryPoint.Runtime.Contract ||
+		identity.KernelDigest != manifest.RecoveryPoint.Runtime.KernelDigest ||
+		identity.InitramfsDigest != manifest.RecoveryPoint.Runtime.InitramfsDigest ||
+		identity.RootfsDigest != manifest.RecoveryPoint.Runtime.RootfsDigest {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	if err := validateCheckpointRuntimeShapeAuthority(authority.runtime, manifest); err != nil {
+		return checkpointSource{}, err
+	}
+	if err := validateCheckpointSubstrateAuthority(
+		ctx,
+		work.q,
+		authority,
+		manifest,
+	); err != nil {
+		return checkpointSource{}, err
+	}
+	if _, err := work.q.RequireCheckpointRestoreSupplier(ctx, db.RequireCheckpointRestoreSupplierParams{
+		SourceRunLeaseID:   authority.runLease.ID,
+		WorkerGroupID:      pgvalue.UUID(worker.WorkerGroupID),
+		WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:        worker.WorkerEpoch,
+		SourceWorkerPoolID: sourcePoolID,
+	}); err != nil {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+	checkpointedAt, err := work.q.GetRunLeaseRenewalTime(ctx)
+	if err != nil || !checkpointedAt.Valid || !checkpointedAt.Time.Before(authority.runLease.ExpiresAt.Time) || (checkpoint.ExpiresAt.Valid && !checkpointedAt.Time.Before(checkpoint.ExpiresAt.Time)) {
+		return checkpointSource{}, staleRunLeaseClaim(err)
+	}
+
+	if _, _, err := validateCheckpointManifest(manifest, checkpointID.String(),
+		pgvalue.UUIDString(authority.run.ID), authority.attempt.Number, waitID.String(), authority.runtime.RuntimeIdentityID); err != nil {
+		return checkpointSource{}, errStaleRunLeaseClaim
+	}
+	return checkpointSource{authority: authority, wait: wait, checkpointedAt: checkpointedAt, workspaceBindings: workspaceBindings, expiresAt: checkpoint.ExpiresAt}, nil
 }

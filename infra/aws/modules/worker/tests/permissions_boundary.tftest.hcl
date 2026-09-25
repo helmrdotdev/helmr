@@ -31,24 +31,26 @@ mock_provider "aws" {
 }
 
 variables {
-  name                       = "helmr-test-worker"
-  worker_pool_name           = "execution-v1"
-  network_blocked_ipv4_cidrs = ["10.0.0.0/8", "169.254.0.0/16"]
-  network_link_pool          = "169.254.64.0/18"
-  network_translation_pool   = "100.96.0.0/16"
-  vpc_id                     = "vpc-00000000000000000"
-  subnet_ids                 = ["subnet-00000000000000000"]
-  ami_id                     = "ami-00000000000000000"
-  worker_controlplane_url    = "https://controlplane.example.test"
-  cas_uri                    = "s3://helmr-test-cas"
-  cas_bucket_arn             = "arn:aws:s3:::helmr-test-cas"
-  kms_key_arn                = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
-  platform_store_uri         = "s3://helmr-test-runtime/objects"
-  platform_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
-  platform_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  min_size                   = 0
-  max_size                   = 1
-  root_volume_size_gb        = 120
+  computer_save_interval_seconds = 60
+  computer_devices               = ["/dev/nbd0", "/dev/nbd1"]
+  name                           = "helmr-test-worker"
+  worker_pool_name               = "execution-v1"
+  network_blocked_ipv4_cidrs     = ["10.0.0.0/8", "169.254.0.0/16"]
+  network_link_pool              = "169.254.64.0/18"
+  network_translation_pool       = "100.96.0.0/16"
+  vpc_id                         = "vpc-00000000000000000"
+  subnet_ids                     = ["subnet-00000000000000000"]
+  ami_id                         = "ami-00000000000000000"
+  worker_controlplane_url        = "https://controlplane.example.test"
+  cas_uri                        = "s3://helmr-test-cas"
+  cas_bucket_arn                 = "arn:aws:s3:::helmr-test-cas"
+  kms_key_arn                    = "arn:aws:kms:us-east-1:111122223333:key/00000000-0000-0000-0000-000000000000"
+  platform_store_uri             = "s3://helmr-test-runtime/objects"
+  platform_store_bucket_arn      = "arn:aws:s3:::helmr-test-runtime"
+  platform_store_kms_key_arn     = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  min_size                       = 0
+  max_size                       = 1
+  root_volume_size_gb            = 120
   secret_arns = {
     checkpoint_encryption_key = "arn:aws:secretsmanager:us-east-1:111122223333:secret:checkpoint"
     worker_enrollment_token   = "arn:aws:secretsmanager:us-east-1:111122223333:secret:worker-enrollment"

@@ -56,14 +56,6 @@ type ResumeRequest struct {
 	HoldID uuid.UUID
 }
 
-type RecoverRequest struct {
-	ResumeRequest
-	TurnID             *uuid.UUID
-	WorkspaceVersionID uuid.UUID
-	ReconciliationRef  string
-	Disposition        string
-}
-
 type InterruptRequest struct {
 	ControlRequest
 	TurnID uuid.UUID

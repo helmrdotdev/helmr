@@ -14,17 +14,18 @@ WITH worker AS (
        AND worker_instances.status IN ('active', 'draining')
 )
 SELECT runtime_instances.*,
+       deployment_definitions.manifest_version AS sandbox_manifest_version,
+       deployment_definitions.manifest AS sandbox_manifest,
+       reserved_computer_versions.status AS computer_version_status,
+       computer.initial_config AS computer_initial_config,
+       computer_root.locator AS computer_generation_locator,
        artifacts.digest AS workspace_image_digest,
        artifacts.size_bytes AS workspace_image_size_bytes,
        artifacts.media_type AS workspace_image_media_type,
        '/workspace'::text AS workspace_mount_path,
-       reserved_workspace_versions.id AS base_workspace_version_id,
-	   reserved_workspace_versions.content_digest AS workspace_content_digest,
-	   reserved_workspace_versions.size_bytes AS workspace_logical_size_bytes,
-       reserved_workspace_versions.entry_count AS workspace_entry_count,
-       COALESCE(reserved_workspace_artifacts.digest, '') AS workspace_artifact_digest,
-       COALESCE(reserved_workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
-       COALESCE(reserved_workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
+       reserved_computer_versions.id AS base_workspace_version_id,
+	   reserved_computer_versions.root_pack_digest AS workspace_content_digest,
+	   reserved_computer_versions.logical_bytes AS workspace_logical_size_bytes,
        runtime_identities.runtime_arch AS workspace_architecture,
        program_deployments.id AS program_deployment_authority_id,
        program_deployments.runtime_artifact_digest AS program_runtime_digest,
@@ -47,14 +48,18 @@ SELECT runtime_instances.*,
    AND deployment_definitions.kind = 'sandbox'
   JOIN artifacts ON artifacts.environment_id = deployment_definitions.environment_id
                 AND artifacts.id = deployment_definitions.artifact_id
-  LEFT JOIN workspace_versions AS reserved_workspace_versions
-    ON reserved_workspace_versions.environment_id = runtime_instances.environment_id
-   AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
-   AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.status IN ('committed', 'private')
-  LEFT JOIN artifacts AS reserved_workspace_artifacts
-    ON reserved_workspace_artifacts.environment_id = reserved_workspace_versions.environment_id
-   AND reserved_workspace_artifacts.id = reserved_workspace_versions.artifact_id
+  LEFT JOIN computer_versions AS reserved_computer_versions
+    ON reserved_computer_versions.environment_id = runtime_instances.environment_id
+   AND reserved_computer_versions.computer_id = runtime_instances.workspace_id
+   AND reserved_computer_versions.id = runtime_instances.reserved_workspace_version_id
+   AND reserved_computer_versions.status IN ('initializing', 'committed', 'private')
+  JOIN computers AS computer
+    ON computer.environment_id = runtime_instances.environment_id
+   AND computer.id = runtime_instances.workspace_id
+  LEFT JOIN computer_version_roots AS computer_root
+    ON computer_root.environment_id=reserved_computer_versions.environment_id
+   AND computer_root.computer_id=reserved_computer_versions.computer_id
+   AND computer_root.version_id=reserved_computer_versions.id
   LEFT JOIN deployments AS program_deployments
     ON program_deployments.environment_id = runtime_instances.environment_id
    AND program_deployments.id = runtime_instances.program_deployment_id
@@ -253,33 +258,33 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
       FROM restore_run_authority
       JOIN runtime_instances
         ON runtime_instances.id = restore_run_authority.runtime_instance_id
-      JOIN workspaces
-        ON workspaces.id = runtime_instances.workspace_id
-       AND workspaces.environment_id = runtime_instances.environment_id
+      JOIN computers
+        ON computers.id = runtime_instances.workspace_id
+       AND computers.environment_id = runtime_instances.environment_id
        AND ((restore_run_authority.entrypoint_kind = 'task'
              AND (
-                 (workspaces.owner_run_id = runtime_instances.reserved_run_id
-                  AND workspaces.owner_session_id IS NULL)
+                 (computers.owner_run_id = runtime_instances.reserved_run_id
+                  AND computers.owner_session_id IS NULL)
                  OR EXISTS (
                      SELECT 1
                        FROM restore_same_workspace_root_authority AS root
                       WHERE root.runtime_instance_id = runtime_instances.id
-                        AND root.ownership_generation = workspaces.ownership_generation
+                        AND root.ownership_generation = computers.ownership_generation
                         AND ((root.parent_session_id IS NULL
-                              AND workspaces.owner_run_id = root.parent_run_id
-                              AND workspaces.owner_session_id IS NULL)
+                              AND computers.owner_run_id = root.parent_run_id
+                              AND computers.owner_session_id IS NULL)
                              OR (root.parent_session_id IS NOT NULL
-                                 AND workspaces.owner_session_id = root.parent_session_id
-                                 AND workspaces.owner_run_id IS NULL))
+                                 AND computers.owner_session_id = root.parent_session_id
+                                 AND computers.owner_run_id IS NULL))
                  )
              ))
             OR (restore_run_authority.entrypoint_kind = 'actor'
-                AND workspaces.owner_session_id = restore_run_authority.session_id
-                AND workspaces.owner_run_id IS NULL))
-       AND workspaces.status = 'active'
-       AND workspaces.desired_state = 'active'
-       AND workspaces.dirty_state = 'clean'
-     FOR UPDATE OF workspaces
+                AND computers.owner_session_id = restore_run_authority.session_id
+                AND computers.owner_run_id IS NULL))
+       AND computers.status = 'active'
+       AND computers.desired_state = 'active'
+       AND computers.dirty_state = 'clean'
+     FOR UPDATE OF computers
 ), restore_attempt_authority AS MATERIALIZED (
     SELECT restore_workspace_authority.*
       FROM restore_workspace_authority
@@ -343,7 +348,8 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
             OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
      FOR UPDATE OF runtime_instances
 ), restore_authority AS MATERIALIZED (
-    SELECT runtime_instances.id AS runtime_instance_id
+    SELECT runtime_instances.id AS runtime_instance_id,
+           run_checkpoints.expires_at AS checkpoint_expires_at
       FROM runtime_authority
       JOIN runtime_instances
         ON runtime_instances.id = runtime_authority.runtime_instance_id
@@ -386,10 +392,10 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
        AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
        AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
-      JOIN workspace_versions
-        ON workspace_versions.workspace_id = runtime_instances.workspace_id
-       AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-       AND workspace_versions.status = 'private'
+      JOIN computer_versions
+        ON computer_versions.computer_id = runtime_instances.workspace_id
+       AND computer_versions.id = runtime_instances.reserved_workspace_version_id
+       AND computer_versions.status = 'private'
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
@@ -397,20 +403,41 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
              WHERE workspace_secrets.workspace_id = runtime_instances.workspace_id)
            = (SELECT count(*) FROM restore_secret_authority
                WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
-     FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
+     FOR UPDATE OF run_waits, run_checkpoints, computer_versions
+), ready_decision AS MATERIALIZED (
+    -- Sample time after all preparation/restore row locks, not at transaction
+    -- start or while a row-locking SELECT is still waiting for its input.
+    SELECT runtime_authority.runtime_instance_id, clock_timestamp() AS decided_at
+      FROM runtime_authority
+     WHERE (SELECT count(*) FROM restore_authority) >= 0
 )
 UPDATE runtime_instances
    SET runtime_substrate_id = sqlc.arg(runtime_substrate_id),
        observed_state = 'ready', observed_version = observed_version + 1,
-       observed_desired_version = sqlc.arg(desired_version), observed_at = now(),
-       ready_at = COALESCE(ready_at, now()),
-       updated_at = now()
-  FROM runtime_authority
+       observed_desired_version = sqlc.arg(desired_version), observed_at = ready_decision.decided_at,
+       ready_at = COALESCE(ready_at, ready_decision.decided_at),
+       reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
+           THEN ready_decision.decided_at + sqlc.arg(reservation_seconds)::bigint * interval '1 second' END,
+       updated_at = ready_decision.decided_at
+  FROM ready_decision
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND runtime_authority.runtime_instance_id = runtime_instances.id
+   AND ready_decision.runtime_instance_id = runtime_instances.id
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch) AND runtime_instances.desired_version = sqlc.arg(desired_version)
    AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
    AND runtime_instances.observed_state = 'allocated'
+   AND runtime_instances.preparation_expires_at > ready_decision.decided_at
+   AND EXISTS (
+       SELECT 1 FROM computer_versions AS persistent_version
+         JOIN computer_version_roots AS retained_root
+           ON retained_root.environment_id = persistent_version.environment_id
+          AND retained_root.computer_id = persistent_version.computer_id
+          AND retained_root.version_id = persistent_version.id
+        WHERE persistent_version.environment_id = runtime_instances.environment_id
+          AND persistent_version.computer_id = runtime_instances.workspace_id
+          AND persistent_version.id = runtime_instances.reserved_workspace_version_id
+          AND persistent_version.status IN ('committed', 'private')
+          AND runtime_instances.retained_computer_source_version_id = persistent_version.id
+   )
    AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
    AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
    AND (runtime_instances.runtime_substrate_id IS NULL
@@ -419,6 +446,8 @@ UPDATE runtime_instances
         OR EXISTS (
             SELECT 1 FROM restore_authority
              WHERE restore_authority.runtime_instance_id = runtime_instances.id
+               AND (restore_authority.checkpoint_expires_at IS NULL
+                    OR restore_authority.checkpoint_expires_at > ready_decision.decided_at)
         ))
 RETURNING runtime_instances.*;
 
@@ -537,3 +566,37 @@ UPDATE runtime_instances
           AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    )
 RETURNING runtime_instances.*;
+
+-- name: ListExpiredRuntimeReservations :many
+SELECT * FROM runtime_instances
+ WHERE desired_state = 'ready' AND reclaimed_at IS NULL
+   AND ((observed_state = 'allocated' AND preparation_expires_at <= transaction_timestamp())
+     OR (observed_state = 'ready' AND reservation_expires_at <= transaction_timestamp()))
+ ORDER BY CASE WHEN observed_state = 'allocated' THEN preparation_expires_at ELSE reservation_expires_at END, id
+ LIMIT sqlc.arg(row_limit);
+
+-- name: CloseExpiredRuntimeReservation :one
+WITH closing AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = transaction_timestamp(),
+           desired_reason = CASE WHEN observed_state = 'allocated' THEN 'runtime_preparation_expired'
+                                 ELSE 'runtime_reservation_expired' END,
+           updated_at = transaction_timestamp()
+     WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.desired_version = sqlc.arg(desired_version)
+       AND desired_state = 'ready' AND reclaimed_at IS NULL
+       AND ((observed_state = 'allocated' AND preparation_expires_at <= transaction_timestamp())
+         OR (observed_state = 'ready' AND reservation_expires_at <= transaction_timestamp()))
+    RETURNING *
+), stopped_mounts AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounting', finalization_action = 'discard',
+           finalization_reason_code = closing.desired_reason, finalization_error = NULL,
+           stopped_at = COALESCE(stopped_at, transaction_timestamp()),
+           updated_at = transaction_timestamp()
+      FROM closing
+     WHERE workspace_mounts.runtime_instance_id = closing.id
+       AND workspace_mounts.status IN ('mounting', 'mounted')
+    RETURNING workspace_mounts.id
+)
+SELECT closing.* FROM closing;

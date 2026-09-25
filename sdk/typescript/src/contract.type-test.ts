@@ -27,7 +27,6 @@ import {
   type TaskInfo,
   type TaskInput,
   type TaskOutput,
-  type ClientSessionRef,
   type SessionEventPage,
   type SessionRef,
   type TokenCreateResult,
@@ -248,9 +247,6 @@ export function assertGreenfieldTypes(): void {
   client.sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   ) satisfies SessionRef
-  client.sessions.ref(
-    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
-  ) satisfies ClientSessionRef
   client.sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
   ).events.list({ after: 0, limit: 10 }) satisfies Promise<SessionEventPage>

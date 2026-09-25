@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace(t *testing.T) {
+func TestComputerMountTargetAuthorityProjectsPrivateVersionWithinExactWorkspace(t *testing.T) {
 	ctx := t.Context()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now())
@@ -37,7 +37,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	privateVersionID := uuid.NewV7()
 	digest := dbtest.Digest("private-workspace-reset-target")
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, 1) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/vnd.helmr.workspace.v0.tar')
 	`, fixture.orgID, digest)
 	dbtest.MustExec(t, ctx, fixture.pool, `
@@ -48,17 +48,15 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 		          'application/vnd.helmr.workspace.v0.tar', $6)
 	`, artifactID, fixture.orgID, fixture.projectID, fixture.environmentID, digest, fixture.workerID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
-		INSERT INTO workspace_versions (
-			id, environment_id, workspace_id, parent_version_id,
-			artifact_id, content_digest,
-			size_bytes, entry_count, status, source_workspace_lease_id,
+		INSERT INTO computer_versions (
+			id, environment_id, computer_id, parent_version_id, root_pack_digest,
+			logical_bytes, status, source_workspace_lease_id,
 			ownership_generation, writer_generation
-		) VALUES ($1, $2, $3, $4, $5, $6,
-		          1, 1, 'private', $7, $8, $9)
-	`, privateVersionID, fixture.environmentID, workspaceID, baseWorkspaceVersionID,
-		artifactID, digest, workspaceLeaseID, ownershipGeneration, writerGeneration)
+		) VALUES ($1, $2, $3, $4, $5,
+		          1, 'private', $6, $7, $8)
+	`, privateVersionID, fixture.environmentID, workspaceID, baseWorkspaceVersionID, digest, workspaceLeaseID, ownershipGeneration, writerGeneration)
 
-	row, err := fixture.queries.GetWorkspaceResetTargetAuthority(ctx, GetWorkspaceResetTargetAuthorityParams{
+	row, err := fixture.queries.GetComputerVersionAuthority(ctx, GetComputerVersionAuthorityParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(workspaceID),
 		VersionID: pgvalue.UUID(privateVersionID),
@@ -66,8 +64,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pgvalue.MustUUIDValue(row.VersionID) != privateVersionID ||
-		!row.ArtifactDigest.Valid || row.ArtifactDigest.String != digest {
+	if pgvalue.MustUUIDValue(row.VersionID) != privateVersionID || row.ParentVersionID != pgvalue.UUID(baseWorkspaceVersionID) {
 		t.Fatalf("private reset target authority = %+v", row)
 	}
 
@@ -76,7 +73,7 @@ func TestWorkspaceResetTargetAuthorityProjectsPrivateVersionWithinExactWorkspace
 	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, other.runID).Scan(&otherWorkspaceID); err != nil {
 		t.Fatal(err)
 	}
-	_, err = fixture.queries.GetWorkspaceResetTargetAuthority(ctx, GetWorkspaceResetTargetAuthorityParams{
+	_, err = fixture.queries.GetComputerVersionAuthority(ctx, GetComputerVersionAuthorityParams{
 		OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
 		EnvironmentID: pgvalue.UUID(fixture.environmentID), WorkspaceID: pgvalue.UUID(otherWorkspaceID),
 		VersionID: pgvalue.UUID(privateVersionID),
@@ -126,7 +123,7 @@ func TestChildWorkspacePairLocksConvergeForOppositeDirections(t *testing.T) {
 			},
 		})
 		if err == nil && len(rows) != 2 {
-			err = fmt.Errorf("locked %d workspaces, want 2", len(rows))
+			err = fmt.Errorf("locked %d computers, want 2", len(rows))
 		}
 		if err == nil {
 			err = tx.Commit(ctx)

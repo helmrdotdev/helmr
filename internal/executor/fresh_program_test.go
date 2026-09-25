@@ -897,7 +897,7 @@ func testWorkspaceMount(
 		ID:                lease.WorkspaceMountID,
 		WorkspaceID:       lease.WorkspaceID,
 		RuntimeInstanceID: lease.RuntimeInstanceID,
-		Target: workerapi.WorkspaceResetTarget{
+		Target: workerapi.ComputerMountTarget{
 			BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
 		},
 		FencingGeneration: lease.MountFencingGeneration,

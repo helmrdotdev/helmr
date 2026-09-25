@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -46,8 +48,16 @@ type RunNetworkSession interface {
 
 type CheckpointableSession interface {
 	Session
+	SnapshotLimits() (SnapshotLimits, error)
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
-	Resume(context.Context) error
+}
+
+// ComputerCaptureSession holds customer execution and device dispatch until
+// source release. It captures no RAM and does not authorize continuation.
+type ComputerCaptureSession interface {
+	Session
+	SnapshotLimits() (SnapshotLimits, error)
+	PauseComputer(context.Context) (*ComputerSnapshot, error)
 }
 
 type ConnectRequest struct {
@@ -77,7 +87,37 @@ type ReadOnlyDriveSource interface {
 }
 
 type RuntimeTopology struct {
+	Computer  *RuntimeComputer
 	Substrate *RuntimeSubstrate
+}
+
+// RuntimeComputer transfers an exclusively owned working disk to the VM owner.
+// File is a private backing inode, valid through Materialize; the connector
+// retains its own inode link. For a block device the Runtime must also retain its
+// attachment and export until the VMM and all device users are proven absent.
+// Device transfers that ownership to the connector when BindConsumer succeeds.
+// VersionID identifies the published source, not subsequent guest writes.
+type RuntimeComputer struct {
+	ComputerID string
+	Path       string
+	File       *os.File
+	Device     ComputerDevice `json:"-"`
+	VersionID  string
+	SizeBytes  int64
+}
+
+// ComputerDevice transfers the live export to the VM lifecycle owner. The owner
+// binds before launch and signals exclusion only after exact physical cleanup.
+// Close failure retains the device for another Cleanup attempt. File and Device
+// are mutually exclusive; snapshots contain neither process-local capability.
+// Wait must return when its context is canceled. A rejected bind leaves ownership
+// with the caller; successful binding retains ownership even if launch fails.
+type ComputerDevice interface {
+	Capture(context.Context) (computer.CapturedGeneration, error)
+	BindConsumer(<-chan struct{}) error
+	LinkInto(context.Context, string, int, int) (string, error)
+	Wait(context.Context) error
+	Close(context.Context) error
 }
 
 type RuntimeSubstrateSource interface {
@@ -103,7 +143,15 @@ type SnapshotRequest struct {
 	ID string
 }
 
+// ComputerSnapshot transfers retention of the exact cut to its receiver.
+// The receiver releases Capture after all publishers have joined.
+type ComputerSnapshot struct {
+	ComputerID string
+	Capture    computer.CapturedGeneration
+}
+
 type SnapshotArtifact struct {
+	Computer            *ComputerSnapshot
 	RuntimeBackend      string
 	RuntimeArch         string
 	VMRuntimeContract   string
@@ -129,6 +177,7 @@ type SnapshotFile struct {
 }
 
 type RestoreRequest struct {
+	Resources            compute.ResourceVector
 	ID                   string
 	RuntimeInstanceID    string
 	OwnerKind            OwnerKind
@@ -325,4 +374,14 @@ func RuntimeErrorClass(err error) string {
 	default:
 		return "unknown"
 	}
+}
+
+// SnapshotLimits describes stable source sizes and bounded raw metadata. The
+// caller reserves encoded staging in addition to the runtime-owned source disks.
+type SnapshotLimits struct {
+	ComputerBytes int64
+	MemoryBytes   int64
+	ScratchBytes  int64
+	StateBytes    int64
+	ConfigBytes   int64
 }

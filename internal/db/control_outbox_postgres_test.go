@@ -154,7 +154,7 @@ func TestControlOutboxDeadLettersOnlyUnsupportedTopics(t *testing.T) {
 	rows, err := queries.DeadLetterUnsupportedControlOutbox(ctx, db.DeadLetterUnsupportedControlOutboxParams{
 		SupportedTopics: []string{
 			"session.input.reconcile",
-			"session.close.reconcile",
+			"session.lifecycle.reconcile",
 			"token.reconcile",
 			"secret.revoked",
 		},
@@ -181,7 +181,7 @@ func TestControlOutboxDeadLettersUnsupportedAfterSupportedPrefixSaturation(t *te
 	const rowLimit int32 = 2
 	supportedTopics := []string{
 		"session.input.reconcile",
-		"session.close.reconcile",
+		"session.lifecycle.reconcile",
 		"token.reconcile",
 		"secret.revoked",
 	}
@@ -319,7 +319,7 @@ func TestControlOutboxLifecycleScaleBudget(t *testing.T) {
 		  FROM candidates
 		 WHERE control_outbox.id = candidates.id
 		   AND control_outbox.status = 'pending'
-	`, []string{"token.reconcile", "secret.revoked", "session.input.reconcile", "session.close.reconcile"})
+	`, []string{"token.reconcile", "secret.revoked", "session.input.reconcile", "session.lifecycle.reconcile"})
 	if err := unsupportedTx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}

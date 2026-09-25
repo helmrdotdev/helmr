@@ -55,7 +55,7 @@ UPDATE runs
 	var ownerRunID *uuid.UUID
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT owner_run_id
-  FROM workspaces
+  FROM computers
  WHERE id = (SELECT workspace_id FROM runs WHERE id = $1)`, parent.runID,
 	).Scan(&ownerRunID); err != nil {
 		t.Fatal(err)
@@ -244,7 +244,7 @@ UPDATE runtime_instances
        reserved_run_id = $2, reserved_attempt_number = 1,
        reserved_workspace_version_id = (
            SELECT base_workspace_version_id FROM runs WHERE id = $2
-       ), reservation_expires_at = now() + interval '5 minutes'
+       ), reservation_expires_at = NULL
  WHERE id = $1`, runtimeID, work.runID)
 
 	for failure := int32(1); failure <= 8; failure++ {
@@ -305,11 +305,11 @@ SELECT runtime_preparation_count, next_runtime_preparation_at, status
 SELECT run_attempts.terminal_outcome,
        run_attempts.terminal_reason_code,
        runs.current_attempt_number,
-       workspaces.owner_run_id
+       computers.owner_run_id
   FROM runs
   JOIN run_attempts ON run_attempts.run_id = runs.id
                    AND run_attempts.number = runs.current_attempt_number
-  JOIN workspaces ON workspaces.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.workspace_id
 	 WHERE runs.id = $1`, work.runID).Scan(&attemptOutcome, &attemptReason, &attemptNumber, &ownerRunID); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ UPDATE runs
 	var active pgtype.UUID
 	if err := fixture.pool.QueryRow(ctx, `
 SELECT r.status,s.status,s.dispatch_hold_reason,s.current_run_id,s.dispatch_hold_run_id,s.active_turn_id,w.owner_session_id
-FROM runs r JOIN sessions s ON s.id=$2 JOIN workspaces w ON w.id=s.workspace_id
+FROM runs r JOIN sessions s ON s.id=$2 JOIN computers w ON w.id=s.workspace_id
 WHERE r.id=$1`, work.runID, sessionID).Scan(&runStatus, &sessionStatus, &holdReason, &currentRun, &holdRun, &active, &owner); err != nil {
 		t.Fatal(err)
 	}

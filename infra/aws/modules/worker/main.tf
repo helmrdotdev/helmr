@@ -6,6 +6,8 @@ locals {
   network_resolver_ipv4 = coalesce(var.network_resolver_ipv4, cidrhost(data.aws_vpc.selected.cidr_block, 2))
 
   worker_environment_values = {
+    WORKER_COMPUTER_SAVE_EVERY        = "${var.computer_save_interval_seconds}s"
+    WORKER_COMPUTER_DEVICES           = join(" ", var.computer_devices)
     CONTROL_PLANE_URL                 = var.worker_controlplane_url
     CAS_URI                           = var.cas_uri
     PLATFORM_STORE_URI                = var.platform_store_uri
@@ -55,6 +57,8 @@ locals {
   base_worker_environment      = merge(var.worker_environment, local.worker_environment)
   worker_user_data_max_bytes   = 15360
   worker_user_data = templatefile("${path.module}/templates/user-data.sh.tftpl", {
+    computer_devices                     = var.computer_devices
+    computer_device_count                = max([for device in var.computer_devices : tonumber(trimprefix(device, "/dev/nbd"))]...) + 1
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
     worker_enrollment_token_secret_arn   = var.secret_arns.worker_enrollment_token

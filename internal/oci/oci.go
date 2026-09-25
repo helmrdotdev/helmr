@@ -76,6 +76,10 @@ func Unpack(r io.Reader, destination string) (Image, error) {
 }
 
 func UnpackAt(r io.Reader, destination, scratchRoot string) (Image, error) {
+	return unpack(r, destination, scratchRoot, ApplyLayerTar)
+}
+
+func unpack(r io.Reader, destination, scratchRoot string, apply func(io.Reader, string) error) (Image, error) {
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		return Image{}, fmt.Errorf("create oci destination: %w", err)
 	}
@@ -112,7 +116,7 @@ func UnpackAt(r io.Reader, destination, scratchRoot string) (Image, error) {
 		return Image{}, err
 	}
 	for _, layer := range manifest.Layers {
-		if err := applyLayer(blobsDir, layer, destination); err != nil {
+		if err := applyLayer(blobsDir, layer, destination, apply); err != nil {
 			return Image{}, err
 		}
 	}
@@ -490,7 +494,7 @@ func readBlob(blobsDir, digest string) ([]byte, error) {
 	return body, nil
 }
 
-func applyLayer(blobsDir string, layer Descriptor, destination string) error {
+func applyLayer(blobsDir string, layer Descriptor, destination string, apply func(io.Reader, string) error) error {
 	hexDigest, err := parseDigest(layer.Digest)
 	if err != nil {
 		return err
@@ -503,7 +507,7 @@ func applyLayer(blobsDir string, layer Descriptor, destination string) error {
 	switch layer.MediaType {
 	case "application/vnd.oci.image.layer.v1.tar",
 		"application/vnd.docker.image.rootfs.diff.tar":
-		return ApplyLayerTar(file, destination)
+		return apply(file, destination)
 	case "application/vnd.oci.image.layer.v1.tar+gzip",
 		"application/vnd.docker.image.rootfs.diff.tar.gzip":
 		gzipReader, err := gzip.NewReader(file)
@@ -511,14 +515,14 @@ func applyLayer(blobsDir string, layer Descriptor, destination string) error {
 			return fmt.Errorf("open gzip oci layer %s: %w", layer.Digest, err)
 		}
 		defer gzipReader.Close()
-		return ApplyLayerTar(gzipReader, destination)
+		return apply(gzipReader, destination)
 	case "application/vnd.oci.image.layer.v1.tar+zstd":
 		zstdReader, err := zstd.NewReader(file)
 		if err != nil {
 			return fmt.Errorf("open zstd oci layer %s: %w", layer.Digest, err)
 		}
 		defer zstdReader.Close()
-		return ApplyLayerTar(zstdReader, destination)
+		return apply(zstdReader, destination)
 	default:
 		return fmt.Errorf("unsupported oci layer media type %q", layer.MediaType)
 	}

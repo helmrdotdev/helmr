@@ -9,6 +9,7 @@ SELECT id
 -- name: ListCancellationLineage :many
 WITH RECURSIVE lineage AS (
     SELECT runs.id,
+           runs.workspace_id,
            runs.parent_run_id,
            runs.parent_owns_lifecycle,
            0 AS depth,
@@ -19,6 +20,7 @@ WITH RECURSIVE lineage AS (
      WHERE runs.id = sqlc.arg(target_id)
     UNION ALL
     SELECT parent.id,
+           parent.workspace_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
            lineage.depth + 1,
@@ -32,7 +34,7 @@ WITH RECURSIVE lineage AS (
        AND NOT lineage.cycle
        AND lineage.depth < lineage.max_depth
 )
-SELECT id, depth, cycle
+SELECT id, workspace_id, depth, cycle
   FROM lineage
  ORDER BY depth DESC;
 
@@ -131,7 +133,7 @@ RETURNING *;
 
 -- name: LockCancellationWorkspaces :many
 SELECT id
-  FROM workspaces
+  FROM computers
  WHERE id IN (
        SELECT workspace_id
          FROM runs
@@ -357,11 +359,9 @@ SELECT runs.id AS run_id,
        runs.status AS run_status,
        runs.revision,
        runs.current_attempt_number,
-       runs.entrypoint_kind,
        runs.session_id,
        runs.parent_run_id,
        runs.parent_owns_lifecycle,
-       runs.retry_policy,
        runs.max_active_duration_ms,
        runs.active_elapsed_ms,
        runs.active_started_at,
@@ -443,7 +443,6 @@ SELECT runs.id AS run_id,
             AND runs.status = 'running'
             AND runs.active_started_at IS NULL
             AND run_leases.finalization_operation_id IS NOT NULL
-            AND run_leases.finalization_kind IS NOT NULL
             AND run_leases.finalization_started_at IS NOT NULL
             AND run_leases.finalization_request_fingerprint IS NOT NULL))
    AND (runs.entrypoint_kind = 'task'
@@ -457,6 +456,7 @@ SELECT runs.id AS run_id,
           AND run_waits.attempt_number = runs.current_attempt_number
           AND run_waits.current_run_lease_id = run_leases.id
           AND run_waits.suspension_status = 'resuming'
+          AND run_leases.status IN ('assigned', 'starting')
           AND (runs.entrypoint_kind = 'task' OR EXISTS (
               SELECT 1 FROM sessions
               JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
@@ -464,8 +464,8 @@ SELECT runs.id AS run_id,
                AND run_checkpoints.attempt_number = runs.current_attempt_number
                AND run_checkpoints.run_wait_id = run_waits.id
                AND run_checkpoints.workspace_id = runs.workspace_id
-              JOIN workspace_versions ON workspace_versions.id = run_checkpoints.private_workspace_version_id
-               AND workspace_versions.workspace_id = run_checkpoints.workspace_id
+              JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
+               AND computer_versions.computer_id = run_checkpoints.workspace_id
               JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
                AND source_run_leases.run_id = runs.id
                AND source_run_leases.attempt_number = runs.current_attempt_number
@@ -474,23 +474,11 @@ SELECT runs.id AS run_id,
                 AND sessions.dispatch_hold_id IS NULL
                 AND run_checkpoints.status = 'ready'
                 AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                AND workspace_versions.status = 'private'
+                AND computer_versions.status = 'private'
                 AND source_run_leases.status = 'checkpointed'
                 AND run_checkpoints.actor_speculative_input_sequence
                     BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
-                AND (run_leases.status <> 'running' OR runs.active_started_at IS NULL
-                     OR runs.active_started_at
-                        + (GREATEST(runs.max_active_duration_ms - runs.active_elapsed_ms, 0)::text || ' milliseconds')::interval
-                        > LEAST(run_leases.expires_at,
-                            COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
-                            COALESCE(worker_instances.termination_ready_at, 'infinity'::timestamptz),
-                            CASE WHEN worker_instances.current_epoch IS DISTINCT FROM run_leases.worker_epoch
-                                 THEN COALESCE(worker_instances.epoch_started_at, worker_instances.updated_at)
-                                 ELSE 'infinity'::timestamptz END,
-                            CASE WHEN runtime_instances.observed_state IN ('lost', 'failed')
-                                 THEN runtime_instances.terminal_at ELSE 'infinity'::timestamptz END,
-                            COALESCE(workspace_mounts.lost_at, 'infinity'::timestamptz),
-                            COALESCE(workspace_mounts.failed_at, 'infinity'::timestamptz)))
+
           ))
    );
 
@@ -579,7 +567,8 @@ WITH candidate_runtimes AS (
      WHERE runtime_instances.id IN (
            SELECT runtime_instance_id FROM candidate_runtimes
        )
-       AND runtime_instances.observed_state IN ('allocated', 'ready')
+       AND runtime_instances.observed_state IN ('allocated', 'ready', 'failed')
+       AND runtime_instances.reclaimed_at IS NULL
     RETURNING runtime_instances.id
 )
 UPDATE workspace_mounts
@@ -630,7 +619,7 @@ UPDATE runs
    AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested');
 
 -- name: ReleaseTaskWorkspace :exec
-UPDATE workspaces
+UPDATE computers
    SET owner_run_id = NULL,
        ownership_generation = ownership_generation + 1,
        revision = revision + 1,
@@ -685,3 +674,25 @@ SELECT org_id,
        transaction_timestamp()
   FROM runs
  WHERE runs.id = sqlc.arg(run_id);
+
+-- name: RequireLostRunComputerRecovery :execrows
+UPDATE computers
+   SET status = 'recovery_required',
+       recovery_id = sqlc.arg(recovery_id),
+       recovery_version_id = head_version_id,
+       recovery_reason = sqlc.arg(recovery_reason),
+       recovery_started_at = transaction_timestamp(),
+       recovery_preparation_count = 0, next_recovery_preparation_at = NULL,
+       recovery_runtime_id = NULL, recovery_completed_at = NULL,
+       desired_state = 'stopped',
+       dirty_state = 'dirty_state_lost',
+       revision = revision + 1,
+       updated_at = transaction_timestamp()
+  FROM workspace_leases
+ WHERE computers.id = sqlc.arg(workspace_id)
+   AND workspace_leases.workspace_id = computers.id
+   AND workspace_leases.owner_run_lease_id = sqlc.arg(run_lease_id)
+   AND workspace_leases.ownership_generation = computers.ownership_generation
+   AND workspace_leases.writer_generation = computers.writer_generation
+   AND workspace_leases.status IN ('active', 'releasing')
+   AND computers.status = 'active';
