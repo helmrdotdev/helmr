@@ -65,7 +65,7 @@ jobs:
         with:
           name: build-artifacts-${{ github.run_id }}-${{ matrix.part }}
           path: ${{ runner.temp }}/frozen/
-          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
+          retention-days: 7
           compression-level: 0
           if-no-files-found: error
   cli:
@@ -101,13 +101,10 @@ jobs:
       - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3
         with:
           github_access_token: ''
-      - name: Construct CLI and revalidate exact source under trusted orchestration
+      - name: Construct CLI from the selected source
         working-directory: source
         run: |
           nix develop ../tools#images -c bash -euo pipefail <<'SH'
-          bun install --frozen-lockfile --ignore-scripts
-          bash scripts/build-runtime-entry.sh --check
-          go test ./cmd/helmr ./cmd/control-plane ./internal/builder ./internal/deployment
           if [ ! -d "$RUNNER_TEMP/part" ]; then
             bash ../tools/scripts/release/build.sh cli "$RUNNER_TEMP/part"
           fi
@@ -120,7 +117,7 @@ jobs:
         with:
           name: build-artifacts-${{ github.run_id }}-cli
           path: ${{ runner.temp }}/frozen/
-          retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}
+          retention-days: 7
           if-no-files-found: error
   consumer:
     needs: cli

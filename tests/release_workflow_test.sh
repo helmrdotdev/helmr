@@ -7,26 +7,19 @@ canonical_json_check="$repo_root/scripts/check-canonical-json.sh"
 controlplane_builder="$repo_root/scripts/build-controlplane-image.sh"
 require_text() { rg -F -- "$1" "$2" >/dev/null || { echo "$3" >&2; exit 1; }; }
 require_text "'!v*-preview.*'" "$workflow" 'generated preview tags must be excluded'
-require_text 'workflow_run:' "$workflow" 'automatic main preview trigger missing'
-require_text 'workflow_dispatch:' "$workflow" 'manual exact PR head trigger missing'
-for caller in "$workflow" "$repo_root/.github/workflows/ci.yaml"; do
-  require_text 'uses: ./.github/workflows/build-artifacts.yaml' "$caller" \
-    'CI and release must use the same artifact build workflow'
-done
+if rg -q 'workflow_run:|ci:full|superseded|precheck' "$workflow"; then
+  echo 'release must be explicitly requested, without automatic supersession' >&2
+  exit 1
+fi
+require_text 'workflow_dispatch:' "$workflow" 'manual checkpoint trigger missing'
+require_text 'uses: ./.github/workflows/build-artifacts.yaml' "$workflow" 'release must build its own exact cohort'
+require_text "needs.integration.result == 'success'" "$workflow" 'integration must pass before publication'
+require_text "needs.build.result == 'success'" "$workflow" 'artifact build must pass before publication'
 require_text 'publisher_run: ${{ github.run_id }}' "$workflow" \
   'publish job must export publisher run for readback verification'
-require_text 'release-producer-' "$workflow" \
-  'same-producer release runs must serialize without cancellation'
-require_text 'queue: max' "$workflow" \
-  'preview-channel, producer and discovery groups must use native queue:max'
-require_text 'cancel-in-progress: false' "$workflow" \
-  'preview eviction-unsafe groups must not cancel in progress'
-require_text 'main.py precheck' "$workflow" \
-  'publish must re-check main head after preview channel lock'
-require_text 'python3 scripts/release/main.py precheck' "$workflow" \
-  'precheck must not require the images shell'
-require_text 'needs.publish-preview.outputs.superseded' "$workflow" \
-  'verify and complete-preview must skip superseded automatic main candidates'
+require_text 'group: release-checkpoint' "$workflow" 'checkpoint releases must serialize'
+require_text 'queue: max' "$workflow" 'requested checkpoints must not evict pending work'
+require_text 'cancel-in-progress: false' "$workflow" 'publication must not be cancelled by a later request'
 require_text 'needs.publish-preview.result == '\''success'\''' "$workflow" \
   'verify and complete-preview must gate on successful preview publish'
 require_text 'needs.publish-tag.result == '\''success'\''' "$workflow" \

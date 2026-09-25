@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from contract import ASSETS, DIGEST, canonical, descriptor, digest, read, require, validate, verify_files, write
-from admission import git, relevant
+from admission import git
 
 DEFAULT_ORIGIN = 'https://helmr-previews-879980497511-us-east-1.s3.us-east-1.amazonaws.com'
 DEFAULT_BUCKET = 'helmr-previews-879980497511-us-east-1'
@@ -211,14 +211,29 @@ def build_index(selection, directory):
                 assets={name: descriptor(directory / name) for name in sorted(ASSETS)})
 
 
+def checkpoint_follows(root, selected, current):
+    """Keep shared npm and object-store preview channels moving in one direction."""
+    if selected['sourceCommit'] == current['sourceCommit']:
+        if selected['version'] == current['version']:
+            return True
+        def build_number(version):
+            match = re.search(r'\.b([1-9][0-9]*)$', version)
+            require(match is not None, 'invalid checkpoint build identity')
+            return int(match[1])
+        return build_number(selected['version']) > build_number(current['version'])
+    return subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor',
+                           current['sourceCommit'], selected['sourceCommit']], capture_output=True).returncode == 0
+
+
 def stage(api, selection, directory):
     from publish import publish_images, npm_publish
-    from admission import recheck_pr
     directory = Path(directory)
-    recheck_pr(api, selection)
     index = build_index(selection, directory)
     verify_files(index, directory)
     _, bucket = config()
+    current = pointer_snapshot(bucket, optional=True)
+    require(current is None or checkpoint_follows(Path.cwd(), selection, current[0]),
+            'checkpoint precedes the published preview; select a newer source or build')
     write(directory / LOCAL_BUILD_INDEX, index)
     publish_images(directory, index)
     for package, filename in (('@helmr/proto', 'proto.tgz'), ('@helmr/sdk', 'sdk.tgz')):
@@ -263,11 +278,9 @@ def signature_or_create(bucket, key, index_path, signature_path):
 
 
 def finalize(api, selection, directory, build_digest):
-    from admission import recheck_pr
     from publish import sign
     directory = Path(directory)
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    recheck_pr(api, selection)
     require(re.fullmatch(DIGEST, build_digest or ''), 'build digest required')
     index = verify_public(selection, directory, build_digest)
     _, bucket = config()
@@ -310,7 +323,6 @@ def discover(api, root, selection, index_digest):
     require(selection['build']['mode'] == 'main', 'preview pointer update is main-only')
     require(re.fullmatch(DIGEST, index_digest or ''), 'index digest required')
     subprocess.run(['git', '-C', str(root), 'fetch', '--no-tags', 'origin', 'main'], check=True)
-    main = git(root, 'rev-parse', 'FETCH_HEAD')
     record = dict(version=selection['version'], sourceCommit=selection['sourceCommit'], indexDigest=index_digest)
     _, bucket = config()
     current = pointer_snapshot(bucket, optional=True)
@@ -319,12 +331,12 @@ def discover(api, root, selection, index_digest):
         if existing['version'] == selection['version']:
             require(existing == record, 'preview pointer must bind the completed cohort')
             return record
+        if selection['sourceCommit'] == existing['sourceCommit']:
+            return cas_pointer(record, current) if checkpoint_follows(root, selection, existing) else existing
         if subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor',
                            selection['sourceCommit'], existing['sourceCommit']], capture_output=True).returncode == 0:
             return existing
         if subprocess.run(['git', '-C', str(root), 'merge-base', '--is-ancestor',
                            existing['sourceCommit'], selection['sourceCommit']], capture_output=True).returncode != 0:
             require(False, 'preview pointer must not regress')
-        if relevant(root, selection['sourceCommit'], main):
-            return existing
     return cas_pointer(record, current)

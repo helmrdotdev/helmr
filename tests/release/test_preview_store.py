@@ -122,7 +122,7 @@ class PreviewTransport(unittest.TestCase):
     def test_main_admit_allows_unpublished_preview(self):
         selected = selection('main')
         output = Path(tempfile.mkdtemp()) / 'outputs'
-        with patch.object(main, 'GitHub'), patch.object(main, 'admit', return_value=(selected, True)), \
+        with patch.object(main, 'GitHub'), patch.object(main, 'admit', return_value=selected), \
              patch.object(main, 'complete', return_value=None) as complete, \
              patch.dict(os.environ, RELEASE_SELECTION='{}', GITHUB_OUTPUT=str(output),
                         GITHUB_EVENT_PATH=str(output.with_suffix('.event.json'))):
@@ -155,7 +155,7 @@ class PreviewTransport(unittest.TestCase):
                 calls.append(list(args))
                 return self.fixture.aws(*args, **kwargs)
             with patch.object(preview_store, 'aws', side_effect=tracking_aws), \
-                 patch('admission.recheck_pr'), patch('publish.publish_images'), patch('publish.npm_publish'):
+                 patch('publish.publish_images'), patch('publish.npm_publish'):
                 preview_store.stage(object(), selected, root)
             uploaded_keys = [cmd[cmd.index('--key') + 1] for cmd in calls if cmd[:2] == ['s3api', 'put-object']]
             self.assertNotIn(preview_store.object_key(selected['version'], preview_store.LOCAL_BUILD_INDEX), uploaded_keys)
@@ -195,22 +195,9 @@ class PreviewTransport(unittest.TestCase):
         older['sourceCommit'] = 'a' * 40
         with patch.object(preview_store, 'aws', side_effect=self.fixture.aws), \
              patch.object(preview_store.subprocess, 'run', return_value=type('R', (), {'returncode': 0})()), \
-             patch.object(preview_store, 'git', side_effect=lambda root, *args: {'rev-parse FETCH_HEAD': 'd' * 40}.get(' '.join(args), 'd' * 40)), \
-             patch.object(preview_store, 'relevant', return_value=False):
+             patch.object(preview_store, 'git', side_effect=lambda root, *args: {'rev-parse FETCH_HEAD': 'd' * 40}.get(' '.join(args), 'd' * 40)):
             result = preview_store.discover(object(), Path('.'), older, 'sha256:' + '2' * 64)
         self.assertEqual(result, newer)
-
-    def test_discover_holds_pointer_when_selection_not_on_main_lineage(self):
-        current = dict(version='v0.1.0-preview.gccc.b3', sourceCommit='c' * 40, indexDigest='sha256:' + '3' * 64)
-        self.fixture.put(preview_store.POINTER_KEY, canonical(current))
-        selected = selection('main')
-        selected['sourceCommit'] = 'a' * 40
-        with patch.object(preview_store, 'aws', side_effect=self.fixture.aws), \
-             patch.object(preview_store.subprocess, 'run', return_value=type('R', (), {'returncode': 0})()), \
-             patch.object(preview_store, 'git', return_value='d' * 40), \
-             patch.object(preview_store, 'relevant', return_value=True):
-            result = preview_store.discover(object(), Path('.'), selected, 'sha256:' + '2' * 64)
-        self.assertEqual(result, current)
 
     def test_discover_rejects_regressing_pointer(self):
         current = dict(version='v0.1.0-preview.gccc.b3', sourceCommit='c' * 40, indexDigest='sha256:' + '3' * 64)
@@ -230,8 +217,7 @@ class PreviewTransport(unittest.TestCase):
 
         with patch.object(preview_store, 'aws', side_effect=self.fixture.aws), \
              patch.object(preview_store.subprocess, 'run', side_effect=merge_base), \
-             patch.object(preview_store, 'git', return_value='d' * 40), \
-             patch.object(preview_store, 'relevant', return_value=False):
+             patch.object(preview_store, 'git', return_value='d' * 40):
             with self.assertRaisesRegex(ValueError, 'must not regress'):
                 preview_store.discover(object(), Path('.'), selected, 'sha256:' + '2' * 64)
 
@@ -289,7 +275,7 @@ class PreviewTransport(unittest.TestCase):
             for name in ASSETS:
                 self.fixture.put(preview_store.object_key(version, name), (root / name).read_bytes())
             with patch.object(preview_store, 'aws', side_effect=self.fixture.aws), \
-                 patch('admission.recheck_pr'), patch.object(preview_store, 'public_fetch', side_effect=self._public_get), \
+                 patch.object(preview_store, 'public_fetch', side_effect=self._public_get), \
                  patch('publish.verify_signature', side_effect=fake_verify), patch('publish.sign', side_effect=fake_sign):
                 preview_store.finalize(object(), selected, root, expected)
             self.assertIn(preview_store.object_key(version, preview_store.COMPLETION_INDEX), self.fixture.objects)

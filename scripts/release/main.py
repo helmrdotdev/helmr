@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 from contract import ASSETS, descriptor, read, require, verify_files, write
 from api import GitHub
-from admission import admit, main_superseded
+from admission import admit
 from preview_store import preview_mode, stage as preview_stage, verify_public
 from transport import assemble, freeze, restore, download_readback
 from publish import complete, discover, download_build, finalize, stage
@@ -21,7 +21,7 @@ def output(key, value):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=('admit', 'precheck', 'restore', 'freeze', 'assemble', 'stage', 'verify',
+    parser.add_argument('command', choices=('admit', 'restore', 'freeze', 'assemble', 'stage', 'verify',
                                               'download', 'finalize', 'discover'))
     parser.add_argument('--part')
     parser.add_argument('--directory')
@@ -40,17 +40,11 @@ def main():
     selection = json.loads(os.environ.get('RELEASE_SELECTION', '{}'))
     if args.command == 'admit':
         event = read(os.environ['GITHUB_EVENT_PATH'])
-        selection, skip = admit(api, os.environ, event, Path.cwd())
+        selection = admit(api, os.environ, event, Path.cwd())
         with tempfile.TemporaryDirectory() as temporary:
             done = complete(api, selection, Path(temporary) / 'complete')
-            if done:
-                skip = False
         output('selection', json.dumps(selection, separators=(',', ':')))
         output('complete', str(bool(done)).lower())
-        output('skip', str(skip).lower())
-    elif args.command == 'precheck':
-        superseded = main_superseded(api, selection) if selection.get('build', {}).get('mode') == 'main' else False
-        output('superseded', str(superseded).lower())
     elif args.command == 'restore':
         output('restored', str(restore(api, args.part, selection, args.directory)).lower())
     elif args.command == 'freeze':

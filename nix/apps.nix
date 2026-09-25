@@ -36,6 +36,32 @@ let
     };
 
   ciApps = {
+    ci-fast-policy =
+      app "ci-fast-policy" "check workflow and repository security policy" toolsets.ciPolicy
+        ''
+          actionlint
+          scripts/security-checks.sh
+        '';
+    ci-fast-go =
+      app "ci-fast-go" "compile commands and run Go unit tests" toolsets.ciGoConsole
+        ''
+          export HELMR_SKIP_POSTGRES_TESTS=1
+          bun install --frozen-lockfile --ignore-scripts
+          make console-build
+          go build -tags embed_console ./cmd/...
+          go test -tags embed_console ./...
+        '';
+    ci-fast-typescript =
+      app "ci-fast-typescript" "check TypeScript types and unit tests" toolsets.ciTypescript
+        ''
+          ${pkgs.lib.optionalString pkgs.stdenv.isLinux ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
+          ''}
+          bun install --frozen-lockfile --ignore-scripts
+          bun run typecheck
+          bun run test:ts
+        '';
+
     ci-policy =
       app "ci-policy" "run repository policy and release script checks for CI" toolsets.ciPolicy
         ''

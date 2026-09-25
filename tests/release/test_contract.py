@@ -12,7 +12,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts/release'))
 from contract import cli_checksums, ASSETS, canonical, descriptor, digest, preview_version, read, safe_extract, signer, validate, verify_files, write
 import admission
-from admission import ci_success, docs_only, pr_head, relevant
+
 from transport import freeze, same_selection
 
 SOURCE = '01234567' + 'a' * 32
@@ -154,28 +154,6 @@ class Contract(unittest.TestCase):
             index['build']['attempt']='2'
             with self.assertRaisesRegex(ValueError,'build identity fields differ'):validate(index)
 
-    def test_current_pr_head(self):
-        pr=dict(number=7,state='open',base=dict(ref='main',repo=dict(id=1)),head=dict(sha=SOURCE,repo=dict(id=1)))
-        pr_head(pr,7,SOURCE,1)
-        for change in ('closed','fork','stale','base'):
-            bad=copy.deepcopy(pr)
-            if change=='closed':bad['state']='closed'
-            elif change=='fork':bad['head']['repo']['id']=2
-            elif change=='stale':bad['head']['sha']='c'*40
-            else:bad['base']['ref']='other'
-            with self.assertRaises(ValueError):pr_head(bad,7,SOURCE,1)
-
-    def test_native_ci_producer_and_aggregate(self):
-        run=dict(id=10,run_attempt=1,repository=dict(id=1),workflow_id=2,path='.github/workflows/ci.yaml',event='push',head_sha=SOURCE,head_branch='main',status='completed',conclusion='success')
-        class API:
-            def pages(self,*_):return [dict(name='source-ci-complete',status='completed',conclusion='success'),dict(name='preview-ready',status='completed',conclusion='success')]
-        self.assertEqual(admission.ci_success(API(),run,2,1,SOURCE,'push')[0],10)
-        class PR:
-            def pages(self,*_):return [dict(name='ci complete',status='completed',conclusion='success')]
-        pr=dict(run,event='pull_request',head_branch=None,pull_requests=[dict(number=7,head=dict(sha=SOURCE))])
-        self.assertEqual(admission.ci_success(PR(),pr,2,1,SOURCE,'pull_request',7)[0],10)
-        for key,value in [('path','.github/workflows/release.yaml'),('workflow_id',3),('event','pull_request'),('head_branch','other'),('conclusion','failure'),('head_sha','c'*40)]:
-            with self.subTest(key=key),self.assertRaises(ValueError):admission.ci_success(API(),dict(run,**{key:value}),2,1,SOURCE,'push')
 
 
 class RepositoryFixture:
@@ -193,15 +171,5 @@ class RepositoryFixture:
     def index(self,source,run):
         s=selection();s['sourceCommit']=source;s['build']['runId']=str(run);return s
 
-
-class Discovery(RepositoryFixture, unittest.TestCase):
-    def test_rename_and_delete_relevance(self):
-        self.git('mv','README.md','shipped.md');self.git('-c','commit.gpgsign=false','commit','-qm','rename')
-        self.assertTrue(relevant(self.root,self.c,self.git('rev-parse','HEAD')))
-        self.assertFalse(docs_only(['sdk/README.md']))
-        self.assertFalse(docs_only(['LICENSE']))
-        self.assertFalse(docs_only(['README.md','go.sum']))
-        self.assertTrue(docs_only(['README.md','packages/web/src/content/docs/test.md']))
-        self.assertFalse(docs_only([]))
 
 if __name__=='__main__':unittest.main()
