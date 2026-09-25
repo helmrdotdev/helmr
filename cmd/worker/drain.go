@@ -9,13 +9,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/worker"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
@@ -65,29 +65,38 @@ func runDrain(log *slog.Logger, args []string) error {
 	if !*wait {
 		return nil
 	}
-	if status.Status == workerapi.StatusTerminationReady {
-		return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
+	// The supervisor persists this receipt only after Control Plane confirms
+	// termination_ready. That transition revokes credentials, so polling the
+	// authenticated status endpoint cannot reliably observe it.
+	if err := waitForDrainCompleteMarker(ctx, workDir, workerCredential.WorkerInstanceID, *timeout, cfg.PollEvery); err != nil {
+		return err
 	}
-	deadline := time.NewTimer(*timeout)
+	log.Info("worker drain completed", "worker_instance_id", workerCredential.WorkerInstanceID)
+	return nil
+}
+
+func waitForDrainCompleteMarker(ctx context.Context, workDir, workerInstanceID string, timeout, pollEvery time.Duration) error {
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
-	ticker := time.NewTicker(cfg.PollEvery)
+	ticker := time.NewTicker(pollEvery)
 	defer ticker.Stop()
 	for {
+		payload, err := os.ReadFile(filepath.Join(workDir, drainCompleteMarkerName))
+		if err == nil {
+			if strings.TrimSpace(string(payload)) != workerInstanceID {
+				return errors.New("drain completion marker belongs to a different worker")
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read drain completion marker: %w", err)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("worker drain timed out with %d active executions", status.ActiveExecutions)
+			return errors.New("worker drain timed out waiting for supervisor completion")
 		case <-ticker.C:
-			status, err = controlPlaneClient.GetWorkerStatus(ctx)
-			if err != nil {
-				return fmt.Errorf("get worker drain status: %w", err)
-			}
-			log.Info("worker drain status", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
-			if status.Status == workerapi.StatusTerminationReady {
-				log.Info("worker drain completed", "worker_instance_id", status.WorkerInstanceID)
-				return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
-			}
 		}
 	}
 }
