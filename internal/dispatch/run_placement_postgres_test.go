@@ -508,6 +508,14 @@ SELECT status, finalization_action, finalization_reason_code,
 		!finalizationReason.Valid || finalizationReason.String != "capacity_pressure" {
 		t.Fatalf("pressure Mount = state:%s finalization:%v/%v", state, finalizationKind, finalizationReason)
 	}
+	var runtimeDesired string
+	var reclaimed bool
+	if err := fixture.pool.QueryRow(fixture.ctx, `SELECT desired_state,reclaimed_at IS NOT NULL FROM runtime_instances WHERE id=$1`, runtimeID).Scan(&runtimeDesired, &reclaimed); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeDesired != "closed" || reclaimed {
+		t.Fatalf("pressure runtime intent=%s reclaimed=%v", runtimeDesired, reclaimed)
+	}
 	if _, err := db.New(fixture.pool).StopWorkspaceMount(fixture.ctx, db.StopWorkspaceMountParams{
 		ReasonCode: pgvalue.Text("capacity_pressure"), OrgID: pgvalue.UUID(fixture.orgID),
 		ID: mounted.WorkspaceMountID, WorkerInstanceID: mountWorkerID, WorkerEpoch: workerEpoch,

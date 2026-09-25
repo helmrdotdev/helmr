@@ -666,6 +666,7 @@ func (q *Queries) LockRuntimePreparationFailureAuthority(ctx context.Context, ar
 }
 
 const markRuntimeInstanceClosed = `-- name: MarkRuntimeInstanceClosed :one
+WITH closed_runtime AS (
 UPDATE runtime_instances
    SET observed_state = 'closed', observed_version = observed_version + 1,
        observed_desired_version = desired_version, observed_at = now(),
@@ -681,6 +682,20 @@ UPDATE runtime_instances
    AND observed_version = $7
    AND observed_state IN ('allocated','ready')
 RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.vm_vcpu_count, runtime_instances.cpu_config_digest, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_guest_ephemeral_disk_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.computer_source_version_id, runtime_instances.computer_save_sequence, runtime_instances.computer_save_version_id, runtime_instances.computer_save_lease_id, runtime_instances.computer_save_base_version_id, runtime_instances.computer_payload_required, runtime_instances.retained_computer_source_version_id, runtime_instances.computer_write_key_id, runtime_instances.retained_computer_write_key_id, runtime_instances.computer_key_available, runtime_instances.preparation_expires_at, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.ready_at, runtime_instances.terminal_at, runtime_instances.reclaimed_at, runtime_instances.reclaim_evidence, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.updated_at
+), stopped_mounts AS (
+    UPDATE workspace_mounts
+       SET status = 'unmounted', unmounted_at = now(), terminal_at = now(),
+           terminal_reason_code = 'runtime_closed', terminal_error = NULL, updated_at = now()
+      FROM closed_runtime
+     WHERE workspace_mounts.runtime_instance_id = closed_runtime.id
+       AND workspace_mounts.org_id = closed_runtime.org_id
+       AND workspace_mounts.worker_instance_id = closed_runtime.worker_instance_id
+       AND workspace_mounts.worker_epoch = closed_runtime.worker_epoch
+       AND workspace_mounts.status = 'unmounting'
+       AND workspace_mounts.finalization_action = 'discard'
+    RETURNING workspace_mounts.id
+)
+SELECT closed_runtime.id, closed_runtime.org_id, closed_runtime.worker_group_id, closed_runtime.project_id, closed_runtime.environment_id, closed_runtime.region_id, closed_runtime.worker_instance_id, closed_runtime.runtime_identity_id, closed_runtime.deployment_definition_id, closed_runtime.runtime_substrate_id, closed_runtime.worker_epoch, closed_runtime.vm_vcpu_count, closed_runtime.cpu_config_digest, closed_runtime.reserved_cpu_millis, closed_runtime.reserved_memory_bytes, closed_runtime.reserved_guest_ephemeral_disk_bytes, closed_runtime.reserved_execution_slots, closed_runtime.workspace_id, closed_runtime.program_deployment_id, closed_runtime.restore_checkpoint_id, closed_runtime.reserved_run_id, closed_runtime.reserved_attempt_number, closed_runtime.reserved_process_id, closed_runtime.reserved_workspace_version_id, closed_runtime.computer_source_version_id, closed_runtime.computer_save_sequence, closed_runtime.computer_save_version_id, closed_runtime.computer_save_lease_id, closed_runtime.computer_save_base_version_id, closed_runtime.computer_payload_required, closed_runtime.retained_computer_source_version_id, closed_runtime.computer_write_key_id, closed_runtime.retained_computer_write_key_id, closed_runtime.computer_key_available, closed_runtime.preparation_expires_at, closed_runtime.reservation_expires_at, closed_runtime.desired_state, closed_runtime.desired_version, closed_runtime.desired_at, closed_runtime.desired_reason, closed_runtime.observed_state, closed_runtime.observed_version, closed_runtime.observed_desired_version, closed_runtime.observed_at, closed_runtime.allocated_at, closed_runtime.ready_at, closed_runtime.terminal_at, closed_runtime.reclaimed_at, closed_runtime.reclaim_evidence, closed_runtime.terminal_reason_code, closed_runtime.terminal_error, closed_runtime.updated_at FROM closed_runtime
 `
 
 type MarkRuntimeInstanceClosedParams struct {
@@ -693,7 +708,62 @@ type MarkRuntimeInstanceClosedParams struct {
 	ExpectedObservedVersion int64       `json:"expected_observed_version"`
 }
 
-func (q *Queries) MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntimeInstanceClosedParams) (RuntimeInstance, error) {
+type MarkRuntimeInstanceClosedRow struct {
+	ID                              pgtype.UUID        `json:"id"`
+	OrgID                           pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                       pgtype.UUID        `json:"project_id"`
+	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
+	RegionID                        string             `json:"region_id"`
+	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
+	RuntimeIdentityID               string             `json:"runtime_identity_id"`
+	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
+	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
+	WorkerEpoch                     int64              `json:"worker_epoch"`
+	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
+	CPUConfigDigest                 string             `json:"cpu_config_digest"`
+	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
+	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
+	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
+	WorkspaceID                     pgtype.UUID        `json:"workspace_id"`
+	ProgramDeploymentID             pgtype.UUID        `json:"program_deployment_id"`
+	RestoreCheckpointID             pgtype.UUID        `json:"restore_checkpoint_id"`
+	ReservedRunID                   pgtype.UUID        `json:"reserved_run_id"`
+	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
+	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
+	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
+	ComputerSourceVersionID         pgtype.UUID        `json:"computer_source_version_id"`
+	ComputerSaveSequence            int64              `json:"computer_save_sequence"`
+	ComputerSaveVersionID           pgtype.UUID        `json:"computer_save_version_id"`
+	ComputerSaveLeaseID             pgtype.UUID        `json:"computer_save_lease_id"`
+	ComputerSaveBaseVersionID       pgtype.UUID        `json:"computer_save_base_version_id"`
+	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
+	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
+	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
+	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
+	ComputerKeyAvailable            pgtype.Bool        `json:"computer_key_available"`
+	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
+	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
+	DesiredState                    string             `json:"desired_state"`
+	DesiredVersion                  int64              `json:"desired_version"`
+	DesiredAt                       pgtype.Timestamptz `json:"desired_at"`
+	DesiredReason                   string             `json:"desired_reason"`
+	ObservedState                   string             `json:"observed_state"`
+	ObservedVersion                 int64              `json:"observed_version"`
+	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
+	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
+	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
+	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
+	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
+	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
+	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
+	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError                   []byte             `json:"terminal_error"`
+	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntimeInstanceClosedParams) (MarkRuntimeInstanceClosedRow, error) {
 	row := q.db.QueryRow(ctx, markRuntimeInstanceClosed,
 		arg.ReasonCode,
 		arg.CleanupProof,
@@ -703,7 +773,7 @@ func (q *Queries) MarkRuntimeInstanceClosed(ctx context.Context, arg MarkRuntime
 		arg.DesiredVersion,
 		arg.ExpectedObservedVersion,
 	)
-	var i RuntimeInstance
+	var i MarkRuntimeInstanceClosedRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

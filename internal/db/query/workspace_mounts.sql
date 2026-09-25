@@ -461,7 +461,7 @@ WITH candidates AS (
      ORDER BY workspace_mounts.updated_at, workspace_mounts.id
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE OF workspace_mounts SKIP LOCKED
-)
+), stopped AS (
 UPDATE workspace_mounts
    SET status = 'unmounting',
        finalization_action = 'discard',
@@ -470,7 +470,23 @@ UPDATE workspace_mounts
        stopped_at = now(),
        updated_at = now()
   FROM candidates WHERE workspace_mounts.id = candidates.id
-RETURNING workspace_mounts.*;
+RETURNING workspace_mounts.*
+), closing_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE WHEN runtime_instances.desired_state = 'closed'
+                                  THEN runtime_instances.desired_version
+                                  ELSE runtime_instances.desired_version + 1 END,
+           desired_at = now(), desired_reason = 'capacity_pressure', updated_at = now()
+      FROM stopped
+     WHERE runtime_instances.id = stopped.runtime_instance_id
+       AND runtime_instances.worker_instance_id = stopped.worker_instance_id
+       AND runtime_instances.worker_epoch = stopped.worker_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+    RETURNING runtime_instances.id
+)
+SELECT stopped.* FROM stopped
+  JOIN closing_runtime ON closing_runtime.id = stopped.runtime_instance_id;
 
 -- name: FailWorkspaceMount :one
 WITH source_runtime AS MATERIALIZED (

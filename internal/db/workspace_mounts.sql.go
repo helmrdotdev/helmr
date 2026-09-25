@@ -1086,7 +1086,7 @@ WITH candidates AS (
      ORDER BY workspace_mounts.updated_at, workspace_mounts.id
      LIMIT $3
      FOR UPDATE OF workspace_mounts SKIP LOCKED
-)
+), stopped AS (
 UPDATE workspace_mounts
    SET status = 'unmounting',
        finalization_action = 'discard',
@@ -1096,6 +1096,22 @@ UPDATE workspace_mounts
        updated_at = now()
   FROM candidates WHERE workspace_mounts.id = candidates.id
 RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.status, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.finalization_action, workspace_mounts.finalization_reason_code, workspace_mounts.finalization_error, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+), closing_runtime AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed',
+           desired_version = CASE WHEN runtime_instances.desired_state = 'closed'
+                                  THEN runtime_instances.desired_version
+                                  ELSE runtime_instances.desired_version + 1 END,
+           desired_at = now(), desired_reason = 'capacity_pressure', updated_at = now()
+      FROM stopped
+     WHERE runtime_instances.id = stopped.runtime_instance_id
+       AND runtime_instances.worker_instance_id = stopped.worker_instance_id
+       AND runtime_instances.worker_epoch = stopped.worker_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+    RETURNING runtime_instances.id
+)
+SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.materialized_version_id, stopped.runtime_instance_id, stopped.guest_channel_token_hash, stopped.guest_channel_token_expires_at, stopped.status, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.finalization_action, stopped.finalization_reason_code, stopped.finalization_error, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
+  JOIN closing_runtime ON closing_runtime.id = stopped.runtime_instance_id
 `
 
 type RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams struct {
@@ -1104,15 +1120,48 @@ type RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams struct {
 	LimitCount       int32       `json:"limit_count"`
 }
 
-func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx context.Context, arg RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams) ([]WorkspaceMount, error) {
+type RequestCapacityPressureIdleWorkspaceMountStopsForWorkerRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              pgtype.UUID        `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RegionID                   string             `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID        `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	Status                     string             `json:"status"`
+	Request                    []byte             `json:"request"`
+	DirtyGeneration            int64              `json:"dirty_generation"`
+	FencingGeneration          int64              `json:"fencing_generation"`
+	FinalizationAction         pgtype.Text        `json:"finalization_action"`
+	FinalizationReasonCode     pgtype.Text        `json:"finalization_reason_code"`
+	FinalizationError          []byte             `json:"finalization_error"`
+	MountedAt                  pgtype.Timestamptz `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`
+	TerminalError              []byte             `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx context.Context, arg RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams) ([]RequestCapacityPressureIdleWorkspaceMountStopsForWorkerRow, error) {
 	rows, err := q.db.Query(ctx, requestCapacityPressureIdleWorkspaceMountStopsForWorker, arg.WorkerInstanceID, arg.WorkerEpoch, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []WorkspaceMount
+	var items []RequestCapacityPressureIdleWorkspaceMountStopsForWorkerRow
 	for rows.Next() {
-		var i WorkspaceMount
+		var i RequestCapacityPressureIdleWorkspaceMountStopsForWorkerRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,

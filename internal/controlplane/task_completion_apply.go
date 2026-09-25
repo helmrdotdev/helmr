@@ -207,29 +207,8 @@ func (s *Server) completeTask(
 		}); err != nil {
 			return staleTaskCompletion(err)
 		}
-		if sameWorkspaceChildFinalization(authority) {
-			if _, err := work.q.RequestSameWorkspaceChildAttemptRuntimeDiscard(
-				ctx,
-				db.RequestSameWorkspaceChildAttemptRuntimeDiscardParams{
-					CompletedAt: completedAt,
-					OrgID:       authority.run.OrgID, ProjectID: authority.run.ProjectID,
-					EnvironmentID: authority.run.EnvironmentID,
-					WorkspaceID:   authority.workspace.ID, RunID: authority.run.ID,
-					AttemptNumber:          authority.attempt.Number,
-					RunLeaseID:             authority.runLease.ID,
-					WorkspaceLeaseID:       authority.workspaceLease.ID,
-					RuntimeInstanceID:      authority.runtime.ID,
-					WorkspaceMountID:       authority.workspaceMount.ID,
-					WorkerGroupID:          authority.worker.WorkerGroupID,
-					WorkerInstanceID:       authority.worker.ID,
-					WorkerEpoch:            authority.worker.CurrentEpoch.Int64,
-					OwnershipGeneration:    authority.workspace.OwnershipGeneration,
-					WriterGeneration:       authority.workspace.WriterGeneration,
-					MountFencingGeneration: authority.workspaceMount.FencingGeneration,
-				},
-			); err != nil {
-				return staleTaskCompletion(err)
-			}
+		if err := requestCompletedAttemptRuntimeDiscard(ctx, work.q, authority, completedAt); err != nil {
+			return staleTaskCompletion(err)
 		}
 		failurePoint = taskCompletionPointFinish
 		switch {
@@ -854,4 +833,27 @@ func recordChildTaskWorkspaceVersion(
 		return pgtype.UUID{}, err
 	}
 	return version.ID, nil
+}
+
+// A terminal capture has stopped the VM. Persist closure intent while publishing
+// its saved Computer; only the Worker's physical-cleanup proof reclaims capacity.
+func requestCompletedAttemptRuntimeDiscard(ctx context.Context, store db.Querier, authority runLeaseClaimAuthority, completedAt pgtype.Timestamptz) error {
+	_, err := store.RequestCompletedAttemptRuntimeDiscard(ctx, db.RequestCompletedAttemptRuntimeDiscardParams{
+		CompletedAt: completedAt,
+		OrgID:       authority.run.OrgID, ProjectID: authority.run.ProjectID,
+		EnvironmentID: authority.run.EnvironmentID,
+		WorkspaceID:   authority.workspace.ID, RunID: authority.run.ID,
+		AttemptNumber:          authority.attempt.Number,
+		RunLeaseID:             authority.runLease.ID,
+		WorkspaceLeaseID:       authority.workspaceLease.ID,
+		RuntimeInstanceID:      authority.runtime.ID,
+		WorkspaceMountID:       authority.workspaceMount.ID,
+		WorkerGroupID:          authority.worker.WorkerGroupID,
+		WorkerInstanceID:       authority.worker.ID,
+		WorkerEpoch:            authority.worker.CurrentEpoch.Int64,
+		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
+		WriterGeneration:       authority.workspace.WriterGeneration,
+		MountFencingGeneration: authority.workspaceMount.FencingGeneration,
+	})
+	return err
 }

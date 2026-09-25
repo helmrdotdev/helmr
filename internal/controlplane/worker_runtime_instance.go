@@ -224,12 +224,13 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		if reason == "" {
 			reason = "desired_state_reconciled"
 		}
-		row, err = s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
+		closed, closeErr := s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
 			ReasonCode: pgtype.Text{String: reason, Valid: true}, ID: pgvalue.UUID(id), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 			DesiredVersion:          request.DesiredVersion,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 			CleanupProof:            proof,
 		})
+		row, err = db.RuntimeInstance(closed), closeErr
 	case "failed":
 		reason := strings.TrimSpace(request.ReasonCode)
 		if reason == "" {
