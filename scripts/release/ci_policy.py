@@ -7,46 +7,84 @@ import subprocess
 import sys
 
 
-def source_only(path):
-    """Paths covered by source CI without constructing the distribution set.
+# Keep this inventory and the coverage table in README.md together. Matrix names
+# remain stable for native job evidence; the policy job always runs.
+REPO_CHECKS = {
+    'ci-policy': 'repo policy',
+    'ci-generated': 'generated',
+    'ci-typescript': 'typescript',
+    'ci-go-lint': 'go lint',
+    'ci-go-build': 'go build',
+    'ci-go-race': 'go race',
+    'ci-linux-compile': 'linux compile',
+    'ci-firecracker-probe': 'Firecracker probe',
+    'ci-linux-lint': 'linux lint',
+    'ci-infra-test': 'infrastructure',
+    'ci-clickhouse': 'ClickHouse',
+}
+SOURCE_JOBS = ('nix-flake', 'postgres', 'browser', 'release-contracts')
+ALL_CHECKS = frozenset(REPO_CHECKS) | frozenset(SOURCE_JOBS)
+WEB_CHECKS = frozenset(('ci-policy', 'ci-typescript'))
+CONSOLE_CHECKS = WEB_CHECKS | frozenset(('ci-generated', 'ci-go-build', 'browser'))
+BACKEND_CHECKS = frozenset((
+    'ci-policy', 'ci-generated', 'ci-go-lint', 'ci-go-build', 'ci-go-race',
+    'ci-linux-compile', 'ci-linux-lint', 'ci-clickhouse', 'postgres', 'browser',
+))
 
-    Keep the coverage table in README.md in sync. Everything else is full CI,
-    including locks, packaging/wiring, shared Go packages and new path classes.
+
+def path_checks(path):
+    """Return retained source checks, or None for a full-risk input.
+
+    Backend logic/SQL is exercised by Go, real databases and browser acceptance.
+    Builder fixtures do not run a Control Plane or query its database. Shared
+    runtime/client packages, build wiring and new file types remain full-risk.
     """
     parts = PurePosixPath(path).parts
     if not parts or path.startswith('/') or '..' in parts:
-        return False
-    if path == 'README.md' or path.startswith('packages/web/src/content/docs/'):
-        return True
+        return None
     suffix = PurePosixPath(path).suffix
+    if path == 'README.md':
+        return frozenset(('ci-policy',))
+    if path.startswith('packages/web/src/content/docs/') and suffix in ('.md', '.mdx'):
+        return WEB_CHECKS
     if path.startswith('packages/console/src/') and suffix in ('.ts', '.tsx', '.css'):
-        return True
+        return CONSOLE_CHECKS
     if path.startswith('packages/web/src/') and suffix in ('.ts', '.astro', '.css'):
-        return True
+        return WEB_CHECKS
     if path.startswith('packages/web/public/') and suffix in ('.svg', '.png', '.ico', '.webmanifest'):
-        return True
-    if path.startswith('internal/controlplane/') and suffix == '.go':
-        # Reviewed application CRUD only. Worker contracts also live in files
-        # such as worker.go and run_lease_claim_response.go, not one prefix.
-        name = path.removeprefix('internal/controlplane/')
-        return name in ('project.go', 'organization.go', 'member.go') or (
-            '/' not in name and name.endswith('_test.go')
-            and name.startswith(('project_', 'organization_', 'member_')))
-    return path.startswith('internal/email/') and suffix == '.go'
+        return WEB_CHECKS
+    if path.startswith(('internal/controlplane/', 'internal/email/')) and suffix == '.go':
+        return BACKEND_CHECKS
+    if path.startswith('internal/db/') and suffix in ('.go', '.sql'):
+        return BACKEND_CHECKS
+    return None
 
 
 def classify(paths):
-    # An empty/unavailable comparison is not evidence that expensive work is safe
-    # to omit. Both names of renames are retained by the caller.
-    ordinary = bool(paths) and all(source_only(path) for path in paths)
-    # These packaging inputs do not reach the CLI/SDK/guest builder fixtures.
+    # Both names of renames are retained. Empty/unavailable comparisons, unknown
+    # paths and sensitive inputs select full work, even mixed with ordinary edits.
+    checks = set()
+    artifacts, builder = not paths, not paths
     packaging_only = {
         'internal/console/console.go', 'internal/console/console_embed.go',
         'packages/console/vite.config.ts', 'packages/console/index.html',
         'scripts/build-controlplane-image.sh', 'scripts/verify-controlplane-image-build.sh',
     }
-    builder = not paths or any(not source_only(path) and path not in packaging_only for path in paths)
-    return dict(artifacts=not ordinary, bundle_builder=builder)
+    for path in paths:
+        selected = path_checks(path)
+        if selected is None:
+            artifacts = True
+            builder |= path not in packaging_only
+            checks.update(ALL_CHECKS)
+        else:
+            checks.update(selected)
+    if not paths:
+        checks.update(ALL_CHECKS)
+    return dict(artifacts=artifacts, bundle_builder=builder, source_checks=sorted(checks))
+
+
+def repo_matrix(checks):
+    return dict(include=[dict(name=name, app=app) for app, name in REPO_CHECKS.items() if app in checks])
 
 
 def pr_checks(root, event):
@@ -79,13 +117,27 @@ def check_jobs(needs, aggregate, event):
     for key in ('skip_artifacts', 'run_bundle_builder'):
         if outputs.get(key) not in ('true', 'false'):
             raise ValueError(f'missing or invalid selection: {key}')
+    try:
+        checks = json.loads(outputs['source_checks'])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError('missing or invalid source_checks') from error
+    if (not isinstance(checks, list) or any(not isinstance(check, str) for check in checks)
+            or len(set(checks)) != len(checks) or not set(checks) <= ALL_CHECKS
+            or 'ci-policy' not in checks):
+        raise ValueError('invalid source_checks')
+    # Full packaging and builder validation must never accompany reduced source
+    # coverage; main also retains all checks for documentation-only pushes.
+    if ((outputs['skip_artifacts'] == 'false' or outputs['run_bundle_builder'] == 'true')
+            and set(checks) != ALL_CHECKS):
+        raise ValueError('full work requires complete source CI')
     if aggregate == 'source':
         if event not in ('push', 'pull_request'):
             raise ValueError('unsupported CI event')
-        if event == 'push' and outputs['run_bundle_builder'] != 'true':
+        if event == 'push' and (outputs['run_bundle_builder'] != 'true' or set(checks) != ALL_CHECKS):
             raise ValueError('main requires complete source CI')
-        for job in ('nix-flake', 'repo', 'postgres', 'browser', 'release-contracts'):
-            result(job)
+        result('repo')
+        for job in SOURCE_JOBS:
+            result(job, 'success' if job in checks else 'skipped')
         result('bundle-builder', 'success' if outputs['run_bundle_builder'] == 'true' else 'skipped')
     elif aggregate == 'pr':
         if event != 'pull_request':

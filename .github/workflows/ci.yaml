@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   nix-flake:
+    needs: artifact-selection
+    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'nix-flake')
     name: nix flake
     runs-on: ubuntu-24.04
     env:
@@ -50,37 +52,16 @@ jobs:
 
 
   repo:
+    needs: artifact-selection
     name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     env:
+      CI_APP: ${{ matrix.app }}
       GOCACHE: /tmp/helmr-ci-go-build
       GOMODCACHE: /tmp/helmr-ci-go-mod
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: repo policy
-            app: ci-policy
-          - name: generated
-            app: ci-generated
-          - name: typescript
-            app: ci-typescript
-          - name: go lint
-            app: ci-go-lint
-          - name: go build
-            app: ci-go-build
-          - name: go race
-            app: ci-go-race
-          - name: linux compile
-            app: ci-linux-compile
-          - name: Firecracker probe
-            app: ci-firecracker-probe
-          - name: linux lint
-            app: ci-linux-lint
-          - name: infrastructure
-            app: ci-infra-test
-          - name: ClickHouse
-            app: ci-clickhouse
+      matrix: ${{ fromJSON(needs.artifact-selection.outputs.repo_matrix) }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -102,11 +83,13 @@ jobs:
         run: >-
           nix build --no-link --impure --expr
           'let flake = builtins.getFlake ("git+file://" + toString ./.);
-          in builtins.dirOf (builtins.dirOf flake.apps.x86_64-linux.${{ matrix.app }}.program)'
+          in builtins.dirOf (builtins.dirOf (builtins.getAttr (builtins.getEnv "CI_APP") flake.apps.x86_64-linux).program)'
 
-      - run: nix run .#${{ matrix.app }}
+      - run: nix run ".#$CI_APP"
 
   postgres:
+    needs: artifact-selection
+    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'postgres')
     name: postgres
     runs-on: ubuntu-24.04
     steps:
@@ -125,6 +108,8 @@ jobs:
       - run: nix run .#ci-postgres
 
   browser:
+    needs: artifact-selection
+    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'browser')
     name: browser
     runs-on: ubuntu-24.04
     steps:
@@ -179,6 +164,8 @@ jobs:
       - run: nix run .#ci-bundle-builder
 
   release-contracts:
+    needs: artifact-selection
+    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), 'release-contracts')
     name: release contracts (${{ matrix.app }})
     runs-on: ubuntu-24.04
     strategy:
@@ -207,6 +194,8 @@ jobs:
       selection: ${{ steps.selection.outputs.selection }}
       skip_artifacts: ${{ steps.selection.outputs.skip_artifacts }}
       run_bundle_builder: ${{ steps.selection.outputs.run_bundle_builder }}
+      source_checks: ${{ steps.selection.outputs.source_checks }}
+      repo_matrix: ${{ steps.selection.outputs.repo_matrix }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -224,11 +213,12 @@ jobs:
           sys.path.insert(0, 'scripts/release')
           from api import GitHub
           from admission import artifact_build_needed
-          from ci_policy import pr_checks
+          from ci_policy import classify, pr_checks, repo_matrix
           from contract import preview_version
           source = os.environ['SOURCE_COMMIT']
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == source
           number = int(os.environ['PR_NUMBER']) if os.environ['PR_NUMBER'] else None
+          checks = classify([])
           skip, builder = False, True
           if number is not None:
               checks = pr_checks('.', json.load(open(os.environ['GITHUB_EVENT_PATH'])))
@@ -245,6 +235,8 @@ jobs:
               output.write('selection='+json.dumps(selection,separators=(',',':'))+'\n')
               output.write('skip_artifacts='+('true' if skip else 'false')+'\n')
               output.write('run_bundle_builder='+('true' if builder else 'false')+'\n')
+              output.write('source_checks='+json.dumps(checks['source_checks'])+'\n')
+              output.write('repo_matrix='+json.dumps(repo_matrix(checks['source_checks']))+'\n')
           PYTHON
   build-artifacts:
     name: build release artifacts

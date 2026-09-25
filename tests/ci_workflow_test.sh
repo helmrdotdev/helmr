@@ -52,6 +52,15 @@ assert '      - artifact-selection' in source and '      - artifact-selection' i
 assert '      - source-ci-complete' in pr and '      - build-artifacts' in pr
 assert "if: github.event_name == 'push' && needs.artifact-selection.outputs.skip_artifacts == 'true'" in workflow
 assert "if: needs.artifact-selection.outputs.skip_artifacts == 'false'" in workflow
+# Selected jobs must be gated at job level, not return a green skipped command.
+for job in ('nix-flake', 'postgres', 'browser', 'release-contracts'):
+    block = workflow.split('  '+job+':\n', 1)[1]
+    expected = "    needs: artifact-selection\n    if: contains(fromJSON(needs.artifact-selection.outputs.source_checks), '" + job + "')\n"
+    assert block.startswith(expected), job + ' must use the source selection'
+assert 'matrix: ${{ fromJSON(needs.artifact-selection.outputs.repo_matrix) }}' in workflow
+assert "checks = classify([])" in workflow, 'main must default to complete source checks'
+assert "output.write('source_checks='+json.dumps(checks['source_checks'])" in workflow
+assert "output.write('repo_matrix='+json.dumps(repo_matrix(checks['source_checks']))" in workflow
 build = (root / '.github/workflows/build-artifacts.yaml').read_text()
 retention = "retention-days: ${{ github.event_name == 'pull_request' && 1 || 7 }}"
 assert build.count(retention) == 2, 'both frozen PR component and CLI uploads need short retention'

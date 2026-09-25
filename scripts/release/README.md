@@ -42,8 +42,8 @@ include deletions/renames and the entire diff since the last selected complete
 source, so a relevant change followed by docs cannot disappear.
 
 Pull requests retain **ci complete**, which requires **source-ci-complete** and
-all packaging work selected for the exact PR head. Ordinary application/Console
-changes retain source builds and tests without creating the full distribution.
+all work selected for the exact PR head. PRs run the source checks affected by
+their changes; ordinary backend/Console changes do not create the full distribution.
 Release publication for PRs and human tags still builds the complete set once
 under trusted orchestration; a lightweight PR result never substitutes for it.
 
@@ -57,16 +57,41 @@ CLI/SDK/proto/compiler/runtime/Worker changes select full work. Main keeps compl
 source validation and builds every artifact-relevant change, including ordinary
 application edits. Its documentation-only skip policy above is unchanged.
 
-| PR path group | Distribution set / builder E2E | Retained proof |
+| PR path group | Distribution set / builder E2E | Required source checks |
 | --- | --- | --- |
-| Root README and `packages/web/src/content/docs/**` | Skip / skip | All ordinary source checks, including website build |
-| `packages/console/src/**` (`.ts`, `.tsx`, `.css`) | Skip / skip | TypeScript tests, generated output, embedded-Console Go build/race/lint and browser tests |
-| `packages/web/src/**` (`.ts`, `.astro`, `.css`) and public SVG/PNG/ICO/webmanifest assets | Skip / skip | Website typecheck and real website build, plus all other source checks |
-| Control Plane `project.go`, `organization.go`, `member.go` and `project_*`, `organization_*`, `member_*` Go test files; `internal/email/**.go` | Skip / skip | Go build/race/lint, PostgreSQL, browser and source contracts |
-| Existing Console embedding Go files, Console Vite config/index, Control Plane image build/verify scripts | Full / skip | Complete package consumer plus source checks; these do not reach builder fixtures |
-| Every other or mixed path class | Full / full when any member requires it | Complete distribution/consumer, deep builder tests and source checks |
+| Root `README.md` | Skip / skip | Repository policy/contracts; no product compilation |
+| Website docs (`packages/web/src/content/docs/**.md`, `.mdx`), website source (`.ts`, `.astro`, `.css`) and public SVG/PNG/ICO/webmanifest assets | Skip / skip | Repository policy and TypeScript checks, including website typecheck, messaging tests and real website build |
+| `packages/console/src/**` (`.ts`, `.tsx`, `.css`) | Skip / skip | Repository policy, TypeScript tests/typecheck, generated output, embedded-Console Go build and browser acceptance |
+| `internal/controlplane/**.go`, `internal/email/**.go`, `internal/db/**` (`.go`, `.sql`, including generated queries and schema migrations) | Skip / skip | Repository policy, generated output/SQL, Go build/lint/race, Linux test compilation/lint, real ClickHouse/PostgreSQL and browser acceptance |
+| Existing Console embedding Go files, Console Vite config/index, Control Plane image build/verify scripts | Full / skip | All source checks and complete distribution/consumer |
+| Shared runtime/client packages, CLI/SDK/proto/compiler/Worker, build/release/CI wiring, locks, unknown paths/types | Full / full | All source checks and complete distribution/consumer |
 
-A maintainer can add **`ci:full`** to request both expensive checks on any PR.
+Mixed ordinary changes run the union of their source checks. Any full-risk path
+selects all source checks; the packaging-only exceptions above still omit builder
+E2E unless another path needs it. Missing ancestry or an empty diff selects full CI.
+
+The backend group deliberately includes API handlers, SQL and migration changes:
+these need actual server/database tests, not the builder's package-manager,
+native-library and build-isolation fixtures, which do not run the Control Plane
+or its queries. Shared packages such as `internal/run`, `internal/schedule` and
+`internal/api` remain full-risk. SQL can also change types consumed by other Go
+commands, so backend PRs retain all-command build, Go race tests and Linux test
+compilation rather than testing only the edited package.
+
+Console source changes retain the real embedded Go build and browser tests; Go
+lint/race and independent database suites do not validate new Console behavior.
+Nix package/smoke checks, boot reproducibility, version-cohort builds, infrastructure
+and the Firecracker binary probe are omitted for ordinary changes that do not
+change their contracts. Generated-code checking still verifies Go formatting and
+SQL/proto generation where needed. The existing TypeScript check remains a single
+small job; no separate website/Console test framework is introduced. Repository
+policy/contracts remain the small common baseline for every PR.
+
+The source job inventory and selected repo matrix live in `ci_policy.py`. Optional
+jobs are skipped at job level, not reported successful without executing tests.
+Main always runs the complete inventory, including documentation-only pushes.
+
+A maintainer can add **`ci:full`** to request all source and packaging checks on any PR.
 Adding/removing labels and pushing a new revision recompute selection and all
 required checks; unrelated label events also run normal CI, rather than leaving a
 skipped or misleading required status. The label only requests computation and
@@ -74,8 +99,9 @@ works on fork PRs without granting release credentials. Obsolete PR runs cancel;
 main runs do not.
 
 Both aggregates reject failed/cancelled/missing selected jobs, failed selection,
-invalid boolean outputs and unexpectedly skipped mandatory jobs. Only an explicit
-selection permits `skipped` for optional work. A distribution-only defect in an
+invalid selection outputs and unexpectedly skipped mandatory jobs. Only an explicit
+selection permits `skipped` for optional work. Full packaging cannot accompany
+a reduced source selection, and the repo matrix always includes repository policy. A distribution-only defect in an
 ordinary source edit can first be discovered on main, where complete build and
 consumer success are still required before publication. Use `ci:full` for earlier
 package-level proof when a change warrants it.
