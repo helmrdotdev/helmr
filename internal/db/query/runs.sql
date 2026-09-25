@@ -51,7 +51,7 @@ WITH selected_target AS MATERIALIZED (
       JOIN computer_versions
         ON computer_versions.computer_id = computers.id
        AND computer_versions.id = sqlc.arg(base_workspace_version_id)
-       AND computer_versions.status = 'committed'
+       AND computer_versions.status IN ('initializing', 'committed')
      WHERE environments.id = sqlc.arg(environment_id)
        AND environments.org_id = sqlc.arg(org_id)
        AND environments.project_id = sqlc.arg(project_id)
@@ -377,7 +377,7 @@ WITH selected_target AS MATERIALIZED (
       JOIN computer_versions
         ON computer_versions.computer_id = computers.id
        AND computer_versions.id = sqlc.arg(base_workspace_version_id)
-       AND computer_versions.status = 'committed'
+       AND computer_versions.status IN ('initializing', 'committed')
       LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = sqlc.narg(claim_id)
