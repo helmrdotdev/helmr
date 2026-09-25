@@ -5,33 +5,62 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
-// TestManagedNodeAgenticWork runs representative agent tool work in a real
-// Workspace image: the OCI archive the builder produced from the fixture's SDK
-// sandbox declaration is unpacked with guestd's own unpacker, and each declared
-// task's handler runs under the platform Node through the managed Program
-// launch path with the Runtime's Program flags. The guest task protocol and
-// launcher are not exercised here. tests/agentic_work_e2e.sh provides the inputs.
+// TestManagedNodeAgenticWork runs representative tool work on a writable Computer
+// disk decoded from the builder's seed. Handlers run through the managed Program
+// launch path with the Runtime's Node flags. This checks actual deployment bytes,
+// but not the guest task protocol, Firecracker or checkpoint/resume.
+// tests/agentic_work_e2e.sh provides the inputs.
 func TestManagedNodeAgenticWork(t *testing.T) {
-	archive := os.Getenv("HELMR_GUESTD_AGENTIC_WORKSPACE_IMAGE")
-	if archive == "" {
-		t.Skip("HELMR_GUESTD_AGENTIC_WORKSPACE_IMAGE is not set")
+	descriptor := os.Getenv("HELMR_GUESTD_AGENTIC_COMPUTER_SEED")
+	if descriptor == "" {
+		t.Skip("HELMR_GUESTD_AGENTIC_COMPUTER_SEED is not set")
 	}
-	file, err := os.Open(archive)
+	raw, err := os.ReadFile(descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := unpackOCIImage(file, t.TempDir())
-	file.Close()
+	var seed deployment.BundleWorkspaceImageArtifact
+	if err := json.Unmarshal(raw, &seed); err != nil {
+		t.Fatal(err)
+	}
+	if seed.Profile != computer.SeedProfile {
+		t.Fatalf("unexpected Computer seed profile %q", seed.Profile)
+	}
+	objects, err := cas.NewFile(filepath.Join(filepath.Dir(descriptor), "objects"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	imageRoot := image.RootfsDir
+	directory := t.TempDir()
+	disk := filepath.Join(directory, "computer.ext4")
+	artifact := computer.SeedArtifact{Object: cas.Descriptor{Digest: seed.Digest, SizeBytes: seed.SizeBytes, MediaType: seed.MediaType}, LogicalBytes: computer.SeedCapacity}
+	if err := (computer.SeedStore{CAS: objects}).Decode(t.Context(), artifact, disk, computer.SeedCapacity); err != nil {
+		t.Fatal(err)
+	}
+	imageRoot := filepath.Join(directory, "root")
+	if err := os.Mkdir(imageRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.CommandContext(t.Context(), "mount", "-t", "ext4", "-o", "loop", disk, imageRoot).CombinedOutput(); err != nil {
+		t.Fatalf("mount Computer: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		if out, err := exec.Command("umount", imageRoot).CombinedOutput(); err != nil {
+			t.Errorf("unmount Computer: %v: %s", err, out)
+		}
+	})
+	image := ociImage{RootfsDir: imageRoot, Config: seed.Config}
 	user, err := resolveRuntimeUser(imageRoot, image.Config.User)
 	if err != nil {
 		t.Fatal(err)
