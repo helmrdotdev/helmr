@@ -2320,41 +2320,8 @@ func runPlacementRuntimeReadyParams(t *testing.T, fixture runPlacementFixture, r
 	var desiredVersion, observedVersion, workerEpoch int64
 	var vmVCPUCount int32
 	var cpuConfigDigest string
-	var workerID, runtimeSubstrateID pgtype.UUID
+	var workerID pgtype.UUID
 	err := fixture.pool.QueryRow(fixture.ctx, `
-WITH runtime AS (
-    SELECT runtime_instances.org_id,
-           runtime_instances.project_id,
-           runtime_instances.environment_id,
-           runtime_instances.deployment_definition_id
-      FROM runtime_instances
-     WHERE runtime_instances.id = $1
-),
-inserted AS (
-	INSERT INTO runtime_substrates (
-		id, org_id, project_id, environment_id, deployment_definition_id,
-		substrate_digest, substrate_format, substrate_contract,
-		substrate_size_bytes
-	)
-	SELECT $2, org_id, project_id, environment_id, deployment_definition_id,
-		   'sha256:82a76312340ff2dc8b52b1e6ff24308d9d9f54c3cb94e5957660b94afc53bc2d', $3, $4, 1
-      FROM runtime
-    ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
-    RETURNING id
-)
-SELECT id FROM inserted
-UNION ALL
-SELECT runtime_substrates.id
-  FROM runtime_substrates
-  JOIN runtime USING (org_id, project_id, environment_id, deployment_definition_id)
- WHERE substrate_format = $3
-   AND substrate_contract = $4
-LIMIT 1`, runtimeID, pgvalue.NewUUIDv7(),
-		capacity.SubstrateFormatExt4, capacity.SubstrateContractExt4).Scan(&runtimeSubstrateID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT runtime_instances.desired_version,
        runtime_instances.observed_version,
        runtime_instances.worker_instance_id,
@@ -2370,8 +2337,7 @@ SELECT runtime_instances.desired_version,
 		t.Fatal(err)
 	}
 	return db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300,
-		RuntimeSubstrateID: runtimeSubstrateID,
-		DesiredVersion:     desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
+		DesiredVersion: desiredVersion, ID: runtimeID, WorkerInstanceID: workerID,
 		WorkerEpoch: workerEpoch, ExpectedObservedVersion: observedVersion,
 		VMVCPUCount: vmVCPUCount, CPUConfigDigest: cpuConfigDigest,
 	}

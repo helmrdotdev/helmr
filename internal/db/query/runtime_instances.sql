@@ -306,7 +306,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
                 AND restore_workspace_authority.committed_input_sequence
                     < restore_workspace_authority.next_input_sequence))
      FOR UPDATE OF run_attempts
-), substrate_authority AS MATERIALIZED (
+), worker_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id
       FROM runtime_instances
       JOIN worker_instances
@@ -314,14 +314,6 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
 	   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
 	   AND worker_instances.current_epoch = runtime_instances.worker_epoch
 	   AND worker_instances.status IN ('active', 'draining')
-      JOIN runtime_substrates
-        ON runtime_substrates.id = sqlc.arg(runtime_substrate_id)
-       AND runtime_substrates.org_id = runtime_instances.org_id
-       AND runtime_substrates.project_id = runtime_instances.project_id
-       AND runtime_substrates.environment_id = runtime_instances.environment_id
-       AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
-       AND runtime_substrates.substrate_format = worker_instances.substrate_format
-       AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
      WHERE runtime_instances.id = sqlc.arg(id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
@@ -332,20 +324,18 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
                   FROM restore_attempt_authority
                  WHERE restore_attempt_authority.runtime_instance_id = runtime_instances.id
             ))
-     ORDER BY worker_instances.id, runtime_substrates.id
-     FOR UPDATE OF worker_instances, runtime_substrates
+     ORDER BY worker_instances.id
+     FOR UPDATE OF worker_instances
 ), runtime_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id
-      FROM substrate_authority
+      FROM worker_authority
       JOIN runtime_instances
-        ON runtime_instances.id = substrate_authority.runtime_instance_id
+        ON runtime_instances.id = worker_authority.runtime_instance_id
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
        AND runtime_instances.desired_version = sqlc.arg(desired_version)
        AND runtime_instances.observed_version = sqlc.arg(expected_observed_version)
        AND runtime_instances.observed_state = 'allocated'
-       AND (runtime_instances.runtime_substrate_id IS NULL
-            OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
      FOR UPDATE OF runtime_instances
 ), restore_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
@@ -391,7 +381,6 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
        AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
        AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
-       AND source_runtime.runtime_substrate_id = sqlc.arg(runtime_substrate_id)
       JOIN computer_versions
         ON computer_versions.computer_id = runtime_instances.workspace_id
        AND computer_versions.id = runtime_instances.reserved_workspace_version_id
@@ -412,8 +401,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
      WHERE (SELECT count(*) FROM restore_authority) >= 0
 )
 UPDATE runtime_instances
-   SET runtime_substrate_id = sqlc.arg(runtime_substrate_id),
-       observed_state = 'ready', observed_version = observed_version + 1,
+   SET observed_state = 'ready', observed_version = observed_version + 1,
        observed_desired_version = sqlc.arg(desired_version), observed_at = ready_decision.decided_at,
        ready_at = COALESCE(ready_at, ready_decision.decided_at),
        reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
@@ -440,8 +428,6 @@ UPDATE runtime_instances
    )
    AND runtime_instances.vm_vcpu_count = sqlc.arg(vm_vcpu_count)
    AND runtime_instances.cpu_config_digest = sqlc.arg(cpu_config_digest)
-   AND (runtime_instances.runtime_substrate_id IS NULL
-        OR runtime_instances.runtime_substrate_id = sqlc.arg(runtime_substrate_id))
    AND (runtime_instances.restore_checkpoint_id IS NULL
         OR EXISTS (
             SELECT 1 FROM restore_authority

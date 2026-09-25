@@ -203,7 +203,6 @@ type RuntimeInstanceStateRequest struct {
 	ExpectedObservedVersion int64                `json:"expected_observed_version"`
 	VMVCPUCount             int32                `json:"vm_vcpu_count,omitempty"`
 	CPUConfigDigest         string               `json:"cpu_config_digest,omitempty"`
-	RuntimeSubstrateID      string               `json:"runtime_substrate_id,omitempty"`
 	ReasonCode              string               `json:"reason_code,omitempty"`
 	Error                   json.RawMessage      `json:"error,omitempty"`
 	CleanupProof            *RuntimeCleanupProof `json:"cleanup_proof,omitempty"`

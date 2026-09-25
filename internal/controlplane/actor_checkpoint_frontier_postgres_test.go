@@ -175,14 +175,12 @@ func (f *actorCheckpointFixture) placeAndClaim(t *testing.T) {
 	if err := f.Pool.QueryRow(ctx, `SELECT desired_version,observed_version,vm_vcpu_count,cpu_config_digest FROM runtime_instances WHERE id=$1`, reserved.RuntimeInstanceID).Scan(&rt.DesiredVersion, &rt.ObservedVersion, &rt.VMVCPUCount, &rt.CPUConfigDigest); err != nil {
 		t.Fatalf("reserved runtime %+v: %v", reserved, err)
 	}
-	var substrate uuid.UUID
-	if err := f.Pool.QueryRow(ctx, `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,$6,'squashfs','builder-v0',1) ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO UPDATE SET substrate_digest=EXCLUDED.substrate_digest RETURNING id`, uuid.NewV7(), f.OrgID, f.ProjectID, f.EnvironmentID, f.WorkspaceDefinitionID, dbtest.Digest("frontier-substrate")).Scan(&substrate); err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.server.markRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{ReservationSeconds: 300, ID: reserved.RuntimeInstanceID, WorkerInstanceID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: rt.DesiredVersion, ExpectedObservedVersion: rt.ObservedVersion, RuntimeSubstrateID: pgvalue.UUID(substrate), VMVCPUCount: rt.VMVCPUCount, CPUConfigDigest: rt.CPUConfigDigest})
-	if err != nil {
-		t.Fatalf("ready runtime %+v: %v", reserved, err)
-	}
+	// Use the actual Worker request: Computer preparation sends no substrate ID.
+	f.workerCall(t, f.server.workerMarkRuntimeInstanceReady, workerapi.RuntimeInstanceStateRequest{
+		ID: pgvalue.UUIDString(reserved.RuntimeInstanceID), WorkerEpoch: 1,
+		DesiredVersion: rt.DesiredVersion, ExpectedObservedVersion: rt.ObservedVersion,
+		VMVCPUCount: rt.VMVCPUCount, CPUConfigDigest: rt.CPUConfigDigest,
+	}, nil)
 	_, err = f.placement.PlaceReadyRun(ctx, candidate)
 	if err != nil {
 		t.Fatalf("dispatch mount: %v", err)

@@ -875,9 +875,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND secret_resolutions.placement_target = workspace_secrets.placement_target
        AND secret_resolutions.secret_id = workspace_secrets.secret_id
        AND secret_resolutions.revocation_generation = secrets.revocation_generation
-     WHERE runtime_instances.id = $4
-       AND runtime_instances.worker_instance_id = $5
-       AND runtime_instances.worker_epoch = $6
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
      ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
      FOR UPDATE OF secrets
@@ -896,9 +896,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND sessions.workspace_id = runtime_instances.workspace_id
        AND sessions.current_run_id = runs.id
        AND sessions.status IN ('open', 'closing')
-     WHERE runtime_instances.id = $4
-       AND runtime_instances.worker_instance_id = $5
-       AND runtime_instances.worker_epoch = $6
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
        AND (SELECT count(*) FROM restore_secret_authority) >= 0
      FOR UPDATE OF sessions
@@ -909,9 +909,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
            NULL::bigint AS next_input_sequence
       FROM runtime_instances
       JOIN runs ON runs.id = runtime_instances.reserved_run_id
-     WHERE runtime_instances.id = $4
-       AND runtime_instances.worker_instance_id = $5
-       AND runtime_instances.worker_epoch = $6
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
        AND runs.entrypoint_kind = 'task'
        AND runs.session_id IS NULL
@@ -1069,7 +1069,7 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
                 AND restore_workspace_authority.committed_input_sequence
                     < restore_workspace_authority.next_input_sequence))
      FOR UPDATE OF run_attempts
-), substrate_authority AS MATERIALIZED (
+), worker_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id
       FROM runtime_instances
       JOIN worker_instances
@@ -1077,17 +1077,9 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
 	   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
 	   AND worker_instances.current_epoch = runtime_instances.worker_epoch
 	   AND worker_instances.status IN ('active', 'draining')
-      JOIN runtime_substrates
-        ON runtime_substrates.id = $1
-       AND runtime_substrates.org_id = runtime_instances.org_id
-       AND runtime_substrates.project_id = runtime_instances.project_id
-       AND runtime_substrates.environment_id = runtime_instances.environment_id
-       AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
-       AND runtime_substrates.substrate_format = worker_instances.substrate_format
-       AND runtime_substrates.substrate_contract = worker_instances.substrate_contract
-     WHERE runtime_instances.id = $4
-       AND runtime_instances.worker_instance_id = $5
-       AND runtime_instances.worker_epoch = $6
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
        AND (SELECT count(*) FROM restore_secret_authority) >= 0
        AND (runtime_instances.restore_checkpoint_id IS NULL
             OR EXISTS (
@@ -1095,20 +1087,18 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
                   FROM restore_attempt_authority
                  WHERE restore_attempt_authority.runtime_instance_id = runtime_instances.id
             ))
-     ORDER BY worker_instances.id, runtime_substrates.id
-     FOR UPDATE OF worker_instances, runtime_substrates
+     ORDER BY worker_instances.id
+     FOR UPDATE OF worker_instances
 ), runtime_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id
-      FROM substrate_authority
+      FROM worker_authority
       JOIN runtime_instances
-        ON runtime_instances.id = substrate_authority.runtime_instance_id
-       AND runtime_instances.worker_instance_id = $5
-       AND runtime_instances.worker_epoch = $6
-       AND runtime_instances.desired_version = $2
-       AND runtime_instances.observed_version = $7
+        ON runtime_instances.id = worker_authority.runtime_instance_id
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.desired_version = $1
+       AND runtime_instances.observed_version = $6
        AND runtime_instances.observed_state = 'allocated'
-       AND (runtime_instances.runtime_substrate_id IS NULL
-            OR runtime_instances.runtime_substrate_id = $1)
      FOR UPDATE OF runtime_instances
 ), restore_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id,
@@ -1154,14 +1144,13 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
        AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
        AND source_runtime.vm_vcpu_count = runtime_instances.vm_vcpu_count
        AND source_runtime.cpu_config_digest = runtime_instances.cpu_config_digest
-       AND source_runtime.runtime_substrate_id = $1
       JOIN computer_versions
         ON computer_versions.computer_id = runtime_instances.workspace_id
        AND computer_versions.id = runtime_instances.reserved_workspace_version_id
        AND computer_versions.status = 'private'
-     WHERE runtime_instances.id = $4
-       AND runtime_instances.worker_instance_id = $5
-       AND runtime_instances.worker_epoch = $6
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
        AND (SELECT count(*) FROM workspace_secrets
              WHERE workspace_secrets.workspace_id = runtime_instances.workspace_id)
            = (SELECT count(*) FROM restore_secret_authority
@@ -1175,18 +1164,17 @@ WITH RECURSIVE restore_secret_authority AS MATERIALIZED (
      WHERE (SELECT count(*) FROM restore_authority) >= 0
 )
 UPDATE runtime_instances
-   SET runtime_substrate_id = $1,
-       observed_state = 'ready', observed_version = observed_version + 1,
-       observed_desired_version = $2, observed_at = ready_decision.decided_at,
+   SET observed_state = 'ready', observed_version = observed_version + 1,
+       observed_desired_version = $1, observed_at = ready_decision.decided_at,
        ready_at = COALESCE(ready_at, ready_decision.decided_at),
        reservation_expires_at = CASE WHEN reserved_run_id IS NOT NULL OR reserved_process_id IS NOT NULL
-           THEN ready_decision.decided_at + $3::bigint * interval '1 second' END,
+           THEN ready_decision.decided_at + $2::bigint * interval '1 second' END,
        updated_at = ready_decision.decided_at
   FROM ready_decision
- WHERE runtime_instances.id = $4 AND runtime_instances.worker_instance_id = $5
+ WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
    AND ready_decision.runtime_instance_id = runtime_instances.id
-   AND runtime_instances.worker_epoch = $6 AND runtime_instances.desired_version = $2
-   AND runtime_instances.observed_version = $7
+   AND runtime_instances.worker_epoch = $5 AND runtime_instances.desired_version = $1
+   AND runtime_instances.observed_version = $6
    AND runtime_instances.observed_state = 'allocated'
    AND runtime_instances.preparation_expires_at > ready_decision.decided_at
    AND EXISTS (
@@ -1201,10 +1189,8 @@ UPDATE runtime_instances
           AND persistent_version.status IN ('committed', 'private')
           AND runtime_instances.retained_computer_source_version_id = persistent_version.id
    )
-   AND runtime_instances.vm_vcpu_count = $8
-   AND runtime_instances.cpu_config_digest = $9
-   AND (runtime_instances.runtime_substrate_id IS NULL
-        OR runtime_instances.runtime_substrate_id = $1)
+   AND runtime_instances.vm_vcpu_count = $7
+   AND runtime_instances.cpu_config_digest = $8
    AND (runtime_instances.restore_checkpoint_id IS NULL
         OR EXISTS (
             SELECT 1 FROM restore_authority
@@ -1216,7 +1202,6 @@ RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.work
 `
 
 type MarkRuntimeInstanceReadyParams struct {
-	RuntimeSubstrateID      pgtype.UUID `json:"runtime_substrate_id"`
 	DesiredVersion          int64       `json:"desired_version"`
 	ReservationSeconds      int64       `json:"reservation_seconds"`
 	ID                      pgtype.UUID `json:"id"`
@@ -1229,7 +1214,6 @@ type MarkRuntimeInstanceReadyParams struct {
 
 func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeInstanceReadyParams) (RuntimeInstance, error) {
 	row := q.db.QueryRow(ctx, markRuntimeInstanceReady,
-		arg.RuntimeSubstrateID,
 		arg.DesiredVersion,
 		arg.ReservationSeconds,
 		arg.ID,
