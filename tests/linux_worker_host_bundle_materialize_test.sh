@@ -75,12 +75,25 @@ cmp "${tmp}/bundle-a/worker-host-artifacts.json" "${tmp}/bundle-b/worker-host-ar
 cmp "${tmp}/bundle-a/worker-host-bundle.json" "${tmp}/bundle-b/worker-host-bundle.json"
 jq -e --arg source_commit "${source_commit}" '.sourceCommit == $source_commit' \
   "${tmp}/bundle-a/worker-host-bundle.json" >/dev/null
-grep -Fq -- "HELMR_SOURCE_COMMIT=${source_commit}" "${docker_args}"
-grep -Fq -- 'test "$("$host/bin/worker" --version)" = "$HELMR_PLATFORM_VERSION ($HELMR_SOURCE_COMMIT)"' "${docker_args}"
+if grep -Eq 'HELMR_SOURCE_COMMIT|HELMR_PLATFORM_VERSION|--impure' "${docker_args}"; then
+  printf 'not ok - Worker build must not depend on cohort labels\n' >&2
+  exit 1
+fi
+# shellcheck disable=SC2016 # Assert the literal command passed to the container.
+grep -Fq -- '"$host/bin/worker" --version >&2' "${docker_args}"
 grep -Fxq -- '--platform' "${docker_args}"
 grep -Fxq -- 'linux/amd64' "${docker_args}"
 grep -Fxq -- 'nixos/nix:2.31.2@sha256:c7cc6c8cb5d81bed19997247629604708fda95c99c43ac362daa05b6a68e8a24' "${docker_args}"
 grep -Fq -- 'path:/work#packages.x86_64-linux.workerHost' "${docker_args}"
+
+if TMPDIR="${test_tmp}" PATH="${test_bin}:${PATH}" RELEASE_SOURCE_COMMIT=incorrect \
+  MOCK_DOCKER_ARGS="${tmp}/mismatch.args" MOCK_WORKER_HOST="${host}" \
+  "${repo}/scripts/materialize-linux-worker-host-bundle.sh" "${tmp}/mismatch-output" >/dev/null 2>&1; then
+  printf 'not ok - selected source mismatch must still fail without embedded stamps\n' >&2
+  exit 1
+fi
+[ ! -e "${tmp}/mismatch.args" ]
+[ ! -e "${tmp}/mismatch-output" ]
 
 printf 'dirty\n' >>"${repo}/tracked"
 if TMPDIR="${test_tmp}" PATH="${test_bin}:${PATH}" MOCK_DOCKER_ARGS="${tmp}/dirty.args" MOCK_WORKER_HOST="${host}" \

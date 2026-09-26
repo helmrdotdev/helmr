@@ -1,8 +1,6 @@
 {
   lib,
   buildGoModule,
-  version,
-  sourceCommit,
 }:
 
 let
@@ -21,8 +19,7 @@ let
   };
 in
 buildGoModule {
-  pname = "worker";
-  inherit version;
+  name = "worker";
 
   src = lib.fileset.toSource {
     root = ../..;
@@ -51,8 +48,6 @@ buildGoModule {
   ldflags = [
     "-s"
     "-w"
-    "-X github.com/helmrdotdev/helmr/internal/version.Version=${version}"
-    "-X github.com/helmrdotdev/helmr/internal/version.SourceCommit=${sourceCommit}"
   ];
 
   meta = {

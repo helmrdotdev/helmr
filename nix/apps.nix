@@ -237,7 +237,7 @@ ciApps
         exec bash ./tests/bundle_builder_e2e.sh
       '';
   ci-version-cohort =
-    app "ci-version-cohort" "verify one version across the release cohort"
+    app "ci-version-cohort" "verify cohort stamps and Worker artifact identity guidance"
       [
         pkgs.bash
         pkgs.coreutils

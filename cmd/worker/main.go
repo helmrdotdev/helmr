@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 func main() {
@@ -18,7 +17,7 @@ func main() {
 		return
 	}
 	if len(os.Args) == 2 && os.Args[1] == "--version" {
-		fmt.Println(version.String())
+		fmt.Println("worker (build identity: signed release manifest and worker-host-artifacts.json)")
 		return
 	}
 	if handled, err := deployment.RunVerifierChild(os.Args); handled {

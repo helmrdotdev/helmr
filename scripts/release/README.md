@@ -139,3 +139,17 @@ INDEX_SIGNATURE ARCHIVE PROVENANCE`. It verifies the signed v0 index with the ex
 tag/main workflow identity, matches the checkout/tag/source and indexed archive and
 provenance, safely extracts, and delegates to the existing immutable publisher.
 No standalone Platform archive signature is produced or accepted.
+
+## Worker artifact identity
+
+Worker builds do not embed the cohort version or source commit. `worker --version`
+prints guidance to the signed release manifest and `worker-host-artifacts.json`;
+it does not identify a particular binary. The signed release index and bundle
+receipt still bind the selected source to the exact artifact digests. Each selected
+cohort builds its own Worker, so identical inputs can produce identical bytes
+across versions without relabelling a previously built Product artifact.
+
+Consumers may reuse an existing AMI only after verifying that its complete image
+definition and artifact digests match those current-cohort bytes. The original AMI
+build identity stays intact. A byte mismatch, OS or recipe change requires a new
+image; unavailable or unverified images must not be accepted.
