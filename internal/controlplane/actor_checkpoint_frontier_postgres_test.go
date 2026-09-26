@@ -427,6 +427,16 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 	for _, mode := range []string{"changed", "unchanged", "close", "interrupt"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newActorCheckpointFixture(t)
+			platform, err := cas.NewFile(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			object, err := platform.Put(t.Context(), deployment.RuntimeArtifactMediaType, bytes.NewReader([]byte("runtime descriptor fixture")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployments SET runtime_artifact_digest=$2 WHERE id=$1`, f.DeploymentID, object.Digest)
+			f.server.platformStore = platform
 			first := f.capture(t, "input1")
 			f.turn(t, 1)
 			checkpoint := f.suspend(t, first)
@@ -448,7 +458,34 @@ func TestActorCheckpointFrontierPostgres(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			f.placeAndStart(t)
+			f.placeAndClaim(t)
+			var response workerapi.RunLeaseClaimResponse
+			f.workerCall(t, f.server.workerClaimRunLease, workerapi.RunLeaseClaimRequest{
+				LeaseID: f.fence().ID, LeaseSequence: f.fence().LeaseSequence,
+			}, &response)
+			restore := response.Execution.Restore
+			if restore == nil || restore.TurnID != nil || restore.SessionID != f.sessionID.String() {
+				t.Fatal("receive checkpoint lost its outside-Turn scope")
+			}
+			if mode != "close" {
+				if restore.Decision.Completed == nil {
+					t.Fatal("receive decision is not completed")
+				}
+				var decision struct {
+					Turn struct {
+						ID string `json:"id"`
+					} `json:"turn"`
+				}
+				if err := json.Unmarshal(restore.Decision.Completed.ResultJSON, &decision); err != nil {
+					t.Fatal(err)
+				}
+				if !f.claim.actor.ActiveTurnID.Valid || f.claim.runWait.TurnID != f.claim.actor.ActiveTurnID || decision.Turn.ID != pgvalue.UUIDString(f.claim.actor.ActiveTurnID) {
+					t.Fatalf("receive decision lost its admitted Turn: %+v", decision)
+				}
+			} else if restore.Decision.Failed == nil || restore.Decision.Failed.ReasonCode != f.claim.runWait.ConditionReasonCode.String {
+				t.Fatal("receive close decision changed")
+			}
+			f.startClaim(t)
 			if mode == "interrupt" {
 				scope := f.receiveTurn(t, 2)
 				receipt, err := interruptTurn(t.Context(), f, scope, "restored-stop")

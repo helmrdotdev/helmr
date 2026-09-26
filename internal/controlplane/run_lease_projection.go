@@ -104,7 +104,9 @@ func projectRunLeaseExecution(
 			}
 			restore.SessionID = pgvalue.UUIDString(actor.ID)
 			restore.RunGeneration = actor.RunGeneration
-			if actor.ActiveTurnID.Valid {
+			// Input waits freeze outside a Turn. Admission binds the next Turn
+			// before restore, but that Turn belongs to the decision payload.
+			if authority.runWait.Kind != db.WaitKindActorInput && actor.ActiveTurnID.Valid {
 				id := pgvalue.UUIDString(actor.ActiveTurnID)
 				restore.TurnID = &id
 			}

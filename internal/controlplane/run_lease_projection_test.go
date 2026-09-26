@@ -45,7 +45,8 @@ func TestProjectRunLeaseExecutionProjectsFreshOnly(t *testing.T) {
 	}
 }
 
-func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
+func checkpointRestoreProjection(t *testing.T) runLeaseExecutionProjection {
+	t.Helper()
 	run, attempt, definition := validTaskProgramStart(t, "none")
 	attempt.EntrypointEnteredAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	waitID := pgvalue.UUID(uuid.New())
@@ -64,19 +65,84 @@ func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
 		Manifest:              testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
 	}
 	artifacts := validCheckpointArtifactAuthority()
-	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+	return runLeaseExecutionProjection{
 		mode: runLeaseClaimRestore, run: run, attempt: attempt, definition: definition,
 		runtime: db.RuntimeInstance{RestoreCheckpointID: checkpointID},
 		runWait: wait, checkpoint: checkpoint, checkpointArtifacts: artifacts,
-	})
+	}
+}
+
+func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
+	authority := checkpointRestoreProjection(t)
+	execution, err := projectRunLeaseExecution(authority)
 	if err != nil {
 		t.Fatalf("project restore: %v", err)
 	}
 	if execution.Restore == nil || execution.Fresh != nil ||
-		execution.Restore.ResumeAttachID != pgvalue.UUIDString(attachID) ||
-		execution.Restore.CheckpointID != pgvalue.UUIDString(checkpointID) ||
+		execution.Restore.ResumeAttachID != pgvalue.UUIDString(authority.runWait.ResumeAttachID) ||
+		execution.Restore.CheckpointID != pgvalue.UUIDString(authority.checkpoint.ID) ||
+		execution.Restore.TurnID != nil || execution.Restore.SessionID != "" ||
 		len(execution.Restore.Artifacts) != 4 {
 		t.Fatalf("unexpected restore execution: %#v", execution)
+	}
+}
+
+func TestProjectActorRestorePreservesFrozenTurnScope(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		kind       db.WaitKind
+		activeTurn bool
+		failed     bool
+		wantTurn   bool
+	}{
+		{name: "receive admitted next Turn", kind: db.WaitKindActorInput, activeTurn: true},
+		{name: "receive closed", kind: db.WaitKindActorInput},
+		{name: "receive timeout", kind: db.WaitKindActorInput, failed: true},
+		{name: "Token in Turn", kind: db.WaitKindToken, activeTurn: true, wantTurn: true},
+		{name: "timer in Turn", kind: db.WaitKindTimer, activeTurn: true, wantTurn: true},
+		{name: "child in Turn", kind: db.WaitKindChild, activeTurn: true, wantTurn: true},
+		{name: "Token outside Turn", kind: db.WaitKindToken},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			a := checkpointRestoreProjection(t)
+			a.run.EntrypointKind = "actor"
+			a.run.SessionID = pgvalue.UUID(uuid.NewV7())
+			a.actor = &db.Session{ID: a.run.SessionID, CurrentRunID: a.run.ID, RunGeneration: 2}
+			a.runWait.Kind = test.kind
+			a.runWait.ConditionResult = []byte(`null`)
+			if test.activeTurn {
+				a.actor.ActiveTurnID = pgvalue.UUID(uuid.NewV7())
+				a.runWait.TurnID = a.actor.ActiveTurnID
+				a.runWait.ConditionResult = []byte(`{"turn":{"id":"` + pgvalue.UUIDString(a.actor.ActiveTurnID) + `"},"run_generation":2,"value":{}}`)
+			}
+			if test.failed {
+				a.runWait.ConditionStatus = db.WaitStatusFailed
+				a.runWait.ConditionResult = nil
+				a.runWait.ConditionReasonCode = pgvalue.Text("timeout")
+			}
+			execution, err := projectRunLeaseExecution(a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := execution.Restore
+			if r == nil || r.SessionID != pgvalue.UUIDString(a.actor.ID) || r.RunGeneration != 2 {
+				t.Fatalf("Actor execution scope changed: %+v", r)
+			}
+			if test.wantTurn {
+				if r.TurnID == nil || *r.TurnID != pgvalue.UUIDString(a.actor.ActiveTurnID) {
+					t.Fatalf("lost frozen Turn: %+v", r.TurnID)
+				}
+			} else if r.TurnID != nil {
+				t.Fatalf("outside-Turn checkpoint acquired attachment Turn %s", *r.TurnID)
+			}
+			if test.failed {
+				if r.Decision.Failed == nil || r.Decision.Failed.ReasonCode != "timeout" {
+					t.Fatalf("failed receive decision changed: %+v", r.Decision)
+				}
+			} else if r.Decision.Completed == nil || string(r.Decision.Completed.ResultJSON) != string(a.runWait.ConditionResult) {
+				t.Fatalf("destination decision changed: %+v", r.Decision)
+			}
+		})
 	}
 }
 
