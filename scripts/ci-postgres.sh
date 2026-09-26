@@ -2,6 +2,15 @@
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [ "${1:-}" = --help ]; then
+  echo 'usage: scripts/ci-postgres.sh [TOP_LEVEL_TEST_PATTERN PACKAGE...]'
+  echo 'No arguments runs the CI suite. A selection must execute passing, non-skipped tests in every package.'
+  exit 0
+fi
+if [ "$#" = 1 ]; then
+  echo 'a selected test pattern requires at least one Go package' >&2
+  exit 2
+fi
 tmp_root=${RUNNER_TEMP:-${TMPDIR:-/tmp}}
 workdir=$(mktemp -d "${tmp_root%/}/helmr-postgres.XXXXXX")
 pgdata="$workdir/data"
@@ -67,6 +76,10 @@ if [ "$redis_ready" != "1" ]; then
 fi
 export HELMR_TEST_REDIS_URL="redis://127.0.0.1:${redis_port}/0"
 cd "$repo_root"
+if [ "$#" -gt 0 ]; then
+  CGO_ENABLED=1 GOFLAGS="${GOFLAGS:-} -race" bash "$repo_root/scripts/test-go-selection.sh" "$@"
+  exit 0
+fi
 CGO_ENABLED=1 go test -race -count=1 \
 	./cmd/internal/dev-controlplane \
 	./internal/controlplane \

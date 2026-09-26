@@ -28,7 +28,7 @@ run_check() {
 # code or comments.
 run_check ipv6-host-policy \
   'go test ./internal/firecracker -run TestRunNetworkPolicyIsClosedAroundBinding -count=1' \
-  dev/release-gate/run-go-tests.sh \
+  scripts/test-go-selection.sh \
   '^TestRunNetworkPolicyIsClosedAroundBinding$' ./internal/firecracker
 run_check workflow-samples-typecheck \
   'bun run --cwd dev/workflows typecheck' \
@@ -41,11 +41,11 @@ run_check release-smoke-contract \
   bash tests/release_smoke_selector_test.sh
 run_check network-deny-evidence-producer \
   'named nft deny policy and counter tests' \
-  dev/release-gate/run-go-tests.sh \
+  scripts/test-go-selection.sh \
   '^(TestNetworkPolicyUsesSuppliedDenySetAndDNSException|TestRunNetworkCounterContractRejectsMissingAndDuplicate)$' ./internal/firecracker
 run_check same-workspace-call \
   'same-Workspace controlplane, executor, dispatch, and guest Program restore contracts plus release smoke selector' \
-  bash -c "nix develop -c dev/release-gate/run-go-tests.sh 'SameWorkspace|Same.Workspace' ./internal/controlplane ./internal/dispatch && dev/release-gate/run-go-tests.sh '^TestStartRestoredProgramOrdersGrantStartProofAndRelease$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestRestoredProgramDecisionPreservesTerminalUnion$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority$' ./internal/guestd && dev/release-gate/run-go-tests.sh '^TestProgramCgroupLeaf(IsStableAndProgramSpecific|RejectsIncompleteOrUntrustedNames)$' ./internal/guestd && dev/release-gate/run-go-tests.sh '^TestWorkspaceProgramAdmission(RejectsRetiredMount|InstallsNewMountGeneration)$' ./internal/guestd && bash tests/release_smoke_selector_test.sh"
+  bash -c "nix develop -c scripts/test-go-selection.sh 'SameWorkspace|Same.Workspace' ./internal/controlplane ./internal/dispatch && scripts/test-go-selection.sh '^TestStartRestoredProgramOrdersGrantStartProofAndRelease$' ./internal/executor && scripts/test-go-selection.sh '^TestRestoredProgramDecisionPreservesTerminalUnion$' ./internal/executor && scripts/test-go-selection.sh '^TestRestoredWorkspaceMaterializesExactTargetBeforeRebindingAuthority$' ./internal/guestd && scripts/test-go-selection.sh '^TestProgramCgroupLeaf(IsStableAndProgramSpecific|RejectsIncompleteOrUntrustedNames)$' ./internal/guestd && scripts/test-go-selection.sh '^TestWorkspaceProgramAdmission(RejectsRetiredMount|InstallsNewMountGeneration)$' ./internal/guestd && bash tests/release_smoke_selector_test.sh"
 run_check console-typecheck \
   'Console TypeScript typecheck' \
   bun run --cwd packages/console typecheck
@@ -54,32 +54,32 @@ run_check external-token-wait-registration \
   bash -c "bun test sdk/typescript/src/tokens.test.ts && bun run --cwd dev/client typecheck && bun run --cwd dev/workflows typecheck"
 run_check identity-fencing-contract \
   'deterministic stale Lease and prior worker epoch rejection tests' \
-  bash -c "dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseRejectsPriorWorkerEpoch$' ./internal/controlplane && dev/release-gate/run-go-tests.sh '^TestStaleWorkerFencerOldEpochCannotFenceNewEpoch$' ./internal/dispatch"
+  bash -c "scripts/test-go-selection.sh '^TestRenewRunLeaseRejectsPriorWorkerEpoch$' ./internal/controlplane && scripts/test-go-selection.sh '^TestStaleWorkerFencerOldEpochCannotFenceNewEpoch$' ./internal/dispatch"
 run_check worker-mutation-lock-contract \
   'minimal Lease fences, renewal CAS/replay, Token Wait linearization, canonical child Workspace locks, and uncertain session unlock discard' \
-  bash -c "dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousExpiry$' ./internal/controlplane && dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseRejectsUnexpectedExpiry$' ./internal/controlplane && dev/release-gate/run-go-tests.sh '^TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks$' ./internal/controlplane && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunLeaseRenewalUpdatesBothLeasesAtomically$' ./internal/db && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunLeaseRenewalRollsBackWhenWorkspaceLeaseCannotAdvance$' ./internal/db && nix develop -c dev/release-gate/run-go-tests.sh '^TestChildWorkspacePairLocksConvergeForOppositeDirections$' ./internal/db && nix develop -c dev/release-gate/run-go-tests.sh '^TestTokenWaitRegistrationConcurrentReplayConverges$' ./internal/token && nix develop -c dev/release-gate/run-go-tests.sh '^TestTokenWaitRegistrationReplaySurvivesParkedCompletion$' ./internal/token && nix develop -c dev/release-gate/run-go-tests.sh '^TestAcquireHoldsAndReleasesEveryKey$' ./internal/pglock && nix develop -c dev/release-gate/run-go-tests.sh '^TestGuardDiscardsConnectionWhenReleaseCannotBeConfirmed$' ./internal/pglock"
+  bash -c "scripts/test-go-selection.sh '^TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousExpiry$' ./internal/controlplane && scripts/test-go-selection.sh '^TestRenewRunLeaseRejectsUnexpectedExpiry$' ./internal/controlplane && scripts/test-go-selection.sh '^TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks$' ./internal/controlplane && nix develop -c scripts/test-go-selection.sh '^TestRunLeaseRenewalUpdatesBothLeasesAtomically$' ./internal/db && nix develop -c scripts/test-go-selection.sh '^TestRunLeaseRenewalRollsBackWhenWorkspaceLeaseCannotAdvance$' ./internal/db && nix develop -c scripts/test-go-selection.sh '^TestChildWorkspacePairLocksConvergeForOppositeDirections$' ./internal/db && nix develop -c scripts/test-go-selection.sh '^TestTokenWaitRegistrationConcurrentReplayConverges$' ./internal/token && nix develop -c scripts/test-go-selection.sh '^TestTokenWaitRegistrationReplaySurvivesParkedCompletion$' ./internal/token && nix develop -c scripts/test-go-selection.sh '^TestAcquireHoldsAndReleasesEveryKey$' ./internal/pglock && nix develop -c scripts/test-go-selection.sh '^TestGuardDiscardsConnectionWhenReleaseCannotBeConfirmed$' ./internal/pglock"
 run_check postgres-primitive-schema \
   'PostgreSQL 18 migration/down-migration contract with no application-owned functions, triggers, views, rules, generated business columns, Run-stream tables, or workspace_process_records' \
-  nix develop -c dev/release-gate/run-go-tests.sh '^TestUpWithPostgres$' ./internal/db/schema
+  nix develop -c scripts/test-go-selection.sh '^TestUpWithPostgres$' ./internal/db/schema
 run_check packed-sdk-consumer \
   'bash scripts/check-packed-sdk-consumer.sh' \
   bash scripts/check-packed-sdk-consumer.sh
 run_check cli-resource-boundary \
   'go test ./cmd/helmr -run "TestCommandSurface|TestTaskStart" -count=1' \
-  dev/release-gate/run-go-tests.sh \
+  scripts/test-go-selection.sh \
   '^(TestCommandSurface|TestTaskStart.*)$' ./cmd/helmr
 run_check actor-cli \
   'go test ./cmd/helmr ./internal/client -run Actor -count=1' \
-  dev/release-gate/run-go-tests.sh 'Actor' ./cmd/helmr ./internal/client
+  scripts/test-go-selection.sh 'Actor' ./cmd/helmr ./internal/client
 run_check actor-runtime-contract \
   'typed Actor proto-to-executor worker bridge, semantic failure, and stale Run source Lease fence' \
-  bash -c "dev/release-gate/run-go-tests.sh '^TestActorRuntimeVerticalContract$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestWorkerActor' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence$' ./internal/controlplane"
+  bash -c "scripts/test-go-selection.sh '^TestActorRuntimeVerticalContract$' ./internal/executor && scripts/test-go-selection.sh '^TestWorkerActor' ./internal/executor && scripts/test-go-selection.sh '^TestAuthorizeWorkerRunSourceRequiresWorkerAndLiveFence$' ./internal/controlplane"
 run_check workspace-runtime-contract \
   'typed SDK/proto Workspace surface, drained checkpoint pause, executor worker bridge, renewed assignment retry, run-pinned create fence, and error classification' \
-  bash -c "bun test runtime/typescript/src/program.test.ts && dev/release-gate/run-go-tests.sh '^TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain$' ./internal/guestd && dev/release-gate/run-go-tests.sh '^TestWorkspaceRuntimeVerticalContract$' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestWorkerWorkspaceRequests' ./internal/executor && dev/release-gate/run-go-tests.sh '^TestWorkspaceRuntimeRetryUsesRenewedAssignment$' ./internal/executor && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim$' ./internal/controlplane && nix develop -c dev/release-gate/run-go-tests.sh '^TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects$' ./internal/controlplane && nix develop -c dev/release-gate/run-go-tests.sh '^TestWorkerWorkspaceExecFailureDoesNotClassifyUnknownInfrastructureError$' ./internal/controlplane"
+  bash -c "bun test runtime/typescript/src/program.test.ts && scripts/test-go-selection.sh '^TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain$' ./internal/guestd && scripts/test-go-selection.sh '^TestWorkspaceRuntimeVerticalContract$' ./internal/executor && scripts/test-go-selection.sh '^TestWorkerWorkspaceRequests' ./internal/executor && scripts/test-go-selection.sh '^TestWorkspaceRuntimeRetryUsesRenewedAssignment$' ./internal/executor && nix develop -c scripts/test-go-selection.sh '^TestRunPinnedWorkspaceCreateUsesSourceDeploymentAndFencesBeforeClaim$' ./internal/controlplane && nix develop -c scripts/test-go-selection.sh '^TestRunSourcedWorkspaceSelfExecAndDeleteAreBusyWithoutSideEffects$' ./internal/controlplane && nix develop -c scripts/test-go-selection.sh '^TestWorkerWorkspaceExecFailureDoesNotClassifyUnknownInfrastructureError$' ./internal/controlplane"
 run_check schedule-cli \
   'go test ./cmd/helmr ./internal/client -run Schedule -count=1' \
-  dev/release-gate/run-go-tests.sh 'Schedule' ./cmd/helmr ./internal/client
+  scripts/test-go-selection.sh 'Schedule' ./cmd/helmr ./internal/client
 
 status=passed
 reason_json=null

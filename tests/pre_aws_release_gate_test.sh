@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-runner="${repo_root}/dev/release-gate/run-go-tests.sh"
+runner="${repo_root}/scripts/test-go-selection.sh"
 gate="${repo_root}/dev/release-gate/check-pre-aws.sh"
 
 found_script=false
@@ -35,4 +35,28 @@ if "${runner}" '^TestParse$' \
   exit 1
 fi
 
+fixture=$(mktemp -d)
+trap 'rm -rf "$fixture"' EXIT
+cat >"$fixture/go.mod" <<'EOF'
+module selectedtest
+
+go 1.27.1
+EOF
+cat >"$fixture/selection_test.go" <<'EOF'
+package selectedtest
+import "testing"
+func TestReady(t *testing.T) {}
+func TestUnavailable(t *testing.T) { t.Skip("required service unavailable") }
+func TestNested(t *testing.T) { t.Run("needs-service", func(t *testing.T) { t.Skip("missing service") }) }
+EOF
+(
+  cd "$fixture"
+  "$runner" '^TestReady$' .
+  for pattern in '^TestNested$/^needs-service$' '^TestUnavailable$' '^TestNested$' '^Test(Ready|Unavailable)$'; do
+    if "$runner" "$pattern" . >/dev/null 2>&1; then
+      echo "not ok - skipped selected assertion was accepted: $pattern" >&2
+      exit 1
+    fi
+  done
+)
 printf 'ok - pre-AWS release gate tests\n'

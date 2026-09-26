@@ -1,0 +1,30 @@
+{
+  "binaries": {
+    "postgres": "/opt/helmr-tools/bin/postgres",
+    "initdb": "/opt/helmr-tools/bin/initdb",
+    "psql": "/opt/helmr-tools/bin/psql",
+    "redis-server": "/opt/helmr-tools/bin/redis-server",
+    "clickhouse": "/opt/helmr-tools/bin/clickhouse"
+  },
+  "control_plane": {
+    "CAS_URI": "s3://REPLACE-scope-cas",
+    "PLATFORM_STORE_URI": "s3://REPLACE-scope-platform",
+    "DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH": "/opt/helmr-candidate/runtime-descriptor.json",
+    "AWS_REGION": "REPLACE",
+    "GITHUB_OAUTH_CLIENT_ID": "REPLACE",
+    "GITHUB_OAUTH_CLIENT_SECRET": "REPLACE",
+    "BOOTSTRAP_WORKER_TOKEN": "REPLACE"
+  },
+  "worker": {
+    "AWS_REGION": "REPLACE",
+    "WORKER_RESOURCE_ID": "REPLACE-scope-host",
+    "WORKER_COMPUTER_DEVICES": "/dev/nbd0 /dev/nbd1",
+    "WORKER_NETWORK_LINK_POOL": "172.30.0.0/16",
+    "WORKER_NETWORK_TRANSLATION_POOL": "172.31.0.0/16",
+    "WORKER_NETWORK_RESOLVER_IPV4": "REPLACE",
+    "WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "[\"169.254.0.0/16\"]"
+  },
+  "services_candidate": "/opt/helmr-candidate/services",
+  "worker_host_receipt": "/opt/helmr-candidate/worker-host-bundle.json",
+  "worker_runtime_receipt": "/opt/helmr-candidate/worker-runtime-bundle.json"
+}

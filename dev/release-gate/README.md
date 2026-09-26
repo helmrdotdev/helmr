@@ -22,7 +22,7 @@ is accepted only through executable tests, type checks, or a packed-package
 consumer. Source strings and the disappearance of an old stub are never
 readiness evidence.
 
-Go test selections are executed through `run-go-tests.sh`. The gate requires
+Go test selections are executed through `../../scripts/test-go-selection.sh`. The gate requires
 at least one matching passed test in every selected package, so a renamed or
 deleted test cannot become passing evidence merely because `go test -run`
 exits successfully.

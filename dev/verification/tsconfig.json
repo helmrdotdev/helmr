@@ -1,0 +1,4 @@
+{
+  "extends": "../workflows/tsconfig.json",
+  "include": ["tasks/**/*.ts", "cases/**/*.ts", "helmr.config.ts"]
+}

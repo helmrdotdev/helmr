@@ -1,0 +1,13 @@
+{
+  "name": "helmr-verification",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.3.13",
+  "dependencies": {
+    "@helmr/sdk": "file:../../dist/npm/sdk/package",
+    "zod": "4.4.3"
+  },
+  "overrides": {
+    "@helmr/proto": "file:../../dist/npm/proto/package"
+  }
+}
