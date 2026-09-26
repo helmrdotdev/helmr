@@ -294,6 +294,12 @@ func Plan(ctx context.Context, store Store, workerGroupID uuid.UUID, request Pla
 		if assigned {
 			continue
 		}
+		// Reuse compatible capacity first. For new Workers, prefer the current
+		// primary while retaining deterministic secondary choices when needed.
+		sort.SliceStable(compatiblePoolIndexes[:compatiblePoolCount], func(i, j int) bool {
+			return plans[compatiblePoolIndexes[i]].id == group.PrimaryPoolID &&
+				plans[compatiblePoolIndexes[j]].id != group.PrimaryPoolID
+		})
 		for _, planIndex := range compatiblePoolIndexes[:compatiblePoolCount] {
 			plan := &plans[planIndex]
 			if int32(len(plan.bins)) >= plan.max {
