@@ -22,6 +22,8 @@ type waitingRunRegistry struct {
 }
 
 type waitingRunSlot struct {
+	execution                *programv0.SessionExecution
+	turnID                   *string
 	runID                    string
 	attemptNumber            uint32
 	checkpointID             string
@@ -53,7 +55,10 @@ func (r *waitingRunRegistry) registerProgram(request *programv0.CheckpointPauseR
 		request.GetCorrelationId() == "" {
 		return waitingRunRegistration{}, fmt.Errorf("exact program checkpoint registration is required")
 	}
+	frozen := proto.Clone(request).(*programv0.CheckpointPauseRequest)
 	slot := &waitingRunSlot{
+		execution:                frozen.Execution,
+		turnID:                   frozen.TurnId,
 		runID:                    request.GetRunId(),
 		attemptNumber:            request.GetAttemptNumber(),
 		checkpointID:             request.GetCheckpointId(),
@@ -203,13 +208,24 @@ func (r *waitingRunRegistry) grantProgramResume(grant *programResumeGrant) error
 		strings.TrimSpace(attach.GetRunLeaseId()) == "" || attach.GetResumeRequestVersion() <= 0 {
 		return errors.New("program resume grant did not match the frozen wait")
 	}
+	// Actor scope comes from the frozen Program, while the mounted authority
+	// grants its new lease. Keep the combined tuple exact for every attachment.
+	attach = proto.Clone(attach).(*programv0.ResumeAttach)
+	attach.Execution, attach.TurnId = nil, nil
+	if slot.execution != nil {
+		attach.Execution = proto.Clone(slot.execution).(*programv0.SessionExecution)
+	}
+	if slot.turnID != nil {
+		turnID := *slot.turnID
+		attach.TurnId = &turnID
+	}
 	if slot.granted != nil && !proto.Equal(slot.granted.attach, attach) {
 		return errors.New("program resume grant changed an installed authority")
 	}
 	if slot.accepted != nil && !proto.Equal(slot.accepted, attach) {
 		return errors.New("program resume grant changed an accepted authority")
 	}
-	grant.attach = proto.Clone(attach).(*programv0.ResumeAttach)
+	grant.attach = attach
 	slot.granted = grant
 	return nil
 }
