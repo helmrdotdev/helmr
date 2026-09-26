@@ -19,7 +19,7 @@ WITH transitioned AS (
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
        AND worker_instances.status = 'draining'
-       AND worker_instances.claim_version = sqlc.arg(expected_claim_version) + 1
+       AND worker_instances.claim_version IN (sqlc.arg(expected_claim_version), sqlc.arg(expected_claim_version) + 1)
        AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), idle_mounts AS (
     UPDATE workspace_mounts

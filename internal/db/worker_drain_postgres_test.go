@@ -81,6 +81,59 @@ func TestWorkerDrainPublishesExactTerminalReceiptAndReplays(t *testing.T) {
 	}
 }
 
+func TestWorkerDrainCurrentClaimPreservesFences(t *testing.T) {
+	ctx := t.Context()
+	pool := newPostgresDB(t, ctx)
+	q := db.New(pool)
+	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now().UTC())
+	params := db.DrainWorkerInstanceParams{
+		ID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1,
+	}
+	first, err := q.DrainWorkerInstance(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, claim := range []int64{first.ClaimVersion, 1, first.ClaimVersion} {
+		params.ExpectedClaimVersion = claim
+		got, err := q.DrainWorkerInstance(ctx, params)
+		if err != nil {
+			t.Fatalf("drain claim %d: %v", claim, err)
+		}
+		if got.ClaimVersion != first.ClaimVersion || got.DrainingAt != first.DrainingAt {
+			t.Fatalf("reentry changed transition: %+v", got)
+		}
+	}
+	for _, name := range []string{"worker", "group", "epoch", "older claim", "future claim"} {
+		t.Run(name, func(t *testing.T) {
+			bad := params
+			switch name {
+			case "worker":
+				bad.ID = pgvalue.UUID(uuid.NewV7())
+			case "group":
+				bad.WorkerGroupID = pgvalue.UUID(uuid.NewV7())
+			case "epoch":
+				bad.ExpectedEpoch.Int64++
+			case "older claim":
+				bad.ExpectedClaimVersion = 0
+			case "future claim":
+				bad.ExpectedClaimVersion++
+			}
+			if _, err := q.DrainWorkerInstance(ctx, bad); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("invalid fence error=%v, want no rows", err)
+			}
+		})
+	}
+	dbtest.MustExec(t, ctx, pool, `UPDATE worker_instances
+ SET status='termination_ready',claim_version=claim_version+1,termination_ready_at=now() WHERE id=$1`, workerID)
+	for _, claim := range []int64{first.ClaimVersion, first.ClaimVersion + 1} {
+		params.ExpectedClaimVersion = claim
+		if _, err := q.DrainWorkerInstance(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("terminal drain claim %d error=%v, want no rows", claim, err)
+		}
+	}
+}
+
 func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
@@ -121,7 +174,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 		ID:                   pgvalue.UUID(fixture.workerID),
 		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
 		ExpectedEpoch:        pgtype.Int8{Int64: 1, Valid: true},
-		ExpectedClaimVersion: 1,
+		ExpectedClaimVersion: 2,
 	}
 	if _, err := q.DrainWorkerInstance(ctx, params); err != nil {
 		t.Fatal(err)
@@ -144,6 +197,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 		       terminal_reason_code = 'worker_unmounted', updated_at = now()
 		 WHERE id = $1
 	`, mountID)
+	params.ExpectedClaimVersion = 1 // Preserve the original transition's exact replay.
 	if _, err := q.DrainWorkerInstance(ctx, params); err != nil {
 		t.Fatal(err)
 	}
@@ -159,6 +213,7 @@ func TestWorkerDrainReplayPublishesOwnerlessCleanupUntilRuntimeClosed(t *testing
 	if desiredState != "closed" || desiredVersion != 2 || desiredReason != "worker_draining" {
 		t.Fatalf("runtime cleanup = (%q, %d, %q)", desiredState, desiredVersion, desiredReason)
 	}
+	params.ExpectedClaimVersion = 2
 	if _, err := q.DrainWorkerInstance(ctx, params); err != nil {
 		t.Fatal(err)
 	}

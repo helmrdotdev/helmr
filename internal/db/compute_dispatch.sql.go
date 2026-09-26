@@ -32,7 +32,7 @@ WITH transitioned AS (
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
        AND worker_instances.status = 'draining'
-       AND worker_instances.claim_version = $4 + 1
+       AND worker_instances.claim_version IN ($4, $4 + 1)
        AND NOT EXISTS (SELECT 1 FROM transitioned)
 ), idle_mounts AS (
     UPDATE workspace_mounts
