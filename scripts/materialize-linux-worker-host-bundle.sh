@@ -37,22 +37,19 @@ git -C "${ROOT}" archive --format=tar HEAD | tar -xf - -C "${source_dir}"
 [ ! -e "${source_dir}/.git" ] || { printf 'Worker host source export contains Git metadata\n' >&2; exit 1; }
 
 source_commit="$(git -C "${ROOT}" rev-parse HEAD)"
-build_version="${HELMR_PLATFORM_VERSION:-0.0.0-dev}"
 [ "${RELEASE_SOURCE_COMMIT:-$source_commit}" = "$source_commit" ] || { echo 'Worker source selection differs' >&2; exit 1; }
 docker run --rm \
-  --env "HELMR_SOURCE_COMMIT=$source_commit" \
-  --env "HELMR_PLATFORM_VERSION=$build_version" \
   --platform linux/amd64 \
   --mount "type=bind,source=${source_dir},target=/work,readonly" \
   -w /work \
   "${BUILDER_IMAGE}" \
   sh -ceu '
     host="$(nix --extra-experimental-features "nix-command flakes" \
-      build --impure --no-link --print-out-paths \
+      build --no-link --print-out-paths \
       --option sandbox false \
       --option filter-syscalls false \
       path:/work#packages.x86_64-linux.workerHost)"
-    test "$("$host/bin/worker" --version)" = "$HELMR_PLATFORM_VERSION ($HELMR_SOURCE_COMMIT)"
+    "$host/bin/worker" --version >&2
     tar -C "${host}" -cf - .
   ' | tar -xof - -C "${host_dir}"
 

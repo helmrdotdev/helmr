@@ -17,14 +17,20 @@ cd "$repo_root"
 for command in helmr control-plane dispatcher; do
   go build -trimpath -ldflags="$ldflags" -o "$tmp/$command" "./cmd/$command"
 done
-worker=$(HELMR_PLATFORM_VERSION="$version" nix build --impure --no-link --print-out-paths .#worker)
+worker=$(nix build --no-link --print-out-paths .#worker)
 
-for binary in "$tmp/helmr" "$tmp/control-plane" "$tmp/dispatcher" "$worker/bin/worker"; do
+for binary in "$tmp/helmr" "$tmp/control-plane" "$tmp/dispatcher"; do
   actual=$($binary --version)
   [ "$actual" = "$expected" ] || {
     printf '%s reported %s, expected %s\n' "$binary" "$actual" "$expected" >&2
     exit 1
   }
 done
+
+actual=$("$worker/bin/worker" --version)
+[ "$actual" = 'worker (build identity: signed release manifest and worker-host-artifacts.json)' ] || {
+  printf 'Worker must report artifact identity guidance, got %s\n' "$actual" >&2
+  exit 1
+}
 
 printf 'ok - version cohort contract\n'

@@ -164,8 +164,6 @@ let
   firecrackerReleaseVersion = "1.17.0";
   worker = pkgs.callPackage ./worker.nix {
     buildGoModule = buildGo127Module;
-    version = platformVersion;
-    inherit sourceCommit;
   };
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";
