@@ -185,7 +185,13 @@ func (s *guestSession) syncPausedDisks(ctx context.Context) error {
 		if drive.Cache != writableBlockCache {
 			return fmt.Errorf("paused %s device requires writeback cache", drive.ID)
 		}
-		if *drive.ReadOnly || strings.TrimPrefix(drive.Path, "/") != filepath.Base(path) {
+		jailedName := filepath.Base(path)
+		if drive.ID == scratchDriveID {
+			// Restored scratch has a unique host filename, while the snapshot
+			// and withJailedRestoreFiles retain the canonical jailed name.
+			jailedName = scratchDiskName
+		}
+		if *drive.ReadOnly || strings.TrimPrefix(drive.Path, "/") != jailedName {
 			return fmt.Errorf("paused %s device does not match its owned backing file", drive.ID)
 		}
 		backings[drive.ID] = actual
