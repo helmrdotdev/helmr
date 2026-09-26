@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -17,7 +18,7 @@ import (
 )
 
 func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
-	for _, scenario := range []string{"valid", "missing cache", "unsafe computer", "unsafe scratch", "async read", "async write", "missing engine", "extra writer", "missing disk", "duplicate", "wrong path", "wrong inode", "missing source", "oversize", "http error"} {
+	for _, scenario := range []string{"valid", "restored", "restored path", "restored inode", "missing cache", "unsafe computer", "unsafe scratch", "async read", "async write", "missing engine", "extra writer", "missing disk", "duplicate", "wrong path", "wrong inode", "missing source", "oversize", "http error"} {
 		t.Run(scenario, func(t *testing.T) {
 			root := t.TempDir()
 			jail := filepath.Join(root, "jail")
@@ -32,7 +33,17 @@ func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			files, err := openRuntimeDiskFiles(filepath.Join(root, "scratch.ext4"), filepath.Join(root, "computer.ext4"))
+			scratch := filepath.Join(root, scratchDiskName)
+			if strings.HasPrefix(scenario, "restored") {
+				// Restore unpacks to a unique host name but retains the canonical
+				// jailed name from the snapshot. Both paths own the same inode.
+				restored := filepath.Join(root, "restore-123."+scratchDiskName)
+				if err := os.Rename(scratch, restored); err != nil {
+					t.Fatal(err)
+				}
+				scratch = restored
+			}
+			files, err := openRuntimeDiskFiles(scratch, filepath.Join(root, "computer.ext4"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -43,6 +54,20 @@ func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
 				{"drive_id": "rootfs", "io_engine": "Sync", "is_read_only": true, "path_on_host": "root.squashfs"},
 			}
 			switch scenario {
+			case "restored path":
+				// Even another hard link to the owned inode is not the declared
+				// snapshot drive path.
+				if err := os.Link(scratch, filepath.Join(jail, filepath.Base(scratch))); err != nil {
+					t.Fatal(err)
+				}
+				drives[1]["path_on_host"] = filepath.Base(scratch)
+			case "restored inode":
+				if err := os.Remove(filepath.Join(jail, scratchDiskName)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(jail, scratchDiskName), []byte("replacement"), 0600); err != nil {
+					t.Fatal(err)
+				}
 			case "missing cache":
 				delete(drives[0], "cache_type")
 			case "unsafe computer":
@@ -95,9 +120,9 @@ func TestPausedDiskBarrierVerifiesActualDevices(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			session := &guestSession{diskFiles: files, machine: machine, jailRoot: jail, scratchDisk: filepath.Join(root, "scratch.ext4"), topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{Path: filepath.Join(root, "computer.ext4")}}}
+			session := &guestSession{diskFiles: files, machine: machine, jailRoot: jail, scratchDisk: scratch, topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{Path: filepath.Join(root, "computer.ext4")}}}
 			err = session.syncPausedDisks(t.Context())
-			if (err == nil) != (scenario == "valid") {
+			if (err == nil) != (scenario == "valid" || scenario == "restored") {
 				t.Fatalf("barrier result: %v", err)
 			}
 		})
