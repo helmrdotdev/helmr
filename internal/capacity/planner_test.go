@@ -588,7 +588,7 @@ func TestPlanRestoreScalesBoundSecondaryWhenCompatiblePrimaryIsUnboundAndFull(t 
 	}
 }
 
-func TestPlanAssignsRestoreOnceInDeterministicPoolOrder(t *testing.T) {
+func TestPlanRestorePrefersPrimaryForNewWorker(t *testing.T) {
 	firstID := plannerTestUUID(1)
 	secondID := plannerTestUUID(2)
 	first := plannerTestPool(firstID, "first")
@@ -597,7 +597,7 @@ func TestPlanAssignsRestoreOnceInDeterministicPoolOrder(t *testing.T) {
 	second.ActiveWorkers = 3
 	requirements := plannerRestoreRequirements()
 	run := plannerRestoreRun(15, requirements)
-	group := plannerTestGroup(firstID)
+	group := plannerTestGroup(secondID)
 
 	forward, err := Plan(context.Background(), plannerStore{
 		group: group, pools: []db.ListCapacityWorkerPoolsRow{first, second}, runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{run},
@@ -621,14 +621,98 @@ func TestPlanAssignsRestoreOnceInDeterministicPoolOrder(t *testing.T) {
 	}
 	firstPlan := requirePoolPlan(t, forward, firstID)
 	secondPlan := requirePoolPlan(t, forward, secondID)
-	if firstPlan.CompatibleQueuedItems != 1 || firstPlan.RecommendedAdditionalWorkers != 1 || !firstPlan.ScaleInBlocked {
+	if firstPlan.CompatibleQueuedItems != 0 || firstPlan.RecommendedAdditionalWorkers != 0 || firstPlan.ScaleInBlocked {
 		t.Fatalf("first pool plan = %+v", firstPlan)
 	}
-	if secondPlan.CompatibleQueuedItems != 0 || secondPlan.RecommendedAdditionalWorkers != 0 || secondPlan.ScaleInBlocked {
+	if secondPlan.CompatibleQueuedItems != 1 || secondPlan.RecommendedAdditionalWorkers != 1 || !secondPlan.ScaleInBlocked {
 		t.Fatalf("second pool plan = %+v", secondPlan)
 	}
 	if got := firstPlan.CompatibleQueuedItems + secondPlan.CompatibleQueuedItems; got != 1 {
 		t.Fatalf("compatible item count = %d, want exactly 1", got)
+	}
+}
+
+func TestPlanRestorePrimaryFallback(t *testing.T) {
+	for _, reason := range []string{"incompatible", "unbound", "absent", "zero budget", "full"} {
+		t.Run(reason, func(t *testing.T) {
+			secondaryID, primaryID := plannerTestUUID(1), plannerTestUUID(2)
+			secondary := plannerTestPool(secondaryID, "secondary")
+			primary := plannerTestPool(primaryID, "primary")
+			request := PlanRequest{Pools: []PoolRequest{plannerPoolRequest(secondaryID, 1), plannerPoolRequest(primaryID, 1)}}
+			store := plannerStore{group: plannerTestGroup(primaryID)}
+			store.runs = []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerRestoreRun(20, plannerRestoreRequirements())}
+			switch reason {
+			case "incompatible":
+				primary.CPUShapeConfigDigests = []string{plannerDigest('c')}
+			case "unbound":
+				request.Pools = request.Pools[:1]
+			case "absent":
+				store.group.PrimaryPoolID = pgtype.UUID{}
+			case "zero budget":
+				request.Pools[1].MaxAdditionalWorkers = 0
+			case "full":
+				store.runs = append(store.runs, plannerFreshRun(10))
+			}
+			store.pools = []db.ListCapacityWorkerPoolsRow{secondary, primary}
+			plan, err := Plan(context.Background(), store, plannerTestGroupID, request, plannerTestNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := requirePoolPlan(t, plan, secondaryID)
+			if got.RecommendedAdditionalWorkers != 1 || got.CompatibleQueuedItems != 1 || !got.ScaleInBlocked || !plan.Complete || len(plan.UnmatchedDemand) != 0 {
+				t.Fatalf("plan = %+v", plan)
+			}
+			if reason == "full" {
+				got = requirePoolPlan(t, plan, primaryID)
+				if got.RecommendedAdditionalWorkers != 1 || got.CompatibleQueuedItems != 1 {
+					t.Fatalf("primary plan = %+v", got)
+				}
+			}
+		})
+	}
+}
+
+func TestPlanRestoreReusesSecondaryCapacityBeforeNewPrimary(t *testing.T) {
+	for _, physical := range []bool{true, false} {
+		t.Run(fmt.Sprintf("physical=%t", physical), func(t *testing.T) {
+			secondaryID, primaryID := plannerTestUUID(1), plannerTestUUID(2)
+			secondary := plannerTestPool(secondaryID, "secondary")
+			primary := plannerTestPool(primaryID, "primary")
+			store := plannerStore{group: plannerTestGroup(primaryID)}
+			store.runs = []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerRestoreRun(20, plannerRestoreRequirements())}
+			wantWorkers, wantItems := int32(0), int64(1)
+			if physical {
+				store.bins = []db.ListWorkerCapacityBinsRow{plannerBin(secondary, primaryID)}
+			} else {
+				// A larger restore needs the secondary. The smaller restore must
+				// reuse the resulting planned bin rather than start a primary.
+				secondary.CapacityCPUMillis.Int64 = 3000
+				secondary.PerVMCPUMillis.Int64 = 2000
+				secondary.MaxVMSlots.Int32 = 2
+				secondary.CPUShapeVCPUCounts = []int32{1, 2}
+				secondary.CPUShapeConfigDigests = []string{plannerTestCPUConfigDigest, plannerTestCPUConfigDigest}
+				large := plannerRestoreRequirements()
+				large.Resources.CPUMillis = 2000
+				large.VCPUCount = 2
+				store.runs = append(store.runs, plannerRestoreRun(21, large))
+				wantWorkers, wantItems = 1, 2
+			}
+			store.pools = []db.ListCapacityWorkerPoolsRow{secondary, primary}
+			plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
+				plannerPoolRequest(secondaryID, 1), plannerPoolRequest(primaryID, 1),
+			}}, plannerTestNow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := requirePoolPlan(t, plan, secondaryID)
+			if got.RecommendedAdditionalWorkers != wantWorkers || got.CompatibleQueuedItems != wantItems || !plan.Complete || len(plan.UnmatchedDemand) != 0 {
+				t.Fatalf("plan = %+v", plan)
+			}
+			got = requirePoolPlan(t, plan, primaryID)
+			if got.RecommendedAdditionalWorkers != 0 || got.CompatibleQueuedItems != 0 {
+				t.Fatalf("primary plan = %+v", got)
+			}
+		})
 	}
 }
 
