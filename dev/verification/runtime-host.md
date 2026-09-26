@@ -94,7 +94,7 @@ Dispatcher, CP and backing services in that order. Failed drain or unexpected
 Worker state stops the operation before dependencies are removed. Diagnose the
 retained environment; do not interpret a timeout as permission to erase it.
 Stopping retains all host/S3 data. It is neither fixture cleanup nor environment
-destruction. Independent expiry, orphan recovery and whole-scope cleanup belong
+destruction. Whole-scope cleanup belongs
 to Cloud and must exist before unattended allocation. No host is allocated by
 these commands.
 
@@ -110,50 +110,13 @@ and any pending update's identity and bounded result phase. It reads
 Exit 1 with `status: blocked` identifies missing/corrupt receipts, schema or byte
 mismatches, inactive/unobservable services, or an incomplete update. A pending
 marker remains blocking even when the attempt's result says `service-ready` or
-`rolled-back`; inspection never repairs or removes it. A missing result after an
-interruption remains unknown. Use the bounded CP recovery below when applicable before performing another
-update or case. For an interrupted destructive reset use `resume-reset` below, not CP rollback.
-
-Exit 0 with `status: observed` means only that these checks found no blocker. It
-is not case acceptance, Worker/guest artifact verification, an atomic snapshot,
-or permission to resume mutations. Compare the report with the intended
-recoverable candidate and original Worker receipts. Scope ownership and expiry
-still belong to Cloud's capsule. Secret configuration, environment files, keys,
-full attempt errors and database credentials are excluded from this output.
-Resume uses the existing scope; it does not install this profile again.
-
-## Recovering an interrupted CP-only update
-
-Within the existing scope's live-operation authorization, run:
-
-```sh
-sudo python3 dev/verification/runtime-host.py recover-services
-```
-
-This always restores the **previous CP**, never silently finishes the target
-update. Before publishing a pending update, the updater now retains the old CP
-and previous candidate, digest and data-generation receipts in its owned attempt.
-Recovery requires those complete records, a matching target archive, unchanged
-data generation/schema and retained service processes, matching Dispatcher bytes,
-and installed CP bytes belonging to either the old or target candidate. A host
-reboot, unrelated replacement or incomplete/corrupt evidence requires diagnosis;
-the command does not guess what was previously installed.
-
-Recovery stops/replaces/starts only CP, checks readiness and actual executable
-identity, restores the previous metadata and writes a new recovery result before
-removing the pending marker. Original attempt evidence stays intact. A failure or
-process interruption retains the marker; another recovery invocation reconciles
-the same attempt and creates separate evidence. This covers process interruption,
-not a qualified host power-loss or filesystem durability guarantee. An update
-interrupted before all rollback inputs were saved cannot be recovered by inventing
-those inputs from the current candidate.
-
-An interrupted data reset is rejected by `recover-services`: already erased
-fixtures cannot be rolled back by replacing a binary. Use the explicit reset
-retry below when completing that same destructive operation is authorized. Recovery does not
-allocate, reset data, change Worker/guest artifacts, close the scope or extend its
-expiry. A successful CP recovery means the previous candidate is restored; the
-failed target update remains failed and selected behavior cases must run again.
+`update-failed`; inspection never repairs or removes it. A missing result after an
+interruption remains unknown. A pending update blocks further starts and updates.
+Collect the attempt result and relevant journals, then destroy and recreate this
+disposable environment through Cloud's native runbook. Do not remove the marker
+to make a partially updated host appear healthy. There is no rollback or resume
+command. Keep a healthy environment across ordinary failed behavior cases; a
+failed test alone does not require recreation.
 
 ## First ordinary Task case
 
@@ -219,13 +182,10 @@ Dispatcher bytes keep their original source identity. This does not prove that
 an active guest survived a long CP outage; rerun the selected behavior cases, and
 select an in-flight recovery case when that is the claim.
 
-If CP startup or identity verification fails, the updater attempts to restore
-only the previous CP binary and its candidate metadata. The failed attempt remains
-recorded even when rollback succeeds. If interrupted, or recovery fails, the
-pending marker blocks further updates/ordinary starts. Inspect that attempt's
-`result.json`, saved previous CP and journals; do not delete the marker to make
-an inconsistent environment appear ready. Use `recover-services` for a qualifying CP-only interruption. Data resets use `resume-reset`; changed retained processes remain outside the
-CP rollback contract.
+If CP startup, identity verification or receipt writing fails, the update remains
+failed and its pending marker blocks further work. Collect the result and recreate
+the environment. The updater does not retain rollback binaries or restore an old
+candidate. Successful updates still reuse the current host and retained services.
 
 ## Edited migration files and disposable data reset
 
@@ -260,71 +220,26 @@ remain orphaned until the scope's final storage cleanup; each reset is not a
 zero-storage claim. This path never resets shared staging or production and does
 not change the migration policy for already released persistent installations.
 
-## Completing an interrupted data reset
+## Failed reset
 
-When the same disposable-data deletion is authorized, run on the existing host:
+A reset runs in the native `helmr-verification-reset.service` so initialization
+and its child processes have one inspectable lifecycle. The caller waits; no
+retry is scheduled. If the caller disappears, inspect that unit and its journal.
+Collect the failed attempt and destroy/recreate the environment if reset did not
+finish. There is no saved-generation resume protocol or data rollback.
 
-```sh
-sudo python3 dev/verification/runtime-host.py resume-reset
-```
+Do not start another operation while the native unit is still running. For a stuck
+operation, stop the exact unit under the existing scope authority before host
+teardown. Native service credentials come from the private profile or host role;
+caller environment variables are not forwarded. Source/tool paths must remain
+available while the unit runs.
 
-Both initial reset and retry execute inside the fixed native
-`helmr-verification-reset.service`. The caller waits for its result; it does not
-run an initializer outside this boundary. `ExitType=cgroup` retains the service
-while any child remains, and `KillMode=control-group` stops its descendants. A
-second launch under the same unit name is rejected while the first remains;
-there is no direct-execution fallback. These properties follow the upstream
-[service lifecycle](https://raw.githubusercontent.com/systemd/systemd/main/man/systemd.service.xml)
-and [process termination](https://raw.githubusercontent.com/systemd/systemd/main/man/systemd.kill.xml)
-contracts. This host profile already requires recent systemd.
+The focused Linux check `tests/runtime_host/check_reset_process_boundary.py`
+qualifies child-process containment on an authorized host. It is not a resume
+acceptance suite and has not yet run at the deferred live checkpoint.
 
-After caller loss, inspect `systemctl status helmr-verification-reset.service` and
-its journal before retrying. If terminating a stuck operation is within the scope's
-authorization, stop that exact service and wait for it to stop; never kill only the
-Python PID or clear a marker. Native service credentials must come from the
-profile's private configuration or host-native role/credential files, not ephemeral
-caller environment variables, which are not forwarded. The private source/tool
-paths must remain present while the service runs.
-
-At the authorized Linux checkpoint, run
-`python3 tests/runtime_host/check_reset_process_boundary.py` as root to test the
-production supervision properties with a harmless surviving initializer process
-through the same native `runuser`/`helmr-services` identity as initialization. The
-profile service account and readable source/tool paths must already exist.
-It kills the main test process, checks duplicate-unit rejection, stops the group,
-and checks the child is terminal; it retains a private evidence directory. It
-creates only a uniquely named test unit and does not reset Product data. This
-native check has not run on the workstation; passing unit tests alone do not
-qualify the process boundary.
-
-This repeats initialization for the **saved pending candidate**. It accepts no new
-candidate and cannot roll a reset back. Both the first reset and this retry use
-one implementation: quiesce, discard private fixtures, initialize storage, install
-CP/Dispatcher, perform native bootstrap/migrations/enrollment and verify process
-identity. It restarts from clean private data instead of guessing which migration
-or initialization statement last completed.
-
-The original reset fixes a new data-generation ID. That ID is published before
-fixture deletion and is retained across retries of this logical reset. Each retry
-writes a new result alongside the original attempt evidence. An unrelated data
-generation, different candidate/runtime inputs, unknown binary, corrupt receipt,
-or missing required quiescence record blocks before deletion. No replacement
-scope or new lifetime is created. Old API keys and fixture IDs remain invalid.
-
-The old Worker must complete normal drain before the first erase; a durable record
-in the owned attempt marks that boundary. On a later retry, a failed partially
-started Worker may be stopped, but all services must then be inactive and the
-existing NBD/mount checks must pass before erasure. An active Worker's failed drain
-never falls back to forced termination. Pending markers survive failures and
-interruptions; do not delete them manually. This is process-interruption handling,
-not a qualified host power-loss guarantee.
-
-Success reports `services-ready-fixtures-required` and removes the pending update
-only after process and receipt verification. **Repeat normal self-hosted setup,
-project/environment/API-key creation and case deployment** before running selected
-cases. No user is seeded, credentials bypassed or previous test success reused.
-These authenticated steps are not automated by the host reset command. S3 cleanup,
-Worker/guest artifact replacement and whole-scope closure remain separate.
+After a successful reset, repeat normal authenticated setup, project/environment,
+API keys and case deployment before testing. Services ready is not case success.
 
 ## Persistence and resume case
 

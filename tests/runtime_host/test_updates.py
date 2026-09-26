@@ -49,7 +49,7 @@ class UpdateTests(unittest.TestCase):
             with self.subTest(component=component), self.assertRaises(ValueError):
                 host.update_kind(old, changed, True)
 
-    def exercise_cp_update(self, fail_receipt=False):
+    def exercise_cp_update(self, fail_receipt=False, fail_result=False):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             cfg_dir = directory / 'config'
@@ -74,34 +74,38 @@ class UpdateTests(unittest.TestCase):
             injected = False
             def write(path, value):
                 nonlocal injected
-                if fail_receipt and path.name == 'binary-digests.json' and not injected:
+                if not injected and ((fail_receipt and path.name == 'binary-digests.json') or
+                                     (fail_result and path.name == 'result.json' and value.get('phase') == 'service-ready')):
                     injected = True
                     raise OSError('injected receipt write failure')
                 original_write(path, value)
             with patch.object(host, 'write_json', side_effect=write), patch.object(host, 'CONFIG', cfg_dir), patch.object(host, 'require_active_services'), patch.object(host, 'service_identity', side_effect=identity), patch.object(host, 'http_ready', return_value=True), patch.object(host, 'run') as run:
-                if fail_receipt:
+                if fail_receipt or fail_result:
                     with self.assertRaises(OSError):
                         host.apply_services(cfg, directory / 'new', False)
                 else:
                     host.apply_services(cfg, directory / 'new', False)
                 expected = [('systemctl', 'stop', host.unit('control-plane')), ('systemctl', 'start', host.unit('control-plane'))]
-                self.assertEqual([c.args for c in run.call_args_list], expected * (2 if fail_receipt else 1))
+                self.assertEqual([c.args for c in run.call_args_list], expected)
             accepted = json.loads((cfg_dir / 'installed-candidate.json').read_text())
-            if fail_receipt:
-                self.assertEqual(accepted, old)
-                self.assertEqual((cfg_dir / 'bin/control-plane').read_bytes(), b'old-cp')
-                self.assertEqual(json.loads((cfg_dir / 'binary-digests.json').read_text()), old['binaries'])
+            if fail_receipt or fail_result:
+                self.assertEqual((cfg_dir / 'bin/control-plane').read_bytes(), b'new-cp')
+                with patch.object(host, 'CONFIG', cfg_dir), self.assertRaisesRegex(RuntimeError, 'recreate'):
+                    host.apply_services(cfg, directory / 'new', False)
             else:
                 self.assertEqual(accepted['component_sources']['dispatcher'], old['source_commit'])
                 self.assertEqual(accepted['component_sources']['control-plane'], new['source_commit'])
             self.assertEqual((cfg_dir / 'bin/dispatcher').read_bytes(), b'dispatcher')
-            self.assertFalse((cfg_dir / 'pending-update.json').exists())
+            self.assertEqual((cfg_dir / 'pending-update.json').exists(), fail_receipt or fail_result)
 
     def test_cp_route_does_not_relabel_dispatcher(self):
         self.exercise_cp_update()
 
-    def test_receipt_failure_rolls_back_both_binary_and_metadata(self):
+    def test_receipt_failure_blocks_reuse_without_rollback(self):
         self.exercise_cp_update(fail_receipt=True)
+
+    def test_final_result_failure_keeps_incomplete_marker(self):
+        self.exercise_cp_update(fail_result=True)
 
     def test_bad_binary_is_rejected_before_mutation(self):
         with tempfile.TemporaryDirectory() as temporary:

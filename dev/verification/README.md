@@ -97,8 +97,8 @@ a second payload format for testing.
 The [dedicated runtime host profile](runtime-host.md) composes actual services and
 the installed Worker, with a separate small Task fixture and executable assertion.
 Its source is prepared; live integrated execution is not yet qualified. It requires
-real S3, runtime artifacts and normal authentication. Independent expiry and full
-environment cleanup remain separate Cloud responsibilities.
+real S3, runtime artifacts and normal authentication. The operating agent uses Cloud’s native runbook for explicit environment cleanup;
+there is no independent expiry service.
 
 ## Evidence and case maintenance
 

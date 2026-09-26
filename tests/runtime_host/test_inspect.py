@@ -56,7 +56,7 @@ class InspectionTests(unittest.TestCase):
         self.assertIn('data generation schema differs from installed candidate', self.inspect(schema)['blockers'])
 
     def test_pending_even_success_result_blocks_and_redacts_failure(self):
-        for result_phase in ['service-ready', 'rolled-back', None]:
+        for result_phase in ['service-ready', 'update-failed', None]:
             def pending(root, installed):
                 attempt=root/'updates/12345678-1234-4234-8234-123456789012';attempt.mkdir(parents=True)
                 (root/'pending-update.json').write_text(json.dumps(dict(attempt=str(attempt),candidate='b'*40)))

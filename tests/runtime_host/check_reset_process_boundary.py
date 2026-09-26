@@ -48,7 +48,7 @@ def main():
     host = importlib.util.module_from_spec(spec); spec.loader.exec_module(host)
     # Exercise production supervision properties with a harmless initializer stand-in.
     with patch.object(host.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as invoke:
-        host.supervise_reset(['resume-reset'])
+        host.supervise_reset(['apply-services', '--reset-data', '--candidate', '/private/candidate'])
         command = invoke.call_args.args[0]
     name = 'helmr-reset-boundary-test-' + str(uuid.uuid4()) + '.service'
     account = pwd.getpwnam(host.USER)

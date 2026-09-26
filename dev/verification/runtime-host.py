@@ -444,7 +444,7 @@ def inspect_profile(cfg):
         except (KeyError, TypeError, ValueError, AttributeError):
             blockers.append('data-generation.json: invalid identity')
     if pending is not None:
-        blockers.append('incomplete update; recovery required before further work')
+        blockers.append('incomplete update; recreate this disposable environment')
         try:
             attempt = Path(pending['attempt'])
             identifier = str(uuid.UUID(attempt.name))
@@ -454,9 +454,9 @@ def inspect_profile(cfg):
                                         'candidate': hex_value(pending['candidate'], 40)}
             result = load(Path('updates') / identifier / 'result.json', optional=True)
             phases = {'prepared', 'quiescing-reset', 'discarding-private-data', 'reset-failed',
-                      'services-ready-fixtures-required', 'service-ready', 'rolled-back'}
+                      'services-ready-fixtures-required', 'service-ready', 'update-failed'}
             report['pending_update']['result_phase'] = (result.get('phase') if result and result.get('phase') in phases else 'unknown')
-            report['pending_update']['failure_recorded'] = bool(result and ('failure' in result or 'rollback_failure' in result))
+            report['pending_update']['failure_recorded'] = bool(result and (result.get('phase') in {'update-failed', 'reset-failed'} or 'failure' in result))
         except (KeyError, TypeError, ValueError):
             blockers.append('pending-update.json: invalid identity')
     for name in [unit(n) for n in SERVICES] + ['helmr-worker.service']:
@@ -520,158 +520,13 @@ def reset_private_data(cfg):
     service_run(cfg['binaries']['initdb'], '-D', str(DATA / 'postgres'), '--auth-local=peer', '--auth-host=scram-sha-256')
 
 
-def recover_services(cfg):
-    """Return an interrupted CP-only update to its recorded previous candidate."""
-    pending = json.loads((CONFIG / 'pending-update.json').read_text())
-    if pending.get('reset_data') is not False:
-        raise RuntimeError('data reset cannot be rolled back; preserve evidence and reconcile or recreate the owned profile')
-    attempt = Path(pending['attempt'])
-    identifier = str(uuid.UUID(attempt.name))
-    if attempt != CONFIG / 'updates' / identifier or attempt.resolve() != CONFIG.resolve() / 'updates' / identifier:
-        raise ValueError('pending attempt is outside owned updates')
-    candidate = read_candidate(attempt)
-    if pending['candidate'] != candidate['source_commit']:
-        raise ValueError('pending candidate identity differs')
-    snapshot = json.loads((attempt / 'previous-state.json').read_text())
-    previous, hashes, generation = (snapshot[k] for k in ['candidate', 'digests', 'generation'])
-    update_kind(previous, candidate, False)
-    if generation != json.loads((CONFIG / 'data-generation.json').read_text()) or generation['schema'] != previous['inputs']['schema']:
-        raise ValueError('data generation changed; CP-only rollback cannot reconcile it')
-    for name in ['control-plane', 'dispatcher']:
-        if hashes[name] != previous['binaries'][name]:
-            raise ValueError('previous receipt digests differ')
-    if digest(attempt / 'previous-control-plane') != hashes['control-plane']:
-        raise ValueError('previous CP bytes are missing or changed')
-    if digest(Path(cfg['binaries']['control-plane'])) not in [hashes['control-plane'], candidate['binaries']['control-plane']]:
-        raise ValueError('installed CP is neither the previous nor target candidate')
-    if digest(Path(cfg['binaries']['dispatcher'])) != hashes['dispatcher']:
-        raise ValueError('retained Dispatcher bytes changed')
-    retained = [unit(n) for n in SERVICES if n != 'control-plane'] + ['helmr-worker.service']
-    before = {name: service_identity(name) for name in retained}
-    if before[unit('dispatcher')]['executable_sha256'] != hashes['dispatcher']:
-        raise RuntimeError('running Dispatcher differs from previous candidate')
-    if before != pending['before']:
-        raise RuntimeError('retained service processes changed; automatic CP rollback is not applicable')
-    # A fresh file preserves every recovery failure; never overwrite update evidence.
-    evidence_path = attempt / ('recovery-' + str(uuid.uuid4()) + '.json')
-    evidence = {'phase': 'restoring-previous-cp', 'started_at': time.time()}
-    write_json(evidence_path, evidence)
-    try:
-        run('systemctl', 'stop', unit('control-plane'))
-        replace_binary(attempt / 'previous-control-plane', Path(cfg['binaries']['control-plane']))
-        run('systemctl', 'start', unit('control-plane'))
-        wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'recovered Control Plane')
-        require_active_services()
-        if service_identity(unit('control-plane'))['executable_sha256'] != hashes['control-plane']:
-            raise RuntimeError('recovered process differs from previous CP')
-        if {name: service_identity(name) for name in retained} != before:
-            raise RuntimeError('retained processes changed during recovery')
-        write_json(CONFIG / 'installed-candidate.json', previous)
-        write_json(CONFIG / 'binary-digests.json', hashes)
-        evidence['phase'] = 'previous-cp-restored'
-        evidence['finished_at'] = time.time()
-        write_json(evidence_path, evidence)
-        (CONFIG / 'pending-update.json').unlink()
-    except Exception:
-        evidence['phase'] = 'recovery-failed'
-        evidence['finished_at'] = time.time()
-        write_json(evidence_path, evidence)
-        raise
-    print('Previous CP and receipts restored; the target update did not succeed. Rerun selected cases.')
-
-
-def resume_reset(cfg):
-    pending = json.loads((CONFIG / 'pending-update.json').read_text())
-    if pending.get('reset_data') is not True:
-        raise ValueError('resume-reset requires a pending data reset')
-    attempt = Path(pending['attempt'])
-    identifier = str(uuid.UUID(attempt.name))
-    if attempt != CONFIG / 'updates' / identifier or attempt.resolve() != CONFIG.resolve() / 'updates' / identifier:
-        raise ValueError('pending reset is outside owned updates')
-    candidate = read_candidate(attempt)
-    snapshot = json.loads((attempt / 'previous-state.json').read_text())
-    execute_reset(cfg, pending, candidate, snapshot,
-                  attempt / ('reset-retry-' + str(uuid.uuid4()) + '.json'))
-
-
-def execute_reset(cfg, pending, candidate, snapshot, evidence_path):
-    """Initial reset and retry share one destructive path, bound to one candidate."""
-    attempt = Path(pending['attempt'])
-    previous, hashes, old_generation = (snapshot[k] for k in ['candidate', 'digests', 'generation'])
-    if pending['candidate'] != candidate['source_commit']:
-        raise ValueError('pending reset candidate differs')
-    update_kind(previous, candidate, True)
-    generation = pending['reset_generation']
-    if str(uuid.UUID(generation['id'])) != generation['id'] or generation['schema'] != candidate['inputs']['schema']:
-        raise ValueError('pending reset generation differs')
-    current_generation = json.loads((CONFIG / 'data-generation.json').read_text())
-    if current_generation not in [old_generation, generation]:
-        raise ValueError('data belongs to another generation')
-    for name in ['control-plane', 'dispatcher']:
-        if hashes[name] != previous['binaries'][name] or digest(Path(cfg['binaries'][name])) not in [hashes[name], candidate['binaries'][name]]:
-            raise ValueError('installed service is outside the pending reset')
-    marker = attempt / 'reset-quiesced.json'
-    authority = {'candidate': candidate['source_commit'], 'source_sha256': candidate['source_sha256'],
-                 'generation': generation}
-    try:
-        quiesced = json.loads(marker.read_text())
-        if quiesced != authority:
-            raise ValueError('reset quiescence record differs')
-    except FileNotFoundError:
-        quiesced = None
-    if quiesced is None and current_generation != old_generation:
-        raise ValueError('reset has no old-runtime quiescence proof')
-    evidence = {'candidate': candidate['source_commit'], 'data_generation': generation['id'],
-                'phase': 'quiescing-reset', 'started_at': time.time()}
-    write_json(evidence_path, evidence)
-    try:
-        # Before the first erase, only normal old-Worker drain can establish
-        # quiescence. After that point a failed, partially started new Worker may
-        # be stopped, but reset_private_data still requires no NBD/mount leftovers.
-        if quiesced is not None and state('helmr-worker.service') == 'failed':
-            run('systemctl', 'stop', 'helmr-worker.service')
-            for name in reversed(SERVICES):
-                run('systemctl', 'stop', unit(name))
-        else:
-            stop(cfg)
-        if any(state(name) != 'inactive' for name in [unit(n) for n in SERVICES] + ['helmr-worker.service']):
-            raise RuntimeError('reset requires stopped services')
-        write_json(marker, authority)
-        # Publish invalidation before erasing fixtures, keeping this logical reset
-        # generation stable across retries while every retry retains its own result.
-        write_json(CONFIG / 'data-generation.json', generation)
-        evidence['phase'] = 'discarding-private-data'
-        write_json(evidence_path, evidence)
-        reset_private_data(cfg)
-        for name in ['control-plane', 'dispatcher']:
-            replace_binary(attempt / name, Path(cfg['binaries'][name]))
-        start(cfg)
-        for name in ['control-plane', 'dispatcher']:
-            if service_identity(unit(name))['executable_sha256'] != candidate['binaries'][name]:
-                raise RuntimeError('reset service process differs from candidate')
-        installed = dict(candidate)
-        installed['component_sources'] = {n: candidate['source_commit'] for n in ['control-plane', 'dispatcher']}
-        write_json(CONFIG / 'installed-candidate.json', installed)
-        write_json(CONFIG / 'binary-digests.json', hashes | candidate['binaries'])
-        evidence['phase'] = 'services-ready-fixtures-required'
-        evidence['finished_at'] = time.time()
-        write_json(evidence_path, evidence)
-        (CONFIG / 'pending-update.json').unlink()
-    except Exception:
-        evidence['phase'] = 'reset-failed'
-        evidence['finished_at'] = time.time()
-        write_json(evidence_path, evidence)
-        raise
-    print('Reset services ready; repeat normal setup, API keys and case deployment. No behavior case has passed.')
-
-
 def apply_services(cfg, directory, reset):
     previous = json.loads((CONFIG / 'installed-candidate.json').read_text())
     previous_hashes = json.loads((CONFIG / 'binary-digests.json').read_text())
     candidate = read_candidate(directory)
     names = update_kind(previous, candidate, reset)
     if (CONFIG / 'pending-update.json').exists():
-        raise RuntimeError('incomplete update requires inspection; see its retained attempt')
+        raise RuntimeError('incomplete update; collect evidence and recreate this disposable environment')
     require_active_services()
     # Private copies are rechecked before any running service is touched.
     attempt = CONFIG / 'updates' / str(uuid.uuid4())
@@ -687,21 +542,41 @@ def apply_services(cfg, directory, reset):
     before = {name: service_identity(name) for name in untouched}
     evidence = {'candidate': candidate['source_commit'], 'reset_data': reset, 'phase': 'prepared',
                 'before': before, 'attempt': str(attempt), 'started_at': time.time()}
-    # Prepare complete rollback inputs before publishing mutation intent.
     generation = json.loads((CONFIG / 'data-generation.json').read_text())
     if generation['schema'] != previous['inputs']['schema']:
         raise ValueError('installed schema and data generation differ')
-    shutil.copyfile(cfg['binaries']['control-plane'], attempt / 'previous-control-plane')
-    if digest(attempt / 'previous-control-plane') != previous['binaries']['control-plane']:
-        raise ValueError('previous CP snapshot differs')
-    write_json(attempt / 'previous-state.json', {'candidate': previous, 'digests': previous_hashes, 'generation': generation})
-    if reset:
-        evidence['reset_generation'] = {'id': str(uuid.uuid4()), 'schema': candidate['inputs']['schema']}
+    # This marker blocks testing a partial update; it is not a resume journal.
     write_json(CONFIG / 'pending-update.json', evidence)
+    write_json(attempt / 'result.json', evidence)
     if reset:
-        execute_reset(cfg, evidence, candidate,
-                      {'candidate': previous, 'digests': previous_hashes, 'generation': generation},
-                      attempt / 'result.json')
+        try:
+            evidence['phase'] = 'quiescing-reset'
+            write_json(attempt / 'result.json', evidence)
+            stop(cfg)  # Drain the old Worker against the old schema before erasure.
+            write_json(CONFIG / 'data-generation.json',
+                       {'id': str(uuid.uuid4()), 'schema': candidate['inputs']['schema']})
+            evidence['phase'] = 'discarding-private-data'
+            write_json(attempt / 'result.json', evidence)
+            reset_private_data(cfg)
+            for name in names:
+                replace_binary(attempt / name, Path(cfg['binaries'][name]))
+            start(cfg)
+            for name in names:
+                if service_identity(unit(name))['executable_sha256'] != candidate['binaries'][name]:
+                    raise RuntimeError('reset service process differs from candidate')
+            installed = dict(candidate)
+            installed['component_sources'] = {n: candidate['source_commit'] for n in names}
+            write_json(CONFIG / 'installed-candidate.json', installed)
+            write_json(CONFIG / 'binary-digests.json', previous_hashes | candidate['binaries'])
+            evidence['phase'] = 'services-ready-fixtures-required'
+        except BaseException:
+            evidence['phase'] = 'reset-failed'
+            raise
+        finally:
+            evidence['finished_at'] = time.time()
+            write_json(attempt / 'result.json', evidence)
+        (CONFIG / 'pending-update.json').unlink()
+        print('Reset services ready; repeat normal setup, API keys and case deployment. No behavior case has passed.')
         return
     try:
         run('systemctl', 'stop', unit('control-plane'))
@@ -724,28 +599,14 @@ def apply_services(cfg, directory, reset):
         write_json(CONFIG / 'installed-candidate.json', installed)
         write_json(CONFIG / 'binary-digests.json', previous_hashes | installed['binaries'])
         evidence['phase'] = 'service-ready'
-        (CONFIG / 'pending-update.json').unlink()
-    except Exception as error:
-        evidence['failure'] = str(error)
-        # No schema mutation occurred. Restore ONLY CP, preserving evidence.
-        try:
-            run('systemctl', 'stop', unit('control-plane'))
-            replace_binary(attempt / 'previous-control-plane', Path(cfg['binaries']['control-plane']))
-            run('systemctl', 'start', unit('control-plane'))
-            wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'previous Control Plane')
-            require_active_services()
-            if service_identity(unit('control-plane'))['executable_sha256'] != previous['binaries']['control-plane']:
-                raise RuntimeError('rollback process bytes do not match previous candidate')
-            write_json(CONFIG / 'installed-candidate.json', previous)
-            write_json(CONFIG / 'binary-digests.json', previous_hashes)
-            evidence['phase'] = 'rolled-back'
-            (CONFIG / 'pending-update.json').unlink()
-        except Exception as rollback_error:
-            evidence['rollback_failure'] = str(rollback_error)
+    except BaseException:
+        evidence['phase'] = 'update-failed'
+        # Keep the marker and failure evidence. Recreate instead of rolling back.
         raise
     finally:
         evidence['finished_at'] = time.time()
         write_json(attempt / 'result.json', evidence)
+    (CONFIG / 'pending-update.json').unlink()
     print(f'Service update complete; run selected cases. Evidence: {attempt}/result.json')
 
 
@@ -804,7 +665,7 @@ def require_reset_runner():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'recover-services', 'resume-reset', 'wait-parked', 'verify-restored'])
+    parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored'])
     parser.add_argument('--config', type=Path, help='input JSON for render/install')
     parser.add_argument('--output', type=Path, help='new private directory for offline render')
     parser.add_argument('--candidate', type=Path, help='build-services.py output for apply-services')
@@ -814,7 +675,7 @@ def main():
     args = parser.parse_args()
     if args.candidate is not None and args.action != 'apply-services':
         parser.error('--candidate is only valid with apply-services')
-    reset_action = args.action == 'resume-reset' or (args.action == 'apply-services' and args.reset_data)
+    reset_action = args.action == 'apply-services' and args.reset_data
     if args.reset_runner and not reset_action:
         parser.error('reset runner is only valid for a reset')
     if args.reset_data and args.action != 'apply-services':
@@ -840,7 +701,7 @@ def main():
         if not args.reset_runner:
             sys.exit(supervise_reset(sys.argv[1:]))
         require_reset_runner()
-    # Serialize local operators; this is not the provider expiry/ownership lease.
+    # Reject concurrent host operations.
     with open('/run/helmr-verification.lock', 'a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if args.action == 'install':
@@ -849,12 +710,8 @@ def main():
         cfg = json.loads((CONFIG / 'config.json').read_text())
         if args.action == 'start':
             if (CONFIG / 'pending-update.json').exists():
-                raise RuntimeError('an incomplete update requires inspection; refusing ordinary start')
+                raise RuntimeError('incomplete update; recreate this disposable environment before starting')
             start(cfg)
-        elif args.action == 'resume-reset':
-            resume_reset(cfg)
-        elif args.action == 'recover-services':
-            recover_services(cfg)
         elif args.action == 'apply-services':
             if args.candidate is None:
                 parser.error('--candidate is required')
