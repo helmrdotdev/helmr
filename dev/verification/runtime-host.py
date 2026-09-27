@@ -172,9 +172,11 @@ def files(cfg):
     return result
 
 
-def wait_for(check, label, seconds=120):
+def wait_for(check, label, seconds=120, unit_name=None):
     end = time.monotonic() + seconds
     while True:
+        if unit_name is not None and state(unit_name) == 'failed':
+            raise RuntimeError(f'{unit_name} failed while waiting for {label}; inspect retained journal and state')
         try:
             if check():
                 return
@@ -306,13 +308,13 @@ def start(cfg):
         run('systemctl', 'start', unit(name))
     def sql(query):
         return service_run(b['psql'], '-h', str(DATA), '-p', '55432', '-d', 'postgres', '-X', '-v', 'ON_ERROR_STOP=1', '-At', input=query, capture_output=True, text=True).stdout.strip()
-    wait_for(lambda: sql('SELECT 1') == '1', 'PostgreSQL')
+    wait_for(lambda: sql('SELECT 1') == '1', 'PostgreSQL', unit_name=unit('postgres'))
     if sql("SELECT count(*) FROM pg_roles WHERE rolname='helmr'") == '0':
         sql(f"CREATE ROLE helmr LOGIN PASSWORD '{cfg['database_password']}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
     if sql("SELECT count(*) FROM pg_database WHERE datname='helmr'") == '0':
         sql('CREATE DATABASE helmr OWNER helmr')
-    wait_for(redis_ready, 'Redis')
-    wait_for(lambda: http_ready('http://127.0.0.1:58123/ping'), 'ClickHouse')
+    wait_for(redis_ready, 'Redis', unit_name=unit('redis'))
+    wait_for(lambda: http_ready('http://127.0.0.1:58123/ping'), 'ClickHouse', unit_name=unit('clickhouse'))
     cp = cfg['control_plane']
     # Commands run as the same service identity, against real backing services.
     # runuser preserves supplied environment except its own identity variables.
@@ -322,9 +324,9 @@ def start(cfg):
     service_run(b['control-plane'], 'migrate', 'up', env=dict(os.environ) | migration)
     for name in SERVICES[3:]:
         run('systemctl', 'start', unit(name))
-    wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'Control Plane')
+    wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'Control Plane', unit_name=unit('control-plane'))
     run('systemctl', 'start', 'helmr-worker.service')
-    wait_for(lambda: run('/usr/local/bin/worker', 'status', env=dict(os.environ) | cfg['worker'], capture_output=True).returncode == 0, 'Worker readiness', seconds=300)
+    wait_for(lambda: run('/usr/local/bin/worker', 'status', env=dict(os.environ) | cfg['worker'], capture_output=True).returncode == 0, 'Worker readiness', seconds=300, unit_name='helmr-worker.service')
     require_active_services()
     print('CP and Worker report ready; all service processes are active. No Task/Actor assertion has run.')
 
@@ -586,7 +588,7 @@ def apply_services(cfg, directory, reset):
         for name in names:
             replace_binary(attempt / name, Path(cfg['binaries'][name]))
         run('systemctl', 'start', unit('control-plane'))
-        wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'updated Control Plane')
+        wait_for(lambda: http_ready('http://127.0.0.1:58080/readyz'), 'updated Control Plane', unit_name=unit('control-plane'))
         require_active_services()
         after = {name: service_identity(name) for name in untouched}
         evidence['after'] = after

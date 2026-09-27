@@ -79,7 +79,7 @@ class UpdateTests(unittest.TestCase):
                     injected = True
                     raise OSError('injected receipt write failure')
                 original_write(path, value)
-            with patch.object(host, 'write_json', side_effect=write), patch.object(host, 'CONFIG', cfg_dir), patch.object(host, 'require_active_services'), patch.object(host, 'service_identity', side_effect=identity), patch.object(host, 'http_ready', return_value=True), patch.object(host, 'run') as run:
+            with patch.object(host, 'write_json', side_effect=write), patch.object(host, 'CONFIG', cfg_dir), patch.object(host, 'require_active_services'), patch.object(host, 'service_identity', side_effect=identity), patch.object(host, 'http_ready', return_value=True), patch.object(host, 'state', return_value='active'), patch.object(host, 'run') as run:
                 if fail_receipt or fail_result:
                     with self.assertRaises(OSError):
                         host.apply_services(cfg, directory / 'new', False)

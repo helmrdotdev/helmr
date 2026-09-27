@@ -131,6 +131,18 @@ class ProfileTests(unittest.TestCase):
                 host.wait_for(lambda: False, 'dependency')
             sleep.assert_not_called()
 
+    def test_dead_service_stops_readiness_wait_without_sleep(self):
+        with patch.object(host, 'state', return_value='failed'), patch.object(host.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(RuntimeError, 'helmr-worker.service failed'):
+                host.wait_for(lambda: False, 'Worker readiness', seconds=300, unit_name='helmr-worker.service')
+            sleep.assert_not_called()
+
+    def test_live_service_can_become_ready_on_later_probe(self):
+        ready = iter([False, True])
+        with patch.object(host, 'state', return_value='active'), patch.object(host.time, 'sleep') as sleep:
+            host.wait_for(lambda: next(ready), 'Control Plane', unit_name=host.unit('control-plane'))
+            sleep.assert_called_once_with(1)
+
 
 if __name__ == '__main__':
     unittest.main()
