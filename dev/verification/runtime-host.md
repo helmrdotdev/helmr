@@ -36,6 +36,8 @@ Provisioning must supply:
   Supply absolute paths to the
   backing services from the pinned toolchain. Provisioning must retain their Nix
   closure/profile if using Nix; a development shell alone is not a GC root.
+  Supply the actual `/nix/store/.../bin/...` paths, rather than standalone symlink
+  aliases: PostgreSQL locates its accompanying share files from its executable path.
 - Normal OAuth configuration and a normal Worker enrollment token. Normal
   self-hosted setup and environment-scoped API keys are still required for cases;
   no seeded user or authentication bypass is installed.
@@ -126,21 +128,35 @@ identities. It has no package-install layer, Actor dependency, combined smoke su
 or case registry. Add or remove ordinary `tasks/*.ts` and `cases/*.ts` files with
 the behavior that needs them.
 
-Prepare the local SDK packages and case dependencies:
+Prepare a separate, self-contained case project with local SDK tarballs:
 
 ```sh
-nix develop -c bash -c 'bun install --frozen-lockfile && scripts/build-npm-packages.sh'
-nix develop -c bun install --cwd dev/verification --frozen-lockfile
+nix develop -c bun install --frozen-lockfile
+nix develop -c python3 dev/verification/prepare-project.py /private/case-project
 ```
+
+The new directory contains the current editable cases/tasks, local packed SDK and
+Proto dependencies, and its own lockfile. No npm publication is performed. BuildKit
+receives all dependency files inside the project; repository-relative `file:`
+dependencies and TypeScript configuration outside it cannot survive source capture.
+Keep the prepared directory as the attempt's input; prepare another after changing
+cases or SDK source. The source checkout's dependencies remain useful for local
+type checks, but do not deploy `dev/verification` directly.
+
+Use a CLI with an exact canonical bundle-builder image. A plain `go build` has no
+builder selection and cannot build a deployment. For private source work, reuse a
+verified published builder only when its Runtime descriptor and builder/compiler
+inputs match the candidate; otherwise build the normal builder image from source.
+Do not publish a release merely to prepare this private case.
 
 After normal self-hosted setup has produced an environment API key, use the native
 CLI to deploy this small project into that isolated scope. Deployment uploads and
 builds are live operations and require the scope's authorization:
 
 ```sh
-helmr deploy dev/verification
+helmr deploy /private/case-project
 HELMR_EVIDENCE_DIR=/private/attempt-001/task \
-  bun run dev/verification/cases/task.ts
+  bun run /private/case-project/cases/task.ts
 ```
 
 Both commands use `HELMR_API_URL` and `HELMR_API_KEY`. The evidence directory must
@@ -243,12 +259,12 @@ API keys and case deployment before testing. Services ready is not case success.
 
 ## Persistence and resume case
 
-Deploy this directory's Task project and run on the dedicated host with normal
+Deploy the prepared Task project and run its case on the dedicated host with normal
 API credentials and authorized noninteractive sudo for the read-only observer:
 
 ```sh
 HELMR_EVIDENCE_DIR=/private/attempt-003/persistence \
-  bun run dev/verification/cases/persistence.ts
+  bun run /private/case-project/cases/persistence.ts
 ```
 
 The Task writes a unique marker/symlink and emits a random in-memory nonce before
@@ -271,7 +287,7 @@ After deploying the same small project with normal credentials, run on the host:
 
 ```sh
 HELMR_EVIDENCE_DIR=/private/attempt-004/actor \
-  bun run dev/verification/cases/actor.ts
+  bun run /private/case-project/cases/actor.ts
 ```
 
 The Actor creates a random nonce in memory once, writes its marker to a private
