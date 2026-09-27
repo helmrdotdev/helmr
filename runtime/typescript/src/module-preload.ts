@@ -1,6 +1,6 @@
-import { installModuleExecution } from "@helmr/module-execution"
+import { installModuleLoader } from "@helmr/module-loader"
 
-installModuleExecution({
+installModuleLoader({
   root: "/opt/helmr/program",
   platformRoot: "/opt/helmr/runtime",
 })

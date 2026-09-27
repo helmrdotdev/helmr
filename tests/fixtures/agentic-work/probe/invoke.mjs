@@ -1,5 +1,5 @@
 // Invoked by the guestd launch test under the Runtime's Program flags: loads the
-// project's task module through the Runtime's language adapter and calls one
+// project's task module through the Runtime's module loader and calls one
 // declared task's handler. The guest task protocol is not involved.
 const definitions = await import("../tasks/agent.ts")
 const brand = Symbol.for("helmr.sdk.v0.definition")

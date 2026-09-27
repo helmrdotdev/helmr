@@ -990,7 +990,7 @@ function decodeGeneratedFile(value) {
 }
 
 // compiler/typescript/src/source.ts
-import { installModuleExecution, moduleExecutionIdentity } from "../moduleexecution/loader.mjs";
+import { installModuleLoader, moduleLoaderIdentity } from "../moduleloader/loader.mjs";
 import { createHash } from "node:crypto";
 import { realpath as realpath2 } from "node:fs/promises";
 import { resolve as resolve2 } from "node:path";
@@ -1521,20 +1521,20 @@ function compareLocatorOccurrence(left, right) {
 // compiler/typescript/src/source.ts
 var COMPILER_API_VERSION = "helmr.compiler.v0";
 function compilerContract() {
-  return { apiVersion: COMPILER_API_VERSION, language: moduleExecutionIdentity() };
+  return { apiVersion: COMPILER_API_VERSION, moduleLoader: moduleLoaderIdentity() };
 }
 async function compileProgram(options) {
   if (process.versions.node !== options.nodeVersion) throw new Error(`Program Compiler Node version ${process.versions.node} does not match ${options.nodeVersion}`);
   if (!/^sha256:[0-9a-f]{64}$/.test(options.inputTreeDigest)) throw new Error("Program Compiler input tree digest is invalid");
   const root = await realpath2(options.root);
-  const language = moduleExecutionIdentity();
-  const execution = installModuleExecution({ root });
+  const moduleLoader = moduleLoaderIdentity();
+  const loader = installModuleLoader({ root });
   try {
     const modules = await discoverModules(root, options.config);
     if (modules.length === 0) throw new Error("configured dirs contain no declaration source modules");
     const exports = [];
     for (const sourcePath of modules) {
-      const namespace = await execution.importSourceExports(pathToFileURL(resolve2(root, sourcePath)));
+      const namespace = await loader.importSourceExports(pathToFileURL(resolve2(root, sourcePath)));
       for (const exportName of Object.keys(namespace).sort(compareUTF82)) {
         exports.push({ sourcePath, exportName, value: namespace[exportName] });
       }
@@ -1543,7 +1543,7 @@ async function compileProgram(options) {
     const configBytes = canonicalizeJsonValue(options.config);
     const result = {
       apiVersion: COMPILER_API_VERSION,
-      language,
+      moduleLoader,
       nodeVersion: options.nodeVersion,
       config: { path: "helmr/config.json", digest: `sha256:${createHash("sha256").update(configBytes).digest("hex")}` },
       inputTreeDigest: options.inputTreeDigest,
@@ -1555,7 +1555,7 @@ async function compileProgram(options) {
       ["helmr/compiler-result.json", canonicalizeJsonValue(result)]
     ]) };
   } finally {
-    execution.dispose();
+    loader.dispose();
   }
 }
 

@@ -12,7 +12,7 @@ let
   };
 in
 stdenvNoCC.mkDerivation {
-  pname = "helmr-module-execution";
+  pname = "helmr-module-loader";
   version = "0";
   dontUnpack = true;
   nativeBuildInputs = [
@@ -20,10 +20,10 @@ stdenvNoCC.mkDerivation {
     gzip
   ];
   buildCommand = ''
-    mkdir -p "$out/moduleexecution" "$out/share/licenses/typescript" upstream
+    mkdir -p "$out/moduleloader" "$out/share/licenses/typescript" upstream
     tar -xzf ${typescript} --strip-components=1 -C upstream
-    install -m0644 ${../../internal/moduleexecution/loader.mjs} "$out/moduleexecution/loader.mjs"
-    install -m0644 upstream/lib/typescript.js "$out/moduleexecution/typescript.cjs"
+    install -m0644 ${../../internal/moduleloader/loader.mjs} "$out/moduleloader/loader.mjs"
+    install -m0644 upstream/lib/typescript.js "$out/moduleloader/typescript.cjs"
     install -m0644 upstream/LICENSE.txt "$out/share/licenses/typescript/LICENSE"
   '';
 }

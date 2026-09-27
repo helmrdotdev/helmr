@@ -5,15 +5,15 @@ import { join, dirname } from "node:path"
 import { spawnSync } from "node:child_process"
 import { test } from "node:test"
 
-const adapter = new URL("../../../internal/moduleexecution/loader.mjs", import.meta.url).pathname
-function fixture(files: Record<string, string | object>, body: string, prefix = "helmr-module-execution-") {
+const loaderPath = new URL("../../../internal/moduleloader/loader.mjs", import.meta.url).pathname
+function fixture(files: Record<string, string | object>, body: string, prefix = "helmr-module-loader-") {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
   for (const [path, value] of Object.entries({ "package.json": { type: "module" }, ...files })) {
     mkdirSync(dirname(join(root, path)), { recursive: true })
     writeFileSync(join(root, path), typeof value === "string" ? value : JSON.stringify(value))
   }
   const runner = join(root, "runner.mjs")
-  writeFileSync(runner, `import {installModuleExecution} from ${JSON.stringify(adapter)};const execution=installModuleExecution({root:${JSON.stringify(root)}});\n${body}`)
+  writeFileSync(runner, `import {installModuleLoader} from ${JSON.stringify(loaderPath)};const loader=installModuleLoader({root:${JSON.stringify(root)}});\n${body}`)
   return { root, run: () => spawnSync(process.execPath, ["--no-strip-types", "--no-global-search-paths", "--enable-source-maps", runner], { encoding: "utf8", env: { PATH: process.env["PATH"] } }), close: () => rmSync(root, { recursive: true, force: true }) }
 }
 function check(files: Record<string, string | object>, body: string, expected: unknown) {
@@ -28,7 +28,7 @@ test("mixed installed JS, dynamic TS, assets and native module identity", () => 
     "node_modules/p/value.ts": 'import{readFileSync}from"node:fs";globalThis.count=(globalThis.count??0)+1;export const state:object={count:globalThis.count,asset:readFileSync(new URL("./data.txt",import.meta.url),"utf8")}',
     "node_modules/p/data.txt": "installed",
     "main.ts": 'import{state,dynamic}from"p";export default [state,state===(await dynamic()).state]',
-  }, 'console.log(JSON.stringify((await execution.importSourceExports(new URL("./main.ts",import.meta.url))).default))', [{ count: 1, asset: "installed" }, true])
+  }, 'console.log(JSON.stringify((await loader.importSourceExports(new URL("./main.ts",import.meta.url))).default))', [{ count: 1, asset: "installed" }, true])
 })
 
 test("nearest JSONC extends, aliases and class field lowering agree", () => {
@@ -39,7 +39,7 @@ test("nearest JSONC extends, aliases and class field lowering agree", () => {
     "sub/base.json": { compilerOptions: { paths: { "@value": ["./value.ts"] }, target: "es2018", jsxFactory: "h", jsx: "preserve" } },
     "sub/value.ts": 'export default "nested"',
     "sub/main.tsx": 'import value from"@value";const h=()=>"jsx";let effect="own";class B{set x(v:number){effect="setter"}}class C extends B{x=1}new C;export default [value,<div/>,effect]',
-  }, 'console.log(JSON.stringify((await execution.importSourceExports(new URL("./sub/main.tsx",import.meta.url))).default))', ["nested", "jsx", "setter"])
+  }, 'console.log(JSON.stringify((await loader.importSourceExports(new URL("./sub/main.tsx",import.meta.url))).default))', ["nested", "jsx", "setter"])
 })
 
 test("native conditions and multiple installed instances", () => {
@@ -48,12 +48,12 @@ test("native conditions and multiple installed instances", () => {
     "node_modules/p/import.mts": 'export default "import"',
     "node_modules/p/require.cts": 'module.exports="require"',
     "main.ts": 'import value from"p";import{createRequire}from"node:module";export default [value,createRequire(import.meta.url)("p")]',
-  }, 'console.log(JSON.stringify((await execution.importSourceExports(new URL("./main.ts",import.meta.url))).default))', ["import", "require"])
+  }, 'console.log(JSON.stringify((await loader.importSourceExports(new URL("./main.ts",import.meta.url))).default))', ["import", "require"])
 })
 
 test("genuine ESM values are not CJS-unwrapped; CJS uses known format", () => {
-  check({ "value.ts": 'export default {__esModule:true,default:{dirs:["wrong"]},dirs:["right"]}' }, 'console.log(JSON.stringify((await execution.importSourceExports(new URL("./value.ts",import.meta.url))).default))', { __esModule: true, default: { dirs: ["wrong"] }, dirs: ["right"] })
-  check({ "package.json": {}, "value.ts": 'globalThis.count=(globalThis.count??0)+1;const config={dirs:["tasks"]};export default config' }, 'const value=await execution.importSourceExports(new URL("./value.ts",import.meta.url));console.log(JSON.stringify([value.default,globalThis.count]))', [{ dirs: ["tasks"] }, 1])
+  check({ "value.ts": 'export default {__esModule:true,default:{dirs:["wrong"]},dirs:["right"]}' }, 'console.log(JSON.stringify((await loader.importSourceExports(new URL("./value.ts",import.meta.url))).default))', { __esModule: true, default: { dirs: ["wrong"] }, dirs: ["right"] })
+  check({ "package.json": {}, "value.ts": 'globalThis.count=(globalThis.count??0)+1;const config={dirs:["tasks"]};export default config' }, 'const value=await loader.importSourceExports(new URL("./value.ts",import.meta.url));console.log(JSON.stringify([value.default,globalThis.count]))', [{ dirs: ["tasks"] }, 1])
 })
 
 test("root config aliases, symlinks and queries are build-only", () => {
@@ -89,7 +89,7 @@ test("alias fallback preserves broken package targets and native JS wins collisi
 })
 
 test("customer imports cannot enter trusted platform bootstrap", () => {
-  const f = fixture({ "main.ts": `import ${JSON.stringify(adapter)}` }, 'await import("./main.ts")')
+  const f = fixture({ "main.ts": `import ${JSON.stringify(loaderPath)}` }, 'await import("./main.ts")')
   try { assert.match(f.run().stderr, /must stay inside Program/) } finally { f.close() }
 })
 
@@ -99,14 +99,14 @@ test("dirty ancestor lookup locations and non-object root manifest reject entry"
   const parent = fixture({}, '')
   try {
     mkdirSync(join(parent.root,"node_modules"));mkdirSync(join(parent.root,"project"));writeFileSync(join(parent.root,"project/package.json"),'{}')
-    writeFileSync(join(parent.root,"runner.mjs"),`import{installModuleExecution}from${JSON.stringify(adapter)};installModuleExecution({root:${JSON.stringify(join(parent.root,"project"))}})`)
+    writeFileSync(join(parent.root,"runner.mjs"),`import{installModuleLoader}from${JSON.stringify(loaderPath)};installModuleLoader({root:${JSON.stringify(join(parent.root,"project"))}})`)
     assert.match(parent.run().stderr,/ancestor node_modules search location/)
   } finally { parent.close() }
 })
 
 
 test("typeless Node JS syntax detection preserves genuine namespace", () => {
-  check({"package.json": {}, "main.js": 'export const example=42;export default {value:7,__esModule:true,default:13}'}, 'console.log(JSON.stringify(await execution.importSourceExports(new URL("./main.js",import.meta.url))))', {example:42,default:{value:7,__esModule:true,default:13}})
+  check({"package.json": {}, "main.js": 'export const example=42;export default {value:7,__esModule:true,default:13}'}, 'console.log(JSON.stringify(await loader.importSourceExports(new URL("./main.js",import.meta.url))))', {example:42,default:{value:7,__esModule:true,default:13}})
 })
 test("data modules do not inherit trusted bootstrap authority", () => {
  const f=fixture({}, 'await import("./main.ts")')
@@ -114,7 +114,7 @@ test("data modules do not inherit trusted bootstrap authority", () => {
   const platform=join(f.root,"../platform-"+f.root.split("/").pop());mkdirSync(join(platform,"helmr"),{recursive:true});writeFileSync(join(platform,"helmr/entry.mjs"),'export const value=42')
   try {
    writeFileSync(join(f.root,"main.ts"),`import ${JSON.stringify('data:text/javascript,'+encodeURIComponent('import '+JSON.stringify("file://"+join(platform,"helmr/entry.mjs"))))}`)
-   writeFileSync(join(f.root,"runner.mjs"),`import{installModuleExecution}from${JSON.stringify(adapter)};installModuleExecution({root:${JSON.stringify(f.root)},platformRoot:${JSON.stringify(platform)}});await import('./main.ts')`)
+   writeFileSync(join(f.root,"runner.mjs"),`import{installModuleLoader}from${JSON.stringify(loaderPath)};installModuleLoader({root:${JSON.stringify(f.root)},platformRoot:${JSON.stringify(platform)}});await import('./main.ts')`)
    assert.match(f.run().stderr,/must stay inside Program/)
   } finally {rmSync(platform,{recursive:true,force:true})}
  } finally {f.close()}
@@ -135,8 +135,8 @@ test("scoped aliases, nested versions, package self-reference and imports stay n
 })
 
 test("CJS cache and true ESM module.exports export do not confuse extraction", () => {
-  check({ "package.json": {}, "value.js": 'module.exports={value:42}', "main.cts": 'const a=require("./value.js");module.exports={a,same:a===require("./value.js")}' }, 'const v=await execution.importSourceExports(new URL("./main.cts",import.meta.url));console.log(JSON.stringify([v.default.a.value,v.default.same]))', [42,true])
-  check({ "main.mjs": 'const value={__esModule:true,default:13};export{value as "module.exports"};export default value' }, 'const v=await execution.importSourceExports(new URL("./main.mjs",import.meta.url));console.log(JSON.stringify(v.default))', {__esModule:true,default:13})
+  check({ "package.json": {}, "value.js": 'module.exports={value:42}', "main.cts": 'const a=require("./value.js");module.exports={a,same:a===require("./value.js")}' }, 'const v=await loader.importSourceExports(new URL("./main.cts",import.meta.url));console.log(JSON.stringify([v.default.a.value,v.default.same]))', [42,true])
+  check({ "main.mjs": 'const value={__esModule:true,default:13};export{value as "module.exports"};export default value' }, 'const v=await loader.importSourceExports(new URL("./main.mjs",import.meta.url));console.log(JSON.stringify(v.default))', {__esModule:true,default:13})
 })
 
 test("source maps report original TS lines and thrown modules are not retried", () => {
@@ -189,7 +189,7 @@ test("linked JS callers select config from canonical source ancestry", () => {
     "packages/value.ts": 'export default "canonical"',
     "packages/p/package.json": { type: "module", exports: "./entry.mjs" },
     "packages/p/entry.mjs": 'export {default} from "@value"',
-  }, 'const value=(await import("p")).default;console.log(JSON.stringify([value,[...execution.configReads.keys()].map(p=>p.slice(execution.root.length+1))]))')
+  }, 'const value=(await import("p")).default;console.log(JSON.stringify([value,[...loader.configReads.keys()].map(p=>p.slice(loader.root.length+1))]))')
   try {
     symlinkSync("../packages/p", join(f.root, "node_modules/p"))
     const result = f.run()
@@ -234,7 +234,7 @@ test("aliases preserve literal filename characters and nearest config in encoded
         "nested#%?/main.js": commonjs
           ? 'module.exports=[require("@value").default,require("@index").default]'
           : 'import value from"@value";import index from"@index";export default [value,index]',
-      }, 'const value=(await import("./nested%23%25%3F/main.js")).default;console.log(JSON.stringify([value,[...execution.configReads.keys()].map(p=>p.slice(execution.root.length+1))]))', "helmr-module-#%?-")
+      }, 'const value=(await import("./nested%23%25%3F/main.js")).default;console.log(JSON.stringify([value,[...loader.configReads.keys()].map(p=>p.slice(loader.root.length+1))]))', "helmr-module-#%?-")
       try {
         const result = f.run()
         assert.equal(result.status, 0, result.stderr)

@@ -17,7 +17,7 @@ import (
 
 type ProgramCompilerResult struct {
 	APIVersion          string                     `json:"apiVersion"`
-	Language            ModuleExecutionIdentity    `json:"language"`
+	ModuleLoader        ModuleLoaderIdentity       `json:"moduleLoader"`
 	NodeVersion         string                     `json:"nodeVersion"`
 	Config              ProgramPathDigest          `json:"config"`
 	InputTreeDigest     string                     `json:"inputTreeDigest"`
@@ -92,7 +92,7 @@ func validateProgramCompilerResult(result ProgramCompilerResult) error {
 	if result.APIVersion != "helmr.compiler.v0" || result.NodeVersion != productversion.Node() {
 		return errors.New("program compiler execution contract is invalid")
 	}
-	if err := ValidateModuleExecutionIdentity(result.Language); err != nil {
+	if err := ValidateModuleLoaderIdentity(result.ModuleLoader); err != nil {
 		return err
 	}
 	if result.Config.Path != "helmr/config.json" || !sha256DigestPattern.MatchString(result.Config.Digest) || !sha256DigestPattern.MatchString(result.InputTreeDigest) {
@@ -126,7 +126,7 @@ func validateProgramCompilerAuthority(result ProgramCompilerResult, compiler Com
 	if err := ValidateCompilerInputs(compiler); err != nil {
 		return err
 	}
-	if result.APIVersion != compiler.APIVersion || result.Language != compiler.Language || result.NodeVersion != nodeVersion {
+	if result.APIVersion != compiler.APIVersion || result.ModuleLoader != compiler.ModuleLoader || result.NodeVersion != nodeVersion {
 		return errors.New("program compiler result does not match compiler/runtime authority")
 	}
 	return nil

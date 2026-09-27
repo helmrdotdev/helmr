@@ -52,7 +52,7 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 
 func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	metadata := RuntimeMetadata{
-		Language:         testLanguageIdentity(),
+		ModuleLoader:     testModuleLoaderIdentity(),
 		Architecture:     ArchitectureX8664,
 		FormatVersion:    RuntimeMetadataFormatVersion,
 		NodeVersion:      "24.21.0",

@@ -18,7 +18,7 @@
       "name": "@helmr/compiler",
       "version": "0.1.0",
       "dependencies": {
-        "@helmr/module-execution": "workspace:*",
+        "@helmr/module-loader": "workspace:*",
         "@helmr/sdk": "workspace:*",
         "jiti": "2.7.0",
         "yaml": "2.9.1",
@@ -77,8 +77,8 @@
         "vite-plugin-solid": "^2.11.14",
       },
     },
-    "packages/module-execution": {
-      "name": "@helmr/module-execution",
+    "packages/module-loader": {
+      "name": "@helmr/module-loader",
       "version": "0.1.0",
       "dependencies": {
         "typescript": "6.0.3",
@@ -115,7 +115,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@bufbuild/protobuf": "^2.12.0",
-        "@helmr/module-execution": "workspace:*",
+        "@helmr/module-loader": "workspace:*",
         "@helmr/proto": "workspace:*",
         "@helmr/sdk": "workspace:*",
       },
@@ -359,7 +359,7 @@
 
     "@helmr/console": ["@helmr/console@workspace:packages/console"],
 
-    "@helmr/module-execution": ["@helmr/module-execution@workspace:packages/module-execution"],
+    "@helmr/module-loader": ["@helmr/module-loader@workspace:packages/module-loader"],
 
     "@helmr/proto": ["@helmr/proto@workspace:proto/typescript"],
 
@@ -1149,7 +1149,7 @@
 
     "@bufbuild/protoplugin/typescript": ["typescript@5.4.5", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ=="],
 
-    "@helmr/module-execution/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+    "@helmr/module-loader/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 
     "@helmr/web/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
 

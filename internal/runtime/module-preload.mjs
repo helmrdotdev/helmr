@@ -1,6 +1,6 @@
 // runtime/typescript/src/module-preload.ts
-import { installModuleExecution } from "../moduleexecution/loader.mjs";
-installModuleExecution({
+import { installModuleLoader } from "../moduleloader/loader.mjs";
+installModuleLoader({
   root: "/opt/helmr/program",
   platformRoot: "/opt/helmr/runtime"
 });

@@ -1,5 +1,5 @@
 {
-  "name": "@helmr/module-execution",
+  "name": "@helmr/module-loader",
   "private": true,
   "type": "module",
   "version": "0.1.0",

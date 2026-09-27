@@ -208,7 +208,7 @@ class SourceInputTests(unittest.TestCase):
             self.assertNotEqual(first['dispatcher'], second['dispatcher'])
             self.assertEqual(first['worker'], second['worker'])
             self.assertEqual(first['guestd'], second['guestd'])
-            for relative in ['internal/runtime/entry.mjs', 'internal/runtime/module-preload.mjs', 'internal/moduleexecution/loader.mjs', 'internal/compiler/program-compiler.mjs', 'internal/version/runtime-dependencies.json']:
+            for relative in ['internal/runtime/entry.mjs', 'internal/runtime/module-preload.mjs', 'internal/moduleloader/loader.mjs', 'internal/compiler/program-compiler.mjs', 'internal/version/runtime-dependencies.json']:
                 path = source / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text('old')

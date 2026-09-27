@@ -493,7 +493,7 @@ export async function runProgram(
   let definition: InternalTaskDefinition | InternalActorDefinition
   try {
     const imported = io.importModule === undefined
-      ? await (await import("@helmr/module-execution")).importSourceExports(moduleURL)
+      ? await (await import("@helmr/module-loader")).importSourceExports(moduleURL)
       : await io.importModule(moduleURL)
     const inspected = inspectDefinition(imported[locator.exportName])
     if (

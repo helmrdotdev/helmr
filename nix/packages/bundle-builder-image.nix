@@ -25,7 +25,7 @@ let
     cp -a ${runtimeRelease}/tree "$out/opt/helmr/runtime"
     cp ${runtimeRelease}/runtime.descriptor.json "$out/opt/helmr/release/runtime.descriptor.json"
     cp -a ${compiler}/tree/helmr/. "$out/nix/helmr/"
-    cp -a ${compiler}/tree/moduleexecution "$out/nix/moduleexecution"
+    cp -a ${compiler}/tree/moduleloader "$out/nix/moduleloader"
     cp -a ${compiler}/tree/share "$out/nix/share"
     chmod u+w "$out/nix/helmr"
     cp ${compiler}/compiler.descriptor.json "$out/nix/helmr/compiler.descriptor.json"

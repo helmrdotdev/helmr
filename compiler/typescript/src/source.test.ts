@@ -50,7 +50,7 @@ test("real packed SDK config/task/actor identity through a mixed JS-to-TS packag
   expect(result.programDeclarations.map((d:{kind:string})=>d.kind)).toEqual(["task","actor"])
   expect(result.programDeclarations[1].slots).toEqual(["handler"])
   expect(result.declarationLocator.declarations.map((d:{sourcePath:string})=>d.sourcePath)).toEqual(["tasks/task.ts","tasks/task.ts"])
-  expect(Object.keys(result.result).sort()).toEqual(["apiVersion","config","discoveryCandidates","inputTreeDigest","language","nodeVersion","selections"])
+  expect(Object.keys(result.result).sort()).toEqual(["apiVersion","config","discoveryCandidates","inputTreeDigest","moduleLoader","nodeVersion","selections"])
  }finally{await f.close()}
 })
 

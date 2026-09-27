@@ -322,8 +322,8 @@ func compileInstalledProgram(
 	if err != nil {
 		return deployment.BuildConfig{}, deployment.VerificationResult{}, err
 	}
-	if after != inputDigest || result.InputTreeDigest != inputDigest || result.Language != input.Compiler.Language || result.NodeVersion != input.RuntimeMetadata.NodeVersion {
-		return deployment.BuildConfig{}, deployment.VerificationResult{}, errors.New("compiled Program input or language authority changed during preparation")
+	if after != inputDigest || result.InputTreeDigest != inputDigest || result.ModuleLoader != input.Compiler.ModuleLoader || result.NodeVersion != input.RuntimeMetadata.NodeVersion {
+		return deployment.BuildConfig{}, deployment.VerificationResult{}, errors.New("compiled Program input or module loader authority changed during preparation")
 	}
 	return config, verification, nil
 }
@@ -358,7 +358,7 @@ func validateProgramInput(input ProgramInput) error {
 	if err := deployment.ValidateRuntimeMetadata(input.RuntimeMetadata); err != nil {
 		return err
 	}
-	if input.Compiler.Language != input.RuntimeMetadata.Language || input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
+	if input.Compiler.ModuleLoader != input.RuntimeMetadata.ModuleLoader || input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
 		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
 		return errors.New("runtime descriptor and metadata do not match")
 	}
@@ -404,7 +404,7 @@ func validatePreparedProgramInput(input PreparedProgramInput) error {
 	if err := deployment.ValidateRuntimeMetadata(input.RuntimeMetadata); err != nil {
 		return err
 	}
-	if input.Compiler.Language != input.RuntimeMetadata.Language || input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
+	if input.Compiler.ModuleLoader != input.RuntimeMetadata.ModuleLoader || input.Runtime.Architecture != input.RuntimeMetadata.Architecture ||
 		input.Runtime.RuntimeContract != input.RuntimeMetadata.RuntimeContract {
 		return errors.New("runtime descriptor and metadata do not match")
 	}

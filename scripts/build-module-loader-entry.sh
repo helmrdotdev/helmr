@@ -2,4 +2,4 @@
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-bun scripts/build-module-execution-entry.ts "$@"
+bun scripts/build-module-loader-entry.ts "$@"

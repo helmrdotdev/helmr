@@ -29,8 +29,8 @@ for (const [entry, target] of entries) {
     target: group === "hostconfig" ? hostNodeTarget : nodeTarget,
     // jiti's bundled CommonJS pieces call require(); an ES module has none.
     banner: group === "hostconfig" ? { js: 'import { createRequire as helmrCreateRequire } from "node:module"; const require = helmrCreateRequire(import.meta.url);' } : {},
-    plugins: [{ name: "shared-language", setup(build) {
-      build.onResolve({ filter: /^@helmr\/module-execution$/ }, () => ({ path: "../moduleexecution/loader.mjs", external: true }))
+    plugins: [{ name: "shared-module-loader", setup(build) {
+      build.onResolve({ filter: /^@helmr\/module-loader$/ }, () => ({ path: "../moduleloader/loader.mjs", external: true }))
     } }],
   })
   const bytes = result.outputFiles[0]!.text

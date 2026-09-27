@@ -105,7 +105,7 @@ func verifyRuntimeTopology(
 		"share",
 		"share/licenses",
 		"share/licenses/node",
-		"moduleexecution",
+		"moduleloader",
 		"share/licenses/typescript",
 		"share/licenses/debian",
 	}
@@ -121,8 +121,8 @@ func verifyRuntimeTopology(
 		runtimeLibcPath:                     0644,
 		runtimeLicensePath:                  0644,
 		"helmr/module-preload.mjs":          0644,
-		"moduleexecution/loader.mjs":        0644,
-		"moduleexecution/typescript.cjs":    0644,
+		"moduleloader/loader.mjs":           0644,
+		"moduleloader/typescript.cjs":       0644,
 		"share/licenses/typescript/LICENSE": 0644,
 		"share/licenses/debian/libc6":       0644,
 		"share/licenses/debian/libgcc-s1":   0644,
@@ -159,7 +159,7 @@ func verifyRuntimeTopology(
 	if err != nil {
 		return RuntimeIndex{}, err
 	}
-	for name, digest := range map[string]string{"moduleexecution/loader.mjs": metadata.Language.AdapterDigest, "moduleexecution/typescript.cjs": metadata.Language.TypeScriptDigest} {
+	for name, digest := range map[string]string{"moduleloader/loader.mjs": metadata.ModuleLoader.LoaderDigest, "moduleloader/typescript.cjs": metadata.ModuleLoader.TypeScriptDigest} {
 		if err := verifyProgramPathDigest(ctx, artifact, ProgramPathDigest{Path: name, Digest: digest}); err != nil {
 			return RuntimeIndex{}, err
 		}
@@ -172,7 +172,7 @@ func verifyRuntimeTopology(
 
 func validateRuntimePath(entry artifactEntry, required map[string]uint32) error {
 	switch entry.Path {
-	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node", "moduleexecution", "share/licenses/typescript", "share/licenses/debian":
+	case ".", "bin", "helmr", "lib", "share", "share/licenses", "share/licenses/node", "moduleloader", "share/licenses/typescript", "share/licenses/debian":
 		return nil
 	}
 	if _, exists := required[entry.Path]; exists {

@@ -16,26 +16,26 @@ type CompilerEntrypoint struct {
 	Entrypoint string `json:"entrypoint"`
 }
 
-// ModuleExecutionIdentity binds the exact shared parser, emitter and source guard.
-type ModuleExecutionIdentity struct {
+// ModuleLoaderIdentity binds the shared loader and its TypeScript dependency.
+type ModuleLoaderIdentity struct {
 	APIVersion        string `json:"apiVersion"`
-	AdapterDigest     string `json:"adapterDigest"`
+	LoaderDigest      string `json:"loaderDigest"`
 	TypeScriptDigest  string `json:"typescriptDigest"`
 	TypeScriptVersion string `json:"typescriptVersion"`
 }
 
-func ValidateModuleExecutionIdentity(value ModuleExecutionIdentity) error {
-	if value.APIVersion != "helmr.module-execution.v0" || value.TypeScriptVersion != version.RuntimeTypeScript() ||
-		!sha256DigestPattern.MatchString(value.AdapterDigest) || !sha256DigestPattern.MatchString(value.TypeScriptDigest) {
-		return errors.New("module execution identity does not match the v0 contract")
+func ValidateModuleLoaderIdentity(value ModuleLoaderIdentity) error {
+	if value.APIVersion != "helmr.module-loader.v0" || value.TypeScriptVersion != version.RuntimeTypeScript() ||
+		!sha256DigestPattern.MatchString(value.LoaderDigest) || !sha256DigestPattern.MatchString(value.TypeScriptDigest) {
+		return errors.New("module loader identity does not match the v0 contract")
 	}
 	return nil
 }
 
 type CompilerInputs struct {
-	APIVersion      string                  `json:"apiVersion"`
-	Language        ModuleExecutionIdentity `json:"language"`
-	ProgramCompiler CompilerEntrypoint      `json:"programCompiler"`
+	APIVersion      string               `json:"apiVersion"`
+	ModuleLoader    ModuleLoaderIdentity `json:"moduleLoader"`
+	ProgramCompiler CompilerEntrypoint   `json:"programCompiler"`
 }
 
 func ParseCompilerInputs(raw []byte) (CompilerInputs, error) {
@@ -94,7 +94,7 @@ func ValidateCompilerInputs(input CompilerInputs) error {
 		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" {
 		return errors.New("compiler inputs do not match the v0 contract")
 	}
-	if err := ValidateModuleExecutionIdentity(input.Language); err != nil {
+	if err := ValidateModuleLoaderIdentity(input.ModuleLoader); err != nil {
 		return err
 	}
 	for _, entry := range []CompilerEntrypoint{input.ProgramCompiler} {

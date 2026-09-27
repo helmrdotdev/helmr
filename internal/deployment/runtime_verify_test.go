@@ -94,7 +94,7 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		},
 		"metadata Node flags": func(artifact *memoryArtifact) {
 			invalid := RuntimeMetadata{
-				Language:     testLanguageIdentity(),
+				ModuleLoader: testModuleLoaderIdentity(),
 				Architecture: ArchitectureX8664, FormatVersion: RuntimeMetadataFormatVersion,
 				NodeVersion:      "24.21.0",
 				ProgramNodeFlags: []string{"--no-experimental-strip-types", "--enable-source-maps"},
@@ -201,7 +201,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	t.Helper()
 	metadata := RuntimeMetadata{
-		Language:         testLanguageIdentity(),
+		ModuleLoader:     testModuleLoaderIdentity(),
 		Architecture:     ArchitectureX8664,
 		FormatVersion:    RuntimeMetadataFormatVersion,
 		NodeVersion:      "24.21.0",
@@ -219,15 +219,15 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("share")
 	artifact.addDirectory("share/licenses")
 	artifact.addDirectory("share/licenses/node")
-	artifact.addDirectory("moduleexecution")
+	artifact.addDirectory("moduleloader")
 	artifact.addDirectory("share/licenses/typescript")
 	artifact.addDirectory("share/licenses/debian")
 	for _, name := range []string{"libc6", "libgcc-s1", "libstdc++6"} {
 		artifact.addFile("share/licenses/debian/"+name, []byte("copyright"), 0644)
 	}
 	artifact.addFile("helmr/module-preload.mjs", []byte("preload"), 0644)
-	artifact.addFile("moduleexecution/loader.mjs", []byte("adapter"), 0644)
-	artifact.addFile("moduleexecution/typescript.cjs", []byte("typescript"), 0644)
+	artifact.addFile("moduleloader/loader.mjs", []byte("loader"), 0644)
+	artifact.addFile("moduleloader/typescript.cjs", []byte("typescript"), 0644)
 	artifact.addFile("share/licenses/typescript/LICENSE", []byte("license"), 0644)
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
 	artifact.addFile(runtimeEntryPath, []byte("entry"), 0644)

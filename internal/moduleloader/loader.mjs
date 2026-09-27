@@ -1,4 +1,4 @@
-// packages/module-execution/src/index.ts
+// packages/module-loader/src/index.ts
 import { createHash as createHash2 } from "node:crypto";
 import { existsSync as existsSync2, readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
 import { isBuiltin, registerHooks } from "node:module";
@@ -6,10 +6,10 @@ import { dirname as dirname2, extname, join as join2, resolve as resolve2 } from
 import { fileURLToPath, pathToFileURL } from "node:url";
 import ts2 from "./typescript.cjs";
 
-// packages/module-execution/src/runtime-dependencies.ts
+// packages/module-loader/src/runtime-dependencies.ts
 var typescriptVersion = "6.0.3";
 
-// packages/module-execution/src/authority.ts
+// packages/module-loader/src/authority.ts
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -155,13 +155,13 @@ function diagnosticError(diagnostics) {
   }).trim());
 }
 
-// packages/module-execution/src/index.ts
-var languageVersion = "helmr.module-execution.v0";
+// packages/module-loader/src/index.ts
+var moduleLoaderAPIVersion = "helmr.module-loader.v0";
 var sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"];
 var typed = (path) => /\.(?:[cm]?ts|tsx|jsx)$/.test(path);
 var absent = (error) => error instanceof Error && "code" in error && (error.code === "ERR_MODULE_NOT_FOUND" || error.code === "MODULE_NOT_FOUND" || error.code === "ERR_UNSUPPORTED_DIR_IMPORT");
-function installModuleExecution(options) {
-  if (activeExecution !== void 0) throw new Error("Helmr module execution is already installed");
+function installModuleLoader(options) {
+  if (activeLoader !== void 0) throw new Error("Helmr module loader is already installed");
   if (ts2.version !== typescriptVersion) throw new Error(`Helmr requires TypeScript ${typescriptVersion}, got ${ts2.version}`);
   const authority = new SourceAuthority(options.root);
   authority.assertEntry();
@@ -169,8 +169,8 @@ function installModuleExecution(options) {
   const rootConfig = existsSync2(configPath) ? authority.file(configPath) : void 0;
   const platformFiles = new Set(options.platformRoot === void 0 ? [] : [
     resolve2(options.platformRoot, "helmr/entry.mjs"),
-    resolve2(options.platformRoot, "moduleexecution/loader.mjs"),
-    resolve2(options.platformRoot, "moduleexecution/typescript.cjs")
+    resolve2(options.platformRoot, "moduleloader/loader.mjs"),
+    resolve2(options.platformRoot, "moduleloader/typescript.cjs")
   ]);
   const source = (path) => {
     const canonical = authority.file(path);
@@ -272,13 +272,12 @@ function installModuleExecution(options) {
       return { format, source: result.outputText, shortCircuit: true };
     }
   });
-  const execution = {
+  const loader = {
     root: authority.root,
-    rootConfig,
     configReads: authority.configReads,
     dispose: () => {
       hooks.deregister();
-      if (activeExecution === execution) activeExecution = void 0;
+      if (activeLoader === loader) activeLoader = void 0;
     },
     async importSourceExports(url) {
       source(fileURLToPath(url));
@@ -292,8 +291,8 @@ function installModuleExecution(options) {
       return { default: value };
     }
   };
-  activeExecution = execution;
-  return execution;
+  activeLoader = loader;
+  return loader;
 }
 function bareAlias(specifier) {
   return !specifier.startsWith(".") && !specifier.startsWith("/") && !specifier.startsWith("#") && !specifier.includes(":");
@@ -343,20 +342,20 @@ function emitOptions(options, format) {
     ignoreDeprecations: "6.0"
   };
 }
-var activeExecution;
+var activeLoader;
 function importSourceExports(url) {
-  if (activeExecution === void 0) throw new Error("Helmr module execution has not been installed");
-  return activeExecution.importSourceExports(url);
+  if (activeLoader === void 0) throw new Error("Helmr module loader has not been installed");
+  return activeLoader.importSourceExports(url);
 }
-function moduleExecutionIdentity() {
+function moduleLoaderIdentity() {
   const digest = (url) => `sha256:${createHash2("sha256").update(readFileSync2(url)).digest("hex")}`;
-  return { apiVersion: languageVersion, adapterDigest: digest(new URL(import.meta.url)), typescriptDigest: digest(new URL("./typescript.cjs", import.meta.url)), typescriptVersion };
+  return { apiVersion: moduleLoaderAPIVersion, loaderDigest: digest(new URL(import.meta.url)), typescriptDigest: digest(new URL("./typescript.cjs", import.meta.url)), typescriptVersion };
 }
 export {
   importSourceExports,
-  installModuleExecution,
-  languageVersion,
-  moduleExecutionIdentity,
+  installModuleLoader,
+  moduleLoaderAPIVersion,
+  moduleLoaderIdentity,
   sourceExtensions,
   typescriptVersion
 };

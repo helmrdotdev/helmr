@@ -8,22 +8,22 @@ import ts from "typescript"
 import { typescriptVersion } from "./runtime-dependencies"
 import { SourceAuthority, diagnosticError, isContained } from "./authority"
 
-export const languageVersion = "helmr.module-execution.v0" as const
+export const moduleLoaderAPIVersion = "helmr.module-loader.v0" as const
 export { typescriptVersion } from "./runtime-dependencies"
 export const sourceExtensions = [".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"] as const
 const typed = (path: string) => /\.(?:[cm]?ts|tsx|jsx)$/.test(path)
 const absent = (error: unknown) => error instanceof Error && "code" in error &&
   (error.code === "ERR_MODULE_NOT_FOUND" || error.code === "MODULE_NOT_FOUND" || error.code === "ERR_UNSUPPORTED_DIR_IMPORT")
 
-export interface ModuleExecutionOptions {
+export interface ModuleLoaderOptions {
   root: string
   // The verified platform installation; only the fixed bootstrap files below
   // can load outside Program, and only from a platform parent/Node entry.
   platformRoot?: string
 }
 
-export function installModuleExecution(options: ModuleExecutionOptions): ModuleExecution {
-  if (activeExecution !== undefined) throw new Error("Helmr module execution is already installed")
+export function installModuleLoader(options: ModuleLoaderOptions): ModuleLoader {
+  if (activeLoader !== undefined) throw new Error("Helmr module loader is already installed")
   if (ts.version !== typescriptVersion) throw new Error(`Helmr requires TypeScript ${typescriptVersion}, got ${ts.version}`)
   const authority = new SourceAuthority(options.root)
   authority.assertEntry()
@@ -31,8 +31,8 @@ export function installModuleExecution(options: ModuleExecutionOptions): ModuleE
   const rootConfig = existsSync(configPath) ? authority.file(configPath) : undefined
   const platformFiles = new Set(options.platformRoot === undefined ? [] : [
     resolve(options.platformRoot, "helmr/entry.mjs"),
-    resolve(options.platformRoot, "moduleexecution/loader.mjs"),
-    resolve(options.platformRoot, "moduleexecution/typescript.cjs"),
+    resolve(options.platformRoot, "moduleloader/loader.mjs"),
+    resolve(options.platformRoot, "moduleloader/typescript.cjs"),
   ])
   const source = (path: string) => {
     const canonical = authority.file(path)
@@ -149,11 +149,10 @@ export function installModuleExecution(options: ModuleExecutionOptions): ModuleE
     },
   })
 
-  const execution: ModuleExecution = {
+  const loader: ModuleLoader = {
     root: authority.root,
-    rootConfig,
     configReads: authority.configReads,
-    dispose: () => { hooks.deregister(); if (activeExecution === execution) activeExecution = undefined },
+    dispose: () => { hooks.deregister(); if (activeLoader === loader) activeLoader = undefined },
     async importSourceExports(url: URL): Promise<Record<string, unknown>> {
       source(fileURLToPath(url))
       const namespace = await import(url.href) as Record<string, unknown>
@@ -166,8 +165,8 @@ export function installModuleExecution(options: ModuleExecutionOptions): ModuleE
       return { default: value }
     },
   }
-  activeExecution = execution
-  return execution
+  activeLoader = loader
+  return loader
 }
 
 function bareAlias(specifier: string): boolean {
@@ -217,19 +216,18 @@ function emitOptions(options: ts.CompilerOptions, format: "module" | "commonjs")
   }
 }
 
-export interface ModuleExecution {
+export interface ModuleLoader {
   root: string
-  rootConfig: string | undefined
   configReads: ReadonlyMap<string, string>
   dispose(): void
   importSourceExports(url: URL): Promise<Record<string, unknown>>
 }
-let activeExecution: ModuleExecution | undefined
+let activeLoader: ModuleLoader | undefined
 export function importSourceExports(url: URL): Promise<Record<string, unknown>> {
-  if (activeExecution === undefined) throw new Error("Helmr module execution has not been installed")
-  return activeExecution.importSourceExports(url)
+  if (activeLoader === undefined) throw new Error("Helmr module loader has not been installed")
+  return activeLoader.importSourceExports(url)
 }
-export function moduleExecutionIdentity() {
+export function moduleLoaderIdentity() {
   const digest = (url: URL) => `sha256:${createHash("sha256").update(readFileSync(url)).digest("hex")}`
-  return { apiVersion: languageVersion, adapterDigest: digest(new URL(import.meta.url)), typescriptDigest: digest(new URL("./typescript.cjs", import.meta.url)), typescriptVersion }
+  return { apiVersion: moduleLoaderAPIVersion, loaderDigest: digest(new URL(import.meta.url)), typescriptDigest: digest(new URL("./typescript.cjs", import.meta.url)), typescriptVersion }
 }

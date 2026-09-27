@@ -4752,7 +4752,7 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   validateEntrypointRelease(release, start, kind);
   let definition;
   try {
-    const imported = io.importModule === void 0 ? await (await import("../moduleexecution/loader.mjs")).importSourceExports(moduleURL) : await io.importModule(moduleURL);
+    const imported = io.importModule === void 0 ? await (await import("../moduleloader/loader.mjs")).importSourceExports(moduleURL) : await io.importModule(moduleURL);
     const inspected = inspectDefinition(imported[locator.exportName]);
     if (inspected === void 0 || inspected.kind !== declaration.kind || inspected.id !== declaration.declaredId || inspected.kind !== "task" && inspected.kind !== "actor") {
       throw new Error(

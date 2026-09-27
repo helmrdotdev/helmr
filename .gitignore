@@ -31,4 +31,4 @@ playwright-report/
 test-results/
 
 # Local platform dependency; Nix packages the pinned TypeScript API separately.
-/internal/moduleexecution/typescript.cjs
+/internal/moduleloader/typescript.cjs

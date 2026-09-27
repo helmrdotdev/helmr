@@ -134,8 +134,9 @@ limited to 11 GiB including metadata and padding.
 ## Installed dependencies and source execution
 
 Helmr installs dependencies once for the target Linux platform and retains the
-whole installed tree. Config, declaration analysis, and Program execution use
-one platform-owned Node 24.21 language adapter. JavaScript keeps native Node
+whole installed tree. Declaration analysis and Program execution share one
+platform-owned Node 24.21 module loader. Host configuration evaluation is separate,
+as described under Task project above. JavaScript keeps native Node
 resolution, package exports, module cache and file locations. Reached TypeScript
 and JSX files are transformed in memory using the Runtime-pinned TypeScript version, including
 files under `node_modules`, mixed JavaScript-to-TypeScript packages, and dynamic

@@ -41,12 +41,12 @@ type RuntimeDescriptor struct {
 }
 
 type RuntimeMetadata struct {
-	Language         ModuleExecutionIdentity `json:"language"`
-	Architecture     RuntimeArchitecture     `json:"architecture"`
-	FormatVersion    int                     `json:"formatVersion"`
-	NodeVersion      string                  `json:"nodeVersion"`
-	ProgramNodeFlags []string                `json:"programNodeFlags"`
-	RuntimeContract  string                  `json:"runtimeContract"`
+	ModuleLoader     ModuleLoaderIdentity `json:"moduleLoader"`
+	Architecture     RuntimeArchitecture  `json:"architecture"`
+	FormatVersion    int                  `json:"formatVersion"`
+	NodeVersion      string               `json:"nodeVersion"`
+	ProgramNodeFlags []string             `json:"programNodeFlags"`
+	RuntimeContract  string               `json:"runtimeContract"`
 }
 
 func ParseRuntimeMetadata(raw []byte) (RuntimeMetadata, error) {
@@ -76,7 +76,7 @@ func CanonicalRuntimeMetadata(metadata RuntimeMetadata) ([]byte, error) {
 }
 
 func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
-	if err := ValidateModuleExecutionIdentity(metadata.Language); err != nil {
+	if err := ValidateModuleLoaderIdentity(metadata.ModuleLoader); err != nil {
 		return err
 	}
 	if metadata.FormatVersion != RuntimeMetadataFormatVersion {
@@ -109,7 +109,7 @@ func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
 // NodeLanguageFlags is shared by managed config, analysis and runtime processes.
 func NodeLanguageFlags(version string) ([]string, error) {
 	if version != productversion.Node() {
-		return nil, fmt.Errorf("node version %q has no module execution contract", version)
+		return nil, fmt.Errorf("node version %q has no module loader contract", version)
 	}
 	return []string{NodeNoStripTypes, "--no-global-search-paths", "--enable-source-maps"}, nil
 }

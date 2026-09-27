@@ -1,6 +1,6 @@
 {
   lib,
-  moduleExecution,
+  moduleLoader,
   stdenv,
   stdenvNoCC,
   debianRuntimeImage,
@@ -76,10 +76,10 @@ stdenvNoCC.mkDerivation {
     install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
 
     install -m0644 ${../../internal/runtime/module-preload.mjs} "$tree/helmr/module-preload.mjs"
-    cp -a ${moduleExecution}/moduleexecution "$tree/moduleexecution"
-    cp -a ${moduleExecution}/share/licenses/typescript "$tree/share/licenses/typescript"
-    adapter_digest="sha256:$(sha256sum "$tree/moduleexecution/loader.mjs" | cut -d' ' -f1)"
-    typescript_digest="sha256:$(sha256sum "$tree/moduleexecution/typescript.cjs" | cut -d' ' -f1)"
+    cp -a ${moduleLoader}/moduleloader "$tree/moduleloader"
+    cp -a ${moduleLoader}/share/licenses/typescript "$tree/share/licenses/typescript"
+    loader_digest="sha256:$(sha256sum "$tree/moduleloader/loader.mjs" | cut -d' ' -f1)"
+    typescript_digest="sha256:$(sha256sum "$tree/moduleloader/typescript.cjs" | cut -d' ' -f1)"
 
     debian="$TMPDIR/debian"
     mkdir -p "$TMPDIR/image" "$debian" "$tree/share/licenses/debian"
@@ -138,7 +138,7 @@ stdenvNoCC.mkDerivation {
       --arg architecture "${architecture}" \
       --arg nodeVersion "${nodeVersion}" \
       --arg typescriptVersion "${typescriptVersion}" \
-      --arg adapterDigest "$adapter_digest" \
+      --arg loaderDigest "$loader_digest" \
       --arg typescriptDigest "$typescript_digest" \
       --arg runtimeContract "helmr.runtime.v0" \
       '{
@@ -146,7 +146,7 @@ stdenvNoCC.mkDerivation {
         formatVersion:0,
         nodeVersion:$nodeVersion,
         programNodeFlags:["--no-strip-types","--no-global-search-paths","--enable-source-maps","--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"],
-        language:{apiVersion:"helmr.module-execution.v0",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:$typescriptVersion},
+        moduleLoader:{apiVersion:"helmr.module-loader.v0",loaderDigest:$loaderDigest,typescriptDigest:$typescriptDigest,typescriptVersion:$typescriptVersion},
         runtimeContract:$runtimeContract
       }' >"$tree/helmr/runtime.json"
 
