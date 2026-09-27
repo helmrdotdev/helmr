@@ -16,7 +16,8 @@ A removed or renamed selected case must fail selection rather than silently pass
 | Actor state across Turns and checkpoint restore | Dedicated host and `cases/actor.ts` | Host-loss or cross-host recovery |
 | IAM, managed capacity, rollout or cross-host behavior | Cloud-owned managed validation for the exact claim | Unselected cases or full scope closure |
 
-The dedicated-host cases are source-prepared and not yet live-qualified.
+The dedicated-host Task, same-host persistence and Actor continuation cases
+passed on a disposable dev host on 2026-09-27.
 Task persistence does not imply Actor coverage; the Actor case separately asserts
 Turn continuity and same-host restore. Select or add the actual behavior's case
 for host-loss or other claims. Cases are independently editable source, not a fixed all-suite
@@ -96,7 +97,9 @@ a second payload format for testing.
 
 The [dedicated runtime host profile](runtime-host.md) composes actual services and
 the installed Worker, with a separate small Task fixture and executable assertion.
-Its source is prepared; live integrated execution is not yet qualified. It requires
+Normal authenticated setup, Task execution, same-host persistence and Actor
+continuation have passed
+on the dedicated dev profile. This does not qualify every update or reset path. It requires
 real S3, runtime artifacts and normal authentication. The operating agent uses Cloud’s native runbook for explicit environment cleanup;
 there is no independent expiry service.
 

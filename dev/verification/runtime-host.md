@@ -1,12 +1,13 @@
 # Dedicated runtime host
 
-This is a source-prepared feasibility profile, not a qualified deployment target.
+This is a dedicated development verification profile, not a general deployment target.
 It composes the normal Control Plane, Dispatcher, PostgreSQL 18, Redis,
 ClickHouse and installed Worker on one dedicated Linux x86_64 KVM/systemd host.
 A passing `start` means CP and native Worker readiness, Redis PING and active
-service processes only. The Task case
-below provides a separate execution assertion. Live integrated acceptance is
-still outstanding.
+service processes only. On 2026-09-27 the Task, same-host persistence and Actor
+continuation cases passed on a disposable host using normal authentication and
+private native artifacts. Updated service binaries, edited-schema reset, guest
+metadata isolation and cross-host recovery require their own acceptance evidence.
 
 ## Inputs and ownership
 
@@ -277,10 +278,16 @@ available while the unit runs.
 
 The focused Linux check `tests/runtime_host/check_reset_process_boundary.py`
 qualifies child-process containment on an authorized host. It is not a resume
-acceptance suite and has not yet run at the deferred live checkpoint.
+acceptance suite. The dedicated-host check passed on 2026-09-27: a stopped reset
+unit terminated its child process, and duplicate operation admission was rejected.
 
 After a successful reset, repeat normal authenticated setup, project/environment,
 API keys and case deployment before testing. Services ready is not case success.
+
+The same-candidate reset was exercised on 2026-09-27: services restarted with a
+new data generation, normal authenticated setup/deployment was repeated, and the
+Task case passed afterward. Edited-migration and changed-executable updates remain
+separate unproved boundaries.
 
 ## Persistence and resume case
 
