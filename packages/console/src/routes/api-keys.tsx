@@ -136,7 +136,7 @@ const API_KEY_SCOPE_OPTIONS: {
   {
     value: "computer-exec:create",
     label: "Run computer commands",
-    description: "Allow automation to run bounded synchronous BasicExec commands.",
+    description: "Allow automation to start Commands on Computers.",
   },
   {
     value: "tasks:deploy",
