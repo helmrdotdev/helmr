@@ -1060,11 +1060,18 @@ WITH target AS (
            ),
            mount_state='lost', admission_state='closed', updated_at=now()
      WHERE computer_instances.id IN (SELECT id FROM reclaimable_runtimes)
-    RETURNING computer_instances.id
+    RETURNING computer_instances.id,computer_instances.writer_generation,computer_instances.reclaimed_at
+), reconciled_processes AS (
+    UPDATE run_leases l SET process_reconciled_at=i.reclaimed_at,updated_at=now()
+      FROM reclaimed_runtimes i
+     WHERE l.computer_instance_id=i.id AND l.writer_generation=i.writer_generation
+       AND l.process_reconciled_at IS NULL
+    RETURNING l.id
 )
 UPDATE worker_hosts
    SET updated_at = now()
   FROM target
  WHERE worker_hosts.id = target.id
    AND (SELECT count(*) FROM reclaimed_runtimes) >= 0
+   AND (SELECT count(*) FROM reconciled_processes) >= 0
 RETURNING worker_hosts.*;

@@ -185,6 +185,10 @@ func TestWorkerStartupRecoveryReclaimsPriorInstanceAtomicallyAndReplays(t *testi
 	if err := f.Pool.QueryRow(t.Context(), `SELECT observed_state='lost' AND mount_state='lost' AND admission_state='closed' AND reclaimed_at IS NOT NULL AND terminal_at IS NOT NULL AND terminal_reason_code='worker_startup_reclaimed' AND finalization_action='discard' AND finalization_reason_code='worker_draining' AND reclaim_evidence->>'method'='host_reconciled' AND reclaim_evidence->>'completed_at'='2026-08-17T00:00:00Z' FROM computer_instances WHERE id=$1`, prepared.instanceID).Scan(&exact); err != nil || !exact {
 		t.Fatalf("startup exclusion=%v err=%v", exact, err)
 	}
+	var reconciled bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT bool_and(l.process_reconciled_at=i.reclaimed_at) FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id WHERE i.id=$1`, prepared.instanceID).Scan(&reconciled); err != nil || !reconciled {
+		t.Fatalf("startup left processes unreconciled: %v %v", reconciled, err)
+	}
 	before := instanceSnapshot(t, f, prepared.instanceID)
 	if _, err := q.CompleteWorkerStartupRecovery(t.Context(), prepared.params); err != nil {
 		t.Fatal(err)
