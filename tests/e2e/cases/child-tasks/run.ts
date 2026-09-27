@@ -1,6 +1,7 @@
 import type { childTaskSmoke } from "./task"
+import { cleanupChildren } from "./cleanup"
 import { verify, assert, assertEqual, deadline, waitRun } from "../../support/context"
-await verify("child-tasks", async ({ client, marker, objects, workspace }) => {
+await verify("child-tasks", async ({ client, marker, objects, workspace, cleanup }) => {
   const target = await workspace("helmr-child-task-target-smoke", "target")
   for (const mode of [
     "call-success",
@@ -19,6 +20,7 @@ await verify("child-tasks", async ({ client, marker, objects, workspace }) => {
       { signal: deadline(30_000) },
     )
     objects.run_ids.push(run.id)
+    cleanup(() => cleanupChildren(client, run.id, [caller.id, target.id], objects.run_ids))
     const output = await client.runs.wait(run, { signal: deadline(20 * 60_000) }).unwrap()
     assert(output !== null && typeof output === "object" && !Array.isArray(output))
     assertEqual(output.mode, mode, "Child mode changed")

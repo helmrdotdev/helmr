@@ -268,12 +268,11 @@ def install(raw):
     for name, content in files(cfg).items():
         path = CONFIG / name
         path.write_text(content)
-        path.chmod(0o640)
+        path.chmod(0o600 if name == 'config.json' or name.endswith('.env') or name == 'enrollment-token' else 0o640)
         shutil.chown(path, group=USER)
         if name.endswith('.service'):
             shutil.copyfile(path, Path('/etc/systemd/system') / name)
-    # Worker enrollment credentials are read by root only.
-    (CONFIG / 'enrollment-token').chmod(0o600)
+    # systemd reads EnvironmentFile as root before switching service identities.
     override = Path('/etc/systemd/system/helmr-worker.service.d')
     override.mkdir()
     shutil.copyfile(CONFIG / 'worker-override.conf', override / 'verification.conf')
@@ -336,11 +335,11 @@ def stop(cfg):
     if active == 'active':
         # Keep CP and dispatcher alive until the native drain is acknowledged.
         run('/usr/local/bin/worker', 'drain', '--timeout', '5m', env=dict(os.environ) | cfg['worker'], timeout=310)
-        run('systemctl', 'stop', 'helmr-worker.service')
+        run('systemctl', 'stop', 'helmr-worker.service', timeout=180)
     elif active != 'inactive':
         raise RuntimeError('Worker is not inactive or active; inspect failure before stopping dependencies')
     for name in reversed(SERVICES):
-        run('systemctl', 'stop', unit(name))
+        run('systemctl', 'stop', unit(name), timeout=180)
     print('Services stopped; scope data, S3 objects and host remain allocated.')
 
 
@@ -584,7 +583,7 @@ def apply_services(cfg, directory, reset):
         print('Reset services ready; repeat normal setup, API keys and case deployment. No behavior case has passed.')
         return
     try:
-        run('systemctl', 'stop', unit('control-plane'))
+        run('systemctl', 'stop', unit('control-plane'), timeout=180)
         for name in names:
             replace_binary(attempt / name, Path(cfg['binaries'][name]))
         run('systemctl', 'start', unit('control-plane'))

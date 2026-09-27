@@ -98,6 +98,8 @@ class ProfileTests(unittest.TestCase):
             calls = [call.args for call in run.call_args_list]
             self.assertEqual(calls[0][:2], ('/usr/local/bin/worker', 'drain'))
             self.assertEqual(calls[1], ('systemctl', 'stop', 'helmr-worker.service'))
+            for call in run.call_args_list[1:]:
+                self.assertGreater(call.kwargs['timeout'], 120)
             self.assertLess(calls.index(('systemctl', 'stop', host.unit('control-plane'))), calls.index(('systemctl', 'stop', host.unit('postgres'))))
 
     def test_start_does_not_migrate_under_live_application(self):
