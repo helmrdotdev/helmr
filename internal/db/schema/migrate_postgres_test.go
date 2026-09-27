@@ -772,6 +772,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 
 	requiredIndexes := []string{
+		"run_leases_process_cleanup_idx",
 		"run_leases_run_active_uidx", "run_leases_computer_instance_active_idx",
 		"computer_instances_computer_active_uidx", "computer_instances_source_checkpoint_idx",
 		"computer_instances_writer_expiry_idx", "computer_commands_pending_idx",
