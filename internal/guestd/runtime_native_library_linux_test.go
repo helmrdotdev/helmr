@@ -34,7 +34,7 @@ type nativeLibraryProbe struct {
 // TestManagedNodeNativeLibraries launches the platform Node through the real
 // managed Program path (namespace init, pivot into the Workspace root, sealed
 // Runtime and Program mounts, identity drop, direct exec) inside prepared
-// Workspace roots. tests/guestd_native_library_e2e.sh provides the admitted
+// Workspace roots. tests/build/guestd-native-library.test.sh provides the admitted
 // Program, the Runtime artifact and the roots; it needs root on Linux.
 func TestManagedNodeNativeLibraries(t *testing.T) {
 	roots := os.Getenv("HELMR_GUESTD_NATIVE_WORKSPACES")

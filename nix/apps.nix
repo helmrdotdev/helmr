@@ -70,28 +70,27 @@ let
           actionlint
           scripts/security-checks.sh
           bash -n dev/local/start.sh
-          bash tests/buildkit_steps_test.sh
-          bash tests/ci_workflow_test.sh
-          bash tests/install_test.sh
-          bash tests/release_manifest_test.sh
-          bash tests/release_artifact_contracts_test.sh
-          bash tests/release_workflow_test.sh
-          bash tests/release_manifest_verify_test.sh
-          bash tests/release_worker_ami_cleanup_test.sh
-          bash tests/release_worker_image_identity_test.sh
-          bash tests/aws_bootstrap_helmr_secrets_test.sh
-          bash tests/aws_release_artifacts_test.sh
-          bash tests/platform_release_materialize_test.sh
-          bash tests/platform_release_publish_test.sh
-          bash tests/publish_materialized_platform_release_test.sh
-          bash tests/runtime_naming_contract_test.sh
-          bash tests/worker_host_bundle_test.sh
-          bash tests/worker_runtime_bundle_test.sh
-          bash tests/linux_worker_host_bundle_materialize_test.sh
-          bash tests/netboot_inputs_test.sh
-          bash tests/boot_artifacts_make_test.sh
-          bash tests/guest_init_cgroup_test.sh
-          bash tests/guest_init_network_test.sh
+          bash tests/build/buildkit-steps.test.sh
+          bash tests/build/ci-workflow.test.sh
+          bash tests/release/install.test.sh
+          bash tests/release/manifest.test.sh
+          bash tests/release/artifact-contracts.test.sh
+          bash tests/release/workflow.test.sh
+          bash tests/release/manifest-verify.test.sh
+          bash tests/release/worker-ami-cleanup.test.sh
+          bash tests/release/worker-image-identity.test.sh
+          bash tests/release/aws-bootstrap-helmr-secrets.test.sh
+          bash tests/release/aws-release-artifacts.test.sh
+          bash tests/release/platform-release-materialize.test.sh
+          bash tests/release/publish-materialized-platform-release.test.sh
+          bash tests/build/runtime-naming-contract.test.sh
+          bash tests/release/worker-host-bundle.test.sh
+          bash tests/release/worker-runtime-bundle.test.sh
+          bash tests/release/linux-worker-host-bundle-materialize.test.sh
+          bash tests/build/netboot-inputs.test.sh
+          bash tests/build/boot-artifacts-make.test.sh
+          bash tests/build/guest-init-cgroup.test.sh
+          bash tests/build/guest-init-network.test.sh
         '';
     ci-generated =
       app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciGenerated
@@ -112,7 +111,12 @@ let
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
           ''}
           bun install --frozen-lockfile --ignore-scripts
-          scripts/check-dev-samples.sh
+          scripts/check-e2e.sh
+          (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test tests)
+          scripts/check-packed-sdk-consumer.sh
+          scripts/build-compiler-entry.sh
+          scripts/build-hostconfig-entry.sh
+          node tests/build/fixture-analysis.test.mjs
           bun run typecheck
           bun run test:ts
           bun run build:web
@@ -168,7 +172,7 @@ let
             (
               cd "infra/aws/modules/$module"
               if [ "$module" = worker-image ]; then
-                bash tests/prepare_root_test.sh
+                bash tests/prepare-root.test.sh
               fi
               tofu init -backend=false -input=false
               tofu fmt -check -recursive
@@ -193,7 +197,7 @@ let
               esac
             )
           done
-          python3 tests/aws_root_composition_test.py "$root_plans/quickstart.jsonl" "$root_plans/standard.jsonl" "$root_plans/worker-image.jsonl"
+          python3 infra/aws/tests/check_root_composition.py "$root_plans/quickstart.jsonl" "$root_plans/standard.jsonl" "$root_plans/worker-image.jsonl"
         '';
     ci-clickhouse =
       let
@@ -232,7 +236,7 @@ ciApps
   ci-bundle-builder =
     app "ci-bundle-builder" "run the canonical bundle builder end-to-end tests" toolsets.ciBundleBuilder
       ''
-        exec bash ./tests/bundle_builder_e2e.sh
+        exec bash ./tests/build/bundle-builder.test.sh
       '';
   ci-version-cohort =
     app "ci-version-cohort" "verify cohort stamps and Worker artifact identity guidance"
@@ -245,7 +249,7 @@ ciApps
         pkgs.stdenv.cc
       ]
       ''
-        exec bash ./tests/version_cohort_test.sh "$@"
+        exec bash ./tests/release/version-cohort.test.sh "$@"
       '';
   dev =
     let
@@ -300,11 +304,11 @@ ciApps
         pkgs.nix
       ]
       ''
-        bash ./tests/netboot_inputs_test.sh
-        bash ./tests/boot_artifacts_make_test.sh
-        bash ./tests/guest_init_cgroup_test.sh
-        bash ./tests/guest_init_network_test.sh
-        exec ./tests/boot_artifacts_reproducibility_test.sh "$@"
+        bash ./tests/build/netboot-inputs.test.sh
+        bash ./tests/build/boot-artifacts-make.test.sh
+        bash ./tests/build/guest-init-cgroup.test.sh
+        bash ./tests/build/guest-init-network.test.sh
+        exec ./tests/build/boot-artifacts-reproducibility.test.sh "$@"
       '';
   doctor = app "doctor" "check Helmr host prerequisites" toolsets.appRuntime ''
     exec ./scripts/doctor.sh "$@"
@@ -335,7 +339,7 @@ ciApps
         export PLAYWRIGHT_BROWSERS_PATH=${pkgsUnstable.playwright-driver.browsers}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
         bun install --frozen-lockfile --ignore-scripts
-        bash tests/local_stack_test.sh
+        bash dev/local/start.test.sh
         bun run test:browser
       '';
 

@@ -151,5 +151,5 @@ jobs:
         run: |
           nix develop ../tools#images -c bash -euo pipefail <<'SH'
           bun install --frozen-lockfile --ignore-scripts
-          RELEASE_SOURCE_ROOT="$PWD" bash ../tools/tests/release_consumer.sh "$RUNNER_TEMP/assets"
+          RELEASE_SOURCE_ROOT="$PWD" bash ../tools/tests/release/consumer.sh "$RUNNER_TEMP/assets"
           SH

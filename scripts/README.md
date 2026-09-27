@@ -49,7 +49,7 @@ must agree.
 Run stack integration checks:
 
 ```sh
-./tests/local_stack_test.sh
+./dev/local/start.test.sh
 ```
 
 Run browser acceptance tests (single managed preview stack, reset per run):

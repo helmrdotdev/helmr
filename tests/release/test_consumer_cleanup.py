@@ -18,7 +18,7 @@ class ContextCleanup(unittest.TestCase):
             with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
                 result = subprocess.run(['bash', '-c', r'''
 set -eu
-source tests/buildx-fixture.sh
+source tests/build/buildx-fixture.sh
 # Record calls independently of cleanup's suppressed stdout/stderr.
 env() { printf 'original\n'; }
 docker() {
