@@ -56,6 +56,11 @@ descriptor makes CP reject it. Bootstrap enrollment tokens use the native
 a bare random hex string. Blocked IPv4 CIDRs must be unique and sorted by numeric
 network address, then prefix length. The Worker also blocks its host interfaces
 and link pool; include the actual metadata/privileged destinations explicitly.
+Set `VM_SCRATCH_DISK_MIB=32768` before first enrollment: ordinary Workspaces
+require 32 GiB of guest ephemeral disk. The Worker default of 8 GiB can become
+ready while remaining ineligible for every ordinary Workspace. The pool seals its
+shape on registration; changing this after enrollment requires normal pool
+replacement or an explicit disposable profile reset, not a database row edit.
 
 The profile uses self-hosted Computer key wrapping. Backing services and CP bind
 loopback; access CP through an authorized tunnel. PostgreSQL uses a separate
@@ -165,6 +170,13 @@ helmr deploy /private/case-project
 HELMR_EVIDENCE_DIR=/private/attempt-001/task \
   bun run /private/case-project/cases/task.ts
 ```
+
+When using the local Vite console with separate tunnels, point CLI/SDK
+`HELMR_API_URL` at the forwarded CP port, not the Vite port. Vite proxies `/api/`
+and `/dev/` for browser authentication but does not proxy the CLI/SDK's `/v1/`
+routes. For example, a console on `127.0.0.1:58080` can use a CP tunnel on
+`127.0.0.1:58081`; the latter is the CLI/SDK origin. OAuth still returns to the
+console's configured callback.
 
 Both commands use `HELMR_API_URL` and `HELMR_API_KEY`. The evidence directory must
 not exist, and its parent must exist. The case uses bounded requests and execution

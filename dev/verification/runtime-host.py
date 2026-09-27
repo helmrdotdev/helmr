@@ -164,6 +164,9 @@ def files(cfg):
     }
     for name, command in commands.items():
         result[unit(name)] = service(command, name + '.env' if name in ['control-plane', 'dispatcher'] else None)
+        if name == 'clickhouse':
+            # The pinned ClickHouse launcher returns 128 + SIGTERM on normal stop.
+            result[unit(name)] += 'SuccessExitStatus=143\n'
     # Keep the canonical Worker service's delegation/kill semantics.
     result['worker-override.conf'] = f'[Service]\nEnvironmentFile=\nEnvironmentFile={CONFIG}/worker.env\nRestart=no\n'
     return result

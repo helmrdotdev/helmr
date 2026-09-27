@@ -22,7 +22,8 @@
     "WORKER_NETWORK_LINK_POOL": "172.30.0.0/16",
     "WORKER_NETWORK_TRANSLATION_POOL": "172.31.0.0/16",
     "WORKER_NETWORK_RESOLVER_IPV4": "REPLACE",
-    "WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "[\"169.254.0.0/16\"]"
+    "WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "[\"169.254.0.0/16\"]",
+    "VM_SCRATCH_DISK_MIB": "32768"
   },
   "services_candidate": "/opt/helmr-candidate/services",
   "worker_host_receipt": "/opt/helmr-candidate/worker-host-bundle.json",
