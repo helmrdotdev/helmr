@@ -73,7 +73,7 @@ func loadGoldenFixture(t *testing.T) goldenFixture {
 	if !ok {
 		t.Fatal("resolve test source path")
 	}
-	raw, err := os.ReadFile(filepath.Join(filepath.Dir(source), "..", "..", "fixtures", "contracts", "deployment-v0", "golden.json"))
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(source), "..", "..", "tests", "fixtures", "contracts", "deployment-v0", "golden.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

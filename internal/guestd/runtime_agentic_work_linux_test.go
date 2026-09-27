@@ -21,7 +21,7 @@ import (
 // disk decoded from the builder's seed. Handlers run through the managed Program
 // launch path with the Runtime's Node flags. This checks actual deployment bytes,
 // but not the guest task protocol, Firecracker or checkpoint/resume.
-// tests/agentic_work_e2e.sh provides the inputs.
+// tests/build/agentic-work.test.sh provides the inputs.
 func TestManagedNodeAgenticWork(t *testing.T) {
 	descriptor := os.Getenv("HELMR_GUESTD_AGENTIC_COMPUTER_SEED")
 	if descriptor == "" {

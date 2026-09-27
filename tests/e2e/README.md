@@ -15,6 +15,10 @@ Local, dedicated Dev and shared staging are execution destinations, not three
 copies of each case. Use staging for an integrated rollout claim; ordinary feature
 corrections do not require publishing a preview or rebuilding a managed stack.
 
+See [test ownership and naming](../README.md) for repository-wide placement and
+file conventions. `scripts/check-e2e.sh` checks types and local helper tests; it
+does not execute real workloads.
+
 ## Layout and selection
 
 - `cases/<behavior>/run.ts`: executable stimulus, assertions and fixture cleanup.
@@ -23,7 +27,7 @@ corrections do not require publishing a preview or rebuilding a managed stack.
 - `support/`: bounded waits and evidence/cleanup mechanics shared by actual callers.
 - `fixtures/schedule/`: intentionally separate scheduled deployment. Promote it
   only for Schedule validation; restore the ordinary bundle afterward.
-- `prepare-project.py`: isolate selected fixtures and locally packed SDK dependencies.
+- `prepare_project.py`: isolate selected fixtures and locally packed SDK dependencies.
 
 Keep assertions next to their stimulus. Split by a separately meaningful claim,
 not one file per API call. Do not put deployment, account setup or provider fault
@@ -52,7 +56,7 @@ fixture is likewise consumed by provider validation.
 ## Prepare and run
 
 ```sh
-nix develop -c python3 tests/e2e/prepare-project.py /private/case-project \
+nix develop -c python3 tests/e2e/prepare_project.py /private/case-project \
   --fixtures cases/task
 helmr deploy /private/case-project
 HELMR_EVIDENCE_DIR=/private/attempt/task \

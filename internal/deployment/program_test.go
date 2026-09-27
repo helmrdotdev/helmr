@@ -214,6 +214,7 @@ func loadContractFixture(t *testing.T) contractFixture {
 		filepath.Dir(source),
 		"..",
 		"..",
+		"tests",
 		"fixtures",
 		"contracts",
 		"deployment-v0",

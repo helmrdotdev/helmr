@@ -675,7 +675,7 @@ def main():
     parser.add_argument('action', choices=['render', 'install', 'start', 'stop', 'inspect', 'apply-services', 'wait-parked', 'verify-restored'])
     parser.add_argument('--config', type=Path, help='input JSON for render/install')
     parser.add_argument('--output', type=Path, help='new private directory for offline render')
-    parser.add_argument('--candidate', type=Path, help='build-services.py output for apply-services')
+    parser.add_argument('--candidate', type=Path, help='build_services.py output for apply-services')
     parser.add_argument('--reset-data', action='store_true', help='explicitly discard private scope fixtures and recreate schema')
     parser.add_argument('--run-id', help='Run UUID for persistence evidence')
     parser.add_argument('--reset-runner', action='store_true', help=argparse.SUPPRESS)

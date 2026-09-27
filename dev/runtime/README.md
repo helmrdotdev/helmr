@@ -35,7 +35,7 @@ Provisioning must supply:
   or a host role. The normal runtime release must already be privately published,
   with its actual descriptor. No file CAS, synthetic descriptor or public release
   is part of this path. This script does not grant AWS access or publish artifacts.
-- A `build-services.py` candidate directory containing Linux CP/Dispatcher binaries,
+- A `build_services.py` candidate directory containing Linux CP/Dispatcher binaries,
   input digests and the clean archived source, plus the native Worker host/runtime
   bundle receipts from that initial source revision. These API-only service binaries
   do not embed the console; normal setup/API authentication is still required.
@@ -178,7 +178,7 @@ Prepare a separate, self-contained case project with local SDK tarballs:
 
 ```sh
 nix develop -c bun install --frozen-lockfile
-nix develop -c python3 tests/e2e/prepare-project.py /private/case-project --fixtures cases/task
+nix develop -c python3 tests/e2e/prepare_project.py /private/case-project --fixtures cases/task
 ```
 
 The new directory contains the current editable cases/tasks, local packed SDK and
@@ -231,7 +231,7 @@ local commit is sufficient: the output retains its source archive, so it is not
 recoverable only from the original laptop. Keep output outside the checkout:
 
 ```sh
-nix develop -c python3 dev/runtime/build-services.py . /private/candidate-002
+nix develop -c python3 dev/runtime/build_services.py . /private/candidate-002
 sudo python3 dev/runtime/host.py apply-services --candidate /private/candidate-002
 ```
 
@@ -303,7 +303,7 @@ teardown. Native service credentials come from the private profile or host role;
 caller environment variables are not forwarded. Source/tool paths must remain
 available while the unit runs.
 
-The focused Linux check `tests/runtime_host/check_reset_process_boundary.py`
+The focused Linux check `dev/runtime/check_reset_process_boundary.py`
 qualifies child-process containment on an authorized host. It is not a resume
 acceptance suite. The dedicated-host check passed on 2026-09-27: a stopped reset
 unit terminated its child process, and duplicate operation admission was rejected.
@@ -381,7 +381,7 @@ ambiguity, observation failures, terminal Turn failures and cleanup failures exi
 nonzero. No accepted API deletion is promoted to final resource cleanup.
 
 Offline assertion-sensitivity checks use
-`nix develop -c bun test tests/runtime_actor/actor-check.test.ts`; they reject lost
+`nix develop -c bun test tests/e2e/cases/actor/assertions.test.ts`; they reject lost
 memory, reset counters, changed identity, retried Runs, wrong checkpoints and hot
 VM reuse. Type checking and the real PostgreSQL query check validate source/query
 boundaries only. The complete Actor case still needs the integrated checkpoint.

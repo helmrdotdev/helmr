@@ -8,5 +8,6 @@ verification. Read `tasks/issue-fixer/README.md` for application behavior.
 only when that exact integration needs proof. Do not run it as an implicit release
 gate or as part of unrelated Task verification.
 
-From the Product root, `scripts/check-dev-samples.sh` builds local SDK packages and
-type-checks this example. No SDK publication is required.
+From the Product root, `scripts/build-npm-packages.sh` builds local SDK packages.
+Then run `bun install --frozen-lockfile --ignore-scripts`, `bun run typecheck`
+and `bun test tests` in this directory. No SDK publication is required.
