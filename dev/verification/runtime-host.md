@@ -50,6 +50,13 @@ service identities, and rejects overrides of those fields. Per-scope keys and
 passwords are generated once on install and retained across starts. Secrets never
 belong in source control or the evidence bundle.
 
+Keep the Runtime descriptor's canonical JSON bytes; pretty-printing an extracted
+descriptor makes CP reject it. Bootstrap enrollment tokens use the native
+`hlmr_wgt_` prefix followed by 32 random bytes encoded as unpadded base64url, not
+a bare random hex string. Blocked IPv4 CIDRs must be unique and sorted by numeric
+network address, then prefix length. The Worker also blocks its host interfaces
+and link pool; include the actual metadata/privileged destinations explicitly.
+
 The profile uses self-hosted Computer key wrapping. Backing services and CP bind
 loopback; access CP through an authorized tunnel. PostgreSQL uses a separate
 non-superuser application role with SCRAM authentication over loopback, and
