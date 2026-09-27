@@ -2188,6 +2188,11 @@ CREATE INDEX run_leases_expiry_idx
     ON run_leases (expires_at, id)
     WHERE status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
 
+CREATE INDEX run_leases_process_cleanup_idx
+    ON run_leases (computer_instance_id, writer_generation, created_at, id)
+    WHERE process_reconciled_at IS NULL
+      AND status IN ('completed', 'failed', 'cancelled', 'lost', 'rejected', 'expired');
+
 CREATE INDEX run_leases_history_idx
     ON run_leases (run_id, attempt_number, lease_sequence DESC);
 
