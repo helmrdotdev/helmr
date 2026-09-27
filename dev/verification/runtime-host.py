@@ -637,6 +637,9 @@ def observe_persistence(cfg, run_id, action):
                           env=dict(os.environ, PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=5000'),
                           timeout=10).stdout.strip()
         observed = json.loads(raw) if raw else None
+        status = observed.get('run_status') if observed else None
+        if status in ['failed', 'system_failed', 'cancelled', 'expired'] or (status == 'succeeded' and action == 'wait-parked'):
+            raise RuntimeError(f"Run ended with {status} before {action}: {json.dumps(observed.get('run_failure'))}")
         return persistence_matches(observed, action)
     wait_for(check, action, seconds=180)
     print(json.dumps(observed))

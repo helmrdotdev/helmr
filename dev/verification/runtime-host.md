@@ -11,8 +11,10 @@ still outstanding.
 ## Inputs and ownership
 
 One entire host belongs to one repair scope. Reserve sufficient disk and memory
-for the real services, verifier and guest; the Worker defaults include 64 GiB of
-Computer staging. A scope spans multiple correction attempts. Do not install this
+for the real services, verifier and guest. The sample caps Computer staging at
+4 GiB for these small cases; the native default is 64 GiB. Reserve space for
+the live disks and checkpoint intermediates together. A 200 GiB pilot with the
+64 GiB staging default ran Tasks but rejected checkpoint capture for capacity. A scope spans multiple correction attempts. Do not install this
 profile on shared staging or an existing development host.
 
 Provisioning must supply:

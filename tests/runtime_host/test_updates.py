@@ -162,6 +162,16 @@ class UpdateTests(unittest.TestCase):
                 host.reset_private_data(host.compile_config(config()))
             remove.assert_not_called()
 
+    def test_persistence_stops_on_terminal_failure_without_checkpoint(self):
+        for action in ['wait-parked', 'verify-restored']:
+            for status in ['failed', 'system_failed', 'cancelled', 'expired']:
+                row = {'run_status': status, 'run_failure': {'code': 'checkpoint_failed', 'message': 'capacity exceeded'}}
+                result = subprocess.CompletedProcess([], 0, stdout=json.dumps(row))
+                with self.subTest(action=action, status=status), patch.object(host, 'service_run', return_value=result) as query:
+                    with self.assertRaisesRegex(RuntimeError, 'capacity exceeded'):
+                        host.observe_persistence({'binaries': {'psql': '/psql'}}, '01900000-0000-7000-8000-000000000001', action)
+                    self.assertEqual(query.call_count, 1)
+
     def test_persistence_requires_reclaimed_vm_not_just_waiting(self):
         row = {'attempt_number': 1, 'checkpoint_id': 'checkpoint', 'run_status': 'waiting',
                'condition': 'pending', 'suspension': 'parked', 'checkpoint_status': 'ready',
