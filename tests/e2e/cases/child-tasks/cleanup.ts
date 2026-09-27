@@ -1,5 +1,5 @@
 import type { HelmrClient, Run } from "@helmr/sdk"
-import { deadline, waitRun } from "../../support/context"
+import { deadline, errorCode, waitRun } from "../../support/context"
 
 // A failed parent may never return its child's ID. Discover only this parent's
 // children in its two owned Workspaces before the Workspaces are deleted.
@@ -26,7 +26,12 @@ export async function cleanupChildren(
   // Cancellation can take longer than discovery's request budget.
   for (const run of children) {
     if (!["succeeded", "failed", "system_failed", "cancelled", "expired"].includes(run.status)) {
-      await client.runs.cancel(run.id, {}, { signal: deadline(30_000) })
+      try {
+        await client.runs.cancel(run.id, {}, { signal: deadline(30_000) })
+      } catch (error) {
+        // A child can finish after discovery. Prove terminal state below.
+        if (errorCode(error) !== "run_lifecycle_conflict") throw error
+      }
       await waitRun(client, run.id, ["succeeded", "failed", "system_failed", "cancelled", "expired"], 120_000)
     }
   }

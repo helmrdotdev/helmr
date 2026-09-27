@@ -32,3 +32,17 @@ test("failed parent cleanup discovers paginated children without touching other 
   expect(retrieved).not.toContain("other-workspace")
   expect(recorded).toEqual(["parent", "finished", "child"])
 })
+
+
+test("child finishing between discovery and cancellation is proved terminal", async () => {
+  let reads = 0
+  const client = { runs: {
+    list: async () => ({ items: [{ id: "child", workspaceId: "owned" }] }),
+    retrieve: async () => ({ id: "child", parentRunId: "parent", status: ++reads === 1 ? "running" : "succeeded" }),
+    cancel: async () => { throw Object.assign(new Error("already terminal"), { code: "run_lifecycle_conflict" }) },
+  } } as unknown as HelmrClient
+  const recorded: string[] = []
+  await cleanupChildren(client, "parent", ["owned"], recorded)
+  expect(recorded).toEqual(["child"])
+  expect(reads).toBe(2)
+})
