@@ -1,4 +1,4 @@
-import type { HelmrClient } from "@helmr/sdk"
+import type { HelmrClient, Run } from "@helmr/sdk"
 import { deadline, waitRun } from "../../support/context"
 
 // A failed parent may never return its child's ID. Discover only this parent's
@@ -10,6 +10,7 @@ export async function cleanupChildren(
   recorded: string[],
 ) {
   const signal = deadline(30_000)
+  const children: Run[] = []
   let cursor: string | undefined
   do {
     const page = await client.runs.list({ kind: "task", limit: 100, cursor }, { signal })
@@ -18,11 +19,15 @@ export async function cleanupChildren(
       const run = await client.runs.retrieve(item.id, { signal })
       if (run.parentRunId !== parentId) continue
       if (!recorded.includes(run.id)) recorded.push(run.id)
-      if (!["succeeded", "failed", "system_failed", "cancelled", "expired"].includes(run.status)) {
-        await client.runs.cancel(run.id, {}, { signal: deadline(30_000) })
-        await waitRun(client, run.id, ["succeeded", "failed", "system_failed", "cancelled", "expired"], 120_000)
-      }
+      children.push(run)
     }
     cursor = page.nextCursor
   } while (cursor !== undefined)
+  // Cancellation can take longer than discovery's request budget.
+  for (const run of children) {
+    if (!["succeeded", "failed", "system_failed", "cancelled", "expired"].includes(run.status)) {
+      await client.runs.cancel(run.id, {}, { signal: deadline(30_000) })
+      await waitRun(client, run.id, ["succeeded", "failed", "system_failed", "cancelled", "expired"], 120_000)
+    }
+  }
 }

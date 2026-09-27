@@ -4,18 +4,26 @@ import { cleanupChildren } from "../e2e/cases/child-tasks/cleanup"
 
 test("failed parent cleanup discovers paginated children without touching other owners", async () => {
   const retrieved: string[] = [], cancelled: string[] = [], cursors: unknown[] = []
+  let discoverySignal: AbortSignal | undefined
   const client = { runs: {
-    list: async ({ cursor }: { cursor?: string }) => {
+    list: async ({ cursor }: { cursor?: string }, { signal }: { signal: AbortSignal }) => {
+      discoverySignal = signal
+      signal.throwIfAborted()
       cursors.push(cursor)
       return cursor === undefined
-        ? { items: [{ id: "other-workspace", workspaceId: "unrelated" }, { id: "other-parent", workspaceId: "owned" }], nextCursor: "second" }
-        : { items: [{ id: "child", workspaceId: "owned" }, { id: "finished", workspaceId: "owned" }] }
+        ? { items: [{ id: "child", workspaceId: "owned" }, { id: "other-workspace", workspaceId: "unrelated" }, { id: "other-parent", workspaceId: "owned" }], nextCursor: "second" }
+        : { items: [{ id: "finished", workspaceId: "owned" }] }
     },
     retrieve: async (id: string) => {
       retrieved.push(id)
       return { id, parentRunId: id === "other-parent" ? "other" : "parent", status: id === "child" && !cancelled.includes(id) ? "running" : "succeeded" }
     },
-    cancel: async (id: string) => { cancelled.push(id) },
+    cancel: async (id: string) => {
+      expect(cursors).toEqual([undefined, "second"])
+      expect(retrieved).toContain("finished")
+      expect(discoverySignal).toBeDefined()
+      cancelled.push(id)
+    },
   } } as unknown as HelmrClient
   const recorded = ["parent", "finished"]
   await cleanupChildren(client, "parent", ["owned"], recorded)
