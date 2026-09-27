@@ -23,6 +23,7 @@ const (
 	StreamTypeComputerBasicExec       StreamType = "computer-basic-exec"
 	StreamTypeComputerCommandCancel   StreamType = "computer-command-cancel"
 	StreamTypeComputerCommandRelease  StreamType = "computer-command-release"
+ StreamTypeComputerRunCleanup StreamType = "computer-run-cleanup"
 	StreamTypeComputerAuthorityRenew  StreamType = "computer-authority-renew"
 	StreamTypeProgramResumeGrant      StreamType = "program-resume-grant"
 	StreamTypeComputerRestoreVerify   StreamType = "computer-restore-verify"

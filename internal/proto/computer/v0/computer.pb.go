@@ -2457,6 +2457,150 @@ func (x *ComputerRestoreInstallationResponse) GetInstallation() *ComputerRestore
 	return nil
 }
 
+type ComputerRunCleanupRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	ComputerId         string                 `protobuf:"bytes,1,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
+	ComputerInstanceId string                 `protobuf:"bytes,2,opt,name=computer_instance_id,json=computerInstanceId,proto3" json:"computer_instance_id,omitempty"`
+	WriterGeneration   int64                  `protobuf:"varint,3,opt,name=writer_generation,json=writerGeneration,proto3" json:"writer_generation,omitempty"`
+	ChannelToken       string                 `protobuf:"bytes,4,opt,name=channel_token,json=channelToken,proto3" json:"channel_token,omitempty"`
+	RunId              string                 `protobuf:"bytes,5,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AttemptNumber      uint32                 `protobuf:"varint,6,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	RunLeaseId         string                 `protobuf:"bytes,7,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ComputerRunCleanupRequest) Reset() {
+	*x = ComputerRunCleanupRequest{}
+	mi := &file_computer_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComputerRunCleanupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComputerRunCleanupRequest) ProtoMessage() {}
+
+func (x *ComputerRunCleanupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComputerRunCleanupRequest.ProtoReflect.Descriptor instead.
+func (*ComputerRunCleanupRequest) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *ComputerRunCleanupRequest) GetComputerId() string {
+	if x != nil {
+		return x.ComputerId
+	}
+	return ""
+}
+
+func (x *ComputerRunCleanupRequest) GetComputerInstanceId() string {
+	if x != nil {
+		return x.ComputerInstanceId
+	}
+	return ""
+}
+
+func (x *ComputerRunCleanupRequest) GetWriterGeneration() int64 {
+	if x != nil {
+		return x.WriterGeneration
+	}
+	return 0
+}
+
+func (x *ComputerRunCleanupRequest) GetChannelToken() string {
+	if x != nil {
+		return x.ChannelToken
+	}
+	return ""
+}
+
+func (x *ComputerRunCleanupRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ComputerRunCleanupRequest) GetAttemptNumber() uint32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
+func (x *ComputerRunCleanupRequest) GetRunLeaseId() string {
+	if x != nil {
+		return x.RunLeaseId
+	}
+	return ""
+}
+
+type ComputerRunCleanupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reconciled    bool                   `protobuf:"varint,1,opt,name=reconciled,proto3" json:"reconciled,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComputerRunCleanupResponse) Reset() {
+	*x = ComputerRunCleanupResponse{}
+	mi := &file_computer_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComputerRunCleanupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComputerRunCleanupResponse) ProtoMessage() {}
+
+func (x *ComputerRunCleanupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_computer_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComputerRunCleanupResponse.ProtoReflect.Descriptor instead.
+func (*ComputerRunCleanupResponse) Descriptor() ([]byte, []int) {
+	return file_computer_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *ComputerRunCleanupResponse) GetReconciled() bool {
+	if x != nil {
+		return x.Reconciled
+	}
+	return false
+}
+
+func (x *ComputerRunCleanupResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_computer_proto protoreflect.FileDescriptor
 
 const file_computer_proto_rawDesc = "" +
@@ -2662,7 +2806,22 @@ const file_computer_proto_rawDesc = "" +
 	"\x0fdesired_version\x18\x03 \x01(\x03R\x0edesiredVersion\x12?\n" +
 	"\x06grants\x18\x04 \x03(\v2'.helmr.computer.v0.ComputerRunAuthorityR\x06grants\"y\n" +
 	"#ComputerRestoreInstallationResponse\x12R\n" +
-	"\finstallation\x18\x01 \x01(\v2..helmr.computer.v0.ComputerRestoreInstallationR\finstallationBDZBgithub.com/helmrdotdev/helmr/internal/proto/computer/v0;computerv0b\x06proto3"
+	"\finstallation\x18\x01 \x01(\v2..helmr.computer.v0.ComputerRestoreInstallationR\finstallation\"\xa0\x02\n" +
+	"\x19ComputerRunCleanupRequest\x12\x1f\n" +
+	"\vcomputer_id\x18\x01 \x01(\tR\n" +
+	"computerId\x120\n" +
+	"\x14computer_instance_id\x18\x02 \x01(\tR\x12computerInstanceId\x12+\n" +
+	"\x11writer_generation\x18\x03 \x01(\x03R\x10writerGeneration\x12#\n" +
+	"\rchannel_token\x18\x04 \x01(\tR\fchannelToken\x12\x15\n" +
+	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12%\n" +
+	"\x0eattempt_number\x18\x06 \x01(\rR\rattemptNumber\x12 \n" +
+	"\frun_lease_id\x18\a \x01(\tR\n" +
+	"runLeaseId\"R\n" +
+	"\x1aComputerRunCleanupResponse\x12\x1e\n" +
+	"\n" +
+	"reconciled\x18\x01 \x01(\bR\n" +
+	"reconciled\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05errorBDZBgithub.com/helmrdotdev/helmr/internal/proto/computer/v0;computerv0b\x06proto3"
 
 var (
 	file_computer_proto_rawDescOnce sync.Once
@@ -2676,7 +2835,7 @@ func file_computer_proto_rawDescGZIP() []byte {
 	return file_computer_proto_rawDescData
 }
 
-var file_computer_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_computer_proto_msgTypes = make([]protoimpl.MessageInfo, 39)
 var file_computer_proto_goTypes = []any{
 	(*ComputerOperationEnvelope)(nil),           // 0: helmr.computer.v0.ComputerOperationEnvelope
 	(*ComputerArtifact)(nil),                    // 1: helmr.computer.v0.ComputerArtifact
@@ -2714,8 +2873,10 @@ var file_computer_proto_goTypes = []any{
 	(*ComputerCommandCancelResponse)(nil),       // 33: helmr.computer.v0.ComputerCommandCancelResponse
 	(*ComputerRestoreInstallation)(nil),         // 34: helmr.computer.v0.ComputerRestoreInstallation
 	(*ComputerRestoreInstallationResponse)(nil), // 35: helmr.computer.v0.ComputerRestoreInstallationResponse
-	nil,                     // 36: helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
-	(*v0.ResumeAttach)(nil), // 37: helmr.program.v0.ResumeAttach
+	(*ComputerRunCleanupRequest)(nil),           // 36: helmr.computer.v0.ComputerRunCleanupRequest
+	(*ComputerRunCleanupResponse)(nil),          // 37: helmr.computer.v0.ComputerRunCleanupResponse
+	nil,                                         // 38: helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
+	(*v0.ResumeAttach)(nil),                     // 39: helmr.program.v0.ResumeAttach
 }
 var file_computer_proto_depIdxs = []int32{
 	2,  // 0: helmr.computer.v0.ComputerRunAuthority.fence:type_name -> helmr.computer.v0.ComputerAuthorityFence
@@ -2723,7 +2884,7 @@ var file_computer_proto_depIdxs = []int32{
 	2,  // 2: helmr.computer.v0.RenewComputerAuthorityResponse.fence:type_name -> helmr.computer.v0.ComputerAuthorityFence
 	3,  // 3: helmr.computer.v0.GrantProgramResumeRequest.authority:type_name -> helmr.computer.v0.ComputerRunAuthority
 	2,  // 4: helmr.computer.v0.GrantProgramResumeResponse.fence:type_name -> helmr.computer.v0.ComputerAuthorityFence
-	37, // 5: helmr.computer.v0.GrantProgramResumeResponse.attach:type_name -> helmr.program.v0.ResumeAttach
+	39, // 5: helmr.computer.v0.GrantProgramResumeResponse.attach:type_name -> helmr.program.v0.ResumeAttach
 	8,  // 6: helmr.computer.v0.ComputerRestoreIdentity.runs:type_name -> helmr.computer.v0.CapturedRun
 	10, // 7: helmr.computer.v0.FreezeComputerRequest.runs:type_name -> helmr.computer.v0.ComputerCaptureRun
 	9,  // 8: helmr.computer.v0.FreezeComputerResponse.identity:type_name -> helmr.computer.v0.ComputerRestoreIdentity
@@ -2740,7 +2901,7 @@ var file_computer_proto_depIdxs = []int32{
 	0,  // 19: helmr.computer.v0.HeartbeatComputerRequest.envelope:type_name -> helmr.computer.v0.ComputerOperationEnvelope
 	24, // 20: helmr.computer.v0.ComputerBasicExecRequest.envelope:type_name -> helmr.computer.v0.ComputerCommandAuthority
 	29, // 21: helmr.computer.v0.ComputerBasicExecRequest.secrets:type_name -> helmr.computer.v0.ComputerSecretDelivery
-	36, // 22: helmr.computer.v0.ComputerBasicExecRequest.protected_env:type_name -> helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
+	38, // 22: helmr.computer.v0.ComputerBasicExecRequest.protected_env:type_name -> helmr.computer.v0.ComputerBasicExecRequest.ProtectedEnvEntry
 	27, // 23: helmr.computer.v0.ComputerBasicExecEvent.output:type_name -> helmr.computer.v0.CommandOutputChunk
 	26, // 24: helmr.computer.v0.ComputerBasicExecEvent.result:type_name -> helmr.computer.v0.ComputerBasicExecResult
 	24, // 25: helmr.computer.v0.ComputerCommandReleaseRequest.authority:type_name -> helmr.computer.v0.ComputerCommandAuthority
@@ -2770,7 +2931,7 @@ func file_computer_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_computer_proto_rawDesc), len(file_computer_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   39,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

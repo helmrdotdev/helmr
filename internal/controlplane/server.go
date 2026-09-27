@@ -642,6 +642,8 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 
 				r.Post("/run/computer-commands/claim", s.workerClaimComputerCommand)
 				r.With(limitRequestBody(computerCommandResultLimit)).Post("/run/computer-commands/reconcile", s.workerReconcileComputerCommand)
+				r.Post("/run/computer-instances/runs/cleanup", s.workerGetComputerRunCleanup)
+				r.Post("/run/computer-instances/runs/reconcile", s.workerReconcileComputerRun)
 				r.With(limitRequestBody(workerCommandLogRequestBodyLimit)).Post("/run/computer-commands/logs/append", s.workerAppendCommandLogs)
 				r.With(limitRequestBody(computerCommandResultLimit)).
 					Post("/run/computer-commands/complete", s.workerCompleteComputerCommand)

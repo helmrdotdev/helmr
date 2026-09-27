@@ -223,6 +223,8 @@ POST /worker/v1/run/computer-commands/claim
 POST /worker/v1/run/computer-commands/complete
 POST /worker/v1/run/computer-commands/logs/append
 POST /worker/v1/run/computer-commands/reconcile
+POST /worker/v1/run/computer-instances/runs/cleanup
+POST /worker/v1/run/computer-instances/runs/reconcile
 POST /worker/v1/run/computer-instances/claim
 POST /worker/v1/run/computer-instances/closed
 POST /worker/v1/run/computer-instances/computer-source

@@ -526,3 +526,10 @@ func (*runConsumerTestClient) AppendCommandLog(context.Context, workerapi.Comman
 func (*runConsumerTestClient) ReconcileComputerCommand(context.Context, workerapi.ComputerCommandCompleteRequest) error {
 	return nil
 }
+
+func (*runConsumerTestClient) GetComputerRunCleanup(context.Context, workerapi.ComputerRunCleanupRequest) (workerapi.ComputerRunCleanupResponse, error) {
+	return workerapi.ComputerRunCleanupResponse{}, nil
+}
+func (*runConsumerTestClient) ReconcileComputerRun(context.Context, workerapi.ComputerRunReconcileRequest) error {
+	return nil
+}

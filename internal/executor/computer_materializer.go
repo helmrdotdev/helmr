@@ -165,6 +165,12 @@ func (m ComputerMaterializer) serveComputerMount(
 		err   error
 		fatal bool
 	}
+	runCleanupResult := make(chan error, 1)
+	commands.Add(1)
+	go func() {
+		defer commands.Done()
+		runCleanupResult <- m.reconcileComputerRuns(commandCtx, session, mount, client)
+	}()
 	commandResults := make(chan commandResult)
 	activeCommands := make(map[string]struct{})
 	// false means a cancellation RPC is in flight; true means Guest accepted it.
@@ -291,6 +297,12 @@ func (m ComputerMaterializer) serveComputerMount(
 			}
 			return fmt.Errorf("computer preservation failed: %w", err)
 
+		case err := <-runCleanupResult:
+			if commandCtx.Err() != nil {
+				runCleanupResult = nil
+				continue
+			}
+			return failAndReturn(err)
 		case result := <-cancellationResults:
 			_, active := activeCommands[result.id]
 			if result.err == nil && active {

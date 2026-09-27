@@ -41,6 +41,8 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, logger *slog
 		return false, handleComputerRuntimePrepareConnection(ctx, conn, logger, computerRegistry)
 	case wire.StreamTypeProgramRun:
 		return false, handleProgramRunConnection(ctx, conn, logger, registry, computerRegistry, start.streamHeader, start.bodyLen)
+	case wire.StreamTypeComputerRunCleanup:
+		return false, handleComputerRunCleanupConnection(ctx, conn, computerRegistry)
 	case wire.StreamTypeComputerCommandCancel:
 		return false, handleComputerCommandCancelConnection(ctx, conn, computerRegistry)
 	case wire.StreamTypeComputerCommandRelease:

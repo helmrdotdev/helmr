@@ -42,7 +42,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
 | `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
-| `actor-continuity`, `child-tasks` | `cases/child-tasks` | Child modes, Actor continuation and ordered/paginated durable output |
+| `actor-continuity`, `child-tasks` (including `cancel-peer.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
 | `computer-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite and exact negative contracts |

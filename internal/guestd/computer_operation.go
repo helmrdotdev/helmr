@@ -45,6 +45,10 @@ type managedProgramClaim struct {
 	entry          *computerMountEntry
 	authority      *computerv0.ComputerRunAuthority
 	previousExpiry int64
+	stop           context.CancelFunc
+	stopRequested  bool
+	done           chan struct{}
+	cleanupErr     error
 }
 
 type computerMountEntry struct {
@@ -62,6 +66,7 @@ type computerMountEntry struct {
 	cleanup                   func()
 	processesMu               sync.Mutex
 	commands                  map[string]*computerBasicExec
+	programCleanup            map[string]*managedProgramClaim
 	basicExecRun              func(context.Context, *computerv0.ComputerBasicExecRequest) *computerv0.ComputerBasicExecResult
 	active                    int
 	retired                   bool
@@ -324,6 +329,10 @@ func (r *computerOperationRegistry) admitProgram(entry *computerMountEntry, auth
 		r.mu.Unlock()
 		return func() {}, err
 	}
+	if entry.programCleanup[authority.GetFence().GetRunLeaseId()] != nil {
+		r.mu.Unlock()
+		return func() {}, errors.New("Program lease has been retired")
+	}
 	for _, current := range r.programClaims {
 		if current.authority.GetFence().GetRunId() == authority.GetFence().GetRunId() {
 			r.mu.Unlock()
@@ -333,11 +342,21 @@ func (r *computerOperationRegistry) admitProgram(entry *computerMountEntry, auth
 	claim := &managedProgramClaim{
 		entry:     entry,
 		authority: proto.Clone(authority).(*computerv0.ComputerRunAuthority),
+		done:      make(chan struct{}),
 	}
 	r.programClaims = append(r.programClaims, claim)
 	r.mu.Unlock()
-	return func() {
+	return sync.OnceFunc(func() {
 		r.mu.Lock()
+		if entry.programCleanup == nil {
+			entry.programCleanup = make(map[string]*managedProgramClaim)
+		}
+		fence := claim.authority.GetFence()
+		// Keep only the scoped identity and cleanup result for lost-reply replay.
+		claim.authority = &computerv0.ComputerRunAuthority{Fence: &computerv0.ComputerAuthorityFence{RunId: fence.RunId, RunLeaseId: fence.RunLeaseId, AttemptNumber: fence.AttemptNumber}}
+		entry.programCleanup[claim.authority.GetFence().GetRunLeaseId()] = claim
+		claim.stop = nil
+		close(claim.done)
 		for index, current := range r.programClaims {
 			if current != claim {
 				continue
@@ -346,7 +365,7 @@ func (r *computerOperationRegistry) admitProgram(entry *computerMountEntry, auth
 			break
 		}
 		r.mu.Unlock()
-	}, nil
+	}), nil
 }
 
 func (r *computerOperationRegistry) hasProgramClaimLocked(entry *computerMountEntry) bool {

@@ -50,7 +50,27 @@ type ComputerCommandCompleteRequest struct {
 	Error              json.RawMessage `json:"error,omitempty"`
 }
 
+type ComputerRunCleanup struct {
+	RunID         string `json:"run_id"`
+	RunLeaseID    string `json:"run_lease_id"`
+	AttemptNumber uint32 `json:"attempt_number"`
+}
+type ComputerRunCleanupRequest struct {
+	EnvironmentID      string `json:"environment_id"`
+	ComputerInstanceID string `json:"computer_instance_id"`
+	WriterGeneration   int64  `json:"writer_generation"`
+}
+type ComputerRunCleanupResponse struct {
+	Run *ComputerRunCleanup `json:"run,omitempty"`
+}
+type ComputerRunReconcileRequest struct {
+	ComputerRunCleanupRequest
+	ComputerRunCleanup
+}
+
 type ComputerMaterializerControlPlaneClient interface {
+	GetComputerRunCleanup(context.Context, ComputerRunCleanupRequest) (ComputerRunCleanupResponse, error)
+	ReconcileComputerRun(context.Context, ComputerRunReconcileRequest) error
 	RenewComputerInstance(context.Context, ComputerInstanceRenewRequest) (ComputerInstanceRenewResponse, error)
 	MarkComputerInstanceClosed(context.Context, ComputerInstanceStateRequest) (ComputerInstance, error)
 	MarkComputerInstanceFailed(context.Context, ComputerInstanceStateRequest) (ComputerInstance, error)

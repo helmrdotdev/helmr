@@ -640,3 +640,12 @@ func (c *Client) GetComputerRestorePlan(ctx context.Context, request workerapi.C
 	}
 	return response, nil
 }
+
+func (c *Client) GetComputerRunCleanup(ctx context.Context, r workerapi.ComputerRunCleanupRequest) (workerapi.ComputerRunCleanupResponse, error) {
+	var response workerapi.ComputerRunCleanupResponse
+	err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/runs/cleanup", r, &response)
+	return response, err
+}
+func (c *Client) ReconcileComputerRun(ctx context.Context, r workerapi.ComputerRunReconcileRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/runs/reconcile", r, nil)
+}

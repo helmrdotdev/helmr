@@ -257,3 +257,17 @@ message ComputerRestoreInstallation {
 message ComputerRestoreInstallationResponse {
   ComputerRestoreInstallation installation = 1;
 }
+
+message ComputerRunCleanupRequest {
+  string computer_id = 1;
+  string computer_instance_id = 2;
+  int64 writer_generation = 3;
+  string channel_token = 4;
+  string run_id = 5;
+  uint32 attempt_number = 6;
+  string run_lease_id = 7;
+}
+message ComputerRunCleanupResponse {
+  bool reconciled = 1;
+  string error = 2;
+}

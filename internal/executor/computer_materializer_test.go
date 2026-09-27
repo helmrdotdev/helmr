@@ -1535,3 +1535,10 @@ func TestCommandCompletionLeavesComputerServing(t *testing.T) {
 func (c *computerMaterializerTestClient) ReconcileComputerCommand(context.Context, workerapi.ComputerCommandCompleteRequest) error {
 	return nil
 }
+
+func (*computerMaterializerTestClient) GetComputerRunCleanup(context.Context, workerapi.ComputerRunCleanupRequest) (workerapi.ComputerRunCleanupResponse, error) {
+	return workerapi.ComputerRunCleanupResponse{}, nil
+}
+func (*computerMaterializerTestClient) ReconcileComputerRun(context.Context, workerapi.ComputerRunReconcileRequest) error {
+	return nil
+}

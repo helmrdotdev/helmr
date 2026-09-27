@@ -203,6 +203,21 @@ func handleProgramRunConnection(
 		return err
 	}
 	defer releaseProgram()
+	programCtx, stopProgram := context.WithCancel(ctx)
+	defer stopProgram()
+	claim := registry.bindProgramStop(entry, &authority, stopProgram)
+	if claim == nil {
+		return errors.New("Program cleanup owner is missing")
+	}
+	ctx = programCtx
+	// Closing the control connection also interrupts pre-start reads.
+	controlClosed := make(chan struct{})
+	stopControl := context.AfterFunc(ctx, func() { defer close(controlClosed); _ = programConn.Close() })
+	defer func() {
+		if !stopControl() {
+			<-controlClosed
+		}
+	}()
 	if err := programConn.SetReadDeadline(deadline); err != nil {
 		return err
 	}
@@ -214,6 +229,13 @@ func handleProgramRunConnection(
 		return err
 	}
 	defer cleanup()
+	defer func() {
+		process.terminate()
+		cleanupErr := process.quiesce()
+		registry.mu.Lock()
+		claim.cleanupErr = cleanupErr
+		registry.mu.Unlock()
+	}()
 	if logger != nil {
 		logger.Info(
 			"starting Program",
