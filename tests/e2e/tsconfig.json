@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["cases/**/*.ts", "support/**/*.ts", "helmr.config.ts"]
+}

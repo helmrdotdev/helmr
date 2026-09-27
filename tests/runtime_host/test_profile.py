@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('runtime_host', ROOT / 'dev/verification/runtime-host.py')
+spec = importlib.util.spec_from_file_location('runtime_host', ROOT / 'dev/runtime/host.py')
 host = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(host)
 
@@ -71,7 +71,7 @@ class ProfileTests(unittest.TestCase):
             source = directory / 'input.json'
             source.write_text(json.dumps(config()))
             output = directory / 'render'
-            command = ['python3', str(ROOT / 'dev/verification/runtime-host.py'), 'render', '--config', str(source), '--output', str(output)]
+            command = ['python3', str(ROOT / 'dev/runtime/host.py'), 'render', '--config', str(source), '--output', str(output)]
             subprocess.run(command, check=True, capture_output=True)
             self.assertEqual(output.stat().st_mode & 0o777, 0o700)
             self.assertEqual((output / 'config.json').stat().st_mode & 0o777, 0o600)

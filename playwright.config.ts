@@ -33,7 +33,7 @@ export default defineConfig({
   webServer: externalBaseURL
     ? undefined
     : {
-        command: "./scripts/dev-e2e-stack.sh",
+        command: "./dev/local/browser.sh",
         env: managedWebServerEnv,
         url: `${baseURL}/readyz`,
         reuseExistingServer: false,

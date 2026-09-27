@@ -44,7 +44,7 @@ def main():
     if sys.platform != 'linux' or os.geteuid() != 0:
         raise SystemExit('requires an authorized root Linux/systemd test host')
     script = Path(__file__).resolve()
-    spec = importlib.util.spec_from_file_location('runtime_host', script.parents[2]/'dev/verification/runtime-host.py')
+    spec = importlib.util.spec_from_file_location('runtime_host', script.parents[2]/'dev/runtime/host.py')
     host = importlib.util.module_from_spec(spec); spec.loader.exec_module(host)
     # Exercise production supervision properties with a harmless initializer stand-in.
     with patch.object(host.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as invoke:

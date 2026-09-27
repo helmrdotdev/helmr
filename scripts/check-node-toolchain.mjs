@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url"
 import { nodeVersion } from "./node-version.mjs"
 
 const root = fileURLToPath(new URL("../", import.meta.url))
-export const guards = ["dev/workflows", "examples/cli-tooling", "examples/github-pr-review", "examples/hello-world", "examples/task-secrets"]
+export const guards = ["examples/issue-fixer", "examples/cli-tooling", "examples/github-pr-review", "examples/hello-world", "examples/task-secrets"]
 export function requireVersion(actual, label) {
   if (actual !== nodeVersion) throw new Error(`${label}: expected Product Node ${nodeVersion}, got ${actual}`)
 }

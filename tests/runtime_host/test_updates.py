@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from test_profile import host, config, ROOT
 
-spec = importlib.util.spec_from_file_location('build_services', ROOT / 'dev/verification/build-services.py')
+spec = importlib.util.spec_from_file_location('build_services', ROOT / 'dev/runtime/build-services.py')
 build = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(build)
 

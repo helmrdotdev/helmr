@@ -1,0 +1,407 @@
+# Dedicated runtime host
+
+This is a dedicated development verification profile, not a general deployment target.
+It composes the normal Control Plane, Dispatcher, PostgreSQL 18, Redis,
+ClickHouse and installed Worker on one dedicated Linux x86_64 KVM/systemd host.
+A passing `start` means CP and native Worker readiness, Redis PING and active
+service processes only. On 2026-09-27 the Task, same-host persistence and Actor
+continuation cases passed on a disposable host using normal authentication and
+private native artifacts. Separate checks also passed a changed CP executable,
+an edited-initial-migration reset and guest IPv4 metadata denial. These do not
+qualify arbitrary service changes, general network isolation or cross-host recovery.
+
+## Inputs and ownership
+
+One dedicated host serves one repair objective at a time. It may be stopped and
+retained between objectives. Reserve sufficient disk and memory
+for the real services, verifier and guest. The sample caps Computer staging at
+4 GiB for these small cases; the native default is 64 GiB. Reserve space for
+the live disks and checkpoint intermediates together. A 200 GiB pilot with the
+64 GiB staging default ran Tasks but rejected checkpoint capture for capacity. A scope spans multiple correction attempts. Do not install this
+profile on shared staging or a host belonging to another owner.
+
+Provisioning must supply:
+
+- KVM, cgroup v2, systemd with `DelegateSubgroup`, Python 3.12+, `runuser`, the
+  shared Worker's OS packages and explicitly assigned, disconnected NBD devices.
+  Load/configure NBD during provisioning, including native modules-load/modprobe
+  configuration for reboot. Verify these devices again after restart; this profile never borrows live devices
+  or repartitions a disk. Choose network pools, DNS and blocked destinations for
+  the actual host network, including metadata and other privileged endpoints.
+- The source-owned shared Worker installer and digest-verified host/runtime
+  bundles described in [README](README.md). Run its `install` before installing
+  this profile. Its systemd unit remains the Worker execution boundary.
+- Real, isolated S3 CAS and platform storage with authorized native AWS credentials
+  or a host role. The normal runtime release must already be privately published,
+  with its actual descriptor. No file CAS, synthetic descriptor or public release
+  is part of this path. This script does not grant AWS access or publish artifacts.
+- A `build-services.py` candidate directory containing Linux CP/Dispatcher binaries,
+  input digests and the clean archived source, plus the native Worker host/runtime
+  bundle receipts from that initial source revision. These API-only service binaries
+  do not embed the console; normal setup/API authentication is still required.
+  Supply absolute paths to the
+  backing services from the pinned toolchain. Provisioning must retain their Nix
+  closure/profile if using Nix; a development shell alone is not a GC root.
+  Supply the actual `/nix/store/.../bin/...` paths, rather than standalone symlink
+  aliases: PostgreSQL locates its accompanying share files from its executable path.
+- Normal OAuth configuration and a normal Worker enrollment token. Normal
+  self-hosted setup and environment-scoped API keys are still required for cases;
+  no seeded user or authentication bypass is installed.
+
+Copy [config.example.json](config.example.json) to a private file and
+replace its placeholders. `control_plane` and `worker` contain ordinary native
+configuration, including their own AWS settings where needed. The script owns
+local endpoints, default region/group/pool, store agreement, key generation and
+service identities, and rejects overrides of those fields. Per-scope keys and
+passwords are generated once on install and retained across starts. Secrets never
+belong in source control or the evidence bundle.
+
+Readiness waits stop immediately when their systemd service reports `failed`,
+retaining its journal and state for diagnosis. A live process may still need the
+normal readiness deadline; the profile does not restart failed services.
+
+Keep the Runtime descriptor's canonical JSON bytes; pretty-printing an extracted
+descriptor makes CP reject it. Bootstrap enrollment tokens use the native
+`hlmr_wgt_` prefix followed by 32 random bytes encoded as unpadded base64url, not
+a bare random hex string. Blocked IPv4 CIDRs must be unique and sorted by numeric
+network address, then prefix length. The Worker also blocks its host interfaces
+and link pool; include the actual metadata/privileged destinations explicitly.
+Set `VM_SCRATCH_DISK_MIB=32768` before first enrollment: ordinary Workspaces
+require 32 GiB of guest ephemeral disk. The Worker default of 8 GiB can become
+ready while remaining ineligible for every ordinary Workspace. The pool seals its
+shape on registration; changing this after enrollment requires normal pool
+replacement or an explicit disposable profile reset, not a database row edit.
+The sample allows 120 seconds for guest health during this feasibility run. A
+cold real Workspace took about 46 seconds to report healthy on the pilot
+host, exceeding the native 30-second default. This is a startup allowance, not
+a boot-latency improvement or a performance target.
+
+The profile uses self-hosted Computer key wrapping. Backing services and CP bind
+loopback; access CP through an authorized tunnel. PostgreSQL uses a separate
+non-superuser application role with SCRAM authentication over loopback, and
+ClickHouse uses the real bootstrap command to create separate reader, ingester
+and migration credentials. This does not prove managed TLS/IAM/KMS, provider
+scaling, rollout behavior or cross-host restore.
+
+## Commands
+
+Offline rendering validates configuration shape and writes a new private directory:
+
+```sh
+python3 dev/runtime/host.py render \
+  --config /private/runtime-host.json --output /private/runtime-host-render
+```
+
+After the provisioning and live-use authorization applicable to the scope:
+
+```sh
+sudo python3 dev/runtime/host.py install --config /private/runtime-host.json
+sudo python3 dev/runtime/host.py start
+sudo python3 dev/runtime/host.py inspect
+sudo python3 dev/runtime/host.py stop
+```
+
+`install` requires a fresh dedicated host and an inactive Worker. It copies the
+application binaries and runtime descriptor into `/etc/helmr/verification`,
+records binary digests, creates the backing-service identity and database cluster,
+and writes the units. It does not start services. Keep the source bundle/ref,
+artifact manifests and rendered candidate receipts with scope evidence; binary
+hashes alone do not make source recoverable.
+
+`start` starts the backing services, creates the local application database,
+executes native ClickHouse bootstrap and migrations, starts CP/Dispatcher, then
+starts the Worker and waits for native `worker status`. It refuses to migrate
+under a running application. There is no background retry controller or automatic
+reboot startup. Startup failure returns nonzero and retains services and data for
+inspection; it is not reported as an accepted environment. Read unit journals with
+`journalctl -u helmr-verification-control-plane -u helmr-worker`, and the analogous
+backing-service units. Do not export private configuration with logs.
+
+`stop` first invokes native `worker drain --timeout 5m`, then stops Worker,
+Dispatcher, CP and backing services in that order. Failed drain or unexpected
+Worker state stops the operation before dependencies are removed. Diagnose the
+retained environment; do not interpret a timeout as permission to erase it.
+Stopping retains all host/S3 data. It is neither fixture cleanup nor environment
+destruction. Whole-scope cleanup belongs
+to Cloud and must exist before unattended allocation. No host is allocated by
+these commands.
+
+## Stopped-host reuse
+
+Stop the profile only after selected cases and their native fixture cleanup have
+settled. The Cloud operator then stops the dedicated instance, retaining its disk,
+installed profile, rooted tool closures, authentication/project and artifacts.
+This is not an API for pausing a partly executed test. Each later case starts fresh.
+
+On host restart verify KVM, configured NBD devices and private service files. Keep
+the native Worker and profile units disabled for automatic boot startup, so `start`
+owns dependency/migration order. Inspect installed identities before starting;
+inactive services are expected while stopped. A schema mismatch, corrupt candidate
+or pending update is not expected and must not be bypassed. Run `start` then require
+`inspect` success. Native Worker re-enrollment after a completed drain may replace
+its logical identity; do not infer that retained EC2 means the old Worker survived.
+User authentication and data generation should survive ordinary stop/start; an
+explicit schema reset still invalidates database-backed keys and requires setup.
+
+The repeated-start behavior and warm latency require a real stop/start acceptance
+check. Previous disposable-host Task/reset results do not establish this boundary.
+
+## Resuming an existing scope
+
+Run the existing `inspect` command on the already authorized host. It emits one
+JSON observation containing service states, accepted CP/Dispatcher component
+sources, expected/installed/running executable hashes, data generation and schema,
+and any pending update's identity and bounded result phase. It reads
+`installed-candidate.json`, `binary-digests.json`, `data-generation.json` and
+`pending-update.json` under `/etc/helmr/verification`. It does not change them.
+
+Exit 1 with `status: blocked` identifies missing/corrupt receipts, schema or byte
+mismatches, inactive/unobservable services, or an incomplete update. A pending
+marker remains blocking even when the attempt's result says `service-ready` or
+`update-failed`; inspection never repairs or removes it. A missing result after an
+interruption remains unknown. A pending update blocks further starts and updates.
+Collect the attempt result and relevant journals, then destroy and recreate this
+disposable environment through Cloud's native runbook. Do not remove the marker
+to make a partially updated host appear healthy. There is no rollback or resume
+command. Keep a healthy environment across ordinary failed behavior cases; a
+failed test alone does not require recreation.
+
+## First ordinary Task case
+
+The `tests/e2e/cases/task` fixture contains just a sandbox and a Task that
+round-trips a unique marker through the guest filesystem and returns run/workspace
+identities. It has no package-install layer, Actor dependency, combined smoke suite
+or case registry. Add or remove ordinary `tests/e2e/cases/<behavior>/` files with
+the behavior that needs them.
+
+Prepare a separate, self-contained case project with local SDK tarballs:
+
+```sh
+nix develop -c bun install --frozen-lockfile
+nix develop -c python3 tests/e2e/prepare-project.py /private/case-project --fixtures cases/task
+```
+
+The new directory contains the current editable cases/tasks, local packed SDK and
+Proto dependencies, and its own lockfile. No npm publication is performed. BuildKit
+receives all dependency files inside the project; repository-relative `file:`
+dependencies and TypeScript configuration outside it cannot survive source capture.
+Keep the prepared directory as the attempt's input; prepare another after changing
+cases or SDK source. The source checkout's dependencies remain useful for local
+type checks, but prepare an explicit fixture selection before deployment.
+
+Use a CLI with an exact canonical bundle-builder image. A plain `go build` has no
+builder selection and cannot build a deployment. For private source work, reuse a
+verified published builder only when its Runtime descriptor and builder/compiler
+inputs match the candidate; otherwise build the normal builder image from source.
+Do not publish a release merely to prepare this private case.
+
+After normal self-hosted setup has produced an environment API key, use the native
+CLI to deploy this small project into that isolated scope. Deployment uploads and
+builds are live operations and require the scope's authorization:
+
+```sh
+helmr deploy /private/case-project
+HELMR_EVIDENCE_DIR=/private/attempt-001/task \
+  bun run /private/case-project/cases/task/run.ts
+```
+
+When using the local Vite console with separate tunnels, point CLI/SDK
+`HELMR_API_URL` at the forwarded CP port, not the Vite port. Vite proxies `/api/`
+and `/dev/` for browser authentication but does not proxy the CLI/SDK's `/v1/`
+routes. For example, a console on `127.0.0.1:58080` can use a CP tunnel on
+`127.0.0.1:58081`; the latter is the CLI/SDK origin. OAuth still returns to the
+console's configured callback.
+
+Both commands use `HELMR_API_URL` and `HELMR_API_KEY`. The evidence directory must
+not exist, and its parent must exist. The case uses bounded requests and execution
+waits, fails on mismatched output, and writes `task.json` on execution/cleanup
+failure as well as success. A Workspace delete request being accepted is recorded
+as exactly that; it is not proof of physical cleanup or zero S3 storage. An
+ambiguous create timeout retains its marker/idempotency key for diagnosis.
+
+A passing case proves the ordinary API → dispatcher → Worker → guest → result
+path for these assertions only. Persistence/resume and a CP-only candidate update use the separate paths below.
+Provider behavior and complete scope teardown are not implied by either case.
+
+
+## Candidate preparation and service updates
+
+Use the pinned Nix toolchain and a clean, committed Product checkout. A private
+local commit is sufficient: the output retains its source archive, so it is not
+recoverable only from the original laptop. Keep output outside the checkout:
+
+```sh
+nix develop -c python3 dev/runtime/build-services.py . /private/candidate-002
+sudo python3 dev/runtime/host.py apply-services --candidate /private/candidate-002
+```
+
+The builder hashes actual Go dependency/embedded-file inputs, schema source and
+non-Go runtime/build inputs. It produces Linux AMD64 API-only CP and Dispatcher
+binaries without rebuilding the Worker, guest or console. Candidates are trusted
+operator build outputs, not signed third-party release artifacts. At initial
+installation `services_candidate`, `worker_host_receipt` and
+`worker_runtime_receipt` bind service source to the installed Worker manifests.
+A later candidate is checked again from a private copy before touching services.
+
+The default update restarts **only CP**. It requires unchanged schema, Dispatcher,
+Worker, guest and runtime-support inputs and toolchain. It does not run migrations.
+It compares retained service invocation IDs, PIDs and executable hashes before and
+after, and verifies the actual new CP executable through `/proc`. Unchanged
+Dispatcher bytes keep their original source identity. This does not prove that
+an active guest survived a long CP outage; rerun the selected behavior cases, and
+select an in-flight recovery case when that is the claim.
+
+If CP startup, identity verification or receipt writing fails, the update remains
+failed and its pending marker blocks further work. Collect the result and recreate
+the environment. The updater does not retain rollback binaries or restore an old
+candidate. Successful updates still reuse the current host and retained services.
+
+## Edited migration files and disposable data reset
+
+During unreleased development, editing an existing migration is supported.
+Content hashes, not only the highest migration number, detect the change.
+The default update rejects any schema change before stopping a service. To
+explicitly discard this dedicated scope's fixtures and apply the new schema:
+
+```sh
+sudo python3 dev/runtime/host.py apply-services \
+  --candidate /private/candidate-003 --reset-data
+```
+
+This updates CP **and Dispatcher**, after draining/stopping the old Worker against
+the old database. It requires inactive service units, disconnected owned NBD
+devices and no remaining mounts beneath the reset paths. It clears this profile's
+PostgreSQL, Redis and ClickHouse state, Worker credentials/work state and jailer
+state, then recreates the database cluster and runs the new native bootstrap and
+migrations. Worker/guest binaries, runtime descriptor, installed guest images and
+scope root keys remain. A new data-generation ID distinguishes observations before
+and after reset. Normal self-hosted setup, project/environment/API keys and Task
+deployment must be recreated; old fixture IDs and API keys are no longer valid.
+
+Worker/guest/runtime input changes still require matching artifacts and a new
+profile. `--reset-data` cannot bypass that check. Schema reset is intentionally
+destructive to private fixtures and has no data rollback. A failure keeps its
+pending marker, candidate and phase evidence for inspection. Keep the host until
+that evidence is collected or the owning scope is explicitly destroyed.
+
+S3 CAS/platform objects are **not deleted by data reset**. Old fixture objects can
+remain orphaned until the scope's final storage cleanup; each reset is not a
+zero-storage claim. This path never resets shared staging or production and does
+not change the migration policy for already released persistent installations.
+
+## Failed reset
+
+A reset runs in the native `helmr-verification-reset.service` so initialization
+and its child processes have one inspectable lifecycle. The caller waits; no
+retry is scheduled. If the caller disappears, inspect that unit and its journal.
+Collect the failed attempt and destroy/recreate the environment if reset did not
+finish. There is no saved-generation resume protocol or data rollback.
+
+Do not start another operation while the native unit is still running. For a stuck
+operation, stop the exact unit under the existing scope authority before host
+teardown. Native service credentials come from the private profile or host role;
+caller environment variables are not forwarded. Source/tool paths must remain
+available while the unit runs.
+
+The focused Linux check `tests/runtime_host/check_reset_process_boundary.py`
+qualifies child-process containment on an authorized host. It is not a resume
+acceptance suite. The dedicated-host check passed on 2026-09-27: a stopped reset
+unit terminated its child process, and duplicate operation admission was rejected.
+
+After a successful reset, repeat normal authenticated setup, project/environment,
+API keys and case deployment before testing. Services ready is not case success.
+
+The same-candidate reset was exercised on 2026-09-27: services restarted with a
+new data generation, normal authenticated setup/deployment was repeated, and the
+Task case passed afterward. A separate check changed the existing initial
+migration, verified normal update rejection before any service/data-generation
+change, and applied it with explicit reset. The new schema marker and generation
+were observed, the same protected endpoint changed from HTTP 200 to 401 for the
+old API key, and normal GitHub setup, key issuance, deployment and Task execution
+passed afterward. Reset took 60.810 seconds and the subsequent Task 89.510 seconds
+in that single run, excluding manual setup and deployment time.
+
+A CP-only executable change also passed: the changed HTTP response and executable
+were observed while Dispatcher, Worker, backing-service identities and data
+generation remained unchanged. Host-side update and assertions took 2.170 seconds;
+the subsequent Task passed in 91.507 seconds with the retained API key. These
+measurements exclude candidate build/transfer and are not latency guarantees.
+
+## Persistence and resume case
+
+Deploy the prepared Task project and run its case on the dedicated host with normal
+API credentials and authorized noninteractive sudo for the read-only observer:
+
+```sh
+HELMR_EVIDENCE_DIR=/private/attempt-003/persistence \
+  bun run /private/case-project/cases/persistence/run.ts
+```
+
+The Task writes a unique marker/symlink and emits a random in-memory nonce before
+a managed Token wait. The driver waits for a ready checkpoint and evidence that
+the original VM was closed and reclaimed, then completes the Token. It checks
+file/symlink state, the unchanged nonce, attempt number 1, and a different ready
+runtime restored from that exact checkpoint. Merely reporting `waiting`, a hot
+resume, or rerunning the function from its entry is insufficient.
+
+The Product-owned observer uses a read-only PostgreSQL query with bounded waits.
+No provider runner imports database internals, no DB mutation triggers the resume,
+and the normal API owns all Task/Token actions. This is same-host restore; it does
+not prove host-loss isolation or cross-host compatibility. `persistence.json`
+retains assertions and fixture-cleanup outcomes. Terminal Tokens are not cancelled
+again. API deletion acknowledgement is not final host/S3 cleanup proof.
+
+## Actor Turn continuity
+
+After deploying the same small project with normal credentials, run on the host:
+
+```sh
+HELMR_EVIDENCE_DIR=/private/attempt-004/actor \
+  bun run /private/case-project/cases/actor/run.ts
+```
+
+The Actor creates a random nonce in memory once, writes its marker to a private
+file, and waits on a Token during the first Turn. The driver observes the nonce
+before completion and waits for a ready checkpoint plus the original VM's closure
+and reclamation. It then completes the Token, checks the first Turn's result and
+submits a second Turn. The nonce, file, Run/Session/Workspace identity and in-memory
+counter must persist; the counter must advance from one to two. Run retries are
+disabled. Closing the Session must end its original Run successfully. The Product
+observer checks Actor identity, attempt one, the exact previously observed
+checkpoint and a different ready restored VM.
+
+This is Actor-specific same-host continuation, not host-loss/cross-host acceptance
+or proof of every Session/Turn behavior. It reuses the read-only Product query used
+by the Task persistence case; Cloud receives no DB access. `actor.json` retains
+assertion results, identities and separate cancellation, closure and deletion
+outcomes. Cancellation and closure polling share a 180-second deadline; Workspace
+deletion requires confirmed Session closure. A failed Session or unconfirmed
+closure retains the Workspace for diagnosis instead of claiming cleanup. Creation
+ambiguity, observation failures, terminal Turn failures and cleanup failures exit
+nonzero. No accepted API deletion is promoted to final resource cleanup.
+
+Offline assertion-sensitivity checks use
+`nix develop -c bun test tests/runtime_actor/actor-check.test.ts`; they reject lost
+memory, reset counters, changed identity, retried Runs, wrong checkpoints and hot
+VM reuse. Type checking and the real PostgreSQL query check validate source/query
+boundaries only. The complete Actor case still needs the integrated checkpoint.
+
+## Guest IPv4 metadata case
+
+Run `cases/network/run.ts` on the dedicated host with the same API/key/evidence
+environment as persistence. It first requires successful public HTTPS from the
+guest, then takes a native policy/counter baseline on that Run's exact retained
+VM. A request to the IPv4 metadata index must return no HTTP response; the
+metadata address must be in the installed deny set and the same namespace's
+`run_denied` counter must increase. Token waits keep that VM alive for observation.
+No credential path or IMDS token is requested. The counter is shared by several
+deny rules, so this is not destination-specific tracing, IPv6 coverage or general
+network-isolation qualification. This case passed on 2026-09-27: public HTTPS
+returned 200, the metadata probe received no HTTP response, and the retained VM's
+denied-packet count increased from 0 to 6. The case and fixture cleanup requests
+completed in 115.746 seconds in that run.
+
+Log replay can briefly return `telemetry_lagging`. The driver records and waits
+through only that condition within the existing phase deadline; other errors or
+a terminal Run still fail. The first live attempt exposed this condition and was
+cancelled with fixture cleanup before the corrected case passed.

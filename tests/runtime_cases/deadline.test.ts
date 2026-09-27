@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { deadline } from "../../dev/verification/cases/deadline"
+import { deadline } from "../e2e/support/deadline"
 import { abortableDelay } from "../../sdk/typescript/src/internal/abort"
 
 test("deadline survives listener removal between polling requests", async () => {

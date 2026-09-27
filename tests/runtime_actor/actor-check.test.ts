@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { assertActorRestore, assertActorTurns } from "../../dev/verification/cases/actor-check"
+import { assertActorRestore, assertActorTurns } from "../e2e/cases/actor/assertions"
 
 const expected = { marker: "marker", nonce: "memory-only", sessionId: "session", runId: "run", workspaceId: "workspace" }
 const first = { ...expected, count: 1 }, second = { ...expected, count: 2 }
