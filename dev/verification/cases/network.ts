@@ -24,8 +24,14 @@ const terminal = new Set(["succeeded", "failed", "system_failed", "cancelled", "
 async function phase(name: string) {
   const signal = deadline(180_000)
   while (!signal.aborted) {
-    const logs = await client.runs.logs(runId!, { limit: 100 }, { signal })
-    if (logs.items.some(log => log.kind === "structured" && log.attributes["marker"] === marker && log.attributes["phase"] === name)) return
+    try {
+      const logs = await client.runs.logs(runId!, { limit: 100 }, { signal })
+      if (logs.items.some(log => log.kind === "structured" && log.attributes["marker"] === marker && log.attributes["phase"] === name)) return
+    } catch (error) {
+      // Telemetry replay can lag a live Run; retain the same bounded wait.
+      if (!(error instanceof Error) || !("code" in error) || error.code !== "telemetry_lagging") throw error
+      evidence["telemetryLagResponses"] = Number(evidence["telemetryLagResponses"] ?? 0) + 1
+    }
     const run = await client.runs.retrieve(runId!, { signal })
     assert(!terminal.has(run.status), `Run ended with ${run.status} before ${name}`)
     await delay(1000, undefined, { signal })
