@@ -1509,9 +1509,13 @@ WITH candidates AS MATERIALIZED (
  terminal_reason_code=coalesce(i.terminal_reason_code,'external_instance_drift'),
  reclaimed_at=now(),reclaim_evidence=jsonb_build_object('method','provider_absent','completed_at',now()),
  mount_state='lost',admission_state='closed',updated_at=now()
- FROM candidates c WHERE i.id=c.id RETURNING i.id
+ FROM candidates c WHERE i.id=c.id RETURNING i.id,i.writer_generation,i.reclaimed_at
+), reconciled AS (
+ UPDATE run_leases l SET process_reconciled_at=i.reclaimed_at,updated_at=now()
+ FROM reclaimed i WHERE l.computer_instance_id=i.id AND l.writer_generation=i.writer_generation
+ AND l.process_reconciled_at IS NULL RETURNING l.id
 )
-SELECT count(*) FROM reclaimed
+SELECT count(*) FROM reclaimed WHERE (SELECT count(*) FROM reconciled)>=0
 `
 
 // Provider absence is verified by the operation owner before this transaction.

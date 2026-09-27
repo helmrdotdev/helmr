@@ -695,10 +695,26 @@ func (r ProgramRunner) startNewProgram(
 		claim.Lease.StartDeadlineAt,
 	)
 	defer cancelAdmission()
-	opened, err := r.ComputerMounts.OpenComputerInstanceSession(
-		admissionCtx,
-		claim.Lease.ComputerInstanceID,
-	)
+	// The prepared VM can be advertised before the independent mount consumer
+	// registers its local channel. Wait only for that channel, before admission
+	// writes can start a process, and retain the original admission deadline.
+	var opened ComputerMountSession
+	for {
+		if err := admissionCtx.Err(); err != nil {
+			return freshProgram{}, err
+		}
+		opened, err = r.ComputerMounts.OpenComputerInstanceSession(admissionCtx, claim.Lease.ComputerInstanceID)
+		if !errors.Is(err, ErrComputerMountSessionNotFound) {
+			break
+		}
+		timer := time.NewTimer(runLeaseRetryEvery)
+		select {
+		case <-admissionCtx.Done():
+			timer.Stop()
+			return freshProgram{}, admissionCtx.Err()
+		case <-timer.C:
+		}
+	}
 	if err != nil {
 		return freshProgram{}, err
 	}

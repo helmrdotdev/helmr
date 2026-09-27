@@ -65,6 +65,11 @@ func TestConfirmWorkerHostProviderAbsentReclaimsIndependentlyOfLiveLease(t *test
 	if instanceState != "lost" || !reclaimedAt.Valid || mountStatus != "lost" || admissionState != "closed" || leaseStatus != "assigned" {
 		t.Fatalf("physical exclusion = state %q reclaimed=%v mount=%q admission=%q logical lease=%q", instanceState, reclaimedAt.Valid, mountStatus, admissionState, leaseStatus)
 	}
+
+	var processReconciled bool
+	if err := fixture.Pool.QueryRow(ctx, `SELECT process_reconciled_at=$2 FROM run_leases WHERE id=$1`, work.LeaseID, reclaimedAt).Scan(&processReconciled); err != nil || !processReconciled {
+		t.Fatalf("provider exclusion left process unreconciled: %v %v", processReconciled, err)
+	}
 	var credentialRevoked bool
 	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT revoked_at IS NOT NULL

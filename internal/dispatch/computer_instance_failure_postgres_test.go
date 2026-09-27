@@ -140,6 +140,11 @@ func TestInstanceReclaimRequiresCurrentCloseAndKeepsFailure(t *testing.T) {
 	if _, err = reclaim(params); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("old observation reclaimed: %v", err)
 	}
+
+	var processEmpty bool
+	if err = f.Pool.QueryRow(t.Context(), `SELECT process_reconciled_at IS NULL FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&processEmpty); err != nil || !processEmpty {
+		t.Fatalf("failure without physical proof reconciled process: %v %v", processEmpty, err)
+	}
 	params.DesiredVersion = failed.DesiredVersion
 	params.ExpectedObservedVersion = failed.ObservedVersion
 	reclaimed, err := reclaim(params)
@@ -148,6 +153,10 @@ func TestInstanceReclaimRequiresCurrentCloseAndKeepsFailure(t *testing.T) {
 	}
 	if !reclaimed.ReclaimedAt.Valid || reclaimed.MountState != "unmounted" || reclaimed.ObservedState != "failed" || reclaimed.TerminalReasonCode != failed.TerminalReasonCode || string(reclaimed.TerminalError) != string(failed.TerminalError) {
 		t.Fatalf("lost failure diagnosis: %+v", reclaimed)
+	}
+
+	if err = f.Pool.QueryRow(t.Context(), `SELECT process_reconciled_at=$2 FROM run_leases WHERE id=$1`, work.LeaseID, reclaimed.ReclaimedAt).Scan(&processEmpty); err != nil || !processEmpty {
+		t.Fatalf("physical exclusion left member unreconciled: %v %v", processEmpty, err)
 	}
 	replayed, err := reclaim(params)
 	if err != nil || replayed.ObservedVersion != reclaimed.ObservedVersion || replayed.ReclaimedAt != reclaimed.ReclaimedAt || string(replayed.ReclaimEvidence) != string(reclaimed.ReclaimEvidence) {

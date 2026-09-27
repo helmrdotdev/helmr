@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -1091,5 +1092,60 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	}
 	if len(controlPlane.snapshot()) != 0 {
 		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
+	}
+}
+
+func TestFreshProgramWaitsForLocalMountRegistration(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		claim := testFreshProgramClaim(t)
+		control := &testFreshProgramControlPlane{lease: claim.Lease}
+		events := &testFreshProgramEventSink{}
+		guest, host := net.Pipe()
+		defer guest.Close()
+		sessions := NewComputerMountSessions()
+		mount := testComputerMount(claim.Lease)
+		guestResult := make(chan error, 1)
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			unregister := sessions.RegisterComputerMountSession(mount, fakeGuestSession{stream: host}, "channel-1")
+			defer unregister()
+			guestResult <- serveFreshProgramProtocol(guest, claim.Lease, mount, control)
+		}()
+		program, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(t.Context(), &claim, control, events)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer program.session.Close(context.Background())
+		outcome, _, err := program.awaitTaskCompletion(t.Context(), events, nil, nil, nil, nil)
+		if err != nil || outcome.GetSucceeded().GetOutputJson() != `{"ok":true}` {
+			t.Fatalf("completion=%v %v", outcome, err)
+		}
+		if err := <-guestResult; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestFreshProgramMissingMountHonorsAdmissionDeadlineAndCancellation(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				claim := testFreshProgramClaim(t)
+				claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if cancelled {
+					go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+				}
+				_, err := (ProgramRunner{ComputerMounts: NewComputerMountSessions()}).startNewProgram(ctx, &claim, &testFreshProgramControlPlane{lease: claim.Lease}, &testFreshProgramEventSink{})
+				want := context.DeadlineExceeded
+				if cancelled {
+					want = context.Canceled
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("error=%v want %v", err, want)
+				}
+			})
+		})
 	}
 }

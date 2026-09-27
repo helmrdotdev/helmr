@@ -44,5 +44,17 @@ func RecordComputerInstanceReclaim(ctx context.Context, tx pgx.Tx, workerGroupID
 		params.Error = nil
 	}
 	params.MountState = "unmounted"
-	return q.ReclaimComputerInstance(ctx, params)
+	reclaimed, err := q.ReclaimComputerInstance(ctx, params)
+	if err != nil {
+		return db.ComputerInstance{}, err
+	}
+	// Physical exclusion settles every process in this exact incarnation,
+	// including members whose scoped exit proof was lost. Logical outcomes are
+	// still owned by the Run and checkpoint reconciliation paths.
+	if _, err := tx.Exec(ctx, `UPDATE run_leases SET process_reconciled_at=$3,updated_at=clock_timestamp()
+ WHERE computer_instance_id=$1 AND writer_generation=$2 AND process_reconciled_at IS NULL`,
+		reclaimed.ID, reclaimed.WriterGeneration, reclaimed.ReclaimedAt); err != nil {
+		return db.ComputerInstance{}, err
+	}
+	return reclaimed, nil
 }
