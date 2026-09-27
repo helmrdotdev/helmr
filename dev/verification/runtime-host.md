@@ -61,6 +61,10 @@ require 32 GiB of guest ephemeral disk. The Worker default of 8 GiB can become
 ready while remaining ineligible for every ordinary Workspace. The pool seals its
 shape on registration; changing this after enrollment requires normal pool
 replacement or an explicit disposable profile reset, not a database row edit.
+The sample allows 120 seconds for guest health during this feasibility run. A
+cold real Workspace took about 46 seconds to report healthy on the pilot
+host, exceeding the native 30-second default. This is a startup allowance, not
+a boot-latency improvement or a performance target.
 
 The profile uses self-hosted Computer key wrapping. Backing services and CP bind
 loopback; access CP through an authorized tunnel. PostgreSQL uses a separate
