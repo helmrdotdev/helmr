@@ -12,18 +12,20 @@ qualify arbitrary service changes, general network isolation or cross-host recov
 
 ## Inputs and ownership
 
-One entire host belongs to one repair scope. Reserve sufficient disk and memory
+One dedicated host serves one repair objective at a time. It may be stopped and
+retained between objectives. Reserve sufficient disk and memory
 for the real services, verifier and guest. The sample caps Computer staging at
 4 GiB for these small cases; the native default is 64 GiB. Reserve space for
 the live disks and checkpoint intermediates together. A 200 GiB pilot with the
 64 GiB staging default ran Tasks but rejected checkpoint capture for capacity. A scope spans multiple correction attempts. Do not install this
-profile on shared staging or an existing development host.
+profile on shared staging or a host belonging to another owner.
 
 Provisioning must supply:
 
 - KVM, cgroup v2, systemd with `DelegateSubgroup`, Python 3.12+, `runuser`, the
   shared Worker's OS packages and explicitly assigned, disconnected NBD devices.
-  Load/configure NBD during provisioning; this profile never borrows live devices
+  Load/configure NBD during provisioning, including native modules-load/modprobe
+  configuration for reboot. Verify these devices again after restart; this profile never borrows live devices
   or repartitions a disk. Choose network pools, DNS and blocked destinations for
   the actual host network, including metadata and other privileged endpoints.
 - The source-owned shared Worker installer and digest-verified host/runtime
@@ -123,6 +125,26 @@ Stopping retains all host/S3 data. It is neither fixture cleanup nor environment
 destruction. Whole-scope cleanup belongs
 to Cloud and must exist before unattended allocation. No host is allocated by
 these commands.
+
+## Stopped-host reuse
+
+Stop the profile only after selected cases and their native fixture cleanup have
+settled. The Cloud operator then stops the dedicated instance, retaining its disk,
+installed profile, rooted tool closures, authentication/project and artifacts.
+This is not an API for pausing a partly executed test. Each later case starts fresh.
+
+On host restart verify KVM, configured NBD devices and private service files. Keep
+the native Worker and profile units disabled for automatic boot startup, so `start`
+owns dependency/migration order. Inspect installed identities before starting;
+inactive services are expected while stopped. A schema mismatch, corrupt candidate
+or pending update is not expected and must not be bypassed. Run `start` then require
+`inspect` success. Native Worker re-enrollment after a completed drain may replace
+its logical identity; do not infer that retained EC2 means the old Worker survived.
+User authentication and data generation should survive ordinary stop/start; an
+explicit schema reset still invalidates database-backed keys and requires setup.
+
+The repeated-start behavior and warm latency require a real stop/start acceptance
+check. Previous disposable-host Task/reset results do not establish this boundary.
 
 ## Resuming an existing scope
 

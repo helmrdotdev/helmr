@@ -31,7 +31,9 @@ data generation to the intended candidate, and inspect any incomplete update.
 Service health alone does not establish those identities. Follow the
 [update and reset contracts](runtime-host.md#candidate-preparation-and-service-updates);
 do not make a new environment for every source fix or restart an interrupted
-update blindly. Cloud owns provisioning, scope authority and final destruction.
+update blindly. Cloud owns provisioning, retained-host stop/start, environment authority and final
+destruction. End-of-objective fixture cleanup is separate from stopping the host;
+keep normal login/project setup and verified artifacts for the next objective.
 
 ## Real PostgreSQL and Redis
 
