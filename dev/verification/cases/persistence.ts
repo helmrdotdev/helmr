@@ -1,3 +1,4 @@
+import { deadline } from "./deadline"
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -22,7 +23,7 @@ const evidence: Record<string, unknown> = { case: "persistence", marker, started
 let workspace: WorkspaceRef | undefined
 let tokenId: string | undefined
 let failure: unknown
-const request = () => ({ signal: AbortSignal.timeout(30_000) })
+const request = () => ({ signal: deadline(30_000) })
 async function observe(action: string, runId: string) {
   const { stdout } = await promisify(execFile)("sudo", ["-n", "python3", fileURLToPath(new URL("../runtime-host.py", import.meta.url)), action, "--run-id", runId], { timeout: 200_000, maxBuffer: 65536 })
   return JSON.parse(stdout)
@@ -52,7 +53,7 @@ try {
   assert(nonce, "pre-checkpoint memory nonce was not observed")
   evidence["nonceBefore"] = nonce
   await client.tokens.complete(tokenId, { result: { resume: true }, idempotencyKey: `resume:${marker}` }, request())
-  const output = await client.runs.wait(run, { signal: AbortSignal.timeout(180_000) }).unwrap()
+  const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
   assert.deepEqual(output, { marker, nonce, runId: run.id, workspaceId: workspace.id })
   const restored = await observe("verify-restored", run.id)
   assert.equal(restored.checkpoint_id, parked.checkpoint_id, "resume did not use the observed checkpoint")

@@ -1,3 +1,4 @@
+import { deadline } from "./deadline"
 import assert from "node:assert/strict"
 import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
@@ -20,7 +21,7 @@ const evidence: Record<string, unknown> = { case: "actor", marker, startedAt: ne
 let workspace: WorkspaceRef | undefined, session: SessionRef | undefined, tokenId: string | undefined
 let failure: unknown
 let sessionClosed = false
-const request = () => ({ signal: AbortSignal.timeout(30_000) })
+const request = () => ({ signal: deadline(30_000) })
 async function observe(action: string, runId: string) {
   const { stdout } = await promisify(execFile)("sudo", ["-n", "python3",
     fileURLToPath(new URL("../runtime-host.py", import.meta.url)), action, "--run-id", runId],
@@ -76,7 +77,7 @@ try {
     firstState.result, secondState.result)
   evidence["turns"] = [firstState, secondState]
   await session.close({ idempotencyKey: `close:${marker}` }, request())
-  await client.runs.wait(started.run, { signal: AbortSignal.timeout(180_000) }).unwrap()
+  await client.runs.wait(started.run, { signal: deadline(180_000) }).unwrap()
   assert.equal((await session.retrieve(request())).status, "closed")
   const restored = await observe("verify-restored", started.run.id)
   assertActorRestore(parked, restored, session.id)
@@ -88,7 +89,7 @@ try {
 } finally {
   for (const [name, cleanup] of [
     ["sessionCleanup", session ? async () => {
-      const signal = AbortSignal.timeout(180_000)
+      const signal = deadline(180_000)
       let current = await session!.retrieve({ signal })
       evidence["sessionCancellation"] = "not-needed"
       if (current.status === "open" || current.status === "closing") {

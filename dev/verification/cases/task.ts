@@ -1,3 +1,4 @@
+import { deadline } from "./deadline"
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
@@ -19,13 +20,13 @@ let failure: unknown
 try {
   workspace = await client.sandboxes.createWorkspace("verification", {
     key: marker, idempotencyKey: `verification:create:${marker}`,
-  }, { signal: AbortSignal.timeout(30_000) })
+  }, { signal: deadline(30_000) })
   evidence["workspaceId"] = workspace.id
   const run = await client.tasks.start<typeof verificationTask>("verification-task", {
     workspace, payload: { marker }, idempotencyKey: `verification:task:${marker}`,
-  }, { signal: AbortSignal.timeout(30_000) })
+  }, { signal: deadline(30_000) })
   evidence["runId"] = run.id
-  const output = await client.runs.wait(run, { signal: AbortSignal.timeout(180_000) }).unwrap()
+  const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
   assert.deepEqual(output, { marker, runId: run.id, workspaceId: workspace.id })
   evidence["output"] = output
   evidence["passed"] = true
@@ -35,7 +36,7 @@ try {
 } finally {
   if (workspace) {
     try {
-      await workspace.delete({ idempotencyKey: `verification:delete:${marker}` }, { signal: AbortSignal.timeout(30_000) })
+      await workspace.delete({ idempotencyKey: `verification:delete:${marker}` }, { signal: deadline(30_000) })
       evidence["fixtureCleanup"] = "delete-request-accepted"
     } catch (error) {
       evidence["fixtureCleanup"] = "failed"
