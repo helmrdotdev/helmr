@@ -116,7 +116,7 @@ let
           scripts/check-packed-sdk-consumer.sh
           scripts/build-compiler-entry.sh
           scripts/build-hostconfig-entry.sh
-          node tests/build/fixture-analysis.test.mjs
+          node tests/build/check-fixture-analysis.mjs
           bun run typecheck
           bun run test:ts
           bun run build:web

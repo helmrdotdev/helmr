@@ -52,7 +52,7 @@ different boundaries; none of them is a universal acceptance gate:
 - `nix develop -c scripts/check-e2e.sh`: case typechecks and helper unit tests;
   does not run Tasks, Actors or browsers and does not prove runtime behavior.
 - Build fixture analysis: run `scripts/build-compiler-entry.sh` and
-  `scripts/build-hostconfig-entry.sh`, then `node tests/build/fixture-analysis.test.mjs`
+  `scripts/build-hostconfig-entry.sh`, then `node tests/build/check-fixture-analysis.mjs`
   in the Nix development shell. This is compiler analysis, not real execution.
 - `scripts/check-packed-sdk-consumer.sh`: packed SDK import/type contract.
 - External examples: build local SDK packages, then install/typecheck/test the

@@ -166,7 +166,7 @@ run "retain_current_sealed_generation" {
   }
 }
 
-# Compiled service values are checked by aws_root_composition_test.py.
+# Compiled service values are checked by infra/aws/tests/check_root_composition.py.
 run "rollback_default" {
   command = plan
   variables {
