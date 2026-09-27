@@ -100,7 +100,9 @@ The [dedicated runtime host profile](runtime-host.md) composes actual services a
 the installed Worker, with a separate small Task fixture and executable assertion.
 Normal authenticated setup, Task execution, same-host persistence and Actor
 continuation have passed
-on the dedicated dev profile. This does not qualify every update or reset path. It requires
+on the dedicated dev profile. Separate checks passed CP-only executable replacement,
+edited-initial-migration reset with authenticated Task afterward, and guest IPv4
+metadata denial. This does not qualify every update or reset path. It requires
 real S3, runtime artifacts and normal authentication. The operating agent uses Cloud’s native runbook for explicit environment cleanup;
 there is no independent expiry service.
 

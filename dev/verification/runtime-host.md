@@ -6,8 +6,9 @@ ClickHouse and installed Worker on one dedicated Linux x86_64 KVM/systemd host.
 A passing `start` means CP and native Worker readiness, Redis PING and active
 service processes only. On 2026-09-27 the Task, same-host persistence and Actor
 continuation cases passed on a disposable host using normal authentication and
-private native artifacts. Updated service binaries, edited-schema reset, guest
-metadata isolation and cross-host recovery require their own acceptance evidence.
+private native artifacts. Separate checks also passed a changed CP executable,
+an edited-initial-migration reset and guest IPv4 metadata denial. These do not
+qualify arbitrary service changes, general network isolation or cross-host recovery.
 
 ## Inputs and ownership
 
@@ -52,6 +53,10 @@ local endpoints, default region/group/pool, store agreement, key generation and
 service identities, and rejects overrides of those fields. Per-scope keys and
 passwords are generated once on install and retained across starts. Secrets never
 belong in source control or the evidence bundle.
+
+Readiness waits stop immediately when their systemd service reports `failed`,
+retaining its journal and state for diagnosis. A live process may still need the
+normal readiness deadline; the profile does not restart failed services.
 
 Keep the Runtime descriptor's canonical JSON bytes; pretty-printing an extracted
 descriptor makes CP reject it. Bootstrap enrollment tokens use the native
@@ -286,8 +291,19 @@ API keys and case deployment before testing. Services ready is not case success.
 
 The same-candidate reset was exercised on 2026-09-27: services restarted with a
 new data generation, normal authenticated setup/deployment was repeated, and the
-Task case passed afterward. Edited-migration and changed-executable updates remain
-separate unproved boundaries.
+Task case passed afterward. A separate check changed the existing initial
+migration, verified normal update rejection before any service/data-generation
+change, and applied it with explicit reset. The new schema marker and generation
+were observed, the same protected endpoint changed from HTTP 200 to 401 for the
+old API key, and normal GitHub setup, key issuance, deployment and Task execution
+passed afterward. Reset took 60.810 seconds and the subsequent Task 89.510 seconds
+in that single run, excluding manual setup and deployment time.
+
+A CP-only executable change also passed: the changed HTTP response and executable
+were observed while Dispatcher, Worker, backing-service identities and data
+generation remained unchanged. Host-side update and assertions took 2.170 seconds;
+the subsequent Task passed in 91.507 seconds with the retained API key. These
+measurements exclude candidate build/transfer and are not latency guarantees.
 
 ## Persistence and resume case
 
@@ -358,4 +374,12 @@ metadata address must be in the installed deny set and the same namespace's
 `run_denied` counter must increase. Token waits keep that VM alive for observation.
 No credential path or IMDS token is requested. The counter is shared by several
 deny rules, so this is not destination-specific tracing, IPv6 coverage or general
-network-isolation qualification. The new case still requires live execution.
+network-isolation qualification. This case passed on 2026-09-27: public HTTPS
+returned 200, the metadata probe received no HTTP response, and the retained VM's
+denied-packet count increased from 0 to 6. The case and fixture cleanup requests
+completed in 115.746 seconds in that run.
+
+Log replay can briefly return `telemetry_lagging`. The driver records and waits
+through only that condition within the existing phase deadline; other errors or
+a terminal Run still fail. The first live attempt exposed this condition and was
+cancelled with fixture cleanup before the corrected case passed.
