@@ -11,7 +11,7 @@ const RootKeySize = 32
 const (
 	sessionDomain         = "helmr.auth.session.v0"
 	invitationDomain      = "helmr.auth.invitation.v0"
-	workerInstanceDomain  = "helmr.auth.worker-instance.v0"
+	workerHostDomain      = "helmr.auth.worker-host.v0"
 	magicLinkDomain       = "helmr.auth.magic-link.v0"
 	deviceCodeDomain      = "helmr.auth.device-code.v0"
 	browserAuthDomain     = "helmr.auth.browser-auth.v0"
@@ -21,7 +21,7 @@ const (
 type Keys struct {
 	Session         []byte
 	Invitation      []byte
-	WorkerInstance  []byte
+	WorkerHost      []byte
 	MagicLink       []byte
 	DeviceCode      []byte
 	BrowserAuth     []byte
@@ -40,7 +40,7 @@ func NewKeys(root []byte) (Keys, error) {
 	return Keys{
 		Session:         derive(sessionDomain),
 		Invitation:      derive(invitationDomain),
-		WorkerInstance:  derive(workerInstanceDomain),
+		WorkerHost:      derive(workerHostDomain),
 		MagicLink:       derive(magicLinkDomain),
 		DeviceCode:      derive(deviceCodeDomain),
 		BrowserAuth:     derive(browserAuthDomain),
@@ -51,7 +51,7 @@ func NewKeys(root []byte) (Keys, error) {
 func (k Keys) Valid() bool {
 	return len(k.Session) == RootKeySize &&
 		len(k.Invitation) == RootKeySize &&
-		len(k.WorkerInstance) == RootKeySize &&
+		len(k.WorkerHost) == RootKeySize &&
 		len(k.MagicLink) == RootKeySize &&
 		len(k.DeviceCode) == RootKeySize &&
 		len(k.BrowserAuth) == RootKeySize &&

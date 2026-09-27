@@ -58,7 +58,7 @@ func TestComputerAttachmentOwnsExactInode(t *testing.T) {
 	if err := validateComputerDisk(disk); err == nil {
 		t.Fatal("closed source accepted")
 	}
-	drives := runtimeDrivesWithComputer("root", "scratch", "", destination, nil, nil)
+	drives := runtimeDrivesWithComputer("root", "scratch", destination, nil, nil)
 	if len(drives) != 3 || *drives[2].DriveID != "computer" || *drives[2].IsReadOnly {
 		t.Fatalf("computer is not writable third drive: %+v", drives)
 	}

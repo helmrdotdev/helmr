@@ -13,7 +13,7 @@ import (
 type queuedDemandStore interface {
 	GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error)
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
-	ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error)
+	ListPendingComputerCommandCapacityCandidates(context.Context, db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error)
 }
 
 func HasQueuedDemand(ctx context.Context, store queuedDemandStore, workerGroupID uuid.UUID) (bool, error) {
@@ -30,11 +30,11 @@ func HasQueuedDemand(ctx context.Context, store queuedDemandStore, workerGroupID
 	if len(runs) != 0 {
 		return true, nil
 	}
-	execs, err := store.ListPendingWorkspaceExecCapacityCandidates(ctx, db.ListPendingWorkspaceExecCapacityCandidatesParams{
+	commands, err := store.ListPendingComputerCommandCapacityCandidates(ctx, db.ListPendingComputerCommandCapacityCandidatesParams{
 		RegionID: group.RegionID, RowLimit: 1,
 	})
 	if err != nil {
-		return false, fmt.Errorf("list pending Workspace Execs: %w", err)
+		return false, fmt.Errorf("list pending Computer Commands: %w", err)
 	}
-	return len(execs) != 0, nil
+	return len(commands) != 0, nil
 }

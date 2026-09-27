@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestParseTaskCompletionSuccess(t *testing.T) {
@@ -17,7 +15,7 @@ func TestParseTaskCompletionSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.kind != taskCompletionSucceeded || string(parsed.output) != `{"a":1,"b":2}` || parsed.capture == nil {
+	if parsed.kind != taskCompletionSucceeded || string(parsed.output) != `{"a":1,"b":2}` || parsed.operationID.String() != request.OperationID {
 		t.Fatalf("parsed completion = %+v", parsed)
 	}
 	if parsed.fingerprint == "" {
@@ -28,7 +26,6 @@ func TestParseTaskCompletionSuccess(t *testing.T) {
 func TestTaskCompletionFingerprintUsesSemanticJSONAndLeaseFence(t *testing.T) {
 	first := validTaskCompletionRequest(t)
 	second := first
-	second.Workspace.Captured = cloneTaskWorkspaceCapture(first.Workspace.Captured)
 	second.Outcome.Succeeded = &workerapi.TaskSucceeded{Output: json.RawMessage(`{"b":2,"a":1}`)}
 
 	left, err := parseTaskCompletionRequest(first)
@@ -44,7 +41,6 @@ func TestTaskCompletionFingerprintUsesSemanticJSONAndLeaseFence(t *testing.T) {
 	}
 
 	second.Lease.LeaseSequence++
-	setCaptureFingerprint(t, second.Workspace.Captured)
 	changed, err := parseTaskCompletionRequest(second)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +50,7 @@ func TestTaskCompletionFingerprintUsesSemanticJSONAndLeaseFence(t *testing.T) {
 	}
 }
 
-func TestParseTaskCompletionFailureRequiresRetainedCapture(t *testing.T) {
+func TestParseTaskCompletionFailureRequiresOperation(t *testing.T) {
 	request := validTaskCompletionRequest(t)
 	request.Outcome = workerapi.TaskOutcome{
 		Failed: &workerapi.TaskFailure{Message: "boom", Details: json.RawMessage(`{"z":2,"a":1}`)},
@@ -68,9 +64,9 @@ func TestParseTaskCompletionFailureRequiresRetainedCapture(t *testing.T) {
 		t.Fatalf("parsed completion = %+v", parsed)
 	}
 
-	request.Workspace.Captured = nil
+	request.OperationID = ""
 	if _, err := parseTaskCompletionRequest(request); err == nil {
-		t.Fatal("failure without retained capture was accepted")
+		t.Fatal("failure without operation identity was accepted")
 	}
 }
 
@@ -104,8 +100,8 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 			r.Outcome = workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: " failed "}}
 
 		}},
-		{name: "noncanonical digest", mutate: func(r *workerapi.CompleteTaskRequest) {
-			r.Workspace.Captured.Disk.Root.Pack.Digest = "SHA256:" + strings.Repeat("a", 64)
+		{name: "invalid operation", mutate: func(r *workerapi.CompleteTaskRequest) {
+			r.OperationID = "invalid"
 		}},
 	}
 	for _, test := range tests {
@@ -121,72 +117,11 @@ func TestParseTaskCompletionRejectsOpenOrMismatchedShapes(t *testing.T) {
 
 func validTaskCompletionRequest(t *testing.T) workerapi.CompleteTaskRequest {
 	t.Helper()
-	lease := validRunLeaseAssignment(uuid.NewV7())
-	lease.StartDeadlineAt = time.Unix(1_800_000_000, 123_456_789).UTC()
-	lease.ExpiresAt = time.Unix(1_800_000_100, 987_654_321).UTC()
 	return workerapi.CompleteTaskRequest{
-		Lease: lease.Fence(),
+		Lease: workerapi.RunLeaseFence{ID: uuid.NewV7().String(), LeaseSequence: 1},
 		Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 			Output: json.RawMessage(`{"b":2,"a":1}`),
 		}},
-		Workspace: workerapi.TaskWorkspaceProof{Captured: validTaskWorkspaceCapture(t, lease)},
-	}
-}
-
-func validTaskWorkspaceCapture(t *testing.T, lease workerapi.RunLeaseAssignment) *workerapi.TaskWorkspaceCapture {
-	t.Helper()
-	capture := &workerapi.TaskWorkspaceCapture{
-		Receipt: validWorkspaceFinalizationReceipt(lease),
-		Disk: workerapi.CheckpointComputer{
-			ComputerID: lease.WorkspaceID, LogicalBytes: 4096,
-			Root: testGenerationRoot(4096),
-		},
-	}
-	setCaptureFingerprint(t, capture)
-	return capture
-}
-
-func validWorkspaceFinalizationReceipt(lease workerapi.RunLeaseAssignment) workerapi.WorkspaceFinalizationReceipt {
-	return workerapi.WorkspaceFinalizationReceipt{
 		OperationID: uuid.NewV7().String(),
-		Fence: workerapi.WorkspaceFinalizationFence{
-			WorkerInstanceID: lease.WorkerInstanceID, WorkerEpoch: lease.WorkerEpoch,
-			RuntimeInstanceID: lease.RuntimeInstanceID, RuntimeIdentityID: lease.RuntimeIdentityID,
-			WorkspaceID: lease.WorkspaceID, WorkspaceMountID: lease.WorkspaceMountID,
-			RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID,
-			LeaseSequence: lease.LeaseSequence, WorkspaceLeaseID: lease.WorkspaceLeaseID,
-			OwnershipGeneration: lease.OwnershipGeneration, WriterGeneration: lease.WriterGeneration,
-			MountFencingGeneration: lease.MountFencingGeneration, ExpiresAt: lease.ExpiresAt,
-			BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
-		},
 	}
-}
-
-func setCaptureFingerprint(t *testing.T, capture *workerapi.TaskWorkspaceCapture) {
-	t.Helper()
-	fingerprint, err := workspace.FinalizationFingerprint(workspace.FinalizationCaptureKind, workspace.FinalizationRequest{
-		OperationID: capture.Receipt.OperationID, Fence: testFinalizationFence(capture.Receipt.Fence),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	capture.Receipt.RequestFingerprint = fingerprint
-}
-
-func testFinalizationFence(fence workerapi.WorkspaceFinalizationFence) workspace.FinalizationFence {
-	return workspace.FinalizationFence{
-		WorkerInstanceID: fence.WorkerInstanceID, WorkerEpoch: fence.WorkerEpoch,
-		RuntimeInstanceID: fence.RuntimeInstanceID, RuntimeIdentityID: fence.RuntimeIdentityID,
-		WorkspaceID: fence.WorkspaceID, WorkspaceMountID: fence.WorkspaceMountID,
-		RunID: fence.RunID, AttemptNumber: uint32(fence.AttemptNumber), RunLeaseID: fence.RunLeaseID,
-		LeaseSequence: fence.LeaseSequence, WorkspaceLeaseID: fence.WorkspaceLeaseID,
-		OwnershipGeneration: fence.OwnershipGeneration, WriterGeneration: fence.WriterGeneration,
-		MountFencingGeneration: fence.MountFencingGeneration, ExpiresAtUnixNano: fence.ExpiresAt.UnixNano(),
-		BaseWorkspaceVersionID: fence.BaseWorkspaceVersionID,
-	}
-}
-
-func cloneTaskWorkspaceCapture(capture *workerapi.TaskWorkspaceCapture) *workerapi.TaskWorkspaceCapture {
-	copy := *capture
-	return &copy
 }

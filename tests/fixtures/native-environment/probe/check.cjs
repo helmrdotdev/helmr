@@ -1,4 +1,4 @@
-// Run by the guestd launch test inside each Workspace root, with the admitted
+// Run by the guestd launch test inside each Computer root, with the admitted
 // Program and Runtime mounted exactly as a managed Program sees them.
 const { execFileSync, spawnSync } = require("node:child_process")
 const dns = require("node:dns")

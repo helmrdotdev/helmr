@@ -22,7 +22,7 @@ func TestComputerCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
 	for range 2 {
 		work := f.AddRunLease(t, "assigned", time.Now())
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
- SELECT environment_id,workspace_id,$2,org_id,project_id,1,'application/octet-stream','segment',0,'{}',now() FROM runs WHERE id=$1`, work.RunID, digest)
+ SELECT environment_id,computer_id,$2,org_id,project_id,1,'application/octet-stream','segment',0,'{}',now() FROM runs WHERE id=$1`, work.RunID, digest)
 	}
 	candidates, err := q.ListUnreferencedComputerObjects(t.Context(), 100)
 	if err != nil {
@@ -101,10 +101,10 @@ func TestComputerCollectionDrainsOrphanGraph(t *testing.T) {
 			t.Fatal(err)
 		}
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_objects(environment_id,computer_id,digest,org_id,project_id,size_bytes,media_type,kind,rank,inspection,certified_at)
- SELECT environment_id,workspace_id,$2,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',now() FROM runs WHERE id=$1`, work.RunID, digest, []string{"segment", "index", "root"}[rank], rank)
+ SELECT environment_id,computer_id,$2,org_id,project_id,1,'application/octet-stream',$3,$4,'{}',now() FROM runs WHERE id=$1`, work.RunID, digest, []string{"segment", "index", "root"}[rank], rank)
 		if rank > 0 {
 			dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_edges(environment_id,computer_id,parent_digest,child_digest,parent_rank,child_rank)
- SELECT environment_id,workspace_id,$2,$3,$4,$4-1 FROM runs WHERE id=$1`, work.RunID, digest, digests[rank-1], rank)
+ SELECT environment_id,computer_id,$2,$3,$4,$4-1 FROM runs WHERE id=$1`, work.RunID, digest, digests[rank-1], rank)
 		}
 	}
 	collector := &Reclaimer{pool: f.Pool, queries: q}

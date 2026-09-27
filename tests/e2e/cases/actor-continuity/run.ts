@@ -1,31 +1,31 @@
 import { verify, assert, assertEqual, errorCode, deadline } from "../../support/context"
-import type { WorkspaceRef, SessionRef, Session, Run } from "@helmr/sdk"
+import type { ComputerRef, SessionRef, Session, Run } from "@helmr/sdk"
 import type { childTaskSmoke } from "../child-tasks/task"
 await verify("actor-continuity", async ({ client, marker, objects, cleanup }) => {
-  const targetWorkspace = await client.sandboxes.createWorkspace("helmr-child-task-target-smoke", {
+  const targetComputer = await client.sandboxes.createComputer("helmr-child-task-target-smoke", {
     key: `child-target-${marker}`,
     idempotencyKey: `child-target:create:${marker}`,
   })
-  objects.workspace_ids.push(targetWorkspace.id)
-  cleanup(() => deleteChildSmokeWorkspace(targetWorkspace, `child-target:delete:${marker}`))
-  const taskCallerWorkspace = await client.sandboxes.createWorkspace(
+  objects.computer_ids.push(targetComputer.id)
+  cleanup(() => deleteChildSmokeComputer(targetComputer, `child-target:delete:${marker}`))
+  const taskCallerComputer = await client.sandboxes.createComputer(
     "helmr-child-task-caller-smoke",
     {
       key: `child-task-caller-${marker}`,
       idempotencyKey: `child-task-caller:create:${marker}`,
     },
   )
-  objects.workspace_ids.push(taskCallerWorkspace.id)
+  objects.computer_ids.push(taskCallerComputer.id)
   cleanup(() =>
-    deleteChildSmokeWorkspace(taskCallerWorkspace, `child-task-caller:delete:${marker}`),
+    deleteChildSmokeComputer(taskCallerComputer, `child-task-caller:delete:${marker}`),
   )
   const task = await client.tasks.start<typeof childTaskSmoke>("child-task-smoke", {
     payload: {
       mode: "call-success",
       marker: `${marker}-task-call`,
-      childWorkspaceId: targetWorkspace.id,
+      childComputerId: targetComputer.id,
     },
-    workspace: taskCallerWorkspace,
+    computer: taskCallerComputer,
     idempotencyKey: `child-task:start:${marker}`,
   })
   objects.run_ids.push(task.id)
@@ -37,15 +37,15 @@ await verify("actor-continuity", async ({ client, marker, objects, cleanup }) =>
     "Task child call output did not match the requested smoke marker",
   )
 
-  const actorWorkspace = await client.sandboxes.createWorkspace("helmr-child-task-caller-smoke", {
+  const actorComputer = await client.sandboxes.createComputer("helmr-child-task-caller-smoke", {
     key: `child-actor-caller-${marker}`,
     idempotencyKey: `child-actor-caller:create:${marker}`,
   })
-  objects.workspace_ids.push(actorWorkspace.id)
-  cleanup(() => deleteChildSmokeWorkspace(actorWorkspace, `child-actor-caller:delete:${marker}`))
+  objects.computer_ids.push(actorComputer.id)
+  cleanup(() => deleteChildSmokeComputer(actorComputer, `child-actor-caller:delete:${marker}`))
   const actor = await client.actors.start("child-task-smoke-actor", {
     key: `child-call:${marker}`,
-    workspace: actorWorkspace,
+    computer: actorComputer,
     idempotencyKey: `child-actor:start:${marker}`,
   })
   cleanup(() => closeSmokeActor(actor.session))
@@ -54,7 +54,7 @@ await verify("actor-continuity", async ({ client, marker, objects, cleanup }) =>
   const firstTurn = await actor.session.enqueue(
     {
       marker: `${marker}-actor-call`,
-      childWorkspaceId: targetWorkspace.id,
+      childComputerId: targetComputer.id,
     },
     { idempotencyKey: `child-actor:first:${marker}` },
   )
@@ -87,7 +87,7 @@ await verify("actor-continuity", async ({ client, marker, objects, cleanup }) =>
   const actorByKey = client.sessions.ref(sessionMatches.items[0]!.id)
   const replayedInput = {
     marker: `${marker}-actor-continuation`,
-    childWorkspaceId: targetWorkspace.id,
+    childComputerId: targetComputer.id,
   }
   const sent = await actorByKey.enqueue(
     replayedInput,
@@ -147,25 +147,25 @@ await verify("actor-continuity", async ({ client, marker, objects, cleanup }) =>
     "Actor close discarded durable output",
   )
   return {
-    targetWorkspaceId: targetWorkspace.id,
-    taskCallerWorkspaceId: taskCallerWorkspace.id,
+    targetComputerId: targetComputer.id,
+    taskCallerComputerId: taskCallerComputer.id,
     taskRunId: task.id,
     taskOutput,
-    actorWorkspaceId: actorWorkspace.id,
+    actorComputerId: actorComputer.id,
     sessionId: actor.session.id,
     actorRunId: actor.run.id,
     actorContinuationRunId,
     actorChildRunId,
     actorOutputSequences: outputSequences,
   }
-  async function deleteChildSmokeWorkspace(
-    ref: WorkspaceRef,
+  async function deleteChildSmokeComputer(
+    ref: ComputerRef,
     idempotencyKey: string,
   ): Promise<void> {
     try {
       await ref.delete({ idempotencyKey })
     } catch (error) {
-      if (errorCode(error) !== "workspace_not_found") throw error
+      if (errorCode(error) !== "computer_not_found") throw error
     }
   }
 

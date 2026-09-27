@@ -1,16 +1,16 @@
 ---
 title: Start a task
-description: Start a deployed Task in an existing Workspace.
+description: Start a deployed Task in an existing Computer.
 ---
 
 # Start a task
 
-Every external Task start names an existing Workspace:
+Every external Task start names an existing Computer:
 
 ```sh
 helmr task start review-pr \
   --project agents --env development \
-  --workspace WORKSPACE_ID \
+  --computer COMPUTER_ID \
   --payload-json '{"owner":"helmrdotdev","repo":"helmr","number":42}' \
   --idempotency-key github:helmrdotdev/helmr:pr:42 \
   --wait
@@ -26,7 +26,7 @@ finishes. For asynchronous starts, omit both and save the returned Run ID.
 The SDK preserves Task input and output types:
 
 ```ts
-const workspace = client.workspaces.ref("WORKSPACE_ID")
+const computer = client.computers.ref("COMPUTER_ID")
 const run = await client.tasks.start<typeof reviewPr>(
   reviewPr.id,
   {
@@ -35,7 +35,7 @@ const run = await client.tasks.start<typeof reviewPr>(
       repo: "helmr",
       number: 42,
     },
-    workspace,
+    computer,
     idempotencyKey: "github:helmrdotdev/helmr:pr:42",
   },
 )

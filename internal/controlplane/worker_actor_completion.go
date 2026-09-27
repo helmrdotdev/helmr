@@ -48,6 +48,11 @@ func (s *Server) workerCompleteActor(w http.ResponseWriter, r *http.Request) {
 			writeError(w, conflict(errStaleActorCompletion))
 			return
 		}
+		if isDeterministicWorkerAdmission(err) {
+			writeError(w, apiError{kind: errUnprocessable, err: errors.New("actor completion admission is invalid")})
+			return
+		}
+
 		s.log.Error("complete Actor failed", "run_lease_id", request.Lease.ID, "error", err)
 		writeError(w, errors.New("complete actor"))
 		return

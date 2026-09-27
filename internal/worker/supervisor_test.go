@@ -570,7 +570,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		ControlPlane: controlPlane, PollEvery: time.Millisecond, ObservationEvery: time.Millisecond, DrainTimeout: time.Second,
 		Consumers: []ConsumerSpec{
 			{Name: "run", Concurrency: 1, Consumer: runs},
-			{Name: "workspace-cleanup", Concurrency: 1, ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: cleanup},
+			{Name: "computer-cleanup", Concurrency: 1, ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: cleanup},
 		},
 		FinalizeDrain: func(context.Context) (RecoveryEvidence, error) {
 			close(finalized)
@@ -588,7 +588,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("run did not start")
 	}
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1})
 	deadline := time.Now().Add(time.Second)
 	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
@@ -609,7 +609,7 @@ func TestServerDirectedDrainStopsExecutionAndCompletesAfterCleanup(t *testing.T)
 		t.Fatal("execution consumer claimed new work after server-directed drain")
 	case <-time.After(20 * time.Millisecond):
 	}
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 0})
 	select {
 	case <-finalized:
 	case <-time.After(time.Second):
@@ -661,7 +661,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1})
 	deadline := time.Now().Add(time.Second)
 	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
@@ -676,7 +676,7 @@ func TestServerDirectedDrainContinuesBoundRunWithHardAdmission(t *testing.T) {
 		t.Fatal("bound Run was not claimed during drain")
 	}
 	close(releaseWork)
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 0})
 	select {
 	case err := <-done:
 		if err != nil {
@@ -715,7 +715,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- s.Run(t.Context()) }()
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1})
 	deadline := time.Now().Add(time.Second)
 	for s.state.Load().(Status) != StatusDraining {
 		if time.Now().After(deadline) {
@@ -731,7 +731,7 @@ func TestServerDirectedDrainDoesNotBypassBoundRunAdmission(t *testing.T) {
 	if claimed != 0 {
 		t.Fatalf("claimed %d bound Runs with unavailable KVM", claimed)
 	}
-	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 0})
+	controlPlane.status.Store(workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 0})
 	select {
 	case err := <-done:
 		if err != nil {
@@ -756,7 +756,7 @@ func TestDrainingObservationPreservesHardHealthInsteadOfLifecyclePause(t *testin
 	})
 	s := &Supervisor{cfg: Config{AdmissionEvaluator: evaluator}}
 	observation := s.observation(StatusDraining, RecoveryEvidence{})
-	if observation.RunPausedReason != "" || observation.RuntimePausedReason != "" {
+	if observation.RunPausedReason != "" || observation.VMPausedReason != "" {
 		t.Fatalf("draining observation reported lifecycle pause: %+v", observation)
 	}
 }
@@ -908,7 +908,7 @@ func TestServerDirectedDrainDoesNotCompleteOnTimeoutOrDirtyInventory(t *testing.
 		wantError   string
 	}{
 		{
-			name: "server authority timeout", status: workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveExecutions: 1},
+			name: "server authority timeout", status: workerapi.StatusResponse{Status: workerapi.StatusDraining, ActiveInstances: 1},
 			finalize: func(context.Context) (RecoveryEvidence, error) {
 				return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
 			},

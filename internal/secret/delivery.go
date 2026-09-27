@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const maxWorkspaceSecretPlacements = 64
+const maxComputerSecretPlacements = 64
 
 var ErrDeliveryUnavailable = errors.New("secret delivery authority is unavailable")
 
@@ -44,27 +44,27 @@ func LockAttemptDelivery(
 	store deliveryStore,
 	runID pgtype.UUID,
 	attemptNumber int32,
-	workspaceID pgtype.UUID,
+	computerID pgtype.UUID,
 ) ([]DeliveryEnvelope, error) {
-	if !runID.Valid || !workspaceID.Valid || attemptNumber <= 0 {
+	if !runID.Valid || !computerID.Valid || attemptNumber <= 0 {
 		return nil, ErrDeliveryUnavailable
 	}
 	rows, err := store.LockAttemptSecretDelivery(ctx, db.LockAttemptSecretDeliveryParams{
 		RunID:         runID,
 		AttemptNumber: pgtype.Int4{Int32: attemptNumber, Valid: true},
-		WorkspaceID:   workspaceID,
+		ComputerID:    computerID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("lock attempt secret delivery: %w", err)
 	}
-	if len(rows) > maxWorkspaceSecretPlacements {
+	if len(rows) > maxComputerSecretPlacements {
 		return nil, ErrDeliveryUnavailable
 	}
 
 	versions := make(map[uuid.UUID]db.SecretVersion)
 	envelopes := make([]DeliveryEnvelope, 0, len(rows))
 	for _, row := range rows {
-		if err := validateDeliveryRow(row, runID, attemptNumber, workspaceID); err != nil {
+		if err := validateDeliveryRow(row, runID, attemptNumber, computerID); err != nil {
 			return nil, err
 		}
 		versionID, err := pgvalue.UUIDValue(row.ResolutionSecretVersionID)
@@ -87,9 +87,9 @@ func LockAttemptDelivery(
 			versions[versionID] = version
 		}
 		envelopes = append(envelopes, DeliveryEnvelope{
-			Mode:            row.WorkspaceSecret.Mode,
-			PlacementKind:   row.WorkspaceSecret.PlacementKind,
-			PlacementTarget: row.WorkspaceSecret.PlacementTarget,
+			Mode:            row.ComputerSecret.Mode,
+			PlacementKind:   row.ComputerSecret.PlacementKind,
+			PlacementTarget: row.ComputerSecret.PlacementTarget,
 			Secret:          row.Secret,
 			Version:         version,
 		})
@@ -100,33 +100,33 @@ func LockAttemptDelivery(
 func LockProcessDelivery(
 	ctx context.Context,
 	store processDeliveryStore,
-	processID pgtype.UUID,
-	workspaceID pgtype.UUID,
+	commandID pgtype.UUID,
+	computerID pgtype.UUID,
 ) ([]DeliveryEnvelope, error) {
-	if !processID.Valid || !workspaceID.Valid {
+	if !commandID.Valid || !computerID.Valid {
 		return nil, ErrDeliveryUnavailable
 	}
 	rows, err := store.LockProcessSecretDelivery(ctx, db.LockProcessSecretDeliveryParams{
-		ProcessID:   processID,
-		WorkspaceID: workspaceID,
+		CommandID:  commandID,
+		ComputerID: computerID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("lock process secret delivery: %w", err)
 	}
-	if len(rows) > maxWorkspaceSecretPlacements {
+	if len(rows) > maxComputerSecretPlacements {
 		return nil, ErrDeliveryUnavailable
 	}
 	versions := make(map[uuid.UUID]db.SecretVersion)
 	envelopes := make([]DeliveryEnvelope, 0, len(rows))
 	for _, row := range rows {
-		if row.WorkspaceSecret.WorkspaceID != workspaceID ||
-			row.WorkspaceSecret.EnvironmentID != row.Secret.EnvironmentID ||
-			row.WorkspaceSecret.SecretID != row.Secret.ID ||
-			(row.WorkspaceSecret.PlacementKind != "env" && row.WorkspaceSecret.PlacementKind != "file") ||
-			row.WorkspaceSecret.PlacementTarget == "" ||
+		if row.ComputerSecret.ComputerID != computerID ||
+			row.ComputerSecret.EnvironmentID != row.Secret.EnvironmentID ||
+			row.ComputerSecret.SecretID != row.Secret.ID ||
+			(row.ComputerSecret.PlacementKind != "env" && row.ComputerSecret.PlacementKind != "file") ||
+			row.ComputerSecret.PlacementTarget == "" ||
 			row.Secret.Status != "active" ||
 			!row.ResolutionID.Valid ||
-			row.ResolutionProcessID != processID ||
+			row.ResolutionCommandID != commandID ||
 			!row.ResolutionSecretVersionID.Valid ||
 			!row.ResolutionRevocationGeneration.Valid ||
 			row.ResolutionRevocationGeneration.Int64 != row.Secret.RevocationGeneration {
@@ -152,9 +152,9 @@ func LockProcessDelivery(
 			versions[versionID] = version
 		}
 		envelopes = append(envelopes, DeliveryEnvelope{
-			Mode:            row.WorkspaceSecret.Mode,
-			PlacementKind:   row.WorkspaceSecret.PlacementKind,
-			PlacementTarget: row.WorkspaceSecret.PlacementTarget,
+			Mode:            row.ComputerSecret.Mode,
+			PlacementKind:   row.ComputerSecret.PlacementKind,
+			PlacementTarget: row.ComputerSecret.PlacementTarget,
 			Secret:          row.Secret,
 			Version:         version,
 		})
@@ -166,13 +166,13 @@ func validateDeliveryRow(
 	row db.LockAttemptSecretDeliveryRow,
 	runID pgtype.UUID,
 	attemptNumber int32,
-	workspaceID pgtype.UUID,
+	computerID pgtype.UUID,
 ) error {
-	if row.WorkspaceSecret.WorkspaceID != workspaceID ||
-		row.WorkspaceSecret.EnvironmentID != row.Secret.EnvironmentID ||
-		row.WorkspaceSecret.SecretID != row.Secret.ID ||
-		(row.WorkspaceSecret.PlacementKind != "env" && row.WorkspaceSecret.PlacementKind != "file") ||
-		row.WorkspaceSecret.PlacementTarget == "" ||
+	if row.ComputerSecret.ComputerID != computerID ||
+		row.ComputerSecret.EnvironmentID != row.Secret.EnvironmentID ||
+		row.ComputerSecret.SecretID != row.Secret.ID ||
+		(row.ComputerSecret.PlacementKind != "env" && row.ComputerSecret.PlacementKind != "file") ||
+		row.ComputerSecret.PlacementTarget == "" ||
 		row.Secret.Status != "active" ||
 		!row.ResolutionID.Valid ||
 		row.ResolutionRunID != runID ||
@@ -187,7 +187,7 @@ func validateDeliveryRow(
 }
 
 func (s *Store) OpenDeliveries(environmentID uuid.UUID, envelopes []DeliveryEnvelope) ([]DeliveryMaterial, error) {
-	if len(envelopes) > maxWorkspaceSecretPlacements {
+	if len(envelopes) > maxComputerSecretPlacements {
 		return nil, ErrDeliveryUnavailable
 	}
 	materials := make([]DeliveryMaterial, 0, len(envelopes))

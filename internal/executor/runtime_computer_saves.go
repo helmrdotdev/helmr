@@ -16,7 +16,7 @@ import (
 // Quiesce irreversibly prevents admission before joining that operation.
 type runtimeComputerSaves struct {
 	mu                    sync.Mutex
-	authorities           []*computerSaveAuthority
+	writer                *workerapi.ComputerSaveBeginRequest
 	loopCancel            context.CancelFunc
 	loopDone              chan struct{}
 	sequence              int64

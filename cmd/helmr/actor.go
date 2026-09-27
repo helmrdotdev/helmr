@@ -34,7 +34,7 @@ func actorStartCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
 	var key string
-	var workspaceID string
+	var computerID string
 	var idempotencyKey string
 	var queue string
 	var concurrencyKey string
@@ -66,10 +66,10 @@ func actorStartCommand() *cobra.Command {
 					return fmt.Errorf("parse --retry: %w", err)
 				}
 			}
-			if workspaceID == "" {
-				return errors.New("--workspace is required")
+			if computerID == "" {
+				return errors.New("--computer is required")
 			}
-			if err := api.ValidateWorkspaceID(workspaceID); err != nil {
+			if err := api.ValidateComputerID(computerID); err != nil {
 				return err
 			}
 			var actorKey *string
@@ -100,7 +100,7 @@ func actorStartCommand() *cobra.Command {
 			response, err := controlPlane.StartActor(cmd.Context(), args[0], api.StartActorRequest{
 				Key:            actorKey,
 				IdempotencyKey: strings.TrimSpace(idempotencyKey),
-				Workspace:      api.WorkspaceIDTarget{ID: workspaceID},
+				Computer:       api.ComputerIDTarget{ID: computerID},
 				Run:            run,
 			}, scope)
 			if err != nil {
@@ -116,7 +116,7 @@ func actorStartCommand() *cobra.Command {
 	}
 	addScopeFlags(cmd, &projectID, &environmentID)
 	cmd.Flags().StringVar(&key, "key", "", "Stable identity key for the new Actor.")
-	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing Workspace ID (required).")
+	cmd.Flags().StringVar(&computerID, "computer", "", "Existing Computer ID (required).")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this Actor start.")
 	cmd.Flags().StringVar(&queue, "queue", "", "Queue name for managed Runs.")
 	cmd.Flags().StringVar(&concurrencyKey, "concurrency-key", "", "Concurrency key for managed Runs.")

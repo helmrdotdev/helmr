@@ -418,9 +418,9 @@ func environmentScopeForClient(ctx context.Context, controlPlane *client.Client,
 	return client.EnvironmentScopeOptions{ProjectID: project.ID, EnvironmentID: environment.ID}, nil
 }
 
-func workspaceScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.WorkspaceScopeOptions, error) {
+func computerScopeForClient(ctx context.Context, controlPlane *client.Client, projectID string, environmentID string) (client.ComputerScopeOptions, error) {
 	environmentScope, err := environmentScopeForClient(ctx, controlPlane, projectID, environmentID)
-	return client.WorkspaceScopeOptions(environmentScope), err
+	return client.ComputerScopeOptions(environmentScope), err
 }
 
 func writeRunLifecycleResult(cmd *cobra.Command, run api.RunSnapshotResponse) {

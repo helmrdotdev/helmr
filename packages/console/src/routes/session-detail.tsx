@@ -346,11 +346,11 @@ function SessionDetailContent() {
                   <DetailItem label="Deployment">
                     <IDText value={current().deployment_id} mode="link" href={deploymentHref(current().deployment_id)} />
                   </DetailItem>
-                  <DetailItem label="Workspace">
+                  <DetailItem label="Computer">
                     <IDText
-                      value={current().workspace_id ?? ""}
+                      value={current().computer_id ?? ""}
                       mode="link"
-                      href={current().workspace_id ? `/workspaces/${current().workspace_id}` : undefined}
+                      href={current().computer_id ? `/computers/${current().computer_id}` : undefined}
                     />
                   </DetailItem>
                   <DetailItem label="Current Run">

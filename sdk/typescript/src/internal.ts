@@ -18,18 +18,19 @@ export {
 } from "./image"
 export {
   inspectSandboxDefinition,
-  inspectWorkspaceAddress,
-  workspaceRefID,
-  brandWorkspaceAddress,
-  createWorkspaceRef,
-  encodeWorkspaceSecrets,
-  parseWorkspaceDeleteReceipt,
-  parseWorkspaceExecResult,
-  parseWorkspace,
-  type EncodedWorkspaceSecret,
-  type WorkspaceResources,
+  inspectComputerAddress,
+  computerRefID,
+  brandComputerAddress,
+  createComputerRef,
+  encodeComputerSecrets,
+  parseComputerDeleteReceipt,
+  parseComputer,
+  parseComputerMembers,
+  encodeComputerMembersQuery,
+  type EncodedComputerSecret,
+  type ComputerResources,
   type InternalSandboxDefinition,
-} from "./workspace"
+} from "./computer"
 export {
   canonicalizeJsonValue,
   type JsonObject,

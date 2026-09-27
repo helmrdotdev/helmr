@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -27,8 +28,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -39,11 +38,11 @@ const (
 	workerLogRequestBodyLimit    = int64(256 << 10)
 	workerRunLogRequestBodyLimit = int64(len(`{"lease":{"id":"00000000-0000-7000-8000-000000000000","lease_sequence":9223372036854775807},"stream":"stdout","observed_seq":9223372036854775807,"content_base64":""}`) +
 		((telemetry.MaxRunLogContentBytes + 2) / 3 * 4))
-	taskCompletionBodyLimit  = int64(17 << 20)
-	workspaceExecResultLimit = int64(10 << 20)
-	secretRequestBodyLimit   = int64(1 << 20)
-	adminRequestBodyLimit    = int64(64 << 10)
-	maxPageSize              = int32(500)
+	taskCompletionBodyLimit    = int64(17 << 20)
+	computerCommandResultLimit = int64(10 << 20)
+	secretRequestBodyLimit     = int64(1 << 20)
+	adminRequestBodyLimit      = int64(64 << 10)
+	maxPageSize                = int32(500)
 )
 
 type SecretManager interface {
@@ -70,7 +69,7 @@ type Server struct {
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
 	secretProxy           *secret.Store
-	workspaceFencingKey   workspace.FencingKey
+	computerFencingKey    computer.FencingKey
 	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
@@ -101,8 +100,9 @@ const (
 	deploymentModeManagedCloud = "managed-cloud"
 )
 
-type TxBeginner interface {
-	Begin(context.Context) (pgx.Tx, error)
+// inTx owns the PostgreSQL transaction for a request's durable unit of work.
+func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) error {
+	return inTxWith(ctx, s.tx, fn)
 }
 
 type ServerConfig struct {
@@ -114,20 +114,20 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth                auth.Authenticator
-	CAS                 cas.Store
-	BundleAdmission     *deployment.DeploymentBundleAdmission
-	PlatformStore       cas.Reader
-	Secrets             SecretManager
-	SecretDelivery      SecretDeliveryOpener
-	SecretProxy         *secret.Store
-	WorkspaceFencingKey workspace.FencingKey
-	TokenCredentialKey  auth.CredentialKey
-	EventStream         SubjectEventReader
-	TelemetryReader     telemetry.Reader
-	Mailer              email.Sender
-	MagicLinkDelivery   *MagicLinkDelivery
-	AuthProvider        AuthProvider
+	Auth               auth.Authenticator
+	CAS                cas.Store
+	BundleAdmission    *deployment.DeploymentBundleAdmission
+	PlatformStore      cas.Reader
+	Secrets            SecretManager
+	SecretDelivery     SecretDeliveryOpener
+	SecretProxy        *secret.Store
+	ComputerFencingKey computer.FencingKey
+	TokenCredentialKey auth.CredentialKey
+	EventStream        SubjectEventReader
+	TelemetryReader    telemetry.Reader
+	Mailer             email.Sender
+	MagicLinkDelivery  *MagicLinkDelivery
+	AuthProvider       AuthProvider
 
 	WorkerTokenSigningKey []byte
 	WorkerTokenTTL        time.Duration
@@ -181,8 +181,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.SecretDelivery == nil {
 		return nil, errors.New("secret delivery opener is required")
 	}
-	if !cfg.WorkspaceFencingKey.Valid() {
-		return nil, errors.New("workspace fencing key is required")
+	if !cfg.ComputerFencingKey.Valid() {
+		return nil, errors.New("computer fencing key is required")
 	}
 	if !cfg.TokenCredentialKey.Valid() {
 		return nil, errors.New("token credential key is required")
@@ -242,7 +242,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
 		secretProxy:           cfg.SecretProxy,
-		workspaceFencingKey:   cfg.WorkspaceFencingKey,
+		computerFencingKey:    cfg.ComputerFencingKey,
 		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
@@ -476,14 +476,17 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate", s.rotateSecretByID)
 		r.With(limitRequestBody(secretRequestBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke", s.revokeSecretByID)
-		r.With(limitRequestBody(workspaceCreateBodyLimit)).
-			Post("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/workspaces", s.createWorkspaceHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces", s.listWorkspacesHTTP)
-		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).
-			Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec/{processID}", s.getWorkspaceExecHTTP)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspaceHTTP)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
+		r.With(limitRequestBody(computerCreateBodyLimit)).
+			Post("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/computers", s.createComputerHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/computers", s.listComputersHTTP)
+		r.With(limitRequestBody(computerCommandBodyMaxBytes)).
+			Post("/projects/{projectID}/environments/{environmentID}/computers/{computerID}/exec", s.executeComputerHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/commands/{commandID}", s.getComputerCommandHTTP)
+		r.Post("/projects/{projectID}/environments/{environmentID}/commands/{commandID}/cancel", s.cancelCommandHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/commands/{commandID}/logs", s.listCommandLogsHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.getComputerHTTP)
+		r.Get("/projects/{projectID}/environments/{environmentID}/computers/{computerID}/members", s.listComputerMembersHTTP)
+		r.Delete("/projects/{projectID}/environments/{environmentID}/computers/{computerID}", s.deleteComputerHTTP)
 		r.With(limitRequestBody(taskStartBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredID}/start", s.startTaskHTTP)
 		r.Get("/projects/{projectID}/environments/{environmentID}/tasks", s.listTasks)
@@ -568,12 +571,15 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/secrets/{secretID}", s.getSecretByID)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets/{secretID}/rotate", s.rotateSecretByID)
 		r.With(limitRequestBody(secretRequestBodyLimit)).Post("/secrets/{secretID}/revoke", s.revokeSecretByID)
-		r.With(limitRequestBody(workspaceCreateBodyLimit)).Post("/sandboxes/{sandboxID}/workspaces", s.createWorkspaceHTTP)
-		r.Get("/workspaces", s.listWorkspacesHTTP)
-		r.With(limitRequestBody(workspaceExecBodyMaxBytes)).Post("/workspaces/{workspaceID}/exec", s.executeWorkspaceHTTP)
-		r.Get("/workspaces/{workspaceID}/exec/{processID}", s.getWorkspaceExecHTTP)
-		r.Get("/workspaces/{workspaceID}", s.getWorkspaceHTTP)
-		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspaceHTTP)
+		r.With(limitRequestBody(computerCreateBodyLimit)).Post("/sandboxes/{sandboxID}/computers", s.createComputerHTTP)
+		r.Get("/computers", s.listComputersHTTP)
+		r.With(limitRequestBody(computerCommandBodyMaxBytes)).Post("/computers/{computerID}/exec", s.executeComputerHTTP)
+		r.Get("/commands/{commandID}", s.getComputerCommandHTTP)
+		r.Post("/commands/{commandID}/cancel", s.cancelCommandHTTP)
+		r.Get("/commands/{commandID}/logs", s.listCommandLogsHTTP)
+		r.Get("/computers/{computerID}", s.getComputerHTTP)
+		r.Get("/computers/{computerID}/members", s.listComputerMembersHTTP)
+		r.Delete("/computers/{computerID}", s.deleteComputerHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -615,12 +621,12 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Group(func(r chi.Router) {
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/prepare", s.workerPrepareSecretProxy)
 				r.With(limitRequestBody(16384)).Post("/run/secret-proxy/resolve", s.workerResolveSecretProxy)
-				r.Post("/run/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
-				r.Post("/run/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
-				r.With(limitRequestBody(1<<20)).Post("/run/runtime-instances/initialization/generation", s.workerPublishInitialComputerGeneration)
-				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/initialization/key", s.workerInitialComputerKey)
-				r.With(limitRequestBody(1024)).Post("/run/runtime-instances/computer-source", s.workerComputerSource)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)
+				r.Post("/run/computer-instances/reconcile", s.workerNextRuntimeReconcileTarget)
+				r.Post("/run/computer-instances/ready", s.workerMarkComputerInstanceReady)
+				r.With(limitRequestBody(1<<20)).Post("/run/computer-instances/initialization/generation", s.workerPublishInitialComputerGeneration)
+				r.With(limitRequestBody(1024)).Post("/run/computer-instances/initialization/key", s.workerInitialComputerKey)
+				r.With(limitRequestBody(1024)).Post("/run/computer-instances/computer-source", s.workerComputerSource)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-instances/initialization/objects/register", s.workerRegisterInitialComputerObject)
 				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/begin", s.workerBeginComputerSave)
 				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/abandon", s.workerAbandonComputerSave)
 				r.With(limitRequestBody(1<<20)).Post("/run/computer-saves/publish", s.workerPublishComputerSave)
@@ -628,50 +634,43 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/register", s.workerRegisterComputerSaveObject)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/certify", s.workerCertifyComputerSaveObject)
 				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-saves/objects/reuse", s.workerReuseComputerSaveObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-objects/register", s.workerRegisterRunComputerObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-objects/certify", s.workerCertifyRunComputerObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-objects/reuse", s.workerReuseRunComputerObject)
-				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/runtime-instances/initialization/objects/certify", s.workerCertifyInitialComputerObject)
-				r.Post("/run/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
-				r.Post("/run/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
-				r.Post("/run/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
-				r.Post("/run/workspace-mounts/claim", s.workerClaimWorkspaceMount)
-				r.Post("/run/workspace-mounts/renew", s.workerRenewWorkspaceMount)
-				r.Post("/run/workspace-mounts/mounted", s.workerMarkWorkspaceMountMounted)
-				r.Post("/run/workspace-mounts/capture", s.workerCaptureWorkspaceMount)
-				r.Post("/run/workspace-mounts/computer-objects/register", s.workerRegisterExecComputerObject)
-				r.Post("/run/workspace-mounts/computer-objects/certify", s.workerCertifyExecComputerObject)
-				r.Post("/run/workspace-mounts/computer-objects/reuse", s.workerReuseExecComputerObject)
+				r.With(limitRequestBody(computerObjectRequestLimit)).Post("/run/computer-instances/initialization/objects/certify", s.workerCertifyInitialComputerObject)
+				r.Post("/run/computer-instances/closed", s.workerMarkComputerInstanceClosed)
+				r.Post("/run/computer-instances/failed", s.workerMarkComputerInstanceFailed)
+				r.Post("/run/computer-instances/claim", s.workerClaimComputerInstance)
+				r.Post("/run/computer-instances/renew", s.workerRenewComputerInstance)
 
-				r.Post("/run/workspace-mounts/stop", s.workerStopWorkspaceMount)
-				r.Post("/run/workspace-mounts/fail", s.workerFailWorkspaceMount)
-				r.Post("/run/workspace-execs/claim", s.workerClaimWorkspaceExec)
-				r.With(limitRequestBody(workspaceExecResultLimit)).
-					Post("/run/workspace-execs/complete", s.workerCompleteWorkspaceExec)
+				r.Post("/run/computer-commands/claim", s.workerClaimComputerCommand)
+				r.With(limitRequestBody(computerCommandResultLimit)).Post("/run/computer-commands/reconcile", s.workerReconcileComputerCommand)
+				r.With(limitRequestBody(workerCommandLogRequestBodyLimit)).Post("/run/computer-commands/logs/append", s.workerAppendCommandLogs)
+				r.With(limitRequestBody(computerCommandResultLimit)).
+					Post("/run/computer-commands/complete", s.workerCompleteComputerCommand)
 				r.Post("/run/leases/discover", s.workerDiscoverRunLeases)
 				r.Post("/run/leases/claim", s.workerClaimRunLease)
 				r.Post("/run/leases/start", s.workerStart)
-				r.Post("/run/leases/resume-release", s.workerAcknowledgeRunResumeRelease)
 				r.Post("/run/leases/entrypoint", s.workerEnterRunEntrypoint)
 				r.Post("/run/leases/renew", s.workerRenewRunLease)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/create", s.workerCreateRunWait)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/poll", s.workerPollRunWait)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/waits/resume-ack", s.workerAcknowledgeRunWaitResume)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/register", s.workerRegisterCheckpoint)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/ready", s.workerMarkCheckpointReady)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/checkpoints/failed", s.workerMarkCheckpointFailed)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/restores/ack", s.workerAcknowledgeComputerRestore)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/restores/plan", s.workerComputerRestorePlan)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/register", s.workerRegisterCheckpoint)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/ready", s.workerMarkCheckpointReady)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/failed", s.workerMarkCheckpointFailed)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/register", s.workerRegisterCheckpointComputerObject)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/certify", s.workerCertifyCheckpointComputerObject)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/computer/checkpoints/objects/reuse", s.workerReuseCheckpointComputerObject)
 				r.Post("/run/finalization/begin", s.workerBeginRunFinalization)
-				r.Post("/run/finalization/register", s.workerRegisterRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/turns/commit", s.workerCommitActorTurn)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/actors/start", s.workerStartActor)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/retrieve", s.workerGetSessionStatus)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/close", s.workerCloseSession)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/sessions/cancel", s.workerCancelSession)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/create", s.workerCreateWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/retrieve", s.workerRetrieveWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/exec", s.workerExecuteWorkspace)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/exec/poll", s.workerPollWorkspaceExec)
-				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/workspaces/delete", s.workerDeleteWorkspace)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/create", s.workerCreateComputer)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/retrieve", s.workerRetrieveComputer)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/members", s.workerListComputerMembers)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/computers/delete", s.workerDeleteComputer)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/invoke", s.workerInvokeChildTask)
 				r.With(limitRequestBody(tokenRequestBodyLimit)).Post("/run/tokens/create", s.workerCreateToken)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/run/tasks/complete", s.workerCompleteTask)

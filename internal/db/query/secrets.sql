@@ -85,7 +85,7 @@ WHERE environment_id = sqlc.arg(environment_id)
   AND revision = sqlc.arg(expected_revision)
 RETURNING *;
 
--- name: LockActiveSecretsByNameForWorkspaceCreate :many
+-- name: LockActiveSecretsByNameForComputerCreate :many
 SELECT secrets.*
 FROM secrets
 WHERE environment_id = sqlc.arg(environment_id)
@@ -208,14 +208,14 @@ WITH RECURSIVE affected_runs AS MATERIALIZED (
     SELECT DISTINCT runs.org_id,
            runs.project_id,
            runs.environment_id,
-           runs.workspace_id,
+           runs.computer_id,
            runs.id,
            runs.parent_run_id,
            runs.created_at
       FROM secret_resolutions
       JOIN runs
         ON runs.id = secret_resolutions.run_id
-       AND runs.workspace_id = secret_resolutions.workspace_id
+       AND runs.computer_id = secret_resolutions.computer_id
        AND runs.current_attempt_number = secret_resolutions.attempt_number
      WHERE secret_resolutions.secret_id = sqlc.arg(secret_id)
        AND secret_resolutions.revocation_generation < sqlc.arg(revocation_generation)
@@ -242,7 +242,7 @@ WITH RECURSIVE affected_runs AS MATERIALIZED (
 SELECT affected_runs.org_id,
        affected_runs.project_id,
        affected_runs.environment_id,
-       affected_runs.workspace_id,
+       affected_runs.computer_id,
        affected_runs.id
   FROM affected_runs
   JOIN candidate_depths ON candidate_depths.candidate_id = affected_runs.id
@@ -250,100 +250,102 @@ SELECT affected_runs.org_id,
  LIMIT sqlc.arg(row_limit);
 
 -- name: ListSecretRevocationProcesses :many
-SELECT DISTINCT workspace_processes.org_id,
-       workspace_processes.workspace_id,
-       workspace_processes.id,
-       workspace_processes.revision,
-       workspace_processes.created_at
+SELECT DISTINCT command_environment.org_id,
+       computer_commands.computer_id,
+       computer_commands.id,
+       computer_commands.revision,
+       computer_commands.created_at
   FROM secret_resolutions
-  JOIN workspace_processes
-    ON workspace_processes.id = secret_resolutions.process_id
-   AND workspace_processes.workspace_id = secret_resolutions.workspace_id
+  JOIN computer_commands
+    ON computer_commands.id = secret_resolutions.command_id
+   AND computer_commands.computer_id = secret_resolutions.computer_id
+  JOIN environments command_environment ON command_environment.id=computer_commands.environment_id
  WHERE secret_resolutions.secret_id = sqlc.arg(secret_id)
    AND secret_resolutions.revocation_generation < sqlc.arg(revocation_generation)
-   AND workspace_processes.environment_id = sqlc.arg(environment_id)
-   AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
- ORDER BY workspace_processes.created_at, workspace_processes.id
+   AND computer_commands.environment_id = sqlc.arg(environment_id)
+   AND computer_commands.terminal_at IS NULL
+   AND computer_commands.cancel_requested_at IS NULL
+ ORDER BY computer_commands.created_at, computer_commands.id
  LIMIT sqlc.arg(row_limit);
 
--- name: ListWorkspaceSecrets :many
+-- name: ListComputerSecrets :many
 SELECT
-    workspace_secrets.*,
+    computer_secrets.*,
     secrets.name AS secret_name,
     secrets.status AS secret_status,
     secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
-FROM workspace_secrets
-JOIN secrets ON secrets.id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
-ORDER BY workspace_secrets.placement_kind, workspace_secrets.placement_target;
+FROM computer_secrets
+JOIN secrets ON secrets.id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = sqlc.arg(computer_id)
+ORDER BY computer_secrets.placement_kind, computer_secrets.placement_target;
 
--- name: LockWorkspaceSecretsForAdmission :many
+-- name: LockComputerSecretsForAdmission :many
 SELECT
-    workspace_secrets.*,
+    computer_secrets.*,
     secrets.status AS secret_status,
     secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
-FROM workspace_secrets
-JOIN secrets ON secrets.id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
-ORDER BY workspace_secrets.secret_id
+FROM computer_secrets
+JOIN secrets ON secrets.id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = sqlc.arg(computer_id)
+ORDER BY computer_secrets.secret_id
 FOR UPDATE OF secrets;
 
 -- name: LockAttemptSecretDelivery :many
 SELECT
-    sqlc.embed(workspace_secrets),
+    sqlc.embed(computer_secrets),
     sqlc.embed(secrets),
     secret_resolutions.id AS resolution_id,
     secret_resolutions.run_id AS resolution_run_id,
     secret_resolutions.attempt_number AS resolution_attempt_number,
     secret_resolutions.secret_version_id AS resolution_secret_version_id,
     secret_resolutions.revocation_generation AS resolution_revocation_generation
-FROM workspace_secrets
+FROM computer_secrets
 JOIN secrets
-  ON secrets.environment_id = workspace_secrets.environment_id
- AND secrets.id = workspace_secrets.secret_id
+  ON secrets.environment_id = computer_secrets.environment_id
+ AND secrets.id = computer_secrets.secret_id
 LEFT JOIN secret_resolutions
-  ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
+  ON secret_resolutions.computer_id = computer_secrets.computer_id
  AND secret_resolutions.run_id = sqlc.arg(run_id)
  AND secret_resolutions.attempt_number = sqlc.arg(attempt_number)
- AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
- AND secret_resolutions.placement_target = workspace_secrets.placement_target
- AND secret_resolutions.secret_id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
-ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+ AND secret_resolutions.placement_kind = computer_secrets.placement_kind
+ AND secret_resolutions.placement_target = computer_secrets.placement_target
+ AND secret_resolutions.secret_id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = sqlc.arg(computer_id)
+ORDER BY secrets.id, computer_secrets.placement_kind, computer_secrets.placement_target
 LIMIT 65
 FOR UPDATE OF secrets;
 
 -- name: LockProcessSecretDelivery :many
 SELECT
-    sqlc.embed(workspace_secrets),
+    sqlc.embed(computer_secrets),
     sqlc.embed(secrets),
     secret_resolutions.id AS resolution_id,
-    secret_resolutions.process_id AS resolution_process_id,
+    secret_resolutions.command_id AS resolution_command_id,
     secret_resolutions.secret_version_id AS resolution_secret_version_id,
     secret_resolutions.revocation_generation AS resolution_revocation_generation
-FROM workspace_secrets
+FROM computer_secrets
 JOIN secrets
-  ON secrets.environment_id = workspace_secrets.environment_id
- AND secrets.id = workspace_secrets.secret_id
+  ON secrets.environment_id = computer_secrets.environment_id
+ AND secrets.id = computer_secrets.secret_id
 LEFT JOIN secret_resolutions
-  ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
- AND secret_resolutions.process_id = sqlc.arg(process_id)
- AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
- AND secret_resolutions.placement_target = workspace_secrets.placement_target
- AND secret_resolutions.secret_id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
-ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+  ON secret_resolutions.computer_id = computer_secrets.computer_id
+ AND secret_resolutions.command_id = sqlc.arg(command_id)
+ AND secret_resolutions.placement_kind = computer_secrets.placement_kind
+ AND secret_resolutions.placement_target = computer_secrets.placement_target
+ AND secret_resolutions.secret_id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = sqlc.arg(computer_id)
+ORDER BY secrets.id, computer_secrets.placement_kind, computer_secrets.placement_target
 LIMIT 65
 FOR UPDATE OF secrets;
 
 -- name: CreateAttemptSecretResolutions :execrows
 INSERT INTO secret_resolutions (
     id,
-    workspace_id,
+    computer_id,
     run_id,
     attempt_number,
     placement_kind,
@@ -354,7 +356,7 @@ INSERT INTO secret_resolutions (
 )
 SELECT
     input_ids.id,
-    sqlc.arg(workspace_id),
+    sqlc.arg(computer_id),
     sqlc.arg(run_id),
     sqlc.arg(attempt_number),
     input_kinds.placement_kind,
@@ -389,8 +391,8 @@ WHERE cardinality(sqlc.arg(ids)::uuid[]) BETWEEN 1 AND 64
 -- name: CreateProcessSecretResolutions :execrows
 INSERT INTO secret_resolutions (
     id,
-    workspace_id,
-    process_id,
+    computer_id,
+    command_id,
     placement_kind,
     placement_target,
     secret_id,
@@ -399,8 +401,8 @@ INSERT INTO secret_resolutions (
 )
 SELECT
     input_ids.id,
-    sqlc.arg(workspace_id),
-    sqlc.arg(process_id),
+    sqlc.arg(computer_id),
+    sqlc.arg(command_id),
     input_kinds.placement_kind,
     input_targets.placement_target,
     input_secrets.secret_id,

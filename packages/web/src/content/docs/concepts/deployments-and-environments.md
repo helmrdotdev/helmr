@@ -8,7 +8,7 @@ sidebarLabel: Deployments and environments
 
 A Project groups a product or service inside an organization. Environments are
 independent scopes within a Project: each has its own current Deployment,
-Secrets, Workspaces, Runs, Sessions, Tokens, and Schedules.
+Secrets, Computers, Runs, Sessions, Tokens, and Schedules.
 
 Use separate Environments when the same source needs different promoted
 versions, credentials, execution history, or access boundaries. Environment
@@ -27,7 +27,7 @@ explicitly selects another Deployment. Existing Runs remain pinned to the
 Deployment recorded when they were created.
 
 Promotion also reconciles source-declared Schedules. It does not mutate the
-immutable Deployment or rewrite existing Workspaces. Deploying with
+immutable Deployment or rewrite existing Computers. Deploying with
 `--skip-promotion` is useful for finalizing and inspecting a candidate before it
 becomes current.
 

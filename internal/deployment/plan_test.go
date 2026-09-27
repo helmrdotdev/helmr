@@ -233,7 +233,7 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 			errMsg: "imageBuild",
 		},
 		{
-			name: "workspace resources",
+			name: "computer resources",
 			change: func(plan *BuildPlan) {
 				plan.Definitions[2].Sandbox.Resources.MemoryMiB = 0
 			},
@@ -398,34 +398,34 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 			errMsg: "IANA timezone",
 		},
 		{
-			name: "workspace sandbox missing",
+			name: "computer sandbox missing",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace.SandboxDeclaredID = ""
+				manifest.Computer.SandboxDeclaredID = ""
 			},
-			errMsg: "workspace declared ID",
+			errMsg: "computer declared ID",
 		},
 		{
-			name: "workspace sandbox invalid",
+			name: "computer sandbox invalid",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace.SandboxDeclaredID = "invalid sandbox"
+				manifest.Computer.SandboxDeclaredID = "invalid sandbox"
 			},
-			errMsg: "workspace declared ID",
+			errMsg: "computer declared ID",
 		},
 		{
-			name: "workspace secrets nil",
+			name: "computer secrets nil",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace.Secrets = nil
+				manifest.Computer.Secrets = nil
 			},
 			errMsg: "secrets must be an array",
 		},
 		{
-			name: "workspace secret target",
+			name: "computer secret target",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Workspace.Secrets = []api.WorkspaceSecret{{
+				manifest.Computer.Secrets = []api.ComputerSecret{{
 					Name: "TOKEN", Env: &api.SecretEnv{Name: "HELMR_TOKEN", Mode: "raw"},
 				}}
 			},
-			errMsg: "reserved workspace secret environment target",
+			errMsg: "reserved computer secret environment target",
 		},
 	}
 
@@ -500,9 +500,9 @@ func testBuildPlan() BuildPlan {
 					Schedule: &ScheduleManifest{
 						Cron:     "0 9 * * *",
 						Timezone: "UTC",
-						Workspace: ScheduleWorkspaceManifest{
+						Computer: ScheduleComputerManifest{
 							SandboxDeclaredID: "repo",
-							Secrets:           []api.WorkspaceSecret{},
+							Secrets:           []api.ComputerSecret{},
 						},
 					},
 				},

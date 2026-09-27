@@ -2,7 +2,7 @@ import { postJson, request } from "./api";
 
 export type SessionStatus = "open" | "closing" | "closed" | "failed";
 export type Session = {
-  id: string; actor_id: string; deployment_id: string; workspace_id?: string; key?: string;
+  id: string; actor_id: string; deployment_id: string; computer_id?: string; key?: string;
   status: SessionStatus; created_at: string; updated_at: string;
   current_run_id: string | null; active_turn_id: string | null;
   dispatch: { state: string; hold_id?: string; reason?: string };

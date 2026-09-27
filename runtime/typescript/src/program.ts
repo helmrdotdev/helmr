@@ -2,14 +2,14 @@ import { create, fromBinary, toBinary } from "@bufbuild/protobuf"
 import { programProto } from "@helmr/proto"
 import {
   canonicalizeJsonValue,
-  createWorkspaceRef,
+  createComputerRef,
   createRunHandle,
   inspectDefinition,
-  encodeWorkspaceSecrets,
+  encodeComputerSecrets,
   installRuntimeOperations,
-  parseWorkspaceDeleteReceipt,
-  parseWorkspaceExecResult,
-  parseWorkspace,
+  parseComputerDeleteReceipt,
+  parseComputer,
+  parseComputerMembers,
   parseSession,
   parseSessionAdmissionReceipt,
   parseSessionMessageReceipt,
@@ -20,7 +20,7 @@ import {
   parseTurnInterruptReceipt,
   parseOutputReceipt,
   MessageRejected,
-  workspaceRefID,
+  computerRefID,
   resourceID,
   timestampString,
   trimGoSpace,
@@ -52,12 +52,10 @@ import type {
   TokenCreateRequest,
   TokenCreateResult,
   TokenWaitOptions,
-  WorkspaceDeleteReceipt,
-  WorkspaceDeleteRequest,
-  WorkspaceExecRequest,
-  WorkspaceExecResult,
-  Workspace,
-  WorkspaceCreateRequest,
+  ComputerDeleteReceipt,
+  ComputerDeleteRequest,
+  Computer,
+  ComputerCreateRequest,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
 import { randomUUIDv7 as newUUIDv7 } from "node:crypto"
@@ -178,6 +176,7 @@ class ResumeDecisionRouter {
   readonly #pending = new Map<string, {
     readonly resolve: (decision: programProto.ResumeDecision) => void
     readonly reject: (error: Error) => void
+    readonly reattach?: (decision: programProto.ResumeDecision) => Promise<void>
   }>()
   #reading = false
   #control: ((decision: programProto.ResumeDecision) => void) | undefined
@@ -187,13 +186,16 @@ class ResumeDecisionRouter {
     this.#reader = reader
   }
 
-  register(correlationId: string): Promise<programProto.ResumeDecision> {
+  register(
+    correlationId: string,
+    reattach?: (decision: programProto.ResumeDecision) => Promise<void>,
+  ): Promise<programProto.ResumeDecision> {
     if (this.#pending.has(correlationId)) {
       return Promise.reject(new Error("duplicate runtime correlation id"))
     }
     const { promise, resolve, reject } =
       Promise.withResolvers<programProto.ResumeDecision>()
-    this.#pending.set(correlationId, { resolve, reject })
+    this.#pending.set(correlationId, { resolve, reject, ...(reattach === undefined ? {} : { reattach }) })
     this.#pump()
     return promise
   }
@@ -240,6 +242,13 @@ class ResumeDecisionRouter {
           const pending = this.#pending.get(decision.correlationId)
           if (pending === undefined) {
             throw new Error("resume decision did not match a pending runtime operation")
+          }
+          if (decision.kind === "waiting") {
+            if (pending.reattach === undefined) {
+              throw new RuntimeProtocolError("reattachment requires a pending managed Wait")
+            }
+            await pending.reattach(decision)
+            continue
           }
           this.#pending.delete(decision.correlationId)
           pending.resolve(decision)
@@ -359,6 +368,7 @@ class ConsumingWaitGate {
       this.#pending = false
     }
   }
+
 }
 
 async function requestRuntimeDecision(
@@ -367,7 +377,19 @@ async function requestRuntimeDecision(
   correlationId: string,
   event: programProto.RunEvent["event"],
 ): Promise<programProto.ResumeDecision> {
-  const pending = decisions.register(correlationId)
+  const wait = event.case === "runWaitRequested" ||
+      (event.case === "taskChildInvokeRequested" && event.value.method === "call")
+    ? event.value : undefined
+  const pending = decisions.register(correlationId, wait === undefined ? undefined : async (decision) => {
+    if (decision.runWaitId !== wait.runWaitId ||
+        decision.resumeAttachId !== wait.resumeAttachId ||
+        !decision.requireConsumedAck || decision.checkpointId === "" ||
+        decision.runLeaseId === "" || decision.resumeRequestVersion <= 0n ||
+        decision.dataJson !== "" || decision.noResult) {
+      throw new RuntimeProtocolError("reattachment did not match the pending Wait")
+    }
+    await acknowledgeResumeConsumed(io, decision)
+  })
   try {
     await writeRunEvent(io, event)
   } catch (error) {
@@ -642,8 +664,8 @@ function validateProgramStart(start: programProto.ProgramStart): void {
     start.entrypointDeclaredId === "" ||
     start.deploymentId === "" ||
     start.deploymentVersion === "" ||
-    start.workspaceId === "" ||
-    start.baseWorkspaceVersionId === "" ||
+    start.computerId === "" ||
+    start.baseComputerDiskVersionId === "" ||
     start.cause === undefined ||
     start.cause.kind.case === undefined
   ) {
@@ -834,8 +856,8 @@ function programRuntimeOperations(
     const payloadJson = target.payloadPresent
       ? new TextDecoder().decode(canonicalizeJsonValue(payload as JsonValue))
       : undefined
-    const workspaceJson = new TextDecoder().decode(
-      canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }),
+    const computerJson = new TextDecoder().decode(
+      canonicalizeJsonValue({ id: computerRefID(options.computer) }),
     )
     const requestOptions = {
       ...(options.queue === undefined ? {} : { queue: options.queue }),
@@ -863,7 +885,7 @@ function programRuntimeOperations(
           ...(actor === undefined ? {} : { actorSpeculativeInputSequence: actor.cursor.value, execution: actor.execution, ...(actor.active === undefined ? {} : { turnId: actor.active.scope.turnId }) }),
           payloadPresent: target.payloadPresent,
           ...(payloadJson === undefined ? {} : { payloadJson }),
-          workspaceJson,
+          computerJson,
           optionsJson,
           ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
         }),
@@ -909,8 +931,8 @@ function programRuntimeOperations(
               canonicalizeJsonValue(payload as JsonValue),
             )
           : undefined
-        const workspaceJson = new TextDecoder().decode(
-          canonicalizeJsonValue({ id: workspaceRefID(options.workspace) }),
+        const computerJson = new TextDecoder().decode(
+          canonicalizeJsonValue({ id: computerRefID(options.computer) }),
         )
         const requestOptions = {
           ...(options.queue === undefined ? {} : { queue: options.queue }),
@@ -943,7 +965,7 @@ function programRuntimeOperations(
               method: "call",
               payloadPresent: target.payloadPresent,
               ...(payloadJson === undefined ? {} : { payloadJson }),
-              workspaceJson,
+              computerJson,
               optionsJson: new TextDecoder().decode(
                 canonicalizeJsonValue(requestOptions),
               ),
@@ -1057,7 +1079,7 @@ function programRuntimeOperations(
         value: create(programProto.ActorStartRequestedSchema, {
           correlationId,
           declaredId,
-          workspaceId: workspaceRefID(options.workspace),
+          computerId: computerRefID(options.computer),
           ...(options.key === undefined ? {} : { key: options.key }),
           ...(options.idempotencyKey === undefined
             ? {}
@@ -1133,24 +1155,24 @@ function programRuntimeOperations(
       correlationId, sessionId, mode, dataJson, ...(turnId === undefined ? {} : { turnId }), idempotencyKey: request?.idempotencyKey ?? newUUIDv7(),
     }) }), (value): import("@helmr/sdk").SessionMessageReceipt | import("@helmr/sdk").SessionAdmissionReceipt => mode === "message" ? parseSessionMessageReceipt(value) : parseSessionAdmissionReceipt(value), signal)
   }
-  const workspaceAddress = (workspaceId: string) =>
-    create(programProto.WorkspaceAddressSchema, { workspaceId })
-  const performWorkspaceCreate = async (
+  const computerAddress = (computerId: string) =>
+    create(programProto.ComputerAddressSchema, { computerId })
+  const performComputerCreate = async (
     declaredId: string,
-    request: WorkspaceCreateRequest = {},
+    request: ComputerCreateRequest = {},
     signal?: AbortSignal,
-  ): Promise<Readonly<{ workspaceId: string }>> => {
+  ): Promise<Readonly<{ computerId: string }>> => {
     if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceCreateRequested",
-        value: create(programProto.WorkspaceCreateRequestedSchema, {
+        case: "computerCreateRequested",
+        value: create(programProto.ComputerCreateRequestedSchema, {
           correlationId,
           declaredId,
           ...(request.key === undefined ? {} : { key: request.key }),
-          secrets: encodeWorkspaceSecrets(request.secrets).map((secret) =>
-            create(programProto.WorkspaceSecretPlacementSchema, {
+          secrets: encodeComputerSecrets(request.secrets).map((secret) =>
+            create(programProto.ComputerSecretPlacementSchema, {
               secret: secret.secret,
               placement: secret.env !== undefined
                 ? { case: "env", value: create(programProto.SecretEnvBindingSchema, { name: secret.env.name, mode: secret.env.mode, allowedOrigins: [...(secret.env.allowed_origins ?? [])] }) }
@@ -1162,116 +1184,76 @@ function programRuntimeOperations(
             : { idempotencyKey: request.idempotencyKey }),
         }),
       })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace create")
+      requireRuntimeOperationDecision(decision, correlationId, "Computer create")
       if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace create", decision.dataJson)
+        throw runtimeOperationFailure("Computer create", decision.dataJson)
       }
-      return parseRuntimeProtocolValue("Workspace create result", () => {
-        const value = parseObjectJSON(decision.dataJson, "Workspace create result")
-        requireExactKeys(value, ["workspace_id"], "Workspace create result")
-        const workspaceId = resourceID(
+      return parseRuntimeProtocolValue("Computer create result", () => {
+        const value = parseObjectJSON(decision.dataJson, "Computer create result")
+        requireExactKeys(value, ["computer_id"], "Computer create result")
+        const computerId = resourceID(
           stringField(
             value,
-            "workspace_id",
-            "Workspace create result",
+            "computer_id",
+            "Computer create result",
           ),
-          "Workspace create result.workspace_id",
+          "Computer create result.computer_id",
         )
-        return Object.freeze({ workspaceId })
+        return Object.freeze({ computerId })
       })
     })
     return abortableRuntimeOperation(operation, signal)
   }
-  const performWorkspaceRetrieve = async (
-    workspaceId: string,
+  const performComputerRetrieve = async (
+    computerId: string,
     signal?: AbortSignal,
-  ): Promise<Workspace> => {
+  ): Promise<Computer> => {
     if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceRetrieveRequested",
-        value: create(programProto.WorkspaceRetrieveRequestedSchema, {
+        case: "computerRetrieveRequested",
+        value: create(programProto.ComputerRetrieveRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(workspaceId),
+          computer: computerAddress(computerId),
         }),
       })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace retrieve")
+      requireRuntimeOperationDecision(decision, correlationId, "Computer retrieve")
       if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace retrieve", decision.dataJson)
+        throw runtimeOperationFailure("Computer retrieve", decision.dataJson)
       }
       return parseRuntimeProtocolValue(
-        "Workspace retrieve result",
-        () => parseWorkspace(JSON.parse(decision.dataJson)),
+        "Computer retrieve result",
+        () => parseComputer(JSON.parse(decision.dataJson)),
       )
     })
     return abortableRuntimeOperation(operation, signal)
   }
-  const performWorkspaceExec = async (
-    workspaceId: string,
-    request: WorkspaceExecRequest,
+  const performComputerDelete = async (
+    computerId: string,
+    request: ComputerDeleteRequest = {},
     signal?: AbortSignal,
-  ): Promise<WorkspaceExecResult> => {
-    if (signal?.aborted) throw abortSignalReason(signal)
-    const timeoutMs = request.timeout === undefined
-      ? undefined
-      : durationMilliseconds(request.timeout, "Workspace exec timeout")
-    if (timeoutMs !== undefined && timeoutMs > 15 * 60 * 1_000) {
-      throw new Error("Workspace exec timeout must not exceed 15m")
-    }
-    const correlationId = newUUIDv7()
-    const operation = runOperations.trackDrainable(async () => {
-      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceExecRequested",
-        value: create(programProto.WorkspaceExecRequestedSchema, {
-          correlationId,
-          workspace: workspaceAddress(workspaceId),
-          command: [...request.command],
-          ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
-          env: request.env === undefined ? {} : { ...request.env },
-          stdin: request.stdin === undefined
-            ? new Uint8Array()
-            : new Uint8Array(request.stdin),
-          ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
-          idempotencyKey: request.idempotencyKey,
-        }),
-      })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace exec")
-      if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace exec", decision.dataJson)
-      }
-      return parseRuntimeProtocolValue(
-        "Workspace exec result",
-        () => parseWorkspaceExecResult(JSON.parse(decision.dataJson)),
-      )
-    })
-    return abortableRuntimeOperation(operation, signal)
-  }
-  const performWorkspaceDelete = async (
-    workspaceId: string,
-    request: WorkspaceDeleteRequest = {},
-    signal?: AbortSignal,
-  ): Promise<WorkspaceDeleteReceipt> => {
+  ): Promise<ComputerDeleteReceipt> => {
     if (signal?.aborted) throw abortSignalReason(signal)
     const correlationId = newUUIDv7()
     const operation = runOperations.trackDrainable(async () => {
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
-        case: "workspaceDeleteRequested",
-        value: create(programProto.WorkspaceDeleteRequestedSchema, {
+        case: "computerDeleteRequested",
+        value: create(programProto.ComputerDeleteRequestedSchema, {
           correlationId,
-          workspace: workspaceAddress(workspaceId),
+          computer: computerAddress(computerId),
           ...(request.idempotencyKey === undefined
             ? {}
             : { idempotencyKey: request.idempotencyKey }),
         }),
       })
-      requireRuntimeOperationDecision(decision, correlationId, "Workspace delete")
+      requireRuntimeOperationDecision(decision, correlationId, "Computer delete")
       if (decision.kind === "failed") {
-        throw runtimeOperationFailure("Workspace delete", decision.dataJson)
+        throw runtimeOperationFailure("Computer delete", decision.dataJson)
       }
       return parseRuntimeProtocolValue(
-        "Workspace delete result",
-        () => parseWorkspaceDeleteReceipt(JSON.parse(decision.dataJson)),
+        "Computer delete result",
+        () => parseComputerDeleteReceipt(JSON.parse(decision.dataJson)),
       )
     })
     return abortableRuntimeOperation(operation, signal)
@@ -1495,17 +1477,22 @@ function programRuntimeOperations(
     sessionResume(sessionId, request, signal) {
       return sessionOperation(correlationId => ({ case: "sessionResumeRequested", value: create(programProto.SessionResumeRequestedSchema, { correlationId, sessionId, holdId: request.holdId, idempotencyKey: request.idempotencyKey ?? newUUIDv7() }) }), parseSessionResumeReceipt, signal)
     },
-    workspaceCreate(declaredId, request, signal) {
-      return performWorkspaceCreate(declaredId, request, signal)
+    computerCreate(declaredId, request, signal) {
+      return performComputerCreate(declaredId, request, signal)
     },
-    workspaceRetrieve(address, signal) {
-      return performWorkspaceRetrieve(address, signal)
+    computerRetrieve(address, signal) {
+      return performComputerRetrieve(address, signal)
     },
-    workspaceExec(address, request, signal) {
-      return performWorkspaceExec(address, request, signal)
+    computerMembers(address, query, signal) {
+      return sessionOperation(correlationId => ({
+        case: "computerMembersRequested",
+        value: create(programProto.ComputerMembersRequestedSchema, {
+          correlationId, computer: computerAddress(address), cursor: query.cursor ?? "", limit: query.limit ?? 50,
+        }),
+      }), parseComputerMembers, signal)
     },
-    workspaceDelete(address, request, signal) {
-      return performWorkspaceDelete(address, request, signal)
+    computerDelete(address, request, signal) {
+      return performComputerDelete(address, request, signal)
     },
     tokenCreate(options) {
       return performTokenCreate(options)
@@ -2745,7 +2732,7 @@ function executionContext(
       id: start.deploymentId,
       version: start.deploymentVersion,
     }),
-    workspace: createWorkspaceRef(start.workspaceId),
+    computer: createComputerRef(start.computerId),
   }) as ExecutionContext
 }
 

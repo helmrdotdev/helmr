@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 func TestLoadRuntimeArtifacts(t *testing.T) {
@@ -56,11 +56,11 @@ func TestRuntimeArtifactProducersUseLoaderContract(t *testing.T) {
 	}{
 		{
 			path: filepath.Join(repoRoot, "images", "boot-artifacts.mk"),
-			want: `"vm_runtime_contract": "` + runtimeid.Contract + `"`,
+			want: `"vm_runtime_contract": "` + vmplatform.Contract + `"`,
 		},
 		{
 			path: filepath.Join(repoRoot, "infra", "aws", "modules", "worker-image", "main.tf"),
-			want: `.vm_runtime_contract == \"` + runtimeid.Contract + `\"`,
+			want: `.vm_runtime_contract == \"` + vmplatform.Contract + `\"`,
 		},
 	}
 	for _, check := range checks {
@@ -154,7 +154,7 @@ func writeRuntimeArtifactFixture(t *testing.T) (Config, runtimeArtifacts) {
 	manifest := runtimeArtifacts{
 		Schema:            runtimeArtifactsSchema,
 		Arch:              runtime.GOARCH,
-		VMRuntimeContract: runtimeid.Contract,
+		VMRuntimeContract: vmplatform.Contract,
 		Kernel:            write(cfg.KernelPath, "kernel"),
 		Initramfs:         write(cfg.InitramfsPath, "initramfs"),
 		Rootfs:            write(cfg.RootfsPath, "rootfs"),

@@ -28,11 +28,11 @@ The custom `run` loop owns execution. A receive returns the next Turn or `null`
 when closing has drained. Output is durable application data; explicit completion
 marks the outcome. Put any tests or other post-processing before completion.
 
-Start with a Workspace, then enqueue the first work using the returned Session ID:
+Start with a Computer, then enqueue the first work using the returned Session ID:
 
 ```sh
 helmr actor start reviewer --project agents --env development \
-  --workspace WORKSPACE_ID --key review:42 \
+  --computer COMPUTER_ID --key review:42 \
   --idempotency-key review:42:start --json
 
 helmr actor enqueue SESSION_ID --project agents --env development \

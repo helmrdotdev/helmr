@@ -17,7 +17,7 @@ const base = image("helmr-datapath-network")
   .user("root")
   .workdir("/sandbox")
 
-export const datapathNetworkWorkspace = sandbox({ id: "helmr-datapath-network" })
+export const datapathNetworkComputer = sandbox({ id: "helmr-datapath-network" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

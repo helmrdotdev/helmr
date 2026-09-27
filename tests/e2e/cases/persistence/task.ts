@@ -19,6 +19,6 @@ export const persistenceTask = task({
     if (await readlink(`${file}.link`) !== file) throw new Error("persisted symlink changed")
     const restored = JSON.parse(await readFile(`${file}.link`, "utf8"))
     if (restored.marker !== marker || restored.nonce !== nonce) throw new Error("persisted state changed")
-    return { marker, nonce, runId: ctx.run.id, workspaceId: ctx.workspace.id }
+    return { marker, nonce, runId: ctx.run.id, computerId: ctx.computer.id }
   },
 })

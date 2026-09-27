@@ -18,31 +18,30 @@ const (
 
 	defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=squashfs ro init=/init"
 
-	apiSocketName              = "api.sock"
-	vsockSocketName            = "vsock.sock"
-	scratchDiskName            = "scratch.ext4"
-	substrateDiskName          = "substrate.ext4"
-	restoreMemoryName          = "memory.mem"
-	snapshotMemorySuffix       = ".mem"
-	snapshotStateSuffix        = ".vmstate"
-	snapshotScratchPackSuffix  = ".scratch.filepack"
-	snapshotMemoryPackSuffix   = ".memory.filepack"
-	readOnlyDriveSuffix        = ".squashfs"
-	rootfsDriveID              = "rootfs"
-	scratchDriveID             = "scratch"
-	substrateDriveID           = "substrate"
-	guestVsockID               = "guest-vsock"
-	guestNetworkInterfaceID    = "1"
-	defaultRuntimeProfileName  = "default"
-	runtimeSubstrateKernelFlag = "helmr.substrate=1"
-	runtimeProgramKernelFlag   = "helmr.program=1"
-	runtimeIPKernelParameter   = "helmr.ip"
-	snapshotBackend            = "firecracker"
-	snapshotCreateType         = "Full"
-	snapshotMemoryBackend      = "File"
-	machineHugePages           = "None"
-	blockIOEngine              = "Sync"
-	writableBlockCache         = "Writeback"
+	apiSocketName             = "api.sock"
+	vsockSocketName           = "vsock.sock"
+	scratchDiskName           = "scratch.ext4"
+	restoreMemoryName         = "memory.mem"
+	snapshotMemorySuffix      = ".mem"
+	snapshotStateSuffix       = ".vmstate"
+	snapshotScratchPackSuffix = ".scratch.filepack"
+	snapshotMemoryPackSuffix  = ".memory.filepack"
+	readOnlyDriveSuffix       = ".squashfs"
+	rootfsDriveID             = "rootfs"
+	scratchDriveID            = "scratch"
+	computerDriveID           = "computer"
+	guestVsockID              = "guest-vsock"
+	guestNetworkInterfaceID   = "1"
+	defaultRuntimeProfileName = "default"
+	runtimeComputerKernelFlag = "helmr.computer=1"
+	runtimeProgramKernelFlag  = "helmr.program=1"
+	runtimeIPKernelParameter  = "helmr.ip"
+	snapshotBackend           = "firecracker"
+	snapshotCreateType        = "Full"
+	snapshotMemoryBackend     = "File"
+	machineHugePages          = "None"
+	blockIOEngine             = "Sync"
+	writableBlockCache        = "Writeback"
 
 	GuestNetworkCIDRV0   = "192.168.127.2/30"
 	GuestGatewayIPv4V0   = "192.168.127.1"
@@ -161,7 +160,7 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 	drives := []VMRuntimeDriveDescriptor{
 		{ID: rootfsDriveID, Required: true, Root: true, ReadOnly: true, PathConvention: "config.rootfs_path"},
 		{ID: scratchDriveID, Required: true, PathConvention: scratchDiskName},
-		{ID: substrateDriveID, ReadOnly: true, PathConvention: "basename(config.substrate_path)"},
+		{ID: computerDriveID, PathConvention: "computer.ext4"},
 	}
 	for _, id := range readOnlyDriveOrder {
 		drives = append(drives, VMRuntimeDriveDescriptor{
@@ -179,7 +178,7 @@ func CanonicalVMRuntimeDescriptor() VMRuntimeDescriptor {
 			Profiles: []VMRuntimeBootProfile{
 				{Name: defaultRuntimeProfileName, KernelArgs: defaultKernelArgs},
 			},
-			DynamicFlags: []string{runtimeSubstrateKernelFlag, runtimeProgramKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
+			DynamicFlags: []string{runtimeComputerKernelFlag, runtimeProgramKernelFlag, runtimeIPKernelParameter + "=<static_ipv4_config>"},
 		},
 		Devices: VMRuntimeDeviceDescriptor{
 			BlockIOEngine: blockIOEngine, WritableBlockCache: writableBlockCache,

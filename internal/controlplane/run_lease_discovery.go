@@ -16,14 +16,14 @@ func discoverWorkerRunLeases(
 	ctx context.Context,
 	store db.Querier,
 	workerGroupID uuid.UUID,
-	workerInstanceID pgtype.UUID,
+	workerHostID pgtype.UUID,
 	workerEpoch int64,
 ) (workerapi.RunLeaseDiscoveryResponse, error) {
 	rows, err := store.DiscoverWorkerRunLeaseWork(ctx, db.DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID:    pgvalue.UUID(workerGroupID),
-		RowLimit:         workerRunLeaseDiscoveryLimit,
-		WorkerInstanceID: workerInstanceID,
-		WorkerEpoch:      workerEpoch,
+		WorkerGroupID: pgvalue.UUID(workerGroupID),
+		RowLimit:      workerRunLeaseDiscoveryLimit,
+		WorkerHostID:  workerHostID,
+		WorkerEpoch:   workerEpoch,
 	})
 	if err != nil {
 		return workerapi.RunLeaseDiscoveryResponse{}, err

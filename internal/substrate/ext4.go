@@ -5,35 +5,18 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/oci"
-	"math"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
 )
 
 const (
-	defaultExtraBytes = int64(128 * 1024 * 1024)
-	ext4Features      = "sparse_super,large_file,filetype,resize_inode,dir_index,ext_attr,has_journal,extent,huge_file,flex_bg,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize,orphan_file"
+	ext4Features = "sparse_super,large_file,filetype,resize_inode,dir_index,ext_attr,has_journal,extent,huge_file,flex_bg,metadata_csum,metadata_csum_seed,64bit,dir_nlink,extra_isize,orphan_file"
 )
-
-func substrateDiskSize(filesystem *oci.Filesystem) (int64, error) {
-	total, err := filesystem.LogicalBytes()
-	if err != nil {
-		return 0, err
-	}
-	const block = int64(4 * 1024 * 1024)
-	if total > math.MaxInt64-defaultExtraBytes-block {
-		return 0, errors.New("image disk size overflow")
-	}
-	size := max(total+defaultExtraBytes, 256*1024*1024)
-	if rem := size % block; rem != 0 {
-		size += block - rem
-	}
-	return size, nil
-}
 
 func createExt4(
 	ctx context.Context,
@@ -113,4 +96,18 @@ func deterministicUUID(key string) string {
 	raw[8] = (raw[8] & 0x3f) | 0x80
 	hexValue := hex.EncodeToString(raw)
 	return hexValue[0:8] + "-" + hexValue[8:12] + "-" + hexValue[12:16] + "-" + hexValue[16:20] + "-" + hexValue[20:32]
+}
+
+func fileDigest(path string) (string, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", 0, err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	size, err := io.Copy(digest, file)
+	if err != nil {
+		return "", 0, err
+	}
+	return sha256sum.DigestHash(digest), size, nil
 }

@@ -98,7 +98,7 @@ func TestParseDeploymentBundleRequiresClosedCanonicalShape(t *testing.T) {
 			errMsg: "program index does not match deployment plan",
 		},
 		{
-			name: "deployment plan sandbox digest differs from Workspace Image",
+			name: "deployment plan sandbox digest differs from Computer Image",
 			raw: func() []byte {
 				return mutateDeploymentBundleJSON(t, raw, func(root map[string]any) {
 					definitions := root["plan"].(map[string]any)["definitions"].([]any)
@@ -205,21 +205,21 @@ func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 	}
 }
 
-func TestDeploymentBundleObjectClosureAllowsSharedWorkspaceImageObject(t *testing.T) {
+func TestDeploymentBundleObjectClosureAllowsSharedComputerImageObject(t *testing.T) {
 	bundle := testDeploymentBundle(t)
-	shared := bundle.WorkspaceImages[0]
+	shared := bundle.ComputerImages[0]
 	shared.DeclaredID = "repo-copy"
-	bundle.WorkspaceImages = append(bundle.WorkspaceImages, shared)
+	bundle.ComputerImages = append(bundle.ComputerImages, shared)
 
 	if err := validateBundleObjectClosure(bundle); err != nil {
 		t.Fatalf("validateBundleObjectClosure: %v", err)
 	}
 
 	conflicting := bundle
-	conflicting.WorkspaceImages = append(
-		[]BundleWorkspaceImage(nil), bundle.WorkspaceImages...,
+	conflicting.ComputerImages = append(
+		[]BundleComputerImage(nil), bundle.ComputerImages...,
 	)
-	conflicting.WorkspaceImages[1].Artifact.SizeBytes++
+	conflicting.ComputerImages[1].Artifact.SizeBytes++
 	if err := validateBundleObjectClosure(conflicting); err == nil ||
 		!strings.Contains(err.Error(), "conflicting reference metadata") {
 		t.Fatalf("validateBundleObjectClosure error = %v", err)
@@ -242,13 +242,13 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 		Definitions:   append([]ProgramIndexDeclaration(nil), program.Index.Declarations...),
 		Queues:        cloneQueueInputs(program.Index.Queues),
 	}
-	workspaceImage := BundleWorkspaceImage{
+	computerImage := BundleComputerImage{
 		DeclaredID: "repo",
-		Artifact: BundleWorkspaceImageArtifact{
+		Artifact: BundleComputerImageArtifact{
 			Profile:      computer.SeedProfile,
 			Architecture: ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("d", 64),
-			MediaType:    WorkspaceImageArtifactMediaType,
+			MediaType:    ComputerImageArtifactMediaType,
 			SizeBytes:    4096,
 		},
 	}
@@ -267,11 +267,11 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 				MediaType: RuntimeArtifactMediaType,
 			},
 		},
-		Program:         program,
-		WorkspaceImages: []BundleWorkspaceImage{workspaceImage},
+		Program:        program,
+		ComputerImages: []BundleComputerImage{computerImage},
 		Objects: []BundleObject{
 			{Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType},
-			{Digest: workspaceImage.Artifact.Digest, SizeBytes: workspaceImage.Artifact.SizeBytes, MediaType: workspaceImage.Artifact.MediaType},
+			{Digest: computerImage.Artifact.Digest, SizeBytes: computerImage.Artifact.SizeBytes, MediaType: computerImage.Artifact.MediaType},
 		},
 	}
 	SortDeploymentBundleObjects(bundle.Objects)
@@ -331,11 +331,11 @@ func TestDeploymentBundleBindsDiskProfileAndConfig(t *testing.T) {
 			bundle := testDeploymentBundle(t)
 			switch kind {
 			case "profile":
-				bundle.WorkspaceImages[0].Artifact.Profile = "other"
+				bundle.ComputerImages[0].Artifact.Profile = "other"
 			case "config":
-				bundle.WorkspaceImages[0].Artifact.Config.User = "root"
+				bundle.ComputerImages[0].Artifact.Config.User = "root"
 			case "legacy-format":
-				bundle.WorkspaceImages[0].Artifact.MediaType = "application/vnd.helmr.workspace-image.v0.oci-tar"
+				bundle.ComputerImages[0].Artifact.MediaType = "application/vnd.helmr.computer-image.v0.oci-tar"
 			}
 			if err := ValidateDeploymentBundle(bundle); err == nil {
 				t.Fatal("mismatched disk contract accepted")

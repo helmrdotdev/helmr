@@ -9,7 +9,7 @@ import { createRunHandle } from "./internal/run-handle"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 import { createSessionRef } from "./client-session"
-import { workspaceRefID } from "./workspace"
+import { computerRefID } from "./computer"
 import {
   definitionItemQuery,
   definitionListQuery,
@@ -144,7 +144,7 @@ function actorStartBody(request: ActorStartRequest): Record<string, unknown> {
   return {
     ...(request.key === undefined ? {} : { key: request.key }),
     idempotency_key: sessionOperationOptions(request).idempotencyKey,
-    workspace: { id: workspaceRefID(request.workspace) },
+    computer: { id: computerRefID(request.computer) },
     ...(request.run === undefined ? {} : { run: runOptionsBody(request.run) }),
   }
 }

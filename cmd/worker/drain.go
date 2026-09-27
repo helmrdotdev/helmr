@@ -53,7 +53,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerHostID, workerCredential.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -61,21 +61,21 @@ func runDrain(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("mark worker draining: %w", err)
 	}
-	log.Info("worker draining", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
+	log.Info("worker draining", "worker_host_id", status.WorkerHostID, "active_instances", status.ActiveInstances)
 	if !*wait {
 		return nil
 	}
 	// The supervisor persists this receipt only after Control Plane confirms
 	// termination_ready. That transition revokes credentials, so polling the
 	// authenticated status endpoint cannot reliably observe it.
-	if err := waitForDrainCompleteMarker(ctx, workDir, workerCredential.WorkerInstanceID, *timeout, cfg.PollEvery); err != nil {
+	if err := waitForDrainCompleteMarker(ctx, workDir, workerCredential.WorkerHostID, *timeout, cfg.PollEvery); err != nil {
 		return err
 	}
-	log.Info("worker drain completed", "worker_instance_id", workerCredential.WorkerInstanceID)
+	log.Info("worker drain completed", "worker_host_id", workerCredential.WorkerHostID)
 	return nil
 }
 
-func waitForDrainCompleteMarker(ctx context.Context, workDir, workerInstanceID string, timeout, pollEvery time.Duration) error {
+func waitForDrainCompleteMarker(ctx context.Context, workDir, workerHostID string, timeout, pollEvery time.Duration) error {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	ticker := time.NewTicker(pollEvery)
@@ -83,7 +83,7 @@ func waitForDrainCompleteMarker(ctx context.Context, workDir, workerInstanceID s
 	for {
 		payload, err := os.ReadFile(filepath.Join(workDir, drainCompleteMarkerName))
 		if err == nil {
-			if strings.TrimSpace(string(payload)) != workerInstanceID {
+			if strings.TrimSpace(string(payload)) != workerHostID {
 				return errors.New("drain completion marker belongs to a different worker")
 			}
 			return nil
@@ -101,7 +101,7 @@ func waitForDrainCompleteMarker(ctx context.Context, workDir, workerInstanceID s
 	}
 }
 
-func writeDrainCompleteMarker(workDir, workerInstanceID string) error {
+func writeDrainCompleteMarker(workDir, workerHostID string) error {
 	path := filepath.Join(workDir, drainCompleteMarkerName)
 	if err := os.MkdirAll(workDir, 0o700); err != nil {
 		return fmt.Errorf("create drain marker directory: %w", err)
@@ -116,7 +116,7 @@ func writeDrainCompleteMarker(workDir, workerInstanceID string) error {
 		_ = tmp.Close()
 		return fmt.Errorf("secure drain marker: %w", err)
 	}
-	if _, err := fmt.Fprintln(tmp, workerInstanceID); err != nil {
+	if _, err := fmt.Fprintln(tmp, workerHostID); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("write drain marker: %w", err)
 	}
@@ -163,7 +163,7 @@ func workerControlPlaneClient() (*workerclient.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerHostID, workerCredential.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return nil, fmt.Errorf("configure control client: %w", err)
 	}

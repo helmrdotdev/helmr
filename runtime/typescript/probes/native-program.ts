@@ -38,8 +38,8 @@ export function runNativeProgram(bridge: string, config: any, definition: any, i
     }
     input.write(frame(programProto.ProgramStartSchema, {
       entrypointDeclaredId: definition.id, runId: config.runId, attemptNumber: 1,
-      deploymentId: config.deploymentId, deploymentVersion: "v1", workspaceId: config.workspaceId,
-      baseWorkspaceVersionId: config.baseWorkspaceVersionId, cause: { kind: { case: "actorStart", value: {} } },
+      deploymentId: config.deploymentId, deploymentVersion: "v1", computerId: config.computerId,
+      baseComputerDiskVersionId: config.baseComputerDiskVersionId, cause: { kind: { case: "actorStart", value: {} } },
       entrypoint: { case: "actor", value: { sessionId: config.sessionId, startInputSequence: BigInt(config.startInputSequence ?? 0),
         inputHighWatermark: BigInt(config.inputHighWatermark ?? 1), runGeneration: BigInt(config.runGeneration) } },
     }))
@@ -99,7 +99,7 @@ export function runNativeProgram(bridge: string, config: any, definition: any, i
             target_input_sequence: Number(value.targetInputSequence),
             ...(value.resultJson === undefined ? {} : { result: JSON.parse(value.resultJson) }) })
           await hooks.settled()
-          reply({ event_id: result.event_id, workspace_version_id: result.workspace_version_id }, "committed"); return
+          reply({ event_id: result.event_id, computer_disk_version_id: result.computer_disk_version_id }, "committed"); return
         }
         throw new Error(`Unexpected runtime event ${event.case}`)
       },

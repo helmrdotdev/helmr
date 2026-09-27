@@ -10,6 +10,7 @@ import (
 )
 
 type imageCommandOptions struct {
+	SecretRoot      string
 	ManagedProgram  bool
 	CgroupNamespace bool
 	CgroupLeaf      string

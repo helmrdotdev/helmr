@@ -52,21 +52,21 @@ func Resume(ctx context.Context, q db.Querier, request ResumeRequest) (ControlRe
 		return ControlReceipt{}, err
 	}
 	// Continuation consumes secrets: take their complete admission set before Session.
-	bindings, err := q.LockWorkspaceSecretsForAdmission(ctx, locator.WorkspaceID)
+	bindings, err := q.LockComputerSecretsForAdmission(ctx, locator.ComputerID)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	return ResumeWithLockedSecrets(ctx, q, request, locator.WorkspaceID, bindings)
+	return ResumeWithLockedSecrets(ctx, q, request, locator.ComputerID, bindings)
 }
 
 // ResumeWithLockedSecrets consumes the target's complete admission bindings,
 // locked before Session authority by a cross-Session caller.
-func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRequest, workspaceID pgtype.UUID, bindings []db.LockWorkspaceSecretsForAdmissionRow) (ControlReceipt, error) {
+func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRequest, computerID pgtype.UUID, bindings []db.LockComputerSecretsForAdmissionRow) (ControlReceipt, error) {
 	actor, err := lockSession(ctx, q, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	if actor.WorkspaceID != workspaceID {
+	if actor.ComputerID != computerID {
 		return ControlReceipt{}, ErrAuthority
 	}
 	claim, err := claimOperation(ctx, q, request.ControlRequest, "session.resume", struct {
@@ -93,15 +93,15 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 	case actor.DispatchHoldReason.String == "recovery_required":
 		receipt.Code = "recovery_required"
 	default:
-		workspace, err := q.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{EnvironmentID: actor.EnvironmentID, WorkspaceID: actor.WorkspaceID, SessionID: actor.ID})
+		computer, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, SessionID: actor.ID})
 		if err != nil {
 			return receipt, err
 		}
-		excluded, err := q.SessionWriterExcluded(ctx, actor.WorkspaceID)
+		excluded, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
 		if err != nil {
 			return receipt, err
 		}
-		if (!excluded.Valid || !excluded.Bool) || workspace.DirtyState != db.WorkspaceDirtyStateClean || workspace.Status != db.WorkspaceStatusActive || workspace.DesiredState != db.WorkspaceDesiredStateActive || !workspace.HeadVersionID.Valid || !bindingsCanAdmit(actor, bindings) {
+		if (!excluded) || (computer.DirtyState == db.ComputerDirtyStateCaptureFailed || computer.DirtyState == db.ComputerDirtyStateDirtyStateLost) || computer.Status != db.ComputerStatusActive || computer.DesiredState != db.ComputerDesiredStateActive || !computer.HeadDiskVersionID.Valid || !bindingsCanAdmit(actor, bindings) {
 			receipt.Code = "not_settled"
 			break
 		}
@@ -116,7 +116,7 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 		if actor.Status == "closing" {
 			err = q.CreateSessionLifecycleReconcileOutbox(ctx, db.CreateSessionLifecycleReconcileOutboxParams{ID: claim.ID, EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
 		} else if CanStartContinuation(actor) {
-			_, err = CreateContinuation(ctx, q, actor, db.LockActorInputWorkspaceRow{ID: workspace.ID}, bindings)
+			_, err = CreateContinuation(ctx, q, actor, db.Computer{ID: computer.ID}, bindings)
 		}
 		if err != nil {
 			return receipt, err
@@ -125,9 +125,9 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 	return receipt, finishOperation(ctx, q, claim, receipt)
 }
 
-// CompleteInterruption publishes the held Turn only after the caller verifies the
-// exact captured finalization, or a cancelled unleased execution with physical
-// writer exclusion and a committed retained head, in the caller's transaction.
+// CompleteInterruption settles the held Turn after the caller verifies execution
+// and owned-scope cleanup in the same transaction. The version records the last
+// retained Computer head; process cleanup has its own evidence.
 func CompleteInterruption(ctx context.Context, q db.Querier, actor db.Session, versionID pgtype.UUID, fingerprint string) error {
 	var sequence pgtype.Int8
 	if actor.ActiveTurnID.Valid {
@@ -141,7 +141,7 @@ func CompleteInterruption(ctx context.Context, q db.Querier, actor db.Session, v
 		if err := finishUnsettledMessages(ctx, q, actor, turn.ID, "execution_interrupted"); err != nil {
 			return err
 		}
-		body, _ := json.Marshal(map[string]any{"workspace_version_id": pgvalue.UUIDString(versionID), "hold_id": pgvalue.UUIDString(actor.DispatchHoldID)})
+		body, _ := json.Marshal(map[string]any{"computer_disk_version_id": pgvalue.UUIDString(versionID), "hold_id": pgvalue.UUIDString(actor.DispatchHoldID)})
 		event, err := appendLifecycleEvent(ctx, q, actor, turn.ID, pgtype.UUID{}, "turn.interrupted", body, versionID)
 		if err != nil {
 			return err
@@ -156,7 +156,7 @@ func CompleteInterruption(ctx context.Context, q db.Querier, actor db.Session, v
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(map[string]any{"hold_id": pgvalue.UUIDString(held.DispatchHoldID), "previous_hold_id": pgvalue.UUIDString(previousHold), "reason": "interrupted", "workspace_version_id": pgvalue.UUIDString(versionID)})
+	body, _ := json.Marshal(map[string]any{"hold_id": pgvalue.UUIDString(held.DispatchHoldID), "previous_hold_id": pgvalue.UUIDString(previousHold), "reason": "interrupted", "computer_disk_version_id": pgvalue.UUIDString(versionID)})
 	_, err = appendLifecycleEvent(ctx, q, held, pgtype.UUID{}, pgtype.UUID{}, "session.held", body, versionID)
 	return err
 }

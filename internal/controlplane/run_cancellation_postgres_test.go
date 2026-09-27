@@ -56,7 +56,7 @@ func TestCancelRunHTTPAcceptsExactActorStopAndReplaysReceipt(t *testing.T) {
 }
 
 func TestCancelRunHTTPRejectsActiveTurnWithoutMutatingItsAuthority(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	principal := auth.Actor{OrgID: f.OrgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage}}
 	request := runCancellationRequest(t, f.runID.String(), principal)

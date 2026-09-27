@@ -32,13 +32,13 @@ func NewInitialGenerationPublisher(client InitialGenerationClient, objects gener
 	return &InitialGenerationPublisher{client: client, objects: objects, runtimeID: runtimeID, desiredVersion: desiredVersion}, nil
 }
 func (p InitialGenerationPublisher) Register(ctx context.Context, e blockformat.ObjectInspection) error {
-	return p.client.RegisterInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{RuntimeInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
+	return p.client.RegisterInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
 }
 func (p InitialGenerationPublisher) Upload(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	return p.objects.Publish(ctx, d, file)
 }
 func (p InitialGenerationPublisher) Certify(ctx context.Context, e blockformat.ObjectInspection) error {
-	return p.client.CertifyInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{RuntimeInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
+	return p.client.CertifyInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
 }
 
 var _ computer.GenerationPublication = InitialGenerationPublisher{}

@@ -35,7 +35,7 @@ let
     cp ${./mke2fs.conf} "$out/opt/helmr/release/mke2fs.conf"
     ln -s ${bundleBuilder}/bin/bundle-builder "$out/opt/helmr/bin/bundle-builder"
     ln -s ${squashfsTools}/bin/mksquashfs "$out/opt/helmr/bin/mksquashfs"
-    ln -s /workspace/project "$out/opt/helmr/program"
+    ln -s /computer/project "$out/opt/helmr/program"
   '';
   # The user-facing toolchain is the unmodified official release, running on
   # the Debian base like any other program there.
@@ -71,15 +71,15 @@ dockerTools.buildLayeredImage {
     Env = [
       "COREPACK_DEFAULT_TO_LATEST=0"
       "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"
-      "HOME=/workspace/home"
+      "HOME=/computer/home"
       "LANG=C.UTF-8"
       "LC_ALL=C.UTF-8"
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-      "TMPDIR=/workspace/tmp"
+      "TMPDIR=/computer/tmp"
       "TZ=UTC"
-      "XDG_CACHE_HOME=/workspace/home/cache"
+      "XDG_CACHE_HOME=/computer/home/cache"
     ];
-    WorkingDir = "/workspace/project";
+    WorkingDir = "/computer/project";
   };
 
   meta = {

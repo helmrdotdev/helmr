@@ -27,7 +27,7 @@ func (s *Server) workerGetSessionTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	var result api.SessionTurn
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerRunSource(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
+		source, err := authorizeWorkerRunSource(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
 		if err != nil {
 			return err
 		}

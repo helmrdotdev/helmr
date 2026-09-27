@@ -13,15 +13,15 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestWorkerLifecycleClient(t *testing.T) {
 	claim := workerapi.RunLease{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
-		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
-		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
+		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerHostID: "00000000-0000-0000-0000-000000000401",
+		WorkerEpoch: 1, LeaseSequence: 1, ComputerInstanceID: "00000000-0000-0000-0000-000000000501",
 		AttemptNumber: 1, ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	paths := []string{}
@@ -37,7 +37,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.WorkerInstanceID != "00000000-0000-0000-0000-000000000401" || request.WorkerInstanceSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
+			if request.WorkerHostID != "00000000-0000-0000-0000-000000000401" || request.WorkerHostSecret != "worker-secret" || request.ServiceID != "00000000-0000-0000-0000-000000000901" {
 				t.Fatalf("worker token request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
@@ -69,12 +69,12 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if request.Capabilities.Runtime.Arch != "arm64" {
 				t.Fatalf("activate capabilities = %+v", request.Capabilities)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
+			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
 		case "/worker/v1/instance/drain":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveExecutions: 1})
+			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveInstances: 1})
 		case "/worker/v1/instance/drain/complete":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -86,12 +86,12 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 {
 				t.Fatalf("worker drain completion = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusTerminationReady})
+			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusTerminationReady})
 		case "/worker/v1/instance":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerInstanceID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveExecutions: 1})
+			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusDraining, ActiveInstances: 1})
 		case "/worker/v1/instance/fence":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -126,10 +126,10 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if status, err := client.ActivateWorker(context.Background(), workerClientCapabilities()); err != nil || status.Status != workerapi.StatusActive {
 		t.Fatalf("activate status = %+v err=%v", status, err)
 	}
-	if status, err := client.DrainWorker(context.Background()); err != nil || status.Status != workerapi.StatusDraining || status.ActiveExecutions != 1 {
+	if status, err := client.DrainWorker(context.Background()); err != nil || status.Status != workerapi.StatusDraining || status.ActiveInstances != 1 {
 		t.Fatalf("drain status = %+v err=%v", status, err)
 	}
-	if status, err := client.GetWorkerStatus(context.Background()); err != nil || status.Status != workerapi.StatusDraining || status.ActiveExecutions != 1 {
+	if status, err := client.GetWorkerStatus(context.Background()); err != nil || status.Status != workerapi.StatusDraining || status.ActiveInstances != 1 {
 		t.Fatalf("worker status = %+v err=%v", status, err)
 	}
 	if status, err := client.CompleteWorkerDrain(context.Background(), workerapi.DrainCompletionRequest{
@@ -150,11 +150,11 @@ func TestWorkerLifecycleClient(t *testing.T) {
 
 func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	receipt := workerapi.RunLeaseAssignment{
-		ID:                     "00000000-0000-0000-0000-000000000001",
-		RunID:                  "00000000-0000-0000-0000-000000000002",
-		AttemptNumber:          1,
-		LeaseSequence:          3,
-		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000003",
+		ID:                        "00000000-0000-0000-0000-000000000001",
+		RunID:                     "00000000-0000-0000-0000-000000000002",
+		AttemptNumber:             1,
+		LeaseSequence:             3,
+		BaseComputerDiskVersionID: "00000000-0000-0000-0000-000000000003",
 	}
 	operationID := "00000000-0000-0000-0000-000000000004"
 	var paths []string
@@ -179,14 +179,10 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(
 					workerapi.RunLeaseClaimResponse{
 						Lease: receipt,
-						Workspace: workerapi.WorkspaceAttachment{Target: workerapi.ComputerMountTarget{
-							BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+						Computer: workerapi.ComputerAttachment{Target: workerapi.ComputerMountTarget{
+							BaseComputerDiskVersionID: receipt.BaseComputerDiskVersionID,
 						}},
-						Execution: workerapi.RunLeaseExecution{
-							Fresh: &workerapi.RunLeaseFresh{
-								ProgramStart: []byte("frame"),
-							},
-						},
+						ProgramStart: []byte("frame"),
 					},
 				)
 			case "/worker/v1/run/leases/start":
@@ -194,8 +190,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt.Fence() || request.Fresh == nil ||
-					request.Restore != nil {
+				if request.Lease != receipt.Fence() {
 					t.Fatalf("start request = %+v", request)
 				}
 				_ = json.NewEncoder(w).Encode(
@@ -223,7 +218,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(workerapi.RunLeaseRenewResponse{
 					Lease: receipt.Fence(), ExpiresAt: receipt.ExpiresAt,
-					BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+					BaseComputerDiskVersionID: receipt.BaseComputerDiskVersionID,
 				})
 			case "/worker/v1/run/logs/append":
 				var request workerapi.RunLogAppendRequest
@@ -244,7 +239,6 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				}
 				if request.Lease != receipt.Fence() ||
 					request.OperationID != operationID ||
-					request.Kind != workerapi.RunFinalizationCapture ||
 					request.ProgramQuiesced.RunID != receipt.RunID ||
 					request.ProgramQuiesced.AttemptNumber != receipt.AttemptNumber ||
 					request.ProgramQuiesced.RunLeaseID != receipt.ID {
@@ -252,9 +246,8 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				}
 				_ = json.NewEncoder(w).Encode(
 					workerapi.BeginRunFinalizationResponse{
-						Lease: receipt.Fence(), BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+						Lease:     receipt.Fence(),
 						ExpiresAt: receipt.ExpiresAt, OperationID: operationID,
-						Kind: workerapi.RunFinalizationCapture,
 					},
 				)
 			case "/worker/v1/run/tasks/complete":
@@ -265,8 +258,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if request.Lease != receipt.Fence() ||
 					request.Outcome.Succeeded == nil ||
 					string(request.Outcome.Succeeded.Output) != `{"ok":true}` ||
-					request.Workspace.Captured == nil ||
-					request.Workspace.Captured.Receipt.OperationID != operationID {
+					request.OperationID != operationID {
 					t.Fatalf("Task completion request = %+v", request)
 				}
 				w.WriteHeader(http.StatusNoContent)
@@ -301,13 +293,13 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	if claim.Lease != receipt ||
-		claim.Execution.Fresh == nil ||
-		string(claim.Execution.Fresh.ProgramStart) != "frame" {
+		len(claim.ProgramStart) == 0 ||
+		string(claim.ProgramStart) != "frame" {
 		t.Fatalf("claim response = %+v", claim)
 	}
 	started, err := client.AcknowledgeRunStart(
 		context.Background(),
-		workerapi.RunStartRequest{Lease: receipt.Fence(), Fresh: &workerapi.RunStartFresh{}},
+		workerapi.RunStartRequest{Lease: receipt.Fence()},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -341,15 +333,13 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				RunLeaseID: receipt.ID,
 			},
 			OperationID: operationID,
-			Kind:        workerapi.RunFinalizationCapture,
 		},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if finalization.Lease != receipt.Fence() ||
-		finalization.OperationID != operationID ||
-		finalization.Kind != workerapi.RunFinalizationCapture {
+		finalization.OperationID != operationID {
 		t.Fatalf("finalization response = %+v", finalization)
 	}
 	if err := client.CompleteTask(
@@ -359,9 +349,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 				Output: json.RawMessage(`{"ok":true}`),
 			}},
-			Workspace: workerapi.TaskWorkspaceProof{Captured: &workerapi.TaskWorkspaceCapture{
-				Receipt: workerapi.WorkspaceFinalizationReceipt{OperationID: operationID},
-			}},
+			OperationID: operationID,
 		},
 	); err != nil {
 		t.Fatal(err)
@@ -523,13 +511,11 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 func TestWorkerRunWaitClient(t *testing.T) {
 	claim := workerapi.RunLeaseAssignment{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
-		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
-		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
-		AttemptNumber: 1, WorkspaceID: "00000000-0000-0000-0000-000000000701",
-		WorkspaceMountID:       "00000000-0000-0000-0000-000000000702",
-		WorkspaceLeaseID:       "00000000-0000-0000-0000-000000000703",
-		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000704",
-		ExpiresAt:              time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
+		WorkerGroupID: "01900000-0000-7000-8000-000000000901", WorkerHostID: "00000000-0000-0000-0000-000000000401",
+		WorkerEpoch: 1, LeaseSequence: 1, ComputerInstanceID: "00000000-0000-0000-0000-000000000501",
+		AttemptNumber: 1, ComputerID: "00000000-0000-0000-0000-000000000701",
+		BaseComputerDiskVersionID: "00000000-0000-0000-0000-000000000704",
+		ExpiresAt:                 time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	kernelDigest := "sha256:kernel"
 	rootfsDigest := "sha256:rootfs"
@@ -568,40 +554,40 @@ func TestWorkerRunWaitClient(t *testing.T) {
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.RunWaitPollResponse{
 				RunID: claim.RunID, RunWaitID: request.RunWaitID, Status: "resume_requested",
-				RequestVersion: 7, ResumeKind: "completed", ResumePayload: json.RawMessage(`{"approved":true}`),
+				ResumeKind: "completed", ResumePayload: json.RawMessage(`{"approved":true}`),
 			})
 		case "/worker/v1/run/waits/resume-ack":
 			var request workerapi.RunWaitResumeAckRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-id-1" || request.ResumeRequestVersion != 7 {
+			if request.Lease.ID != claim.ID || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("resume ack request = %+v", request)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.RunWaitResumeAckResponse{
-				RunID: claim.RunID, RunWaitID: request.RunWaitID, ResumeRequestVersion: request.ResumeRequestVersion,
+				RunID: claim.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
 			})
-		case "/worker/v1/run/checkpoints/ready":
+		case "/worker/v1/computer/checkpoints/ready":
 			var request workerapi.CheckpointReadyRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RequestVersion != 42 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
+			if request.ComputerInstanceID != "instance-1" || request.WorkerEpoch != 2 || request.DesiredVersion != 42 || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
 			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
 				t.Fatalf("checkpoint manifest = %+v", request.Manifest)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.CheckpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1"})
-		case "/worker/v1/run/checkpoints/failed":
+			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: "instance-1", WorkerEpoch: 2, DesiredVersion: 42, CheckpointID: "checkpoint-1"})
+		case "/worker/v1/computer/checkpoints/failed":
 			var request workerapi.CheckpointFailedRequest
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RequestVersion != 43 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
+			if request.ComputerInstanceID != "instance-1" || request.WorkerEpoch != 2 || request.DesiredVersion != 43 || request.CheckpointID != "checkpoint-1" || request.Error != "snapshot failed" {
 				t.Fatalf("checkpoint failed request = %+v", request)
 			}
-			_ = json.NewEncoder(w).Encode(workerapi.CheckpointResponse{RunID: claim.RunID, RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1"})
+			_ = json.NewEncoder(w).Encode(workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -625,21 +611,21 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("created = %+v", created)
 	}
 	polled, err := client.PollRunWait(context.Background(), workerapi.RunWaitPollRequest{Lease: claim.Fence(), RunWaitID: "run-wait-id-1"})
-	if err != nil || polled.RequestVersion != 7 || polled.ResumeKind != "completed" {
+	if err != nil || polled.ResumeKind != "completed" {
 		t.Fatalf("polled = %+v, err = %v", polled, err)
 	}
 	resumeAck, err := client.AcknowledgeRunWaitResume(context.Background(), workerapi.RunWaitResumeAckRequest{
-		Lease: claim.Fence(), RunWaitID: "run-wait-id-1", ResumeRequestVersion: 7,
+		Lease: claim.Fence(), RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
 	})
-	if err != nil || resumeAck.ResumeRequestVersion != 7 {
+	if err != nil || resumeAck.CheckpointID != "checkpoint-1" {
 		t.Fatalf("resume ack = %+v, err = %v", resumeAck, err)
 	}
 	ready, err := client.MarkCheckpointReady(context.Background(), workerapi.CheckpointReadyRequest{
-		Lease:          claim.Fence(),
-		RequestVersion: 42,
-		RunWaitID:      "run-wait-id-1",
-		CheckpointID:   "checkpoint-1",
-		Manifest:       testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
+		ComputerInstanceID: "instance-1",
+		WorkerEpoch:        2,
+		DesiredVersion:     42,
+		CheckpointID:       "checkpoint-1",
+		Manifest:           testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -648,84 +634,20 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("ready = %+v", ready)
 	}
 	failed, err := client.MarkCheckpointFailed(context.Background(), workerapi.CheckpointFailedRequest{
-		Lease:          claim.Fence(),
-		RequestVersion: 43,
-		RunWaitID:      "run-wait-id-1",
-		CheckpointID:   "checkpoint-1",
-		Error:          "snapshot failed",
+		ComputerInstanceID: "instance-1",
+		WorkerEpoch:        2,
+		DesiredVersion:     43,
+		CheckpointID:       "checkpoint-1",
+		Error:              "snapshot failed",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if failed.CheckpointID != "checkpoint-1" {
+	if failed.CheckpointID != "checkpoint-1" || failed.ComputerInstanceID != "instance-1" || failed.WorkerEpoch != 2 || failed.DesiredVersion != 43 {
 		t.Fatalf("failed = %+v", failed)
 	}
-	if got := strings.Join(paths, ","); got != "/worker/v1/instance/token,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/run/checkpoints/ready,/worker/v1/run/checkpoints/failed" {
+	if got := strings.Join(paths, ","); got != "/worker/v1/instance/token,/worker/v1/run/waits/create,/worker/v1/run/waits/poll,/worker/v1/run/waits/resume-ack,/worker/v1/computer/checkpoints/ready,/worker/v1/computer/checkpoints/failed" {
 		t.Fatalf("paths = %s", got)
-	}
-}
-
-func TestAcknowledgeRunResumeRelease(t *testing.T) {
-	lease := workerapi.RunLeaseAssignment{ID: "lease-1", RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", LeaseSequence: 3}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/worker/v1/instance/token":
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{
-				Token: "worker-token", ExpiresInSeconds: int64(time.Hour / time.Second),
-			})
-		case "/worker/v1/run/leases/resume-release":
-			if got := r.Header.Get("authorization"); got != "Bearer worker-token" {
-				t.Fatalf("worker auth = %q", got)
-			}
-			var request workerapi.RunResumeReleaseRequest
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-				t.Fatal(err)
-			}
-			if request.Lease != lease.Fence() ||
-				request.RunWaitID != "wait-1" ||
-				request.CheckpointID != "checkpoint-1" ||
-				request.ResumeAttachID != "attach-1" ||
-				request.ResumeRequestVersion != 7 {
-				t.Fatalf("resume release request = %+v", request)
-			}
-			_ = json.NewEncoder(w).Encode(workerapi.RunResumeReleaseResponse{
-				Lease:                lease.Fence(),
-				RunWaitID:            request.RunWaitID,
-				CheckpointID:         request.CheckpointID,
-				ResumeAttachID:       request.ResumeAttachID,
-				ResumeRequestVersion: request.ResumeRequestVersion,
-			})
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-	}))
-	defer server.Close()
-
-	client, err := New(
-		server.URL,
-		WithHTTPClient(server.Client()),
-		WithAuth("worker-1", "worker-secret"),
-		WithService("service-1"),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.AcknowledgeRunResumeRelease(context.Background(), workerapi.RunResumeReleaseRequest{
-		Lease:                lease.Fence(),
-		RunWaitID:            "wait-1",
-		CheckpointID:         "checkpoint-1",
-		ResumeAttachID:       "attach-1",
-		ResumeRequestVersion: 7,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Lease.ID != lease.ID ||
-		response.RunWaitID != "wait-1" ||
-		response.CheckpointID != "checkpoint-1" ||
-		response.ResumeAttachID != "attach-1" ||
-		response.ResumeRequestVersion != 7 {
-		t.Fatalf("resume release response = %+v", response)
 	}
 }
 
@@ -735,29 +657,29 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Backend:         "firecracker",
 			ID:              "sha256:runtime",
 			Arch:            "arm64",
-			Contract:        runtimeid.Contract,
+			Contract:        vmplatform.Contract,
 			KernelDigest:    kernelDigest,
 			InitramfsDigest: "sha256:initramfs",
 			RootfsDigest:    rootfsDigest,
 			ConfigDigest:    configDigest,
 		}},
 		RuntimeState: workerapi.CheckpointRuntimeState{
-			ConfigArtifact:      workerapi.CheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointRuntimeConfigMediaType},
+			ConfigArtifact:      workerapi.CheckpointArtifact{Digest: manifestDigest, MediaType: cas.CheckpointVMConfigMediaType},
 			VMStateArtifact:     workerapi.CheckpointArtifact{Digest: vmStateDigest, MediaType: cas.CheckpointVMStateMediaType},
 			ScratchDiskArtifact: workerapi.CheckpointArtifact{Digest: scratchDigest, MediaType: cas.CheckpointScratchDiskMediaType},
 			MemoryArtifacts:     []workerapi.CheckpointArtifact{{Digest: memoryDigest, MediaType: cas.CheckpointMemoryMediaType}},
 			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
-		WorkspaceState: workerapi.CheckpointWorkspaceState{
-			Base: workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"},
+		ComputerState: workerapi.CheckpointComputerState{
+			Base: workerapi.CheckpointComputerBase{MountPath: "/computer"},
 		},
 	}
 }
 
 func workerClientCapabilities() workerapi.Capabilities {
 	return workerapi.Capabilities{
-		Runtime: runtimeid.Profile{
-			ID: "sha256:runtime", Arch: "arm64", Contract: runtimeid.Contract,
+		Runtime: vmplatform.Profile{
+			ID: "sha256:runtime", Arch: "arm64", Contract: vmplatform.Contract,
 			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
 		},
 		MaxVCPUs:                  2,

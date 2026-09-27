@@ -54,14 +54,8 @@ INSERT INTO idempotency_claims (
 				dbtest.Hash("queued-child-expiry-request"),
 			)
 			dbtest.MustExec(t, ctx, tx, `
-UPDATE workspace_leases
-   SET status = 'released', released_at = now(), terminal_at = now()
- WHERE owner_run_lease_id = $1`,
-				child.leaseID,
-			)
-			dbtest.MustExec(t, ctx, tx, `
 UPDATE run_leases
-   SET status = 'cancelled', terminal_at = now(),
+   SET status = 'cancelled', terminal_at = now(), process_reconciled_at=now(),
        terminal_reason_code = 'test_reset'
  WHERE id = $1`,
 				child.leaseID,
@@ -139,21 +133,19 @@ UPDATE run_waits
 
 			var childStatus db.RunStatus
 			var failureCode string
-			var ownerRunID *uuid.UUID
 			if err := fixture.pool.QueryRow(ctx, `
-SELECT runs.status, runs.failure->>'code', computers.owner_run_id
+SELECT runs.status, runs.failure->>'code'
   FROM runs
-  JOIN computers ON computers.id = runs.workspace_id
+  JOIN computers ON computers.id = runs.computer_id
  WHERE runs.id = $1`,
 				child.runID,
-			).Scan(&childStatus, &failureCode, &ownerRunID); err != nil {
+			).Scan(&childStatus, &failureCode); err != nil {
 				t.Fatal(err)
 			}
-			if childStatus != db.RunStatusExpired || failureCode != "queued_ttl_expired" ||
-				ownerRunID != nil {
+			if childStatus != db.RunStatusExpired || failureCode != "queued_ttl_expired" {
 				t.Fatalf(
-					"child expiry = status:%s failure:%s owner:%v",
-					childStatus, failureCode, ownerRunID,
+					"child expiry = status:%s failure:%s",
+					childStatus, failureCode,
 				)
 			}
 			var result json.RawMessage
@@ -215,7 +207,7 @@ SELECT condition_result, condition_status, suspension_status
 type queuedChildParent struct {
 	waitID       uuid.UUID
 	runID        uuid.UUID
-	workspaceID  uuid.UUID
+	computerID   uuid.UUID
 	leaseID      uuid.UUID
 	checkpointID pgtype.UUID
 }
@@ -235,9 +227,9 @@ func newQueuedChildParent(
 	}
 	if err := fixture.pool.QueryRow(
 		ctx,
-		`SELECT workspace_id FROM runs WHERE id = $1`,
+		`SELECT computer_id FROM runs WHERE id = $1`,
 		work.runID,
-	).Scan(&parent.workspaceID); err != nil {
+	).Scan(&parent.computerID); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, fixture.pool, `
@@ -256,80 +248,44 @@ func newQueuedChildParent(
 	`, parent.runID)
 	dbtest.MustExec(t, ctx, fixture.pool, `
 		INSERT INTO run_waits (
-			id, environment_id, run_id, workspace_id, kind, due_at,
-			expected_run_revision, attempt_number, current_run_lease_id,
-			resume_attach_id
-		) VALUES ($1, $2, $3, $4, 'timer', now() + interval '1 hour', 2, 1, $5, $6)
-	`, parent.waitID, fixture.environmentID, parent.runID, parent.workspaceID,
-		parent.leaseID, uuid.NewV7())
+			id, environment_id, run_id, computer_id, kind, due_at,
+			expected_run_revision, attempt_number, current_run_lease_id
+		) VALUES ($1, $2, $3, $4, 'timer', now() + interval '1 hour', 2, 1, $5)
+	`, parent.waitID, fixture.environmentID, parent.runID, parent.computerID,
+		parent.leaseID)
 
 	switch suspension {
 	case db.RunWaitStatusHot:
 	case db.RunWaitStatusCheckpointing:
 		dbtest.MustExec(t, ctx, fixture.pool, `
 			UPDATE run_waits
-			   SET suspension_status = 'checkpointing',
-			       checkpoint_request_version = 1
+			   SET suspension_status = 'checkpointing'
 			 WHERE id = $1
 		`, parent.waitID)
 	case db.RunWaitStatusParked:
-		var workspaceLeaseID, baseWorkspaceVersionID uuid.UUID
-		if err := fixture.pool.QueryRow(ctx, `
-			SELECT workspace_leases.id, runs.base_workspace_version_id
-			  FROM workspace_leases
-			  JOIN runs ON runs.id = $1
-			 WHERE workspace_leases.owner_run_lease_id = $2
-		`, parent.runID, parent.leaseID).Scan(&workspaceLeaseID, &baseWorkspaceVersionID); err != nil {
+		tx, err := fixture.pool.Begin(ctx)
+		if err != nil {
 			t.Fatal(err)
 		}
-		checkpointID := uuid.NewV7()
+		defer tx.Rollback(ctx)
+		dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
+		checkpointID, privateID := uuid.NewV7(), uuid.NewV7()
 		parent.checkpointID = pgvalue.UUID(checkpointID)
-		checkpointArtifacts := dbtest.InsertCheckpointArtifacts(t, ctx, fixture.pool, parent.runID, checkpointID.String())
-		dbtest.MustExec(t, ctx, fixture.pool, `
-			INSERT INTO run_checkpoints (
-			    id, run_id, attempt_number, run_wait_id,
-			    source_run_lease_id, source_workspace_lease_id, workspace_id,
-			    base_workspace_version_id, private_workspace_version_id,
-			    runtime_config_artifact_id, vm_state_artifact_id,
-			    memory_artifact_id, scratch_disk_artifact_id,
-			    status, manifest, ready_request_fingerprint, ready_at
-			) VALUES (
-			    $1, $2, 1, $3, $4, $5, $6, $7, $7,
-			    $8, $9, $10, $11,
-			    'ready', '{"test":true}'::jsonb, 'sha256:70ac3c8c49385651ccc368788f78f79e99cd6f3094c74f1eb89fa896cfce3863', transaction_timestamp()
-			)
-		`, checkpointID, parent.runID, parent.waitID, parent.leaseID,
-			workspaceLeaseID, parent.workspaceID, baseWorkspaceVersionID,
-			checkpointArtifacts.RuntimeConfig, checkpointArtifacts.VMState, checkpointArtifacts.Memory, checkpointArtifacts.ScratchDisk)
-		dbtest.MustExec(t, ctx, fixture.pool, `
-			UPDATE run_leases
-			   SET status = 'checkpointed',
-			       checkpointed_at = transaction_timestamp(),
-			       terminal_at = transaction_timestamp(),
-			       terminal_reason_code = 'checkpointed'
-			 WHERE id = $1
-		`, parent.leaseID)
-		dbtest.MustExec(t, ctx, fixture.pool, `
-			UPDATE workspace_leases
-			   SET status = 'released',
-			       released_at = transaction_timestamp(),
-			       terminal_at = transaction_timestamp()
-			 WHERE id = $1
-		`, workspaceLeaseID)
-		dbtest.MustExec(t, ctx, fixture.pool, `
-			UPDATE runs
-			   SET current_run_lease_id = NULL,
-			       active_started_at = NULL
-			 WHERE id = $1
-		`, parent.runID)
-		dbtest.MustExec(t, ctx, fixture.pool, `
-			UPDATE run_waits
-			   SET suspension_status = 'parked',
-			       current_run_lease_id = NULL,
-			       prior_run_lease_id = $1,
-			       suspend_checkpoint_id = $2
-			 WHERE id = $3
-		`, parent.leaseID, checkpointID, parent.waitID)
+		dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoints(id,computer_id,environment_id,computer_spec_id,source_computer_instance_id,writer_generation,membership_revision,program_deployment_id,base_computer_disk_version_id)
+        SELECT $2,i.computer_id,i.environment_id,i.computer_spec_id,i.id,i.writer_generation,i.membership_revision,i.program_deployment_id,r.base_computer_disk_version_id FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id JOIN runs r ON r.id=l.run_id WHERE l.id=$1`, parent.leaseID, checkpointID)
+		dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation)
+        SELECT $2,environment_id,computer_id,base_computer_disk_version_id,$3,4096,'private',source_computer_instance_id,writer_generation FROM computer_checkpoints WHERE id=$1`, checkpointID, privateID, dbtest.Digest("parked-root"))
+		artifacts := dbtest.InsertCheckpointArtifacts(t, ctx, tx, parent.runID, checkpointID.String())
+		dbtest.MustExec(t, ctx, tx, `UPDATE computer_checkpoints SET status='ready',ready_at=now(),private_computer_disk_version_id=$2,manifest='{"version":1}',ready_request_fingerprint=$3,vm_config_artifact_id=$4,vm_state_artifact_id=$5,memory_artifact_id=$6,scratch_disk_artifact_id=$7 WHERE id=$1`, checkpointID, privateID, dbtest.Digest("ready-parked"), artifacts.RuntimeConfig, artifacts.VMState, artifacts.Memory, artifacts.ScratchDisk)
+		dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_checkpoint_runs(checkpoint_id,environment_id,computer_id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_computer_instance_id,writer_generation)
+        SELECT $2,environment_id,computer_id,run_id,attempt_number,$3,id,computer_instance_id,writer_generation FROM run_leases WHERE id=$1`, parent.leaseID, checkpointID, parent.waitID)
+		dbtest.MustExec(t, ctx, tx, `UPDATE run_leases SET status='checkpointed',checkpointed_at=now(),terminal_at=now(),terminal_reason_code='checkpointed',process_reconciled_at=now() WHERE id=$1`, parent.leaseID)
+		dbtest.MustExec(t, ctx, tx, `UPDATE runs SET current_run_lease_id=NULL,active_started_at=NULL WHERE id=$1`, parent.runID)
+		dbtest.MustExec(t, ctx, tx, `UPDATE run_waits SET suspension_status='parked',current_run_lease_id=NULL,prior_run_lease_id=$2,suspend_checkpoint_id=$3 WHERE id=$1`, parent.waitID, parent.leaseID, checkpointID)
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
 	default:
 		t.Fatalf("unsupported suspension %s", suspension)
 	}

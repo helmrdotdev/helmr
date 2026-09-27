@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 func TestRunRuntimeRequirementsFromFields(t *testing.T) {
@@ -15,7 +15,7 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "amd64",
-		VMRuntimeContract:       runtimeid.Contract,
+		VMRuntimeContract:       vmplatform.Contract,
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",
@@ -37,7 +37,7 @@ func TestRunRuntimeRequirementsRejectsPlacementRegion(t *testing.T) {
 		RequestedExecutionSlots: 1,
 		RuntimeID:               "sha256:runtime",
 		RuntimeArch:             "amd64",
-		VMRuntimeContract:       runtimeid.Contract,
+		VMRuntimeContract:       vmplatform.Contract,
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",
 		RootfsDigest:            "sha256:rootfs",

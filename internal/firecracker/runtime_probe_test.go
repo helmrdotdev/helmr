@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 func TestInspectHostRuntimeReturnsOrderedCanonicalEvidence(t *testing.T) {
@@ -70,7 +70,7 @@ func TestInspectHostRuntimeReturnsOrderedCanonicalEvidence(t *testing.T) {
 	}
 	artifacts := runtimeArtifacts{
 		Arch:              "amd64",
-		VMRuntimeContract: runtimeid.Contract,
+		VMRuntimeContract: vmplatform.Contract,
 		Kernel:            runtimeArtifact{Digest: testCanonicalDigest("1")},
 		Initramfs:         runtimeArtifact{Digest: testCanonicalDigest("2")},
 		Rootfs:            runtimeArtifact{Digest: testCanonicalDigest("3")},
@@ -112,11 +112,11 @@ func TestInspectHostRuntimeReturnsOrderedCanonicalEvidence(t *testing.T) {
 	if evidence.VMRuntimeDescriptorDigest != descriptorDigest || evidence.KernelDigest != artifacts.Kernel.Digest || evidence.InitramfsDigest != artifacts.Initramfs.Digest || evidence.RootfsDigest != artifacts.Rootfs.Digest {
 		t.Fatalf("evidence = %+v", evidence)
 	}
-	identity, err := evidence.RuntimeIdentity()
+	identity, err := evidence.VMPlatform()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.ID != evidence.RuntimeID || identity.Arch != "x86_64" || identity.Contract != runtimeid.Contract || identity.FirecrackerDigest != evidence.FirecrackerDigest || identity.VMRuntimeDescriptorDigest != descriptorDigest {
+	if identity.ID != evidence.RuntimeID || identity.Arch != "x86_64" || identity.Contract != vmplatform.Contract || identity.FirecrackerDigest != evidence.FirecrackerDigest || identity.VMRuntimeDescriptorDigest != descriptorDigest {
 		t.Fatalf("runtime identity = %+v evidence = %+v", identity, evidence)
 	}
 	expectedEnvironment := RuntimeEnvironmentEvidence{
@@ -472,13 +472,13 @@ func TestHostRuntimeEvidenceStoreBindsIdentityAndImmutableCPUMapOnce(t *testing.
 	identical.CPUShapes = append([]CPUShapeEvidence(nil), evidence.CPUShapes...)
 	tampered := evidence
 	tampered.RuntimeID = testCanonicalDigest("f")
-	if _, err := tampered.RuntimeIdentity(); err == nil || !strings.Contains(err.Error(), "does not match canonical ID") {
+	if _, err := tampered.VMPlatform(); err == nil || !strings.Contains(err.Error(), "does not match canonical ID") {
 		t.Fatalf("tampered runtime identity error = %v", err)
 	}
 	firstDigest := evidence.CPUShapes[0].CPUConfigDigest
 	secondDigest := evidence.CPUShapes[1].CPUConfigDigest
 	store := newHostRuntimeEvidenceStore()
-	if _, err := store.runtimeIdentity(); err == nil || !strings.Contains(err.Error(), "not bound") {
+	if _, err := store.vmPlatform(); err == nil || !strings.Contains(err.Error(), "not bound") {
 		t.Fatalf("unbound identity error = %v", err)
 	}
 	if _, err := store.cpuConfigDigest(1); err == nil || !strings.Contains(err.Error(), "not bound") {
@@ -497,7 +497,7 @@ func TestHostRuntimeEvidenceStoreBindsIdentityAndImmutableCPUMapOnce(t *testing.
 	if _, err := store.cpuConfigDigest(3); err == nil || !strings.Contains(err.Error(), "no entry") {
 		t.Fatalf("digest(3) error = %v", err)
 	}
-	boundIdentity, err := store.runtimeIdentity()
+	boundIdentity, err := store.vmPlatform()
 	if err != nil || boundIdentity.ID == "" {
 		t.Fatalf("bound identity = %+v, %v", boundIdentity, err)
 	}
@@ -506,7 +506,7 @@ func TestHostRuntimeEvidenceStoreBindsIdentityAndImmutableCPUMapOnce(t *testing.
 	}
 	changed := identical
 	changed.HostKernelRelease = "6.12.32"
-	changed.RuntimeID = mustDeriveTestRuntimeIdentity(t, changed).ID
+	changed.RuntimeID = mustDeriveTestVMPlatform(t, changed).ID
 	if err := store.bind(changed, 2); err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("changed rebind error = %v", err)
 	}
@@ -540,7 +540,7 @@ func TestPinnedRuntimeExecutableRetainsMeasuredBytesAndFailsClosedOnMutation(t *
 	evidence := testHostRuntimeEvidence(t, 1, testProbeRuntimeArtifacts())
 	evidence.FirecrackerDigest = expectedDigest
 	evidence.firecrackerPath = pinnedPath
-	evidence.RuntimeID = mustDeriveTestRuntimeIdentity(t, evidence).ID
+	evidence.RuntimeID = mustDeriveTestVMPlatform(t, evidence).ID
 	store := newHostRuntimeEvidenceStore()
 	if err := store.bind(evidence, 1); err != nil {
 		t.Fatal(err)
@@ -604,7 +604,7 @@ func testCanonicalDigest(character string) string {
 func testProbeRuntimeArtifacts() runtimeArtifacts {
 	return runtimeArtifacts{
 		Arch:              "amd64",
-		VMRuntimeContract: runtimeid.Contract,
+		VMRuntimeContract: vmplatform.Contract,
 		Kernel:            runtimeArtifact{Digest: testCanonicalDigest("1")},
 		Initramfs:         runtimeArtifact{Digest: testCanonicalDigest("2")},
 		Rootfs:            runtimeArtifact{Digest: testCanonicalDigest("3")},
@@ -632,7 +632,7 @@ func testHostRuntimeEvidence(t *testing.T, maxVCPUCount int64, artifacts runtime
 	if err != nil {
 		t.Fatal(err)
 	}
-	architecture, err := runtimeid.ArchitectureFromGo(artifacts.Arch)
+	architecture, err := vmplatform.ArchitectureFromGo(artifacts.Arch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,13 +657,13 @@ func testHostRuntimeEvidence(t *testing.T, maxVCPUCount int64, artifacts runtime
 		RootfsDigest:              artifacts.Rootfs.Digest,
 		firecrackerPath:           firecrackerPath,
 	}
-	evidence.RuntimeID = mustDeriveTestRuntimeIdentity(t, evidence).ID
+	evidence.RuntimeID = mustDeriveTestVMPlatform(t, evidence).ID
 	return evidence
 }
 
-func mustDeriveTestRuntimeIdentity(t *testing.T, evidence HostRuntimeEvidence) runtimeid.Profile {
+func mustDeriveTestVMPlatform(t *testing.T, evidence HostRuntimeEvidence) vmplatform.Profile {
 	t.Helper()
-	identity, err := deriveHostRuntimeIdentity(evidence)
+	identity, err := deriveHostVMPlatform(evidence)
 	if err != nil {
 		t.Fatal(err)
 	}

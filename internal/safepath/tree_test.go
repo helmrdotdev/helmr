@@ -8,7 +8,7 @@ import (
 
 func TestTreeRepresentability(t *testing.T) {
 	for _, name := range []string{"日本語.txt", strings.Repeat("x", 255), strings.Repeat("dir/", 127) + "leaf", strings.Repeat("p", 80) + "/" + strings.Repeat("q", 80) + "/file"} {
-		if err := ValidateTreePath(name, "/workspace/project", "/workspace/program", "/opt/helmr/program"); err != nil {
+		if err := ValidateTreePath(name, "/computer/project", "/computer/program", "/opt/helmr/program"); err != nil {
 			t.Fatalf("%q: %v", name, err)
 		}
 	}
@@ -17,7 +17,7 @@ func TestTreeRepresentability(t *testing.T) {
 			t.Fatalf("accepted %q", name)
 		}
 	}
-	prefix := "/workspace/project"
+	prefix := "/computer/project"
 	name := strings.Repeat(strings.Repeat("a", 254)+"/", 15)
 	name += strings.Repeat("b", 4096-len(prefix)-2-len(name))
 	if err := ValidateTreePath(name, prefix); err != nil {

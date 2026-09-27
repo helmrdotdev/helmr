@@ -4,7 +4,7 @@ INSERT INTO sessions (
     environment_id,
     actor_declared_id,
     deployment_definition_id,
-    workspace_id,
+    computer_id,
     key,
     run_queue_name,
     run_concurrency_key,
@@ -43,16 +43,11 @@ SELECT sqlc.arg(id),
    AND deployments.runtime_artifact_digest IS NOT NULL
   JOIN computers
     ON computers.environment_id = actor_definition.environment_id
-   AND computers.id = sqlc.arg(workspace_id)
+   AND computers.id = sqlc.arg(computer_id)
   JOIN environments AS actor_environment
     ON actor_environment.id = computers.environment_id
    AND actor_environment.org_id = sqlc.arg(org_id)
    AND actor_environment.project_id = sqlc.arg(project_id)
-  JOIN deployment_definitions AS workspace_definition
-    ON workspace_definition.environment_id = computers.environment_id
-   AND workspace_definition.id = computers.deployment_definition_id
-   AND workspace_definition.kind = 'sandbox'
-   AND workspace_definition.declared_id = computers.sandbox_declared_id
  WHERE actor_definition.environment_id = sqlc.arg(environment_id)
    AND actor_definition.id = sqlc.arg(deployment_definition_id)
    AND actor_definition.kind = 'actor'
@@ -105,7 +100,7 @@ UPDATE sessions
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND status = 'open'
    AND current_run_id IS NULL
    AND run_generation = 1

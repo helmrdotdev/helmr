@@ -15,36 +15,43 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (workerapi.RuntimeComputerSource, error) {
+func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow) (workerapi.RuntimeComputerSource, error) {
 	var source workerapi.RuntimeComputerSource
-	if !row.BaseWorkspaceVersionID.Valid || !row.ComputerVersionStatus.Valid {
-		return source, errors.New("runtime reservation has no exact computer version")
+	if !row.PreparationDiskVersionID.Valid || !row.ComputerDiskVersionStatus.Valid {
+		return source, errors.New("computer instance has no exact computer version")
 	}
-	if row.WorkspaceArchitecture != string(deployment.ArchitectureX8664) || row.ReservedGuestEphemeralDiskBytes != computer.SeedCapacity {
-		return source, errors.New("runtime reservation has an unsupported computer capacity or architecture")
+	if (row.SourceDiskVersionID.Valid && row.SourceDiskVersionID != row.PreparationDiskVersionID) || (row.SourceCheckpointID.Valid && !row.SourceDiskVersionID.Valid) {
+		return source, errors.New("computer instance source does not match its retained disk")
 	}
-	source.VersionID = pgvalue.UUIDString(row.BaseWorkspaceVersionID)
+	if row.ComputerArchitecture != string(deployment.ArchitectureX8664) || row.ReservedGuestEphemeralDiskBytes != computer.SeedCapacity {
+		return source, errors.New("computer instance has an unsupported computer capacity or architecture")
+	}
+	source.VersionID = pgvalue.UUIDString(row.PreparationDiskVersionID)
 	source.LogicalBytes = row.ReservedGuestEphemeralDiskBytes
-	switch row.ComputerVersionStatus.String {
+	switch row.ComputerDiskVersionStatus.String {
 	case "initializing":
-		if len(row.ComputerGenerationLocator) != 0 || row.RestoreCheckpointID.Valid || row.WorkspaceContentDigest.Valid ||
-			!row.WorkspaceLogicalSizeBytes.Valid || row.WorkspaceLogicalSizeBytes.Int64 != 0 ||
+		if len(row.ComputerGenerationLocator) != 0 || row.SourceCheckpointID.Valid || row.ComputerContentDigest.Valid ||
+			!row.ComputerLogicalSizeBytes.Valid || row.ComputerLogicalSizeBytes.Int64 != 0 ||
 			len(row.ComputerInitialConfig) != 0 {
 			return source, errors.New("initializing computer has persisted disk or continuation state")
 		}
-		manifest, err := deployment.ParseSandboxManifest(row.SandboxManifestVersion, row.SandboxManifest)
+		object := cas.Descriptor{Digest: row.ComputerImageDigest, SizeBytes: row.ComputerImageSizeBytes, MediaType: row.ComputerImageMediaType}
+		spec, err := deployment.ParseComputerSpec(row.ComputerConfig, object)
 		if err != nil {
 			return source, fmt.Errorf("project computer seed: %w", err)
 		}
-		object := cas.Descriptor{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType}
-		if manifest.Image.Profile != computer.SeedProfile || manifest.Image.ArtifactDigest != object.Digest || manifest.Image.MediaType != object.MediaType {
-			return source, errors.New("computer seed does not match admitted deployment")
+		if !bytes.Equal(spec.Digest[:], row.ComputerSpecDigest) {
+			return source, errors.New("computer seed does not match admitted specification")
+		}
+		var config deployment.ComputerConfig
+		if err := json.Unmarshal(spec.Config, &config); err != nil {
+			return source, err
 		}
 		if err := (computer.SeedArtifact{Object: object, LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes); err != nil {
 			return source, fmt.Errorf("project computer seed: %w", err)
 		}
-		source.Config = manifest.Image.Config
-		source.Seed = &workerapi.ComputerSeed{Profile: manifest.Image.Profile, Object: workerapi.CASObject{
+		source.Config = config.Image
+		source.Seed = &workerapi.ComputerSeed{Profile: config.Profile, Object: workerapi.CASObject{
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		}}
 	case "committed", "private":
@@ -52,7 +59,7 @@ func projectRuntimeComputerSource(row db.ListRuntimeReconcileTargetsRow) (worker
 		if err != nil {
 			return source, fmt.Errorf("project computer generation: %w", err)
 		}
-		if !row.WorkspaceLogicalSizeBytes.Valid || row.WorkspaceLogicalSizeBytes.Int64 != source.LogicalBytes || !row.WorkspaceContentDigest.Valid || row.WorkspaceContentDigest.String != root.Pack.Digest {
+		if !row.ComputerLogicalSizeBytes.Valid || row.ComputerLogicalSizeBytes.Int64 != source.LogicalBytes || !row.ComputerContentDigest.Valid || row.ComputerContentDigest.String != root.Pack.Digest {
 			return source, errors.New("computer generation identity is incomplete")
 		}
 		source.Root = &root

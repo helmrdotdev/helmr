@@ -104,28 +104,28 @@ func TestNormalizeStartActorRetryFillsPublicDefaults(t *testing.T) {
 	}
 }
 
-func TestValidateStartActorRequestRejectsInvalidWorkspaceAndRetry(t *testing.T) {
-	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+func TestValidateStartActorRequestRejectsInvalidComputerAndRetry(t *testing.T) {
+	computerID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	maxAttempts := int64(3)
 	emptyConcurrencyKey := ""
 	for _, request := range []StartActorRequest{
 		{},
-		{Workspace: WorkspaceIDTarget{ID: "thread:1"}},
+		{Computer: ComputerIDTarget{ID: "thread:1"}},
 		{
-			Workspace: WorkspaceIDTarget{ID: workspaceID},
+			Computer: ComputerIDTarget{ID: computerID},
 			Run: &StartActorRunOptions{
 				TTL:   "1h30m",
 				Retry: &StartActorRetryPolicy{MaxAttempts: &maxAttempts},
 			},
 		},
 		{
-			Workspace: WorkspaceIDTarget{ID: workspaceID},
+			Computer: ComputerIDTarget{ID: computerID},
 			Run: &StartActorRunOptions{
 				ConcurrencyKey: &emptyConcurrencyKey,
 			},
 		},
 		{
-			Workspace: WorkspaceIDTarget{ID: workspaceID},
+			Computer: ComputerIDTarget{ID: computerID},
 			Run: &StartActorRunOptions{
 				Retry: &StartActorRetryPolicy{
 					MaxAttempts: &maxAttempts,

@@ -80,11 +80,8 @@ func TestSchemaCanonicalContentAndRequestDigests(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	substrateID := uuid.NewV7()
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO runtime_substrates(id,org_id,project_id,environment_id,deployment_definition_id,substrate_digest,substrate_format,substrate_contract,substrate_size_bytes) VALUES($1,$2,$3,$4,$5,$6,'squashfs','test',1)`, substrateID, f.orgID, f.projectID, f.environmentID, f.workspaceDefinitionID, dbtest.Digest("substrate"))
 	for _, value := range []string{"", "digest", "sha256:abc", "sha256:" + strings.Repeat("A", 64), "sha512:" + strings.Repeat("a", 64)} {
 		rejectSchemaRow(t, tx, "23514", `INSERT INTO cas_objects(org_id,digest,size_bytes,media_type) VALUES($1,$2,1,'application/octet-stream')`, f.orgID, value)
-		rejectSchemaRow(t, tx, "23514", `UPDATE runtime_substrates SET substrate_digest=$2 WHERE id=$1`, substrateID, value)
 		rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET terminal_request_fingerprint=$2 WHERE id=$1`, work.leaseID, value)
 		rejectSchemaRow(t, tx, "23514", `UPDATE run_leases SET status='finalizing',started_at=claimed_at,finalization_operation_id=$2,finalization_started_at=now(),finalization_request_fingerprint=$3 WHERE id=$1`, work.leaseID, uuid.NewV7(), value)
 	}
@@ -99,7 +96,7 @@ func TestCreationSelectsDefinitionKindAndDeclaredID(t *testing.T) {
 	actorID := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO deployment_definitions(id,environment_id,deployment_id,kind,declared_id,manifest_version,manifest,manifest_digest) VALUES($1,$2,$3,'actor','selection-actor',0,'{}',$4)`, actorID, f.environmentID, f.deploymentID, dbtest.Hash("actor-manifest"))
 	var sandboxName string
-	if err := f.pool.QueryRow(ctx, `SELECT declared_id FROM deployment_definitions WHERE id=$1`, f.workspaceDefinitionID).Scan(&sandboxName); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT declared_id FROM deployment_definitions WHERE id=$1`, f.computerDefinitionID).Scan(&sandboxName); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(ctx)
@@ -108,27 +105,27 @@ func TestCreationSelectsDefinitionKindAndDeclaredID(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 	q := New(tx)
-	workspaceParams := CreateWorkspaceFromCurrentDeploymentParams{ID: pgvalue.UUID(uuid.NewV7()), InitialVersionID: pgvalue.UUID(uuid.NewV7()), OrgID: pgvalue.UUID(f.orgID), ProjectID: pgvalue.UUID(f.projectID), EnvironmentID: pgvalue.UUID(f.environmentID), DeploymentDefinitionID: pgvalue.UUID(f.workspaceDefinitionID), SandboxDeclaredID: sandboxName}
+	computerParams := CreateComputerFromCurrentDeploymentParams{ID: pgvalue.UUID(uuid.NewV7()), InitialVersionID: pgvalue.UUID(uuid.NewV7()), OrgID: pgvalue.UUID(f.orgID), ProjectID: pgvalue.UUID(f.projectID), EnvironmentID: pgvalue.UUID(f.environmentID), DeploymentDefinitionID: pgvalue.UUID(f.computerDefinitionID), SandboxDeclaredID: sandboxName}
 	for _, tc := range []struct {
 		definition uuid.UUID
 		name       string
-	}{{f.taskDefinitionID, "test-task"}, {f.workspaceDefinitionID, "wrong-name"}, {actorID, "selection-actor"}} {
-		p := workspaceParams
+	}{{f.taskDefinitionID, "test-task"}, {f.computerDefinitionID, "wrong-name"}, {actorID, "selection-actor"}} {
+		p := computerParams
 		p.DeploymentDefinitionID = pgvalue.UUID(tc.definition)
 		p.SandboxDeclaredID = tc.name
-		if _, err := q.CreateWorkspaceFromCurrentDeployment(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("workspace selection = %v", err)
+		if _, err := q.CreateComputerFromCurrentDeployment(ctx, p); !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("computer selection = %v", err)
 		}
 	}
-	workspace, err := q.CreateWorkspaceFromCurrentDeployment(ctx, workspaceParams)
+	computer, err := q.CreateComputerFromCurrentDeployment(ctx, computerParams)
 	if err != nil {
 		t.Fatal(err)
 	}
-	params := CreateActorParams{ID: pgvalue.UUID(uuid.NewV7()), OrgID: workspaceParams.OrgID, ProjectID: workspaceParams.ProjectID, EnvironmentID: workspaceParams.EnvironmentID, WorkspaceID: workspace.ID, DeploymentDefinitionID: pgvalue.UUID(actorID), ActorDeclaredID: "selection-actor", RunQueueName: "default", RunMaxActiveDurationMs: 5000, RunRetryPolicy: []byte(`{"enabled":false}`)}
+	params := CreateActorParams{ID: pgvalue.UUID(uuid.NewV7()), OrgID: computerParams.OrgID, ProjectID: computerParams.ProjectID, EnvironmentID: computerParams.EnvironmentID, ComputerID: computer.ID, DeploymentDefinitionID: pgvalue.UUID(actorID), ActorDeclaredID: "selection-actor", RunQueueName: "default", RunMaxActiveDurationMs: 5000, RunRetryPolicy: []byte(`{"enabled":false}`)}
 	for _, tc := range []struct {
 		definition uuid.UUID
 		name       string
-	}{{f.taskDefinitionID, "test-task"}, {f.workspaceDefinitionID, sandboxName}, {actorID, "wrong-name"}} {
+	}{{f.taskDefinitionID, "test-task"}, {f.computerDefinitionID, sandboxName}, {actorID, "wrong-name"}} {
 		p := params
 		p.DeploymentDefinitionID = pgvalue.UUID(tc.definition)
 		p.ActorDeclaredID = tc.name
@@ -140,7 +137,7 @@ func TestCreationSelectsDefinitionKindAndDeclaredID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session.ActorDeclaredID != "selection-actor" || session.WorkspaceID != workspace.ID {
+	if session.ActorDeclaredID != "selection-actor" || session.ComputerID != computer.ID {
 		t.Fatalf("session = %+v", session)
 	}
 	dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL IMMEDIATE`)
@@ -167,8 +164,8 @@ func TestSchemaTurnFingerprintAndMessageEventSubject(t *testing.T) {
 	dbtest.MustExec(t, ctx, tx, `UPDATE session_turns SET terminal_request_fingerprint=$2 WHERE id=$1`, turnID, dbtest.Digest("settlement"))
 	dbtest.MustExec(t, ctx, tx, `INSERT INTO session_messages(id,environment_id,session_id,turn_id,run_id,attempt_number,run_generation,data,accepted_sequence)
   VALUES($1,$2,$3,$4,$5,1,1,'null',1)`, messageID, f.environmentID, sessionID, turnID, work.runID)
-	const eventSQL = `INSERT INTO session_events(id,environment_id,session_id,workspace_id,turn_id,message_id,sequence,kind,data)
-  SELECT $1,environment_id,id,workspace_id,$3,$4,1,'message.accepted','{}' FROM sessions WHERE id=$2`
+	const eventSQL = `INSERT INTO session_events(id,environment_id,session_id,computer_id,turn_id,message_id,sequence,kind,data)
+  SELECT $1,environment_id,id,computer_id,$3,$4,1,'message.accepted','{}' FROM sessions WHERE id=$2`
 	// Each subject exists within this Session, but only the message's own Turn is valid.
 	rejectSchemaRow(t, tx, "23503", eventSQL, uuid.NewV7(), sessionID, otherTurnID, messageID)
 	dbtest.MustExec(t, ctx, tx, eventSQL, uuid.NewV7(), sessionID, turnID, messageID)

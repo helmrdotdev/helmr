@@ -1,6 +1,6 @@
 ---
 title: Use secrets
-description: Create a Secret, bind it to a Workspace, and rotate its value.
+description: Create a Secret, bind it to a Computer, and rotate its value.
 ---
 
 # Use secrets
@@ -8,7 +8,7 @@ description: Create a Secret, bind it to a Workspace, and rotate its value.
 This guide uses a GitHub token with `gh api`. The `reviewer` Sandbox must be
 included in the current Deployment and its image must contain `gh`. See
 [Build a custom image](/docs/guides/how-to/build-a-custom-image) to install tools.
-Use the same Project Environment for the Secret and Workspace.
+Use the same Project Environment for the Secret and Computer.
 
 ## Create the Secret
 
@@ -29,7 +29,7 @@ ID for rotation or revocation.
 
 Set `HELMR_API_KEY` to an [environment API key](/docs/reference/rest-api/authentication)
 for the same `agents` project and `development` environment. Bind the Secret by
-name when creating the Workspace:
+name when creating the Computer:
 
 ```ts
 import { HelmrClient } from "@helmr/sdk"
@@ -38,9 +38,9 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const workspace = await client.sandboxes.createWorkspace("reviewer", {
+const computer = await client.sandboxes.createComputer("reviewer", {
   key: "github-review",
-  idempotencyKey: "workspace:github-review",
+  idempotencyKey: "computer:github-review",
   secrets: [
     {
       secret: "GITHUB_TOKEN",
@@ -53,34 +53,35 @@ const workspace = await client.sandboxes.createWorkspace("reviewer", {
   ],
 })
 
-const result = await workspace.exec({
+const command = await computer.exec({
   command: ["gh", "api", "user"],
   idempotencyKey: "github-user",
 })
+const outcome = await command.wait()
 ```
 
 `gh` reads `GH_TOKEN` and sends it in the authorization header. Inside the
-Workspace, that variable contains a placeholder. Helmr replaces it with the
+Computer, that variable contains a placeholder. Helmr replaces it with the
 current Secret value only for the approved origin while execution is authorized.
 The token must have permission for the GitHub API operation you request.
 
-Clients must trust the Workspace public CA and CA trust settings and send the
+Clients must trust the Computer public CA and CA trust settings and send the
 placeholder unchanged in the header. Do not encode it for Basic authentication
 or use it to sign requests. See [client requirements](/docs/concepts/secrets#client-requirements)
 for supported protocols and limitations.
 
-Bindings are fixed at Workspace creation. Later Task and Actor starts use the
-Workspace reference rather than a new binding map. To change a binding or its
-allowed origins, create a new Workspace.
+Bindings are fixed at Computer creation. Later Task and Actor starts use the
+Computer reference rather than a new binding map. To change a binding or its
+allowed origins, create a new Computer.
 
-You can also attach Secrets in Console under **Workspaces → Create Workspace**, or
-use the CLI's [`--secrets-file`](/docs/reference/cli/workspace#secret-bindings-at-creation)
+You can also attach Secrets in Console under **Computers → Create Computer**, or
+use the CLI's [`--secrets-file`](/docs/reference/cli/computer#secret-bindings-at-creation)
 option. JSON uses `allowed_origins` where the SDK uses `allowedOrigins`.
 
 ## Use raw values when required
 
 If a tool needs the actual credential for a non-HTTP protocol, signing, or file
-access, choose raw env or file delivery when creating its Workspace:
+access, choose raw env or file delivery when creating its Computer:
 
 ```ts
 secrets: [
@@ -90,8 +91,8 @@ secrets: [
 ```
 
 Create those named Secrets in the same Project Environment first. Raw values can
-be read by Workspace processes and may be retained in snapshots. Do not expose a
-Secret through raw delivery if you need its value hidden from the Workspace.
+be read by Computer processes and may be retained in snapshots. Do not expose a
+Secret through raw delivery if you need its value hidden from the Computer.
 
 ## Rotate or revoke the Secret
 

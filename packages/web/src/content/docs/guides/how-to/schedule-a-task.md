@@ -26,7 +26,7 @@ export const dailyReport = schedules.task({
     pattern: "0 9 * * *",
     timezone: "America/New_York",
   },
-  workspace: {
+  computer: {
     sandbox: reportingSandbox,
     secrets: [
       {
@@ -48,7 +48,7 @@ export const dailyReport = schedules.task({
 
 Deploy and promote the project. Promotion reconciles the Schedule from the
 declaration; there is no imperative create or update command. Each logical fire
-creates a fresh Workspace from the declared Sandbox and secret placements.
+creates a fresh Computer from the declared Sandbox and secret placements.
 
 Inspect the resulting resource:
 

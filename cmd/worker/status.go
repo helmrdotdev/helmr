@@ -30,7 +30,7 @@ func runStatus(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), workerclient.WithService(identity.ServiceID))
+	controlPlaneClient, err := workerclient.New(cfg.ControlPlaneURL, workerclient.WithAuth(workerCredential.WorkerHostID, workerCredential.WorkerHostSecret), workerclient.WithService(identity.ServiceID))
 	if err != nil {
 		return fmt.Errorf("configure control client: %w", err)
 	}
@@ -49,7 +49,7 @@ func runStatus(log *slog.Logger) error {
 	if status.Readiness.Runtime == nil || !status.Readiness.Runtime.Ready {
 		return fmt.Errorf("worker runtime role is not ready: %s", workerPauseReason(status.Readiness.Runtime))
 	}
-	log.Info("worker ready", "worker_instance_id", status.WorkerInstanceID, "active_executions", status.ActiveExecutions)
+	log.Info("worker ready", "worker_host_id", status.WorkerHostID, "active_instances", status.ActiveInstances)
 	return nil
 }
 

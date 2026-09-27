@@ -17,7 +17,7 @@ func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("invalid initial computer key request")))
 		return
 	}
-	runtimeID, err := ids.Parse(request.RuntimeInstanceID)
+	runtimeID, err := ids.Parse(request.ComputerInstanceID)
 	if err != nil || request.DesiredVersion <= 0 {
 		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
 		return
@@ -25,7 +25,7 @@ func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request
 	worker := workerFromContext(r.Context())
 	material, err := s.computerKeys.initial(r.Context(), computerKeyFence{
 		ComputerPreparationFence: dispatch.ComputerPreparationFence{
-			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.WorkerInstanceID),
+			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.WorkerHostID),
 			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch,
 			DesiredVersion: request.DesiredVersion,
 		},
@@ -50,7 +50,7 @@ func (s *Server) workerComputerSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("invalid computer source request")))
 		return
 	}
-	runtimeID, err := ids.Parse(request.RuntimeInstanceID)
+	runtimeID, err := ids.Parse(request.ComputerInstanceID)
 	if err != nil || request.DesiredVersion <= 0 {
 		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
 		return
@@ -58,7 +58,7 @@ func (s *Server) workerComputerSource(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	material, err := s.computerKeys.source(r.Context(), computerKeyFence{
 		ComputerPreparationFence: dispatch.ComputerPreparationFence{
-			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.WorkerInstanceID),
+			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.WorkerHostID),
 			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch,
 			DesiredVersion: request.DesiredVersion,
 		},

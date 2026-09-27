@@ -140,7 +140,7 @@ func TestSessionHTTPPostgresAdmissionEventsScopeAndClose(t *testing.T) {
 }
 
 func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	principal := auth.Actor{OrgID: f.OrgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper, ProjectID: f.ProjectID.String(), EnvironmentID: f.EnvironmentID.String(), Permissions: []auth.Permission{auth.PermissionSessionsSend, auth.PermissionSessionsInterrupt, auth.PermissionSessionsResume, auth.PermissionSessionsRead, auth.PermissionSessionsClose}}
 	call := func(handler http.HandlerFunc, raw, turnID string) *httptest.ResponseRecorder {
@@ -218,7 +218,7 @@ func TestSessionHTTPPostgresStopKeepsFIFOAndRequiresExactHold(t *testing.T) {
 	}
 }
 
-func TestSessionHTTPPostgresIdleCloseReleasesWorkspace(t *testing.T) {
+func TestSessionHTTPPostgresIdleCloseReleasesComputer(t *testing.T) {
 	f := newActorStartPostgresFixture(t, 1)
 	started, err := f.server.startActor(t.Context(), f.request(0, nil, ""))
 	if err != nil {
@@ -240,12 +240,12 @@ func TestSessionHTTPPostgresIdleCloseReleasesWorkspace(t *testing.T) {
 		t.Fatalf("close reconciliation deferred=%v err=%v", deferred, err)
 	}
 	var status string
-	var owner *uuid.UUID
-	if err := f.pool.QueryRow(t.Context(), `SELECT s.status,w.owner_session_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &owner); err != nil {
+	var sessionComputer *uuid.UUID
+	if err := f.pool.QueryRow(t.Context(), `SELECT s.status,s.computer_id FROM sessions s JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, started.SessionID).Scan(&status, &sessionComputer); err != nil {
 		t.Fatal(err)
 	}
-	if status != "closed" || owner != nil {
-		t.Fatalf("close=%s owner=%v", status, owner)
+	if status != "closed" || sessionComputer == nil {
+		t.Fatalf("close=%s sessionComputer=%v", status, sessionComputer)
 	}
 	// The console route reads the closed Session through the same scope.
 	r = sessionLifecycleRequest("", principal, started.SessionID.String(), "")

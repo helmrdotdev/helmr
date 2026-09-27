@@ -18,17 +18,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-var ErrProxyTrustExpired = errors.New("workspace Secret transport has expired; create a new Workspace")
+var ErrProxyTrustExpired = errors.New("computer Secret transport has expired; create a new Computer")
 
-func proxyTrustAAD(environmentID, workspaceID uuid.UUID) []byte {
-	return []byte("helmr.workspace-secret-proxy-trust.v0\x00" + environmentID.String() + "\x00" + workspaceID.String())
+func proxyTrustAAD(environmentID, computerID uuid.UUID) []byte {
+	return []byte("helmr.computer-secret-proxy-trust.v0\x00" + environmentID.String() + "\x00" + computerID.String())
 }
 
-// ProxyTrust is encrypted Workspace CA material. Only creation and authorized
+// ProxyTrust is encrypted Computer CA material. Only creation and authorized
 // preparation handle the signer; public delivery and resolution use certificate/expiry.
 type ProxyTrust struct {
 	EnvironmentID        uuid.UUID
-	WorkspaceID          uuid.UUID
+	ComputerID           uuid.UUID
 	Certificate          []byte
 	PrivateKeyNonce      []byte
 	PrivateKeyCiphertext []byte
@@ -36,10 +36,10 @@ type ProxyTrust struct {
 }
 
 // GenerateProxyTrust does not persist or retrieve material. Callers persist it
-// only in the transaction that inserted the Workspace, using that row's CreatedAt.
-func (s *Store) GenerateProxyTrust(environmentID, workspaceID uuid.UUID, createdAt time.Time) (ProxyTrust, error) {
-	row := ProxyTrust{EnvironmentID: environmentID, WorkspaceID: workspaceID}
-	if s == nil || s.encryption == nil || createdAt.IsZero() || environmentID == uuid.Nil() || workspaceID == uuid.Nil() {
+// only in the transaction that inserted the Computer, using that row's CreatedAt.
+func (s *Store) GenerateProxyTrust(environmentID, computerID uuid.UUID, createdAt time.Time) (ProxyTrust, error) {
+	row := ProxyTrust{EnvironmentID: environmentID, ComputerID: computerID}
+	if s == nil || s.encryption == nil || createdAt.IsZero() || environmentID == uuid.Nil() || computerID == uuid.Nil() {
 		return row, ErrDeliveryUnavailable
 	}
 	entropy := s.rand
@@ -58,7 +58,7 @@ func (s *Store) GenerateProxyTrust(environmentID, workspaceID uuid.UUID, created
 	if err != nil {
 		return row, err
 	}
-	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Helmr Workspace Secret transport"},
+	template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "Helmr Computer Secret transport"},
 		NotBefore: createdAt.Add(-5 * time.Minute), NotAfter: expires, IsCA: true, BasicConstraintsValid: true,
 		MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
 	der, err := x509.CreateCertificate(entropy, template, template, &key.PublicKey, key)
@@ -74,7 +74,7 @@ func (s *Store) GenerateProxyTrust(environmentID, workspaceID uuid.UUID, created
 	if _, err := io.ReadFull(entropy, nonce); err != nil {
 		return row, err
 	}
-	ciphertext := s.encryption.Seal(nil, nonce, private, proxyTrustAAD(environmentID, workspaceID))
+	ciphertext := s.encryption.Seal(nil, nonce, private, proxyTrustAAD(environmentID, computerID))
 	row.Certificate = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	row.PrivateKeyNonce, row.PrivateKeyCiphertext, row.NotAfter = nonce, ciphertext, expires
 	return row, nil
@@ -103,11 +103,11 @@ func (s *Store) ProxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error
 		return nil, nil, err
 	}
 	environmentID := row.EnvironmentID
-	workspaceID := row.WorkspaceID
+	computerID := row.ComputerID
 	if s == nil || s.encryption == nil || len(row.PrivateKeyNonce) != s.encryption.NonceSize() || len(row.PrivateKeyCiphertext) == 0 {
 		return nil, nil, ErrDeliveryUnavailable
 	}
-	private, err := s.encryption.Open(nil, row.PrivateKeyNonce, row.PrivateKeyCiphertext, proxyTrustAAD(environmentID, workspaceID))
+	private, err := s.encryption.Open(nil, row.PrivateKeyNonce, row.PrivateKeyCiphertext, proxyTrustAAD(environmentID, computerID))
 	if err != nil {
 		return nil, nil, ErrDeliveryUnavailable
 	}

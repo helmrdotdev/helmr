@@ -171,16 +171,16 @@ func validateProgramIndexDeclaration(
 		if !sha256DigestPattern.MatchString(
 			declaration.Sandbox.Image.ArtifactDigest,
 		) {
-			return errors.New("workspace image artifactDigest is not a lowercase SHA-256 digest")
+			return errors.New("computer image artifactDigest is not a lowercase SHA-256 digest")
 		}
 		if declaration.Sandbox.Image.Profile != computer.SeedProfile {
 			return fmt.Errorf("sandbox disk profile %q is unsupported", declaration.Sandbox.Image.Profile)
 		}
-		if declaration.Sandbox.Image.MediaType != WorkspaceImageArtifactMediaType {
+		if declaration.Sandbox.Image.MediaType != ComputerImageArtifactMediaType {
 			return fmt.Errorf(
 				"sandbox image mediaType = %q, want %q",
 				declaration.Sandbox.Image.MediaType,
-				WorkspaceImageArtifactMediaType,
+				ComputerImageArtifactMediaType,
 			)
 		}
 		if err := validateResourcesManifest(declaration.Sandbox.Resources); err != nil {
@@ -234,20 +234,20 @@ func cloneProgramIndexDeclaration(
 		value.Run = cloneRunManifest(value.Run)
 		if value.Schedule != nil {
 			schedule := *value.Schedule
-			schedule.Workspace.Secrets = make(
-				[]api.WorkspaceSecret,
-				len(value.Schedule.Workspace.Secrets),
+			schedule.Computer.Secrets = make(
+				[]api.ComputerSecret,
+				len(value.Schedule.Computer.Secrets),
 			)
-			for index, binding := range value.Schedule.Workspace.Secrets {
-				schedule.Workspace.Secrets[index] = binding
+			for index, binding := range value.Schedule.Computer.Secrets {
+				schedule.Computer.Secrets[index] = binding
 				if binding.Env != nil {
 					env := *binding.Env
 					env.AllowedOrigins = append([]string(nil), env.AllowedOrigins...)
-					schedule.Workspace.Secrets[index].Env = &env
+					schedule.Computer.Secrets[index].Env = &env
 				}
 				if binding.File != nil {
 					file := *binding.File
-					schedule.Workspace.Secrets[index].File = &file
+					schedule.Computer.Secrets[index].File = &file
 				}
 			}
 			value.Schedule = &schedule
@@ -292,7 +292,7 @@ func cloneRunManifest(run RunManifest) RunManifest {
 func buildProgramIndex(
 	plan BuildPlan,
 	locator DeclarationLocator,
-	images []BundleWorkspaceImage,
+	images []BundleComputerImage,
 	configResultDigest string,
 	runtimeDigest string,
 ) (ProgramIndex, error) {
@@ -306,9 +306,9 @@ func buildProgramIndex(
 	for _, located := range locator.Declarations {
 		locators[string(located.Kind)+"\x00"+located.DeclaredID] = located
 	}
-	workspaceImages := make(map[string]BundleWorkspaceImageArtifact, len(images))
+	computerImages := make(map[string]BundleComputerImageArtifact, len(images))
 	for _, image := range images {
-		workspaceImages[image.DeclaredID] = image.Artifact
+		computerImages[image.DeclaredID] = image.Artifact
 	}
 	declarations := make([]ProgramIndexDeclaration, 0, len(plan.Definitions))
 	for _, definition := range plan.Definitions {
@@ -346,7 +346,7 @@ func buildProgramIndex(
 				Slot:       located.Slot,
 			}
 		case DefinitionKindSandbox:
-			image, exists := workspaceImages[definition.DeclaredID]
+			image, exists := computerImages[definition.DeclaredID]
 			if !exists || definition.Sandbox == nil {
 				return ProgramIndex{}, fmt.Errorf(
 					"sandbox %q has no image result",
@@ -360,6 +360,9 @@ func buildProgramIndex(
 					MediaType:      image.MediaType,
 				},
 				Resources: definition.Sandbox.Resources,
+			}
+			if _, err := CompileComputerSpec(*declaration.Sandbox, image); err != nil {
+				return ProgramIndex{}, fmt.Errorf("sandbox %q: %w", definition.DeclaredID, err)
 			}
 		default:
 			return ProgramIndex{}, fmt.Errorf(

@@ -54,7 +54,7 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 		RootSpanID:            "0000000000000001",
 		EnvironmentID:         pgvalue.UUID(fixture.environmentID),
 		SessionID:             pgvalue.UUID(first.SessionID),
-		WorkspaceID:           pgvalue.UUID(fixture.workspaceIDs[0]),
+		ComputerID:            pgvalue.UUID(fixture.computerIDs[0]),
 		ExpectedRunGeneration: 1,
 	}); err != nil {
 		t.Fatal(err)
@@ -63,8 +63,8 @@ func TestRunListPostgresFiltersBySession(t *testing.T) {
 	task, err := fixture.server.startTask(t.Context(), taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
-		Payload:     json.RawMessage(`{"imageId":"image-1"}`),
-		WorkspaceID: fixture.workspaceIDs[2], IdempotencyKey: "runs-task",
+		Payload:    json.RawMessage(`{"imageId":"image-1"}`),
+		ComputerID: fixture.computerIDs[2], IdempotencyKey: "runs-task",
 	})
 	if err != nil {
 		t.Fatal(err)

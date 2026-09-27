@@ -145,7 +145,7 @@ func TestPausedBackingSyncErrorIsReturned(t *testing.T) {
 
 func TestRuntimeDrivesPinSynchronousIO(t *testing.T) {
 	for _, computer := range []string{"", "computer.ext4"} {
-		for _, drive := range runtimeDrivesWithComputer("root", "scratch", "substrate", computer, nil, nil) {
+		for _, drive := range runtimeDrivesWithComputer("root", "scratch", computer, nil, nil) {
 			if !*drive.IsReadOnly && (drive.CacheType == nil || *drive.CacheType != "Writeback") {
 				t.Fatalf("guest flush disabled: %+v", drive)
 			}

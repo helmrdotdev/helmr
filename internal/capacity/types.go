@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 type WorkerGroupStatus string
@@ -18,14 +18,14 @@ const (
 	WorkerGroupStatusDisabled WorkerGroupStatus = "disabled"
 )
 
-type WorkerInstanceStatus string
+type WorkerHostStatus string
 
 const (
-	WorkerInstanceStatusRegistering      WorkerInstanceStatus = "registering"
-	WorkerInstanceStatusActive           WorkerInstanceStatus = "active"
-	WorkerInstanceStatusDraining         WorkerInstanceStatus = "draining"
-	WorkerInstanceStatusTerminationReady WorkerInstanceStatus = "termination_ready"
-	WorkerInstanceStatusLost             WorkerInstanceStatus = "lost"
+	WorkerHostStatusRegistering      WorkerHostStatus = "registering"
+	WorkerHostStatusActive           WorkerHostStatus = "active"
+	WorkerHostStatusDraining         WorkerHostStatus = "draining"
+	WorkerHostStatusTerminationReady WorkerHostStatus = "termination_ready"
+	WorkerHostStatusLost             WorkerHostStatus = "lost"
 )
 
 type WorkerPoolStatus string
@@ -46,23 +46,12 @@ type ResourceVector struct {
 
 const WorkerTemplateSchema = "helmr.worker-template.v0"
 
-const (
-	SubstrateFormatExt4   = "ext4"
-	SubstrateContractExt4 = "helmr.substrate.ext4.v1"
-)
-
-type SubstrateProfile struct {
-	Format   string `json:"format,omitempty"`
-	Contract string `json:"contract,omitempty"`
-}
-
 type WorkerTemplate struct {
-	Schema    string               `json:"schema"`
-	Runtime   runtimeid.Profile    `json:"runtime"`
-	CPUShapes []runtimeid.CPUShape `json:"cpu_shapes"`
-	Substrate SubstrateProfile     `json:"substrate"`
-	Capacity  ResourceVector       `json:"capacity"`
-	PerVM     ResourceVector       `json:"per_vm"`
+	Schema    string                `json:"schema"`
+	Runtime   vmplatform.Profile    `json:"runtime"`
+	CPUShapes []vmplatform.CPUShape `json:"cpu_shapes"`
+	Capacity  ResourceVector        `json:"capacity"`
+	PerVM     ResourceVector        `json:"per_vm"`
 }
 
 func (t WorkerTemplate) Validate() error {
@@ -72,9 +61,6 @@ func (t WorkerTemplate) Validate() error {
 	}
 	if err := t.Runtime.Validate(); err != nil {
 		problems = append(problems, err)
-	}
-	if t.Substrate.Format != SubstrateFormatExt4 || t.Substrate.Contract != SubstrateContractExt4 {
-		problems = append(problems, errors.New("run Worker substrate format or contract is not supported"))
 	}
 	for _, resources := range []struct {
 		name   string
@@ -183,26 +169,26 @@ type PoolPlan struct {
 	ScaleInBlocked               bool   `json:"scale_in_blocked"`
 }
 
-type WorkerInstance struct {
-	ID                 string               `json:"id"`
-	ResourceID         string               `json:"resource_id"`
-	WorkerGroupID      string               `json:"worker_group_id"`
-	WorkerPoolID       string               `json:"worker_pool_id"`
-	Status             WorkerInstanceStatus `json:"status"`
-	ClaimVersion       int64                `json:"claim_version"`
-	CurrentEpoch       *int64               `json:"current_epoch,omitempty"`
-	DrainingAt         *time.Time           `json:"draining_at,omitempty"`
-	TerminationReadyAt *time.Time           `json:"termination_ready_at,omitempty"`
-	LostAt             *time.Time           `json:"lost_at,omitempty"`
-	CreatedAt          time.Time            `json:"created_at"`
-	UpdatedAt          time.Time            `json:"updated_at"`
+type WorkerHost struct {
+	ID                 string           `json:"id"`
+	ResourceID         string           `json:"resource_id"`
+	WorkerGroupID      string           `json:"worker_group_id"`
+	WorkerPoolID       string           `json:"worker_pool_id"`
+	Status             WorkerHostStatus `json:"status"`
+	ClaimVersion       int64            `json:"claim_version"`
+	CurrentEpoch       *int64           `json:"current_epoch,omitempty"`
+	DrainingAt         *time.Time       `json:"draining_at,omitempty"`
+	TerminationReadyAt *time.Time       `json:"termination_ready_at,omitempty"`
+	LostAt             *time.Time       `json:"lost_at,omitempty"`
+	CreatedAt          time.Time        `json:"created_at"`
+	UpdatedAt          time.Time        `json:"updated_at"`
 }
 
-type ListWorkerInstancesResponse struct {
-	WorkerInstances []WorkerInstance `json:"worker_instances"`
+type ListWorkerHostsResponse struct {
+	WorkerHosts []WorkerHost `json:"worker_hosts"`
 }
 
-type DrainWorkerInstanceRequest struct {
+type DrainWorkerHostRequest struct {
 	ExpectedEpoch           int64 `json:"expected_epoch"`
 	ExpectedClaimVersion    int64 `json:"expected_claim_version"`
 	RequireZeroQueuedDemand bool  `json:"require_zero_queued_demand,omitempty"`

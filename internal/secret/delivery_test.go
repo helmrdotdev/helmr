@@ -16,7 +16,7 @@ import (
 
 func TestLockAttemptDeliveryReturnsExactRecordedVersion(t *testing.T) {
 	runID := pgvalue.UUID(uuid.New())
-	workspaceID := pgvalue.UUID(uuid.New())
+	computerID := pgvalue.UUID(uuid.New())
 	environmentID := pgvalue.UUID(uuid.New())
 	secretID := pgvalue.UUID(uuid.New())
 	oldVersionID := pgvalue.UUID(uuid.New())
@@ -30,13 +30,13 @@ func TestLockAttemptDeliveryReturnsExactRecordedVersion(t *testing.T) {
 	}
 	store := &fakeDeliveryStore{
 		rows: []db.LockAttemptSecretDeliveryRow{
-			deliveryRow(runID, workspaceID, secret, oldVersionID, 3, "env", "TOKEN"),
-			deliveryRow(runID, workspaceID, secret, oldVersionID, 3, "file", "/run/helmr/token"),
+			deliveryRow(runID, computerID, secret, oldVersionID, 3, "env", "TOKEN"),
+			deliveryRow(runID, computerID, secret, oldVersionID, 3, "file", "/run/helmr/token"),
 		},
 		version: db.SecretVersion{ID: oldVersionID, SecretID: secretID, Version: 1},
 	}
 
-	envelopes, err := LockAttemptDelivery(t.Context(), store, runID, 2, workspaceID)
+	envelopes, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,14 +48,14 @@ func TestLockAttemptDeliveryReturnsExactRecordedVersion(t *testing.T) {
 	}
 	if store.params.RunID != runID ||
 		store.params.AttemptNumber != (pgtype.Int4{Int32: 2, Valid: true}) ||
-		store.params.WorkspaceID != workspaceID {
+		store.params.ComputerID != computerID {
 		t.Fatalf("params = %+v", store.params)
 	}
 }
 
 func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 	runID := pgvalue.UUID(uuid.New())
-	workspaceID := pgvalue.UUID(uuid.New())
+	computerID := pgvalue.UUID(uuid.New())
 	environmentID := pgvalue.UUID(uuid.New())
 	secretID := pgvalue.UUID(uuid.New())
 	versionID := pgvalue.UUID(uuid.New())
@@ -75,16 +75,16 @@ func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 		{name: "wrong Attempt", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ResolutionAttemptNumber.Int32++ }},
 		{name: "revocation generation changed", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.RevocationGeneration++ }},
 		{name: "revoked", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.Secret.Status = "revoked" }},
-		{name: "wrong Workspace", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.WorkspaceSecret.WorkspaceID = pgvalue.UUID(uuid.New()) }},
+		{name: "wrong Computer", edit: func(row *db.LockAttemptSecretDeliveryRow) { row.ComputerSecret.ComputerID = pgvalue.UUID(uuid.New()) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			row := deliveryRow(runID, workspaceID, active, versionID, 4, "env", "TOKEN")
+			row := deliveryRow(runID, computerID, active, versionID, 4, "env", "TOKEN")
 			test.edit(&row)
 			store := &fakeDeliveryStore{
 				rows:    []db.LockAttemptSecretDeliveryRow{row},
 				version: db.SecretVersion{ID: versionID, SecretID: secretID, Version: 1},
 			}
-			_, err := LockAttemptDelivery(t.Context(), store, runID, 2, workspaceID)
+			_, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
 			if !errors.Is(err, ErrDeliveryUnavailable) {
 				t.Fatalf("error = %v", err)
 			}
@@ -95,7 +95,7 @@ func TestLockAttemptDeliveryRejectsIncompleteOrRevokedAuthority(t *testing.T) {
 	}
 }
 
-func TestLockAttemptDeliveryAllowsEmptyWorkspaceSecretSet(t *testing.T) {
+func TestLockAttemptDeliveryAllowsEmptyComputerSecretSet(t *testing.T) {
 	envelopes, err := LockAttemptDelivery(
 		t.Context(),
 		&fakeDeliveryStore{},
@@ -113,13 +113,13 @@ func TestLockAttemptDeliveryAllowsEmptyWorkspaceSecretSet(t *testing.T) {
 
 func TestLockAttemptDeliveryRejectsPlacementOverflow(t *testing.T) {
 	runID := pgvalue.UUID(uuid.New())
-	workspaceID := pgvalue.UUID(uuid.New())
+	computerID := pgvalue.UUID(uuid.New())
 	environmentID := pgvalue.UUID(uuid.New())
-	rows := make([]db.LockAttemptSecretDeliveryRow, maxWorkspaceSecretPlacements+1)
+	rows := make([]db.LockAttemptSecretDeliveryRow, maxComputerSecretPlacements+1)
 	for index := range rows {
 		secretID := pgvalue.UUID(uuid.New())
 		versionID := pgvalue.UUID(uuid.New())
-		rows[index] = deliveryRow(runID, workspaceID, db.Secret{
+		rows[index] = deliveryRow(runID, computerID, db.Secret{
 			ID:                   secretID,
 			EnvironmentID:        environmentID,
 			Status:               "active",
@@ -128,7 +128,7 @@ func TestLockAttemptDeliveryRejectsPlacementOverflow(t *testing.T) {
 		}, versionID, 1, "env", "TOKEN")
 	}
 	store := &fakeDeliveryStore{rows: rows}
-	_, err := LockAttemptDelivery(t.Context(), store, runID, 2, workspaceID)
+	_, err := LockAttemptDelivery(t.Context(), store, runID, 2, computerID)
 	if !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatalf("error = %v", err)
 	}
@@ -230,7 +230,7 @@ func TestOpenDeliveriesRejectsAuthorityMismatch(t *testing.T) {
 
 func deliveryRow(
 	runID pgtype.UUID,
-	workspaceID pgtype.UUID,
+	computerID pgtype.UUID,
 	secret db.Secret,
 	versionID pgtype.UUID,
 	revocationGeneration int64,
@@ -238,8 +238,8 @@ func deliveryRow(
 	placementTarget string,
 ) db.LockAttemptSecretDeliveryRow {
 	return db.LockAttemptSecretDeliveryRow{
-		WorkspaceSecret: db.WorkspaceSecret{
-			WorkspaceID:     workspaceID,
+		ComputerSecret: db.ComputerSecret{
+			ComputerID:      computerID,
 			EnvironmentID:   secret.EnvironmentID,
 			PlacementKind:   placementKind,
 			PlacementTarget: placementTarget,

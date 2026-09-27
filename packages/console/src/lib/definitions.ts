@@ -23,13 +23,13 @@ export type ListSandboxesResponse = {
 };
 
 export type StartTaskInput = {
-  workspace: { id: string };
+  computer: { id: string };
   payload?: unknown;
   idempotency_key: string;
 };
 
 export type StartActorInput = {
-  workspace: { id: string };
+  computer: { id: string };
   key?: string;
   input?: unknown;
   idempotency_key: string;

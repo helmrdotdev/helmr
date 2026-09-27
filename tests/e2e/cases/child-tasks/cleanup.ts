@@ -2,11 +2,11 @@ import type { HelmrClient, Run } from "@helmr/sdk"
 import { deadline, errorCode, waitRun } from "../../support/context"
 
 // A failed parent may never return its child's ID. Discover only this parent's
-// children in its two owned Workspaces before the Workspaces are deleted.
+// children in its two owned Computers before the Computers are deleted.
 export async function cleanupChildren(
   client: HelmrClient,
   parentId: string,
-  workspaceIds: readonly string[],
+  computerIds: readonly string[],
   recorded: string[],
 ) {
   const signal = deadline(30_000)
@@ -15,7 +15,7 @@ export async function cleanupChildren(
   do {
     const page = await client.runs.list({ kind: "task", limit: 100, cursor }, { signal })
     for (const item of page.items) {
-      if (!workspaceIds.includes(item.workspaceId) || item.id === parentId) continue
+      if (!computerIds.includes(item.computerId) || item.id === parentId) continue
       const run = await client.runs.retrieve(item.id, { signal })
       if (run.parentRunId !== parentId) continue
       if (!recorded.includes(run.id)) recorded.push(run.id)

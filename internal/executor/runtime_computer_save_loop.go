@@ -3,70 +3,34 @@ package executor
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// Each execution lends its current authority to the physical mount. Waiting or
-// finished executions return nil; unregistering does not change a pending save.
-type computerSaveAuthority struct {
-	current func() *workerapi.ComputerSaveBeginRequest
-}
-
-func (s *runtimeComputerSaves) attach(runtimeID, computerID string, current func() *workerapi.ComputerSaveBeginRequest) (func(), error) {
-	if ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || current == nil {
-		return nil, errors.New("computer save authority identity required")
+// bind fixes the preservation loop to its physical writer for the checkout lifetime.
+func (s *runtimeComputerSaves) bind(request workerapi.ComputerSaveBeginRequest, computerID string) error {
+	if ids.Validate(request.EnvironmentID) != nil || ids.Validate(request.ComputerInstanceID) != nil || ids.Validate(computerID) != nil || request.WriterGeneration <= 0 {
+		return errors.New("computer save writer identity required")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stopped {
-		return nil, errors.New("computer saves are quiescing")
+	if s.stopped || s.writer != nil {
+		return errors.New("computer save writer already bound or stopped")
 	}
-	if s.runtimeID != "" && (s.runtimeID != runtimeID || s.computerID != computerID) {
-		return nil, errors.New("computer save authority belongs to another Runtime")
-	}
-	s.runtimeID, s.computerID = runtimeID, computerID
-	authority := &computerSaveAuthority{current: current}
-	s.authorities = append(s.authorities, authority)
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			s.mu.Lock()
-			defer s.mu.Unlock()
-			for i, entry := range s.authorities {
-				if entry == authority {
-					s.authorities = append(s.authorities[:i], s.authorities[i+1:]...)
-					break
-				}
-			}
-		})
-	}, nil
+	s.runtimeID, s.computerID = request.ComputerInstanceID, computerID
+	s.writer = &request
+	return nil
 }
-
 func (s *runtimeComputerSaves) authority() (*workerapi.ComputerSaveBeginRequest, string, string) {
 	s.mu.Lock()
-	if s.stopped {
-		s.mu.Unlock()
-		return nil, "", ""
+	defer s.mu.Unlock()
+	if s.stopped || s.writer == nil {
+		return nil, s.runtimeID, s.computerID
 	}
-	authorities := append([]*computerSaveAuthority(nil), s.authorities...)
-	runtimeID, computerID := s.runtimeID, s.computerID
-	s.mu.Unlock()
-	// Never call an execution owner while holding the mount owner lock.
-	for _, authority := range authorities {
-		if request := authority.current(); request != nil {
-			copy := *request
-			if request.Lease != nil {
-				lease := *request.Lease
-				copy.Lease = &lease
-			}
-			return &copy, runtimeID, computerID
-		}
-	}
-	return nil, runtimeID, computerID
+	request := *s.writer
+	return &request, s.runtimeID, s.computerID
 }
 
 // run starts exactly one loop per physical Runtime. The interval is supplied by

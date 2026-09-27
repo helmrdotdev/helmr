@@ -32,7 +32,7 @@ export const verificationActor = actor({
         const stored = JSON.parse(await readFile(file, "utf8"))
         if (stored.marker !== marker || stored.nonce !== nonce) throw new Error("Actor filesystem state changed")
         await turn.complete({ marker: marker!, nonce, count, sessionId: session.id,
-                              runId: ctx.run.id, workspaceId: ctx.workspace.id })
+                              runId: ctx.run.id, computerId: ctx.computer.id })
       } catch (error) {
         if (turn.signal.aborted) throw error
         await turn.fail(error)

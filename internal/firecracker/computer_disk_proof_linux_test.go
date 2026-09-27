@@ -34,9 +34,9 @@ func TestComputerDiskProof(t *testing.T) {
 	root := t.TempDir()
 	seed := filepath.Join(root, "seed")
 	files := map[string]string{
-		"workspace/result.txt":            "child task result\n",
+		"computer/result.txt":             "child task result\n",
 		"home/agent/.claude/history.json": `{ "conversation": "continued" }`,
-		"etc/agent.conf":                  "configured outside workspace\n",
+		"etc/agent.conf":                  "configured outside computer\n",
 		"opt/agent/bin/codex":             "#!/bin/sh\nprintf continued\n",
 	}
 	for path, body := range files {
@@ -66,7 +66,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if err := os.Symlink("/opt/agent/bin/codex", link); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Link(filepath.Join(seed, "workspace/result.txt"), filepath.Join(seed, "workspace/result-link.txt")); err != nil {
+	if err := os.Link(filepath.Join(seed, "computer/result.txt"), filepath.Join(seed, "computer/result-link.txt")); err != nil {
 		t.Fatal(err)
 	}
 	// Non-compressible content keeps timing/size observations from describing only
@@ -122,7 +122,7 @@ func TestComputerDiskProof(t *testing.T) {
 	}
 	packTime := time.Since(start)
 	// Remove both original disk and seed: all restoration bytes must come from
-	// the artifact, including paths that the old Workspace tar would omit/reject.
+	// the artifact, including paths that the old Computer tar would omit/reject.
 	if err := os.Remove(source); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if !strings.Contains(executableStat, "0755") {
 		t.Fatalf("executable permissions not preserved: %s", executableStat)
 	}
-	hardlinkStat := computerProofCommand(t, "debugfs", "-R", "stat /workspace/result-link.txt", restored)
+	hardlinkStat := computerProofCommand(t, "debugfs", "-R", "stat /computer/result-link.txt", restored)
 	if !strings.Contains(hardlinkStat, "Links: 2") {
 		t.Fatalf("hard link not preserved: %s", hardlinkStat)
 	}

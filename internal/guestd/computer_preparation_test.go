@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -18,8 +18,8 @@ func TestComputerPreparationUsesMountedRoot(t *testing.T) {
 	if err := os.WriteFile(marker, []byte("retained"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	request := &workspacev0.PrepareWorkspaceRuntimeRequest{MountedImageConfig: &workspacev0.RuntimeImageConfig{WorkingDir: "/project", User: "1000:1000"}}
-	image, cleanup, err := restorePreparedWorkspaceImage(strings.NewReader("not an image stream"), request)
+	request := &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2, MountedImageConfig: &computerv0.RuntimeImageConfig{WorkingDir: "/project", User: "1000:1000"}}
+	image, cleanup, err := restorePreparedComputerImage(strings.NewReader("not an image stream"), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestComputerPreparationUsesMountedRoot(t *testing.T) {
 		t.Fatalf("cleanup removed customer disk: %v", err)
 	}
 	request.MountedImageConfig = nil
-	if _, _, err := restorePreparedWorkspaceImage(strings.NewReader(""), request); err == nil || !strings.Contains(err.Error(), "admitted image config") {
+	if _, _, err := restorePreparedComputerImage(strings.NewReader(""), request); err == nil || !strings.Contains(err.Error(), "admitted image config") {
 		t.Fatalf("missing config tried stream fallback: %v", err)
 	}
 }
@@ -46,45 +46,46 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 	if err := os.Symlink("customer-state", filepath.Join(root, "customer-link")); err != nil {
 		t.Fatal(err)
 	}
-	artifact := &workspacev0.WorkspaceArtifact{
+	artifact := &computerv0.ComputerArtifact{
 		Digest: "sha256:seed", MediaType: computer.SeedMediaType,
 		Encoding: "oci-tar", SizeBytes: 79_664_879,
 	}
-	prepared, _, err := restorePreparedWorkspaceRuntime(strings.NewReader("no image stream"), &workspacev0.PrepareWorkspaceRuntimeRequest{
-		RuntimeInstanceId: "runtime", MountPath: "/workspace", WorkspaceImage: artifact,
-		MountedImageConfig: &workspacev0.RuntimeImageConfig{WorkingDir: "/workspace", User: "0:0"},
+	prepared, _, err := restorePreparedComputerRuntime(strings.NewReader("no image stream"), &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,
+		ComputerInstanceId: "runtime", MountPath: "/computer", ComputerImage: artifact,
+		MountedImageConfig: &computerv0.RuntimeImageConfig{WorkingDir: "/computer", User: "0:0"},
 	}, slogDiscard())
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry := newWorkspaceOperationRegistry()
+	registry := newComputerOperationRegistry()
 	registry.setPreparedRuntime(prepared)
-	request := &workspacev0.MaterializeWorkspaceRequest{
-		Envelope:  &workspacev0.WorkspaceOperationEnvelope{WorkspaceMountId: "mount"},
-		MountPath: "/workspace", Target: testComputerMountTarget("version"),
-		RuntimeInstanceId: "runtime", UsePreparedRuntime: true, WorkspaceImage: artifact,
+	request := &computerv0.MaterializeComputerRequest{
+		Envelope:  &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "runtime", ComputerId: "computer-1", WriterGeneration: 2},
+		MountPath: "/computer", Target: testComputerMountTarget("version"),
+		UsePreparedRuntime: true, ComputerImage: artifact,
 	}
-	for name, change := range map[string]func(*workspacev0.MaterializeWorkspaceRequest){
-		"runtime": func(r *workspacev0.MaterializeWorkspaceRequest) { r.RuntimeInstanceId = "other" },
-		"digest":  func(r *workspacev0.MaterializeWorkspaceRequest) { r.WorkspaceImage.Digest = "sha256:other" },
-		"mount":   func(r *workspacev0.MaterializeWorkspaceRequest) { r.MountPath = "/other" },
+	for name, change := range map[string]func(*computerv0.MaterializeComputerRequest){
+		"writer":  func(r *computerv0.MaterializeComputerRequest) { r.Envelope.WriterGeneration++ },
+		"runtime": func(r *computerv0.MaterializeComputerRequest) { r.Envelope.ComputerInstanceId = "other" },
+		"digest":  func(r *computerv0.MaterializeComputerRequest) { r.ComputerImage.Digest = "sha256:other" },
+		"mount":   func(r *computerv0.MaterializeComputerRequest) { r.MountPath = "/other" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			mismatch := proto.Clone(request).(*workspacev0.MaterializeWorkspaceRequest)
+			mismatch := proto.Clone(request).(*computerv0.MaterializeComputerRequest)
 			change(mismatch)
-			if _, err := restoreWorkspaceMount(mismatch, registry); err == nil || !strings.Contains(err.Error(), "prepared computer runtime is not available") {
+			if _, err := restoreComputerMount(mismatch, registry); err == nil || !strings.Contains(err.Error(), "prepared computer runtime is not available") {
 				t.Fatalf("mismatched prepared identity: %v", err)
 			}
 		})
 	}
-	entry, err := restoreWorkspaceMount(request, registry)
+	entry, err := restoreComputerMount(request, registry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.imageRoot != root || entry.workspaceRoot != filepath.Join(root, "workspace") {
+	if entry.imageRoot != root || entry.computerRoot != filepath.Join(root, "computer") {
 		t.Fatalf("materialization changed mounted root: %+v", entry)
 	}
-	if _, err := restoreWorkspaceMount(request, registry); err == nil || !strings.Contains(err.Error(), "prepared computer runtime is not available") {
+	if _, err := restoreComputerMount(request, registry); err == nil || !strings.Contains(err.Error(), "prepared computer runtime is not available") {
 		t.Fatalf("prepared runtime reused: %v", err)
 	}
 	entry.cleanup()

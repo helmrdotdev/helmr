@@ -110,7 +110,7 @@ func TestEveryGraphStartsFromTheOneMaterializedEnvironment(t *testing.T) {
 			if stage.base == "helmr_environment" {
 				environments++
 				// Preparation left root's context in the image; Helmr's own is restored first.
-				want := []string{"USER 0:0", "ENV HOME=/workspace/home TMPDIR=/workspace/tmp XDG_CACHE_HOME=/workspace/home/cache"}
+				want := []string{"USER 0:0", "ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache"}
 				if strings.Join(stage.instructions[:2], "\n") != strings.Join(want, "\n") {
 					t.Fatalf("%s graph stage %q does not restore the managed context:\n%s", name, stage.name, strings.Join(stage.instructions, "\n"))
 				}
@@ -133,9 +133,9 @@ func TestInstallIsTheOnlyStageWithNetworkSecretsAndProjectSource(t *testing.T) {
 	installed := stageNamed(t, stages, "installed")
 	want := []string{
 		"USER 0:0",
-		"ENV HOME=/workspace/home TMPDIR=/workspace/tmp XDG_CACHE_HOME=/workspace/home/cache",
-		`RUN ["/bin/bash","-euo","pipefail","-c","install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work"]`,
-		"WORKDIR /workspace/project",
+		"ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache",
+		`RUN ["/bin/bash","-euo","pipefail","-c","install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work"]`,
+		"WORKDIR /computer/project",
 		"COPY --chown=65532:65532 . .",
 		"USER 65532:65532",
 		`RUN --mount=type=secret,id=NPM_TOKEN,uid=65532,gid=65532,mode=0400,required=true ["corepack","yarn@8.0.0","install","--immutable"]`,
@@ -145,7 +145,7 @@ func TestInstallIsTheOnlyStageWithNetworkSecretsAndProjectSource(t *testing.T) {
 	}
 	tree := stageNamed(t, stages, "installed-tree")
 	if tree.base != "scratch" || len(tree.instructions) != 1 ||
-		tree.instructions[0] != "COPY --from=installed --chown=65532:65532 /workspace/project/ /workspace/project/" {
+		tree.instructions[0] != "COPY --from=installed --chown=65532:65532 /computer/project/ /computer/project/" {
 		t.Fatalf("exported tree = %+v", tree)
 	}
 	for _, forbidden := range []string{"docker.sock", "--privileged", "security.insecure", "--network=host", "--mount=type=ssh"} {
@@ -171,8 +171,8 @@ func TestTenantModulesRunOfflineWithCanonicalToolsAndTheResolvedConfig(t *testin
 				}
 			}
 			wantCopies := []string{
-				"COPY --from=installed-tree --chown=0:0 /workspace/project/ /workspace/project/",
-				"COPY --from=helmr_config --chown=0:0 /config.json /workspace/config/config.json",
+				"COPY --from=installed-tree --chown=0:0 /computer/project/ /computer/project/",
+				"COPY --from=helmr_config --chown=0:0 /config.json /computer/config/config.json",
 			}
 			if strings.Join(copies, "\n") != strings.Join(wantCopies, "\n") {
 				t.Fatalf("evaluation inputs:\n%s", strings.Join(copies, "\n"))
@@ -192,7 +192,7 @@ func TestTenantModulesRunOfflineWithCanonicalToolsAndTheResolvedConfig(t *testin
 				"--mount=type=bind,from=helmr-builder,source=/nix,target=/nix ",
 				`["/opt/helmr/bin/bundle-builder",`,
 				`"--node","/opt/helmr/runtime/bin/node"`,
-				`"--config","/workspace/config/config.json"`,
+				`"--config","/computer/config/config.json"`,
 			} {
 				if !strings.Contains(run, required) {
 					t.Fatalf("tenant execution is missing %q:\n%s", required, run)
@@ -205,7 +205,7 @@ func TestTenantModulesRunOfflineWithCanonicalToolsAndTheResolvedConfig(t *testin
 			arguments := run[strings.Index(run, "["):]
 			for argument := range strings.SplitSeq(strings.Trim(arguments, "[]"), ",") {
 				argument = strings.Trim(argument, `"`)
-				if strings.HasPrefix(argument, "/") && !strings.HasPrefix(argument, "/workspace/") &&
+				if strings.HasPrefix(argument, "/") && !strings.HasPrefix(argument, "/computer/") &&
 					!strings.HasPrefix(argument, "/opt/helmr/") && !strings.HasPrefix(argument, "/nix/") {
 					t.Fatalf("tenant execution uses unmounted tool path %q", argument)
 				}
@@ -231,7 +231,7 @@ func TestFinalizerNeverSeesTheEnvironmentOrExecutesTenantStages(t *testing.T) {
 		}
 		copies++
 		if !strings.Contains(instruction, "--from=installed-tree ") &&
-			!strings.Contains(instruction, "--from=prepared --chown=65532:65532 /workspace/output/prepared/ ") &&
+			!strings.Contains(instruction, "--from=prepared --chown=65532:65532 /computer/output/prepared/ ") &&
 			!strings.Contains(instruction, "--from=helmr_images ") {
 			t.Fatalf("finalizer takes unexpected input: %s", instruction)
 		}
@@ -240,14 +240,14 @@ func TestFinalizerNeverSeesTheEnvironmentOrExecutesTenantStages(t *testing.T) {
 		t.Fatalf("finalizer has %d inputs, want installed tree, prepared output and images", copies)
 	}
 	last := finalized.instructions[len(finalized.instructions)-1]
-	if !strings.HasPrefix(last, `RUN --network=none ["/opt/helmr/bin/bundle-builder","--prepared","/workspace/prepared","--program-project","/workspace/program"`) {
+	if !strings.HasPrefix(last, `RUN --network=none ["/opt/helmr/bin/bundle-builder","--prepared","/computer/prepared","--program-project","/computer/program"`) {
 		t.Fatalf("finalizer run = %s", last)
 	}
 	if strings.Contains(last, "--node") || strings.Contains(last, "--config") {
 		t.Fatalf("finalizer can execute or configure modules: %s", last)
 	}
 	bundle := stageNamed(t, stages, "bundle")
-	if bundle.base != "scratch" || len(bundle.instructions) != 1 || bundle.instructions[0] != "COPY --from=finalized /workspace/output/bundle/ /" {
+	if bundle.base != "scratch" || len(bundle.instructions) != 1 || bundle.instructions[0] != "COPY --from=finalized /computer/output/bundle/ /" {
 		t.Fatalf("bundle export = %+v", bundle)
 	}
 }

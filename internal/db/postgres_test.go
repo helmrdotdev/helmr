@@ -5,22 +5,21 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type postgresIDs struct {
-	orgID                    uuid.UUID
-	projectID                uuid.UUID
-	environmentID            uuid.UUID
-	deploymentID             uuid.UUID
-	workspaceImageArtifactID uuid.UUID
+	orgID                   uuid.UUID
+	projectID               uuid.UUID
+	environmentID           uuid.UUID
+	deploymentID            uuid.UUID
+	computerImageArtifactID uuid.UUID
 }
 
 func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgresIDs {
@@ -55,14 +54,14 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		deployment.ProgramArtifactMediaType,
 		"program",
 	)
-	ids.workspaceImageArtifactID = seedPostgresArtifact(
+	ids.computerImageArtifactID = seedPostgresArtifact(
 		t,
 		ctx,
 		pool,
 		ids,
-		"workspace_image",
-		deployment.WorkspaceImageArtifactMediaType,
-		"workspace-image",
+		"computer_image",
+		deployment.ComputerImageArtifactMediaType,
+		"computer-image",
 	)
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO deployments (
@@ -125,8 +124,8 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, ctx, pool, `
-		INSERT INTO runtime_identities (
-			id, runtime_arch, vm_runtime_contract, vm_runtime_descriptor_digest,
+		INSERT INTO vm_platforms (
+			id, arch, contract, descriptor_digest,
 			firecracker_digest, firecracker_version, snapshot_format_version,
 			host_kernel_release, cpu_template_kind,
 			kernel_digest, initramfs_digest, rootfs_digest
@@ -137,7 +136,7 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		)
 	`,
 		dbtest.DefaultRuntimeID,
-		runtimeid.Contract,
+		vmplatform.Contract,
 		dbtest.Digest("db-test-vm-runtime-descriptor"),
 		dbtest.Digest("db-test-firecracker"),
 		dbtest.Digest("db-test-kernel"),
@@ -147,14 +146,14 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	dbtest.MustExec(t, ctx, pool, `
 		INSERT INTO worker_pools (
 			id, worker_group_id, name, status,
-			runtime_identity_id, substrate_format, substrate_contract,
+			vm_platform_id,
 			capacity_cpu_millis, capacity_memory_bytes,
 			capacity_guest_ephemeral_disk_bytes,
 			per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_guest_ephemeral_disk_bytes, max_vm_slots, sealed_at
 		) VALUES (
 			$1, $2, 'default', 'active',
-			$3, $4, $5,
+			$3,
 			8000, 17179869184, 274877906944,
 			4000, 8589934592, 34359738368, 8, now()
 		)
@@ -162,8 +161,6 @@ func newPostgresDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		dbtest.DefaultWorkerPoolID,
 		dbtest.DefaultWorkerGroupID,
 		dbtest.DefaultRuntimeID,
-		capacity.SubstrateFormatExt4,
-		capacity.SubstrateContractExt4,
 	)
 	for vcpuCount := int32(1); vcpuCount <= 4; vcpuCount++ {
 		dbtest.MustExec(t, ctx, pool, `

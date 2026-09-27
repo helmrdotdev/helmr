@@ -8,12 +8,12 @@ import (
 
 func TestWorkerCompleteTaskRequestRejectsAmbiguousWireShapes(t *testing.T) {
 	validOutcome := `"outcome":{"succeeded":{"output":null}}`
-	validWorkspace := `"workspace":{"captured":{"artifact":{}}}`
+	validOperation := `"operation_id":"operation"`
 	invalid := [][]byte{
-		[]byte(`{"lease":{},"lease":{},` + validOutcome + `,` + validWorkspace + `}`),
-		[]byte(`{"lease":{"id":"first","id":"second"},` + validOutcome + `,` + validWorkspace + `}`),
-		[]byte(`{"lease":{},"unknown":true,` + validOutcome + `,` + validWorkspace + `}`),
-		append([]byte(`{"lease":{"id":"`), append([]byte{0xff}, []byte(`"},`+validOutcome+`,`+validWorkspace+`}`)...)...),
+		[]byte(`{"lease":{},"lease":{},` + validOutcome + `,` + validOperation + `}`),
+		[]byte(`{"lease":{"id":"first","id":"second"},` + validOutcome + `,` + validOperation + `}`),
+		[]byte(`{"lease":{},"unknown":true,` + validOutcome + `,` + validOperation + `}`),
+		append([]byte(`{"lease":{"id":"`), append([]byte{0xff}, []byte(`"},`+validOutcome+`,`+validOperation+`}`)...)...),
 	}
 	for _, raw := range invalid {
 		var request CompleteTaskRequest
@@ -71,25 +71,9 @@ func TestWorkerTaskFailureRequiresMessagePresence(t *testing.T) {
 	}
 }
 
-func TestWorkerTaskWorkspaceProofRejectsAmbiguousWireShapes(t *testing.T) {
-	invalid := []string{
-		`{}`,
-		`{"captured":null}`,
-		`{"captured":{"artifact":{}},"rolled_back":{"base_workspace_version_id":"base"}}`,
-		`{"rolled_back":{},"rolled_back":{"base_workspace_version_id":"base"}}`,
-		`{"rolled_back":{"base_workspace_version_id":"base","unknown":true}}`,
-	}
-	for _, raw := range invalid {
-		var proof TaskWorkspaceProof
-		if err := json.Unmarshal([]byte(raw), &proof); err == nil {
-			t.Fatalf("ambiguous Workspace proof %s was accepted", raw)
-		}
-	}
-}
-
 func TestWorkerComputerMountTargetRequiresVersionOnly(t *testing.T) {
 	valid := []string{
-		`{"base_workspace_version_id":"base"}`,
+		`{"base_computer_disk_version_id":"base"}`,
 	}
 	for _, raw := range valid {
 		var target ComputerMountTarget
@@ -98,10 +82,10 @@ func TestWorkerComputerMountTargetRequiresVersionOnly(t *testing.T) {
 		}
 	}
 	invalid := []string{
-		`{"base_workspace_version_id":"base","tree":{}}`,
-		`{"base_workspace_version_id":"base","tree":{},"empty":{},"artifact":{}}`,
-		`{"base_workspace_version_id":"base","tree":{},"empty":null}`,
-		`{"base_workspace_version_id":"base","tree":{},"empty":{},"unknown":true}`,
+		`{"base_computer_disk_version_id":"base","tree":{}}`,
+		`{"base_computer_disk_version_id":"base","tree":{},"empty":{},"artifact":{}}`,
+		`{"base_computer_disk_version_id":"base","tree":{},"empty":null}`,
+		`{"base_computer_disk_version_id":"base","tree":{},"empty":{},"unknown":true}`,
 	}
 	for _, raw := range invalid {
 		var target ComputerMountTarget

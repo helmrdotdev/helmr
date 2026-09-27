@@ -2,12 +2,11 @@ package controlplane
 
 import (
 	"context"
-	"errors"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/helmrdotdev/helmr/internal/session"
 )
@@ -113,13 +112,10 @@ func lockSessionControlGraph(ctx context.Context, work *txWork, target session.T
 	if err != nil {
 		return run.OwnedFinalization{}, err
 	}
-	if _, err = secret.LockAttemptDelivery(ctx, work.q, current.ID, current.CurrentAttemptNumber, actor.WorkspaceID); err != nil {
+	if _, err = secret.LockAttemptDelivery(ctx, work.q, current.ID, current.CurrentAttemptNumber, actor.ComputerID); err != nil {
 		return run.OwnedFinalization{}, err
 	}
-	tx, ok := work.tx.(pgx.Tx)
-	if !ok {
-		return run.OwnedFinalization{}, errors.New("session control transaction does not expose PostgreSQL authority")
-	}
+	tx := work.tx
 	graph, err := run.LockOwnedFinalization(ctx, tx, run.OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(current.OrgID), ProjectID: pgvalue.MustUUIDValue(current.ProjectID), EnvironmentID: target.EnvironmentID, RunID: pgvalue.MustUUIDValue(current.ID)})
 	if err != nil {
 		return graph, err

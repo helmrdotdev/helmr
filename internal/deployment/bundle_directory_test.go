@@ -100,19 +100,19 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, DeploymentBundle)
 	t.Helper()
 	bundle := testDeploymentBundle(t)
 	program := []byte("program")
-	workspace := []byte("workspace")
+	computer := []byte("computer")
 	bundle.Program.Artifact.Digest = sha256sum.DigestBytes(program)
 	bundle.Program.Artifact.SizeBytes = int64(len(program))
-	bundle.WorkspaceImages[0].Artifact.Digest = sha256sum.DigestBytes(workspace)
-	bundle.WorkspaceImages[0].Artifact.SizeBytes = int64(len(workspace))
+	bundle.ComputerImages[0].Artifact.Digest = sha256sum.DigestBytes(computer)
+	bundle.ComputerImages[0].Artifact.SizeBytes = int64(len(computer))
 	for index := range bundle.Program.Index.Declarations {
 		if bundle.Program.Index.Declarations[index].Sandbox != nil {
-			bundle.Program.Index.Declarations[index].Sandbox.Image.ArtifactDigest = bundle.WorkspaceImages[0].Artifact.Digest
+			bundle.Program.Index.Declarations[index].Sandbox.Image.ArtifactDigest = bundle.ComputerImages[0].Artifact.Digest
 		}
 	}
 	bundle.Objects = []BundleObject{
 		{Digest: bundle.Program.Artifact.Digest, SizeBytes: int64(len(program)), MediaType: ProgramArtifactMediaType},
-		{Digest: bundle.WorkspaceImages[0].Artifact.Digest, SizeBytes: int64(len(workspace)), MediaType: WorkspaceImageArtifactMediaType},
+		{Digest: bundle.ComputerImages[0].Artifact.Digest, SizeBytes: int64(len(computer)), MediaType: ComputerImageArtifactMediaType},
 	}
 	SortDeploymentBundleObjects(bundle.Objects)
 	raw, err := CanonicalDeploymentBundle(bundle)
@@ -128,8 +128,8 @@ func writeTestDeploymentBundleDirectory(t *testing.T) (string, DeploymentBundle)
 		t.Fatal(err)
 	}
 	contents := map[string][]byte{
-		bundle.Program.Artifact.Digest:            program,
-		bundle.WorkspaceImages[0].Artifact.Digest: workspace,
+		bundle.Program.Artifact.Digest:           program,
+		bundle.ComputerImages[0].Artifact.Digest: computer,
 	}
 	for digest, content := range contents {
 		if err := os.WriteFile(filepath.Join(objects, strings.TrimPrefix(digest, "sha256:")), content, 0o600); err != nil {

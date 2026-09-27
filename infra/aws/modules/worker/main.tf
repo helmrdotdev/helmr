@@ -33,14 +33,13 @@ locals {
     VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     VM_INIT_TIMEOUT                   = "30s"
     # EC2 workers allow extra time for first-boot guest health convergence.
-    VM_HEALTH_TIMEOUT              = "300s"
-    WORKER_DISK_RESERVE_MIB        = tostring(var.worker_disk_reserve_mib)
-    WORKER_DISK_MIB                = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
-    WORKER_CAPACITY_VCPUS          = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
-    WORKER_CAPACITY_MEMORY_MIB     = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
-    WORKER_EXECUTION_SLOTS         = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
-    WORKER_SUBSTRATE_CACHE_MAX_MIB = var.substrate_cache_max_mib == null ? null : tostring(var.substrate_cache_max_mib)
-    WORKER_ARTIFACT_CACHE_MAX_MIB  = var.artifact_cache_max_mib == null ? null : tostring(var.artifact_cache_max_mib)
+    VM_HEALTH_TIMEOUT             = "300s"
+    WORKER_DISK_RESERVE_MIB       = tostring(var.worker_disk_reserve_mib)
+    WORKER_DISK_MIB               = var.worker_disk_mib == null ? null : tostring(var.worker_disk_mib)
+    WORKER_CAPACITY_VCPUS         = var.worker_capacity_vcpus == null ? null : tostring(var.worker_capacity_vcpus)
+    WORKER_CAPACITY_MEMORY_MIB    = var.worker_capacity_memory_mib == null ? null : tostring(var.worker_capacity_memory_mib)
+    WORKER_EXECUTION_SLOTS        = var.worker_execution_slots == null ? null : tostring(var.worker_execution_slots)
+    WORKER_ARTIFACT_CACHE_MAX_MIB = var.artifact_cache_max_mib == null ? null : tostring(var.artifact_cache_max_mib)
   }
   worker_environment = {
     for key, value in local.worker_environment_values : key => value if value != null
@@ -211,12 +210,12 @@ locals {
   worker_termination_policies                            = var.sealed_provider_definition == null ? ["OldestLaunchTemplate", "OldestInstance"] : var.sealed_provider_definition.termination_policies
   worker_protect_from_scale_in                           = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.protect_from_scale_in
   worker_health_check_type                               = var.sealed_provider_definition == null ? "EC2" : var.sealed_provider_definition.health_check_type
-  worker_instance_refresh_strategy                       = var.sealed_provider_definition == null ? "Rolling" : var.sealed_provider_definition.instance_refresh_strategy
-  worker_instance_refresh_min_healthy_percentage         = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_min_healthy_percentage
-  worker_instance_refresh_max_healthy_percentage         = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_max_healthy_percentage
-  worker_instance_refresh_scale_in_protected_instances   = var.sealed_provider_definition == null ? "Refresh" : var.sealed_provider_definition.instance_refresh_scale_in_protected_instances
-  worker_instance_refresh_standby_instances              = var.sealed_provider_definition == null ? "Terminate" : var.sealed_provider_definition.instance_refresh_standby_instances
-  worker_instance_refresh_skip_matching                  = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.instance_refresh_skip_matching
+  worker_host_refresh_strategy                           = var.sealed_provider_definition == null ? "Rolling" : var.sealed_provider_definition.instance_refresh_strategy
+  worker_host_refresh_min_healthy_percentage             = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_min_healthy_percentage
+  worker_host_refresh_max_healthy_percentage             = var.sealed_provider_definition == null ? 100 : var.sealed_provider_definition.instance_refresh_max_healthy_percentage
+  worker_host_refresh_scale_in_protected_instances       = var.sealed_provider_definition == null ? "Refresh" : var.sealed_provider_definition.instance_refresh_scale_in_protected_instances
+  worker_host_refresh_standby_instances                  = var.sealed_provider_definition == null ? "Terminate" : var.sealed_provider_definition.instance_refresh_standby_instances
+  worker_host_refresh_skip_matching                      = var.sealed_provider_definition == null ? true : var.sealed_provider_definition.instance_refresh_skip_matching
   worker_launch_lifecycle_transition                     = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_LAUNCHING" : var.sealed_provider_definition.launch_lifecycle_transition
   worker_launch_lifecycle_default_result                 = var.sealed_provider_definition == null ? "ABANDON" : var.sealed_provider_definition.launch_lifecycle_default_result
   worker_termination_lifecycle_transition                = var.sealed_provider_definition == null ? "autoscaling:EC2_INSTANCE_TERMINATING" : var.sealed_provider_definition.termination_lifecycle_transition
@@ -426,14 +425,14 @@ resource "aws_autoscaling_group" "worker" {
   }
 
   instance_refresh {
-    strategy = local.worker_instance_refresh_strategy
+    strategy = local.worker_host_refresh_strategy
 
     preferences {
-      min_healthy_percentage       = local.worker_instance_refresh_min_healthy_percentage
-      max_healthy_percentage       = local.worker_instance_refresh_max_healthy_percentage
-      scale_in_protected_instances = local.worker_instance_refresh_scale_in_protected_instances
-      standby_instances            = local.worker_instance_refresh_standby_instances
-      skip_matching                = local.worker_instance_refresh_skip_matching
+      min_healthy_percentage       = local.worker_host_refresh_min_healthy_percentage
+      max_healthy_percentage       = local.worker_host_refresh_max_healthy_percentage
+      scale_in_protected_instances = local.worker_host_refresh_scale_in_protected_instances
+      standby_instances            = local.worker_host_refresh_standby_instances
+      skip_matching                = local.worker_host_refresh_skip_matching
     }
   }
 

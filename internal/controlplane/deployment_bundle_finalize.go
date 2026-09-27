@@ -41,7 +41,7 @@ type finalizedDeploymentDefinition struct {
 	declaredID     string
 	manifest       []byte
 	manifestDigest []byte
-	artifact       *cas.Descriptor
+	computerSpec   *deployment.ComputerSpec
 }
 
 type deploymentFinalizeReceipt struct {
@@ -362,6 +362,10 @@ func (e deploymentObjectSourceError) Error() string { return e.err.Error() }
 func (e deploymentObjectSourceError) Unwrap() error { return e.err }
 
 func publicDeploymentFinalizeError(err error) api.DeploymentBundleFinalizeError {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		return api.DeploymentBundleFinalizeError{Code: expired.ErrorCode(), Message: expired.Error()}
+	}
 	var idempotencyConflict idempotency.ConflictError
 	if errors.As(err, &idempotencyConflict) {
 		return api.DeploymentBundleFinalizeError{
@@ -547,7 +551,7 @@ func (s *Server) verifyFinalizedDeploymentObject(
 	switch object.MediaType {
 	case deployment.ProgramArtifactMediaType:
 		err = verifyStoredProgram(ctx, recorded, bundle.Program)
-	case deployment.WorkspaceImageArtifactMediaType:
+	case deployment.ComputerImageArtifactMediaType:
 		err = computer.VerifySeed(ctx, recorded, computer.SeedArtifact{Object: object, LogicalBytes: computer.SeedCapacity}, computer.SeedCapacity)
 
 	default:
@@ -615,17 +619,14 @@ func verifyStoredProgram(ctx context.Context, source io.Reader, program deployme
 }
 
 func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]finalizedDeploymentDefinition, error) {
-	images := make(map[string]cas.Descriptor, len(bundle.WorkspaceImages))
-	for _, image := range bundle.WorkspaceImages {
-		descriptor := image.Artifact
-		images[image.DeclaredID] = cas.Descriptor{
-			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
-		}
+	images := make(map[string]deployment.BundleComputerImageArtifact, len(bundle.ComputerImages))
+	for _, image := range bundle.ComputerImages {
+		images[image.DeclaredID] = image.Artifact
 	}
 	definitions := make([]finalizedDeploymentDefinition, 0, len(bundle.Plan.Definitions))
 	for _, definition := range bundle.Plan.Definitions {
 		var manifest any
-		var artifact *cas.Descriptor
+		var computerSpec *deployment.ComputerSpec
 		switch definition.Kind {
 		case deployment.DefinitionKindTask:
 			manifest = definition.Task
@@ -637,7 +638,11 @@ func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]final
 			if !ok {
 				return nil, fmt.Errorf("deployment sandbox %q has no image", definition.DeclaredID)
 			}
-			artifact = &value
+			spec, err := deployment.CompileComputerSpec(*definition.Sandbox, value)
+			if err != nil {
+				return nil, fmt.Errorf("deployment sandbox %q: %w", definition.DeclaredID, err)
+			}
+			computerSpec = &spec
 		default:
 			return nil, fmt.Errorf("deployment definition kind %q is unsupported", definition.Kind)
 		}
@@ -651,7 +656,7 @@ func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]final
 		}
 		definitions = append(definitions, finalizedDeploymentDefinition{
 			kind: string(definition.Kind), declaredID: definition.DeclaredID,
-			manifest: canonical, manifestDigest: digest[:], artifact: artifact,
+			manifest: canonical, manifestDigest: digest[:], computerSpec: computerSpec,
 		})
 	}
 	return definitions, nil
@@ -689,7 +694,7 @@ func createFinalizedDeployment(
 	}
 	artifacts := make(map[string]db.Artifact, len(prepared.objects))
 	for _, descriptor := range prepared.objects {
-		kind := db.ArtifactKindWorkspaceImage
+		kind := db.ArtifactKindComputerImage
 		if descriptor.MediaType == deployment.ProgramArtifactMediaType {
 			kind = db.ArtifactKindDeploymentProgram
 		}
@@ -716,10 +721,22 @@ func createFinalizedDeployment(
 	if err != nil {
 		return db.Deployment{}, fmt.Errorf("create deployment: %w", err)
 	}
+	specs, err := registerDeploymentComputerSpecs(ctx, queries, environmentID, prepared.definitions, artifacts)
+	if err != nil {
+		return db.Deployment{}, err
+	}
 	if err := createFinalizedDeploymentDefinitions(
-		ctx, queries, environmentID, record.ID, prepared.definitions, artifacts,
+		ctx, queries, environmentID, record.ID, prepared.definitions, specs,
 	); err != nil {
 		return db.Deployment{}, err
+	}
+	for _, artifact := range artifacts {
+		if artifact.Kind != db.ArtifactKindComputerImage {
+			continue
+		}
+		if err := queries.DeleteUnusedComputerSeedArtifact(ctx, db.DeleteUnusedComputerSeedArtifactParams{EnvironmentID: environmentID, ID: artifact.ID}); err != nil {
+			return db.Deployment{}, fmt.Errorf("release redundant computer seed artifact: %w", err)
+		}
 	}
 	return record, nil
 }
@@ -733,7 +750,7 @@ func createFinalizedDeploymentDefinitions(
 	queries deploymentDefinitionCreator,
 	environmentID, deploymentID pgtype.UUID,
 	definitions []finalizedDeploymentDefinition,
-	artifacts map[string]db.Artifact,
+	specs map[string]db.ComputerSpec,
 ) error {
 	definitionCount := len(definitions)
 	definitionParams := db.CreateDeploymentDefinitionsParams{
@@ -742,7 +759,7 @@ func createFinalizedDeploymentDefinitions(
 		DeclaredIds:     make([]string, definitionCount),
 		Manifests:       make([][]byte, definitionCount),
 		ManifestDigests: make([][]byte, definitionCount),
-		ArtifactIds:     make([]pgtype.UUID, definitionCount),
+		ComputerSpecIds: make([]pgtype.UUID, definitionCount),
 		EnvironmentID:   environmentID,
 		DeploymentID:    deploymentID,
 		ManifestVersion: deployment.DeploymentPlanFormatVersion,
@@ -753,17 +770,17 @@ func createFinalizedDeploymentDefinitions(
 		definitionParams.DeclaredIds[index] = definition.declaredID
 		definitionParams.Manifests[index] = definition.manifest
 		definitionParams.ManifestDigests[index] = definition.manifestDigest
-		if definition.artifact == nil {
+		if definition.kind != string(deployment.DefinitionKindSandbox) {
 			continue
 		}
-		artifact, ok := artifacts[definition.artifact.Digest]
+		spec, ok := specs[definition.declaredID]
 		if !ok {
 			return fmt.Errorf(
-				"create deployment definition: artifact %q is not registered",
-				definition.artifact.Digest,
+				"create deployment definition: computer spec for %q is not registered",
+				definition.declaredID,
 			)
 		}
-		definitionParams.ArtifactIds[index] = artifact.ID
+		definitionParams.ComputerSpecIds[index] = spec.ID
 	}
 	inserted, err := queries.CreateDeploymentDefinitions(ctx, definitionParams)
 	if err != nil {

@@ -31,14 +31,14 @@ const base = image("helmr-runtime-smoke")
   .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
-export const runtimeSmokeWorkspace = sandbox({ id: "helmr-runtime-smoke" })
+export const runtimeSmokeComputer = sandbox({ id: "helmr-runtime-smoke" })
   .image(base)
   .resources({ cpu: 2, memory: "2GiB" })
 
 export const runtimeSmokePayload = z.object({
   scenario: z.string().default("release-smoke"),
   marker: z.string().optional(),
-  expectedWorkspaceMarker: z.string().optional(),
+  expectedComputerMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseToken: z.boolean().default(false),
   externalTokenId: z.uuidv7().optional(),
@@ -75,11 +75,11 @@ export const runtimeSmoke = task({
         attemptNumber: ctx.run.attemptNumber,
         deploymentId: ctx.deployment.id,
         deploymentVersion: ctx.deployment.version,
-        workspace: { id: ctx.workspace.id },
+        computer: { id: ctx.computer.id },
       },
     })
 
-    checks.push(await collectCheck("sandbox-filesystem", () => checkWorkspace(marker, input.largeFileKiB, input.expectedWorkspaceMarker)))
+    checks.push(await collectCheck("sandbox-filesystem", () => checkComputer(marker, input.largeFileKiB, input.expectedComputerMarker)))
     checks.push(await collectCheck("source-bundle", () => checkBundledGuides()))
     checks.push(await collectCheck("node-version", () => checkCommand("node-version", ["node", "--version"])))
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
@@ -171,7 +171,7 @@ async function collectCheck(name: string, run: () => Promise<Check>): Promise<Ch
   }
 }
 
-async function checkWorkspace(marker: string, largeFileKiB: number, expectedPreviousMarker?: string): Promise<Check> {
+async function checkComputer(marker: string, largeFileKiB: number, expectedPreviousMarker?: string): Promise<Check> {
   const nestedDir = "sandbox-smoke/nested"
   await mkdir(nestedDir, { recursive: true })
   const id = randomUUID()

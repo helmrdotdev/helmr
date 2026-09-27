@@ -48,8 +48,7 @@ type WaitRequest struct {
 	IdleTimeoutMS                 *int64
 	ActorSpeculativeInputSequence *int64
 	ActiveDuration                time.Duration
-	Workspace                     workerapi.Workspace
-	Checkpointer                  Checkpointer
+	Computer                      workerapi.Computer
 	Resume                        func(context.Context, WaitResumeDecision) error
 }
 
@@ -58,23 +57,11 @@ type WaitResumeDecision struct {
 	Data json.RawMessage
 }
 
-type Checkpointer interface {
-	CreateCheckpoint(context.Context, CheckpointRequest) (CheckpointResult, error)
-	ReleaseCheckpointSource(context.Context) error
-}
-
-type CheckpointRequest struct {
-	Register                 func(context.Context, workerapi.CheckpointManifest) error
-	Execution                *programv0.SessionExecution
-	TurnID                   *string
-	RunID                    string
-	AttemptNumber            int32
-	RunLeaseID               string
-	RunWaitID                string
-	CorrelationID            string
-	CheckpointID             string
-	ResumeAttachID           string
-	CheckpointRequestVersion int64
+// ComputerCheckpointRequest belongs to the physical Instance owner. Member
+// pausing is coordinated before the guest returns the whole-Computer proof.
+type ComputerCheckpointRequest struct {
+	Target   workerapi.RuntimeReconcileTarget
+	Register func(context.Context, workerapi.CheckpointManifest) error
 }
 
 type CheckpointResult struct {

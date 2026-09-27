@@ -16,10 +16,10 @@ declared on the Actor.
 - `../../interfaces/issue-fixer-slack.ts`: verified Slack intake and a retained-event
   projection, independent of the chosen Actor/provider.
 
-## Running in an isolated workspace
+## Running in an isolated computer
 
 Set `ISSUE_FIXER_REPOSITORY` to a disposable, Session-owned repository checkout in
-the Actor workspace. Different Sessions must not share its writable directory.
+the Actor computer. Different Sessions must not share its writable directory.
 Install the pinned workflow dependencies, configure the chosen provider's ordinary
 credentials on the runtime host, and edit `checks.ts` to use that repository's fixed
 deterministic check command. The webhook cannot select a path or shell command.
@@ -29,7 +29,7 @@ model. The samples do not create commits, push changes or open pull requests.
 Deploy these Actors using the existing workflow configuration. Start either Actor
 with the ordinary `actors.start`/CLI flow and retain the resulting Session ID.
 Each Helmr Turn starts a native process and resumes the Session's saved native
-conversation when present. The conversation files must survive in the Workspace;
+conversation when present. The conversation files must survive in the Computer;
 see the continuity requirements and qualification limits below.
 
 Mount `acceptSlackEvent` in your HTTP application, supplying the original body
@@ -75,7 +75,7 @@ model output and replies can contain repository content. Never send secrets here
 A remote failure or `cursor_expired` must remain visible to the host; do not reset the
 cursor or treat a failed update as delivered. Use a bot token/destination that remain
 valid for long waits rather than a short-lived interaction response URL. This code
-was not run against a real Slack workspace as part of local qualification.
+was not run against a real Slack computer as part of local qualification.
 
 ## Lifecycle exercise
 
@@ -91,7 +91,7 @@ was not run against a real Slack workspace as part of local qualification.
    deterministic checks run next, and only their success calls `turn.complete()`.
    A failed check calls `turn.fail()`.
 
-The runtime owns writer exclusion, Workspace proof and the terminal stop state.
+The runtime owns writer exclusion, Computer proof and the terminal stop state.
 Stopping a local process does not undo remote effects. Native background/external
 work requires application reconciliation before recovery. The small samples do not
 qualify arbitrary native sockets or callback Promises for checkpoint/restore.
@@ -150,7 +150,7 @@ Protocol references checked 2026-09-20:
 
 `conversation.ts` stores each Session/provider's native conversation ID and provider
 home under `<repository>/.helmr/issue-fixer/<session>/<provider>`. Keep `.helmr/` out
-of commits and preserve it in the captured Workspace; do not delete it when checking
+of commits and preserve it in the captured Computer; do not delete it when checking
 out the next task. Codex uses this location as CODEX_HOME, starts a persisted thread
 and later calls thread/resume. Claude uses it as CLAUDE_CONFIG_DIR with persistence
 and later passes resume. Configure existing provider authentication through the
@@ -165,7 +165,7 @@ physical convergence and exact current-hold resume before queued work proceeds.
 
 The local Claude fixture invokes the Actor twice with separate Run heaps and checks
 that the second query receives the persisted native ID. This proves application
-wiring only, not native model memory, provider crash durability or Workspace restore.
+wiring only, not native model memory, provider crash durability or Computer restore.
 Native end-to-end context continuation remains a runtime/provider qualification gate.
 
 Run the real pinned Codex process qualification separately from mocked native tests:
@@ -180,7 +180,7 @@ command approval, interruption while a question is pending, stale reply rejectio
 and saved conversation identity/history after restarting the native process.
 It does not call a remote model or execute the denied command. Helmr handler
 delivery and repository checks are fixtures; this is not a deployed Session,
-queue/hold exercise, crash-durability proof or VM Workspace restore test.
+queue/hold exercise, crash-durability proof or VM Computer restore test.
 
 The Claude probe runs the production Actor and its HumanRequests helper with the
 actual pinned SDK/native processes:
@@ -201,12 +201,12 @@ the abort signal, and the interrupted invocation neither runs checks nor complet
 
 The Actor waits for its direct child exit before returning. These probes qualify
 application integration, not durable Helmr message delivery, physical descendant
-exclusion, managed waits, crash durability, real inference or VM Workspace restore.
+exclusion, managed waits, crash durability, real inference or VM Computer restore.
 
 A non-inference probe of pinned Codex 0.133.0 accepted thread/start but a new
 process immediately attempting thread/resume returned "no rollout found". An empty
 thread's ID is not proof of persisted history. The sample deliberately propagates
 that failure instead of silently opening a replacement conversation; applications
-must reconcile missing native history. Neither a Helmr output receipt nor Workspace
+must reconcile missing native history. Neither a Helmr output receipt nor Computer
 capture can make a provider persist data that it has not written. The probe made no
 turn/start, model, login or outbound interface request.

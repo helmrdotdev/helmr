@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -289,8 +290,8 @@ func (s *Server) createRuntimeToken(
 		if err != nil {
 			return err
 		}
-		locators, _, err = lockTokenCreateAuthority(
-			ctx, work.q, request.Worker, request.Lease, request.ParsedLease,
+		locators, err = lockTokenCreateAuthority(
+			ctx, work.tx, request.Worker, request.Lease, request.ParsedLease,
 		)
 		if err != nil {
 			return err
@@ -380,42 +381,35 @@ func loadTokenCreateLocators(
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:      worker.WorkerEpoch})
-	if err != nil {
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		WorkerHostID:  pgvalue.UUID(worker.WorkerHostID),
+		WorkerEpoch:   worker.WorkerEpoch})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return db.GetLiveRunLeaseLocatorsRow{}, errTokenCreateAuthority
 	}
-	return locators, nil
+	return locators, err
 }
 
 func lockTokenCreateAuthority(
 	ctx context.Context,
-	q db.Querier,
+	tx pgx.Tx,
 	worker workerActor,
 	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
-) (db.GetLiveRunLeaseLocatorsRow, runLeaseClaimAuthority, error) {
-	locators, err := loadTokenCreateLocators(ctx, q, worker, lease, parsed)
+) (db.GetLiveRunLeaseLocatorsRow, error) {
+	locators, err := loadTokenCreateLocators(ctx, db.New(tx), worker, lease, parsed)
 	if err != nil {
-		return db.GetLiveRunLeaseLocatorsRow{}, runLeaseClaimAuthority{}, errTokenCreateAuthority
+		return db.GetLiveRunLeaseLocatorsRow{}, err
 	}
-	authority, err := lockLiveRunLeaseAuthority(
-		ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, locators,
-	)
-	if errors.Is(err, errStaleWorkerClaims) {
-		return db.GetLiveRunLeaseLocatorsRow{}, runLeaseClaimAuthority{}, err
+	authority, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, lease))
+	_, err = validateWorkerRunSource(authority, err)
+	if errors.Is(err, errStaleWorkerRunSource) {
+		return db.GetLiveRunLeaseLocatorsRow{}, errTokenCreateAuthority
 	}
-	if err != nil ||
-		authority.run.Status != db.RunStatusRunning ||
-		authority.runLease.Status != db.RunLeaseStatusRunning ||
-		!authority.run.ActiveStartedAt.Valid ||
-		!authority.attempt.EntrypointEnteredAt.Valid ||
-		authority.attempt.TerminalAt.Valid ||
-		authority.runLease.FinalizationOperationID.Valid {
-		return db.GetLiveRunLeaseLocatorsRow{}, runLeaseClaimAuthority{}, errTokenCreateAuthority
+	if err != nil {
+		return db.GetLiveRunLeaseLocatorsRow{}, err
 	}
-	return locators, authority, nil
+	return locators, nil
 }
 
 func (s *Server) replayTokenCreate(
@@ -1162,6 +1156,11 @@ func tokenFromCancelRow(row db.CancelTokenRow) db.Token {
 
 func (s *Server) writeTokenError(w http.ResponseWriter, err error) {
 	if writeStaleWorkerClaims(w, err) {
+		return
+	}
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
 		return
 	}
 	var conflictError idempotency.ConflictError

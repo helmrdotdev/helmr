@@ -11,35 +11,37 @@ import (
 type StreamType string
 
 const (
-	StreamTypeSessionStop                StreamType = "session-stop"
-	StreamTypeRunImage                   StreamType = "run-image"
-	StreamTypeWorkspaceArtifact          StreamType = "workspace-artifact"
-	StreamTypeCheckpointPauseRequest     StreamType = "checkpoint-pause-request"
-	StreamTypeCheckpointPauseReady       StreamType = "checkpoint-pause-ready"
-	StreamTypeResumeDecision             StreamType = "resume-decision"
-	StreamTypeWorkspaceMaterialize       StreamType = "workspace-materialize"
-	StreamTypeWorkspaceRuntimePrepare    StreamType = "workspace-runtime-prepare"
-	StreamTypeProgramRun                 StreamType = "program-run"
-	StreamTypeWorkspaceBasicExec         StreamType = "workspace-basic-exec"
-	StreamTypeWorkspaceStop              StreamType = "workspace-stop"
-	StreamTypeWorkspaceAuthorityRenew    StreamType = "workspace-authority-renew"
-	StreamTypeProgramResumeGrant         StreamType = "program-resume-grant"
-	StreamTypeProgramRestoreVerify       StreamType = "program-restore-verify"
-	StreamTypeWorkspaceFinalizationBegin StreamType = "workspace-finalization-begin"
-	StreamTypeWorkspaceCapture           StreamType = "workspace-capture"
+	StreamTypeSessionStop             StreamType = "session-stop"
+	StreamTypeRunImage                StreamType = "run-image"
+	StreamTypeComputerArtifact        StreamType = "computer-artifact"
+	StreamTypeCheckpointPauseRequest  StreamType = "checkpoint-pause-request"
+	StreamTypeCheckpointPauseReady    StreamType = "checkpoint-pause-ready"
+	StreamTypeResumeDecision          StreamType = "resume-decision"
+	StreamTypeComputerMaterialize     StreamType = "computer-materialize"
+	StreamTypeComputerRuntimePrepare  StreamType = "computer-runtime-prepare"
+	StreamTypeProgramRun              StreamType = "program-run"
+	StreamTypeComputerBasicExec       StreamType = "computer-basic-exec"
+	StreamTypeComputerCommandCancel   StreamType = "computer-command-cancel"
+	StreamTypeComputerCommandRelease  StreamType = "computer-command-release"
+	StreamTypeComputerAuthorityRenew  StreamType = "computer-authority-renew"
+	StreamTypeProgramResumeGrant      StreamType = "program-resume-grant"
+	StreamTypeComputerRestoreVerify   StreamType = "computer-restore-verify"
+	StreamTypeComputerFreeze          StreamType = "computer-freeze"
+	StreamTypeComputerRestoreInstall  StreamType = "computer-restore-install"
+	StreamTypeComputerRestoreActivate StreamType = "computer-restore-activate"
 )
 
 type StreamHeader struct {
-	Type             StreamType `json:"type"`
-	RunID            string     `json:"run_id,omitempty"`
-	TaskID           string     `json:"task_id,omitempty"`
-	RunWaitID        string     `json:"run_wait_id,omitempty"`
-	CheckpointID     string     `json:"checkpoint_id,omitempty"`
-	WorkspaceID      string     `json:"workspace_id,omitempty"`
-	WorkspaceMountID string     `json:"workspace_mount_id,omitempty"`
-	OperationID      string     `json:"operation_id,omitempty"`
-	BodyDigest       *string    `json:"body_digest,omitempty"`
-	EntryCount       *int       `json:"entry_count,omitempty"`
+	Type               StreamType `json:"type"`
+	RunID              string     `json:"run_id,omitempty"`
+	TaskID             string     `json:"task_id,omitempty"`
+	RunWaitID          string     `json:"run_wait_id,omitempty"`
+	CheckpointID       string     `json:"checkpoint_id,omitempty"`
+	ComputerID         string     `json:"computer_id,omitempty"`
+	ComputerInstanceID string     `json:"computer_instance_id,omitempty"`
+	OperationID        string     `json:"operation_id,omitempty"`
+	BodyDigest         *string    `json:"body_digest,omitempty"`
+	EntryCount         *int       `json:"entry_count,omitempty"`
 }
 
 func WriteStreamFrameHeader(w io.Writer, header StreamHeader, bodyLen uint64) error {

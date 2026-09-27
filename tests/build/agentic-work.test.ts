@@ -1,5 +1,5 @@
 // The agentic-work fixture's subprocess helper runs under the managed Node in
-// real Workspaces, so each case drives the helper inside a Node process: stream
+// real Computers, so each case drives the helper inside a Node process: stream
 // error handling is the runtime's, not the test runner's.
 import { expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"

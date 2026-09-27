@@ -3,211 +3,69 @@ package controlplane
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 	"time"
-	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestEnterRunEntrypointCommitsOnceAndReplaysTheSameFence(t *testing.T) {
-	worker, locators, authority, assignment := validRunEntrypointFixture(t)
-	store := &runLeaseClaimStore{
-		authority:  authority,
-		entrypoint: locators,
-		enteredAt: pgtype.Timestamptz{
-			Time:  time.Date(2026, 7, 21, 10, 0, 0, 0, time.UTC),
-			Valid: true,
-		},
-	}
-	request := workerapi.RunEntrypointRequest{
-		Lease:                assignment.Fence(),
-		EntrypointKind:       authority.run.EntrypointKind,
-		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
-	}
-
-	if err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, request); err != nil {
+func TestEnterRunEntrypointTransaction(t *testing.T) {
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "assigned", time.Now())
+	worker := workerActor{WorkerGroupID: runtest.WorkerGroupID, WorkerHostID: f.WorkerID, WorkerEpoch: 1}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT h.claim_version,g.claim_version FROM worker_hosts h JOIN worker_groups g ON g.id=h.worker_group_id WHERE h.id=$1`, f.WorkerID).Scan(&worker.ClaimVersion, &worker.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
-	wantCalls := []string{
-		"entrypoint_locators", "run", "workspace", "attempt",
-		"worker_group", "worker", "runtime",
-		"entrypoint_lease", "workspace_mount", "workspace_lease",
-		"mark_entrypoint", "commit",
-	}
-	if !slices.Equal(store.calls, wantCalls) {
-		t.Fatalf("calls = %v, want %v", store.calls, wantCalls)
-	}
-	if !store.authority.attempt.EntrypointEnteredAt.Valid {
-		t.Fatal("entrypoint was not recorded")
-	}
-	enteredAt := store.authority.attempt.EntrypointEnteredAt.Time
-
-	store.calls = nil
-	if err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, request); err != nil {
-		t.Fatal(err)
-	}
-	if store.entrypointMarks != 1 {
-		t.Fatalf("entrypoint marks = %d, want 1", store.entrypointMarks)
-	}
-	if !store.authority.attempt.EntrypointEnteredAt.Time.Equal(enteredAt) {
-		t.Fatalf("replay changed entrypoint timestamp: got %v want %v", store.authority.attempt.EntrypointEnteredAt.Time, enteredAt)
-	}
-	if slices.Contains(store.calls, "mark_entrypoint") ||
-		len(store.calls) == 0 ||
-		store.calls[len(store.calls)-1] != "commit" {
-		t.Fatalf("replay calls = %v", store.calls)
-	}
-}
-
-func TestEnterRunEntrypointContinuesRunningLeaseWhileDraining(t *testing.T) {
-	worker, locators, authority, assignment := validRunEntrypointFixture(t)
-	authority.workerGroup.Status = db.WorkerGroupStatusDraining
-	authority.worker.Status = db.WorkerInstanceStatusDraining
-	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
-	request := workerapi.RunEntrypointRequest{
-		Lease: assignment.Fence(), EntrypointKind: authority.run.EntrypointKind,
-		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
-	}
-	if err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, request); err != nil {
-		t.Fatal(err)
-	}
-	if store.entrypointMarks != 1 {
-		t.Fatalf("entrypoint marks = %d, want 1", store.entrypointMarks)
-	}
-}
-
-func TestEnterRunEntrypointRollsBackMismatchedFenceAndIdentity(t *testing.T) {
-	for name, change := range map[string]func(*workerapi.RunEntrypointRequest){
-		"fence": func(request *workerapi.RunEntrypointRequest) {
-			request.Lease.LeaseSequence++
-		},
-		"identity": func(request *workerapi.RunEntrypointRequest) {
-			request.EntrypointDeclaredID = "different"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			worker, locators, authority, assignment := validRunEntrypointFixture(t)
-			store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
-			request := workerapi.RunEntrypointRequest{
-				Lease:                assignment.Fence(),
-				EntrypointKind:       authority.run.EntrypointKind,
-				EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
-			}
-			change(&request)
-
-			err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, request)
-			if !errors.Is(err, errStaleRunLeaseClaim) {
-				t.Fatalf("error = %v, want stale claim", err)
-			}
-			if store.entrypointMarks != 0 ||
-				!slices.Contains(store.calls, "rollback") ||
-				slices.Contains(store.calls, "mark_entrypoint") {
-				t.Fatalf("calls = %v marks = %d", store.calls, store.entrypointMarks)
-			}
-		})
-	}
-}
-
-func TestEnterRunEntrypointRejectsMountedBaseOutsideAttempt(t *testing.T) {
-	worker, locators, authority, assignment := validRunEntrypointFixture(t)
-	differentBase := pgvalue.UUID(uuid.New())
-	authority.workspaceLease.BaseWorkspaceVersionID = differentBase
-	authority.workspaceMount.MaterializedVersionID = differentBase
-	store := &runLeaseClaimStore{authority: authority, entrypoint: locators}
-
-	err := enterRunEntrypoint(context.Background(), store, nil, worker, authority.runLease.ID, workerapi.RunEntrypointRequest{
-		Lease:                assignment.Fence(),
-		EntrypointKind:       authority.run.EntrypointKind,
-		EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
-	})
-	if !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale claim", err)
-	}
-	if store.entrypointMarks != 0 ||
-		!slices.Contains(store.calls, "rollback") ||
-		slices.Contains(store.calls, "mark_entrypoint") {
-		t.Fatalf("calls = %v marks = %d", store.calls, store.entrypointMarks)
-	}
-}
-
-func (s *runLeaseClaimStore) GetRunEntrypointLocators(
-	_ context.Context,
-	params db.GetRunEntrypointLocatorsParams,
-) (db.GetRunEntrypointLocatorsRow, error) {
-	s.calls = append(s.calls, "entrypoint_locators")
-	if params.ID != s.authority.runLease.ID ||
-		params.LeaseSequence != s.authority.runLease.LeaseSequence {
-		return db.GetRunEntrypointLocatorsRow{}, pgx.ErrNoRows
-	}
-	return s.entrypoint, nil
-}
-
-func (s *runLeaseClaimStore) LockRunEntrypointLease(
-	context.Context,
-	db.LockRunEntrypointLeaseParams,
-) (db.RunLease, error) {
-	s.calls = append(s.calls, "entrypoint_lease")
-	return s.authority.runLease, nil
-}
-
-func (s *runLeaseClaimStore) MarkRunEntrypointEntered(
-	context.Context,
-	db.MarkRunEntrypointEnteredParams,
-) (db.RunAttempt, error) {
-	s.calls = append(s.calls, "mark_entrypoint")
-	s.entrypointMarks++
-	s.authority.attempt.EntrypointEnteredAt = s.enteredAt
-	return s.authority.attempt, nil
-}
-
-func validRunEntrypointFixture(
-	t *testing.T,
-) (workerActor, db.GetRunEntrypointLocatorsRow, runLeaseClaimAuthority, workerapi.RunLeaseAssignment) {
-	t.Helper()
-	worker, claimLocators, authority := validRunLeaseClaimFixture()
-	now := time.Date(2026, 7, 21, 9, 0, 0, 0, time.UTC)
-	authority.run.EntrypointDeclaredID = "compile"
-	authority.run.Status = db.RunStatusRunning
-	authority.run.StartedAt = pgtype.Timestamptz{Time: now, Valid: true}
-	authority.run.ActiveStartedAt = pgtype.Timestamptz{Time: now, Valid: true}
-	authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
-	authority.runLease.Status = db.RunLeaseStatusRunning
-	authority.runLease.StartedAt = pgtype.Timestamptz{Time: now, Valid: true}
-	authority.runLease.StartDeadlineAt = pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true}
-	authority.runLease.ExpiresAt = pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true}
-	authority.workspaceMount.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.WorkspaceID = authority.workspace.ID
-	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
-
-	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
-		run:            authority.run,
-		attempt:        authority.attempt,
-		runtime:        authority.runtime,
-		runLease:       authority.runLease,
-		workspace:      authority.workspace,
-		workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
-	})
+	fence := run.ExecutionFence{LeaseID: pgvalue.UUID(work.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: 1, HostClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
+	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return worker, db.GetRunEntrypointLocatorsRow{
-		OrgID:             claimLocators.OrgID,
-		ProjectID:         claimLocators.ProjectID,
-		EnvironmentID:     claimLocators.EnvironmentID,
-		RunID:             claimLocators.RunID,
-		WorkspaceID:       claimLocators.WorkspaceID,
-		AttemptNumber:     claimLocators.AttemptNumber,
-		RegionID:          claimLocators.RegionID,
-		RuntimeInstanceID: claimLocators.RuntimeInstanceID,
-		WorkspaceLeaseID:  claimLocators.WorkspaceLeaseID,
-		WorkspaceMountID:  claimLocators.WorkspaceMountID,
-	}, authority, assignment
+	defer tx.Rollback(context.Background())
+	if _, err = run.ClaimExecution(t.Context(), tx, fence); err != nil {
+		t.Fatal(err)
+	}
+	started, err := run.StartExecution(t.Context(), tx, fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	request := workerapi.RunEntrypointRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, EntrypointKind: started.Run.EntrypointKind, EntrypointDeclaredID: started.Run.EntrypointDeclaredID}
+	wrong := request
+	wrong.EntrypointDeclaredID = "different"
+	if err = enterRunEntrypoint(t.Context(), f.Pool, worker, fence.LeaseID, wrong); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("wrong entrypoint: %v", err)
+	}
+	var entered bool
+	if err = f.Pool.QueryRow(t.Context(), `SELECT entrypoint_entered_at IS NOT NULL FROM run_attempts WHERE run_id=$1 AND number=1`, work.RunID).Scan(&entered); err != nil || entered {
+		t.Fatalf("rejected entry mutated receipt: %v %v", entered, err)
+	}
+	if err = enterRunEntrypoint(t.Context(), f.Pool, worker, fence.LeaseID, request); err != nil {
+		t.Fatal(err)
+	}
+	var original, timeAfterReplay time.Time
+	if err = f.Pool.QueryRow(t.Context(), `SELECT entrypoint_entered_at FROM run_attempts WHERE run_id=$1 AND number=1`, work.RunID).Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	if err = enterRunEntrypoint(t.Context(), f.Pool, worker, fence.LeaseID, request); err != nil {
+		t.Fatal(err)
+	}
+	if err = f.Pool.QueryRow(t.Context(), `SELECT entrypoint_entered_at FROM run_attempts WHERE run_id=$1 AND number=1`, work.RunID).Scan(&timeAfterReplay); err != nil || !original.Equal(timeAfterReplay) {
+		t.Fatalf("receipt changed on replay: %v", err)
+	}
+	stale := worker
+	stale.ClaimVersion++
+	if err = enterRunEntrypoint(t.Context(), f.Pool, stale, fence.LeaseID, request); !errors.Is(err, errStaleWorkerClaims) {
+		t.Fatalf("stale claims: %v", err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, started.Instance.ID)
+	if err = enterRunEntrypoint(t.Context(), f.Pool, worker, fence.LeaseID, request); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("expired writer: %v", err)
+	}
 }

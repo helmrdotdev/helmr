@@ -106,7 +106,7 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 	}
 	var claims bool
 	err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4
- FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id
+ FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id
  WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
 	if err != nil || !claims {
 		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
@@ -116,12 +116,12 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 		return db.ComputerDataKey{}, "", errComputerKeyUnavailable
 	}
 	q := db.New(tx)
-	row, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+	row, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		// A missing row is initialization only when both authoritative pointers are
 		// empty. Never replace an unavailable/corrupt persisted key with a fresh one.
 		var current, runtime pgtype.UUID
-		if err = tx.QueryRow(ctx, `SELECT c.write_key_id,r.computer_write_key_id FROM computers c JOIN runtime_instances r ON r.environment_id=c.environment_id AND r.workspace_id=c.id WHERE r.id=$1`, f.RuntimeID).Scan(&current, &runtime); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT c.write_key_id,r.write_key_id FROM computers c JOIN computer_instances r ON r.environment_id=c.environment_id AND r.computer_id=c.id WHERE r.id=$1`, f.RuntimeID).Scan(&current, &runtime); err != nil {
 			return db.ComputerDataKey{}, "", err
 		}
 		if current.Valid || runtime.Valid {
@@ -147,7 +147,7 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 	} else if err != nil {
 		return db.ComputerDataKey{}, "", err
 	}
-	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: row.ID, RuntimeInstanceID: f.RuntimeID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
+	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: row.ID, ComputerInstanceID: f.RuntimeID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
 	if err != nil {
 		return db.ComputerDataKey{}, "", err
 	}

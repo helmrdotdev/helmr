@@ -31,12 +31,12 @@ type workerLogReplayStore struct {
 	workerID      pgtype.UUID
 	params        *db.AppendRunLogChunkParams
 	replay        *db.GetRunLogChunkReplayRow
-	authorization *db.AuthorizeWorkerInstanceCredentialRow
+	authorization *db.AuthorizeWorkerHostCredentialRow
 }
 
-func (s workerLogReplayStore) AuthorizeWorkerInstanceCredential(_ context.Context, _ db.AuthorizeWorkerInstanceCredentialParams) (db.AuthorizeWorkerInstanceCredentialRow, error) {
+func (s workerLogReplayStore) AuthorizeWorkerHostCredential(_ context.Context, _ db.AuthorizeWorkerHostCredentialParams) (db.AuthorizeWorkerHostCredentialRow, error) {
 	if s.authorization == nil {
-		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
+		return db.AuthorizeWorkerHostCredentialRow{}, pgx.ErrNoRows
 	}
 	return *s.authorization, nil
 }
@@ -55,7 +55,7 @@ func (s workerLogReplayStore) AppendRunLogChunk(_ context.Context, params db.App
 	if s.params != nil {
 		*s.params = params
 	}
-	if s.workerID.Valid && params.WorkerInstanceID != s.workerID {
+	if s.workerID.Valid && params.WorkerHostID != s.workerID {
 		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
 	}
 	return db.AppendRunLogChunkRow{ReplayMatches: s.replayMatches}, nil
@@ -69,8 +69,8 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 	signingKey := []byte("01234567890123456789012345678901")
 	store := workerLogReplayStore{
 		replayMatches: true,
-		authorization: &db.AuthorizeWorkerInstanceCredentialRow{
-			WorkerGroupID: pgvalue.UUID(uuid.MustParse(lease.WorkerGroupID)), WorkerInstanceID: pgvalue.UUID(workerID),
+		authorization: &db.AuthorizeWorkerHostCredentialRow{
+			WorkerGroupID: pgvalue.UUID(uuid.MustParse(lease.WorkerGroupID)), WorkerHostID: pgvalue.UUID(workerID),
 			ClaimVersion: 1, ResourceID: "test-resource", WorkerStatus: "active",
 			EpochStartedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		},
@@ -82,7 +82,7 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 	router := chi.NewRouter()
 	server.mountWorkerRoutes(router)
 	token, err := auth.IssueWorkerToken(signingKey, auth.WorkerClaims{
-		WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: workerID.String(), CredentialID: credentialID.String(),
+		WorkerGroupID: lease.WorkerGroupID, WorkerHostID: workerID.String(), CredentialID: credentialID.String(),
 		WorkerEpoch: lease.WorkerEpoch, ClaimVersion: 1, GroupClaimVersion: 1,
 		IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour),
 	})
@@ -141,7 +141,7 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
+		WorkerHostID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -172,7 +172,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
+		WorkerHostID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -184,7 +184,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	if pgvalue.UUIDString(params.RunLeaseID) != lease.ID ||
 		params.LeaseSequence != lease.LeaseSequence ||
 		pgvalue.UUIDString(params.WorkerGroupID) != lease.WorkerGroupID ||
-		pgvalue.UUIDString(params.WorkerInstanceID) != lease.WorkerInstanceID ||
+		pgvalue.UUIDString(params.WorkerHostID) != lease.WorkerHostID ||
 		params.WorkerEpoch != lease.WorkerEpoch {
 		t.Fatalf("database receipt params = %+v", params)
 	}
@@ -224,7 +224,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
+		WorkerHostID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
 		WorkerEpoch: lease.WorkerEpoch}))
 	recorder := httptest.NewRecorder()
 
@@ -258,9 +258,9 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: uuid.NewV7(),
-		WorkerGroupID:    uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch:      lease.WorkerEpoch,
+		WorkerHostID:  uuid.NewV7(),
+		WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
+		WorkerEpoch:   lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 

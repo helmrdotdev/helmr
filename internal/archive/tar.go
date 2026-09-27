@@ -295,7 +295,7 @@ func appendTree(
 	stats *tarStats,
 ) error {
 	// Installed output has its own bounded discovery and representation rules.
-	// Workspace archiving keeps its existing selection and filesystem behavior.
+	// Computer archiving keeps its existing selection and filesystem behavior.
 	if options.CanonicalMetadata {
 		return appendInstalledTree(ctx, writer, root, excludeMatchers, options, stats)
 	}

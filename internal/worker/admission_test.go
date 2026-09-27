@@ -45,13 +45,13 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 		{name: "kvm", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.KVMHealthy = false }, want: AdmissionKVMUnavailable},
 		{name: "firecracker", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.FirecrackerHealthy = false }, want: AdmissionFirecrackerUnavailable},
 		{name: "slots", mutate: func(_ *HostHealth, c *AdmissionCheck) {
-			c.Consumer = "workspace"
+			c.Consumer = "computer"
 			c.Recovery.Quarantined = []string{"one", "two"}
 		}, want: AdmissionRuntimeSlotsQuarantined},
 		{name: "partial quarantine plus active slot", mutate: func(_ *HostHealth, c *AdmissionCheck) {
-			c.Consumer = "workspace"
+			c.Consumer = "computer"
 			c.Recovery.Quarantined = []string{"one"}
-			c.Snapshot = Snapshot{Active: map[string]int{"workspace": 1}}
+			c.Snapshot = Snapshot{Active: map[string]int{"computer": 1}}
 		}, want: AdmissionRuntimeSlotsQuarantined},
 	}
 	for _, tt := range tests {
@@ -97,7 +97,7 @@ func TestHardAdmissionFailsClosedWhenDatapathChanges(t *testing.T) {
 	}
 	observation := evaluator.Observation()
 	if observation.RunPausedReason != string(AdmissionDatapathUnverified) ||
-		observation.RuntimePausedReason != string(AdmissionDatapathUnverified) {
+		observation.VMPausedReason != string(AdmissionDatapathUnverified) {
 		t.Fatalf("datapath observation = %+v", observation)
 	}
 }
@@ -115,12 +115,12 @@ func TestHardAdmissionKeepsRuntimeSlotPressureInRuntimeDomain(t *testing.T) {
 	check.Consumer = "runtime"
 	evaluator.Evaluate(context.Background(), check)
 	observation := evaluator.Observation()
-	if observation.RunPausedReason != "" || observation.RuntimePausedReason == "" {
-		t.Fatalf("domain pauses = run:%q runtime:%q", observation.RunPausedReason, observation.RuntimePausedReason)
+	if observation.RunPausedReason != "" || observation.VMPausedReason == "" {
+		t.Fatalf("domain pauses = run:%q runtime:%q", observation.RunPausedReason, observation.VMPausedReason)
 	}
 }
 
-func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
+func TestHardAdmissionAllowsRunInsideActiveComputerSlot(t *testing.T) {
 	now := time.Now()
 	probe := &staticHealthProbe{health: healthyHost(now)}
 	evaluator, err := NewHardAdmission(HardAdmissionConfig{
@@ -132,10 +132,10 @@ func TestHardAdmissionAllowsRunInsideActiveWorkspaceSlot(t *testing.T) {
 	}
 	decision := evaluator.Evaluate(context.Background(), AdmissionCheck{
 		Consumer: "run", Status: StatusActive,
-		Snapshot: Snapshot{Active: map[string]int{"workspace": 1}},
+		Snapshot: Snapshot{Active: map[string]int{"computer": 1}},
 	})
 	if !decision.Allowed {
-		t.Fatalf("run inside mounted workspace rejected: %+v", decision)
+		t.Fatalf("run inside mounted computer rejected: %+v", decision)
 	}
 }
 

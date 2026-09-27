@@ -297,17 +297,7 @@ variable "worker_execution_slots" {
   }
 }
 
-variable "substrate_cache_max_mib" {
-  description = "Optional maximum substrate cache size in MiB. Set explicitly when the VM disk shape and host volume leave less room than the derived cache budget."
-  type        = number
-  default     = null
-  nullable    = true
 
-  validation {
-    condition     = var.substrate_cache_max_mib == null || var.substrate_cache_max_mib > 0
-    error_message = "substrate_cache_max_mib must be null or positive."
-  }
-}
 
 variable "artifact_cache_max_mib" {
   description = "Optional maximum artifact cache size in MiB. Set explicitly when the VM disk shape and host volume leave less room than the derived cache budget."

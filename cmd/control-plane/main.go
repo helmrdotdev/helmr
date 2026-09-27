@@ -23,19 +23,21 @@ import (
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/version"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -83,8 +85,8 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "worker-instance":
-			if err := runWorkerInstanceStatusCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
+		case "worker-host":
+			if err := runWorkerHostStatusCommand(context.Background(), os.Stdout, os.Args[2:]); err != nil {
 				log.Error("manage worker instance state", "error", err)
 				os.Exit(1)
 			}
@@ -173,9 +175,9 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
-	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
+	computerFencingKey, err := computer.NewFencingKey(cfg.ComputerFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure workspace fencing key: %w", err)
+		return fmt.Errorf("configure computer fencing key: %w", err)
 	}
 	tokenCredentialKey, err := auth.NewCredentialKey(cfg.TokenCredentialKey)
 	if err != nil {
@@ -223,7 +225,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
 		SecretProxy:           secretStore,
-		WorkspaceFencingKey:   workspaceFencingKey,
+		ComputerFencingKey:    computerFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		EventStream:           eventStream,
 		TelemetryReader:       telemetryReader,
@@ -253,6 +255,12 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
 		{name: "Run retry readiness", run: runRetryReady.Run},
 		{name: "artifact reclamation", run: artifactReclaimer.Run},
+		{name: "operation receipt retention", run: func(ctx context.Context) error {
+			return idempotency.CollectReceipts(ctx, queries, log)
+		}},
+		{name: "exec result retention", run: func(ctx context.Context) error {
+			return dispatch.CollectComputerCommandResults(ctx, queries, log)
+		}},
 		{name: "queued child Run expiry", run: queuedChildExpiry.Run},
 		{name: "magic link delivery", run: magicLinkDelivery.Run},
 	}

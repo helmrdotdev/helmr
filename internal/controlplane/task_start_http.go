@@ -38,9 +38,9 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
 		return
 	}
-	if err := api.ValidateWorkspaceIDTarget(request.Workspace); err != nil {
+	if err := api.ValidateComputerIDTarget(request.Computer); err != nil {
 		writeError(w, badRequest(codedError{
-			code: "invalid_workspace_reference", message: err.Error(),
+			code: "invalid_computer_reference", message: err.Error(),
 		}))
 		return
 	}
@@ -85,7 +85,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
 		return
 	}
-	workspaceID, err := ids.Parse(request.Workspace.ID)
+	computerID, err := ids.Parse(request.Computer.ID)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
 		return
@@ -93,7 +93,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 	result, err := s.startTask(r.Context(), taskStartRequest{
 		OrgID: principal.OrgID, ProjectID: projectUUID, EnvironmentID: environmentUUID,
 		TaskDeclaredID: taskDeclaredID, PayloadPresent: payloadPresent, Payload: request.Payload,
-		WorkspaceID: workspaceID, IdempotencyKey: idempotencyKey,
+		ComputerID: computerID, IdempotencyKey: idempotencyKey,
 		QueueName: request.Queue, ConcurrencyKey: request.ConcurrencyKey,
 		Priority: request.Priority, QueuedTTLMS: ttl, RetryPolicy: retry,
 		Metadata: request.Metadata, Tags: request.Tags,
@@ -122,7 +122,7 @@ func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error)
 		root,
 		"",
 		"idempotency_key",
-		"workspace",
+		"computer",
 		"queue",
 		"concurrency_key",
 		"priority",
@@ -146,15 +146,15 @@ func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error)
 			return api.StartTaskRequest{}, false, fmt.Errorf("%s must be a nonempty string", field)
 		}
 	}
-	workspace, ok := root["workspace"]
+	computer, ok := root["computer"]
 	if !ok {
-		return api.StartTaskRequest{}, false, errors.New("workspace is required")
+		return api.StartTaskRequest{}, false, errors.New("computer is required")
 	}
-	workspaceObject, err := decodeActorStartObject(workspace, "workspace")
+	computerObject, err := decodeActorStartObject(computer, "computer")
 	if err != nil {
 		return api.StartTaskRequest{}, false, err
 	}
-	if err := rejectActorStartNullFields(workspaceObject, "workspace.", "id", "key"); err != nil {
+	if err := rejectActorStartNullFields(computerObject, "computer.", "id", "key"); err != nil {
 		return api.StartTaskRequest{}, false, err
 	}
 	if err := rejectActorStartNullTagElements(root["tags"], "tags"); err != nil {
@@ -239,8 +239,16 @@ func taskStartPolicyFromAPI(request api.StartTaskRequest) (*int64, json.RawMessa
 }
 
 func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
+		return
+	}
 	var idempotencyConflict idempotency.ConflictError
+	var classified apiError
 	switch {
+	case errors.As(err, &classified):
+		writeError(w, classified)
 	case errors.As(err, &idempotencyConflict):
 		writeError(w, conflict(codedError{
 			code:    "idempotency_conflict",
@@ -248,11 +256,11 @@ func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {
 		}))
 	case errors.Is(err, errTaskNotDeployed):
 		writeError(w, notFound(codedError{code: "task_not_deployed", message: err.Error()}))
-	case errors.Is(err, errTaskWorkspaceNotFound):
-		writeError(w, notFound(codedError{code: "workspace_not_found", message: err.Error()}))
-	case errors.Is(err, errTaskWorkspaceUnavailable):
+	case errors.Is(err, errTaskComputerNotFound):
+		writeError(w, notFound(codedError{code: "computer_not_found", message: err.Error()}))
+	case errors.Is(err, errTaskComputerUnavailable):
 		writeError(w, conflict(codedError{
-			code: "workspace_unavailable", message: err.Error(), retryable: true,
+			code: "computer_unavailable", message: err.Error(), retryable: true,
 		}))
 	case errors.Is(err, errTaskSecretUnavailable):
 		writeError(w, conflict(codedError{code: "secret_unavailable", message: err.Error()}))

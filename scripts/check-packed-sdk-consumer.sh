@@ -50,7 +50,7 @@ import {
   type StandardSchemaV1,
   type TaskConfigWithPayload,
   type TokenCompleteRequest,
-  workspaces,
+  computers,
 } from "@helmr/sdk"
 
 const payloadSchema: StandardSchemaV1<string, string> = {
@@ -135,7 +135,7 @@ const client = new HelmrClient({
 })
 const run = await client.tasks.start<typeof fixture>("packed-consumer", {
   payload: "typed",
-  workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
+  computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
   idempotencyKey: "packed-consumer-start",
 })
 if (run.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31") {
@@ -154,7 +154,7 @@ if (request.init?.method !== "POST") {
 const body = JSON.parse(String(request.init?.body))
 if (
   body.payload !== "typed" ||
-  body.workspace?.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" ||
+  body.computer?.id !== "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" ||
   body.idempotency_key !== "packed-consumer-start"
 ) {
   throw new Error(`packed client serialized an unexpected body: ${JSON.stringify(body)}`)

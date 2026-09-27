@@ -1,14 +1,13 @@
-import { createClientWorkspaceRef, type WorkspaceTransport } from "./client-workspace"
+import { createClientComputerRef, type ClientComputerRef, type ComputerTransport } from "./client-computer"
 import type { CursorPage } from "./contract"
 import { resourceID } from "./internal/id"
 import type { RequestOptions } from "./request"
 import { validateTaskId } from "./schema/task"
 import {
-  encodeWorkspaceSecrets,
-  parseWorkspace,
-  type WorkspaceCreateRequest,
-  type WorkspaceRef,
-} from "./workspace"
+  encodeComputerSecrets,
+  parseComputer,
+  type ComputerCreateRequest,
+} from "./computer"
 import {
   definitionItemQuery,
   definitionListQuery,
@@ -38,14 +37,14 @@ export interface SandboxPage extends CursorPage<SandboxListItem> {
 export interface ClientSandboxesApi {
   retrieve(id: string, query?: SandboxRetrieveQuery, options?: RequestOptions): Promise<SandboxInfo>
   list(query?: SandboxListQuery, options?: RequestOptions): Promise<SandboxPage>
-  createWorkspace(
+  createComputer(
     id: string,
-    request?: WorkspaceCreateRequest,
+    request?: ComputerCreateRequest,
     options?: RequestOptions,
-  ): Promise<WorkspaceRef>
+  ): Promise<ClientComputerRef>
 }
 
-export function createClientSandboxes(transport: WorkspaceTransport): ClientSandboxesApi {
+export function createClientSandboxes(transport: ComputerTransport): ClientSandboxesApi {
   return Object.freeze({
     async retrieve(
       id: string,
@@ -81,16 +80,16 @@ export function createClientSandboxes(transport: WorkspaceTransport): ClientSand
         ...(nextCursor === undefined ? {} : { nextCursor }),
       })
     },
-    async createWorkspace(
+    async createComputer(
       id: string,
-      request: WorkspaceCreateRequest = {},
+      request: ComputerCreateRequest = {},
       options: RequestOptions = {},
-    ): Promise<WorkspaceRef> {
+    ): Promise<ClientComputerRef> {
       validateTaskId(id)
-      const secrets = encodeWorkspaceSecrets(request.secrets)
-      const workspace = parseWorkspace(await transport.request(
+      const secrets = encodeComputerSecrets(request.secrets)
+      const computer = parseComputer(await transport.request(
         "POST",
-        `/v1/sandboxes/${encodeURIComponent(id)}/workspaces`,
+        `/v1/sandboxes/${encodeURIComponent(id)}/computers`,
         {
           body: {
             ...(request.key === undefined ? {} : { key: request.key }),
@@ -100,7 +99,7 @@ export function createClientSandboxes(transport: WorkspaceTransport): ClientSand
           ...(options.signal === undefined ? {} : { signal: options.signal }),
         },
       ))
-      return createClientWorkspaceRef(workspace.id, transport)
+      return createClientComputerRef(computer.id, transport)
     },
   })
 }

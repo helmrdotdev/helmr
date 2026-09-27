@@ -251,10 +251,12 @@ SELECT *
    AND schedule_id = sqlc.arg(schedule_id)
  ORDER BY secret_id, placement_kind, placement_target;
 
--- name: CreateWorkspaceForScheduleFire :one
+-- name: CreateComputerForScheduleFire :one
 WITH selected_definition AS (
     SELECT schedules.environment_id,
            definition.id AS deployment_definition_id,
+           definition.computer_spec_id,
+           definition.deployment_id AS creation_deployment_id,
            definition.declared_id AS sandbox_declared_id,
            projects.default_region_id
       FROM schedules
@@ -271,52 +273,49 @@ WITH selected_definition AS (
        AND schedules.id = sqlc.arg(schedule_id)
        AND schedules.generation = sqlc.arg(expected_generation)
        AND schedules.status = 'active'
-), created_workspace AS (
+), created_computer AS (
     INSERT INTO computers (
         id,
         environment_id,
         region_id,
         sandbox_declared_id,
-        deployment_definition_id,
-        head_version_id,
+        head_disk_version_id,
         key
-    )
+    , computer_spec_id, creation_deployment_id)
     SELECT sqlc.arg(id),
            selected_definition.environment_id,
            selected_definition.default_region_id,
            selected_definition.sandbox_declared_id,
-           selected_definition.deployment_definition_id,
            sqlc.arg(initial_version_id),
-           NULL
+           NULL, selected_definition.computer_spec_id, selected_definition.creation_deployment_id
+
       FROM selected_definition
-    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
+    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.computer_spec_id, computers.creation_deployment_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 ), created_version AS (
-    INSERT INTO computer_versions (
+    INSERT INTO computer_disk_versions (
         id,
         environment_id,
         computer_id,
         status,
         root_pack_digest,
         logical_bytes,
-        ownership_generation,
         writer_generation,
         published_at
     )
     SELECT sqlc.arg(initial_version_id),
-           created_workspace.environment_id,
-           created_workspace.id,
+           created_computer.environment_id,
+           created_computer.id,
            'initializing',
            NULL,
            0,
            0,
-           0,
            NULL
-      FROM created_workspace
+      FROM created_computer
     RETURNING computer_id
 )
-SELECT created_workspace.*
-  FROM created_workspace
-  JOIN created_version ON created_version.computer_id = created_workspace.id;
+SELECT created_computer.*
+  FROM created_computer
+  JOIN created_version ON created_version.computer_id = created_computer.id;
 
 -- name: ClaimDueSchedules :many
 WITH candidates AS (

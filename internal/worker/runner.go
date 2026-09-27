@@ -14,8 +14,8 @@ import (
 
 type ControlPlaneClient interface {
 	DiscoverRunLeases(ctx context.Context) (workerapi.RunLeaseDiscoveryResponse, error)
-	ClaimWorkspaceMount(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.WorkspaceMountClaimResponse, error)
-	workerapi.WorkspaceMaterializerControlPlaneClient
+	ClaimComputerInstance(ctx context.Context) (workerapi.ComputerInstanceClaimResponse, error)
+	workerapi.ComputerMaterializerControlPlaneClient
 }
 
 type RunLeaseExecutor interface {
@@ -23,7 +23,7 @@ type RunLeaseExecutor interface {
 }
 
 type Materializer interface {
-	RunWorkspaceMount(ctx context.Context, mount workerapi.WorkspaceMount, client workerapi.WorkspaceMaterializerControlPlaneClient) error
+	RunComputerMount(ctx context.Context, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) error
 }
 
 type Runner struct {

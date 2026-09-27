@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/executor"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +12,9 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/executor"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -46,9 +47,9 @@ func (s *objectStatObserver) Stat(ctx context.Context, digest string) (cas.Objec
 func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	f, broker, fence := initialKeyFixture(t)
 	credentialID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_instance_credentials(id,worker_group_id,worker_instance_id,key_prefix,secret_hash,claim_version) VALUES($1,$2,$3,'object-test-prefix',$4,$5)`, credentialID, fence.WorkerGroupID, fence.WorkerID, []byte("test-hash"), fence.ClaimVersion)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_credentials(id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version) VALUES($1,$2,$3,'object-test-prefix',$4,$5)`, credentialID, fence.WorkerGroupID, fence.WorkerID, []byte("test-hash"), fence.ClaimVersion)
 	signingKey := bytes.Repeat([]byte{0x49}, 32)
-	claims := auth.WorkerClaims{WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerInstanceID: pgvalue.UUIDString(fence.WorkerID), CredentialID: credentialID.String(), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion, GroupClaimVersion: fence.GroupClaimVersion, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour)}
+	claims := auth.WorkerClaims{WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerHostID: pgvalue.UUIDString(fence.WorkerID), CredentialID: credentialID.String(), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion, GroupClaimVersion: fence.GroupClaimVersion, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour)}
 	token, err := auth.IssueWorkerToken(signingKey, claims)
 	if err != nil {
 		t.Fatal(err)
@@ -72,11 +73,11 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		router.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	client, err := workerclient.New(server.URL, workerclient.WithAuth(claims.WorkerInstanceID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
+	client, err := workerclient.New(server.URL, workerclient.WithAuth(claims.WorkerHostID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{RuntimeInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return workerapi.InitialComputerObjectRequest{RuntimeInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion, Inspection: blockformat.ObjectInspection{Pack: &evidence}}
+		return workerapi.InitialComputerObjectRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion, Inspection: blockformat.ObjectInspection{Pack: &evidence}}
 	}
 	upload := func(r workerapi.InitialComputerObjectRequest) {
 		t.Helper()
@@ -129,7 +130,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	}
 	payload, _ := json.Marshal(request)
 	for _, suffix := range []string{"register", "certify"} {
-		r := httptest.NewRequest("POST", "/worker/v1/run/runtime-instances/initialization/objects/"+suffix, bytes.NewReader(payload))
+		r := httptest.NewRequest("POST", "/worker/v1/run/computer-instances/initialization/objects/"+suffix, bytes.NewReader(payload))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, r)
 		if w.Code != 401 {
@@ -153,7 +154,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatalf("certification: %d %v", certified, err)
 	}
 	wrong := request
-	wrong.RuntimeInstanceID = uuid.NewV7().String()
+	wrong.ComputerInstanceID = uuid.NewV7().String()
 	before := observed.calls
 	if err = client.CertifyInitialComputerObject(t.Context(), wrong); err == nil || observed.calls != before {
 		t.Fatal("foreign Runtime probed storage")
@@ -176,7 +177,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer generation.Close()
-	publication, err := executor.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, request.RuntimeInstanceID, request.DesiredVersion)
+	publication, err := executor.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, request.ComputerInstanceID, request.DesiredVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +200,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	}
 	upload(next)
 	observed.after = func() {
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
 	}
 	if err = client.CertifyInitialComputerObject(t.Context(), next); err == nil {
 		t.Fatal("revoked Runtime certified after storage I/O")
@@ -217,14 +218,22 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal("live candidate collected")
 	}
 	var version int64
-	if err = f.Pool.QueryRow(t.Context(), `SELECT observed_version FROM runtime_instances WHERE id=$1`, f.runtime).Scan(&version); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT observed_version FROM computer_instances WHERE id=$1`, f.runtime).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = q.MarkRuntimeInstanceClosed(t.Context(), db.MarkRuntimeInstanceClosedParams{ID: f.runtime, WorkerInstanceID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch, DesiredVersion: fence.DesiredVersion + 1, ExpectedObservedVersion: version, ReasonCode: pgtype.Text{String: "test_cleanup", Valid: true}, CleanupProof: []byte(`{"method":"session_closed"}`)}); err != nil {
+	tx, err = f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err = dispatch.RecordComputerInstanceReclaim(t.Context(), tx, pgvalue.MustUUIDValue(fence.WorkerGroupID), db.ReclaimComputerInstanceParams{ID: f.runtime, WorkerHostID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch, DesiredVersion: fence.DesiredVersion + 1, ExpectedObservedVersion: version, Reason: pgtype.Text{String: "test_cleanup", Valid: true}, Evidence: []byte(`{"method":"session_closed"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	var expectedRetained int
-	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runtime_computer_object_pins WHERE runtime_instance_id=$1`, f.runtime).Scan(&expectedRetained); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_object_pins WHERE computer_instance_id=$1`, f.runtime).Scan(&expectedRetained); err != nil {
 		t.Fatal(err)
 	}
 	for range expectedRetained {

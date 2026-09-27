@@ -40,12 +40,12 @@ injection into an ordinary behavior case. External agent examples live in
 | `persistence` | `cases/persistence` | Checkpoint and same-host restore |
 | `actor` | `cases/actor` | Actor Turns and same-host checkpoint restore |
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
-| `runtime`, `workspace-exec` | `cases/runtime` | Runtime tools/files/logs; Workspace idempotency/exec |
+| `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
 | `actor-continuity`, `child-tasks` | `cases/child-tasks` | Child modes, Actor continuation and ordered/paginated durable output |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
-| `workspace-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/workspace-overwrite` | Filesystem overwrite and exact negative contracts |
+| `computer-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite and exact negative contracts |
 | `secret-injection`, `missing-secret` | `cases/secret-injection` | Disposable secret value binding or missing-secret admission failure |
 | `secrets`, `token-cancel`, `deployment` | None (already initialized scope) | Focused management API contracts |
 
@@ -73,7 +73,7 @@ Rerun preparation into a new directory after source/SDK changes.
 Host-observing `actor`, `persistence` and `network` cases run on the dedicated host
 and require `HELMR_RUNTIME_HOST_TOOL` to name its installed `dev/runtime/host.py`.
 Other cases use only the native API and can target an explicitly authorized endpoint.
-Cases requiring Secret management or Workspace exec need those exact API-key
+Cases requiring Secret management or Computer exec need those exact API-key
 permissions; do not broaden an existing key merely to run every case.
 
 The evidence directory must be new and its parent must exist. Most focused cases

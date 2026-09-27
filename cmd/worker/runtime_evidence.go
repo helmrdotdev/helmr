@@ -6,7 +6,7 @@ import (
 	"math"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -14,16 +14,16 @@ func workerRuntimeProfile(
 	architecture string,
 	artifacts firecracker.RuntimeCapabilities,
 	evidence firecracker.HostRuntimeEvidence,
-) (runtimeid.Profile, []runtimeid.CPUShape, workerapi.CPUEnvironment, error) {
-	if artifacts.Arch != architecture || artifacts.Contract != runtimeid.Contract {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("runtime artifacts do not match the supported runtime contract")
+) (vmplatform.Profile, []vmplatform.CPUShape, workerapi.CPUEnvironment, error) {
+	if artifacts.Arch != architecture || artifacts.Contract != vmplatform.Contract {
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("runtime artifacts do not match the supported runtime contract")
 	}
 	if artifacts.KernelDigest != evidence.KernelDigest ||
 		artifacts.InitramfsDigest != evidence.InitramfsDigest ||
 		artifacts.RootfsDigest != evidence.RootfsDigest {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("measured runtime evidence does not match the loaded guest artifacts")
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("measured runtime evidence does not match the loaded guest artifacts")
 	}
-	profile := runtimeid.Profile{
+	profile := vmplatform.Profile{
 		Arch:                      architecture,
 		Contract:                  artifacts.Contract,
 		VMRuntimeDescriptorDigest: evidence.VMRuntimeDescriptorDigest,
@@ -31,8 +31,8 @@ func workerRuntimeProfile(
 		FirecrackerVersion:        evidence.FirecrackerVersion,
 		SnapshotFormatVersion:     evidence.SnapshotFormatVersion,
 		HostKernelRelease:         evidence.HostKernelRelease,
-		CPUTemplate: runtimeid.CPUTemplateSelector{
-			Kind:   runtimeid.CPUTemplateKind(evidence.CPUTemplateSelector.Kind),
+		CPUTemplate: vmplatform.CPUTemplateSelector{
+			Kind:   vmplatform.CPUTemplateKind(evidence.CPUTemplateSelector.Kind),
 			Digest: evidence.CPUTemplateSelector.Digest,
 		},
 		KernelDigest:    evidence.KernelDigest,
@@ -42,20 +42,20 @@ func workerRuntimeProfile(
 	var err error
 	profile.ID, err = profile.ExpectedID()
 	if err != nil {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, err
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, err
 	}
 	if evidence.RuntimeID != profile.ID || evidence.RuntimeArch != profile.Arch || evidence.VMRuntimeContract != profile.Contract {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("measured runtime identity does not match the connector-bound runtime identity")
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("measured runtime identity does not match the connector-bound runtime identity")
 	}
 	if err := profile.Validate(); err != nil {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, err
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, err
 	}
-	shapes := make([]runtimeid.CPUShape, len(evidence.CPUShapes))
+	shapes := make([]vmplatform.CPUShape, len(evidence.CPUShapes))
 	for index, shape := range evidence.CPUShapes {
 		if shape.VCPUCount <= 0 || shape.VCPUCount > math.MaxInt32 {
-			return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, fmt.Errorf("measured CPU shape %d has unsupported vCPU count %d", index, shape.VCPUCount)
+			return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, fmt.Errorf("measured CPU shape %d has unsupported vCPU count %d", index, shape.VCPUCount)
 		}
-		shapes[index] = runtimeid.CPUShape{
+		shapes[index] = vmplatform.CPUShape{
 			VCPUCount: int32(shape.VCPUCount), CPUConfigDigest: shape.CPUConfigDigest,
 		}
 	}
@@ -68,10 +68,10 @@ func workerRuntimeProfile(
 	}
 	environment.Digest, err = environment.ExpectedDigest()
 	if err != nil {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, err
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, err
 	}
 	if environment.FirecrackerVersion != profile.FirecrackerVersion || environment.HostKernelRelease != profile.HostKernelRelease {
-		return runtimeid.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("CPU environment does not match the measured runtime profile")
+		return vmplatform.Profile{}, nil, workerapi.CPUEnvironment{}, errors.New("CPU environment does not match the measured runtime profile")
 	}
 	return profile, shapes, environment, nil
 }

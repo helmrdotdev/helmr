@@ -4,7 +4,7 @@ import {
   MessageRejected,
   actor,
   sessions,
-  workspaces,
+  computers,
 } from "./index"
 import {
   installRuntimeOperations,
@@ -31,7 +31,7 @@ const turnState = {
   interrupt_requested: false,
   accepts_messages: false,
   terminal_event_id: operationId,
-  workspace_version_id: holdId,
+  computer_disk_version_id: holdId,
 }
 function transport(responses: unknown[]) {
   const requests: Array<{ url: string; init?: RequestInit }> = []
@@ -57,14 +57,14 @@ describe("Session lifecycle client", () => {
       { id: operationId, kind: "enqueued", turn_id: turnId },
     ])
     const { session, run } = await client.actors.start("operator", {
-      workspace: workspaces.ref(holdId),
+      computer: computers.ref(holdId),
       key: "thread:1",
       idempotencyKey: "start-1",
       run: { retry: { maxAttempts: 2 } },
     })
     expect(run.id).toBe(runId)
     expect(JSON.parse(String(requests[0]?.init?.body))).toEqual({
-      workspace: { id: holdId },
+      computer: { id: holdId },
       key: "thread:1",
       idempotency_key: "start-1",
       run: { retry: { max_attempts: 2 } },
@@ -184,7 +184,7 @@ describe("Session lifecycle client", () => {
     expect(await ref.retrieve()).toMatchObject({
       result: null,
       terminalEventId: operationId,
-      workspaceVersionId: holdId,
+      computerDiskVersionId: holdId,
     })
     expect(() => parseTurnState({ ...turnState, result: undefined })).toThrow()
   })
@@ -194,7 +194,7 @@ describe("Session lifecycle client", () => {
         id: sessionId,
         actor_id: "operator",
         deployment_id: holdId,
-        workspace_id: holdId,
+        computer_id: holdId,
         status: "closing",
         created_at: createdAt,
         updated_at: createdAt,
@@ -294,7 +294,7 @@ test("runtime Session refs dispatch receipts and preserve caller abort scope", a
   const uninstall = installRuntimeOperations(operations as RuntimeOperations)
   try {
     const { session } = await actor({ id: "operator", run() {} }).start({
-      workspace: workspaces.ref(holdId),
+      computer: computers.ref(holdId),
     })
     const signal = new AbortController().signal
     const admission = await session.send(

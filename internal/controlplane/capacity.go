@@ -30,11 +30,11 @@ const (
 )
 
 var capacityInstanceStatuses = map[string]struct{}{
-	string(db.WorkerInstanceStatusRegistering):      {},
-	string(db.WorkerInstanceStatusActive):           {},
-	string(db.WorkerInstanceStatusDraining):         {},
-	string(db.WorkerInstanceStatusTerminationReady): {},
-	string(db.WorkerInstanceStatusLost):             {},
+	string(db.WorkerHostStatusRegistering):      {},
+	string(db.WorkerHostStatusActive):           {},
+	string(db.WorkerHostStatusDraining):         {},
+	string(db.WorkerHostStatusTerminationReady): {},
+	string(db.WorkerHostStatusLost):             {},
 }
 
 func hashCapacityToken(raw string) ([]byte, error) {
@@ -58,11 +58,11 @@ func (s *Server) mountCapacityRoutes(r chi.Router) {
 				Put("/worker-groups/{workerGroupID}/primary-pools", s.capacityReconcileWorkerGroupPrimaryPools)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
 				Post("/worker-groups/{workerGroupID}/plan", s.capacityPlan)
-			r.Get("/worker-instances", s.capacityListWorkerInstances)
-			r.Get("/worker-instances/{workerInstanceID}", s.capacityGetWorkerInstance)
-			r.Post("/worker-instances/{workerInstanceID}/lost", s.capacityConfirmWorkerInstanceProviderAbsent)
+			r.Get("/worker-hosts", s.capacityListWorkerHosts)
+			r.Get("/worker-hosts/{workerHostID}", s.capacityGetWorkerHost)
+			r.Post("/worker-hosts/{workerHostID}/lost", s.capacityConfirmWorkerHostProviderAbsent)
 			r.With(limitRequestBody(capacityRequestBodyLimit)).
-				Post("/worker-instances/{workerInstanceID}/drain", s.capacityDrainWorkerInstance)
+				Post("/worker-hosts/{workerHostID}/drain", s.capacityDrainWorkerHost)
 		})
 	})
 }
@@ -237,23 +237,23 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) capacityListWorkerInstances(w http.ResponseWriter, r *http.Request) {
-	params, err := capacityWorkerInstanceListParams(r)
+func (s *Server) capacityListWorkerHosts(w http.ResponseWriter, r *http.Request) {
+	params, err := capacityWorkerHostListParams(r)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	rows, err := s.db.ListCapacityWorkerInstances(r.Context(), params)
+	rows, err := s.db.ListCapacityWorkerHosts(r.Context(), params)
 	if err != nil {
 		s.log.Error("list capacity Worker instances", "error", err)
 		writeError(w, errors.New("list capacity worker instances"))
 		return
 	}
-	response := capacity.ListWorkerInstancesResponse{
-		WorkerInstances: make([]capacity.WorkerInstance, 0, len(rows)),
+	response := capacity.ListWorkerHostsResponse{
+		WorkerHosts: make([]capacity.WorkerHost, 0, len(rows)),
 	}
 	for _, row := range rows {
-		projected, err := projectWorkerInstance(
+		projected, err := projectWorkerHost(
 			row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.Status, row.ClaimVersion,
 			row.CurrentEpoch, row.DrainingAt,
 			row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
@@ -263,47 +263,47 @@ func (s *Server) capacityListWorkerInstances(w http.ResponseWriter, r *http.Requ
 			writeError(w, errors.New("project capacity worker instance"))
 			return
 		}
-		response.WorkerInstances = append(response.WorkerInstances, projected)
+		response.WorkerHosts = append(response.WorkerHosts, projected)
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) capacityGetWorkerInstance(w http.ResponseWriter, r *http.Request) {
-	id, err := capacityWorkerInstanceID(r)
+func (s *Server) capacityGetWorkerHost(w http.ResponseWriter, r *http.Request) {
+	id, err := capacityWorkerHostID(r)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	row, err := s.db.GetCapacityWorkerInstance(r.Context(), pgvalue.UUID(id))
+	row, err := s.db.GetCapacityWorkerHost(r.Context(), pgvalue.UUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker instance was not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("get capacity Worker instance", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("get capacity Worker instance", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("get capacity worker instance"))
 		return
 	}
-	response, err := projectWorkerInstance(
+	response, err := projectWorkerHost(
 		row.ID, row.ResourceID, row.WorkerGroupID, row.WorkerPoolID, row.Status, row.ClaimVersion,
 		row.CurrentEpoch, row.DrainingAt,
 		row.TerminationReadyAt, row.LostAt, row.CreatedAt, row.UpdatedAt,
 	)
 	if err != nil {
-		s.log.Error("project capacity Worker instance", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("project capacity Worker instance", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("project capacity worker instance"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Request) {
-	id, err := capacityWorkerInstanceID(r)
+func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request) {
+	id, err := capacityWorkerHostID(r)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	var request capacity.DrainWorkerInstanceRequest
+	var request capacity.DrainWorkerHostRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker drain JSON: %w", err)))
 		return
@@ -312,20 +312,20 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(errors.New("expected_epoch and expected_claim_version must be positive")))
 		return
 	}
-	instance, err := s.db.GetCapacityWorkerInstance(r.Context(), pgvalue.UUID(id))
+	instance, err := s.db.GetCapacityWorkerHost(r.Context(), pgvalue.UUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker instance was not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("get Worker instance for capacity drain", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("get Worker instance for capacity drain", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("get worker instance for drain"))
 		return
 	}
-	if request.RequireZeroQueuedDemand && instance.Status == string(db.WorkerInstanceStatusActive) {
+	if request.RequireZeroQueuedDemand && instance.Status == string(db.WorkerHostStatusActive) {
 		present, err := capacity.HasQueuedDemand(r.Context(), s.db, pgvalue.MustUUIDValue(instance.WorkerGroupID))
 		if err != nil {
-			s.log.Error("check queued demand for capacity drain", "worker_instance_id", id.String(), "error", err)
+			s.log.Error("check queued demand for capacity drain", "worker_host_id", id.String(), "error", err)
 			writeError(w, errors.New("check queued demand for worker drain"))
 			return
 		}
@@ -336,7 +336,7 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	draining, err := s.db.DrainWorkerInstance(r.Context(), db.DrainWorkerInstanceParams{
+	draining, err := s.db.DrainWorkerHost(r.Context(), db.DrainWorkerHostParams{
 		ID:                   pgvalue.UUID(id),
 		WorkerGroupID:        instance.WorkerGroupID,
 		ExpectedEpoch:        pgtype.Int8{Int64: request.ExpectedEpoch, Valid: true},
@@ -347,26 +347,26 @@ func (s *Server) capacityDrainWorkerInstance(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err != nil {
-		s.log.Error("capacity drain Worker instance", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("capacity drain Worker instance", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("drain worker instance"))
 		return
 	}
-	response, err := projectWorkerInstance(
+	response, err := projectWorkerHost(
 		draining.ID, draining.ResourceID, draining.WorkerGroupID, draining.WorkerPoolID,
 		string(draining.Status), draining.ClaimVersion,
 		draining.CurrentEpoch, draining.DrainingAt,
 		draining.TerminationReadyAt, draining.LostAt, draining.CreatedAt, draining.UpdatedAt,
 	)
 	if err != nil {
-		s.log.Error("project drained capacity Worker instance", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("project drained capacity Worker instance", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("project drained capacity worker instance"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) capacityConfirmWorkerInstanceProviderAbsent(w http.ResponseWriter, r *http.Request) {
-	id, err := capacityWorkerInstanceID(r)
+func (s *Server) capacityConfirmWorkerHostProviderAbsent(w http.ResponseWriter, r *http.Request) {
+	id, err := capacityWorkerHostID(r)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -375,24 +375,24 @@ func (s *Server) capacityConfirmWorkerInstanceProviderAbsent(w http.ResponseWrit
 		writeError(w, badRequest(errors.New("provider absence request must not contain a body")))
 		return
 	}
-	instance, err := s.db.GetCapacityWorkerInstance(r.Context(), pgvalue.UUID(id))
+	instance, err := s.db.GetCapacityWorkerHost(r.Context(), pgvalue.UUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker instance was not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("get Worker instance for provider absence", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("get Worker instance for provider absence", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("get worker instance for provider absence"))
 		return
 	}
-	var confirmed db.ConfirmWorkerInstanceProviderAbsentRow
+	var confirmed db.ConfirmWorkerHostProviderAbsentRow
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		var txErr error
-		confirmed, txErr = work.q.ConfirmWorkerInstanceProviderAbsent(r.Context(), pgvalue.UUID(id))
+		confirmed, txErr = work.q.ConfirmWorkerHostProviderAbsent(r.Context(), pgvalue.UUID(id))
 		if txErr != nil {
 			return txErr
 		}
-		_, txErr = work.q.ReconcileProviderAbsentWorkerRuntimes(r.Context(), pgvalue.UUID(id))
+		_, txErr = work.q.ReconcileProviderAbsentWorkerInstances(r.Context(), pgvalue.UUID(id))
 		return txErr
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -400,38 +400,38 @@ func (s *Server) capacityConfirmWorkerInstanceProviderAbsent(w http.ResponseWrit
 		return
 	}
 	if err != nil {
-		s.log.Error("confirm Worker provider absence", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("confirm Worker provider absence", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("confirm worker provider absence"))
 		return
 	}
 	if confirmed.WorkerGroupID != instance.WorkerGroupID || confirmed.WorkerPoolID != instance.WorkerPoolID || confirmed.ResourceID != instance.ResourceID {
-		s.log.Error("provider absence changed Worker identity", "worker_instance_id", id.String())
+		s.log.Error("provider absence changed Worker identity", "worker_host_id", id.String())
 		writeError(w, errors.New("confirm worker provider absence"))
 		return
 	}
-	response, err := projectWorkerInstance(
+	response, err := projectWorkerHost(
 		confirmed.ID, confirmed.ResourceID, confirmed.WorkerGroupID, confirmed.WorkerPoolID,
 		confirmed.Status, confirmed.ClaimVersion, confirmed.CurrentEpoch, confirmed.DrainingAt,
 		confirmed.TerminationReadyAt, confirmed.LostAt, confirmed.CreatedAt, confirmed.UpdatedAt,
 	)
 	if err != nil {
-		s.log.Error("project provider-absent Worker instance", "worker_instance_id", id.String(), "error", err)
+		s.log.Error("project provider-absent Worker instance", "worker_host_id", id.String(), "error", err)
 		writeError(w, errors.New("project provider-absent worker instance"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func capacityWorkerInstanceID(r *http.Request) (uuid.UUID, error) {
-	id, err := ids.Parse(chi.URLParam(r, "workerInstanceID"))
+func capacityWorkerHostID(r *http.Request) (uuid.UUID, error) {
+	id, err := ids.Parse(chi.URLParam(r, "workerHostID"))
 	if err != nil {
-		return uuid.Nil(), errors.New("worker_instance_id must be a canonical UUIDv7")
+		return uuid.Nil(), errors.New("worker_host_id must be a canonical UUIDv7")
 	}
 	return id, nil
 }
 
-func capacityWorkerInstanceListParams(r *http.Request) (db.ListCapacityWorkerInstancesParams, error) {
-	params := db.ListCapacityWorkerInstancesParams{
+func capacityWorkerHostListParams(r *http.Request) (db.ListCapacityWorkerHostsParams, error) {
+	params := db.ListCapacityWorkerHostsParams{
 		ResourceIds:           []string{},
 		Statuses:              []string{},
 		HasUnreclaimedRuntime: false,
@@ -523,7 +523,7 @@ func workerPoolPublicStatus(state string) (capacity.WorkerPoolStatus, error) {
 	}
 }
 
-func projectWorkerInstance(
+func projectWorkerHost(
 	id pgtype.UUID,
 	resourceID string,
 	workerGroupID pgtype.UUID,
@@ -536,12 +536,12 @@ func projectWorkerInstance(
 	lostAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
-) (capacity.WorkerInstance, error) {
-	publicStatus, err := workerInstancePublicStatus(status)
+) (capacity.WorkerHost, error) {
+	publicStatus, err := workerHostPublicStatus(status)
 	if err != nil {
-		return capacity.WorkerInstance{}, err
+		return capacity.WorkerHost{}, err
 	}
-	result := capacity.WorkerInstance{
+	result := capacity.WorkerHost{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
 		WorkerGroupID: pgvalue.UUIDString(workerGroupID), WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
 		Status: publicStatus, ClaimVersion: claimVersion,
@@ -562,18 +562,18 @@ func projectWorkerInstance(
 	return result, nil
 }
 
-func workerInstancePublicStatus(state string) (capacity.WorkerInstanceStatus, error) {
+func workerHostPublicStatus(state string) (capacity.WorkerHostStatus, error) {
 	switch state {
-	case db.WorkerInstanceStatusRegistering:
-		return capacity.WorkerInstanceStatusRegistering, nil
-	case db.WorkerInstanceStatusActive:
-		return capacity.WorkerInstanceStatusActive, nil
-	case db.WorkerInstanceStatusDraining:
-		return capacity.WorkerInstanceStatusDraining, nil
-	case db.WorkerInstanceStatusTerminationReady:
-		return capacity.WorkerInstanceStatusTerminationReady, nil
-	case db.WorkerInstanceStatusLost:
-		return capacity.WorkerInstanceStatusLost, nil
+	case db.WorkerHostStatusRegistering:
+		return capacity.WorkerHostStatusRegistering, nil
+	case db.WorkerHostStatusActive:
+		return capacity.WorkerHostStatusActive, nil
+	case db.WorkerHostStatusDraining:
+		return capacity.WorkerHostStatusDraining, nil
+	case db.WorkerHostStatusTerminationReady:
+		return capacity.WorkerHostStatusTerminationReady, nil
+	case db.WorkerHostStatusLost:
+		return capacity.WorkerHostStatusLost, nil
 	default:
 		return "", fmt.Errorf("worker instance state %q has no public projection", state)
 	}

@@ -70,19 +70,6 @@ func TestAESGCMEnvelopeAuthenticatesSecretIdentity(t *testing.T) {
 	}
 }
 
-func TestSecretNameContract(t *testing.T) {
-	for _, name := range []string{"API_TOKEN", "config-json", "a.b", "0abc"} {
-		if err := ValidateName(name); err != nil {
-			t.Fatalf("ValidateName(%q) = %v", name, err)
-		}
-	}
-	for _, name := range []string{"", "-bad", "bad/name", "bad name"} {
-		if err := ValidateName(name); err == nil {
-			t.Fatalf("ValidateName(%q) succeeded", name)
-		}
-	}
-}
-
 type cipherDatabase struct {
 	db.Querier
 }

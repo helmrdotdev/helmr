@@ -1,6 +1,6 @@
 ---
 title: Run your first task
-description: Create, deploy, and run a small Helmr task from a durable workspace.
+description: Create, deploy, and run a small Helmr task from a durable computer.
 sidebarLabel: First task
 ---
 
@@ -39,7 +39,7 @@ import { z } from "zod"
 
 const runtime = image("hello")
   .from("debian:bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/computer")
 
 export const helloSandbox = sandbox({ id: "hello" })
   .image(runtime)
@@ -60,7 +60,7 @@ export const hello = task({
 Payload schemas use the Standard Schema v1 contract; Zod 4 is supported. Keep
 credentials out of payloads because payload is stored as Run data.
 
-## Deploy and create a workspace
+## Deploy and create a computer
 
 Log in, then deploy into an existing project and environment:
 
@@ -70,14 +70,14 @@ helmr deploy . --project demo --env development
 ```
 
 The CLI builds an immutable bundle containing the task and Sandbox declarations,
-then promotes the verified Deployment by default. Create a durable Workspace from the promoted
+then promotes the verified Deployment by default. Create a durable Computer from the promoted
 Sandbox:
 
 ```sh
-WORKSPACE_ID="$(helmr workspace create hello \
+COMPUTER_ID="$(helmr computer create hello \
   --project demo --env development \
   --key tutorial:first-task \
-  --idempotency-key tutorial:first-task:workspace)"
+  --idempotency-key tutorial:first-task:computer)"
 ```
 
 The key is an optional stable lookup value. The idempotency key makes a retried
@@ -88,24 +88,24 @@ create request safe.
 ```sh
 helmr task start hello \
   --project demo --env development \
-  --workspace "$WORKSPACE_ID" \
+  --computer "$COMPUTER_ID" \
   --payload-json '{"name":"Ada"}' \
   --idempotency-key tutorial:first-task:run \
   --wait
 ```
 
 The start returns a Run ID. `--wait` also waits for the terminal result. The
-Workspace remains after the Run. You can use Workspace exec to print the file
+Computer remains after the Run. You can use Computer exec to print the file
 the Task committed:
 
 ```sh
-helmr workspace exec \
-  --project demo --env development --id "$WORKSPACE_ID" \
+helmr computer exec \
+  --project demo --env development --id "$COMPUTER_ID" \
   --idempotency-key tutorial:read-greeting -- cat greeting.txt
 ```
 
-This requires `workspace-exec:create`. Exec runs a command and may mutate the
-Workspace; it is not a read-only file inspection API.
+This requires `computer-exec:create`. Exec runs a command and may mutate the
+Computer; it is not a read-only file inspection API.
 
 Next, see [Inspect a run](/docs/guides/how-to/inspect-a-run) for logs and
 events, or [Durable agent](/docs/guides/tutorials/durable-agent) for continuing

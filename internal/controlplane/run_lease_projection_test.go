@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"testing"
 	"time"
 	"uuid"
@@ -10,7 +9,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -31,253 +29,18 @@ func TestProjectSecretDeliveriesUsesCanonicalPlacementOrder(t *testing.T) {
 	}
 }
 
-func TestProjectRunLeaseExecutionProjectsFreshOnly(t *testing.T) {
-	run, attempt, definition := validTaskProgramStart(t, "none")
-	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode: runLeaseClaimFresh, run: run, attempt: attempt,
-		definition: definition, deploymentVersion: "v42",
-	})
-	if err != nil {
-		t.Fatalf("project fresh execution: %v", err)
-	}
-	if execution.Fresh == nil || execution.Restore != nil {
-		t.Fatalf("unexpected fresh execution union: %#v", execution)
-	}
-}
-
-func checkpointRestoreProjection(t *testing.T) runLeaseExecutionProjection {
-	t.Helper()
-	run, attempt, definition := validTaskProgramStart(t, "none")
-	attempt.EntrypointEnteredAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	waitID := pgvalue.UUID(uuid.New())
-	checkpointID := pgvalue.UUID(uuid.New())
-	attachID := pgvalue.UUID(uuid.New())
-	wait := db.RunWait{
-		ID: waitID, ConditionStatus: db.WaitStatusCompleted,
-		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		ResumeAttachID:      attachID, ResumeRequestVersion: 2,
-	}
-	checkpoint := db.RunCheckpoint{
-		ID: checkpointID, RunID: run.ID, AttemptNumber: attempt.Number,
-		Status: db.RunCheckpointStatusReady, RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()),
-		VMStateArtifactID: pgvalue.UUID(uuid.New()), MemoryArtifactID: pgvalue.UUID(uuid.New()),
-		ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-		Manifest:              testCheckpointManifest(t, checkpointID, run.ID, attempt.Number, waitID),
-	}
-	artifacts := validCheckpointArtifactAuthority()
-	return runLeaseExecutionProjection{
-		mode: runLeaseClaimRestore, run: run, attempt: attempt, definition: definition,
-		runtime: db.RuntimeInstance{RestoreCheckpointID: checkpointID},
-		runWait: wait, checkpoint: checkpoint, checkpointArtifacts: artifacts,
-	}
-}
-
-func TestProjectRunLeaseExecutionProjectsCheckpointRestoreOnly(t *testing.T) {
-	authority := checkpointRestoreProjection(t)
-	execution, err := projectRunLeaseExecution(authority)
-	if err != nil {
-		t.Fatalf("project restore: %v", err)
-	}
-	if execution.Restore == nil || execution.Fresh != nil ||
-		execution.Restore.ResumeAttachID != pgvalue.UUIDString(authority.runWait.ResumeAttachID) ||
-		execution.Restore.CheckpointID != pgvalue.UUIDString(authority.checkpoint.ID) ||
-		execution.Restore.TurnID != nil || execution.Restore.SessionID != "" ||
-		len(execution.Restore.Artifacts) != 4 {
-		t.Fatalf("unexpected restore execution: %#v", execution)
-	}
-}
-
-func TestProjectActorRestorePreservesFrozenTurnScope(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		kind       db.WaitKind
-		activeTurn bool
-		failed     bool
-		wantTurn   bool
-	}{
-		{name: "receive admitted next Turn", kind: db.WaitKindActorInput, activeTurn: true},
-		{name: "receive closed", kind: db.WaitKindActorInput},
-		{name: "receive timeout", kind: db.WaitKindActorInput, failed: true},
-		{name: "Token in Turn", kind: db.WaitKindToken, activeTurn: true, wantTurn: true},
-		{name: "timer in Turn", kind: db.WaitKindTimer, activeTurn: true, wantTurn: true},
-		{name: "child in Turn", kind: db.WaitKindChild, activeTurn: true, wantTurn: true},
-		{name: "Token outside Turn", kind: db.WaitKindToken},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			a := checkpointRestoreProjection(t)
-			a.run.EntrypointKind = "actor"
-			a.run.SessionID = pgvalue.UUID(uuid.NewV7())
-			a.actor = &db.Session{ID: a.run.SessionID, CurrentRunID: a.run.ID, RunGeneration: 2}
-			a.runWait.Kind = test.kind
-			a.runWait.ConditionResult = []byte(`null`)
-			if test.activeTurn {
-				a.actor.ActiveTurnID = pgvalue.UUID(uuid.NewV7())
-				a.runWait.TurnID = a.actor.ActiveTurnID
-				a.runWait.ConditionResult = []byte(`{"turn":{"id":"` + pgvalue.UUIDString(a.actor.ActiveTurnID) + `"},"run_generation":2,"value":{}}`)
-			}
-			if test.failed {
-				a.runWait.ConditionStatus = db.WaitStatusFailed
-				a.runWait.ConditionResult = nil
-				a.runWait.ConditionReasonCode = pgvalue.Text("timeout")
-			}
-			execution, err := projectRunLeaseExecution(a)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r := execution.Restore
-			if r == nil || r.SessionID != pgvalue.UUIDString(a.actor.ID) || r.RunGeneration != 2 {
-				t.Fatalf("Actor execution scope changed: %+v", r)
-			}
-			if test.wantTurn {
-				if r.TurnID == nil || *r.TurnID != pgvalue.UUIDString(a.actor.ActiveTurnID) {
-					t.Fatalf("lost frozen Turn: %+v", r.TurnID)
-				}
-			} else if r.TurnID != nil {
-				t.Fatalf("outside-Turn checkpoint acquired attachment Turn %s", *r.TurnID)
-			}
-			if test.failed {
-				if r.Decision.Failed == nil || r.Decision.Failed.ReasonCode != "timeout" {
-					t.Fatalf("failed receive decision changed: %+v", r.Decision)
-				}
-			} else if r.Decision.Completed == nil || string(r.Decision.Completed.ResultJSON) != string(a.runWait.ConditionResult) {
-				t.Fatalf("destination decision changed: %+v", r.Decision)
-			}
-		})
-	}
-}
-
-func testCheckpointManifest(
-	t *testing.T,
-	checkpointID pgtype.UUID,
-	runID pgtype.UUID,
-	attemptNumber int32,
-	waitID pgtype.UUID,
-) []byte {
-	t.Helper()
-	manifest, err := json.Marshal(workerapi.CheckpointManifest{
-		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
-			ID:            pgvalue.UUIDString(checkpointID),
-			RunID:         pgvalue.UUIDString(runID),
-			AttemptNumber: attemptNumber,
-			RunWaitID:     pgvalue.UUIDString(waitID),
-			CorrelationID: "correlation-1",
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return manifest
-}
-
-func TestProjectFreshRunLeaseIgnoresHistoricalRestoreProvenance(t *testing.T) {
-	run, attempt, definition := validTaskProgramStart(t, "none")
-	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode: runLeaseClaimFresh, run: run, attempt: attempt, definition: definition,
-		deploymentVersion: "v42",
-		runtime:           db.RuntimeInstance{RestoreCheckpointID: pgvalue.UUID(uuid.New())},
-	})
-	if err != nil {
-		t.Fatalf("project fresh execution: %v", err)
-	}
-	if execution.Fresh == nil || execution.Restore != nil {
-		t.Fatalf("unexpected fresh execution union: %#v", execution)
-	}
-}
-
-func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
-	terminalAt := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	absent, err := projectRunWaitDecision(db.RunWait{
-		ConditionStatus: db.WaitStatusCompleted, ConditionTerminalAt: terminalAt,
-	})
-	if err != nil {
-		t.Fatalf("project absent result: %v", err)
-	}
-	if absent.Completed == nil ||
-		absent.Completed.NoResult == nil ||
-		absent.Completed.ResultJSON != nil {
-		t.Fatalf("unexpected absent result projection: %#v", absent)
-	}
-
-	present, err := projectRunWaitDecision(db.RunWait{
-		ConditionStatus:     db.WaitStatusCompleted,
-		ConditionResult:     []byte("null"),
-		ConditionTerminalAt: terminalAt,
-	})
-	if err != nil {
-		t.Fatalf("project JSON null: %v", err)
-	}
-	if present.Completed == nil ||
-		present.Completed.NoResult != nil ||
-		present.Completed.ResultJSON == nil ||
-		string(present.Completed.ResultJSON) != "null" {
-		t.Fatalf("unexpected JSON null projection: %#v", present)
-	}
-
-	payload, err := json.Marshal(present)
-	if err != nil {
-		t.Fatalf("marshal decision: %v", err)
-	}
-	if string(payload) != `{"completed":{"result_json":null}}` {
-		t.Fatalf("decision JSON = %s", payload)
-	}
-	var roundTrip workerapi.RunLeaseDecision
-	if err := json.Unmarshal(payload, &roundTrip); err != nil {
-		t.Fatalf("unmarshal decision: %v", err)
-	}
-	if roundTrip.Completed == nil ||
-		roundTrip.Completed.NoResult != nil ||
-		string(roundTrip.Completed.ResultJSON) != "null" {
-		t.Fatalf("JSON null presence was lost: %#v", roundTrip)
-	}
-}
-
-func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.T) {
-	checkpoint := db.RunCheckpoint{
-		ID: pgvalue.UUID(uuid.New()), Status: db.RunCheckpointStatusReady,
-		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
-		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-		Manifest: []byte(`{"version":0}`),
-	}
-	artifacts := validCheckpointArtifactAuthority()
-	projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
-	if err != nil {
-		t.Fatalf("projectRunLeaseCheckpoint: %v", err)
-	}
-	if len(projected.Artifacts) != 4 ||
-		projected.Artifacts[0].Role != "runtime_config" ||
-		projected.Artifacts[1].Role != "vm_state" ||
-		projected.Artifacts[2].Role != "memory" || projected.Artifacts[3].Role != "scratch_disk" {
-		t.Fatalf("unexpected checkpoint Artifacts: %#v", projected.Artifacts)
-	}
-
-	artifacts.memory.digest = "invalid"
-	if _, err := projectRunLeaseCheckpoint(checkpoint, artifacts); err == nil {
-		t.Fatal("invalid checkpoint Artifact descriptor was accepted")
-	}
-}
-
-func validCheckpointArtifactAuthority() checkpointArtifactAuthority {
-	return checkpointArtifactAuthority{
-		runtimeConfig: checkpointArtifactDescriptor{digest: validDigest('a'), sizeBytes: 8, mediaType: "application/example"},
-		vmState:       checkpointArtifactDescriptor{digest: validDigest('b'), sizeBytes: 4, mediaType: "application/example"},
-		memory:        checkpointArtifactDescriptor{digest: validDigest('c'), sizeBytes: 16, mediaType: "application/example"},
-		scratchDisk:   checkpointArtifactDescriptor{digest: validDigest('d'), sizeBytes: 12, mediaType: "application/example"},
-	}
-}
-
-func TestProjectRunLeaseAssignmentAndWorkspace(t *testing.T) {
+func TestProjectRunLeaseAssignmentAndComputer(t *testing.T) {
 	authority := validRunLeaseProjectionAuthority()
+	authority.run.BaseComputerDiskVersionID = pgvalue.UUID(uuid.NewV7())
+	authority.runtime.SourceDiskVersionID = pgvalue.UUID(uuid.NewV7())
 	assignment, err := projectRunLeaseAssignment(authority)
 	if err != nil {
 		t.Fatalf("projectRunLeaseAssignment: %v", err)
 	}
 	if assignment.LeaseSequence != 2 ||
-		assignment.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) ||
-		assignment.WorkspaceLeaseID != pgvalue.UUIDString(authority.workspaceLease.ID) ||
-		assignment.BaseWorkspaceVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseWorkspaceVersionID) ||
-		assignment.OwnershipGeneration != authority.workspaceLease.OwnershipGeneration ||
-		assignment.WriterGeneration != authority.workspaceLease.WriterGeneration ||
-		assignment.MountFencingGeneration != authority.workspaceLease.MountFencingGeneration ||
+		assignment.ComputerID != pgvalue.UUIDString(authority.computer.ID) ||
+		assignment.BaseComputerDiskVersionID != pgvalue.UUIDString(authority.attempt.BaseComputerDiskVersionID) ||
+		assignment.WriterGeneration != authority.runtime.WriterGeneration ||
 		assignment.MaxActiveDurationMs != authority.run.MaxActiveDurationMs {
 		t.Fatalf("unexpected Run Lease assignment: %#v", assignment)
 	}
@@ -286,90 +49,88 @@ func TestProjectRunLeaseAssignmentAndWorkspace(t *testing.T) {
 		t.Fatalf("equal Run Lease deadlines: %v", err)
 	}
 	resetAuthority := validComputerMountTargetAuthority(authority)
-	workspace, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority)
+	computer, err := projectComputerAttachment(authority, "write-capability", resetAuthority)
 	if err != nil {
-		t.Fatalf("projectWorkspaceAttachment: %v", err)
+		t.Fatalf("projectComputerAttachment: %v", err)
 	}
-	if workspace.WriteCapability != "write-capability" ||
-		workspace.Target.BaseWorkspaceVersionID != assignment.BaseWorkspaceVersionID {
-		t.Fatalf("unexpected Workspace attachment: %#v", workspace)
+	if computer.WriteCapability != "write-capability" ||
+		computer.Target.BaseComputerDiskVersionID != assignment.BaseComputerDiskVersionID {
+		t.Fatalf("unexpected Computer attachment: %#v", computer)
 	}
 
-	authority.workspaceLease.WriterGeneration++
-	if _, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority); err == nil {
-		t.Fatal("mismatched writer generation was accepted")
-	}
-	authority.workspaceLease.RuntimeInstanceID = pgvalue.UUID(uuid.New())
-	if _, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority); err == nil {
-		t.Fatal("mismatched Workspace Lease runtime was accepted")
+	for name, mutate := range map[string]func(*runLeaseProjectionAuthority){
+		"writer generation": func(a *runLeaseProjectionAuthority) { a.runtime.WriterGeneration++ },
+		"Instance":          func(a *runLeaseProjectionAuthority) { a.runtime.ID = pgvalue.UUID(uuid.New()) },
+		"Computer":          func(a *runLeaseProjectionAuthority) { a.runtime.ComputerID = pgvalue.UUID(uuid.New()) },
+		"Worker host":       func(a *runLeaseProjectionAuthority) { a.runtime.WorkerHostID = pgvalue.UUID(uuid.New()) },
+		"Worker group":      func(a *runLeaseProjectionAuthority) { a.runtime.WorkerGroupID = pgvalue.UUID(uuid.New()) },
+		"Worker epoch":      func(a *runLeaseProjectionAuthority) { a.runtime.WorkerEpoch++ },
+		"environment":       func(a *runLeaseProjectionAuthority) { a.runtime.EnvironmentID = pgvalue.UUID(uuid.New()) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := authority
+			mutate(&changed)
+			if _, err := projectComputerAttachment(changed, "write-capability", resetAuthority); err == nil {
+				t.Fatal("mismatched physical authority accepted")
+			}
+		})
 	}
 }
 
 func validComputerMountTargetAuthority(
 	authority runLeaseProjectionAuthority,
-) db.GetComputerVersionAuthorityRow {
-	return db.GetComputerVersionAuthorityRow{
-		VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+) db.GetComputerDiskVersionAuthorityRow {
+	return db.GetComputerDiskVersionAuthorityRow{
+		VersionID: authority.attempt.BaseComputerDiskVersionID,
 	}
 }
 
-func TestProjectWorkspaceAttachmentAcceptsGenerationOnlyVersion(t *testing.T) {
+func TestProjectComputerAttachmentAcceptsGenerationOnlyVersion(t *testing.T) {
 	authority := validRunLeaseProjectionAuthority()
-	version := db.GetComputerVersionAuthorityRow{VersionID: authority.workspaceLease.BaseWorkspaceVersionID, ParentVersionID: pgvalue.UUID(uuid.New()), SourceWorkspaceLeaseID: pgvalue.UUID(uuid.New()), OwnershipGeneration: 5, WriterGeneration: 6}
-	attachment, err := projectWorkspaceAttachment(authority, "write-capability", version)
+	version := db.GetComputerDiskVersionAuthorityRow{VersionID: authority.attempt.BaseComputerDiskVersionID, ParentVersionID: pgvalue.UUID(uuid.New()), SourceComputerInstanceID: pgvalue.UUID(uuid.New()), WriterGeneration: 6}
+	attachment, err := projectComputerAttachment(authority, "write-capability", version)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if attachment.Target.BaseWorkspaceVersionID != pgvalue.UUIDString(version.VersionID) {
+	if attachment.Target.BaseComputerDiskVersionID != pgvalue.UUIDString(version.VersionID) {
 		t.Fatalf("attachment = %+v", attachment)
 	}
 	version.VersionID = pgvalue.UUID(uuid.New())
-	if _, err := projectWorkspaceAttachment(authority, "write-capability", version); err == nil {
+	if _, err := projectComputerAttachment(authority, "write-capability", version); err == nil {
 		t.Fatal("wrong version accepted")
 	}
 }
 
 func validRunLeaseProjectionAuthority() runLeaseProjectionAuthority {
 	runID := pgvalue.UUID(uuid.NewV7())
-	workspaceID := pgvalue.UUID(uuid.NewV7())
+	computerID := pgvalue.UUID(uuid.NewV7())
 	versionID := pgvalue.UUID(uuid.NewV7())
 	attemptNumber := int32(1)
 	runtimeID := pgvalue.UUID(uuid.New())
-	mountID := pgvalue.UUID(uuid.New())
+	workerID := pgvalue.UUID(uuid.New())
+	groupID := pgvalue.UUID(uuid.New())
 	runLeaseID := pgvalue.UUID(uuid.New())
-	workspaceLeaseID := pgvalue.UUID(uuid.New())
 	now := time.Now().UTC()
 	return runLeaseProjectionAuthority{
 		run: db.Run{
-			ID: runID, WorkspaceID: workspaceID, CurrentAttemptNumber: attemptNumber,
+			ID: runID, ComputerID: computerID, BaseComputerDiskVersionID: versionID, CurrentAttemptNumber: attemptNumber,
 			MaxActiveDurationMs: 300000, ActiveElapsedMs: 1000,
 		},
-		attempt: db.RunAttempt{RunID: runID, Number: attemptNumber},
-		runtime: db.RuntimeInstance{ID: runtimeID},
+		attempt: db.RunAttempt{RunID: runID, Number: attemptNumber, ComputerID: computerID, BaseComputerDiskVersionID: versionID},
+		runtime: db.ComputerInstance{ID: runtimeID, ComputerID: computerID, WorkerGroupID: groupID, WorkerHostID: workerID, WorkerEpoch: 3, WriterGeneration: 6, VMPlatformID: "runtime"},
 		runLease: db.RunLease{
-			ID: runLeaseID, RunID: runID, WorkspaceID: workspaceID,
+			ID: runLeaseID, RunID: runID, ComputerID: computerID,
 			AttemptNumber: attemptNumber, LeaseSequence: 2,
-			WorkerGroupID: controlplaneTestWorkerGroupDBID, WorkerInstanceID: pgvalue.UUID(uuid.New()),
-			WorkerEpoch: 3, RuntimeInstanceID: runtimeID, RuntimeIdentityID: "runtime",
+			WorkerGroupID: groupID, WorkerHostID: workerID,
+			WorkerEpoch: 3, ComputerInstanceID: runtimeID,
 			RequestedCPUMillis: 1000, RequestedMemoryBytes: 1024,
 			RequestedGuestEphemeralDiskBytes: 2048,
 			RequestedExecutionSlots:          1,
 			StartDeadlineAt:                  pgtype.Timestamptz{Time: now.Add(time.Minute), Valid: true},
 			ExpiresAt:                        pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true},
 		},
-		workspace: db.LockRunLeaseClaimWorkspaceRow{
-			ID: workspaceID, OwnershipGeneration: 5, WriterGeneration: 6,
-		},
-		workspaceMount: db.WorkspaceMount{
-			ID: mountID, WorkspaceID: workspaceID,
-			RuntimeInstanceID: runtimeID, MaterializedVersionID: versionID,
-			FencingGeneration: 7,
-		},
-		workspaceLease: db.WorkspaceLease{
-			ID: workspaceLeaseID, OwnerRunLeaseID: runLeaseID,
-			WorkspaceID: workspaceID, RuntimeInstanceID: runtimeID,
-			WorkspaceMountID: mountID, BaseWorkspaceVersionID: versionID,
-			OwnershipGeneration: 5, WriterGeneration: 6, MountFencingGeneration: 7,
+		computer: db.LockRunLeaseClaimComputerRow{
+			ID: computerID, WriterGeneration: 6,
 		},
 	}
 }

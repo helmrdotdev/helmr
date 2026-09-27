@@ -11,7 +11,7 @@ import (
 )
 
 // MaxChangedBlocks bounds one capture batch to 4 MiB of changed input,
-// independently of disk capacity. Metadata workspace also depends on the touched paths.
+// independently of disk capacity. Metadata computer also depends on the touched paths.
 // Larger captures can be staged as multiple private generations before publication.
 const MaxChangedBlocks = MaxRecords
 

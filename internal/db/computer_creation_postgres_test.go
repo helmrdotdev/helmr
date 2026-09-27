@@ -25,18 +25,18 @@ VALUES ($1,$2,'test-task',$3,$4,'* * * * *','UTC','active',now(),now()+interval 
 			computerID, rootID := pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7())
 			var err error
 			if kind == "current deployment" {
-				_, err = q.CreateWorkspaceFromCurrentDeployment(t.Context(), db.CreateWorkspaceFromCurrentDeploymentParams{
+				_, err = q.CreateComputerFromCurrentDeployment(t.Context(), db.CreateComputerFromCurrentDeploymentParams{
 					OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
-					DeploymentDefinitionID: pgvalue.UUID(f.WorkspaceDefinitionID), SandboxDeclaredID: "test-workspace", ID: computerID, InitialVersionID: rootID,
+					DeploymentDefinitionID: pgvalue.UUID(f.ComputerDefinitionID), SandboxDeclaredID: "test-computer", ID: computerID, InitialVersionID: rootID,
 				})
 			} else if kind == "Run deployment" {
-				_, err = q.CreateWorkspaceFromRunDeployment(t.Context(), db.CreateWorkspaceFromRunDeploymentParams{
-					EnvironmentID: pgvalue.UUID(f.EnvironmentID), RunID: pgvalue.UUID(work.RunID), SandboxDeclaredID: "test-workspace", ID: computerID, InitialVersionID: rootID,
+				_, err = q.CreateComputerFromRunDeployment(t.Context(), db.CreateComputerFromRunDeploymentParams{
+					EnvironmentID: pgvalue.UUID(f.EnvironmentID), RunID: pgvalue.UUID(work.RunID), SandboxDeclaredID: "test-computer", ID: computerID, InitialVersionID: rootID,
 				})
 			} else {
-				_, err = q.CreateWorkspaceForScheduleFire(t.Context(), db.CreateWorkspaceForScheduleFireParams{
+				_, err = q.CreateComputerForScheduleFire(t.Context(), db.CreateComputerForScheduleFireParams{
 					EnvironmentID: pgvalue.UUID(f.EnvironmentID), ScheduleID: scheduleID, ExpectedGeneration: 1,
-					SandboxDeclaredID: "test-workspace", ID: computerID, InitialVersionID: rootID,
+					SandboxDeclaredID: "test-computer", ID: computerID, InitialVersionID: rootID,
 				})
 			}
 			if err != nil {
@@ -44,11 +44,11 @@ VALUES ($1,$2,'test-task',$3,$4,'* * * * *','UTC','active',now(),now()+interval 
 			}
 			var valid bool
 			if err := f.Pool.QueryRow(t.Context(), `SELECT v.id=$2 AND v.status='initializing' AND v.parent_version_id IS NULL
-AND v.publisher_runtime_instance_id IS NULL AND v.root_pack_digest IS NULL AND v.logical_bytes=0 AND v.published_at IS NULL
-FROM computers w JOIN computer_versions v ON v.id=w.head_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
+AND v.publisher_computer_instance_id IS NULL AND v.root_pack_digest IS NULL AND v.logical_bytes=0 AND v.published_at IS NULL
+FROM computers w JOIN computer_disk_versions v ON v.id=w.head_disk_version_id WHERE w.id=$1`, computerID, rootID).Scan(&valid); err != nil || !valid {
 				t.Fatalf("new root fabricated persistence: %v %v", valid, err)
 			}
-			_, err = f.Pool.Exec(t.Context(), `UPDATE computer_versions SET status='committed',published_at=now() WHERE id=$1`, rootID)
+			_, err = f.Pool.Exec(t.Context(), `UPDATE computer_disk_versions SET status='committed',published_at=now() WHERE id=$1`, rootID)
 			var check *pgconn.PgError
 			if !errors.As(err, &check) || check.Code != "23514" {
 				t.Fatalf("root without disk committed: %v", err)

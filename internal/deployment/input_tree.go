@@ -51,7 +51,7 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 			return errors.New("installed input contains reserved root helmr path")
 		}
 		if relative != "." {
-			if err := safepath.ValidateTreePath(relative, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
+			if err := safepath.ValidateTreePath(relative, programMountPath, "/computer/project", "/computer/program"); err != nil {
 				return err
 			}
 		}

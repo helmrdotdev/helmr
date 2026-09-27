@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -10,15 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -26,38 +23,32 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	stream := newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1")
+func TestComputerCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) {
+	target := checkpointCaptureTarget(2)
+	stream := checkpointFreezeStream(t, target)
 	artifact := checkpointArtifact(t)
-	addCheckpointRuntimeSubstrate(t, &artifact)
 	session := &checkpointSession{stream: stream, artifact: artifact}
 	store := &checkpointCAS{}
 	encryptor := testCheckpointEncryptor(t)
 
-	result, err := runtimeCheckpointer{publication: testCheckpointPublication,
+	result, err := (&computerCheckpointer{publication: testCheckpointPublication,
 		session: session,
 		objects: store, capacity: testCheckpointCapacity(t),
 		encryptor: encryptor,
 		tempDir:   t.TempDir(),
-		stream:    stream,
-		workspace: testCheckpointWorkspaceBase(),
-	}.CreateCheckpoint(context.Background(), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
+		computer:  testCheckpointComputerBase(),
+	}).CreateCheckpoint(context.Background(), ComputerCheckpointRequest{
+		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, Target: target,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest := result.Manifest
 
-	if session.resumeCount != 0 || session.closeCount != 0 || len(session.snapshotRequests) != 1 || session.snapshotRequests[0].ID != "checkpoint-1" {
+	if session.resumeCount != 0 || session.closeCount != 0 || len(session.snapshotRequests) != 1 || session.snapshotRequests[0].ID != "checkpoint" {
 		t.Fatalf("session = %+v", session)
 	}
-	if err := (runtimeCheckpointer{publication: testCheckpointPublication, session: session}).ReleaseCheckpointSource(context.Background()); err != nil {
+	if err := (&computerCheckpointer{publication: testCheckpointPublication, session: session}).ReleaseCheckpointSource(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if session.closeCount != 1 {
@@ -66,18 +57,18 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if stream.closed != 1 {
 		t.Fatalf("stream closed %d times", stream.closed)
 	}
-	assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
+	assertComputerFreezeFrame(t, stream.written.Bytes(), target)
 	if len(store.puts) != 4 {
 		t.Fatalf("puts = %+v", store.puts)
 	}
-	manifestPut := checkpointPutByMediaType(t, store, cas.CheckpointRuntimeConfigMediaType)
+	manifestPut := checkpointPutByMediaType(t, store, cas.CheckpointVMConfigMediaType)
 	vmStatePut := checkpointPutByMediaType(t, store, cas.CheckpointVMStateMediaType)
 	scratchPut := checkpointPutByMediaType(t, store, cas.CheckpointScratchDiskMediaType)
 	memoryPut := checkpointPutByMediaType(t, store, cas.CheckpointMemoryMediaType)
 	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "x86_64" || manifest.RecoveryPoint.Runtime.Contract != "helmr.vm-runtime.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
 	}
-	if manifest.RecoveryPoint.ID != "checkpoint-1" || manifest.RecoveryPoint.RunWaitID != "run-wait-id-1" {
+	if manifest.RecoveryPoint.ID != "checkpoint" || len(manifest.RecoveryPoint.Runs) != 2 || manifest.RecoveryPoint.Runs[0].RunWaitID != "wait-a" {
 		t.Fatalf("recovery point = %+v", manifest.RecoveryPoint)
 	}
 	if manifest.RecoveryPoint.Runtime.KernelDigest != "sha256:kernel" || manifest.RecoveryPoint.Runtime.RootfsDigest != "sha256:rootfs" {
@@ -89,9 +80,6 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RecoveryPoint.Runtime.VMVCPUCount != 2 ||
 		manifest.RecoveryPoint.Runtime.CPUConfigDigest != sha256sum.DigestBytes([]byte("cpu-config")) {
 		t.Fatalf("runtime CPU shape = %+v", manifest.RecoveryPoint.Runtime)
-	}
-	if manifest.RecoveryPoint.Runtime.Substrate == nil || manifest.RecoveryPoint.Runtime.Substrate.Digest != sha256sum.DigestBytes([]byte("substrate")) {
-		t.Fatalf("runtime substrate = %+v", manifest.RecoveryPoint.Runtime.Substrate)
 	}
 	if manifest.RuntimeState.ConfigArtifact.Digest != manifestPut.object.Digest {
 		t.Fatalf("manifest artifact = %+v puts=%+v", manifest.RuntimeState.ConfigArtifact, store.puts)
@@ -105,8 +93,8 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if len(manifest.RuntimeState.MemoryArtifacts) != 1 || manifest.RuntimeState.MemoryArtifacts[0].Digest != memoryPut.object.Digest {
 		t.Fatalf("memory artifacts = %+v puts=%+v", manifest.RuntimeState.MemoryArtifacts, store.puts)
 	}
-	if manifest.WorkspaceState.Base.MountPath != "/workspace" {
-		t.Fatalf("workspace base = %+v", manifest.WorkspaceState.Base)
+	if manifest.ComputerState.Base.MountPath != "/computer" {
+		t.Fatalf("computer base = %+v", manifest.ComputerState.Base)
 	}
 	if string(manifest.RuntimeState.Config) != `{"runtime":{"backend":"firecracker"}}` {
 		t.Fatalf("raw manifest = %s", manifest.RuntimeState.Config)
@@ -116,328 +104,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	}
 	assertRemoved(t, artifact.VMState.Path)
 	assertRemoved(t, artifact.ScratchDisk.Path)
-	if _, err := os.Stat(artifact.Substrate.Path); err != nil {
-		t.Fatalf("session-owned substrate projection was removed by checkpoint cleanup: %v", err)
-	}
 	assertRemoved(t, artifact.Memory[0].Path)
-}
-
-func TestRuntimeCheckpointerPublishesFrozenAuthorityBeforeSnapshot(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	stream := newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1")
-	artifact := checkpointArtifact(t)
-	addCheckpointRuntimeSubstrate(t, &artifact)
-	frozen := false
-	session := &checkpointSession{
-		stream: stream, artifact: artifact,
-		snapshotHook: func() {
-			if !frozen {
-				t.Error("snapshot began before the frozen authority transition")
-			}
-		},
-	}
-	_, err := runtimeCheckpointer{publication: testCheckpointPublication,
-		session: session, objects: &checkpointCAS{}, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t),
-		tempDir: t.TempDir(), stream: stream, workspace: testCheckpointWorkspaceBase(),
-		onFrozen: func() { frozen = true },
-	}.CreateCheckpoint(context.Background(), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !frozen {
-		t.Fatal("frozen authority transition was not published")
-	}
-}
-
-func TestValidateRestoreIdentityRejectsMissingSubstrateSize(t *testing.T) {
-	checkpoint := workerapi.CheckpointManifest{RecoveryPoint: workerapi.CheckpointRecoveryPoint{
-		Runtime: workerapi.CheckpointRuntime{
-			Backend: "firecracker", Arch: string(deployment.ArchitectureX8664),
-			Contract: "helmr.vm-runtime.v0", ID: "sha256:runtime",
-			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs",
-			RootfsDigest: "sha256:rootfs", ConfigDigest: "sha256:config",
-			VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu-config")),
-			Substrate: &workerapi.CheckpointRuntimeSubstrate{
-				Digest: "sha256:substrate", Format: "ext4", Contract: "helmr.substrate.v0",
-			},
-		},
-	}}
-	if err := validateRestoreIdentity(checkpoint, deployment.ArchitectureX8664); err == nil ||
-		!strings.Contains(err.Error(), "substrate.size_bytes must be positive") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestRuntimeCheckpointerClosesSourceOnPrePauseConfigurationFailure(t *testing.T) {
-	stream := newCheckpointStream(t, nil, "", "")
-	session := &checkpointSession{stream: stream}
-	_, err := runtimeCheckpointer{publication: testCheckpointPublication, session: session, stream: stream}.CreateCheckpoint(
-		context.Background(),
-		CheckpointRequest{
-			Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1, RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1"},
-	)
-	if err == nil || !strings.Contains(err.Error(), "checkpoint capacity, immutable storage, encryption, stream and registration are required") {
-		t.Fatalf("err = %v", err)
-	}
-	if session.closeCount != 1 || stream.closed != 1 || session.resumeCount != 0 {
-		t.Fatalf("session close/resume = %d/%d, stream closed = %d", session.closeCount, session.resumeCount, stream.closed)
-	}
-}
-
-func TestRuntimeCheckpointerProcessesRunEventsBeforePauseReady(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	stream := newInterleavedCheckpointStream(t,
-		[]proto.Message{&programv0.RunEvent{Event: &programv0.RunEvent_StdoutChunk{StdoutChunk: []byte("flushed before checkpoint")}}},
-		"run-wait-id-1", "checkpoint-1",
-	)
-	artifact := checkpointArtifact(t)
-	session := &checkpointSession{stream: stream, artifact: artifact}
-	store := &checkpointCAS{}
-	encryptor := testCheckpointEncryptor(t)
-	var events []string
-
-	_, err := runtimeCheckpointer{publication: testCheckpointPublication,
-		session: session,
-		objects: store, capacity: testCheckpointCapacity(t),
-		encryptor: encryptor,
-		tempDir:   t.TempDir(),
-		stream:    stream,
-		workspace: testCheckpointWorkspaceBase(),
-		runEvent: func(_ context.Context, event *programv0.RunEvent) error {
-			events = append(events, string(event.GetStdoutChunk()))
-			return nil
-		},
-	}.CreateCheckpoint(context.Background(), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0] != "flushed before checkpoint" {
-		t.Fatalf("events = %+v", events)
-	}
-	if len(session.snapshotRequests) != 1 {
-		t.Fatalf("snapshotRequests = %+v", session.snapshotRequests)
-	}
-}
-
-func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	stream := newCheckpointStream(t, nil, "other-run wait", "checkpoint-1")
-	session := &checkpointSession{stream: stream, artifact: checkpointArtifact(t)}
-
-	_, err := runtimeCheckpointer{publication: testCheckpointPublication,
-		session: session,
-		objects: &checkpointCAS{}, capacity: testCheckpointCapacity(t),
-		encryptor: testCheckpointEncryptor(t),
-		tempDir:   t.TempDir(),
-		stream:    stream,
-	}.CreateCheckpoint(context.Background(), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
-	})
-	if err == nil || !strings.Contains(err.Error(), `checkpoint pause ready mismatch`) {
-		t.Fatalf("err = %v", err)
-	}
-	if session.resumeCount != 0 || session.closeCount != 1 || len(session.snapshotRequests) != 0 || stream.closed != 1 {
-		t.Fatalf("resumeCount=%d closeCount=%d snapshotRequests=%+v closed=%d", session.resumeCount, session.closeCount, session.snapshotRequests, stream.closed)
-	}
-	assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
-}
-
-func TestRuntimeCheckpointerRejectsPauseReadyBody(t *testing.T) {
-	var read bytes.Buffer
-	if err := wire.WriteStreamFrameHeader(&read, wire.StreamHeader{
-		Type:         wire.StreamTypeCheckpointPauseReady,
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
-	}, 1); err != nil {
-		t.Fatal(err)
-	}
-	read.WriteByte(0)
-
-	err := (runtimeCheckpointer{publication: testCheckpointPublication}).readPauseReady(context.Background(), bufio.NewReader(&read), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
-	})
-	if err == nil || !strings.Contains(err.Error(), "body length must be zero") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestRuntimeCheckpointerPauseReadyTimeoutDoesNotCloseSession(t *testing.T) {
-	stream := newBlockingGuestStream()
-	session := &checkpointSession{stream: stream}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	err := runtimeCheckpointer{publication: testCheckpointPublication,
-		session: session,
-		stream:  stream,
-	}.readPauseReadyContext(ctx, bufio.NewReader(stream), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
-	})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
-	}
-	if session.closeCount != 0 {
-		t.Fatalf("session close count = %d, want 0", session.closeCount)
-	}
-	if !stream.isClosed() {
-		t.Fatal("checkpoint stream was not closed")
-	}
-}
-
-func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	tests := []struct {
-		name            string
-		closeErr        error
-		snapshot        func(t *testing.T) (vm.SnapshotArtifact, error)
-		putErrMediaType string
-		want            string
-	}{
-		{
-			name:     "control stream close",
-			closeErr: errors.New("close failed"),
-			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
-				t.Helper()
-				return checkpointArtifact(t), nil
-			},
-			want: "close checkpoint control stream: close failed",
-		},
-		{
-			name: "snapshot",
-			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
-				t.Helper()
-				return vm.SnapshotArtifact{}, errors.New("snapshot failed")
-			},
-			want: "snapshot failed",
-		},
-		{
-			name: "manifest CAS put",
-			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
-				t.Helper()
-				return checkpointArtifact(t), nil
-			},
-			putErrMediaType: cas.CheckpointRuntimeConfigMediaType,
-			want:            "put failed",
-		},
-		{
-			name: "vm state CAS put",
-			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
-				t.Helper()
-				return checkpointArtifact(t), nil
-			},
-			putErrMediaType: cas.CheckpointVMStateMediaType,
-			want:            "put failed",
-		},
-		{
-			name: "memory CAS put",
-			snapshot: func(t *testing.T) (vm.SnapshotArtifact, error) {
-				t.Helper()
-				return checkpointArtifact(t), nil
-			},
-			putErrMediaType: cas.CheckpointMemoryMediaType,
-			want:            "put failed",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stream := newCheckpointStream(t, tt.closeErr, "run-wait-id-1", "checkpoint-1")
-			artifact, snapshotErr := tt.snapshot(t)
-			session := &checkpointSession{stream: stream, artifact: artifact, snapshotErr: snapshotErr}
-			_, err := runtimeCheckpointer{publication: testCheckpointPublication,
-				session: session,
-				objects: &checkpointCAS{putErrMediaType: tt.putErrMediaType}, capacity: testCheckpointCapacity(t),
-				encryptor: testCheckpointEncryptor(t),
-				tempDir:   t.TempDir(),
-				stream:    stream,
-			}.CreateCheckpoint(context.Background(), CheckpointRequest{
-				Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-				RunWaitID:    "run-wait-id-1",
-				CheckpointID: "checkpoint-1",
-			})
-			if err == nil || !strings.Contains(err.Error(), tt.want) {
-				t.Fatalf("err = %v, want %q", err, tt.want)
-			}
-			if session.resumeCount != 0 || session.closeCount != 1 {
-				t.Fatalf("resumeCount = %d, closeCount = %d, want 0/1", session.resumeCount, session.closeCount)
-			}
-			if tt.closeErr == nil && stream.closed != 1 {
-				t.Fatalf("stream closed %d times", stream.closed)
-			}
-			assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
-			if len(session.snapshotRequests) > 0 && artifact.Computer != nil && !artifact.Computer.Capture.(*generationCaptureFixture).released {
-				t.Fatal("capture retention leaked after failure")
-			}
-			if len(session.snapshotRequests) > 0 && artifact.VMState.Path != "" {
-				assertRemoved(t, artifact.VMState.Path)
-			}
-			if len(session.snapshotRequests) > 0 {
-				for _, memory := range artifact.Memory {
-					assertRemoved(t, memory.Path)
-				}
-			}
-		})
-	}
-}
-
-func TestRuntimeCheckpointerReleaseBorrowedSourceDoesNotCloseControlStreamTwice(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	stream := &nonIdempotentCheckpointStream{
-		checkpointStream: newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1"),
-	}
-	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
-	parent.artifact = checkpointArtifact(t)
-	session, ok := newBorrowedRunSession(parent, testVMStream(stream)).(vm.CheckpointableSession)
-	if !ok {
-		t.Fatal("borrowed session is not checkpointable")
-	}
-
-	checkpointer := runtimeCheckpointer{publication: testCheckpointPublication,
-		session: session,
-		objects: &checkpointCAS{}, capacity: testCheckpointCapacity(t),
-		encryptor: testCheckpointEncryptor(t),
-		tempDir:   t.TempDir(),
-		stream:    stream,
-	}
-	_, err := checkpointer.CreateCheckpoint(context.Background(), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1,
-		RunWaitID:    "run-wait-id-1",
-		CheckpointID: "checkpoint-1",
-	})
-	if err != nil {
-		t.Fatalf("CreateCheckpoint() error = %v", err)
-	}
-	if stream.closed != 1 {
-		t.Fatalf("stream closed %d times, want 1", stream.closed)
-	}
-	if err := checkpointer.ReleaseCheckpointSource(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if parent.closeCount != 1 {
-		t.Fatalf("parent close count = %d, want 1", parent.closeCount)
-	}
 }
 
 type checkpointStream struct {
@@ -446,12 +113,9 @@ type checkpointStream struct {
 	closed   int
 }
 
-func newCheckpointStream(t *testing.T, closeErr error, runWaitID string, checkpointID string, messages ...proto.Message) *checkpointStream {
+func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message) *checkpointStream {
 	t.Helper()
 	var read bytes.Buffer
-	if runWaitID != "" || checkpointID != "" {
-		writeCheckpointPauseReadyFrame(t, &read, runWaitID, checkpointID)
-	}
 	for _, message := range messages {
 		body, err := proto.Marshal(message)
 		if err != nil {
@@ -464,46 +128,10 @@ func newCheckpointStream(t *testing.T, closeErr error, runWaitID string, checkpo
 	return &checkpointStream{scriptedGuestStream: &scriptedGuestStream{read: bytes.NewReader(read.Bytes())}, closeErr: closeErr}
 }
 
-func newInterleavedCheckpointStream(t *testing.T, beforeSnapshot []proto.Message, runWaitID string, checkpointID string, messages ...proto.Message) *checkpointStream {
-	t.Helper()
-	var read bytes.Buffer
-	for _, message := range beforeSnapshot {
-		body, err := proto.Marshal(message)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := frameio.WriteMessageFrame(&read, body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeCheckpointPauseReadyFrame(t, &read, runWaitID, checkpointID)
-	for _, message := range messages {
-		body, err := proto.Marshal(message)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := frameio.WriteMessageFrame(&read, body); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return &checkpointStream{scriptedGuestStream: &scriptedGuestStream{read: bytes.NewReader(read.Bytes())}}
-}
+func testCheckpointComputerBase() workerapi.CheckpointComputerBase {
+	return workerapi.CheckpointComputerBase{
 
-func writeCheckpointPauseReadyFrame(t *testing.T, w io.Writer, runWaitID string, checkpointID string) {
-	t.Helper()
-	if err := wire.WriteStreamFrameHeader(w, wire.StreamHeader{
-		Type:         wire.StreamTypeCheckpointPauseReady,
-		RunWaitID:    runWaitID,
-		CheckpointID: checkpointID,
-	}, 0); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func testCheckpointWorkspaceBase() workerapi.CheckpointWorkspaceBase {
-	return workerapi.CheckpointWorkspaceBase{
-
-		MountPath: "/workspace",
+		MountPath: "/computer",
 	}
 }
 
@@ -516,17 +144,6 @@ func (s *checkpointStream) Close() error {
 		return s.closeErr
 	}
 	return nil
-}
-
-type nonIdempotentCheckpointStream struct {
-	*checkpointStream
-}
-
-func (s *nonIdempotentCheckpointStream) Close() error {
-	if s.closed > 0 {
-		return errors.New("control stream closed twice")
-	}
-	return s.checkpointStream.Close()
 }
 
 type checkpointSession struct {
@@ -700,18 +317,18 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		t.Fatal(err)
 	}
 	return vm.SnapshotArtifact{
-		Computer:            &vm.ComputerSnapshot{ComputerID: "01912345-6789-7abc-8def-0123456789ab", Capture: &generationCaptureFixture{root: testGenerationRoot(4096)}},
-		RuntimeBackend:      "firecracker",
-		RuntimeID:           "sha256:runtime",
-		RuntimeArch:         "x86_64",
-		VMRuntimeContract:   "helmr.vm-runtime.v0",
-		KernelDigest:        "sha256:kernel",
-		InitramfsDigest:     "sha256:initramfs",
-		RootfsDigest:        "sha256:rootfs",
-		RuntimeConfigDigest: "sha256:runtime-config",
-		VMVCPUCount:         2,
-		CPUConfigDigest:     sha256sum.DigestBytes([]byte("cpu-config")),
-		VMState:             vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
+		Computer:          &vm.ComputerSnapshot{ComputerID: "01912345-6789-7abc-8def-0123456789ab", Capture: &generationCaptureFixture{root: testGenerationRoot(4096)}},
+		RuntimeBackend:    "firecracker",
+		RuntimeID:         "sha256:runtime",
+		RuntimeArch:       "x86_64",
+		VMRuntimeContract: "helmr.vm-runtime.v0",
+		KernelDigest:      "sha256:kernel",
+		InitramfsDigest:   "sha256:initramfs",
+		RootfsDigest:      "sha256:rootfs",
+		VMConfigDigest:    "sha256:runtime-config",
+		VMVCPUCount:       2,
+		CPUConfigDigest:   sha256sum.DigestBytes([]byte("cpu-config")),
+		VMState:           vm.SnapshotFile{Path: state, MediaType: cas.CheckpointVMStateMediaType},
 		ScratchDisk: vm.SnapshotFile{Path: scratch, MediaType: cas.CheckpointScratchDiskMediaType, Filepack: &vm.FilepackStats{
 			LogicalBytes:  1024,
 			EncodedChunks: 1,
@@ -734,20 +351,6 @@ func testCheckpointRuntimeArchitecture() string {
 	return string(deployment.ArchitectureX8664)
 }
 
-func addCheckpointRuntimeSubstrate(t *testing.T, artifact *vm.SnapshotArtifact) {
-	t.Helper()
-	path := filepath.Join(filepath.Dir(artifact.VMState.Path), "substrate.ext4")
-	if err := os.WriteFile(path, []byte("substrate"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	artifact.Substrate = &vm.RuntimeSubstrate{
-		Path:     path,
-		Digest:   sha256sum.DigestBytes([]byte("substrate")),
-		Format:   "ext4",
-		Contract: "helmr.runtime-substrate.builder.v0",
-	}
-}
-
 func checkpointPhaseHasFilepackStats(phases []workerapi.CheckpointPhase, name string) bool {
 	for _, phase := range phases {
 		if phase.Name == name && phase.Filepack != nil && phase.Filepack.LogicalBytes > 0 {
@@ -757,44 +360,10 @@ func checkpointPhaseHasFilepackStats(phases []workerapi.CheckpointPhase, name st
 	return false
 }
 
-func assertSuspendFrame(t *testing.T, body []byte, runWaitID string, checkpointID string) {
-	t.Helper()
-	reader := bytes.NewReader(body)
-	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	suspend, err := wire.ReadCheckpointPauseRequest(header, reader, bodyLen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if suspend.RunWaitId != runWaitID || suspend.CheckpointId != checkpointID {
-		t.Fatalf("suspend = %+v", suspend)
-	}
-}
-
 func assertRemoved(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stat %s err = %v, want not exist", path, err)
-	}
-}
-
-func TestRuntimeCheckpointerPreservesCaptureAndReleaseErrors(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Computer disk capture requires Linux")
-	}
-	stream := newCheckpointStream(t, nil, "wait", "checkpoint")
-	captureErr, releaseErr := errors.New("pause response lost"), errors.New("stop failed")
-	session := &checkpointSession{stream: stream, snapshotErr: captureErr, closeErr: releaseErr}
-	_, err := (runtimeCheckpointer{publication: testCheckpointPublication, session: session, stream: stream, objects: &checkpointCAS{}, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(context.Background(), CheckpointRequest{
-		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, CheckpointRequestVersion: 1, RunWaitID: "wait", CheckpointID: "checkpoint"})
-	var cleanup *checkpointSourceReleaseError
-	if !errors.Is(err, captureErr) || !errors.Is(err, releaseErr) || !errors.As(err, &cleanup) {
-		t.Fatalf("lost failure: %v", err)
-	}
-	if session.closeCount != 1 || session.resumeCount != 0 {
-		t.Fatalf("close/resume = %d/%d", session.closeCount, session.resumeCount)
 	}
 }
 
@@ -821,7 +390,9 @@ func (c *checkpointCAS) Publish(ctx context.Context, d cas.Descriptor, file *os.
 	return c.put(d.MediaType, data)
 }
 
-func testCheckpointPublication(CheckpointRequest) computer.ContinuationPublication { return nil }
+func testCheckpointPublication(ComputerCheckpointRequest) computer.ContinuationPublication {
+	return nil
+}
 
 type generationCaptureFixture struct {
 	root     computer.GenerationRoot
@@ -846,5 +417,94 @@ func (c *generationCaptureFixture) Release() {
 		if c.release != nil {
 			c.release()
 		}
+	}
+}
+
+func checkpointCaptureTarget(count int) workerapi.RuntimeReconcileTarget {
+	target := freezeTarget(count)
+	target.Source.ComputerID = "01912345-6789-7abc-8def-0123456789ab"
+	target.Source.VMPlatformID = "sha256:runtime"
+	target.Source.VMVCPUCount = 2
+	target.Source.CPUConfigDigest = sha256sum.DigestBytes([]byte("cpu-config"))
+	return target
+}
+func checkpointFreezeStream(t *testing.T, target workerapi.RuntimeReconcileTarget) *checkpointStream {
+	t.Helper()
+	response := &computerv0.FreezeComputerResponse{DesiredVersion: target.DesiredVersion, MembershipRevision: target.Capture.MembershipRevision, Identity: &computerv0.ComputerRestoreIdentity{ComputerId: target.Source.ComputerID, SourceComputerInstanceId: target.ID, WriterGeneration: target.Source.WriterGeneration, CheckpointId: target.Capture.CheckpointID}}
+	for _, member := range target.Capture.Runs {
+		response.Identity.Runs = append(response.Identity.Runs, &computerv0.CapturedRun{RunId: member.RunID, AttemptNumber: uint32(member.AttemptNumber), RunWaitId: member.RunWaitID, RunLeaseId: member.RunLeaseID, CorrelationId: "correlation-" + member.RunID})
+	}
+	return newCheckpointStream(t, nil, response)
+}
+func assertComputerFreezeFrame(t *testing.T, body []byte, target workerapi.RuntimeReconcileTarget) {
+	t.Helper()
+	reader := bytes.NewReader(body)
+	header, size, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil || size != 0 || header.Type != wire.StreamTypeComputerFreeze || header.ComputerID != target.Source.ComputerID || header.RunID != "" {
+		t.Fatalf("invalid freeze header: %+v %v", header, err)
+	}
+	var request computerv0.FreezeComputerRequest
+	if err := frameio.ReadProtoFrame(reader, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.CheckpointId != target.Capture.CheckpointID || len(request.Runs) != len(target.Capture.Runs) {
+		t.Fatalf("invalid membership: %v", &request)
+	}
+}
+func TestComputerCheckpointerPreservesCaptureAndReleaseErrors(t *testing.T) {
+	target := checkpointCaptureTarget(2)
+	stream := checkpointFreezeStream(t, target)
+	captureErr, releaseErr := errors.New("snapshot failed"), errors.New("stop failed")
+	session := &checkpointSession{stream: stream, snapshotErr: captureErr, closeErr: releaseErr}
+	_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: &checkpointCAS{}, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }})
+	var cleanup *checkpointSourceReleaseError
+	if !errors.Is(err, captureErr) || !errors.Is(err, releaseErr) || !errors.As(err, &cleanup) {
+		t.Fatalf("lost failure: %v", err)
+	}
+	if session.closeCount != 1 || session.resumeCount != 0 {
+		t.Fatalf("close/resume = %d/%d", session.closeCount, session.resumeCount)
+	}
+}
+func TestComputerCheckpointerRejectsMismatchedSnapshotBeforePublication(t *testing.T) {
+	for _, field := range []string{"computer", "platform", "cpu-count", "cpu-config", "disk"} {
+		t.Run(field, func(t *testing.T) {
+			target := checkpointCaptureTarget(2)
+			artifact := checkpointArtifact(t)
+			switch field {
+			case "computer":
+				artifact.Computer.ComputerID = "other"
+			case "platform":
+				artifact.RuntimeID = "other"
+			case "cpu-count":
+				artifact.VMVCPUCount++
+			case "cpu-config":
+				artifact.CPUConfigDigest = sha256sum.DigestBytes([]byte("other"))
+			case "disk":
+				artifact.Computer = nil
+			}
+			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: artifact}
+			store := &checkpointCAS{}
+			_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error {
+				t.Fatal("registered changed snapshot")
+				return nil
+			}})
+			if err == nil || session.closeCount != 1 || len(store.puts) != 0 {
+				t.Fatalf("unsafe capture: %v closes=%d puts=%d", err, session.closeCount, len(store.puts))
+			}
+		})
+	}
+}
+func TestComputerCheckpointerInvalidIntentDoesNotCloseUnrelatedSource(t *testing.T) {
+	session := &checkpointSession{}
+	_, err := (&computerCheckpointer{session: session}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{})
+	if err == nil || session.closeCount != 0 {
+		t.Fatalf("err=%v closes=%d", err, session.closeCount)
+	}
+}
+func TestComputerCheckpointerConfigurationFailureClosesSource(t *testing.T) {
+	session := &checkpointSession{stream: checkpointFreezeStream(t, checkpointCaptureTarget(0))}
+	_, err := (&computerCheckpointer{session: session}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: checkpointCaptureTarget(0)})
+	if err == nil || session.closeCount != 1 {
+		t.Fatalf("err=%v closes=%d", err, session.closeCount)
 	}
 }

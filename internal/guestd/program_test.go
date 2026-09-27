@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
@@ -785,7 +785,7 @@ func TestRelayProgramRoutesChildTaskRequests(t *testing.T) {
 			correlationID := "00000000-0000-0000-0000-000000000311"
 			requested := &programv0.TaskChildInvokeRequested{
 				CorrelationId: correlationID, DeclaredId: "child-task",
-				Method: test.method, WorkspaceJson: `{}`, OptionsJson: `{}`,
+				Method: test.method, ComputerJson: `{}`, OptionsJson: `{}`,
 				RunWaitId: test.runWaitID, ResumeAttachId: test.resumeAttachID,
 			}
 			if err := frameio.WriteProtoFrame(controlWriter, &programv0.RunEvent{
@@ -903,7 +903,7 @@ func TestRelayProgramQuiescenceUsesPromotedResumeLease(t *testing.T) {
 	}()
 	child := &programv0.TaskChildInvokeRequested{
 		CorrelationId: "correlation-1", DeclaredId: "child-task", Method: "call",
-		WorkspaceJson: `{}`, OptionsJson: `{}`, RunWaitId: "wait-1",
+		ComputerJson: `{}`, OptionsJson: `{}`, RunWaitId: "wait-1",
 		ResumeAttachId: "attach-1",
 	}
 	if err := frameio.WriteProtoFrame(controlWriter, &programv0.RunEvent{
@@ -1082,7 +1082,7 @@ func TestRelayProgramRejectsConflictingChildTaskState(t *testing.T) {
 		return &programv0.RunEvent{Event: &programv0.RunEvent_TaskChildInvokeRequested{
 			TaskChildInvokeRequested: &programv0.TaskChildInvokeRequested{
 				CorrelationId: correlationID, DeclaredId: "child-task", Method: "call",
-				RunWaitId: "wait-1", ResumeAttachId: "attach-1", WorkspaceJson: `{}`, OptionsJson: `{}`,
+				RunWaitId: "wait-1", ResumeAttachId: "attach-1", ComputerJson: `{}`, OptionsJson: `{}`,
 			},
 		}}
 	}
@@ -1090,7 +1090,7 @@ func TestRelayProgramRejectsConflictingChildTaskState(t *testing.T) {
 		return &programv0.RunEvent{Event: &programv0.RunEvent_TaskChildInvokeRequested{
 			TaskChildInvokeRequested: &programv0.TaskChildInvokeRequested{
 				CorrelationId: correlationID, DeclaredId: "child-task", Method: "start",
-				WorkspaceJson: `{}`, OptionsJson: `{}`,
+				ComputerJson: `{}`, OptionsJson: `{}`,
 			},
 		}}
 	}
@@ -1282,11 +1282,11 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 	writeRetrieve := func(correlationID string) {
 		t.Helper()
 		if err := frameio.WriteProtoFrame(controlWriter, &programv0.RunEvent{
-			Event: &programv0.RunEvent_WorkspaceRetrieveRequested{
-				WorkspaceRetrieveRequested: &programv0.WorkspaceRetrieveRequested{
+			Event: &programv0.RunEvent_ComputerRetrieveRequested{
+				ComputerRetrieveRequested: &programv0.ComputerRetrieveRequested{
 					CorrelationId: correlationID,
-					Workspace: &programv0.WorkspaceAddress{
-						WorkspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
+					Computer: &programv0.ComputerAddress{
+						ComputerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
 					},
 				},
 			},
@@ -1300,8 +1300,8 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 		if err := frameio.ReadProtoFrame(host, &event); err != nil {
 			t.Fatal(err)
 		}
-		if event.GetWorkspaceRetrieveRequested().GetCorrelationId() != correlationID {
-			t.Fatalf("Workspace retrieve event = %#v", event.GetEvent())
+		if event.GetComputerRetrieveRequested().GetCorrelationId() != correlationID {
+			t.Fatalf("Computer retrieve event = %#v", event.GetEvent())
 		}
 	}
 	writeRetrieve("00000000-0000-0000-0000-000000000201")
@@ -1310,7 +1310,7 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 		Event: &programv0.RunEvent_TaskChildInvokeRequested{
 			TaskChildInvokeRequested: &programv0.TaskChildInvokeRequested{
 				CorrelationId: "wait-correlation", DeclaredId: "child-task",
-				Method: "call", WorkspaceJson: `{}`, OptionsJson: `{}`,
+				Method: "call", ComputerJson: `{}`, OptionsJson: `{}`,
 				RunWaitId: "durable-wait", ResumeAttachId: "attach-1",
 			},
 		},
@@ -1384,16 +1384,21 @@ func TestRelayProgramDefersCheckpointPauseUntilRuntimeOperationsDrain(t *testing
 }
 
 func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
-	workspaceRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspaceRoot, "state.txt"), []byte("durable"), 0o600); err != nil {
+	for _, pending := range []bool{false, true} {
+		t.Run(map[bool]string{false: "resolved", true: "pending"}[pending], func(t *testing.T) { testPauseAndResumeProgram(t, pending) })
+	}
+}
+func testPauseAndResumeProgram(t *testing.T, pending bool) {
+	computerRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(computerRoot, "state.txt"), []byte("durable"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	cgroup := &testProgramCgroup{}
 	var programInput bytes.Buffer
 	process := &programProcess{
-		stdin:         nopWriteCloser{Writer: &programInput},
-		cgroup:        cgroup,
-		workspaceRoot: workspaceRoot,
+		stdin:        nopWriteCloser{Writer: &programInput},
+		cgroup:       cgroup,
+		computerRoot: computerRoot,
 	}
 	run := &programv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
 	wait, err := newProgramWaitIdentity(programWaitKindStandard, "wait-1", "durable-wait-1", "attach-1")
@@ -1411,14 +1416,16 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	result := make(chan error, 1)
+	var returnedWaiting bool
 	events := make(chan *programv0.RunEvent, 1)
 	controlErrors := make(chan error, 1)
 	go func() {
-		_, err := pauseAndResumeProgram(
+		_, waiting, err := pauseAndResumeProgram(
 			ctx, run, wait, pause, process,
 			&programEventStream{conn: guest, changed: make(chan struct{}), done: make(chan struct{}), rebind: make(chan programConnection, 1)}, registry,
 			&programOutputCoordinator{}, events, controlErrors,
 		)
+		returnedWaiting = waiting
 		result <- err
 	}()
 	reader := bufio.NewReader(host)
@@ -1451,6 +1458,10 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
 		ResumeRequestVersion: 4, RunLeaseId: "lease-2",
 	}
+	if pending {
+		decision.Kind = "waiting"
+		decision.NoResult = false
+	}
 	if err := frameio.WriteProtoFrame(resumeHost, decision); err != nil {
 		t.Fatal(err)
 	}
@@ -1475,6 +1486,9 @@ func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
 	}
 	if err := <-result; err != nil {
 		t.Fatal(err)
+	}
+	if returnedWaiting != pending {
+		t.Fatalf("waiting=%v want=%v", returnedWaiting, pending)
 	}
 	if run.GetRunLeaseId() != "lease-2" {
 		t.Fatalf("current Program lease = %q", run.GetRunLeaseId())
@@ -1504,6 +1518,10 @@ func TestValidateResumeDecisionAuthorityRejectsMalformedResultUnion(t *testing.T
 		decision *programv0.ResumeDecision
 		wantErr  bool
 	}{
+		{name: "waiting", decision: &programv0.ResumeDecision{Kind: "waiting", RequireConsumedAck: true}},
+		{name: "waiting without ack", decision: &programv0.ResumeDecision{Kind: "waiting"}, wantErr: true},
+		{name: "waiting with result", decision: &programv0.ResumeDecision{Kind: "waiting", RequireConsumedAck: true, DataJson: "null"}, wantErr: true},
+		{name: "waiting no result marker", decision: &programv0.ResumeDecision{Kind: "waiting", RequireConsumedAck: true, NoResult: true}, wantErr: true},
 		{name: "completed no result", decision: &programv0.ResumeDecision{Kind: "completed", NoResult: true}},
 		{name: "completed JSON null", decision: &programv0.ResumeDecision{Kind: "completed", DataJson: "null"}},
 		{name: "completed both", decision: &programv0.ResumeDecision{Kind: "completed", NoResult: true, DataJson: "null"}, wantErr: true},
@@ -1767,13 +1785,13 @@ func TestProgramEventStreamWriteDeadline(t *testing.T) {
 }
 
 func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
-	registry := newWorkspaceOperationRegistry()
-	registry.register("mount-1", &workspaceMountEntry{
-		workspaceID:            "workspace-1",
-		baseWorkspaceVersionID: "version-1",
-		channelToken:           "channel-1",
-		fencingGeneration:      1,
-		runtimeInstanceID:      "runtime-1",
+	registry := newComputerOperationRegistry()
+	registry.register("runtime-1", &computerMountEntry{
+		computerID:                "computer-1",
+		baseComputerDiskVersionID: "version-1",
+		channelToken:              "channel-1",
+		writerGeneration:          1,
+		computerInstanceID:        "runtime-1",
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1789,34 +1807,30 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 			newWaitingRunRegistry(),
 			registry,
 			wire.StreamHeader{
-				Type:             wire.StreamTypeProgramRun,
-				RunID:            "run-1",
-				WorkspaceID:      "workspace-1",
-				WorkspaceMountID: "mount-1",
+				Type:               wire.StreamTypeProgramRun,
+				RunID:              "run-1",
+				ComputerID:         "computer-1",
+				ComputerInstanceID: "runtime-1",
 			},
 			0,
 		)
 	}()
 	if err := frameio.WriteProtoFrame(
 		host,
-		&workspacev0.WorkspaceRunAuthority{
-			Fence: &workspacev0.WorkspaceAuthorityFence{
-				WorkerInstanceId:       "worker-1",
-				WorkerEpoch:            1,
-				RuntimeInstanceId:      "runtime-1",
-				RuntimeIdentityId:      "runtime-identity-1",
-				WorkspaceId:            "workspace-1",
-				WorkspaceMountId:       "mount-1",
-				RunId:                  "run-1",
-				AttemptNumber:          2,
-				RunLeaseId:             "lease-1",
-				LeaseSequence:          1,
-				WorkspaceLeaseId:       "workspace-lease-1",
-				OwnershipGeneration:    1,
-				WriterGeneration:       1,
-				MountFencingGeneration: 1,
-				ExpiresAtUnixNano:      time.Now().Add(time.Minute).UnixNano(),
-				BaseWorkspaceVersionId: "version-1",
+		&computerv0.ComputerRunAuthority{
+			Fence: &computerv0.ComputerAuthorityFence{
+				WorkerHostId:              "worker-1",
+				WorkerEpoch:               1,
+				ComputerInstanceId:        "runtime-1",
+				VmPlatformId:              "vm-platform-1",
+				ComputerId:                "computer-1",
+				RunId:                     "run-1",
+				AttemptNumber:             2,
+				RunLeaseId:                "lease-1",
+				LeaseSequence:             1,
+				WriterGeneration:          1,
+				ExpiresAtUnixNano:         time.Now().Add(time.Minute).UnixNano(),
+				BaseComputerDiskVersionId: "version-1",
 			},
 			ChannelToken:    "channel-1",
 			WriteCapability: "write-capability",
@@ -1851,13 +1865,13 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 }
 
 func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
-	registry := newWorkspaceOperationRegistry()
-	registry.register("mount-1", &workspaceMountEntry{
-		workspaceID:            "workspace-1",
-		baseWorkspaceVersionID: "version-1",
-		channelToken:           "channel-1",
-		fencingGeneration:      1,
-		runtimeInstanceID:      "runtime-1",
+	registry := newComputerOperationRegistry()
+	registry.register("runtime-1", &computerMountEntry{
+		computerID:                "computer-1",
+		baseComputerDiskVersionID: "version-1",
+		channelToken:              "channel-1",
+		writerGeneration:          1,
+		computerInstanceID:        "runtime-1",
 		// A missing runtime user deterministically fails newProgramProcess after
 		// the exact authority and Secret sequence have been admitted.
 		runtimeUser: nil,
@@ -1874,32 +1888,28 @@ func TestProgramAdmissionReportsPrepareFailureWithExactFence(t *testing.T) {
 			newWaitingRunRegistry(),
 			registry,
 			wire.StreamHeader{
-				Type:             wire.StreamTypeProgramRun,
-				RunID:            "run-1",
-				WorkspaceID:      "workspace-1",
-				WorkspaceMountID: "mount-1",
+				Type:               wire.StreamTypeProgramRun,
+				RunID:              "run-1",
+				ComputerID:         "computer-1",
+				ComputerInstanceID: "runtime-1",
 			},
 			0,
 		)
 	}()
-	authority := &workspacev0.WorkspaceRunAuthority{
-		Fence: &workspacev0.WorkspaceAuthorityFence{
-			WorkerInstanceId:       "worker-1",
-			WorkerEpoch:            1,
-			RuntimeInstanceId:      "runtime-1",
-			RuntimeIdentityId:      "runtime-identity-1",
-			WorkspaceId:            "workspace-1",
-			WorkspaceMountId:       "mount-1",
-			RunId:                  "run-1",
-			AttemptNumber:          2,
-			RunLeaseId:             "lease-1",
-			LeaseSequence:          1,
-			WorkspaceLeaseId:       "workspace-lease-1",
-			OwnershipGeneration:    1,
-			WriterGeneration:       1,
-			MountFencingGeneration: 1,
-			ExpiresAtUnixNano:      time.Now().Add(time.Minute).UnixNano(),
-			BaseWorkspaceVersionId: "version-1",
+	authority := &computerv0.ComputerRunAuthority{
+		Fence: &computerv0.ComputerAuthorityFence{
+			WorkerHostId:              "worker-1",
+			WorkerEpoch:               1,
+			ComputerInstanceId:        "runtime-1",
+			VmPlatformId:              "vm-platform-1",
+			ComputerId:                "computer-1",
+			RunId:                     "run-1",
+			AttemptNumber:             2,
+			RunLeaseId:                "lease-1",
+			LeaseSequence:             1,
+			WriterGeneration:          1,
+			ExpiresAtUnixNano:         time.Now().Add(time.Minute).UnixNano(),
+			BaseComputerDiskVersionId: "version-1",
 		},
 		ChannelToken:    "channel-1",
 		WriteCapability: "write-capability",
@@ -2015,7 +2025,7 @@ func TestValidateProgramSecretsRequiresCanonicalNonConflictingPlacements(t *test
 			secrets: []*programv0.ProgramSecret{
 				{
 					Placement: &programv0.ProgramSecret_File{
-						File: "/workspace/token",
+						File: "/computer/token",
 					},
 					Value: []byte("value"),
 				},
@@ -2360,15 +2370,15 @@ func testProgramStartFrame(t *testing.T) []byte {
 	t.Helper()
 	var frame bytes.Buffer
 	if err := frameio.WriteProtoFrame(&frame, &programv0.ProgramStart{
-		RunId:                  "run-1",
-		AttemptNumber:          2,
-		EntrypointDeclaredId:   "deploy",
-		DeploymentId:           "deployment-1",
-		DeploymentVersion:      "v0",
-		WorkspaceId:            "workspace-1",
-		BaseWorkspaceVersionId: "version-1",
-		Cause:                  &programv0.RunCause{Kind: &programv0.RunCause_Api{Api: &programv0.ApiCause{}}},
-		Entrypoint:             &programv0.ProgramStart_Task{Task: &programv0.TaskStart{Payload: &programv0.TaskStart_NoPayload{NoPayload: &programv0.NoPayload{}}}},
+		RunId:                     "run-1",
+		AttemptNumber:             2,
+		EntrypointDeclaredId:      "deploy",
+		DeploymentId:              "deployment-1",
+		DeploymentVersion:         "v0",
+		ComputerId:                "computer-1",
+		BaseComputerDiskVersionId: "version-1",
+		Cause:                     &programv0.RunCause{Kind: &programv0.RunCause_Api{Api: &programv0.ApiCause{}}},
+		Entrypoint:                &programv0.ProgramStart_Task{Task: &programv0.TaskStart{Payload: &programv0.TaskStart_NoPayload{NoPayload: &programv0.NoPayload{}}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -2404,5 +2414,108 @@ func TestProgramSecretCollisionDiagnosticIsActionableAndSafe(t *testing.T) {
 		}
 		guest.Close()
 		host.Close()
+	}
+}
+
+func TestPendingWaitCanBeCapturedAndRestoredAgain(t *testing.T) {
+	ctx := t.Context()
+	cgroup := &testProgramCgroup{}
+	var input bytes.Buffer
+	process := &programProcess{stdin: nopWriteCloser{Writer: &input}, cgroup: cgroup, computerRoot: t.TempDir()}
+	run := &programv0.ProgramRunRequest{RunId: "run", AttemptNumber: 1, RunLeaseId: "lease-0"}
+	wait, err := newProgramWaitIdentity(programWaitKindStandard, "correlation", "wait", "attach")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := newWaitingRunRegistry()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	stream := &programEventStream{conn: guest, changed: make(chan struct{}), done: make(chan struct{}), rebind: make(chan programConnection, 1)}
+	events := make(chan *programv0.RunEvent, 1)
+	type result struct {
+		pending bool
+		err     error
+	}
+	var prior *waitingRunSlot
+	for cycle := 1; cycle <= 2; cycle++ {
+		checkpoint := fmt.Sprintf("checkpoint-%d", cycle)
+		lease := fmt.Sprintf("lease-%d", cycle)
+		pause := &programv0.CheckpointPauseRequest{RunId: "run", AttemptNumber: 1, RunLeaseId: run.RunLeaseId, RunWaitId: "wait", CorrelationId: "correlation", CheckpointId: checkpoint, ResumeAttachId: "attach", CheckpointRequestVersion: int64(cycle)}
+		done := make(chan result, 1)
+		go func() {
+			_, pending, err := pauseAndResumeProgram(ctx, run, wait, pause, process, stream, registry, &programOutputCoordinator{}, events, make(chan error))
+			done <- result{pending, err}
+		}()
+		header, _, err := wire.ReadStreamFrameHeader(host)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if header.Type != wire.StreamTypeCheckpointPauseReady {
+			t.Fatalf("header=%v", header.Type)
+		}
+		if prior != nil {
+			select {
+			case <-prior.retired:
+			default:
+				t.Fatal("previous receipt still active")
+			}
+		}
+		resumeGuest, resumeHost := net.Pipe()
+		defer resumeGuest.Close()
+		defer resumeHost.Close()
+		attach := &programv0.ResumeAttach{RunId: "run", AttemptNumber: 1, RunLeaseId: lease, RunWaitId: "wait", CorrelationId: "correlation", CheckpointId: checkpoint, ResumeAttachId: "attach", ResumeRequestVersion: int64(cycle)}
+		if err := registry.grantProgramResume(testProgramResumeGrant(attach)); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.attachResume(attach, resumeGuest); err != nil {
+			t.Fatal(err)
+		}
+		decision := &programv0.ResumeDecision{RunWaitId: "wait", CorrelationId: "correlation", Kind: "waiting", RequireConsumedAck: true, CheckpointId: checkpoint, ResumeAttachId: "attach", ResumeRequestVersion: int64(cycle), RunLeaseId: lease}
+		if cycle == 2 {
+			decision.Kind = "completed"
+			decision.NoResult = true
+		}
+		if err := frameio.WriteProtoFrame(resumeHost, decision); err != nil {
+			t.Fatal(err)
+		}
+		events <- &programv0.RunEvent{Event: &programv0.RunEvent_ResumeConsumed{ResumeConsumed: &programv0.ResumeConsumed{RunWaitId: "wait", CorrelationId: "correlation", CheckpointId: checkpoint, ResumeAttachId: "attach", ResumeRequestVersion: int64(cycle), RunLeaseId: lease}}}
+		var ack programv0.ResumeAck
+		if err := frameio.ReadProtoFrame(resumeHost, &ack); err != nil {
+			t.Fatal(err)
+		}
+		got := <-done
+		if got.err != nil || got.pending != (cycle == 1) {
+			t.Fatalf("cycle %d: pending=%v err=%v", cycle, got.pending, got.err)
+		}
+		registry.mu.Lock()
+		prior = registry.slots["wait"]
+		n := len(registry.slots)
+		registry.mu.Unlock()
+		if n != 1 || prior.checkpointID != checkpoint || run.RunLeaseId != lease {
+			t.Fatal("capture retained another generation")
+		}
+		host = resumeHost
+	}
+	if cgroup.freezeCount() != 2 || cgroup.thawCount() != 2 {
+		t.Fatal("physical transitions missing")
+	}
+}
+
+func TestResumeRebindNotificationIsFencedByCurrentConnection(t *testing.T) {
+	oldGuest, oldHost := net.Pipe()
+	defer oldGuest.Close()
+	defer oldHost.Close()
+	newGuest, newHost := net.Pipe()
+	defer newGuest.Close()
+	defer newHost.Close()
+	stream := &programEventStream{conn: oldGuest, rebind: make(chan programConnection, 1), changed: make(chan struct{})}
+	stream.rebind <- oldGuest
+	if previous, ok := stream.replaceConn(newGuest); !ok || previous != oldGuest {
+		t.Fatal("next restore did not replace transport")
+	}
+	stale := <-stream.rebind
+	if stream.isCurrentConnection(stale) || !stream.isCurrentConnection(newGuest) {
+		t.Fatal("old notification could replace next restore")
 	}
 }

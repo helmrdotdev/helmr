@@ -4,14 +4,14 @@ import { createMemo, createSignal, Show } from "solid-js";
 import { ApiError } from "../../lib/api";
 import { startActor, startTask } from "../../lib/definitions";
 import { sessionConsolePath } from "../../lib/sessions";
-import { listWorkspaces, type Workspace } from "../../lib/workspaces";
+import { listComputers, type Computer } from "../../lib/computers";
 import { Modal } from "../../ui/Modal";
 import { Select, type SelectOption } from "../../ui/Select";
 import { formatID } from "../../ui/id";
 import { StatePanel } from "../../ui/StatePanel";
 import { ui } from "../../ui/styles";
 import { runHref } from "../runs/navigation";
-import { CreateWorkspaceModal } from "../workspaces/CreateWorkspaceModal";
+import { CreateComputerModal } from "../computers/CreateComputerModal";
 
 export type StartKind = "task" | "actor";
 
@@ -40,40 +40,40 @@ export function StartDefinitionModal(props: {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const scope = () => ({ projectID: props.projectID, environmentID: props.environmentID });
-  const workspaces = createQuery(() => ({
-    queryKey: ["workspaces", "picker", props.projectID, props.environmentID],
-    queryFn: () => listWorkspaces(scope(), { limit: 100 }),
+  const computers = createQuery(() => ({
+    queryKey: ["computers", "picker", props.projectID, props.environmentID],
+    queryFn: () => listComputers(scope(), { limit: 100 }),
     retry: false,
   }));
-  const workspaceOptions = createMemo<SelectOption<string>[]>(() =>
-    (workspaces.data?.workspaces ?? [])
-      .filter((workspace) => workspace.status === "available")
-      .map((workspace) => ({
-        value: workspace.id,
-        label: workspace.key ?? formatID(workspace.id),
-        hint: workspace.sandbox_id,
+  const computerOptions = createMemo<SelectOption<string>[]>(() =>
+    (computers.data?.computers ?? [])
+      .filter((computer) => computer.status === "available")
+      .map((computer) => ({
+        value: computer.id,
+        label: computer.key ?? formatID(computer.id),
+        hint: computer.sandbox_id,
       })),
   );
 
-  const [workspaceID, setWorkspaceID] = createSignal("");
-  const [creatingWorkspace, setCreatingWorkspace] = createSignal(false);
+  const [computerID, setComputerID] = createSignal("");
+  const [creatingComputer, setCreatingComputer] = createSignal(false);
   const [payload, setPayload] = createSignal("");
   const [key, setKey] = createSignal("");
   const [input, setInput] = createSignal("");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-  const selectedWorkspace = createMemo(() => {
-    const chosen = workspaceID();
-    if (chosen && workspaceOptions().some((option) => option.value === chosen)) return chosen;
-    return workspaceOptions()[0]?.value ?? "";
+  const selectedComputer = createMemo(() => {
+    const chosen = computerID();
+    if (chosen && computerOptions().some((option) => option.value === chosen)) return chosen;
+    return computerOptions()[0]?.value ?? "";
   });
   const title = () => (props.kind === "task" ? `Start Task ${props.definitionID}` : `Start Actor ${props.definitionID}`);
 
   const submit = async (event: Event) => {
     event.preventDefault();
-    const workspace = selectedWorkspace();
-    if (!workspace) {
-      setError("Choose a Workspace.");
+    const computer = selectedComputer();
+    if (!computer) {
+      setError("Choose a Computer.");
       return;
     }
     setError(null);
@@ -86,7 +86,7 @@ export function StartDefinitionModal(props: {
           return;
         }
         const result = await startTask(props.definitionID, scope(), {
-          workspace: { id: workspace },
+          computer: { id: computer },
           ...("value" in parsed ? { payload: parsed.value } : {}),
           idempotency_key: crypto.randomUUID(),
         });
@@ -101,7 +101,7 @@ export function StartDefinitionModal(props: {
         }
         const nextKey = key().trim();
         const result = await startActor(props.definitionID, scope(), {
-          workspace: { id: workspace },
+          computer: { id: computer },
           ...(nextKey ? { key: nextKey } : {}),
           ...("value" in parsed ? { input: parsed.value } : {}),
           idempotency_key: crypto.randomUUID(),
@@ -117,9 +117,9 @@ export function StartDefinitionModal(props: {
     }
   };
 
-  const onWorkspaceCreated = async (workspace: Workspace) => {
-    await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
-    setWorkspaceID(workspace.id);
+  const onComputerCreated = async (computer: Computer) => {
+    await queryClient.invalidateQueries({ queryKey: ["computers"] });
+    setComputerID(computer.id);
   };
 
   return (
@@ -128,26 +128,26 @@ export function StartDefinitionModal(props: {
         <form onSubmit={submit}>
           <p class={ui.modalIntro}>
             {props.kind === "task"
-              ? "Starts a Run of this Task on the current Deployment in the selected Workspace."
-              : "Opens a Session of this Actor on the current Deployment in the selected Workspace."}
+              ? "Starts a Run of this Task on the current Deployment in the selected Computer."
+              : "Opens a Session of this Actor on the current Deployment in the selected Computer."}
           </p>
-          <Show when={!workspaces.isPending} fallback={<StatePanel loading="Loading Workspaces..." />}>
-            <Show when={!workspaces.isError} fallback={<StatePanel error={startErrorMessage(workspaces.error, props.kind)} />}>
+          <Show when={!computers.isPending} fallback={<StatePanel loading="Loading Computers..." />}>
+            <Show when={!computers.isError} fallback={<StatePanel error={startErrorMessage(computers.error, props.kind)} />}>
               <div class={ui.field}>
-                <span>Workspace</span>
+                <span>Computer</span>
                 <div class="flex items-center gap-1.5">
                   <div class="min-w-0 flex-1">
                     <Select<string>
-                      value={selectedWorkspace()}
-                      options={workspaceOptions()}
-                      onChange={setWorkspaceID}
-                      ariaLabel="Workspace"
-                      placeholder="No available Workspaces"
-                      disabled={submitting() || workspaceOptions().length === 0}
+                      value={selectedComputer()}
+                      options={computerOptions()}
+                      onChange={setComputerID}
+                      ariaLabel="Computer"
+                      placeholder="No available Computers"
+                      disabled={submitting() || computerOptions().length === 0}
                     />
                   </div>
-                  <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => setCreatingWorkspace(true)}>
-                    Create Workspace
+                  <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={() => setCreatingComputer(true)}>
+                    Create Computer
                   </button>
                 </div>
               </div>
@@ -201,18 +201,18 @@ export function StartDefinitionModal(props: {
             <button type="button" class={ui.secondaryButton} disabled={submitting()} onClick={props.onClose}>
               Cancel
             </button>
-            <button type="submit" class={ui.button} disabled={submitting() || !selectedWorkspace()}>
+            <button type="submit" class={ui.button} disabled={submitting() || !selectedComputer()}>
               {submitting() ? "Starting..." : "Start"}
             </button>
           </div>
         </form>
       </Modal>
-      <Show when={creatingWorkspace()}>
-        <CreateWorkspaceModal
+      <Show when={creatingComputer()}>
+        <CreateComputerModal
           projectID={props.projectID}
           environmentID={props.environmentID}
-          onClose={() => setCreatingWorkspace(false)}
-          onCreated={onWorkspaceCreated}
+          onClose={() => setCreatingComputer(false)}
+          onCreated={onComputerCreated}
         />
       </Show>
     </>

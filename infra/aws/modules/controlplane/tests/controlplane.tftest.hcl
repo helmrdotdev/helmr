@@ -101,7 +101,7 @@ run "controlplane_uses_execution_only_runtime_authority" {
 
   assert {
     condition     = contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].secrets : item.name], "ENCRYPTION_KEY")
-    error_message = "Scheduled protected Workspace creation requires the existing encryption key in dispatcher."
+    error_message = "Scheduled protected Computer creation requires the existing encryption key in dispatcher."
   }
 
   assert {
@@ -302,12 +302,12 @@ run "bootstrap_clickhouse_admin_is_confined_to_one_off_task" {
   }
 }
 
-run "reject_shared_clickhouse_runtime_identity" {
+run "reject_shared_clickhouse_vm_platform" {
   command = plan
   variables { clickhouse_reader_user = "telemetry_ingester" }
   expect_failures = [terraform_data.clickhouse_access_preconditions]
 }
-run "reject_default_clickhouse_runtime_identity" {
+run "reject_default_clickhouse_vm_platform" {
   command = plan
   variables { clickhouse_reader_user = "default" }
   expect_failures = [terraform_data.clickhouse_access_preconditions]

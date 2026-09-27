@@ -5,7 +5,7 @@ WITH input_definitions AS (
            input_declared_ids.declared_id,
            input_manifests.manifest,
            input_manifest_digests.manifest_digest,
-           input_artifact_ids.artifact_id
+           input_computer_spec_ids.computer_spec_id
       FROM unnest(sqlc.arg(ids)::uuid[])
            WITH ORDINALITY AS input_ids(id, position)
       JOIN unnest(sqlc.arg(kinds)::text[])
@@ -20,15 +20,15 @@ WITH input_definitions AS (
       JOIN unnest(sqlc.arg(manifest_digests)::bytea[])
            WITH ORDINALITY AS input_manifest_digests(manifest_digest, position)
         ON input_manifest_digests.position = input_ids.position
-      JOIN unnest(sqlc.arg(artifact_ids)::uuid[])
-           WITH ORDINALITY AS input_artifact_ids(artifact_id, position)
-        ON input_artifact_ids.position = input_ids.position
+      JOIN unnest(sqlc.arg(computer_spec_ids)::uuid[])
+           WITH ORDINALITY AS input_computer_spec_ids(computer_spec_id, position)
+        ON input_computer_spec_ids.position = input_ids.position
      WHERE cardinality(sqlc.arg(ids)::uuid[]) BETWEEN 0 AND 10000
        AND cardinality(sqlc.arg(kinds)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
        AND cardinality(sqlc.arg(declared_ids)::text[]) = cardinality(sqlc.arg(ids)::uuid[])
        AND cardinality(sqlc.arg(manifests)::jsonb[]) = cardinality(sqlc.arg(ids)::uuid[])
        AND cardinality(sqlc.arg(manifest_digests)::bytea[]) = cardinality(sqlc.arg(ids)::uuid[])
-       AND cardinality(sqlc.arg(artifact_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
+       AND cardinality(sqlc.arg(computer_spec_ids)::uuid[]) = cardinality(sqlc.arg(ids)::uuid[])
 )
 INSERT INTO deployment_definitions (
     id,
@@ -39,7 +39,7 @@ INSERT INTO deployment_definitions (
     manifest_version,
     manifest,
     manifest_digest,
-    artifact_id
+    computer_spec_id
 )
 SELECT input_definitions.id,
        sqlc.arg(environment_id),
@@ -49,7 +49,7 @@ SELECT input_definitions.id,
        sqlc.arg(manifest_version),
        input_definitions.manifest,
        input_definitions.manifest_digest,
-       input_definitions.artifact_id
+       input_definitions.computer_spec_id
   FROM input_definitions;
 
 -- name: GetDeploymentDefinition :one

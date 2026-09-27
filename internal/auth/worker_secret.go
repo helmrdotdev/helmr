@@ -5,8 +5,8 @@ import (
 )
 
 const (
-	WorkerInstanceSecretPrefix = "hlmr_wi_"
-	workerSecretBytes          = 32
+	WorkerHostSecretPrefix = "hlmr_wi_"
+	workerSecretBytes      = 32
 )
 
 type GeneratedWorkerToken struct {
@@ -15,12 +15,12 @@ type GeneratedWorkerToken struct {
 	TokenHash []byte
 }
 
-func GenerateWorkerInstanceSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
+func GenerateWorkerHostSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
 	raw, err := GenerateOpaque(workerSecretBytes)
 	if err != nil {
 		return GeneratedWorkerToken{}, err
 	}
-	workerToken := WorkerInstanceSecretPrefix + raw
+	workerToken := WorkerHostSecretPrefix + raw
 	hash, err := HashToken(hashSecret, workerToken)
 	if err != nil {
 		return GeneratedWorkerToken{}, err
@@ -34,8 +34,8 @@ func GenerateWorkerInstanceSecret(hashSecret []byte) (GeneratedWorkerToken, erro
 
 func WorkerKeyPrefix(key string) string {
 	key = strings.TrimSpace(key)
-	if !strings.HasPrefix(key, WorkerInstanceSecretPrefix) || len(key) <= len(WorkerInstanceSecretPrefix)+8 {
+	if !strings.HasPrefix(key, WorkerHostSecretPrefix) || len(key) <= len(WorkerHostSecretPrefix)+8 {
 		return key
 	}
-	return key[:len(WorkerInstanceSecretPrefix)+8]
+	return key[:len(WorkerHostSecretPrefix)+8]
 }

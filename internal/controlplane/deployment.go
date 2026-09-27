@@ -250,6 +250,11 @@ func deploymentResponse(record db.Deployment) api.DeploymentResponse {
 }
 
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
+		return
+	}
 	var idempotencyConflict idempotency.ConflictError
 	if errors.As(err, &idempotencyConflict) {
 		writeError(w, conflict(errors.New("idempotency key conflicts with another deployment bundle")))

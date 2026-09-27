@@ -15,7 +15,7 @@ export const cleanup = schedules.task({
     pattern: "0 2 * * *",
     timezone: "UTC",
   },
-  workspace: { sandbox: repo },
+  computer: { sandbox: repo },
   run: async ({ scheduledAt }) => ({
     at: scheduledAt.toISOString(),
   }),
@@ -23,7 +23,7 @@ export const cleanup = schedules.task({
 ```
 
 The handler payload contains `scheduledAt`, optional `lastScheduledAt`, and
-`timezone`. The declaration also accepts Task defaults and optional Workspace
+`timezone`. The declaration also accepts Task defaults and optional Computer
 secret placements.
 
 External Schedule APIs are read-only: `client.schedules.retrieve(id)` and

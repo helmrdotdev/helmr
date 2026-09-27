@@ -17,14 +17,14 @@ type database interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-type WorkspaceExecCandidate struct {
+type ComputerCommandCandidate struct {
 	OrgID            pgtype.UUID
-	ProcessID        pgtype.UUID
-	WorkspaceID      pgtype.UUID
+	CommandID        pgtype.UUID
+	ComputerID       pgtype.UUID
 	ExpectedRevision int64
 }
 
-type WorkspaceExecRecoverer func(context.Context, WorkspaceExecCandidate) error
+type ComputerCommandRecoverer func(context.Context, ComputerCommandCandidate) error
 
 type RunFinalization struct {
 	OrgID         uuid.UUID
@@ -38,20 +38,20 @@ type RunFinalizer func(context.Context, pgx.Tx, RunFinalization) error
 type RevocationReconciler struct {
 	db            database
 	queries       *db.Queries
-	execRecoverer WorkspaceExecRecoverer
+	execRecoverer ComputerCommandRecoverer
 	runFinalizer  RunFinalizer
 }
 
 func NewRevocationReconciler(
 	database database,
-	execRecoverer WorkspaceExecRecoverer,
+	execRecoverer ComputerCommandRecoverer,
 	runFinalizer RunFinalizer,
 ) (*RevocationReconciler, error) {
 	if database == nil {
 		return nil, errors.New("secret revocation database is required")
 	}
 	if execRecoverer == nil {
-		return nil, errors.New("workspace exec recoverer is required")
+		return nil, errors.New("Command recoverer is required")
 	}
 	if runFinalizer == nil {
 		return nil, errors.New("run finalizer is required")
@@ -151,7 +151,7 @@ func (r *RevocationReconciler) failRun(
 	valid, err := lockAndValidateRevocation(
 		ctx,
 		q,
-		pgvalue.MustUUIDValue(candidate.WorkspaceID),
+		pgvalue.MustUUIDValue(candidate.ComputerID),
 		secretID,
 		revocationGeneration,
 	)
@@ -195,7 +195,7 @@ func (r *RevocationReconciler) fenceProcess(
 	valid, err := lockAndValidateRevocation(
 		ctx,
 		q,
-		pgvalue.MustUUIDValue(candidate.WorkspaceID),
+		pgvalue.MustUUIDValue(candidate.ComputerID),
 		secretID,
 		revocationGeneration,
 	)
@@ -205,43 +205,43 @@ func (r *RevocationReconciler) fenceProcess(
 	if !valid {
 		return tx.Commit(ctx)
 	}
-	if _, err := q.LockWorkspaceExecFailureWorkspace(
-		ctx,
-		db.LockWorkspaceExecFailureWorkspaceParams{
-			OrgID:       candidate.OrgID,
-			WorkspaceID: candidate.WorkspaceID,
-		},
-	); errors.Is(err, pgx.ErrNoRows) {
-		return tx.Commit(ctx)
-	} else if err != nil {
-		return fmt.Errorf("lock secret-revoked process workspace: %w", err)
-	}
-	authority, err := q.LockWorkspaceExecSecretRevocationAuthority(
-		ctx,
-		db.LockWorkspaceExecSecretRevocationAuthorityParams{
-			OrgID:            candidate.OrgID,
-			ProcessID:        candidate.ID,
-			WorkspaceID:      candidate.WorkspaceID,
-			ExpectedRevision: candidate.Revision,
-		},
-	)
+	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{
+		OrgID: candidate.OrgID, CommandID: candidate.ID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		if err := tx.Commit(ctx); err != nil {
-			return fmt.Errorf("commit existing secret-revoked process fence: %w", err)
+		return tx.Commit(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("locate secret-revoked Command: %w", err)
+	}
+	if target.ComputerID != candidate.ComputerID {
+		return errors.New("secret-revoked Command placement changed")
+	}
+	if _, err := q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{
+		EnvironmentID: target.EnvironmentID, ID: target.ComputerID,
+	}); err != nil {
+		return fmt.Errorf("lock secret-revoked Computer: %w", err)
+	}
+	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{
+		EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("lock secret-revoked Instance: %w", err)
+	}
+	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{
+		EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: candidate.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("lock secret-revoked Command: %w", err)
+	}
+	if !command.TerminalAt.Valid && !command.CancelRequestedAt.Valid {
+		command, err = q.StopSecretRevokedComputerCommand(ctx, db.StopSecretRevokedComputerCommandParams{
+			EnvironmentID: target.EnvironmentID, CommandID: command.ID, ExpectedRevision: command.Revision,
+		})
+		if err != nil {
+			return fmt.Errorf("fail secret-revoked Command: %w", err)
 		}
-		return r.recoverProcess(ctx, candidate)
-	} else if err != nil {
-		return fmt.Errorf("lock secret-revoked process authority: %w", err)
 	}
-	if _, err := q.FenceWorkspaceExecLeaseForSecretRevocation(
-		ctx,
-		db.FenceWorkspaceExecLeaseForSecretRevocationParams{
-			LeaseID:   authority.WorkspaceLease.ID,
-			ProcessID: authority.WorkspaceProcess.ID,
-		},
-	); err != nil {
-		return fmt.Errorf("fence secret-revoked workspace exec lease: %w", err)
-	}
+	candidate.Revision = command.Revision
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit secret-revoked process fence: %w", err)
 	}
@@ -254,15 +254,15 @@ func (r *RevocationReconciler) recoverProcess(
 ) error {
 	err := r.execRecoverer(
 		ctx,
-		WorkspaceExecCandidate{
+		ComputerCommandCandidate{
 			OrgID:            candidate.OrgID,
-			ProcessID:        candidate.ID,
-			WorkspaceID:      candidate.WorkspaceID,
+			CommandID:        candidate.ID,
+			ComputerID:       candidate.ComputerID,
 			ExpectedRevision: candidate.Revision,
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("recover secret-revoked workspace exec: %w", err)
+		return fmt.Errorf("recover secret-revoked Command: %w", err)
 	}
 	return nil
 }
@@ -270,19 +270,19 @@ func (r *RevocationReconciler) recoverProcess(
 func lockAndValidateRevocation(
 	ctx context.Context,
 	q *db.Queries,
-	workspaceID uuid.UUID,
+	computerID uuid.UUID,
 	secretID uuid.UUID,
 	revocationGeneration int64,
 ) (bool, error) {
-	rows, err := q.LockWorkspaceSecretsForAdmission(
+	rows, err := q.LockComputerSecretsForAdmission(
 		ctx,
-		pgvalue.UUID(workspaceID),
+		pgvalue.UUID(computerID),
 	)
 	if err != nil {
-		return false, fmt.Errorf("lock workspace secret set for revocation: %w", err)
+		return false, fmt.Errorf("lock computer secret set for revocation: %w", err)
 	}
-	if len(rows) > maxWorkspaceSecretPlacements {
-		return false, errors.New("workspace secret placements exceed their bound")
+	if len(rows) > maxComputerSecretPlacements {
+		return false, errors.New("computer secret placements exceed their bound")
 	}
 	for _, row := range rows {
 		if row.SecretID == pgvalue.UUID(secretID) {

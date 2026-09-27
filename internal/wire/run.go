@@ -104,7 +104,7 @@ func readProtoStreamBody(reader io.Reader, bodyLen uint64, message proto.Message
 }
 
 // SecretEnvCollisionDiagnostic is fixed public text; never append underlying launch errors.
-const SecretEnvCollisionDiagnostic = "workspace Secret env binding conflicts with image or execution env; remove the bound name from image ENV and exec env"
+const SecretEnvCollisionDiagnostic = "computer Secret env binding conflicts with image or execution env; remove the bound name from image ENV and exec env"
 
 func WriteSessionStop(w io.Writer, stop *programv0.SessionStop) error {
 	if stop == nil {

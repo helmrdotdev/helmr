@@ -5,46 +5,27 @@ import (
 	"testing"
 )
 
-func TestWorkerRunStartRequestClosedUnion(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-		ok   bool
+func TestWorkerRunStartRequestRequiresClosedLease(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
 	}{
-		{name: "fresh", body: `{"lease":{},"fresh":{}}`, ok: true},
-		{name: "restore", body: `{"lease":{},"restore":{}}`, ok: true},
-		{name: "missing arm", body: `{"lease":{}}`},
-		{name: "multiple arms", body: `{"lease":{},"fresh":{},"restore":{}}`},
-		{name: "null arm", body: `{"lease":{},"fresh":null}`},
-		{name: "removed attach arm", body: `{"lease":{},"attach":{"child":{}}}`},
-		{name: "unknown top level", body: `{"lease":{},"fresh":{},"unknown":true}`},
-		{name: "unknown nested", body: `{"lease":{},"fresh":{"unknown":true}}`},
-		{name: "null lease", body: `{"lease":null,"fresh":{}}`},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+		{"lease", `{"lease":{"id":"lease","lease_sequence":2}}`, true},
+		{"missing lease", `{}`, false},
+		{"null lease", `{"lease":null}`, false},
+		{"unknown field", `{"lease":{},"unknown":true}`, false},
+		{"unknown lease field", `{"lease":{"unknown":true}}`, false},
+		{"invalid sequence type", `{"lease":{"lease_sequence":"two"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			var request RunStartRequest
-			err := json.Unmarshal([]byte(test.body), &request)
-			if (err == nil) != test.ok {
-				t.Fatalf("error = %v", err)
+			err := json.Unmarshal([]byte(tc.body), &request)
+			if (err == nil) != tc.valid {
+				t.Fatalf("decode: %v", err)
+			}
+			if tc.valid && request.Lease != (RunLeaseFence{ID: "lease", LeaseSequence: 2}) {
+				t.Fatalf("lease: %+v", request.Lease)
 			}
 		})
-	}
-}
-
-func TestWorkerRunStartRequestMarshalUsesSelectedArm(t *testing.T) {
-	data, err := json.Marshal(RunStartRequest{
-		Lease: RunLeaseFence{ID: "lease", LeaseSequence: 1},
-		Fresh: &RunStartFresh{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		t.Fatal(err)
-	}
-	if len(fields) != 2 || fields["fresh"] == nil || fields["lease"] == nil {
-		t.Fatalf("body = %s", data)
 	}
 }

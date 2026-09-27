@@ -7,7 +7,7 @@ sidebarLabel: actor
 # `helmr actor`
 
 ```text
-helmr actor start ACTOR --workspace WORKSPACE [flags]
+helmr actor start ACTOR --computer COMPUTER [flags]
 helmr actor get SESSION_ID [--json]
 helmr actor send SESSION_ID (--data-json JSON | --data-file FILE) [--json]
 helmr actor enqueue SESSION_ID (--data-json JSON | --data-file FILE) [--json]
@@ -26,7 +26,7 @@ object. A receipt acknowledges the operation, not completion of the work.
 
 `start` accepts `--key`, `--idempotency-key`, and managed-Run options: queue,
 concurrency key, priority, TTL, tags, metadata, and retry policy. It requires an
-existing Workspace. Send the first input separately after starting the Session.
+existing Computer. Send the first input separately after starting the Session.
 
 ## Send work and messages
 
@@ -88,5 +88,5 @@ helmr actor get SESSION_ID --project PROJECT --env ENV
 
 `cancel` discards queued Turns with a `cancelled` outcome and stops active work.
 The response acknowledges acceptance. Wait for Session status `closed` before
-Workspace deletion; automatic recovery waits for physical cleanup.
+Computer deletion; automatic recovery waits for physical cleanup.
 Unlike `close`, cancellation does not drain queued work or start new customer code.

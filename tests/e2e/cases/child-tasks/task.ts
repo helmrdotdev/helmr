@@ -3,7 +3,7 @@ import {
   image,
   task,
   sandbox,
-  workspaces,
+  computers,
 } from "@helmr/sdk"
 import { readFile, writeFile } from "node:fs/promises"
 import { setTimeout as sleep } from "node:timers/promises"
@@ -14,13 +14,13 @@ const base = image("helmr-child-task-smoke")
   .workdir("/sandbox")
   .workdir("/sandbox")
 
-export const childTaskSmokeCallerWorkspace = sandbox(
+export const childTaskSmokeCallerComputer = sandbox(
   { id: "helmr-child-task-caller-smoke" },
 )
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 
-export const childTaskSmokeTargetWorkspace = sandbox(
+export const childTaskSmokeTargetComputer = sandbox(
   { id: "helmr-child-task-target-smoke" },
 )
   .image(base)
@@ -69,7 +69,7 @@ const callerPayload = z.object({
     "start-detached",
   ]),
   marker: z.string().min(1),
-  childWorkspaceId: z.string().min(1).optional(),
+  childComputerId: z.string().min(1).optional(),
   holdSeconds: z.number().int().min(0).max(240).default(0),
 }).strict()
 
@@ -80,22 +80,22 @@ export const childTaskSmoke = task({
   maxDuration: "10m",
   payload: callerPayload,
   run: async (input: CallerPayload, ctx) => {
-    if (input.mode !== "same-sandbox-call" && input.childWorkspaceId === undefined) {
-      throw new Error("childWorkspaceId is required for a separate-Workspace child")
+    if (input.mode !== "same-sandbox-call" && input.childComputerId === undefined) {
+      throw new Error("childComputerId is required for a separate-Computer child")
     }
-    if (input.mode === "same-sandbox-call" && ctx.workspace === null) {
-      throw new Error("same-Workspace child call requires a Workspace")
+    if (input.mode === "same-sandbox-call" && ctx.computer === null) {
+      throw new Error("same-Computer child call requires a Computer")
     }
-    const childWorkspace = input.mode === "same-sandbox-call"
-      ? ctx.workspace!
-      : workspaces.ref(input.childWorkspaceId!)
+    const childComputer = input.mode === "same-sandbox-call"
+      ? ctx.computer!
+      : computers.ref(input.childComputerId!)
     const childInput = {
       marker: input.marker,
       fail: input.mode === "call-failure",
       holdSeconds: input.holdSeconds,
     }
     const options = {
-      workspace: childWorkspace,
+      computer: childComputer,
       idempotencyKey: `${ctx.run.id}:${input.mode}`,
       metadata: { marker: input.marker, smokeMode: input.mode },
       tags: ["smoke", "child-task", input.mode],
@@ -110,7 +110,7 @@ export const childTaskSmoke = task({
         childRunId: child.id,
         childAttemptNumber: null,
         childFailure: null,
-        sameWorkspaceMarkerObserved: false,
+        sameComputerMarkerObserved: false,
       }
     }
 
@@ -124,7 +124,7 @@ export const childTaskSmoke = task({
       if (input.mode === "same-sandbox-call") {
         sharedMarker = await readFile("child-task-smoke.json", "utf8")
         if (!sharedMarker.includes(input.marker) || !sharedMarker.includes(output.childRunId)) {
-          throw new Error("resumed parent did not observe the child Workspace marker")
+          throw new Error("resumed parent did not observe the child Computer marker")
         }
       }
       return {
@@ -134,7 +134,7 @@ export const childTaskSmoke = task({
         childRunId: output.childRunId,
         childAttemptNumber: output.attemptNumber,
         childFailure: null,
-        sameWorkspaceMarkerObserved: sharedMarker !== null,
+        sameComputerMarkerObserved: sharedMarker !== null,
       }
     }
 
@@ -153,14 +153,14 @@ export const childTaskSmoke = task({
         message: result.failure.message,
         details: result.failure.details,
       },
-      sameWorkspaceMarkerObserved: false,
+      sameComputerMarkerObserved: false,
     }
   },
 })
 
 const actorInput = z.object({
   marker: z.string().min(1),
-  childWorkspaceId: z.string().min(1),
+  childComputerId: z.string().min(1),
 }).strict()
 
 export const childTaskSmokeActor = actor({
@@ -174,7 +174,7 @@ export const childTaskSmokeActor = actor({
     const output = await childTaskSmokeChild.call(
       { marker: input.marker, fail: false, holdSeconds: 0 },
       {
-        workspace: workspaces.ref(input.childWorkspaceId),
+        computer: computers.ref(input.childComputerId),
         idempotencyKey: `${ctx.run.id}:actor-call`,
         metadata: { marker: input.marker, smokeMode: "actor-call" },
         tags: ["smoke", "child-task", "actor-call"],

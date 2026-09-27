@@ -22,7 +22,7 @@ for (const kind of ["task", "actor"] as const) {
       entrypointDeclaredId: declaredId, runId: "run-1", attemptNumber: 1,
       cause: { kind: kind === "task" ? { case: "api", value: {} } : { case: "actorStart", value: {} } },
       deploymentId: "deployment-1", deploymentVersion: "v1",
-      workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", baseWorkspaceVersionId: "version-1",
+      computerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", baseComputerDiskVersionId: "version-1",
       entrypoint: kind === "task" ? { case: "task", value: { payload: { case: "noPayload", value: {} } } } : { case: "actor", value: { sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", startInputSequence: 0n, inputHighWatermark: 0n, runGeneration: 1n } },
     })
     const release = create(p.EntrypointReleaseSchema, { runId: start.runId, attemptNumber: start.attemptNumber, entrypoint: { declaredId, kind: kind === "task" ? { case: "task", value: {} } : { case: "actor", value: {} } } })
@@ -54,7 +54,7 @@ for (const signal of ["SIGTERM", "SIGKILL"] as const) {
     const start = create(p.ProgramStartSchema, {
       entrypointDeclaredId: "deploy", runId: "run-stop", attemptNumber: 1,
       cause: { kind: { case: "api", value: {} } }, deploymentId: "deployment-1", deploymentVersion: "v1",
-      workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", baseWorkspaceVersionId: "version-1",
+      computerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", baseComputerDiskVersionId: "version-1",
       entrypoint: { case: "task", value: { payload: { case: "noPayload", value: {} } } },
     })
     const child = spawn(process.execPath, [...flags, "/opt/helmr/runtime/helmr/entry.mjs"], { stdio: ["pipe", "pipe", "pipe", "pipe"], env: { PATH: process.env["PATH"] } })

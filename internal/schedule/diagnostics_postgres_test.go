@@ -25,7 +25,7 @@ func TestDBAdmitterDiagnosticCausesRollback(t *testing.T) {
     FROM deployment_definitions WHERE id=$1 RETURNING id
    ) UPDATE schedules SET deployment_definition_id=actor.id FROM actor WHERE deployment_definition_id=$1`, ErrorInvalidSchedule},
 		{"task absent", `UPDATE deployment_definitions SET kind='actor' WHERE id=$1`, ErrorTaskNotFound},
-		{"program wrong kind", `UPDATE artifacts SET kind='workspace_image' WHERE id=(SELECT program_artifact_id FROM deployments WHERE id=(SELECT deployment_id FROM deployment_definitions WHERE id=$1))`, ErrorProgramUnavailable},
+		{"program wrong kind", `UPDATE artifacts SET kind='computer_image' WHERE id=(SELECT program_artifact_id FROM deployments WHERE id=(SELECT deployment_id FROM deployment_definitions WHERE id=$1))`, ErrorProgramUnavailable},
 		{"secret selection", `DELETE FROM schedule_secrets WHERE schedule_id=(SELECT id FROM schedules WHERE deployment_definition_id=$1)`, ErrorSecretSelectionMismatch},
 		{"sandbox absent", `DELETE FROM deployment_definitions WHERE kind='sandbox' AND deployment_id=(SELECT deployment_id FROM deployment_definitions WHERE id=$1)`, ErrorSandboxNotFound},
 	} {

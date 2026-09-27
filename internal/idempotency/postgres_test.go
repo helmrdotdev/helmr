@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestPostgresClaimUniqueSlotAndStaleCompletionFence(t *testing.T) {
+func TestPostgresClaimUniqueSlotSurvivesReceiptPruning(t *testing.T) {
 	database := dbtest.Open(t)
 	if err := schema.Up(t.Context(), database.DSN); err != nil {
 		t.Fatal(err)
@@ -76,12 +76,12 @@ func TestPostgresClaimUniqueSlotAndStaleCompletionFence(t *testing.T) {
 	}
 
 	if _, err := database.Pool.Exec(t.Context(), `
-		UPDATE idempotency_claims
-		   SET accepted_at = statement_timestamp() - interval '31 days',
-		       expires_at = statement_timestamp() - interval '1 day'
-		 WHERE id = $1
-	`, first.ID); err != nil {
+	 UPDATE idempotency_claims SET status='completed',completed_at=now(),
+	 receipt_expires_at=now()-interval '1 day',receipt='{}'::jsonb WHERE id=$1`, first.ID); err != nil {
 		t.Fatal(err)
+	}
+	if count, err := db.New(database.Pool).PruneExpiredIdempotencyReceipts(t.Context(), 100); err != nil || count != 1 {
+		t.Fatalf("prune receipts = %d, %v", count, err)
 	}
 	tx, err := database.Pool.Begin(t.Context())
 	if err != nil {
@@ -92,23 +92,22 @@ func TestPostgresClaimUniqueSlotAndStaleCompletionFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rebound, err := claims.Acquire(t.Context(), request)
-	if err != nil {
+	_, err = claims.Acquire(t.Context(), request)
+	var expired ExpiredError
+	if !errors.As(err, &expired) {
+		t.Fatalf("pruned replay = %v", err)
+	}
+	if _, err := claims.Complete(t.Context(), first, []byte(`{"secretId":"duplicate"}`)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("duplicate completion = %v", err)
+	}
+	var count int
+	if err := tx.QueryRow(t.Context(), `SELECT count(*) FROM idempotency_claims WHERE environment_id=$1 AND operation=$2 AND slot_hash=$3`, first.EnvironmentID, first.Operation, first.SlotHash).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if !rebound.New || rebound.Claim.ID == first.ID {
-		t.Fatalf("rebound claim = %+v", rebound)
+	if count != 1 {
+		t.Fatalf("retained claims=%d", count)
 	}
-	if _, err := claims.Complete(
-		t.Context(),
-		first,
-		[]byte(`{"secretId":"stale"}`),
-	); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("stale completion error = %v", err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+
 }
 
 func TestPostgresClaimSlotIsScopedByEnvironment(t *testing.T) {
@@ -150,9 +149,9 @@ func TestPostgresClaimSlotIsScopedByEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	_, err = db.New(tx).LockLiveIdempotencyClaim(
+	_, err = db.New(tx).LockIdempotencyClaim(
 		t.Context(),
-		db.LockLiveIdempotencyClaimParams{
+		db.LockIdempotencyClaimParams{
 			EnvironmentID: pgvalue.UUID(secondEnvironmentID),
 			Operation:     first.Operation,
 			SlotHash:      first.SlotHash,

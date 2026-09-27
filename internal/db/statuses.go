@@ -27,14 +27,14 @@ const (
 	DeviceCodeStatusConsumed DeviceCodeStatus = "consumed"
 )
 
-type WorkerInstanceStatus = string
+type WorkerHostStatus = string
 
 const (
-	WorkerInstanceStatusRegistering      WorkerInstanceStatus = "registering"
-	WorkerInstanceStatusActive           WorkerInstanceStatus = "active"
-	WorkerInstanceStatusDraining         WorkerInstanceStatus = "draining"
-	WorkerInstanceStatusTerminationReady WorkerInstanceStatus = "termination_ready"
-	WorkerInstanceStatusLost             WorkerInstanceStatus = "lost"
+	WorkerHostStatusRegistering      WorkerHostStatus = "registering"
+	WorkerHostStatusActive           WorkerHostStatus = "active"
+	WorkerHostStatusDraining         WorkerHostStatus = "draining"
+	WorkerHostStatusTerminationReady WorkerHostStatus = "termination_ready"
+	WorkerHostStatusLost             WorkerHostStatus = "lost"
 )
 
 type PublicAccessTokenStatus = string
@@ -92,13 +92,13 @@ const (
 	RunWaitStatusFailed        RunWaitStatus = "failed"
 )
 
-type RunCheckpointStatus = string
+type ComputerCheckpointStatus = string
 
 const (
-	RunCheckpointStatusCreating RunCheckpointStatus = "creating"
-	RunCheckpointStatusReady    RunCheckpointStatus = "ready"
-	RunCheckpointStatusInvalid  RunCheckpointStatus = "invalid"
-	RunCheckpointStatusDeleted  RunCheckpointStatus = "deleted"
+	ComputerCheckpointStatusCreating ComputerCheckpointStatus = "creating"
+	ComputerCheckpointStatusReady    ComputerCheckpointStatus = "ready"
+	ComputerCheckpointStatusInvalid  ComputerCheckpointStatus = "invalid"
+	ComputerCheckpointStatusDeleted  ComputerCheckpointStatus = "deleted"
 )
 
 type RunStatus = string
@@ -133,70 +133,73 @@ const (
 	RunLeaseStatusExpired       RunLeaseStatus = "expired"
 )
 
-type WorkspaceStatus = string
+type ComputerStatus = string
 
 const (
-	WorkspaceStatusActive           WorkspaceStatus = "active"
-	WorkspaceStatusDeleting         WorkspaceStatus = "deleting"
-	WorkspaceStatusRecoveryRequired WorkspaceStatus = "recovery_required"
-	WorkspaceStatusDeleted          WorkspaceStatus = "deleted"
+	ComputerStatusActive           ComputerStatus = "active"
+	ComputerStatusDeleting         ComputerStatus = "deleting"
+	ComputerStatusRecoveryRequired ComputerStatus = "recovery_required"
+	ComputerStatusDeleted          ComputerStatus = "deleted"
 )
 
-type WorkspaceDesiredState = string
+type ComputerDesiredState = string
 
 const (
-	WorkspaceDesiredStateActive  WorkspaceDesiredState = "active"
-	WorkspaceDesiredStateStopped WorkspaceDesiredState = "stopped"
-	WorkspaceDesiredStateDeleted WorkspaceDesiredState = "deleted"
+	ComputerDesiredStateActive  ComputerDesiredState = "active"
+	ComputerDesiredStateStopped ComputerDesiredState = "stopped"
+	ComputerDesiredStateDeleted ComputerDesiredState = "deleted"
 )
 
-type WorkspaceDirtyState = string
+type ComputerDirtyState = string
 
 const (
-	WorkspaceDirtyStateClean          WorkspaceDirtyState = "clean"
-	WorkspaceDirtyStateDirty          WorkspaceDirtyState = "dirty"
-	WorkspaceDirtyStateCapturing      WorkspaceDirtyState = "capturing"
-	WorkspaceDirtyStateCaptureFailed  WorkspaceDirtyState = "capture_failed"
-	WorkspaceDirtyStateDirtyStateLost WorkspaceDirtyState = "dirty_state_lost"
+	ComputerDirtyStateClean          ComputerDirtyState = "clean"
+	ComputerDirtyStateDirty          ComputerDirtyState = "dirty"
+	ComputerDirtyStateCapturing      ComputerDirtyState = "capturing"
+	ComputerDirtyStateCaptureFailed  ComputerDirtyState = "capture_failed"
+	ComputerDirtyStateDirtyStateLost ComputerDirtyState = "dirty_state_lost"
 )
 
-type WorkspaceVersionStatus = string
+type ComputerDiskVersionStatus = string
 
 const (
-	WorkspaceVersionStatusInitializing WorkspaceVersionStatus = "initializing"
-	WorkspaceVersionStatusPrivate      WorkspaceVersionStatus = "private"
-	WorkspaceVersionStatusCommitted    WorkspaceVersionStatus = "committed"
-	WorkspaceVersionStatusDiscarded    WorkspaceVersionStatus = "discarded"
+	ComputerDiskVersionStatusInitializing ComputerDiskVersionStatus = "initializing"
+	ComputerDiskVersionStatusPrivate      ComputerDiskVersionStatus = "private"
+	ComputerDiskVersionStatusCommitted    ComputerDiskVersionStatus = "committed"
+	ComputerDiskVersionStatusDiscarded    ComputerDiskVersionStatus = "discarded"
 )
 
-type WorkspaceMountStatus = string
+type ComputerMountStatus = string
 
 const (
-	WorkspaceMountStatusMounting   WorkspaceMountStatus = "mounting"
-	WorkspaceMountStatusMounted    WorkspaceMountStatus = "mounted"
-	WorkspaceMountStatusUnmounting WorkspaceMountStatus = "unmounting"
-	WorkspaceMountStatusUnmounted  WorkspaceMountStatus = "unmounted"
-	WorkspaceMountStatusLost       WorkspaceMountStatus = "lost"
-	WorkspaceMountStatusFailed     WorkspaceMountStatus = "failed"
+	ComputerMountStatusMounting   ComputerMountStatus = "mounting"
+	ComputerMountStatusMounted    ComputerMountStatus = "mounted"
+	ComputerMountStatusUnmounting ComputerMountStatus = "unmounting"
+	ComputerMountStatusUnmounted  ComputerMountStatus = "unmounted"
+	ComputerMountStatusLost       ComputerMountStatus = "lost"
+	ComputerMountStatusFailed     ComputerMountStatus = "failed"
 )
 
-type WorkspaceLeaseStatus = string
+type ComputerLeaseStatus = string
 
 const (
-	WorkspaceLeaseStatusActive    WorkspaceLeaseStatus = "active"
-	WorkspaceLeaseStatusReleasing WorkspaceLeaseStatus = "releasing"
-	WorkspaceLeaseStatusReleased  WorkspaceLeaseStatus = "released"
-	WorkspaceLeaseStatusExpired   WorkspaceLeaseStatus = "expired"
-	WorkspaceLeaseStatusFenced    WorkspaceLeaseStatus = "fenced"
+	ComputerLeaseStatusActive    ComputerLeaseStatus = "active"
+	ComputerLeaseStatusReleasing ComputerLeaseStatus = "releasing"
+	ComputerLeaseStatusReleased  ComputerLeaseStatus = "released"
+	ComputerLeaseStatusExpired   ComputerLeaseStatus = "expired"
+	ComputerLeaseStatusFenced    ComputerLeaseStatus = "fenced"
 )
 
-type WorkspaceProcessStatus = string
+type ComputerCommandStatus = string
 
 const (
-	WorkspaceProcessStatusPending       WorkspaceProcessStatus = "pending"
-	WorkspaceProcessStatusStarting      WorkspaceProcessStatus = "starting"
-	WorkspaceProcessStatusRunning       WorkspaceProcessStatus = "running"
-	WorkspaceProcessStatusExitRequested WorkspaceProcessStatus = "exit_requested"
-	WorkspaceProcessStatusExited        WorkspaceProcessStatus = "exited"
-	WorkspaceProcessStatusFailed        WorkspaceProcessStatus = "failed"
+	ComputerCommandStatusPending   ComputerCommandStatus = "pending"
+	ComputerCommandStatusStarting  ComputerCommandStatus = "starting"
+	ComputerCommandStatusRunning   ComputerCommandStatus = "running"
+	ComputerCommandStatusStopping  ComputerCommandStatus = "stopping"
+	ComputerCommandStatusCancelled ComputerCommandStatus = "cancelled"
+	ComputerCommandStatusTimedOut  ComputerCommandStatus = "timed_out"
+	ComputerCommandStatusLost      ComputerCommandStatus = "lost"
+	ComputerCommandStatusExited    ComputerCommandStatus = "exited"
+	ComputerCommandStatusFailed    ComputerCommandStatus = "failed"
 )

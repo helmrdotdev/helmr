@@ -35,7 +35,7 @@ const (
 // The transition rechecks freshness defensively under the retained lock.
 type StaleWorkerFenceQueries interface {
 	ListStaleWorkerFenceCandidates(context.Context, db.ListStaleWorkerFenceCandidatesParams) ([]db.ListStaleWorkerFenceCandidatesRow, error)
-	RecheckAndFenceStaleWorkerInstance(context.Context, db.RecheckAndFenceStaleWorkerInstanceParams) (db.RecheckAndFenceStaleWorkerInstanceRow, error)
+	RecheckAndFenceStaleWorkerHost(context.Context, db.RecheckAndFenceStaleWorkerHostParams) (db.RecheckAndFenceStaleWorkerHostRow, error)
 }
 
 type StaleWorkerFenceTransactions interface {
@@ -64,13 +64,13 @@ const (
 )
 
 type StaleWorkerFenceResult struct {
-	WorkerInstanceID pgtype.UUID
-	WorkerGroupID    pgtype.UUID
-	WorkerEpoch      pgtype.Int8
-	PreviousStatus   db.WorkerInstanceStatus
-	FreshnessAt      time.Time
-	Outcome          StaleWorkerFenceOutcome
-	Reason           string
+	WorkerHostID   pgtype.UUID
+	WorkerGroupID  pgtype.UUID
+	WorkerEpoch    pgtype.Int8
+	PreviousStatus db.WorkerHostStatus
+	FreshnessAt    time.Time
+	Outcome        StaleWorkerFenceOutcome
+	Reason         string
 }
 
 type StaleWorkerFenceCycle struct {
@@ -279,14 +279,14 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 			cycle.Selected += len(candidates)
 			for _, candidate := range candidates {
 				result := StaleWorkerFenceResult{
-					WorkerInstanceID: candidate.ID,
-					WorkerGroupID:    candidate.WorkerGroupID,
-					WorkerEpoch:      candidate.CurrentEpoch,
-					PreviousStatus:   candidate.Status,
-					FreshnessAt:      candidate.FreshnessAt.Time,
-					Reason:           candidate.Reason,
+					WorkerHostID:   candidate.ID,
+					WorkerGroupID:  candidate.WorkerGroupID,
+					WorkerEpoch:    candidate.CurrentEpoch,
+					PreviousStatus: candidate.Status,
+					FreshnessAt:    candidate.FreshnessAt.Time,
+					Reason:         candidate.Reason,
 				}
-				_, err := queries.RecheckAndFenceStaleWorkerInstance(ctx, db.RecheckAndFenceStaleWorkerInstanceParams{
+				_, err := queries.RecheckAndFenceStaleWorkerHost(ctx, db.RecheckAndFenceStaleWorkerHostParams{
 					ID:                          candidate.ID,
 					WorkerGroupID:               candidate.WorkerGroupID,
 					ExpectedEpoch:               candidate.CurrentEpoch,
@@ -316,7 +316,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 	}
 	for _, result := range cycle.Results {
 		f.log.Info("stale worker fence result",
-			"worker_instance_id", result.WorkerInstanceID,
+			"worker_host_id", result.WorkerHostID,
 			"worker_group_id", pgvalue.UUIDString(result.WorkerGroupID),
 			"worker_epoch", result.WorkerEpoch.Int64,
 			"previous_status", result.PreviousStatus,

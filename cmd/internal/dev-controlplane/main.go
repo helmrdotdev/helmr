@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -34,7 +35,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -48,7 +48,7 @@ const (
 	defaultSetupToken          = "dev-setup-token"
 	defaultWorkerTokenKey      = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="
 	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	defaultWorkspaceFencingKey = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
+	defaultComputerFencingKey  = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="
 	defaultTokenCredentialKey  = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM="
 	defaultUserID              = "00000000-0000-7000-8000-000000000101"
 )
@@ -166,9 +166,9 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	workspaceFencingKey, err := workspace.NewFencingKey(cfg.workspaceFencingKey)
+	computerFencingKey, err := computer.NewFencingKey(cfg.computerFencingKey)
 	if err != nil {
-		log.Error("configure Workspace fencing key", "error", err)
+		log.Error("configure Computer fencing key", "error", err)
 		os.Exit(1)
 	}
 	tokenCredentialKey, err := auth.NewCredentialKey(cfg.tokenCredentialKey)
@@ -202,7 +202,7 @@ func main() {
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
 		SecretProxy:           secretStore,
-		WorkspaceFencingKey:   workspaceFencingKey,
+		ComputerFencingKey:    computerFencingKey,
 		TokenCredentialKey:    tokenCredentialKey,
 		WorkerTokenSigningKey: cfg.workerTokenKey,
 		SetupToken:            cfg.setupToken,
@@ -261,7 +261,7 @@ type devConfig struct {
 	workerTokenKey                  []byte
 	encryptionKey                   []byte
 	computerWrappingKey             []byte
-	workspaceFencingKey             []byte
+	computerFencingKey              []byte
 	tokenCredentialKey              []byte
 	seedData                        bool
 }
@@ -297,7 +297,7 @@ func loadConfig() (devConfig, error) {
 		{name: "WORKER_TOKEN_SIGNING_KEY", fallback: defaultWorkerTokenKey, target: &cfg.workerTokenKey},
 		{name: "COMPUTER_WRAPPING_KEY", fallback: "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU=", target: &cfg.computerWrappingKey},
 		{name: "ENCRYPTION_KEY", fallback: defaultSecretEncryptionKey, target: &cfg.encryptionKey},
-		{name: "WORKSPACE_FENCING_KEY", fallback: defaultWorkspaceFencingKey, target: &cfg.workspaceFencingKey},
+		{name: "COMPUTER_FENCING_KEY", fallback: defaultComputerFencingKey, target: &cfg.computerFencingKey},
 		{name: "TOKEN_CREDENTIAL_KEY", fallback: defaultTokenCredentialKey, target: &cfg.tokenCredentialKey},
 	} {
 		*key.target, err = decodeRootKey(key.name, secretEnv(key.name, key.fallback))

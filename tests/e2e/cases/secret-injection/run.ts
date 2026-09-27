@@ -12,23 +12,23 @@ await verify("secret-injection", async ({ client, marker, cleanup, objects }) =>
       .ref(secret.id)
       .revoke({ idempotencyKey: `revoke:${marker}` }, { signal: deadline(30_000) }),
   )
-  const workspace = await client.sandboxes.createWorkspace(
+  const computer = await client.sandboxes.createComputer(
     "helmr-secret-smoke",
     {
       key: marker,
-      idempotencyKey: `workspace:${marker}`,
+      idempotencyKey: `computer:${marker}`,
       secrets: [{ secret: name, env: { name: "HELMR_VERIFICATION_SECRET", mode: "raw" } }],
     },
     { signal: deadline(30_000) },
   )
-  objects.workspace_ids.push(workspace.id)
+  objects.computer_ids.push(computer.id)
   cleanup(() =>
-    workspace.delete({ idempotencyKey: `delete:${marker}` }, { signal: deadline(30_000) }),
+    computer.delete({ idempotencyKey: `delete:${marker}` }, { signal: deadline(30_000) }),
   )
   const run = await client.tasks.start(
     "secret-smoke",
     {
-      workspace,
+      computer,
       payload: { sha256: createHash("sha256").update(value).digest("hex") },
       idempotencyKey: `run:${marker}`,
     },

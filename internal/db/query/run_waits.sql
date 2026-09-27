@@ -7,7 +7,7 @@ SELECT *
 
 -- name: GetTokenWaitRegistrationReplay :one
 -- Presence and exact identity must use one statement snapshot, including the
--- read-only replay before lineage locks.
+-- read-only replay before Run locks.
 WITH replay AS (
     SELECT run_waits.id AS wait_id,
            runs.revision AS run_revision,
@@ -23,14 +23,13 @@ WITH replay AS (
         ON run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.run_id = run_waits.run_id
        AND run_leases.attempt_number = run_waits.attempt_number
-       AND run_leases.workspace_id = run_waits.workspace_id
+       AND run_leases.computer_id = run_waits.computer_id
      WHERE run_waits.id = sqlc.arg(wait_id)
        AND run_waits.token_id = sqlc.arg(token_id)
        AND run_waits.kind = 'token'
        AND run_waits.turn_id IS NOT DISTINCT FROM sqlc.narg(turn_id)
        AND run_waits.turn_run_generation IS NOT DISTINCT FROM sqlc.narg(turn_run_generation)
        AND (runs.session_id IS NULL OR EXISTS (SELECT 1 FROM sessions s WHERE s.id=runs.session_id AND s.current_run_id=runs.id AND s.dispatch_hold_id IS NULL AND (run_waits.turn_id IS NULL AND s.active_turn_id IS NULL OR s.active_turn_id=run_waits.turn_id AND s.run_generation=run_waits.turn_run_generation)))
-       AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
        AND run_waits.registration_request_fingerprint
            = sqlc.arg(request_fingerprint)::text
        AND (
@@ -41,10 +40,8 @@ WITH replay AS (
        AND run_waits.tags = sqlc.arg(tags)::text[]
        AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
        AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_leases.worker_host_id = sqlc.arg(worker_host_id)
        AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND run_waits.actor_speculative_input_sequence
-           IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence)
 )
 SELECT addressed.id AS wait_id,
        (replay.wait_id IS NOT NULL)::boolean AS matches,
@@ -58,14 +55,14 @@ SELECT addressed.id AS wait_id,
  WHERE addressed.id = sqlc.arg(wait_id);
 
 -- name: GetTokenWaitRegistrationLocator :one
-SELECT runs.workspace_id,
-       computers.owner_session_id,
+SELECT runs.computer_id,
+       runs.session_id,
        runs.org_id,
        runs.project_id
   FROM runs
   JOIN computers
     ON computers.environment_id = runs.environment_id
-   AND computers.id = runs.workspace_id
+   AND computers.id = runs.computer_id
  WHERE runs.environment_id = sqlc.arg(environment_id)
    AND runs.id = sqlc.arg(run_id);
 
@@ -75,39 +72,40 @@ SELECT *
  WHERE id = sqlc.arg(session_id)
  FOR UPDATE;
 
--- name: LockTokenWaitWorkspace :one
-SELECT owner_session_id, owner_run_id, status, desired_state,
-       ownership_generation, writer_generation
-  FROM computers
- WHERE id = sqlc.arg(workspace_id)
-   AND environment_id = sqlc.arg(environment_id)
- FOR UPDATE;
+-- name: LockTokenWaitComputer :one
+SELECT * FROM computers WHERE id=sqlc.arg(computer_id) AND environment_id=sqlc.arg(environment_id) FOR UPDATE;
 
 -- name: LockTokenWaitAttempt :one
 SELECT entrypoint_kind, session_input_start_sequence, terminal_at
   FROM run_attempts
  WHERE run_id = sqlc.arg(run_id)
    AND number = sqlc.arg(attempt_number)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
  FOR UPDATE;
 
 -- name: LockTokenWaitRunLease :one
-SELECT status
+SELECT run_leases.status
   FROM run_leases
- WHERE id = sqlc.arg(id)
-   AND run_id = sqlc.arg(run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND lease_sequence = sqlc.arg(lease_sequence)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND runtime_identity_id = sqlc.arg(runtime_identity_id)
-   AND region_id = sqlc.arg(region_id)
-   AND status = 'running'
-   AND expires_at > transaction_timestamp()
- FOR UPDATE;
+ WHERE run_leases.id = sqlc.arg(id)
+   AND run_leases.run_id = sqlc.arg(run_id)
+   AND run_leases.attempt_number = sqlc.arg(attempt_number)
+   AND run_leases.computer_id = sqlc.arg(computer_id)
+   AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+   AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
+   AND run_leases.worker_host_id = sqlc.arg(worker_host_id)
+   AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+   AND run_leases.computer_instance_id = sqlc.arg(computer_instance_id)
+   AND EXISTS (SELECT 1 FROM computer_instances AS instance
+                WHERE instance.id = run_leases.computer_instance_id
+                  AND instance.vm_platform_id = sqlc.arg(vm_platform_id)
+                  AND instance.writer_generation=run_leases.writer_generation
+                  AND instance.writer_expires_at>clock_timestamp() AND instance.reclaimed_at IS NULL
+                  AND instance.desired_state='ready' AND instance.observed_state='ready'
+                  AND instance.mount_state='mounted' AND instance.admission_state IN ('open','draining'))
+   AND run_leases.region_id = sqlc.arg(region_id)
+   AND run_leases.status = 'running'
+   AND run_leases.expires_at > clock_timestamp()
+ FOR UPDATE OF run_leases;
 
 -- name: RegisterTokenWait :one
 WITH moved_run AS (
@@ -129,16 +127,16 @@ WITH moved_run AS (
     RETURNING runs.*
 )
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, timeout_at,
+    id, environment_id, run_id, computer_id, kind, timeout_at,
     idle_timeout_ms, token_id, token_registration_run_revision,
     registration_request_fingerprint, expected_run_revision, attempt_number,
-    actor_speculative_input_sequence, current_run_lease_id,
-    checkpoint_due_at, resume_attach_id, metadata, tags
+    current_run_lease_id,
+    metadata, tags
 )
 SELECT sqlc.arg(wait_id),
        sqlc.arg(environment_id),
        moved_run.id,
-       moved_run.workspace_id,
+       moved_run.computer_id,
        'token',
        sqlc.narg(timeout_at),
        sqlc.narg(idle_timeout_ms),
@@ -147,10 +145,7 @@ SELECT sqlc.arg(wait_id),
        sqlc.arg(request_fingerprint)::text,
        moved_run.revision,
        sqlc.arg(attempt_number),
-       sqlc.narg(actor_speculative_input_sequence),
        sqlc.arg(current_run_lease_id),
-       sqlc.narg(checkpoint_due_at),
-       sqlc.arg(resume_attach_id),
        sqlc.arg(metadata)::jsonb,
        sqlc.arg(tags)::text[]
   FROM moved_run
@@ -166,15 +161,15 @@ SELECT status, result
 -- name: GetTokenWaitLocator :one
 SELECT run_waits.id AS wait_id,
        run_waits.run_id,
-       run_waits.workspace_id,
+       run_waits.computer_id,
        run_waits.attempt_number,
-       computers.owner_session_id
+       runs.session_id
   FROM run_waits
   JOIN runs
     ON runs.environment_id = run_waits.environment_id
    AND runs.id = run_waits.run_id
   JOIN computers
-    ON computers.id = run_waits.workspace_id
+    ON computers.id = run_waits.computer_id
  WHERE run_waits.id = sqlc.arg(wait_id)
    AND run_waits.environment_id = sqlc.arg(environment_id)
    AND run_waits.run_id = sqlc.arg(run_id)
@@ -185,44 +180,8 @@ SELECT run_waits.id AS wait_id,
        OR run_waits.suspension_status = 'checkpointing'
    );
 
--- name: LockTokenWaitRunLineage :many
-WITH RECURSIVE lineage AS (
-    SELECT id,
-           parent_run_id,
-           0::integer AS depth,
-           ARRAY[id] AS path,
-           false AS cycle
-      FROM runs
-     WHERE runs.environment_id = sqlc.arg(environment_id)
-       AND runs.id = sqlc.arg(run_id)
-    UNION ALL
-    SELECT parent.id,
-           parent.parent_run_id,
-           child.depth + 1,
-           child.path || parent.id,
-           parent.id = ANY(child.path)
-      FROM lineage AS child
-      JOIN runs AS parent
-        ON parent.environment_id = sqlc.arg(environment_id)
-       AND parent.id = child.parent_run_id
-     WHERE NOT child.cycle
-)
-SELECT runs.id,
-       runs.parent_run_id,
-       runs.workspace_id,
-       runs.session_id,
-       runs.entrypoint_kind,
-       runs.status,
-       runs.revision,
-       runs.current_attempt_number,
-       runs.current_run_lease_id,
-       runs.active_started_at,
-       lineage.depth,
-       lineage.cycle
-  FROM lineage
-  JOIN runs ON runs.id = lineage.id
- ORDER BY lineage.depth DESC, runs.id
- FOR UPDATE OF runs;
+-- name: LockTokenWaitRun :one
+SELECT * FROM runs WHERE environment_id=sqlc.arg(environment_id) AND id=sqlc.arg(run_id) FOR UPDATE;
 
 -- name: LockEnclosingRunWaits :many
 SELECT id
@@ -241,7 +200,7 @@ SELECT id
 -- name: LockTokenWait :one
 SELECT id,
        run_id,
-       workspace_id,
+       computer_id,
        kind,
        condition_status,
        suspension_status,
@@ -259,7 +218,7 @@ SELECT id,
  WHERE id = sqlc.arg(wait_id)
    AND environment_id = sqlc.arg(environment_id)
    AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND token_id = sqlc.arg(token_id)
    AND kind = 'token'
@@ -336,7 +295,6 @@ resolved_wait AS (
            condition_error = sqlc.arg(condition_error)::jsonb,
            condition_terminal_at = transaction_timestamp(),
            suspension_status = 'resume_pending',
-           resume_request_version = run_waits.resume_request_version + 1,
            expected_run_revision = moved_run.revision,
            updated_at = transaction_timestamp()
       FROM moved_run
@@ -352,8 +310,7 @@ resolved_wait AS (
     RETURNING run_waits.id,
               run_waits.environment_id,
               run_waits.run_id,
-              run_waits.workspace_id,
-              run_waits.resume_request_version
+              run_waits.computer_id
 )
 SELECT id FROM resolved_wait;
 
@@ -396,77 +353,9 @@ SELECT *
    AND child_run_id = sqlc.arg(child_run_id)
    AND kind = 'child'
    AND child_claim_id = sqlc.arg(child_claim_id)
-   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
-   AND resume_attach_id = sqlc.arg(resume_attach_id);
+   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint);
 
--- name: GetSameWorkspaceChildCallReplay :one
-SELECT *
-  FROM run_waits
- WHERE environment_id = sqlc.arg(environment_id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND id = sqlc.arg(id)
-   AND kind = 'child'
-   AND kind = 'child'
-   AND child_target_declared_id = sqlc.arg(child_target_declared_id)
-   AND child_claim_id = sqlc.arg(child_claim_id)
-   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
-   AND resume_attach_id = sqlc.arg(resume_attach_id)
-   AND (current_run_lease_id = sqlc.arg(run_lease_id)
-        OR prior_run_lease_id = sqlc.arg(run_lease_id));
-
--- name: GetBoundSameWorkspaceChildCallReplay :one
-SELECT *
-  FROM run_waits
- WHERE environment_id = sqlc.arg(environment_id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id)
-   AND kind = 'child'
-   AND child_target_declared_id = sqlc.arg(child_target_declared_id)
-   AND child_claim_id = sqlc.arg(child_claim_id)
-   AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
-   AND child_run_id = sqlc.arg(child_run_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND ownership_generation IS NOT NULL
-   AND parent_writer_generation IS NOT NULL;
-
--- name: RegisterSameWorkspaceChildCall :one
-WITH moved_run AS (
-    UPDATE runs
-       SET status = 'waiting',
-           revision = revision + 1,
-           updated_at = transaction_timestamp()
-     WHERE runs.id = sqlc.arg(run_id)
-       AND runs.environment_id = sqlc.arg(environment_id)
-       AND runs.workspace_id = sqlc.arg(workspace_id)
-       AND runs.status = 'running'
-       AND runs.revision = sqlc.arg(expected_running_revision)
-       AND runs.current_attempt_number = sqlc.arg(attempt_number)
-       AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
-       AND runs.active_started_at IS NOT NULL
-    RETURNING *
-)
-INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind,
-    child_target_declared_id, child_claim_id, child_request,
-    registration_request_fingerprint, expected_run_revision,
-    attempt_number, actor_speculative_input_sequence, current_run_lease_id,
-    checkpoint_due_at, resume_attach_id, metadata, tags
-)
-SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id,
-       moved_run.workspace_id, 'child',
-       sqlc.arg(child_target_declared_id), sqlc.arg(child_claim_id),
-       sqlc.arg(child_request), sqlc.arg(registration_request_fingerprint),
-       moved_run.revision, sqlc.arg(attempt_number),
-       sqlc.narg(actor_speculative_input_sequence),
-       sqlc.arg(current_run_lease_id), transaction_timestamp(),
-       sqlc.arg(resume_attach_id), '{}'::jsonb, '{}'::text[]
-  FROM moved_run
-RETURNING *;
-
--- name: RegisterDifferentWorkspaceChildCall :one
+-- name: RegisterChildCall :one
 WITH selected_child AS MATERIALIZED (
     SELECT child.id
       FROM runs AS child
@@ -474,7 +363,7 @@ WITH selected_child AS MATERIALIZED (
        AND child.environment_id = sqlc.arg(environment_id)
        AND child.parent_run_id = sqlc.arg(run_id)
        AND child.parent_owns_lifecycle IS TRUE
-       AND child.workspace_id = sqlc.arg(child_workspace_id)
+       AND child.computer_id = sqlc.arg(child_computer_id)
 ), moved_run AS (
     UPDATE runs
        SET status = 'waiting',
@@ -486,48 +375,44 @@ WITH selected_child AS MATERIALIZED (
        AND runs.revision = sqlc.arg(expected_running_revision)
        AND runs.current_attempt_number = sqlc.arg(attempt_number)
        AND runs.current_run_lease_id = sqlc.arg(current_run_lease_id)
-       AND runs.workspace_id <> sqlc.arg(child_workspace_id)
        AND runs.active_started_at IS NOT NULL
        AND EXISTS (SELECT 1 FROM selected_child)
     RETURNING *
 )
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind,
+    id, environment_id, run_id, computer_id, kind,
     child_run_id, child_target_declared_id,
     child_claim_id, child_request, registration_request_fingerprint,
     expected_run_revision, attempt_number,
-    actor_speculative_input_sequence, current_run_lease_id,
-    checkpoint_due_at, resume_attach_id, metadata, tags
+    current_run_lease_id,
+    metadata, tags
 )
-SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.workspace_id,
+SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.computer_id,
        'child', sqlc.arg(child_run_id), sqlc.arg(child_target_declared_id),
        sqlc.arg(child_claim_id), sqlc.arg(child_request),
        sqlc.arg(registration_request_fingerprint), moved_run.revision,
-       sqlc.arg(attempt_number), sqlc.narg(actor_speculative_input_sequence),
-       sqlc.arg(current_run_lease_id), transaction_timestamp(),
-       sqlc.arg(resume_attach_id), '{}'::jsonb, '{}'::text[]
+       sqlc.arg(attempt_number), sqlc.arg(current_run_lease_id),
+       '{}'::jsonb, '{}'::text[]
   FROM moved_run
 RETURNING *;
 
 -- name: RegisterResolvedChildCall :one
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind,
+    id, environment_id, run_id, computer_id, kind,
     condition_status, child_run_id,
     child_target_declared_id, child_claim_id, child_request,
     condition_result, condition_terminal_at, suspension_status,
     registration_request_fingerprint, expected_run_revision,
-    attempt_number, actor_speculative_input_sequence, current_run_lease_id,
-    resume_attach_id, suspension_terminal_at, metadata, tags
+    attempt_number, current_run_lease_id,
+    suspension_terminal_at, metadata, tags
 )
-SELECT sqlc.arg(id), parent.environment_id, parent.id, parent.workspace_id,
+SELECT sqlc.arg(id), parent.environment_id, parent.id, parent.computer_id,
        'child', 'completed', child.id,
        sqlc.arg(child_target_declared_id), sqlc.arg(child_claim_id),
        sqlc.arg(child_request), sqlc.arg(condition_result),
        transaction_timestamp(), 'released',
        sqlc.arg(registration_request_fingerprint), parent.revision,
-       sqlc.arg(attempt_number), sqlc.narg(actor_speculative_input_sequence),
-       sqlc.arg(current_run_lease_id), sqlc.arg(resume_attach_id),
-       transaction_timestamp(), '{}'::jsonb, '{}'::text[]
+       sqlc.arg(attempt_number), sqlc.arg(current_run_lease_id), transaction_timestamp(), '{}'::jsonb, '{}'::text[]
   FROM runs AS parent
   JOIN runs AS child
     ON child.environment_id = parent.environment_id
@@ -564,114 +449,6 @@ SELECT run_waits.*
  ORDER BY run_waits.created_at DESC, run_waits.id DESC
  LIMIT 1
  FOR UPDATE OF parent, run_waits;
-
--- name: ListSameWorkspaceAncestorRuns :many
-WITH RECURSIVE ancestors AS (
-    SELECT edge.run_id AS parent_run_id,
-           edge.child_run_id,
-           0 AS depth
-      FROM run_waits AS edge
-     WHERE edge.environment_id = sqlc.arg(environment_id)
-       AND edge.child_run_id = sqlc.arg(child_run_id)
-       AND edge.workspace_id = sqlc.arg(workspace_id)
-       AND edge.kind = 'child'
-       AND EXISTS (
-           SELECT 1 FROM runs AS owned_child
-            WHERE owned_child.id = edge.child_run_id
-              AND owned_child.parent_run_id = edge.run_id
-              AND owned_child.environment_id = edge.environment_id
-              AND owned_child.parent_owns_lifecycle IS TRUE
-       )
-       AND edge.condition_status = 'pending'
-       AND edge.suspension_status = 'parked'
-    UNION ALL
-    SELECT outer_wait.run_id,
-           outer_wait.child_run_id,
-           ancestors.depth + 1
-      FROM ancestors
-      JOIN runs AS child
-        ON child.id = ancestors.parent_run_id
-       AND child.workspace_id = sqlc.arg(workspace_id)
-       AND child.parent_owns_lifecycle IS TRUE
-      JOIN run_waits AS outer_wait
-        ON outer_wait.environment_id = sqlc.arg(environment_id)
-       AND outer_wait.run_id = child.parent_run_id
-       AND outer_wait.child_run_id = child.id
-       AND outer_wait.workspace_id = sqlc.arg(workspace_id)
-       AND outer_wait.kind = 'child'
-       AND outer_wait.condition_status = 'pending'
-       AND outer_wait.suspension_status = 'parked'
-)
-SELECT sqlc.embed(parent),
-       ancestors.depth
-  FROM ancestors
-  JOIN runs AS parent
-    ON parent.id = ancestors.parent_run_id
-   AND parent.environment_id = sqlc.arg(environment_id)
-   AND parent.workspace_id = sqlc.arg(workspace_id)
-   AND parent.status = 'waiting'
-   AND parent.current_run_lease_id IS NULL
- ORDER BY ancestors.depth DESC;
-
--- name: LockSameWorkspaceAncestors :many
-WITH RECURSIVE ancestors AS (
-    SELECT edge.id,
-           edge.run_id AS parent_run_id,
-           edge.child_run_id,
-           0 AS depth
-      FROM run_waits AS edge
-     WHERE edge.environment_id = sqlc.arg(environment_id)
-       AND edge.child_run_id = sqlc.arg(child_run_id)
-       AND edge.workspace_id = sqlc.arg(workspace_id)
-       AND edge.kind = 'child'
-       AND EXISTS (
-           SELECT 1 FROM runs AS owned_child
-            WHERE owned_child.id = edge.child_run_id
-              AND owned_child.parent_run_id = edge.run_id
-              AND owned_child.environment_id = edge.environment_id
-              AND owned_child.parent_owns_lifecycle IS TRUE
-       )
-       AND edge.condition_status = 'pending'
-       AND edge.suspension_status = 'parked'
-    UNION ALL
-    SELECT outer_wait.id,
-           outer_wait.run_id,
-           outer_wait.child_run_id,
-           ancestors.depth + 1
-      FROM ancestors
-      JOIN runs AS child
-        ON child.id = ancestors.parent_run_id
-       AND child.workspace_id = sqlc.arg(workspace_id)
-       AND child.parent_owns_lifecycle IS TRUE
-      JOIN run_waits AS outer_wait
-        ON outer_wait.environment_id = sqlc.arg(environment_id)
-       AND outer_wait.run_id = child.parent_run_id
-       AND outer_wait.child_run_id = child.id
-       AND outer_wait.workspace_id = sqlc.arg(workspace_id)
-       AND outer_wait.kind = 'child'
-       AND outer_wait.condition_status = 'pending'
-       AND outer_wait.suspension_status = 'parked'
-)
-SELECT sqlc.embed(edge),
-       sqlc.embed(parent),
-       sqlc.embed(attempt),
-       ancestors.depth
-  FROM ancestors
-  JOIN run_waits AS edge
-    ON edge.id = ancestors.id
-  JOIN runs AS parent
-    ON parent.id = edge.run_id
-   AND parent.environment_id = edge.environment_id
-   AND parent.workspace_id = edge.workspace_id
-   AND parent.status = 'waiting'
-   AND parent.current_run_lease_id IS NULL
-  JOIN run_attempts AS attempt
-    ON attempt.run_id = parent.id
-   AND attempt.number = parent.current_attempt_number
-   AND attempt.workspace_id = parent.workspace_id
-   AND attempt.terminal_at IS NULL
- ORDER BY ancestors.depth DESC
- FOR UPDATE OF parent, attempt, edge;
 
 -- name: CompleteHotChildRunWait :one
 WITH moved_run AS (
@@ -739,7 +516,6 @@ UPDATE run_waits
        condition_result = sqlc.arg(condition_result),
        condition_terminal_at = transaction_timestamp(),
        suspension_status = 'resume_pending',
-       resume_request_version = run_waits.resume_request_version + 1,
        expected_run_revision = moved_run.revision,
        updated_at = transaction_timestamp()
   FROM moved_run
@@ -754,53 +530,64 @@ UPDATE run_waits
    AND run_waits.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
 RETURNING run_waits.*;
 
--- name: RequestRunWaitCheckpoint :one
-UPDATE run_waits
-   SET suspension_status = 'checkpointing',
-       checkpoint_request_version = checkpoint_request_version + 1,
-       suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id),
-       updated_at = now()
- WHERE run_waits.run_id = sqlc.arg(run_id)
-   AND run_waits.attempt_number = sqlc.arg(attempt_number)
-   AND run_waits.id = sqlc.arg(id)
-   AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
-   AND run_waits.suspension_status = 'hot'
-   AND run_waits.condition_status = 'pending'
-   AND run_waits.checkpoint_due_at IS NOT NULL
-   AND run_waits.checkpoint_due_at <= transaction_timestamp()
-RETURNING *;
+-- Only the instance coordinator may mark members after sealing the complete set.
+-- name: MarkCheckpointMemberWaiting :one
+UPDATE run_waits w SET suspension_status='checkpointing',suspend_checkpoint_id=m.checkpoint_id,updated_at=clock_timestamp()
+FROM computer_checkpoint_runs m,computer_checkpoints c,computer_instances i
+WHERE m.checkpoint_id=sqlc.arg(checkpoint_id) AND m.run_wait_id=w.id AND m.source_run_lease_id=w.current_run_lease_id
+ AND c.id=m.checkpoint_id AND c.status='creating' AND i.id=c.source_computer_instance_id
+ AND i.capture_checkpoint_id=c.id AND i.admission_state='checkpointing'
+ AND i.writer_generation=c.writer_generation AND i.membership_revision=c.membership_revision
+ AND w.id=sqlc.arg(wait_id) AND w.suspension_status='hot' AND w.condition_status='pending'
+RETURNING w.*;
 
 -- name: BeginRunLeaseCheckpoint :one
 UPDATE run_leases
    SET status = 'checkpointing',
        updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(id)
-   AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND attempt_number = sqlc.arg(attempt_number)
-   AND lease_sequence = sqlc.arg(lease_sequence)
-   AND status = 'running'
-   AND expires_at > transaction_timestamp()
-RETURNING *;
+ WHERE run_leases.id = sqlc.arg(id)
+   AND run_leases.run_id = sqlc.arg(run_id)
+   AND run_leases.computer_id = sqlc.arg(computer_id)
+   AND run_leases.attempt_number = sqlc.arg(attempt_number)
+   AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+   AND run_leases.status = 'running'
+   AND run_leases.expires_at > clock_timestamp()
+   AND EXISTS(SELECT 1 FROM computer_checkpoint_runs m JOIN computer_instances i ON i.id=m.source_computer_instance_id
+               WHERE m.source_run_lease_id=run_leases.id AND i.capture_checkpoint_id=m.checkpoint_id
+               AND i.admission_state='checkpointing' AND i.writer_generation=run_leases.writer_generation)
+RETURNING run_leases.*;
 
--- name: ReleaseRunResumeWait :one
-UPDATE run_waits
-   SET suspension_status = 'released',
-       resume_ack_version = sqlc.arg(resume_request_version),
-       suspension_terminal_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE run_waits.id = sqlc.arg(id)
-   AND run_waits.environment_id = sqlc.arg(environment_id)
-   AND run_waits.run_id = sqlc.arg(run_id)
-   AND run_waits.attempt_number = sqlc.arg(attempt_number)
-   AND run_waits.workspace_id = sqlc.arg(workspace_id)
-   AND run_waits.current_run_lease_id = sqlc.arg(current_run_lease_id)
-   AND run_waits.suspension_status = 'resuming'
-   AND run_waits.suspend_checkpoint_id = sqlc.arg(checkpoint_id)::uuid
-   AND run_waits.resume_attach_id = sqlc.arg(resume_attach_id)
-   AND run_waits.resume_request_version = sqlc.arg(resume_request_version)
-   AND run_waits.resume_ack_version < resume_request_version
-RETURNING *;
+-- A resumed but still-pending waiter remains resident. Its prior checkpoint is
+-- historical; a later whole-instance capture creates a fresh member record.
+-- name: AcknowledgeRunWaitResume :one
+WITH resumed_run AS (
+ UPDATE runs r SET
+ status=CASE WHEN w.condition_status='pending' THEN 'waiting' ELSE 'running' END,
+ revision=r.revision+CASE WHEN w.condition_status='pending' THEN 0 ELSE 1 END,
+ updated_at=clock_timestamp()
+ FROM run_waits w,run_leases l,computer_instances i,computer_checkpoints c
+ WHERE w.id=sqlc.arg(wait_id) AND w.environment_id=sqlc.arg(environment_id)
+ AND w.current_run_lease_id=sqlc.arg(run_lease_id) AND w.suspension_status='resuming'
+ AND r.id=w.run_id AND r.environment_id=w.environment_id AND r.status='waiting'
+ AND r.revision=w.expected_run_revision AND r.current_attempt_number=w.attempt_number
+ AND r.current_run_lease_id=w.current_run_lease_id AND r.active_started_at IS NOT NULL
+ AND l.id=w.current_run_lease_id AND l.run_id=w.run_id AND l.attempt_number=w.attempt_number
+ AND l.lease_sequence=sqlc.arg(lease_sequence) AND l.status='running' AND l.expires_at>clock_timestamp()
+ AND l.process_reconciled_at IS NULL
+ AND i.id=l.computer_instance_id AND i.writer_generation=l.writer_generation
+ AND i.reclaimed_at IS NULL AND i.writer_expires_at>clock_timestamp()
+ AND i.admission_state IN ('restoring','open','draining') AND i.desired_state='ready'
+ AND c.id=w.suspend_checkpoint_id AND c.resume_computer_instance_id=i.id AND c.resume_committed_at IS NOT NULL
+ AND EXISTS(SELECT 1 FROM computer_checkpoint_runs m WHERE m.checkpoint_id=c.id
+ AND m.run_id=r.id AND m.attempt_number=w.attempt_number AND m.run_wait_id=w.id
+ AND m.source_run_lease_id=w.prior_run_lease_id)
+ RETURNING r.id,r.revision
+)
+UPDATE run_waits w SET suspension_status=CASE WHEN w.condition_status='pending' THEN 'hot' ELSE 'released' END,
+ expected_run_revision=resumed_run.revision,prior_run_lease_id=NULL,suspend_checkpoint_id=NULL,
+ suspension_terminal_at=CASE WHEN w.condition_status<>'pending' THEN clock_timestamp() END,updated_at=clock_timestamp()
+FROM resumed_run WHERE w.id=sqlc.arg(wait_id) AND w.run_id=resumed_run.id
+RETURNING w.*;
 
 -- name: RegisterTimerRunWait :one
 WITH moved_run AS (
@@ -820,18 +607,16 @@ WITH moved_run AS (
     RETURNING *
 )
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, due_at,
+    id, environment_id, run_id, computer_id, kind, due_at,
     idle_timeout_ms, registration_request_fingerprint,
     expected_run_revision, attempt_number,
-    actor_speculative_input_sequence, current_run_lease_id,
-    checkpoint_due_at, resume_attach_id, metadata, tags
+    current_run_lease_id,
+    metadata, tags
 )
-SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.workspace_id,
+SELECT sqlc.arg(id), moved_run.environment_id, moved_run.id, moved_run.computer_id,
        'timer', sqlc.arg(due_at), sqlc.arg(idle_timeout_ms),
        sqlc.arg(registration_request_fingerprint), moved_run.revision,
-       sqlc.arg(attempt_number), sqlc.narg(actor_speculative_input_sequence),
-       sqlc.arg(current_run_lease_id), sqlc.arg(checkpoint_due_at),
-       sqlc.arg(resume_attach_id), sqlc.arg(metadata), sqlc.arg(tags)
+       sqlc.arg(attempt_number), sqlc.arg(current_run_lease_id), sqlc.arg(metadata), sqlc.arg(tags)
   FROM moved_run
 RETURNING *;
 
@@ -841,11 +626,9 @@ SELECT *
  WHERE id = sqlc.arg(id)
    AND environment_id = sqlc.arg(environment_id)
    AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND kind = 'timer'
    AND attempt_number = sqlc.arg(attempt_number)
-   AND actor_speculative_input_sequence IS NOT DISTINCT FROM sqlc.narg(actor_speculative_input_sequence)
-   AND resume_attach_id = sqlc.arg(resume_attach_id)
    AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
    AND metadata = sqlc.arg(metadata)
    AND tags = sqlc.arg(tags)
@@ -858,7 +641,7 @@ SELECT run_waits.*
  WHERE kind = 'timer'
    AND condition_status = 'pending'
    AND due_at <= transaction_timestamp()
-   AND suspension_status IN ('hot', 'checkpointing', 'parked')
+   AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resuming')
    AND NOT EXISTS(SELECT 1 FROM runs r JOIN sessions s ON s.id=r.session_id WHERE r.id=run_waits.run_id AND (s.dispatch_hold_id IS NOT NULL OR s.current_run_id IS DISTINCT FROM r.id))
  ORDER BY due_at, run_waits.id
  LIMIT sqlc.arg(limit_count);
@@ -882,19 +665,17 @@ WITH moved_run AS (
     RETURNING *
 )
 INSERT INTO run_waits (
-    id, environment_id, run_id, workspace_id, kind, timeout_at,
+    id, environment_id, run_id, computer_id, kind, timeout_at,
     idle_timeout_ms, session_id, after_input_sequence,
     registration_request_fingerprint, expected_run_revision, attempt_number,
-    actor_speculative_input_sequence, current_run_lease_id,
-    checkpoint_due_at, resume_attach_id, metadata, tags
+    current_run_lease_id,
+    metadata, tags
 )
-SELECT sqlc.arg(id), sqlc.arg(environment_id), moved_run.id, moved_run.workspace_id,
+SELECT sqlc.arg(id), sqlc.arg(environment_id), moved_run.id, moved_run.computer_id,
        'actor_input', sqlc.narg(timeout_at), sqlc.arg(idle_timeout_ms),
        sqlc.arg(session_id), sqlc.arg(after_input_sequence),
        sqlc.arg(registration_request_fingerprint), moved_run.revision,
-       sqlc.arg(attempt_number), sqlc.arg(actor_speculative_input_sequence),
-       sqlc.arg(current_run_lease_id), sqlc.arg(checkpoint_due_at),
-       sqlc.arg(resume_attach_id), sqlc.arg(metadata), sqlc.arg(tags)
+       sqlc.arg(attempt_number), sqlc.arg(current_run_lease_id), sqlc.arg(metadata), sqlc.arg(tags)
   FROM moved_run
 RETURNING *;
 
@@ -904,13 +685,11 @@ SELECT *
  WHERE id = sqlc.arg(id)
    AND environment_id = sqlc.arg(environment_id)
    AND run_id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND kind = 'actor_input'
    AND session_id = sqlc.arg(session_id)
    AND after_input_sequence = sqlc.arg(after_input_sequence)
-   AND actor_speculative_input_sequence = sqlc.arg(actor_speculative_input_sequence)
    AND attempt_number = sqlc.arg(attempt_number)
-   AND resume_attach_id = sqlc.arg(resume_attach_id)
    AND registration_request_fingerprint = sqlc.arg(registration_request_fingerprint)
    AND metadata = sqlc.arg(metadata)
    AND tags = sqlc.arg(tags)
@@ -927,7 +706,7 @@ SELECT *
    AND kind = 'actor_input'
    AND after_input_sequence = sqlc.arg(after_input_sequence)
    AND condition_status = 'pending'
-   AND suspension_status IN ('hot', 'checkpointing', 'parked')
+   AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resuming')
  ORDER BY id
  LIMIT 1
  FOR UPDATE;
@@ -1108,7 +887,6 @@ UPDATE run_waits
        completed_turn_id = sqlc.narg(completed_turn_id),
        condition_terminal_at = transaction_timestamp(),
        suspension_status = 'resume_pending',
-       resume_request_version = run_waits.resume_request_version + 1,
        expected_run_revision = moved_run.revision,
        updated_at = transaction_timestamp()
   FROM moved_run, eligible_wait
@@ -1244,9 +1022,8 @@ WITH locked_run AS MATERIALIZED (
     RETURNING revision
 )
 UPDATE run_waits
-   SET condition_status = 'failed', condition_reason_code = sqlc.arg(reason_code),
+   SET suspension_status='resume_pending', condition_status = 'failed', condition_reason_code = sqlc.arg(reason_code),
        condition_error = sqlc.arg(condition_error), condition_terminal_at = transaction_timestamp(),
-       suspension_status = 'resume_pending', resume_request_version = run_waits.resume_request_version + 1,
        expected_run_revision = moved_run.revision, updated_at = transaction_timestamp()
   FROM moved_run, eligible_wait
  WHERE run_waits.id = eligible_wait.id
@@ -1257,3 +1034,27 @@ SELECT * FROM run_waits
 WHERE environment_id=sqlc.arg(environment_id) AND run_id=sqlc.arg(run_id)
 AND attempt_number=sqlc.arg(attempt_number) AND child_claim_id=sqlc.arg(child_claim_id)
 AND kind='child';
+
+-- A pending member may resume because another member woke the shared instance.
+-- Record condition changes without crossing its activation acknowledgement.
+-- name: ResolveResumingRunWait :one
+UPDATE run_waits w SET condition_status=sqlc.arg(condition_status)::text,
+ condition_result=sqlc.narg(condition_result)::jsonb,condition_error=sqlc.narg(condition_error)::jsonb,
+ condition_reason_code=sqlc.narg(reason_code)::text,completed_turn_id=sqlc.narg(completed_turn_id)::uuid,
+ condition_terminal_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM runs r,run_leases l,computer_instances i,computer_checkpoints c
+WHERE w.id=sqlc.arg(wait_id) AND w.run_id=sqlc.arg(run_id)
+ AND w.expected_run_revision=sqlc.arg(expected_run_revision)
+ AND w.suspension_status='resuming' AND w.condition_status='pending'
+ AND r.id=w.run_id AND r.revision=w.expected_run_revision AND r.status='waiting'
+ AND r.current_attempt_number=w.attempt_number AND r.current_run_lease_id=w.current_run_lease_id
+ AND l.id=w.current_run_lease_id AND l.run_id=r.id AND l.attempt_number=w.attempt_number
+ AND l.status IN ('assigned','starting','running') AND l.process_reconciled_at IS NULL
+ AND i.id=l.computer_instance_id AND i.writer_generation=l.writer_generation
+ AND i.reclaimed_at IS NULL AND i.admission_state IN ('restoring','open','draining')
+ AND c.id=w.suspend_checkpoint_id AND c.resume_computer_instance_id=i.id AND c.resume_committed_at IS NOT NULL
+ AND ((w.kind='actor_input' AND sqlc.narg(completed_turn_id)::uuid IS NOT NULL AND EXISTS(
+    SELECT 1 FROM session_turns t WHERE t.id=sqlc.narg(completed_turn_id) AND t.session_id=w.session_id
+    AND t.environment_id=w.environment_id)) OR (w.kind<>'actor_input' AND sqlc.narg(completed_turn_id)::uuid IS NULL)
+    OR (sqlc.arg(condition_status)::text<>'completed' AND sqlc.narg(completed_turn_id)::uuid IS NULL))
+RETURNING w.*;

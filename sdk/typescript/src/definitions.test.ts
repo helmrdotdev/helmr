@@ -4,7 +4,7 @@ import {
   inspectDefinition,
   inspectImage,
   inspectSandboxDefinition,
-  inspectWorkspaceAddress,
+  inspectComputerAddress,
   installRuntimeOperations,
   isQueue,
 } from "./internal"
@@ -16,7 +16,7 @@ import {
   schedules,
   source,
   task,
-  workspaces,
+  computers,
 } from "./index"
 
 describe("private definition inspection", () => {
@@ -95,13 +95,13 @@ describe("private definition inspection", () => {
     )
   })
 
-  test("constructs branded Workspace refs", () => {
-    const ref = workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
+  test("constructs branded Computer refs", () => {
+    const ref = computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")
 
-    expect(inspectWorkspaceAddress(ref)).toEqual({
+    expect(inspectComputerAddress(ref)).toEqual({
       id: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
     })
-    expect(inspectWorkspaceAddress({ key: "machine" })).toBeUndefined()
+    expect(inspectComputerAddress({ key: "machine" })).toBeUndefined()
     expect(Object.isFrozen(ref)).toBe(true)
   })
 
@@ -110,13 +110,13 @@ describe("private definition inspection", () => {
       schedules.task({
         id: "maintenance",
         cron: { pattern: "0 3 * * *", timezone: "UTC" },
-        workspace: { sandbox: { id: "machine" } } as never,
+        computer: { sandbox: { id: "machine" } } as never,
         run: () => null,
       }),
     ).toThrow("Sandbox definition")
   })
 
-  test("rejects untyped Workspace resource extensions", () => {
+  test("rejects untyped Computer resource extensions", () => {
     const builder = sandbox({ id: "machine" }).image(
       image("root").from("debian:bookworm-slim"),
     )
@@ -154,7 +154,7 @@ describe("private definition inspection", () => {
         run: () => ({ resized: true }),
       })
       const options = {
-        workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
+        computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
         idempotencyKey: "resize:image-1",
       }
       const wait = child.call({ imageId: "image-1" }, options)

@@ -66,7 +66,7 @@ func TestStageProtectedEnvPublicTrustAndCollisions(t *testing.T) {
 	if err := stageProtectedEnv(t.TempDir(), map[string]string{"GH_TOKEN": selector}, bad, &empty); err == nil {
 		t.Fatal("private key accepted in guest trust")
 	}
-	for _, path := range []string{"/workspace/key", "/run/helmr/key", "/var/lib/helmr/key"} {
+	for _, path := range []string{"/computer/key", "/run/helmr/key", "/var/lib/helmr/key"} {
 		if validateProgramSecretFilePath(path) == nil {
 			t.Fatalf("reserved file accepted %s", path)
 		}
@@ -74,7 +74,7 @@ func TestStageProtectedEnvPublicTrustAndCollisions(t *testing.T) {
 }
 
 func TestGuestSecretEnvNameContract(t *testing.T) {
-	data, err := os.ReadFile("../workspace/testdata/secret-env-names.json")
+	data, err := os.ReadFile("../computer/testdata/secret-env-names.json")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ const maxBuildTreeStreamBytes int64 = 11 << 30
 const MaxBuildTreeStreamBytes = maxBuildTreeStreamBytes
 
 // BuildTree is the one lease-private, read-only post-lifecycle tree used by
-// analysis, Workspace image construction, and Program encoding.
+// analysis, Computer image construction, and Program encoding.
 type BuildTree struct {
 	content    *artifactSnapshot
 	inspected  *inspectedArtifact
@@ -171,7 +171,7 @@ func validateBuildTreeLink(
 			continue
 		}
 		candidate := strings.Join(append(resolved, component), "/")
-		if err := safepath.ValidateTreePath(candidate, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
+		if err := safepath.ValidateTreePath(candidate, programMountPath, "/computer/project", "/computer/program"); err != nil {
 			return err
 		}
 		entry, exists := tree.entries[candidate]

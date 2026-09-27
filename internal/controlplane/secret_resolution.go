@@ -5,8 +5,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 )
 
-func workspaceSecretResolutions(
-	bindings []db.LockWorkspaceSecretsForAdmissionRow,
+func computerSecretResolutions(
+	bindings []db.LockComputerSecretsForAdmissionRow,
 ) []secret.Resolution {
 	resolutions := make([]secret.Resolution, len(bindings))
 	for index, binding := range bindings {

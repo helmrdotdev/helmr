@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -81,11 +82,20 @@ func CreateContinuation(
 	ctx context.Context,
 	store db.Querier,
 	actor db.Session,
-	workspace db.LockActorInputWorkspaceRow,
-	bindings []db.LockWorkspaceSecretsForAdmissionRow,
+	computer db.Computer,
+	bindings []db.LockComputerSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
 	if actor.CancelRequestedAt.Valid {
 		return pgtype.UUID{}, ErrAuthority
+	}
+	// A continuation replaces the Session's previous execution scope. Other
+	// members sharing its Computer do not participate in this cleanup barrier.
+	activity, err := store.GetActorCloseComputerActivity(ctx, actor.ID)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	if activity.HasActiveLease || activity.HasActiveChild {
+		return pgtype.UUID{}, pgx.ErrNoRows
 	}
 	runID := pgvalue.UUID(uuid.NewV7())
 	traceID, err := tracing.NewTraceID()
@@ -103,7 +113,7 @@ func CreateContinuation(
 	run, err := store.CreateActorContinuationRun(ctx, db.CreateActorContinuationRunParams{
 		RunID: runID, QueueOriginAt: now,
 		TraceID: pgvalue.Text(traceID), RootSpanID: rootSpanID,
-		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, WorkspaceID: workspace.ID,
+		EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ComputerID: computer.ID,
 		ExpectedRunGeneration: actor.RunGeneration,
 	})
 	if err != nil {
@@ -111,7 +121,7 @@ func CreateContinuation(
 	}
 	resolutions := make([]secret.Resolution, len(bindings))
 	for index, binding := range bindings {
-		if binding.WorkspaceID != workspace.ID || binding.EnvironmentID != actor.EnvironmentID ||
+		if binding.ComputerID != computer.ID || binding.EnvironmentID != actor.EnvironmentID ||
 			binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 			return pgtype.UUID{}, ErrAuthority
 		}
@@ -121,7 +131,7 @@ func CreateContinuation(
 			RevocationGeneration: binding.RevocationGeneration,
 		}
 	}
-	if err := secret.CreateAttemptResolutions(ctx, store, workspace.ID, run.ID, 1, resolutions); err != nil {
+	if err := secret.CreateAttemptResolutions(ctx, store, computer.ID, run.ID, 1, resolutions); err != nil {
 		return pgtype.UUID{}, err
 	}
 	return run.ID, nil

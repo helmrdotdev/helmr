@@ -24,9 +24,9 @@ const (
 	defaultRunPlacementAttemptLimit      = int32(32)
 	defaultRunPlacementParallelism       = 16
 	defaultRunPlacementPendingInterval   = time.Second
-	defaultWorkspaceExecPlacementLimit   = int32(32)
-	defaultWorkspaceDeleteFinalizeLimit  = int32(32)
-	defaultWorkspaceExecPendingTimeout   = 10 * time.Minute
+	defaultComputerCommandPlacementLimit = int32(32)
+	defaultComputerDeleteFinalizeLimit   = int32(32)
+	defaultComputerCommandPendingTimeout = 10 * time.Minute
 )
 
 type RunPlacementDiscovery interface {
@@ -39,54 +39,53 @@ type RunPlacementAuthority interface {
 	PlaceReadyRun(context.Context, ReadyRunCandidate) (ReadyRunPlacement, error)
 }
 
-type WorkspaceExecPlacementDiscovery interface {
-	LoseExpiredWorkspaceMountClaims(context.Context, int32) ([]db.LoseExpiredWorkspaceMountClaimsRow, error)
-	ListPendingWorkspaceExecCandidates(
+type ComputerCommandPlacementDiscovery interface {
+	ListPendingComputerCommandCandidates(
 		context.Context,
 		int32,
-	) ([]db.ListPendingWorkspaceExecCandidatesRow, error)
-	ListRecoverableWorkspaceExecCandidates(
+	) ([]db.ListPendingComputerCommandCandidatesRow, error)
+	ListRecoverableComputerCommandCandidates(
 		context.Context,
 		int32,
-	) ([]db.ListRecoverableWorkspaceExecCandidatesRow, error)
+	) ([]db.ListRecoverableComputerCommandCandidatesRow, error)
 }
 
-type WorkspaceExecPlacementAuthority interface {
-	PlaceWorkspaceExec(
+type ComputerCommandPlacementAuthority interface {
+	PlaceComputerCommand(
 		context.Context,
-		ReadyWorkspaceExecCandidate,
-	) (WorkspaceExecPlacement, error)
-	RecoverWorkspaceExec(
+		ReadyComputerCommandCandidate,
+	) (ComputerCommandPlacement, error)
+	RecoverComputerCommand(
 		context.Context,
-		RecoverableWorkspaceExecCandidate,
+		RecoverableComputerCommandCandidate,
 	) error
-	FailPendingWorkspaceExec(
+	FailPendingComputerCommand(
 		context.Context,
-		ReadyWorkspaceExecCandidate,
+		ReadyComputerCommandCandidate,
 		string,
 	) error
 }
 
-type WorkspaceDeletionFinalizer interface {
-	FinalizeDeletingWorkspaces(context.Context, int32) ([]pgtype.UUID, error)
+type ComputerDeletionFinalizer interface {
+	FinalizeDeletingComputers(context.Context, int32) ([]pgtype.UUID, error)
 }
 
 type PlacementReconciler struct {
-	runDiscovery           RunPlacementDiscovery
-	runLaneLocker          RunPlacementLaneLocker
-	runAuthority           RunPlacementAuthority
-	workspaceExecDiscovery WorkspaceExecPlacementDiscovery
-	workspaceExecAuthority WorkspaceExecPlacementAuthority
-	workspaceFinalizer     WorkspaceDeletionFinalizer
-	runPolicy              runPlacementPolicy
-	workspaceExecPolicy    placementLoopPolicy
-	workspaceDeletePolicy  placementLoopPolicy
-	runCursors             [runPlacementLaneCount]runPlacementCursor
-	runLaneMutexes         [runPlacementLaneCount]sync.Mutex
-	runNextLane            atomic.Uint32
-	runParallel            chan struct{}
-	metrics                reconcileMetrics
-	log                    *slog.Logger
+	runDiscovery             RunPlacementDiscovery
+	runLaneLocker            RunPlacementLaneLocker
+	runAuthority             RunPlacementAuthority
+	computerCommandDiscovery ComputerCommandPlacementDiscovery
+	computerCommandAuthority ComputerCommandPlacementAuthority
+	computerFinalizer        ComputerDeletionFinalizer
+	runPolicy                runPlacementPolicy
+	computerCommandPolicy    placementLoopPolicy
+	computerDeletePolicy     placementLoopPolicy
+	runCursors               [runPlacementLaneCount]runPlacementCursor
+	runLaneMutexes           [runPlacementLaneCount]sync.Mutex
+	runNextLane              atomic.Uint32
+	runParallel              chan struct{}
+	metrics                  reconcileMetrics
+	log                      *slog.Logger
 }
 
 type placementLoopPolicy struct {
@@ -192,24 +191,24 @@ func (c *runPlacementOrganizationCandidates) take(
 
 func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker RunPlacementLaneLocker,
 	runAuthority RunPlacementAuthority,
-	workspaceExecDiscovery WorkspaceExecPlacementDiscovery,
-	workspaceExecAuthority WorkspaceExecPlacementAuthority,
-	workspaceFinalizer WorkspaceDeletionFinalizer,
+	computerCommandDiscovery ComputerCommandPlacementDiscovery,
+	computerCommandAuthority ComputerCommandPlacementAuthority,
+	computerFinalizer ComputerDeletionFinalizer,
 	log *slog.Logger,
 ) (*PlacementReconciler, error) {
 	if runDiscovery == nil || runLaneLocker == nil || runAuthority == nil ||
-		workspaceExecDiscovery == nil || workspaceExecAuthority == nil || workspaceFinalizer == nil {
-		return nil, errors.New("run placement, workspace exec placement, and workspace deletion dependencies are required")
+		computerCommandDiscovery == nil || computerCommandAuthority == nil || computerFinalizer == nil {
+		return nil, errors.New("run placement, computer exec placement, and computer deletion dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
 	reconciler := &PlacementReconciler{
 		runDiscovery: runDiscovery, runLaneLocker: runLaneLocker, runAuthority: runAuthority,
-		workspaceExecDiscovery: workspaceExecDiscovery,
-		workspaceExecAuthority: workspaceExecAuthority,
-		workspaceFinalizer:     workspaceFinalizer,
-		log:                    log, metrics: newReconcileMetrics(),
+		computerCommandDiscovery: computerCommandDiscovery,
+		computerCommandAuthority: computerCommandAuthority,
+		computerFinalizer:        computerFinalizer,
+		log:                      log, metrics: newReconcileMetrics(),
 		runPolicy: runPlacementPolicy{
 			idleInterval:      defaultRunPlacementIdleInterval,
 			failureBackoff:    defaultRunPlacementFailureBackoff,
@@ -220,13 +219,13 @@ func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker Ru
 			parallelism:       defaultRunPlacementParallelism,
 			pendingInterval:   defaultRunPlacementPendingInterval,
 		},
-		workspaceExecPolicy: placementLoopPolicy{
+		computerCommandPolicy: placementLoopPolicy{
 			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
-			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceExecPlacementLimit,
+			timeout: defaultRunPlacementTimeout, limit: defaultComputerCommandPlacementLimit,
 		},
-		workspaceDeletePolicy: placementLoopPolicy{
+		computerDeletePolicy: placementLoopPolicy{
 			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
-			timeout: defaultRunPlacementTimeout, limit: defaultWorkspaceDeleteFinalizeLimit,
+			timeout: defaultRunPlacementTimeout, limit: defaultComputerDeleteFinalizeLimit,
 		},
 	}
 	reconciler.runParallel = make(chan struct{}, reconciler.runPolicy.parallelism)
@@ -244,17 +243,17 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 	go func() {
 		errC <- r.runLoop(
 			runCtx,
-			"workspace_exec",
-			r.workspaceExecPolicy,
-			r.ReconcileWorkspaceExecs,
+			"computer_command",
+			r.computerCommandPolicy,
+			r.ReconcileComputerCommands,
 		)
 	}()
 	go func() {
 		errC <- r.runLoop(
 			runCtx,
-			"workspace_delete",
-			r.workspaceDeletePolicy,
-			r.ReconcileWorkspaceDeletes,
+			"computer_delete",
+			r.computerDeletePolicy,
+			r.ReconcileComputerDeletes,
 		)
 	}()
 	var firstErr error
@@ -354,28 +353,22 @@ func waitFor(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error {
-	if _, err := r.workspaceExecDiscovery.LoseExpiredWorkspaceMountClaims(
+func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) error {
+	recoverable, err := r.computerCommandDiscovery.ListRecoverableComputerCommandCandidates(
 		ctx,
-		r.workspaceExecPolicy.limit,
-	); err != nil {
-		return fmt.Errorf("lose expired workspace mount claims: %w", err)
-	}
-	recoverable, err := r.workspaceExecDiscovery.ListRecoverableWorkspaceExecCandidates(
-		ctx,
-		r.workspaceExecPolicy.limit,
+		r.computerCommandPolicy.limit,
 	)
 	if err != nil {
-		return fmt.Errorf("list recoverable workspace execs: %w", err)
+		return fmt.Errorf("list recoverable computer commands: %w", err)
 	}
 	var problems []error
 	for _, row := range recoverable {
-		err := r.workspaceExecAuthority.RecoverWorkspaceExec(
+		err := r.computerCommandAuthority.RecoverComputerCommand(
 			ctx,
-			RecoverableWorkspaceExecCandidate{
+			RecoverableComputerCommandCandidate{
 				OrgID:            row.OrgID,
-				ProcessID:        row.ID,
-				WorkspaceID:      row.WorkspaceID,
+				CommandID:        row.ID,
+				ComputerID:       row.ComputerID,
 				ExpectedRevision: row.Revision,
 			},
 		)
@@ -386,25 +379,25 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 			problems = append(problems, err)
 		}
 	}
-	rows, err := r.workspaceExecDiscovery.ListPendingWorkspaceExecCandidates(
+	rows, err := r.computerCommandDiscovery.ListPendingComputerCommandCandidates(
 		ctx,
-		r.workspaceExecPolicy.limit,
+		r.computerCommandPolicy.limit,
 	)
 	if err != nil {
-		return fmt.Errorf("list pending workspace execs: %w", err)
+		return fmt.Errorf("list pending computer commands: %w", err)
 	}
-	expiredBefore := time.Now().UTC().Add(-defaultWorkspaceExecPendingTimeout)
+	expiredBefore := time.Now().UTC().Add(-defaultComputerCommandPendingTimeout)
 	for _, row := range rows {
-		candidate := ReadyWorkspaceExecCandidate{
+		candidate := ReadyComputerCommandCandidate{
 			OrgID:            row.OrgID,
-			ProcessID:        row.ID,
+			CommandID:        row.ID,
 			ExpectedRevision: row.Revision,
 		}
 		if !row.CreatedAt.Time.After(expiredBefore) {
-			err := r.workspaceExecAuthority.FailPendingWorkspaceExec(
+			err := r.computerCommandAuthority.FailPendingComputerCommand(
 				ctx,
 				candidate,
-				"workspace_exec_placement_timed_out",
+				"computer_command_placement_timed_out",
 			)
 			if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
 				continue
@@ -414,7 +407,7 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 			}
 			continue
 		}
-		_, err := r.workspaceExecAuthority.PlaceWorkspaceExec(
+		_, err := r.computerCommandAuthority.PlaceComputerCommand(
 			ctx,
 			candidate,
 		)
@@ -431,8 +424,8 @@ func (r *PlacementReconciler) ReconcileWorkspaceExecs(ctx context.Context) error
 	return errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) ReconcileWorkspaceDeletes(ctx context.Context) error {
-	_, err := r.workspaceFinalizer.FinalizeDeletingWorkspaces(ctx, r.workspaceDeletePolicy.limit)
+func (r *PlacementReconciler) ReconcileComputerDeletes(ctx context.Context) error {
+	_, err := r.computerFinalizer.FinalizeDeletingComputers(ctx, r.computerDeletePolicy.limit)
 	if err != nil {
 		return fmt.Errorf("finalize deleting computers: %w", err)
 	}

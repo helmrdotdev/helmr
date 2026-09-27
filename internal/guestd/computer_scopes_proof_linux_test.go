@@ -93,7 +93,7 @@ func TestComputerScopesProof(t *testing.T) {
 	t.Log("child freeze preserves parent progress; tree freeze excludes all user writers; frozen child cancellation survives thaw; root kill empties all descendants")
 }
 
-func computerProofScope(t *testing.T, parent, name string) *linuxProgramCgroup {
+func computerProofScope(t *testing.T, parent, name string) *linuxProcessCgroup {
 	t.Helper()
 	path := filepath.Join(parent, name)
 	if err := os.Mkdir(path, 0755); err != nil {
@@ -103,7 +103,7 @@ func computerProofScope(t *testing.T, parent, name string) *linuxProgramCgroup {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope := &linuxProgramCgroup{path: path, file: os.NewFile(uintptr(fd), path)}
+	scope := &linuxProcessCgroup{path: path, file: os.NewFile(uintptr(fd), path)}
 	t.Cleanup(func() {
 		if err := scope.kill(); err != nil {
 			t.Error(err)
@@ -118,7 +118,7 @@ func computerProofScope(t *testing.T, parent, name string) *linuxProgramCgroup {
 	return scope
 }
 
-func computerProofWriter(t *testing.T, scope *linuxProgramCgroup, path string) <-chan error {
+func computerProofWriter(t *testing.T, scope *linuxProcessCgroup, path string) <-chan error {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestComputerScopeWriterHelper$")
 	cmd.Env = append(os.Environ(), "HELMR_COMPUTER_PROOF_WRITER="+path, "HELMR_COMPUTER_PROOF_DESCENDANT=0")

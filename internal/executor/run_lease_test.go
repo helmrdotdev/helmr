@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"net"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
@@ -43,7 +42,7 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 		trace:   trace,
 		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(renewed),
-		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
+		begin:   testRunFinalizationResponse(frozen),
 	}
 	runner := &testRunLeaseTaskRunner{trace: trace, task: task}
 	executor := Executor{RunLeases: controlPlane, RunLeaseTasks: runner}
@@ -56,17 +55,17 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	}
 	if !slices.Equal(trace.calls, []string{
 		"claim", "start", "wait", "renew", "begin",
-		"guest-begin", "capture", "complete",
+		"complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if controlPlane.completed.Workspace.Captured == nil ||
+	if controlPlane.completed.OperationID != controlPlane.beginOperationIDs[0] ||
 		controlPlane.completed.Outcome.Succeeded == nil {
 		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
 }
 
-func TestExecutorCapturesFailedRunLeaseTask(t *testing.T) {
+func TestExecutorCompletesFailedRunLeaseTask(t *testing.T) {
 	trace := &runLeaseTrace{}
 	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	frozen := lease
@@ -86,7 +85,7 @@ func TestExecutorCapturesFailedRunLeaseTask(t *testing.T) {
 		trace:   trace,
 		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
+		begin:   testRunFinalizationResponse(frozen),
 	}
 	executor := Executor{
 		RunLeases:     controlPlane,
@@ -100,11 +99,11 @@ func TestExecutorCapturesFailedRunLeaseTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete",
+		"claim", "start", "wait", "renew", "begin", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if controlPlane.completed.Workspace.Captured == nil ||
+	if controlPlane.completed.OperationID != controlPlane.beginOperationIDs[0] ||
 		controlPlane.completed.Outcome.Failed == nil {
 		t.Fatalf("completion = %+v", controlPlane.completed)
 	}
@@ -130,16 +129,16 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 		trace:   trace,
 		claim:   workerapi.RunLeaseClaimResponse{Lease: lease},
 		renewed: testRunLeaseRenewResponse(lease),
-		begin:   testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
+		begin:   testRunFinalizationResponse(frozen),
 	}
 	executor := Executor{RunLeases: controlPlane, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
 	if err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete-actor"}) {
+	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "renew", "begin", "complete-actor"}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
-	if controlPlane.completedActor.Outcome.Succeeded == nil || controlPlane.completedActor.Outcome.RunGeneration != 4 || controlPlane.completedActor.Workspace.Captured == nil {
+	if controlPlane.completedActor.Outcome.Succeeded == nil || controlPlane.completedActor.Outcome.RunGeneration != 4 || controlPlane.completedActor.OperationID != controlPlane.beginOperationIDs[0] {
 		t.Fatalf("Actor completion = %+v", controlPlane.completedActor)
 	}
 }
@@ -161,12 +160,11 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 				RunLeaseID: lease.ID,
 			},
 		},
-		beginFailures: 1,
 	}
 	controlPlane := &testRunLeaseControlPlane{
 		trace:            trace,
 		claim:            workerapi.RunLeaseClaimResponse{Lease: lease},
-		begin:            testRunFinalizationResponse(frozen, workerapi.RunFinalizationCapture),
+		begin:            testRunFinalizationResponse(frozen),
 		beginFailures:    1,
 		completeFailures: 1,
 	}
@@ -184,19 +182,18 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 		t.Fatalf("begin operation IDs = %v", controlPlane.beginOperationIDs)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "begin", "guest-begin",
-		"guest-begin", "capture", "complete", "complete",
+		"claim", "start", "wait", "renew", "begin", "begin", "complete", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
 }
 
-func TestExecutorRenewalAcceptsCommittedActorWorkspaceFrontier(t *testing.T) {
+func TestExecutorRenewalAcceptsCommittedActorComputerFrontier(t *testing.T) {
 	trace := &runLeaseTrace{}
 	current := testRunLeaseAssignment(time.Now().Add(time.Minute))
-	current.BaseWorkspaceVersionID = "version-1"
+	current.BaseComputerDiskVersionID = "version-1"
 	previous := current
-	previous.BaseWorkspaceVersionID = "version-2"
+	previous.BaseComputerDiskVersionID = "version-2"
 	previous.ExpiresAt = current.ExpiresAt.Add(30 * time.Second)
 	renewed := previous
 	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
@@ -223,17 +220,16 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
-	registry := NewWorkspaceMountSessions()
-	registry.RegisterWorkspaceMountSession(workerapi.WorkspaceMount{
-		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
-		FencingGeneration: 4, Target: workerapi.ComputerMountTarget{BaseWorkspaceVersionID: "version-1"},
+	registry := NewComputerMountSessions()
+	registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
+		ComputerID: "computer-1", ComputerInstanceID: "runtime-1",
+		WriterGeneration: 4, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
 	}, &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}, "channel-1")
-	authority := &workspacev0.WorkspaceRunAuthority{
-		Fence: &workspacev0.WorkspaceAuthorityFence{
-			WorkspaceMountId: "mount-1", WorkspaceId: "workspace-1",
-			RuntimeInstanceId: "runtime-1", MountFencingGeneration: 4,
+	authority := &computerv0.ComputerRunAuthority{
+		Fence: &computerv0.ComputerAuthorityFence{
+			ComputerInstanceId: "runtime-1", ComputerId: "computer-1", WriterGeneration: 4,
 			RunId: previous.RunID, ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
-			BaseWorkspaceVersionId: "version-1",
+			BaseComputerDiskVersionId: "version-1",
 		},
 		ChannelToken: "channel-1",
 	}
@@ -244,20 +240,20 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 			serverResult <- err
 			return
 		}
-		if header.Type != wire.StreamTypeWorkspaceAuthorityRenew {
+		if header.Type != wire.StreamTypeComputerAuthorityRenew {
 			serverResult <- errors.New("unexpected renewal stream")
 			return
 		}
-		var request workspacev0.RenewWorkspaceAuthorityRequest
+		var request computerv0.RenewComputerAuthorityRequest
 		if err := frameio.ReadProtoFrame(guest, &request); err != nil {
 			serverResult <- err
 			return
 		}
-		fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+		fence := proto.Clone(request.GetPrevious().GetFence()).(*computerv0.ComputerAuthorityFence)
 		fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
 		serverResult <- frameio.WriteProtoFrame(
 			guest,
-			&workspacev0.RenewWorkspaceAuthorityResponse{Fence: fence},
+			&computerv0.RenewComputerAuthorityResponse{Fence: fence},
 		)
 	}()
 	got, fence, err := renewRunLeaseAuthority(ctx, controlPlane, registry, previous, authority)
@@ -282,7 +278,7 @@ func TestRenewRunLeaseAuthorityStopsAtGuestAcknowledgedExpiry(t *testing.T) {
 		controlPlane,
 		nil,
 		previous,
-		&workspacev0.WorkspaceRunAuthority{},
+		&computerv0.ComputerRunAuthority{},
 	)
 	if !errors.Is(err, errRunLeaseAuthorityLapsed) {
 		t.Fatalf("renewal error = %v", err)
@@ -305,7 +301,7 @@ func TestRenewRunLeaseAuthorityDoesNotRetryGuestRejection(t *testing.T) {
 		staticRenewalControlPlane{response: testRunLeaseRenewResponse(renewed)},
 		mounts,
 		previous,
-		&workspacev0.WorkspaceRunAuthority{},
+		&computerv0.ComputerRunAuthority{},
 	)
 	if err == nil || err.Error() != "guest rejected renewal" {
 		t.Fatalf("renewal error = %v", err)
@@ -338,81 +334,10 @@ func TestGuestRunLeaseTaskFrozenCheckpointRenewsOnlyControlPlaneAuthority(t *tes
 		t.Fatalf("renewal = %+v, task Lease = %+v", got, task.lease)
 	}
 	if mounts.calls != 0 {
-		t.Fatalf("frozen checkpoint contacted guest Workspace authority %d times", mounts.calls)
+		t.Fatalf("frozen checkpoint contacted guest Computer authority %d times", mounts.calls)
 	}
 	if len(trace.calls) != 1 || trace.calls[0] != "renew" {
 		t.Fatalf("renewal trace = %v, want control-only renew", trace.calls)
-	}
-}
-
-func TestGuestRunLeaseTaskSerializesRenewalWithCheckpointFreeze(t *testing.T) {
-	previous := testRunLeaseAssignment(time.Now().Add(time.Minute))
-	first := previous
-	first.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
-	second := first
-	second.ExpiresAt = first.ExpiresAt.Add(time.Minute)
-	controlPlane := &sequencedRenewalControlPlane{responses: []workerapi.RunLeaseRenewResponse{
-		testRunLeaseRenewResponse(first), testRunLeaseRenewResponse(second),
-	}}
-	mounts := &blockingRenewalMounts{
-		started: make(chan struct{}), release: make(chan struct{}),
-	}
-	task := &guestRunLeaseTask{
-		mounts: mounts, controlPlane: controlPlane, lease: previous,
-		authority: &workspacev0.WorkspaceRunAuthority{
-			Fence: &workspacev0.WorkspaceAuthorityFence{
-				ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
-			},
-		},
-	}
-	firstRenewal := make(chan error, 1)
-	go func() {
-		_, err := task.RenewRunLease(context.Background())
-		firstRenewal <- err
-	}()
-	<-mounts.started
-
-	stream := &signalingCheckpointStream{
-		checkpointStream: newCheckpointStream(t, nil, "run-wait-id-1", "checkpoint-1"),
-		wrote:            make(chan struct{}),
-	}
-	frozen := make(chan struct{})
-	checkpointDone := make(chan error, 1)
-	go func() {
-		err := runtimeCheckpointer{
-			stream: stream, freezeGate: &task.renewalGate,
-			onFrozen: func() {
-				task.markCheckpointFrozen()
-				close(frozen)
-			},
-		}.suspendGuestForCheckpoint(context.Background(), CheckpointRequest{
-			RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1",
-		})
-		checkpointDone <- err
-	}()
-	<-stream.wrote
-	select {
-	case <-frozen:
-		t.Fatal("checkpoint froze before the in-flight guest renewal completed")
-	default:
-	}
-	close(mounts.release)
-	requirePromptResult(t, firstRenewal, "pre-freeze renewal")
-	requirePromptResult(t, checkpointDone, "checkpoint freeze")
-	select {
-	case <-frozen:
-	default:
-		t.Fatal("checkpoint did not publish frozen authority")
-	}
-
-	if _, err := task.RenewRunLease(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if mounts.calls != 1 {
-		t.Fatalf("guest authority renewals = %d, want only pre-freeze renewal", mounts.calls)
-	}
-	if controlPlane.calls != 2 || !equalRunLeaseAssignment(task.lease, second) {
-		t.Fatalf("Control Plane renewals = %d, task Lease = %+v", controlPlane.calls, task.lease)
 	}
 }
 
@@ -426,54 +351,6 @@ func requirePromptResult(t *testing.T, result <-chan error, operation string) {
 	case <-time.After(time.Second):
 		t.Fatalf("%s did not complete", operation)
 	}
-}
-
-type signalingCheckpointStream struct {
-	*checkpointStream
-	once  sync.Once
-	wrote chan struct{}
-}
-
-func (stream *signalingCheckpointStream) Write(body []byte) (int, error) {
-	stream.once.Do(func() { close(stream.wrote) })
-	return stream.checkpointStream.Write(body)
-}
-
-type sequencedRenewalControlPlane struct {
-	RunLeaseControlPlane
-	responses []workerapi.RunLeaseRenewResponse
-	calls     int
-}
-
-func (controlPlane *sequencedRenewalControlPlane) RenewRunLease(
-	context.Context,
-	workerapi.RunLeaseAssignment,
-) (workerapi.RunLeaseRenewResponse, error) {
-	if controlPlane.calls >= len(controlPlane.responses) {
-		return workerapi.RunLeaseRenewResponse{}, errors.New("unexpected renewal")
-	}
-	response := controlPlane.responses[controlPlane.calls]
-	controlPlane.calls++
-	return response, nil
-}
-
-type blockingRenewalMounts struct {
-	WorkspaceMountSessionRegistry
-	started chan struct{}
-	release chan struct{}
-	calls   int
-}
-
-func (mounts *blockingRenewalMounts) RenewWorkspaceAuthority(
-	_ context.Context,
-	request *workspacev0.RenewWorkspaceAuthorityRequest,
-) (*workspacev0.WorkspaceAuthorityFence, error) {
-	mounts.calls++
-	close(mounts.started)
-	<-mounts.release
-	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
-	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
-	return fence, nil
 }
 
 type cancelingRenewalControlPlane struct {
@@ -505,14 +382,14 @@ func (controlPlane staticRenewalControlPlane) RenewRunLease(
 }
 
 type rejectingRenewalMounts struct {
-	WorkspaceMountSessionRegistry
+	ComputerMountSessionRegistry
 	calls int
 }
 
-func (mounts *rejectingRenewalMounts) RenewWorkspaceAuthority(
+func (mounts *rejectingRenewalMounts) RenewComputerAuthority(
 	context.Context,
-	*workspacev0.RenewWorkspaceAuthorityRequest,
-) (*workspacev0.WorkspaceAuthorityFence, error) {
+	*computerv0.RenewComputerAuthorityRequest,
+) (*computerv0.ComputerAuthorityFence, error) {
 	mounts.calls++
 	return nil, errors.New("guest rejected renewal")
 }
@@ -551,18 +428,14 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 }
 
 type testRunLeaseTask struct {
-	quiesceErr      error
-	waitErr         error
-	trace           *runLeaseTrace
-	result          RunLeaseTaskResult
-	previous        workerapi.RunLeaseAssignment
-	renewed         workerapi.RunLeaseAssignment
-	beginFailures   int
-	captureFailures int
+	waitErr  error
+	trace    *runLeaseTrace
+	result   RunLeaseTaskResult
+	previous workerapi.RunLeaseAssignment
+	renewed  workerapi.RunLeaseAssignment
 }
 
-func (task *testRunLeaseTask) Close()                                     {}
-func (task *testRunLeaseTask) QuiesceComputerSaves(context.Context) error { return task.quiesceErr }
+func (task *testRunLeaseTask) Close() {}
 
 func (task *testRunLeaseTask) Wait(context.Context) (RunLeaseTaskResult, error) {
 	task.trace.add("wait")
@@ -574,30 +447,6 @@ func (task *testRunLeaseTask) RenewRunLease(
 ) (RunLeaseTaskRenewal, error) {
 	task.trace.add("renew")
 	return RunLeaseTaskRenewal{Previous: task.previous, Lease: task.renewed}, nil
-}
-
-func (task *testRunLeaseTask) BeginWorkspaceFinalization(
-	_ context.Context,
-	_ workerapi.RunLeaseAssignment,
-	_ workerapi.RunLeaseAssignment,
-	_ string,
-	_ workerapi.RunFinalizationKind,
-) error {
-	task.trace.add("guest-begin")
-	if task.beginFailures > 0 {
-		task.beginFailures--
-		return errors.New("transient guest begin failure")
-	}
-	return nil
-}
-
-func (task *testRunLeaseTask) CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error) {
-	task.trace.add("capture")
-	if task.captureFailures > 0 {
-		task.captureFailures--
-		return workerapi.TaskWorkspaceCapture{}, errors.New("transient capture failure")
-	}
-	return workerapi.TaskWorkspaceCapture{}, nil
 }
 
 type testRunLeaseControlPlane struct {
@@ -721,18 +570,15 @@ func testRunLeaseRenewResponse(
 ) workerapi.RunLeaseRenewResponse {
 	return workerapi.RunLeaseRenewResponse{
 		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
-		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
+		BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID,
 	}
 }
 
 func testRunFinalizationResponse(
 	lease workerapi.RunLeaseAssignment,
-	kind workerapi.RunFinalizationKind,
 ) workerapi.BeginRunFinalizationResponse {
 	return workerapi.BeginRunFinalizationResponse{
 		Lease: lease.Fence(), ExpiresAt: lease.ExpiresAt,
-		BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
-		Kind:                   kind,
 	}
 }
 
@@ -760,37 +606,5 @@ func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) 
 				t.Fatalf("finalized detached run: %v", trace.calls)
 			}
 		})
-	}
-}
-
-func (*testRunLeaseControlPlane) RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error {
-	return nil
-}
-
-func (*testRunLeaseControlPlane) RegisterRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
-	return nil
-}
-
-func (*testRunLeaseControlPlane) CertifyRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
-	return nil
-}
-
-func (*testRunLeaseControlPlane) ReuseRunComputerObject(context.Context, workerapi.RunComputerObjectRequest) error {
-	return nil
-}
-
-func TestRunFinalizationWaitsForComputerSaveSettlement(t *testing.T) {
-	trace := &runLeaseTrace{}
-	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
-	failure := errors.New("save receipt unresolved")
-	task := &testRunLeaseTask{trace: trace, renewed: lease, quiesceErr: failure}
-	cp := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}, renewed: testRunLeaseRenewResponse(lease)}
-	executor := Executor{RunLeases: cp, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
-	err := executor.ExecuteRunLease(t.Context(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence})
-	if !errors.Is(err, failure) {
-		t.Fatalf("settlement error: %v", err)
-	}
-	if slices.Contains(trace.calls, "begin") {
-		t.Fatalf("revoked save authority before settlement: %v", trace.calls)
 	}
 }

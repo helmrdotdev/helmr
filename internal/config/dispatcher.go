@@ -18,7 +18,7 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("CLICKHOUSE_URL is required")
 	}
-	cfg.WorkspaceFencingKey, err = rootKey("WORKSPACE_FENCING_KEY")
+	cfg.ComputerFencingKey, err = rootKey("COMPUTER_FENCING_KEY")
 	if err != nil {
 		return cfg, err
 	}

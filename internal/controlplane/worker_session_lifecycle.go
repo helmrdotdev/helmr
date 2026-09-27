@@ -3,48 +3,51 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"net/http"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"net/http"
 )
 
-// These commands use the same Secret -> Session owner -> Run -> Workspace ->
-// physical authority order as output/commit. Stop is deliberately not an error
-// here: admitted callback acknowledgments and control observation must still work.
-func lockWorkerSessionExecution(ctx context.Context, q db.Querier, worker workerActor, lease workerapi.RunLeaseFence) (runLeaseClaimAuthority, error) {
+// Secret locks precede Computer/Instance and logical scope locks. Stop remains
+// observable so admitted callback acknowledgements can settle their durable work.
+func lockWorkerSessionExecution(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence) (run.ExecutionAuthority, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
-		return runLeaseClaimAuthority{}, err
+		return run.ExecutionAuthority{}, err
 	}
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch})
-	if err != nil || !loc.SessionID.Valid {
-		return runLeaseClaimAuthority{}, staleActorOutputAppend(err)
-	}
-	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.WorkspaceID); err != nil {
-		return runLeaseClaimAuthority{}, err
-	}
-	owner, err := lockRunFinalizationOwner(ctx, q, loc)
+	q := db.New(tx)
+	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
 	if err != nil {
-		return runLeaseClaimAuthority{}, err
+		return run.ExecutionAuthority{}, staleActorOutputAppend(err)
 	}
-	authority, err := lockRenewableRunLeaseAuthority(ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, loc)
+	if !loc.SessionID.Valid {
+		return run.ExecutionAuthority{}, session.ErrTurnScope
+	}
+	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
+		return run.ExecutionAuthority{}, err
+	}
+	a, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+	if errors.Is(err, run.ErrExecutionWorkerClaims) {
+		return run.ExecutionAuthority{}, errStaleWorkerClaims
+	}
 	if err != nil {
-		return authority, err
+		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
 	}
-	authority.actor = owner.actor
-	if !authority.actor.ID.Valid || authority.run.EntrypointKind != "actor" || authority.actor.CurrentRunID != authority.run.ID || authority.attempt.TerminalAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid || authority.runLease.FinalizationOperationID.Valid {
-		return authority, session.ErrTurnScope
+	if !a.Session.ID.Valid || a.Run.EntrypointKind != "actor" || !a.Attempt.EntrypointEnteredAt.Valid || a.Lease.FinalizationOperationID.Valid {
+		return run.ExecutionAuthority{}, session.ErrTurnScope
 	}
-	return authority, nil
+	return a, nil
 }
 
-func workerTurnScope(authority runLeaseClaimAuthority, request workerapi.TurnExecutionRequest) (session.TurnScope, error) {
+func workerTurnScope(authority run.ExecutionAuthority, request workerapi.TurnExecutionRequest) (session.TurnScope, error) {
 	turnID, err := parseCanonicalUUID("turn_id", request.TurnID)
 	if err != nil {
 		return session.TurnScope{}, err
@@ -52,7 +55,7 @@ func workerTurnScope(authority runLeaseClaimAuthority, request workerapi.TurnExe
 	if request.RunGeneration <= 0 {
 		return session.TurnScope{}, session.ErrTurnScope
 	}
-	return session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.actor.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.actor.ID), TurnID: turnID, RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: request.RunGeneration}, nil
+	return session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Session.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session.ID), TurnID: turnID, RunID: pgvalue.MustUUIDValue(authority.Run.ID), AttemptNumber: authority.Attempt.Number, RunGeneration: request.RunGeneration}, nil
 }
 func projectWorkerSessionEvent(event db.SessionEvent, deploymentID pgtype.UUID) api.SessionEvent {
 	result := api.SessionEvent{ID: pgvalue.UUIDString(event.ID), SessionID: pgvalue.UUIDString(event.SessionID), Sequence: event.Sequence, CreatedAt: event.CreatedAt.Time.UTC(), Kind: event.Kind, Data: event.Data}
@@ -93,7 +96,7 @@ func (s *Server) workerTurnMessagesReady(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		a, err := lockWorkerSessionExecution(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
+		a, err := lockWorkerSessionExecution(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
 		if err != nil {
 			return err
 		}
@@ -101,10 +104,10 @@ func (s *Server) workerTurnMessagesReady(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		if a.run.Status != db.RunStatusRunning || a.runLease.Status != db.RunLeaseStatusRunning {
+		if a.Run.Status != db.RunStatusRunning || a.Lease.Status != db.RunLeaseStatusRunning {
 			return session.ErrTurnScope
 		}
-		_, err = session.DeclareMessageReady(r.Context(), work.q, scope, pgvalue.MustUUIDValue(a.runLease.ID))
+		_, err = session.DeclareMessageReady(r.Context(), work.q, scope, pgvalue.MustUUIDValue(a.Lease.ID))
 		return err
 	})
 	s.writeWorkerSessionCommand(w, request.CorrelationID, err)
@@ -116,7 +119,7 @@ func (s *Server) workerBeginTurnSettlement(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		a, err := lockWorkerSessionExecution(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
+		a, err := lockWorkerSessionExecution(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
 		if err != nil {
 			return err
 		}
@@ -142,7 +145,7 @@ func (s *Server) workerClaimTurnMessage(w http.ResponseWriter, r *http.Request) 
 	}
 	var message db.SessionMessage
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		a, err := lockWorkerSessionExecution(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
+		a, err := lockWorkerSessionExecution(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
 		if err != nil {
 			return err
 		}
@@ -150,7 +153,7 @@ func (s *Server) workerClaimTurnMessage(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			return err
 		}
-		message, err = session.ClaimMessage(r.Context(), work.q, scope, pgvalue.MustUUIDValue(a.runLease.ID), deliveryID)
+		message, err = session.ClaimMessage(r.Context(), work.q, scope, pgvalue.MustUUIDValue(a.Lease.ID), deliveryID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -183,7 +186,7 @@ func (s *Server) workerCompleteTurnMessage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		a, err := lockWorkerSessionExecution(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
+		a, err := lockWorkerSessionExecution(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
 		if err != nil {
 			return err
 		}
@@ -191,7 +194,7 @@ func (s *Server) workerCompleteTurnMessage(w http.ResponseWriter, r *http.Reques
 		if err != nil {
 			return err
 		}
-		_, err = session.CompleteMessage(r.Context(), work.q, scope, pgvalue.MustUUIDValue(a.runLease.ID), messageID, deliveryID, session.MessageOutcome{Status: request.Status, Code: request.Code, Details: request.Details})
+		_, err = session.CompleteMessage(r.Context(), work.q, scope, pgvalue.MustUUIDValue(a.Lease.ID), messageID, deliveryID, session.MessageOutcome{Status: request.Status, Code: request.Code, Details: request.Details})
 		return err
 	})
 	s.writeWorkerSessionCommand(w, request.CorrelationID, err)
@@ -212,7 +215,7 @@ func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 	// the exact hold; polling must not contend with shared worker placement locks.
 	state, err := s.db.ReadWorkerSessionControl(r.Context(), db.ReadWorkerSessionControlParams{
 		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch, RunGeneration: request.RunGeneration,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, RunGeneration: request.RunGeneration,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -242,24 +245,24 @@ func (s *Server) workerWriteSessionOutput(w http.ResponseWriter, r *http.Request
 	var event api.SessionEvent
 	var rejection string
 	err := s.inTx(r.Context(), func(work *txWork) error {
-		a, err := lockWorkerSessionExecution(r.Context(), work.q, workerFromContext(r.Context()), request.Lease)
+		a, err := lockWorkerSessionExecution(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease)
 		if err != nil {
 			return err
 		}
-		if a.run.Status != db.RunStatusRunning || a.runLease.Status != db.RunLeaseStatusRunning {
+		if a.Run.Status != db.RunStatusRunning || a.Lease.Status != db.RunLeaseStatusRunning {
 			return session.ErrTurnScope
 		}
 		key := request.IdempotencyKey
 		if key == "" {
 			key = request.CorrelationID
 		}
-		receipt, err := session.AppendSessionOutput(r.Context(), work.q, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.actor.EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.actor.ID), RunID: pgvalue.MustUUIDValue(a.run.ID), AttemptNumber: a.attempt.Number, RunGeneration: request.RunGeneration}, key, request.Data)
+		receipt, err := session.AppendSessionOutput(r.Context(), work.q, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.Session.EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.Session.ID), RunID: pgvalue.MustUUIDValue(a.Run.ID), AttemptNumber: a.Attempt.Number, RunGeneration: request.RunGeneration}, key, request.Data)
 		if err != nil {
 			return err
 		}
 		rejection = receipt.Code
 		if rejection == "" {
-			event = projectWorkerSessionEvent(receipt.Event, a.run.DeploymentID)
+			event = projectWorkerSessionEvent(receipt.Event, a.Run.DeploymentID)
 		}
 		return nil
 	})

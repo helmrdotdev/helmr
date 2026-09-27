@@ -61,9 +61,12 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *checkpoint.Encryptor
 	return limits, nil
 }
 
-func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (result CheckpointResult, retErr error) {
+func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request ComputerCheckpointRequest) (result CheckpointResult, retErr error) {
 	if c.session == nil {
 		return result, errors.New("checkpoint source session is required")
+	}
+	if _, err := computerFreezeRequest(request.Target); err != nil {
+		return result, err
 	}
 	var key capacity.Key
 	var reserved bool
@@ -108,12 +111,26 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 			cleanupErr = c.capacity.Release(key)
 		}
 		if err := errors.Join(cleanupErr, stopErr); err != nil {
+			c.pendingCleanup = func() error {
+				var cleanup error
+				for _, candidate := range candidates {
+					cleanup = errors.Join(cleanup, candidate.close())
+				}
+				if directory != "" {
+					cleanup = errors.Join(cleanup, os.RemoveAll(directory))
+				}
+				cleanup = errors.Join(cleanup, removeCheckpointSnapshot(artifact))
+				if cleanup == nil && reserved {
+					cleanup = c.capacity.Release(key)
+				}
+				return cleanup
+			}
 			retErr = errors.Join(retErr, &checkpointSourceReleaseError{err: err})
 		}
 	}()
 
-	if c.capacity == nil || c.objects == nil || c.encryptor == nil || c.stream == nil || request.Register == nil || c.publication == nil {
-		return result, errors.New("checkpoint capacity, immutable storage, encryption, stream and registration are required")
+	if c.capacity == nil || c.objects == nil || c.encryptor == nil || request.Register == nil || c.publication == nil {
+		return result, errors.New("checkpoint capacity, immutable storage, encryption and registration are required")
 	}
 	shape, err := c.session.SnapshotLimits()
 	if err != nil {
@@ -123,7 +140,7 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	if err != nil {
 		return result, err
 	}
-	key = capacity.Key{Kind: "checkpoint-staging", ID: request.CheckpointID, Epoch: request.CheckpointRequestVersion}
+	key = capacity.Key{Kind: "checkpoint-staging", ID: request.Target.Capture.CheckpointID, Epoch: request.Target.DesiredVersion}
 	reserved, err = c.capacity.Reserve(key, capacity.Vector{GuestEphemeralDiskBytes: limits.total})
 	if err != nil {
 		if errors.Is(err, capacity.ErrDuplicateReservation) {
@@ -148,17 +165,15 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 			return result, err
 		}
 	}
-	if err := c.suspendGuestForCheckpoint(ctx, request); err != nil {
-		return result, err
-	}
-	if err := c.stream.Close(); err != nil {
-		return result, fmt.Errorf("close checkpoint control stream: %w", err)
-	}
-	artifact, err = c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
+	point, err := freezeComputerOnSession(ctx, c.session, request.Target)
 	if err != nil {
 		return result, err
 	}
-	if artifact.Computer == nil || artifact.Computer.Capture == nil || artifact.Computer.ComputerID == "" || artifact.Computer.Capture.Root().LogicalBytes != shape.ComputerBytes || len(artifact.Memory) != 1 || artifact.VMVCPUCount <= 0 || !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
+	artifact, err = c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.Target.Capture.CheckpointID})
+	if err != nil {
+		return result, err
+	}
+	if artifact.Computer == nil || artifact.Computer.Capture == nil || artifact.Computer.ComputerID != point.ComputerID || artifact.RuntimeID != request.Target.Source.VMPlatformID || artifact.VMVCPUCount != request.Target.Source.VMVCPUCount || artifact.CPUConfigDigest != request.Target.Source.CPUConfigDigest || artifact.Computer.Capture.Root().LogicalBytes != shape.ComputerBytes || len(artifact.Memory) != 1 || artifact.VMVCPUCount <= 0 || !sha256sum.ValidDigest(artifact.CPUConfigDigest) {
 		return result, errors.New("incomplete or changed paired checkpoint snapshot")
 	}
 	if err := artifact.Computer.Capture.Root().Validate(shape.ComputerBytes); err != nil {
@@ -170,7 +185,7 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 		suffix string
 		limit  int64
 	}{
-		{body: artifact.Manifest, file: vm.SnapshotFile{MediaType: cas.CheckpointRuntimeConfigMediaType}, suffix: "manifest", limit: limits.config},
+		{body: artifact.Manifest, file: vm.SnapshotFile{MediaType: cas.CheckpointVMConfigMediaType}, suffix: "manifest", limit: limits.config},
 		{file: artifact.VMState, suffix: "vmstate", limit: limits.state},
 		{file: artifact.ScratchDisk, suffix: "scratch-disk", limit: limits.scratch},
 		{file: artifact.Memory[0], suffix: "memory", limit: limits.memory},
@@ -196,7 +211,7 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 			return result, stageErr
 		}
 	}
-	result.Manifest = c.checkpointManifest(request, artifact, artifact.Computer.Capture.Root(), candidates)
+	result.Manifest = c.checkpointManifest(point, artifact, artifact.Computer.Capture.Root(), candidates)
 	result.Manifest.Phases = append(workerCheckpointPhases(artifact.Phases), workerapi.CheckpointPhase{Name: "capture_checkpoint", DurationMs: durationMilliseconds(time.Since(started))})
 	// The registered descriptors stay fixed through uncertain replies and retries.
 	if err := request.Register(ctx, result.Manifest); err != nil {
@@ -240,7 +255,14 @@ type checkpointCandidate struct {
 	descriptor cas.Descriptor
 }
 
-func (c *checkpointCandidate) close() error { return c.file.Close() }
+func (c *checkpointCandidate) close() error {
+	if c.file == nil {
+		return nil
+	}
+	err := c.file.Close()
+	c.file = nil
+	return err
+}
 func (c *checkpointCandidate) upload(ctx context.Context, store cas.ImmutableStore) error {
 	object, err := store.Publish(ctx, c.descriptor, c.file)
 	if err != nil {
@@ -319,28 +341,21 @@ func removeCheckpointSnapshot(artifact vm.SnapshotArtifact) error {
 func checkpointDescriptor(d cas.Descriptor) workerapi.CheckpointArtifact {
 	return workerapi.CheckpointArtifact{Digest: d.Digest, SizeBytes: d.SizeBytes, MediaType: d.MediaType}
 }
-func (c runtimeCheckpointer) checkpointManifest(request CheckpointRequest, artifact vm.SnapshotArtifact, root computer.GenerationRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
+func (c computerCheckpointer) checkpointManifest(point workerapi.CheckpointRecoveryPoint, artifact vm.SnapshotArtifact, root computer.GenerationRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
+	point.Runtime = workerapi.CheckpointRuntime{
+		Backend:         artifact.RuntimeBackend,
+		ID:              artifact.RuntimeID,
+		Arch:            artifact.RuntimeArch,
+		Contract:        artifact.VMRuntimeContract,
+		KernelDigest:    artifact.KernelDigest,
+		InitramfsDigest: artifact.InitramfsDigest,
+		RootfsDigest:    artifact.RootfsDigest,
+		ConfigDigest:    artifact.VMConfigDigest,
+		VMVCPUCount:     artifact.VMVCPUCount,
+		CPUConfigDigest: artifact.CPUConfigDigest,
+	}
 	return workerapi.CheckpointManifest{
-		RecoveryPoint: workerapi.CheckpointRecoveryPoint{
-			ID:            request.CheckpointID,
-			RunID:         request.RunID,
-			AttemptNumber: request.AttemptNumber,
-			RunWaitID:     request.RunWaitID,
-			CorrelationID: request.CorrelationID,
-			Runtime: workerapi.CheckpointRuntime{
-				Backend:         artifact.RuntimeBackend,
-				ID:              artifact.RuntimeID,
-				Arch:            artifact.RuntimeArch,
-				Contract:        artifact.VMRuntimeContract,
-				KernelDigest:    artifact.KernelDigest,
-				InitramfsDigest: artifact.InitramfsDigest,
-				RootfsDigest:    artifact.RootfsDigest,
-				ConfigDigest:    artifact.RuntimeConfigDigest,
-				VMVCPUCount:     artifact.VMVCPUCount,
-				CPUConfigDigest: artifact.CPUConfigDigest,
-				Substrate:       checkpointRuntimeSubstrate(artifact.Substrate),
-			},
-		},
+		RecoveryPoint: point,
 		RuntimeState: workerapi.CheckpointRuntimeState{
 			Computer:            &workerapi.CheckpointComputer{ComputerID: artifact.Computer.ComputerID, LogicalBytes: root.LogicalBytes, Root: root},
 			ConfigArtifact:      checkpointDescriptor(candidates[0].descriptor),
@@ -349,8 +364,8 @@ func (c runtimeCheckpointer) checkpointManifest(request CheckpointRequest, artif
 			MemoryArtifacts:     []workerapi.CheckpointArtifact{checkpointDescriptor(candidates[3].descriptor)},
 			Config:              artifact.Manifest,
 		},
-		WorkspaceState: workerapi.CheckpointWorkspaceState{
-			Base: c.workspace,
+		ComputerState: workerapi.CheckpointComputerState{
+			Base: c.computer,
 		},
 	}
 }

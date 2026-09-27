@@ -1,30 +1,30 @@
 -- name: LockWorkerDrainCompletion :one
-SELECT worker_instances.id, worker_instances.status, worker_instances.claim_version,
-       worker_instances.current_epoch, worker_instances.termination_ready_at
-  FROM worker_instances
-  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
- WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-   AND worker_instances.status IN ('draining', 'termination_ready')
+SELECT worker_hosts.id, worker_hosts.status, worker_hosts.claim_version,
+       worker_hosts.current_epoch, worker_hosts.termination_ready_at
+  FROM worker_hosts
+  JOIN worker_groups ON worker_groups.id = worker_hosts.worker_group_id
+ WHERE worker_hosts.id = sqlc.arg(worker_host_id)
+   AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
+   AND worker_hosts.status IN ('draining', 'termination_ready')
    AND worker_groups.status IN ('active', 'paused', 'draining')
- FOR UPDATE OF worker_instances;
+ FOR UPDATE OF worker_hosts;
 
 -- name: CompleteWorkerDrain :one
 WITH target AS MATERIALIZED (
-    SELECT worker_instances.*
-      FROM worker_instances
-      JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-     WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-       AND worker_instances.status IN ('draining', 'termination_ready')
-       AND worker_instances.claim_version IN (
+    SELECT worker_hosts.*
+      FROM worker_hosts
+      JOIN worker_groups ON worker_groups.id = worker_hosts.worker_group_id
+     WHERE worker_hosts.id = sqlc.arg(worker_host_id)
+       AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)
+       AND worker_hosts.status IN ('draining', 'termination_ready')
+       AND worker_hosts.claim_version IN (
            sqlc.arg(expected_claim_version)::bigint,
            sqlc.arg(expected_claim_version)::bigint + 1
        )
        AND worker_groups.status IN ('active', 'paused', 'draining')
-     FOR UPDATE OF worker_instances
+     FOR UPDATE OF worker_hosts
 ), eligible AS (
     SELECT drain_target.id
       FROM target AS drain_target
@@ -33,54 +33,43 @@ WITH target AS MATERIALIZED (
        AND sqlc.arg(observed_at)::timestamptz >= drain_target.epoch_started_at
        AND sqlc.arg(observed_at)::timestamptz <= now() + interval '1 minute'
        AND EXISTS (
-           SELECT 1 FROM worker_instance_credentials
-            WHERE worker_instance_credentials.worker_instance_id = drain_target.id
-              AND worker_instance_credentials.claim_version = drain_target.claim_version
-              AND worker_instance_credentials.revoked_at IS NULL
+           SELECT 1 FROM worker_host_credentials
+            WHERE worker_host_credentials.worker_host_id = drain_target.id
+              AND worker_host_credentials.claim_version = drain_target.claim_version
+              AND worker_host_credentials.revoked_at IS NULL
        )
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
-            WHERE run_leases.worker_instance_id = drain_target.id
-              AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
+            WHERE run_leases.worker_host_id = drain_target.id
+              AND run_leases.process_reconciled_at IS NULL
        )
        AND NOT EXISTS (
-           SELECT 1 FROM runtime_instances
-            WHERE runtime_instances.worker_instance_id = drain_target.id
-              AND runtime_instances.reclaimed_at IS NULL
+           SELECT 1 FROM computer_instances
+            WHERE computer_instances.worker_host_id = drain_target.id
+              AND computer_instances.reclaimed_at IS NULL
        )
        AND NOT EXISTS (
-           SELECT 1 FROM workspace_mounts
-            WHERE workspace_mounts.worker_instance_id = drain_target.id
-              AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM workspace_leases
-            WHERE workspace_leases.worker_instance_id = drain_target.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM workspace_processes
-            WHERE workspace_processes.worker_instance_id = drain_target.id
-              AND workspace_processes.status IN ('starting', 'running', 'exit_requested')
+           SELECT 1 FROM computer_commands c JOIN computer_instances i ON i.id=c.computer_instance_id
+            WHERE i.worker_host_id=drain_target.id AND c.process_reconciled_at IS NULL
        )
 ), completed AS (
-    UPDATE worker_instances
+    UPDATE worker_hosts
        SET status = 'termination_ready',
-           claim_version = worker_instances.claim_version + 1,
+           claim_version = worker_hosts.claim_version + 1,
            termination_ready_at = now(),
            updated_at = now()
       FROM eligible
-     WHERE worker_instances.id = eligible.id
-    RETURNING worker_instances.id, worker_instances.worker_group_id,
-              worker_instances.current_epoch, worker_instances.status,
-              worker_instances.claim_version, worker_instances.termination_ready_at
+     WHERE worker_hosts.id = eligible.id
+    RETURNING worker_hosts.id, worker_hosts.worker_group_id,
+              worker_hosts.current_epoch, worker_hosts.status,
+              worker_hosts.claim_version, worker_hosts.termination_ready_at
 ), revoked AS (
-    UPDATE worker_instance_credentials
+    UPDATE worker_host_credentials
        SET revoked_at = now()
       FROM completed
-     WHERE worker_instance_credentials.worker_instance_id = completed.id
-       AND worker_instance_credentials.revoked_at IS NULL
-    RETURNING worker_instance_credentials.id
+     WHERE worker_host_credentials.worker_host_id = completed.id
+       AND worker_host_credentials.revoked_at IS NULL
+    RETURNING worker_host_credentials.id
 ), result AS (
     SELECT completed.*
       FROM completed

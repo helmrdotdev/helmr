@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const NAVIGATION = ["Overview", "Runs", "Sessions", "Tokens", "Workspaces", "Deployments"];
+const NAVIGATION = ["Overview", "Runs", "Sessions", "Tokens", "Computers", "Deployments"];
 
 async function login(page: Page) {
   await page.goto("/dev/login");
@@ -48,10 +48,10 @@ test("every navigation item resolves to its page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Tokens" })).toBeVisible();
   await expect(page.getByText("No Tokens match this filter.")).toBeVisible();
 
-  await navigation.getByRole("link", { name: "Workspaces", exact: true }).click();
-  await expect(page).toHaveURL("/workspaces");
-  await expect(page.getByRole("heading", { name: "Workspaces" })).toBeVisible();
-  await expect(page.getByText("No Workspaces yet.")).toBeVisible();
+  await navigation.getByRole("link", { name: "Computers", exact: true }).click();
+  await expect(page).toHaveURL("/computers");
+  await expect(page.getByRole("heading", { name: "Computers" })).toBeVisible();
+  await expect(page.getByText("No Computers yet.")).toBeVisible();
 
   await navigation.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page).toHaveURL("/runs");

@@ -29,7 +29,7 @@ func EncodeProgram(
 	verification VerificationResult,
 	configResultDigest string,
 	runtimeDigest string,
-	workspaceImages []BundleWorkspaceImage,
+	computerImages []BundleComputerImage,
 	compiler CompilerInputs,
 	nodeVersion string,
 ) (_ *EncodedProgram, returnErr error) {
@@ -99,7 +99,7 @@ func EncodeProgram(
 	index, err := buildProgramIndex(
 		plan,
 		locator,
-		workspaceImages,
+		computerImages,
 		configResultDigest,
 		runtimeDigest,
 	)

@@ -117,7 +117,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		ActorStartRequested: &programv0.ActorStartRequested{
 			CorrelationId:  correlationID,
 			DeclaredId:     "mailbox",
-			WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+			ComputerId:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 			RunOptionsJson: `{}`,
 		},
 	}}
@@ -139,7 +139,7 @@ func TestActorRuntimeVerticalContract(t *testing.T) {
 		if decision.GetKind() != "completed" ||
 			controlPlane.startRequest.Lease.ID == "" ||
 			controlPlane.startRequest.ActorDeclaredID != "mailbox" ||
-			controlPlane.startRequest.Workspace.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
+			controlPlane.startRequest.Computer.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
 			t.Fatalf("decision = %+v request = %+v", decision, controlPlane.startRequest)
 		}
 	})
@@ -265,7 +265,7 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 			Event: &programv0.RunEvent_ActorStartRequested{
 				ActorStartRequested: &programv0.ActorStartRequested{
 					CorrelationId: correlationID, DeclaredId: "mailbox",
-					WorkspaceId:    "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
+					ComputerId:     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
 					RunOptionsJson: `{}`,
 				},
 			},
@@ -307,10 +307,10 @@ func TestRunSourceRuntimeRejectsTerminalLocalStateWithoutRetry(t *testing.T) {
 			t.Fatalf("error = %v calls = %d", err, calls)
 		}
 	})
-	t.Run("finalizing task", func(t *testing.T) {
+	t.Run("closed task", func(t *testing.T) {
 		task := &guestRunLeaseTask{
-			lease:          testRunLeaseAssignment(time.Now().Add(time.Minute)),
-			finalizingKind: workerapi.RunFinalizationCapture,
+			lease:    testRunLeaseAssignment(time.Now().Add(time.Minute)),
+			finished: true,
 		}
 		calls := 0
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)

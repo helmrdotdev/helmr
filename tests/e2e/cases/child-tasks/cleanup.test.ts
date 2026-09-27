@@ -11,8 +11,8 @@ test("failed parent cleanup discovers paginated children without touching other 
       signal.throwIfAborted()
       cursors.push(cursor)
       return cursor === undefined
-        ? { items: [{ id: "child", workspaceId: "owned" }, { id: "other-workspace", workspaceId: "unrelated" }, { id: "other-parent", workspaceId: "owned" }], nextCursor: "second" }
-        : { items: [{ id: "finished", workspaceId: "owned" }] }
+        ? { items: [{ id: "child", computerId: "owned" }, { id: "other-computer", computerId: "unrelated" }, { id: "other-parent", computerId: "owned" }], nextCursor: "second" }
+        : { items: [{ id: "finished", computerId: "owned" }] }
     },
     retrieve: async (id: string) => {
       retrieved.push(id)
@@ -29,7 +29,7 @@ test("failed parent cleanup discovers paginated children without touching other 
   await cleanupChildren(client, "parent", ["owned"], recorded)
   expect(cursors).toEqual([undefined, "second"])
   expect(cancelled).toEqual(["child"])
-  expect(retrieved).not.toContain("other-workspace")
+  expect(retrieved).not.toContain("other-computer")
   expect(recorded).toEqual(["parent", "finished", "child"])
 })
 
@@ -37,7 +37,7 @@ test("failed parent cleanup discovers paginated children without touching other 
 test("child finishing between discovery and cancellation is proved terminal", async () => {
   let reads = 0
   const client = { runs: {
-    list: async () => ({ items: [{ id: "child", workspaceId: "owned" }] }),
+    list: async () => ({ items: [{ id: "child", computerId: "owned" }] }),
     retrieve: async () => ({ id: "child", parentRunId: "parent", status: ++reads === 1 ? "running" : "succeeded" }),
     cancel: async () => { throw Object.assign(new Error("already terminal"), { code: "run_lifecycle_conflict" }) },
   } } as unknown as HelmrClient

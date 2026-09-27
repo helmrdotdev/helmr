@@ -94,7 +94,7 @@ export const codexIssueFixer = actor({
         await server.send({ method: "initialized" })
         threadId = threadResult.parse(await server.request(saved.id ? "thread/resume" : "thread/start", {
           ...(saved.id ? { threadId: saved.id } : {}),
-          cwd, sandbox: "workspace-write", approvalPolicy: "on-request",
+          cwd, sandbox: "computer-write", approvalPolicy: "on-request",
           // The pinned provider otherwise rejects questions in Default mode.
           config: { "features.default_mode_request_user_input": true },
         })).thread.id

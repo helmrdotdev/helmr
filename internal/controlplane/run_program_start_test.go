@@ -75,7 +75,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 		RunGeneration:          3,
 		ActorDeclaredID:        "reviewer",
 		DeploymentDefinitionID: run.DeploymentDefinitionID,
-		WorkspaceID:            run.WorkspaceID,
+		ComputerID:             run.ComputerID,
 		Key:                    pgtype.Text{String: key, Valid: true},
 	}
 	body, err := encodeProgramStart(run, attempt, &actor, definition, "v42")
@@ -127,7 +127,7 @@ func validTaskProgramStart(
 	environmentID := pgvalue.UUID(uuid.New())
 	deploymentID := pgvalue.UUID(uuid.New())
 	definitionID := pgvalue.UUID(uuid.New())
-	workspaceID := pgvalue.UUID(uuid.New())
+	computerID := pgvalue.UUID(uuid.New())
 	versionID := pgvalue.UUID(uuid.New())
 	raw := []byte(`{"payload":{"kind":"` + string(payloadKind) + `"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
 	_, digest, err := deployment.CanonicalManifestAndDigest(raw)
@@ -135,23 +135,23 @@ func validTaskProgramStart(
 		t.Fatalf("CanonicalManifestAndDigest: %v", err)
 	}
 	run := db.Run{
-		ID:                     runID,
-		EnvironmentID:          environmentID,
-		DeploymentID:           deploymentID,
-		DeploymentDefinitionID: definitionID,
-		EntrypointKind:         "task",
-		EntrypointDeclaredID:   "compile",
-		CauseKind:              "api",
-		WorkspaceID:            workspaceID,
-		BaseWorkspaceVersionID: versionID,
-		CurrentAttemptNumber:   1,
+		ID:                        runID,
+		EnvironmentID:             environmentID,
+		DeploymentID:              deploymentID,
+		DeploymentDefinitionID:    definitionID,
+		EntrypointKind:            "task",
+		EntrypointDeclaredID:      "compile",
+		CauseKind:                 "api",
+		ComputerID:                computerID,
+		BaseComputerDiskVersionID: versionID,
+		CurrentAttemptNumber:      1,
 	}
 	attempt := db.RunAttempt{
-		RunID:                  runID,
-		Number:                 1,
-		EntrypointKind:         "task",
-		WorkspaceID:            workspaceID,
-		BaseWorkspaceVersionID: versionID,
+		RunID:                     runID,
+		Number:                    1,
+		EntrypointKind:            "task",
+		ComputerID:                computerID,
+		BaseComputerDiskVersionID: versionID,
 	}
 	definition := db.DeploymentDefinition{
 		ID:              definitionID,

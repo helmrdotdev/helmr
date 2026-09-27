@@ -6,32 +6,46 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/jackc/pgx/v5/pgtype"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 )
 
 func TestWorkerClaimsDoNotReplaceEpochOrStateFences(t *testing.T) {
 	for _, test := range []struct {
-		name  string
-		epoch pgtype.Int8
-		state db.WorkerInstanceStatus
-		want  error
+		name, sql string
+		refresh   bool
 	}{
-		{"active", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusActive, errStaleWorkerClaims},
-		{"draining", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusDraining, errStaleWorkerClaims},
-		{"new epoch", pgtype.Int8{Int64: 2, Valid: true}, db.WorkerInstanceStatusActive, errStaleRunLeaseClaim},
-		{"missing epoch", pgtype.Int8{}, db.WorkerInstanceStatusActive, errStaleRunLeaseClaim},
-		{"lost", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusLost, errStaleRunLeaseClaim},
-		{"termination ready", pgtype.Int8{Int64: 1, Valid: true}, db.WorkerInstanceStatusTerminationReady, errStaleRunLeaseClaim},
+		{"active claims", `UPDATE worker_hosts SET claim_version=claim_version+1`, true},
+		{"draining claims", `UPDATE worker_hosts SET status='draining',draining_at=now(),claim_version=claim_version+1`, true},
+		{"new epoch", `UPDATE worker_hosts SET current_epoch=2,claim_version=claim_version+1`, false},
+		{"lost", `UPDATE worker_hosts SET status='lost',lost_at=now(),claim_version=claim_version+1`, false},
+		{"termination ready", `UPDATE worker_hosts SET status='termination_ready',draining_at=now(),termination_ready_at=now(),claim_version=claim_version+1`, false},
+		{"active Group claims", `UPDATE worker_groups SET claim_version=claim_version+1`, true},
+		{"paused Group", `UPDATE worker_groups SET status='paused',claim_version=claim_version+1`, false},
+		{"disabled Group", `UPDATE worker_groups SET status='disabled',claim_version=claim_version+1`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateClaimWorker(workerActor{WorkerEpoch: 1, ClaimVersion: 1}, db.WorkerInstance{
-				CurrentEpoch: test.epoch, Status: test.state, ClaimVersion: 2,
-			})
-			if !errors.Is(err, test.want) {
-				t.Fatalf("authority error = %v, want %v", err, test.want)
+			f := runtest.New(t)
+			work := f.AddRunLease(t, "assigned", time.Now())
+			target := f.WorkerID
+			if strings.Contains(test.sql, "worker_groups") {
+				target = runtest.WorkerGroupID
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, test.sql+" WHERE id=$1", target)
+			worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+			_, _, err := (&Server{tx: f.Pool}).claimRunLease(t.Context(), worker, pgvalue.UUID(work.LeaseID), 1)
+			want := errStaleRunLeaseClaim
+			if test.refresh {
+				want = errStaleWorkerClaims
+			}
+			if !errors.Is(err, want) {
+				t.Fatalf("authority error=%v want=%v", err, want)
 			}
 		})
 	}
@@ -58,29 +72,14 @@ func TestWorkerClaimsSurviveFinalizationErrorTranslation(t *testing.T) {
 	}
 }
 
-func TestWorkerGroupClaimsDoNotReplaceStateFences(t *testing.T) {
-	for _, state := range []db.WorkerGroupStatus{db.WorkerGroupStatusPaused, db.WorkerGroupStatusDisabled} {
-		t.Run(state, func(t *testing.T) {
-			worker, locators, authority := validRunLeaseClaimFixture()
-			authority.workerGroup.Status = state
-			authority.workerGroup.ClaimVersion++
-			store := &runLeaseClaimStore{authority: authority}
-			_, err := claimFreshTaskRunLeaseInTx(t.Context(), store, worker, authority.runLease.ID, authority.runLease.LeaseSequence, locators)
-			if !errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, errStaleWorkerClaims) {
-				t.Fatalf("group state error = %v, want stale lease authority", err)
-			}
-		})
-	}
-}
-
 func TestWorkerSourceErrorMappersRefreshClaimsBeforeDomainErrors(t *testing.T) {
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for name, write := range map[string]func(http.ResponseWriter, error){
 		"token":      server.writeTokenError,
 		"child task": func(w http.ResponseWriter, err error) { server.writeChildTaskInvokeError(w, "test", "call", err) },
 		"actor":      func(w http.ResponseWriter, err error) { server.writeWorkerActorSourceError(w, "start", "test", err) },
-		"workspace": func(w http.ResponseWriter, err error) {
-			server.writeWorkerWorkspaceSourceError(w, "create", "test", err)
+		"computer": func(w http.ResponseWriter, err error) {
+			server.writeWorkerComputerSourceError(w, "create", "test", err)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -22,7 +22,7 @@ func TestOwnershipDeploymentProgramGateAndReplay(t *testing.T) {
 	}
 	p := CreateDeploymentParams{ID: pgvalue.UUID(uuid.NewV7()), OrgID: d.OrgID, ProjectID: d.ProjectID, EnvironmentID: d.EnvironmentID, Version: d.Version, BundleDigest: d.BundleDigest, RuntimeArtifactDigest: d.RuntimeArtifactDigest, ProgramArtifactID: d.ProgramArtifactID, ProgramIndexDigest: d.ProgramIndexDigest, QueueConfig: d.QueueConfig}
 	wrong := pgvalue.UUID(uuid.NewV7())
-	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) SELECT $1,org_id,project_id,environment_id,digest,'workspace_version',size_bytes,media_type FROM artifacts WHERE id=$2", wrong, d.ProgramArtifactID)
+	dbtest.MustExec(t, ctx, f.pool, "INSERT INTO artifacts(id,org_id,project_id,environment_id,digest,kind,size_bytes,media_type) SELECT $1,org_id,project_id,environment_id,digest,'computer_disk_version',size_bytes,media_type FROM artifacts WHERE id=$2", wrong, d.ProgramArtifactID)
 	crossScope := ownershipCrossScopeArtifact(t, f, d.ProgramArtifactID)
 	for _, id := range []pgtype.UUID{{}, pgvalue.UUID(uuid.NewV7()), wrong, crossScope} {
 		bad := p
@@ -150,53 +150,6 @@ func TestOwnershipScheduleWholeBatchGateIncludesExistingFallback(t *testing.T) {
 
 }
 
-func ownershipVersionParams(t *testing.T, f runLeaseClaimFixture, work runLeaseWork) CreatePrivateCheckpointWorkspaceVersionParams {
-	t.Helper()
-	ctx := t.Context()
-	p := CreatePrivateCheckpointWorkspaceVersionParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RootPackDigest: pgvalue.Text(dbtest.Digest("ownership-version")), LogicalBytes: 1}
-	if err := f.pool.QueryRow(ctx, "SELECT workspace_id,base_workspace_version_id,id,ownership_generation,writer_generation FROM workspace_leases WHERE owner_run_lease_id=$1", work.leaseID).Scan(&p.WorkspaceID, &p.ParentVersionID, &p.SourceWorkspaceLeaseID, &p.OwnershipGeneration, &p.WriterGeneration); err != nil {
-		t.Fatal(err)
-	}
-
-	return p
-}
-
-func TestOwnershipDerivedVersionInsertionGates(t *testing.T) {
-	for _, publish := range []bool{false, true} {
-		name := "checkpoint"
-		if publish {
-			name = "task and actor publication"
-		}
-		t.Run(name, func(t *testing.T) {
-			ctx := t.Context()
-			f := newRunLeaseClaimFixture(t, ctx)
-			work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-			p := ownershipVersionParams(t, f, work)
-
-			insert := func(q *Queries, p CreatePrivateCheckpointWorkspaceVersionParams) (ComputerVersion, error) {
-				if !publish {
-					return q.CreatePrivateCheckpointWorkspaceVersion(ctx, p)
-				}
-				return q.PublishTaskWorkspaceVersion(ctx, PublishTaskWorkspaceVersionParams{ID: p.ID, EnvironmentID: p.EnvironmentID, WorkspaceID: p.WorkspaceID, ParentVersionID: p.ParentVersionID, RootPackDigest: p.RootPackDigest, LogicalBytes: p.LogicalBytes, SourceWorkspaceLeaseID: p.SourceWorkspaceLeaseID, OwnershipGeneration: p.OwnershipGeneration, WriterGeneration: p.WriterGeneration, PublishedAt: pgvalue.Timestamptz(time.Now())})
-			}
-
-			good, err := insert(f.queries, p)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if good.ParentVersionID != p.ParentVersionID {
-				t.Fatalf("version=%+v", good)
-			}
-			tx, err := f.pool.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(ctx)
-			rejectSchemaRow(t, tx, "23503", "UPDATE computer_versions SET writer_generation=writer_generation+1 WHERE id=$1", p.ID)
-		})
-	}
-}
-
 func TestOwnershipChildBindingRejectsDetachedAndWrongParentBeforeMutation(t *testing.T) {
 	for _, resolved := range []bool{false, true} {
 		name := "pending"
@@ -208,7 +161,7 @@ func TestOwnershipChildBindingRejectsDetachedAndWrongParentBeforeMutation(t *tes
 			f := newRunLeaseClaimFixture(t, ctx)
 			parent := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 			child := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-			startTaskCompletionWork(t, ctx, f, parent)
+			dbtest.MustExec(t, ctx, f.pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, parent.runID)
 			claim := uuid.NewV7()
 			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'task.child.invoke',decode(repeat('aa',32),'hex'),decode(repeat('ab',32),'hex'),now())", claim, f.environmentID)
 			dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET cause_kind='child',parent_run_id=$2,parent_owns_lifecycle=false,claim_id=$3 WHERE id=$1", child.runID, parent.runID, claim)
@@ -216,35 +169,38 @@ func TestOwnershipChildBindingRejectsDetachedAndWrongParentBeforeMutation(t *tes
 				dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET status='succeeded',terminal_at=now() WHERE id=$1", child.runID)
 			}
 			var version int64
-			var childWorkspace pgtype.UUID
+			var childComputer pgtype.UUID
 			if err := f.pool.QueryRow(ctx, "SELECT revision FROM runs WHERE id=$1", parent.runID).Scan(&version); err != nil {
 				t.Fatal(err)
 			}
-			if err := f.pool.QueryRow(ctx, "SELECT workspace_id FROM runs WHERE id=$1", child.runID).Scan(&childWorkspace); err != nil {
+			if err := f.pool.QueryRow(ctx, "SELECT computer_id FROM runs WHERE id=$1", child.runID).Scan(&childComputer); err != nil {
 				t.Fatal(err)
 			}
-			p := RegisterDifferentWorkspaceChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), ChildRunID: pgvalue.UUID(child.runID), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildClaimID: pgvalue.UUID(claim), ChildRequest: []byte("{}"), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("child-binding")), AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID), ResumeAttachID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildWorkspaceID: childWorkspace, ExpectedRunningRevision: version}
-			bind := func(q *Queries, p RegisterDifferentWorkspaceChildCallParams) (RunWait, error) {
+			p := RegisterChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), ChildRunID: pgvalue.UUID(child.runID), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildClaimID: pgvalue.UUID(claim), ChildRequest: []byte("{}"), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("child-binding")), AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildComputerID: childComputer, ExpectedRunningRevision: version}
+			bind := func(q *Queries, p RegisterChildCallParams) (RunWait, error) {
 				if !resolved {
-					return q.RegisterDifferentWorkspaceChildCall(ctx, p)
+					return q.RegisterChildCall(ctx, p)
 				}
-				return q.RegisterResolvedChildCall(ctx, RegisterResolvedChildCallParams{ID: p.ID, ChildRunID: p.ChildRunID, ChildTargetDeclaredID: p.ChildTargetDeclaredID, ChildClaimID: p.ChildClaimID, ChildRequest: p.ChildRequest, RegistrationRequestFingerprint: p.RegistrationRequestFingerprint, AttemptNumber: p.AttemptNumber, CurrentRunLeaseID: p.CurrentRunLeaseID, ResumeAttachID: p.ResumeAttachID, EnvironmentID: p.EnvironmentID, RunID: p.RunID, ExpectedRunningRevision: p.ExpectedRunningRevision, ConditionResult: []byte("{}")})
+				return q.RegisterResolvedChildCall(ctx, RegisterResolvedChildCallParams{ID: p.ID, ChildRunID: p.ChildRunID, ChildTargetDeclaredID: p.ChildTargetDeclaredID, ChildClaimID: p.ChildClaimID, ChildRequest: p.ChildRequest, RegistrationRequestFingerprint: p.RegistrationRequestFingerprint, AttemptNumber: p.AttemptNumber, CurrentRunLeaseID: p.CurrentRunLeaseID, EnvironmentID: p.EnvironmentID, RunID: p.RunID, ExpectedRunningRevision: p.ExpectedRunningRevision, ConditionResult: []byte("{}")})
 			}
 			snapshot := func() []byte {
 				var b []byte
-				if err := f.pool.QueryRow(ctx, "SELECT to_jsonb(r) FROM runs r WHERE id=$1", parent.runID).Scan(&b); err != nil {
+				if err := f.pool.QueryRow(ctx, "SELECT jsonb_build_array(to_jsonb(r),(SELECT coalesce(jsonb_agg(to_jsonb(w)),'[]') FROM run_waits w WHERE w.run_id=r.id)) FROM runs r WHERE id=$1", parent.runID).Scan(&b); err != nil {
 					t.Fatal(err)
 				}
 				return b
 			}
+			otherParent := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 			for _, test := range []string{"detached", "missing", "wrong parent"} {
+				parentID := parent.runID
+				if test == "wrong parent" {
+					parentID = otherParent.runID
+				}
+				dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET parent_owns_lifecycle=$2,parent_run_id=$3 WHERE id=$1", child.runID, test != "detached", parentID)
 				before := snapshot()
 				bad := p
 				if test == "missing" {
 					bad.ChildRunID = pgvalue.UUID(uuid.NewV7())
-				}
-				if test == "wrong parent" {
-					bad.RunID = pgvalue.UUID(child.runID)
 				}
 				tx, err := f.pool.Begin(ctx)
 				if err != nil {
@@ -260,7 +216,18 @@ func TestOwnershipChildBindingRejectsDetachedAndWrongParentBeforeMutation(t *tes
 					t.Fatalf("%s moved parent", test)
 				}
 			}
-			dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET parent_owns_lifecycle=true WHERE id=$1", child.runID)
+			dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET parent_owns_lifecycle=true,parent_run_id=$2 WHERE id=$1", child.runID, parent.runID)
+			if !resolved {
+				before := snapshot()
+				bad := p
+				bad.ChildComputerID = pgvalue.UUID(uuid.NewV7())
+				if _, err := bind(f.queries, bad); !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("wrong child Computer=%v", err)
+				}
+				if !bytes.Equal(before, snapshot()) {
+					t.Fatal("wrong Computer moved parent")
+				}
+			}
 			got, err := bind(f.queries, p)
 			if err != nil {
 				t.Fatal(err)
@@ -285,31 +252,30 @@ func TestResolvedSharedChildCallDoesNotRestoreComputer(t *testing.T) {
 	ctx := t.Context()
 	f := newRunLeaseClaimFixture(t, ctx)
 	parent := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	startTaskCompletionWork(t, ctx, f, parent)
+	dbtest.MustExec(t, ctx, f.pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, parent.runID)
 	claim := uuid.NewV7()
 	child := uuid.NewV7()
 	dbtest.MustExec(t, ctx, f.pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'task.child.invoke',decode(repeat('bc',32),'hex'),decode(repeat('bd',32),'hex'),now())`, claim, f.environmentID)
-	// The fixture creates a completed logical child sharing the parent's Computer.
-	// There is deliberately no old child disk snapshot to restore for this result.
-	dbtest.MustExec(t, ctx, f.pool, `WITH child AS (INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,parent_run_id,parent_owns_lifecycle,workspace_id,base_workspace_version_id,status,output,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id,claim_id,terminal_at)
-SELECT $2,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,'child',id,true,workspace_id,base_workspace_version_id,'succeeded','{"reportPath":"/workspace/report.pdf"}',queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id,$3,now() FROM runs WHERE id=$1 RETURNING *) INSERT INTO run_attempts(run_id,number,entrypoint_kind,workspace_id,base_workspace_version_id,terminal_outcome,terminal_reason_code,terminal_at) SELECT id,1,entrypoint_kind,workspace_id,base_workspace_version_id,'succeeded','completed',now() FROM child`, parent.runID, child, claim)
+	// The completed child shares the parent's Computer; result delivery must not change it.
+	dbtest.MustExec(t, ctx, f.pool, `WITH child AS (INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,parent_run_id,parent_owns_lifecycle,computer_id,base_computer_disk_version_id,status,output,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id,claim_id,terminal_at)
+SELECT $2,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,'child',id,true,computer_id,base_computer_disk_version_id,'succeeded','{"reportPath":"/computer/report.pdf"}',queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,root_span_id,$3,now() FROM runs WHERE id=$1 RETURNING *) INSERT INTO run_attempts(run_id,number,entrypoint_kind,computer_id,base_computer_disk_version_id,terminal_outcome,terminal_reason_code,terminal_at) SELECT id,1,entrypoint_kind,computer_id,base_computer_disk_version_id,'succeeded','completed',now() FROM child`, parent.runID, child, claim)
 	var revision int64
 	var before, after []byte
 	if err := f.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id=$1`, parent.runID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(ctx, `SELECT to_jsonb(c) FROM computers c JOIN runs r ON r.workspace_id=c.id WHERE r.id=$1`, parent.runID).Scan(&before); err != nil {
+	if err := f.pool.QueryRow(ctx, `SELECT to_jsonb(c) FROM computers c JOIN runs r ON r.computer_id=c.id WHERE r.id=$1`, parent.runID).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	p := RegisterResolvedChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildRunID: pgvalue.UUID(child), ChildClaimID: pgvalue.UUID(claim), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildRequest: []byte(`{}`), ConditionResult: []byte(`{"ok":true,"output":{"reportPath":"/workspace/report.pdf"}}`), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("shared-result")), ExpectedRunningRevision: revision, AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID), ResumeAttachID: pgvalue.UUID(uuid.NewV7())}
+	p := RegisterResolvedChildCallParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID), RunID: pgvalue.UUID(parent.runID), ChildRunID: pgvalue.UUID(child), ChildClaimID: pgvalue.UUID(claim), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildRequest: []byte(`{}`), ConditionResult: []byte(`{"ok":true,"output":{"reportPath":"/computer/report.pdf"}}`), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("shared-result")), ExpectedRunningRevision: revision, AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(parent.leaseID)}
 	wait, err := f.queries.RegisterResolvedChildCall(ctx, p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wait.SuspensionStatus != RunWaitStatusReleased || wait.ResumeWorkspaceVersionID.Valid || wait.BaseWorkspaceVersionID.Valid || wait.SuspendCheckpointID.Valid {
+	if wait.SuspensionStatus != RunWaitStatusReleased || wait.SuspendCheckpointID.Valid {
 		t.Fatalf("result imposed disk restoration: %+v", wait)
 	}
-	if err = f.pool.QueryRow(ctx, `SELECT to_jsonb(c) FROM computers c JOIN runs r ON r.workspace_id=c.id WHERE r.id=$1`, parent.runID).Scan(&after); err != nil {
+	if err = f.pool.QueryRow(ctx, `SELECT to_jsonb(c) FROM computers c JOIN runs r ON r.computer_id=c.id WHERE r.id=$1`, parent.runID).Scan(&after); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(before, after) {

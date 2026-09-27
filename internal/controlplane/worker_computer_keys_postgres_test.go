@@ -23,12 +23,12 @@ import (
 func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	f, broker, fence := initialKeyFixture(t)
 	credentialID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_instance_credentials
- (id,worker_group_id,worker_instance_id,key_prefix,secret_hash,claim_version)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_credentials
+ (id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version)
  VALUES ($1,$2,$3,'key-test-prefix',$4,$5)`, credentialID, fence.WorkerGroupID, fence.WorkerID, []byte("test-hash"), fence.ClaimVersion)
 	signingKey := bytes.Repeat([]byte{0x49}, 32)
 	claims := auth.WorkerClaims{
-		WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerInstanceID: pgvalue.UUIDString(fence.WorkerID),
+		WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerHostID: pgvalue.UUIDString(fence.WorkerID),
 		CredentialID: credentialID.String(), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion,
 		GroupClaimVersion: fence.GroupClaimVersion, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour),
 	}
@@ -56,11 +56,11 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		router.ServeHTTP(w, r)
 	}))
 	defer httpServer.Close()
-	client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(claims.WorkerInstanceID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
+	client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(claims.WorkerHostID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.InitialComputerKeyRequest{RuntimeInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion}
+	request := workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion}
 	first, err := client.InitialComputerKey(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	}
 	payload, _ := json.Marshal(request)
 	call := func(bearer string, body []byte) *httptest.ResponseRecorder {
-		r := httptest.NewRequest("POST", "/worker/v1/run/runtime-instances/initialization/key", bytes.NewReader(body))
+		r := httptest.NewRequest("POST", "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(body))
 		if bearer != "" {
 			r.Header.Set("Authorization", "Bearer "+bearer)
 		}
@@ -88,7 +88,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		t.Fatalf("successful response status/cache policy: %d", w.Code)
 	}
 	wrongWorker := claims
-	wrongWorker.WorkerInstanceID = uuid.NewV7().String()
+	wrongWorker.WorkerHostID = uuid.NewV7().String()
 	stale := claims
 	stale.ClaimVersion++
 	expired := claims
@@ -102,8 +102,8 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		})
 	}
 	for name, body := range map[string][]byte{
-		"caller key": []byte(`{"runtime_instance_id":"` + request.RuntimeInstanceID + `","desired_version":1,"key":"secret"}`),
-		"oversized":  []byte(`{"runtime_instance_id":"` + strings.Repeat("x", 1100) + `","desired_version":1}`),
+		"caller key": []byte(`{"computer_instance_id":"` + request.ComputerInstanceID + `","desired_version":1,"key":"secret"}`),
+		"oversized":  []byte(`{"computer_instance_id":"` + strings.Repeat("x", 1100) + `","desired_version":1}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := call(token, body)
@@ -116,12 +116,12 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 		})
 	}
 	wrongRuntime := request
-	wrongRuntime.RuntimeInstanceID = uuid.NewV7().String()
+	wrongRuntime.ComputerInstanceID = uuid.NewV7().String()
 	wrongPayload, _ := json.Marshal(wrongRuntime)
 	if w := call(token, wrongPayload); w.Code != 409 {
 		t.Fatalf("unowned runtime status=%d", w.Code)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1 WHERE id=$1`, f.runtime)
 	if material, err := client.InitialComputerKey(t.Context(), request); err == nil || len(material.Key) != 0 {
 		t.Fatal("revoked runtime delivered key")
 	}
@@ -130,12 +130,12 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 func sourceKeyHTTPClient(t *testing.T, f initialPublicationFixture, broker *computerKeyBroker, fence computerKeyFence) *workerclient.Client {
 	t.Helper()
 	credentialID := uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_instance_credentials
- (id,worker_group_id,worker_instance_id,key_prefix,secret_hash,claim_version)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO worker_host_credentials
+ (id,worker_group_id,worker_host_id,key_prefix,secret_hash,claim_version)
  VALUES ($1,$2,$3,'key-test-prefix',$4,$5)`, credentialID, fence.WorkerGroupID, fence.WorkerID, []byte("test-hash"), fence.ClaimVersion)
 	signingKey := bytes.Repeat([]byte{0x49}, 32)
 	claims := auth.WorkerClaims{
-		WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerInstanceID: pgvalue.UUIDString(fence.WorkerID),
+		WorkerGroupID: pgvalue.UUIDString(fence.WorkerGroupID), WorkerHostID: pgvalue.UUIDString(fence.WorkerID),
 		CredentialID: credentialID.String(), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion,
 		GroupClaimVersion: fence.GroupClaimVersion, IssuedAt: time.Now().Add(-time.Minute), ExpiresAt: time.Now().Add(time.Hour),
 	}
@@ -163,7 +163,7 @@ func sourceKeyHTTPClient(t *testing.T, f initialPublicationFixture, broker *comp
 		router.ServeHTTP(w, r)
 	}))
 	t.Cleanup(httpServer.Close)
-	client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(claims.WorkerInstanceID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
+	client, err := workerclient.New(httpServer.URL, workerclient.WithAuth(claims.WorkerHostID, "fixture-secret"), workerclient.WithService(uuid.NewV7().String()))
 	if err != nil {
 		t.Fatal(err)
 	}

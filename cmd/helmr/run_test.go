@@ -96,7 +96,7 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 			Status:               api.RunStatusSucceeded,
 			Entrypoint:           api.RunEntrypointResponse{Kind: "task", ID: "deploy"},
 			Deployment:           api.DeploymentReference{ID: "dep-1", Version: "20260726-test"},
-			WorkspaceID:          "ws-1",
+			ComputerID:           "ws-1",
 			CurrentAttemptNumber: 1,
 			Cause:                api.RunCauseResponse{Type: "direct"},
 			CreatedAt:            terminalAt.Add(-time.Minute),
@@ -118,7 +118,7 @@ func TestRunGetCommandPrintsSnapshotSemantics(t *testing.T) {
 	for _, want := range []string{
 		"Entrypoint:  task deploy",
 		"Deployment:  dep-1 (20260726-test)",
-		"Workspace:   ws-1",
+		"Computer:   ws-1",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("output = %q, missing %q", out.String(), want)

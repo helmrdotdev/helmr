@@ -20,7 +20,7 @@ test("grants only permissions the session reports", () => {
 });
 
 test("denies everything for a viewer-like session and while unauthenticated", () => {
-  const viewer: Me = { ...base, permissions: ["runs.read", "sessions.read", "tokens.read", "workspaces.read"] };
+  const viewer: Me = { ...base, permissions: ["runs.read", "sessions.read", "tokens.read", "computers.read"] };
   for (const permission of ["runs.manage", "tokens.complete", "tokens.cancel", "tasks.deploy"]) {
     expect(hasPermission(viewer, permission)).toBe(false);
   }

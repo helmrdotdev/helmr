@@ -22,7 +22,7 @@ SELECT workers.id,
                THEN 'registering_observation_missing'
            ELSE 'worker_observation_stale'
        END::text AS reason
-  FROM worker_instances AS workers
+  FROM worker_hosts AS workers
  WHERE workers.status IN ('registering', 'active', 'draining')
    AND ($1::uuid IS NULL OR workers.worker_group_id = $1)
    AND (
@@ -90,9 +90,9 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 	return items, nil
 }
 
-const recheckAndFenceStaleWorkerInstance = `-- name: RecheckAndFenceStaleWorkerInstance :one
+const recheckAndFenceStaleWorkerHost = `-- name: RecheckAndFenceStaleWorkerHost :one
 WITH target AS (
-    UPDATE worker_instances AS workers
+    UPDATE worker_hosts AS workers
        SET status = 'lost',
            claim_version = workers.claim_version + 1,
            lost_at = COALESCE(workers.lost_at, now()),
@@ -112,33 +112,22 @@ WITH target AS (
                 < transaction_timestamp()
                     - $5::bigint * interval '1 second')
        )
-    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.runtime_identity_id, workers.substrate_format, workers.substrate_contract, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_runtime_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.runtime_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
+    RETURNING workers.id, workers.resource_id, workers.worker_group_id, workers.worker_pool_id, workers.status, workers.claim_version, workers.current_epoch, workers.current_service_id, workers.vm_platform_id, workers.epoch_cpu_millis, workers.epoch_memory_bytes, workers.epoch_guest_ephemeral_disk_bytes, workers.per_vm_cpu_millis, workers.per_vm_memory_bytes, workers.per_vm_guest_ephemeral_disk_bytes, workers.max_vm_slots, workers.max_vm_starts, workers.cpu_environment, workers.cpu_environment_digest, workers.observed_at, workers.run_paused_reason, workers.vm_paused_reason, workers.epoch_started_at, workers.activated_at, workers.draining_at, workers.termination_ready_at, workers.lost_at, workers.created_at, workers.updated_at
 ), revoked_credentials AS (
-    UPDATE worker_instance_credentials AS credentials
+    UPDATE worker_host_credentials AS credentials
        SET revoked_at = COALESCE(credentials.revoked_at, now())
       FROM target
-     WHERE credentials.worker_instance_id = target.id
+     WHERE credentials.worker_host_id = target.id
        AND credentials.revoked_at IS NULL
     RETURNING credentials.id
-), lost_mounts AS (
-    UPDATE workspace_mounts AS mounts
-       SET status = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $6, updated_at = now()
-      FROM target
-     WHERE mounts.worker_instance_id = target.id
-       AND mounts.worker_epoch = target.current_epoch
-       AND mounts.status IN ('mounting', 'mounted', 'unmounting')
-    RETURNING mounts.id
 ), lost_runtimes AS (
-    UPDATE runtime_instances AS runtimes
+    UPDATE computer_instances AS runtimes
        SET observed_state = 'lost', observed_version = runtimes.observed_version + 1,
            observed_at = now(), terminal_at = now(),
            terminal_reason_code = $6,
-           reserved_run_id = NULL, reserved_attempt_number = NULL,
-           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
-           reservation_expires_at = NULL, updated_at = now()
+           mount_state='lost', admission_state='closed', updated_at=now()
       FROM target
-     WHERE runtimes.worker_instance_id = target.id
+     WHERE runtimes.worker_host_id = target.id
        AND runtimes.worker_epoch = target.current_epoch
        AND runtimes.reclaimed_at IS NULL
        AND runtimes.observed_state IN ('allocated', 'ready')
@@ -147,11 +136,10 @@ WITH target AS (
 SELECT target.id, target.worker_group_id, target.current_epoch, target.status
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
-   AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
 `
 
-type RecheckAndFenceStaleWorkerInstanceParams struct {
+type RecheckAndFenceStaleWorkerHostParams struct {
 	ID                          pgtype.UUID        `json:"id"`
 	WorkerGroupID               pgtype.UUID        `json:"worker_group_id"`
 	ExpectedEpoch               pgtype.Int8        `json:"expected_epoch"`
@@ -160,18 +148,18 @@ type RecheckAndFenceStaleWorkerInstanceParams struct {
 	ReasonCode                  pgtype.Text        `json:"reason_code"`
 }
 
-type RecheckAndFenceStaleWorkerInstanceRow struct {
+type RecheckAndFenceStaleWorkerHostRow struct {
 	ID            pgtype.UUID `json:"id"`
 	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
 	CurrentEpoch  pgtype.Int8 `json:"current_epoch"`
 	Status        string      `json:"status"`
 }
 
-// Immediate fencing revokes credentials and terminalizes mount/runtime
-// observations. Run/build/workspace authority is recovered by its canonical
+// Immediate fencing revokes credentials and marks Instance observations lost.
+// Physical reclamation still requires independent exclusion evidence. Run/build/computer authority is recovered by its canonical
 // expiry and recovery loops; this transition does not imply zero authority.
-func (q *Queries) RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg RecheckAndFenceStaleWorkerInstanceParams) (RecheckAndFenceStaleWorkerInstanceRow, error) {
-	row := q.db.QueryRow(ctx, recheckAndFenceStaleWorkerInstance,
+func (q *Queries) RecheckAndFenceStaleWorkerHost(ctx context.Context, arg RecheckAndFenceStaleWorkerHostParams) (RecheckAndFenceStaleWorkerHostRow, error) {
+	row := q.db.QueryRow(ctx, recheckAndFenceStaleWorkerHost,
 		arg.ID,
 		arg.WorkerGroupID,
 		arg.ExpectedEpoch,
@@ -179,7 +167,7 @@ func (q *Queries) RecheckAndFenceStaleWorkerInstance(ctx context.Context, arg Re
 		arg.ObservationFreshnessSeconds,
 		arg.ReasonCode,
 	)
-	var i RecheckAndFenceStaleWorkerInstanceRow
+	var i RecheckAndFenceStaleWorkerHostRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkerGroupID,

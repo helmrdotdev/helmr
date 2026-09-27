@@ -3,6 +3,7 @@ package idempotency
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -19,7 +20,7 @@ func TestEncodeTaskChildInvokeFingerprintPreservesAbsentRetryPolicy(t *testing.T
 		Method:         "call",
 		PayloadPresent: true,
 		Payload:        json.RawMessage(`{"value":1}`),
-		Workspace:      json.RawMessage(`{"id":"workspace"}`),
+		Computer:       json.RawMessage(`{"id":"computer"}`),
 		QueueName:      "default",
 		Metadata:       json.RawMessage(`{}`),
 		Tags:           []string{},
@@ -48,7 +49,7 @@ func TestEncodeTaskChildInvokeFingerprintPreservesCanonicalRetryPolicy(t *testin
 		t.Run(retryPolicy, func(t *testing.T) {
 			encoded, err := EncodeTaskChildInvokeFingerprint(TaskChildInvokeFingerprint{
 				Method:      "call",
-				Workspace:   json.RawMessage(`{}`),
+				Computer:    json.RawMessage(`{}`),
 				RetryPolicy: json.RawMessage(retryPolicy),
 				Metadata:    json.RawMessage(`{}`),
 				Tags:        []string{},
@@ -176,30 +177,30 @@ func TestDeploymentFinalizeFingerprintBindsBundleDigest(t *testing.T) {
 	}
 }
 
-func TestWorkspaceCreateSlotsBindSourceAuthority(t *testing.T) {
+func TestComputerCreateSlotsBindSourceAuthority(t *testing.T) {
 	environmentID := uuid.New()
 	firstRunID := uuid.New()
 	secondRunID := uuid.New()
-	fingerprint := WorkspaceCreateFingerprint{Secrets: []byte(`[]`)}
-	external, err := NewExternalWorkspaceCreateRequest(
+	fingerprint := ComputerCreateFingerprint{Secrets: []byte(`[]`)}
+	external, err := NewExternalComputerCreateRequest(
 		environmentID, "sandbox", "create-1", fingerprint,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstRun, err := NewRuntimeWorkspaceCreateRequest(
+	firstRun, err := NewRuntimeComputerCreateRequest(
 		environmentID, firstRunID, "sandbox", "create-1", fingerprint,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstRunReplay, err := NewRuntimeWorkspaceCreateRequest(
+	firstRunReplay, err := NewRuntimeComputerCreateRequest(
 		environmentID, firstRunID, "sandbox", "create-1", fingerprint,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondRun, err := NewRuntimeWorkspaceCreateRequest(
+	secondRun, err := NewRuntimeComputerCreateRequest(
 		environmentID, secondRunID, "sandbox", "create-1", fingerprint,
 	)
 	if err != nil {
@@ -209,17 +210,17 @@ func TestWorkspaceCreateSlotsBindSourceAuthority(t *testing.T) {
 	externalSlot := idempotencySlotHash(external.idempotencyRequest())
 	firstRunSlot := idempotencySlotHash(firstRun.idempotencyRequest())
 	if externalSlot == firstRunSlot {
-		t.Fatal("external and Run-internal Workspace creation shared a claim slot")
+		t.Fatal("external and Run-internal Computer creation shared a claim slot")
 	}
 	if firstRunSlot != idempotencySlotHash(firstRunReplay.idempotencyRequest()) {
-		t.Fatal("same source Run did not reproduce its Workspace creation slot")
+		t.Fatal("same source Run did not reproduce its Computer creation slot")
 	}
 	if firstRunSlot == idempotencySlotHash(secondRun.idempotencyRequest()) {
-		t.Fatal("different source Runs shared a Workspace creation slot")
+		t.Fatal("different source Runs shared a Computer creation slot")
 	}
 }
 
-func TestExpiredClaimRebindUsesClaimIDAsCompletionFence(t *testing.T) {
+func TestPrunedReceiptNeverReusesOperationIdentity(t *testing.T) {
 	store := &claimMemory{}
 	transaction := &Transaction{store: store}
 	request, err := NewSecretCreateRequest(uuid.New(), "API_TOKEN", "create-1")
@@ -230,21 +231,25 @@ func TestExpiredClaimRebindUsesClaimIDAsCompletionFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store.expired = true
-
-	rebound, err := transaction.Acquire(t.Context(), request)
-	if err != nil {
+	if _, err := transaction.Complete(t.Context(), first.Claim, []byte(`{"secretId":"created"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if !rebound.New || rebound.Claim.ID == first.Claim.ID {
-		t.Fatalf("rebound claim = %+v", rebound)
+	store.live.Receipt = nil
+	store.live.ReceiptPrunedAt = pgtype.Timestamptz{Valid: true}
+	_, err = transaction.Acquire(t.Context(), request)
+	var expired ExpiredError
+	if !errors.As(err, &expired) {
+		t.Fatalf("pruned retry = %v", err)
 	}
-	if _, err := transaction.Complete(
-		t.Context(),
-		first.Claim,
-		[]byte(`{"secretId":"stale"}`),
-	); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("stale completion error = %v", err)
+	if store.live.ID != first.Claim.ID {
+		t.Fatal("pruned operation changed identity")
+	}
+	changed := request.idempotencyRequest()
+	changed.fingerprint = func() ([sha256.Size]byte, error) { return sha256.Sum256([]byte("changed")), nil }
+	_, err = transaction.Acquire(t.Context(), sealedRequest{value: changed})
+	var conflict ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("changed pruned retry = %v", err)
 	}
 }
 
@@ -279,21 +284,20 @@ func TestSlotHashFramesEveryAuthorityField(t *testing.T) {
 }
 
 type claimMemory struct {
-	live    *db.IdempotencyClaim
-	expired bool
+	live *db.IdempotencyClaim
 }
 
-func (s *claimMemory) LockLiveIdempotencyClaim(
+func (s *claimMemory) LockIdempotencyClaim(
 	_ context.Context,
-	arg db.LockLiveIdempotencyClaimParams,
-) (db.LockLiveIdempotencyClaimRow, error) {
+	arg db.LockIdempotencyClaimParams,
+) (db.IdempotencyClaim, error) {
 	if s.live == nil ||
 		s.live.EnvironmentID != arg.EnvironmentID ||
 		s.live.Operation != arg.Operation ||
 		!bytes.Equal(s.live.SlotHash, arg.SlotHash) {
-		return db.LockLiveIdempotencyClaimRow{}, pgx.ErrNoRows
+		return db.IdempotencyClaim{}, pgx.ErrNoRows
 	}
-	return lockRow(*s.live, s.expired), nil
+	return *s.live, nil
 }
 
 func (s *claimMemory) CreateIdempotencyClaim(
@@ -313,20 +317,6 @@ func (s *claimMemory) CreateIdempotencyClaim(
 	}
 	s.live = &claim
 	return claim, nil
-}
-
-func (s *claimMemory) RetireExpiredIdempotencyClaim(
-	_ context.Context,
-	arg db.RetireExpiredIdempotencyClaimParams,
-) (db.IdempotencyClaim, error) {
-	if s.live == nil || s.live.ID != arg.ID || s.live.EnvironmentID != arg.EnvironmentID || !s.expired {
-		return db.IdempotencyClaim{}, pgx.ErrNoRows
-	}
-	retired := *s.live
-	retired.RetiredAt = pgtype.Timestamptz{Valid: true}
-	s.live = nil
-	s.expired = false
-	return retired, nil
 }
 
 func (s *claimMemory) CompleteIdempotencyClaim(
@@ -361,21 +351,4 @@ func (s *claimMemory) finish(
 	s.live.Receipt = bytes.Clone(receipt)
 	s.live.CompletedAt = pgtype.Timestamptz{Valid: true}
 	return *s.live, nil
-}
-
-func lockRow(claim db.IdempotencyClaim, expired bool) db.LockLiveIdempotencyClaimRow {
-	return db.LockLiveIdempotencyClaimRow{
-		ID:                 claim.ID,
-		EnvironmentID:      claim.EnvironmentID,
-		Operation:          claim.Operation,
-		SlotHash:           claim.SlotHash,
-		RequestFingerprint: claim.RequestFingerprint,
-		Status:             claim.Status,
-		Receipt:            claim.Receipt,
-		AcceptedAt:         claim.AcceptedAt,
-		ExpiresAt:          claim.ExpiresAt,
-		RetiredAt:          claim.RetiredAt,
-		CompletedAt:        claim.CompletedAt,
-		Expired:            expired,
-	}
 }

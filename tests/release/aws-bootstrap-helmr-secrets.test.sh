@@ -16,7 +16,7 @@ case "$*" in
       worker_token_signing_key:"arn:worker-token-signing-key",
       auth_key:"arn:auth-key",
       encryption_key:"arn:encryption-key",
-      workspace_fencing_key:"arn:workspace-fencing-key",
+      computer_fencing_key:"arn:computer-fencing-key",
       token_credential_key:"arn:token-credential-key",
       checkpoint_encryption_key:"arn:checkpoint-encryption-key"
     } + if $setup == "1" then {setup_token:"arn:setup-token",computer_wrapping_key:"arn:computer-wrapping-key"} else {} end'

@@ -52,19 +52,22 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		s.writeRunLeaseClaimFailure(w, authority, err)
 		return
 	}
+	if authority.resumeWait != nil {
+		response, err := projectRestoredRunLeaseClaim(authority, s.computerFencingKey)
+		if err != nil {
+			s.writeRunLeaseClaimFailure(w, authority, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
 	responseAuthority := runLeaseClaimResponseAuthority{
-		mode:                authority.mode,
-		actor:               authority.actor,
-		run:                 authority.run,
-		attempt:             authority.attempt,
-		runtime:             authority.runtime,
-		runLease:            authority.runLease,
-		workspace:           authority.workspace,
-		workspaceMount:      authority.workspaceMount,
-		workspaceLease:      authority.workspaceLease,
-		runWait:             authority.runWait,
-		checkpoint:          authority.checkpoint,
-		checkpointArtifacts: authority.checkpointArtifacts,
+		actor:    authority.actor,
+		run:      authority.run,
+		attempt:  authority.attempt,
+		runtime:  authority.runtime,
+		runLease: authority.runLease,
+		computer: authority.computer,
 	}
 	projection, err := loadRunLeaseClaimProjection(r.Context(), s.db, responseAuthority)
 	if err != nil {
@@ -78,18 +81,16 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		projection,
 		s.platformStore,
 		s.secretDelivery,
-		s.workspaceFencingKey,
+		s.computerFencingKey,
 	)
 	if err != nil {
 		s.writeRunLeaseClaimFailure(w, authority, err)
 		return
 	}
-	if authority.mode == runLeaseClaimFresh {
-		response.ProtectedEnv, err = workspaceProtectedEnv(r.Context(), s.db, authority.workspace.EnvironmentID, authority.workspace.ID)
-		if err != nil {
-			s.writeRunLeaseClaimFailure(w, authority, err)
-			return
-		}
+	response.ProtectedEnv, err = computerProtectedEnv(r.Context(), s.db, authority.computer.EnvironmentID, authority.computer.ID)
+	if err != nil {
+		s.writeRunLeaseClaimFailure(w, authority, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }

@@ -1,9 +1,9 @@
 import { verify, assert, deadline } from "../../support/context"
-await verify("timer", async ({ client, marker, objects, workspace }) => {
-  const target = await workspace("helmr-timer-smoke")
+await verify("timer", async ({ client, marker, objects, computer }) => {
+  const target = await computer("helmr-timer-smoke")
   const run = await client.tasks.start(
     "timer-smoke",
-    { workspace: target, payload: { marker, waitFor: "5s" }, idempotencyKey: `timer:${marker}` },
+    { computer: target, payload: { marker, waitFor: "5s" }, idempotencyKey: `timer:${marker}` },
     { signal: deadline(30_000) },
   )
   objects.run_ids.push(run.id)

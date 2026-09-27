@@ -19,8 +19,7 @@ result="$(mktemp)"
 trap 'rm -f "${result}"' EXIT
 
 if ! go test -json -run "${pattern}" -count=1 "$@" >"${result}"; then
-  jq -r 'select(.Action == "output") | .Output' "${result}" |
-    tail -n 200 >&2
+  jq -r 'select(.Action == "output" or .Action == "build-output") | .Output' "${result}" >&2
   exit 1
 fi
 
@@ -48,3 +47,6 @@ while IFS= read -r package; do
 done <<<"${packages}"
 
 [ "${matched}" = true ]
+
+# Keep successful package evidence visible when this runner is redirected to a log.
+jq -r 'select(.Action == "pass" and .Test == null) | "PASS \(.Package) (\(.Elapsed)s)"' "$result"

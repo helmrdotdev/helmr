@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
@@ -42,7 +43,7 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 	}
 	fingerprint := sha256.Sum256(canonical)
 	replay := func() (computerPublicationResult, error) {
-		v, err := s.db.GetWorkerInitialComputerVersion(ctx, db.GetWorkerInitialComputerVersionParams{RuntimeInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, WorkerInstanceID: fence.WorkerID, WorkerGroupID: fence.WorkerGroupID, WorkerEpoch: fence.WorkerEpoch})
+		v, err := s.db.GetWorkerInitialComputerDiskVersion(ctx, db.GetWorkerInitialComputerDiskVersionParams{ComputerInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, WorkerHostID: fence.WorkerID, WorkerGroupID: fence.WorkerGroupID, WorkerEpoch: fence.WorkerEpoch})
 		if err != nil {
 			return empty, err
 		}
@@ -72,7 +73,7 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 		return empty, errors.New("initial root capacity differs from preparation")
 	}
 	var claims bool
-	if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
 		return empty, err
 	}
 	if !claims {
@@ -97,7 +98,7 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 		return empty, err
 	}
 	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$4 AND runtime_desired_version=$2 AND digest=$3)`, fence.RuntimeID, fence.DesiredVersion, input.Root.Pack.Digest, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID)).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$4 AND instance_desired_version=$2 AND digest=$3)`, fence.RuntimeID, fence.DesiredVersion, input.Root.Pack.Digest, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID)).Scan(&retained); err != nil {
 		return empty, err
 	}
 	if !retained {
@@ -111,15 +112,15 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 	if err != nil {
 		return empty, err
 	}
-	version, err := q.PublishInitialComputerVersion(ctx, db.PublishInitialComputerVersionParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, VersionID: owner.VersionID, RuntimeInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, Fingerprint: fingerprint[:], RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: owner.LogicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
+	version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, VersionID: owner.VersionID, ComputerInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, Fingerprint: fingerprint[:], RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: owner.LogicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
 	if err != nil {
 		return empty, err
 	}
 	// Publication and the preparing Runtime's source retention are one commit.
 	// Otherwise the next source/key request has no retained root, and the
 	// version could be reclaimed between publication and preparation.
-	pinned, err := q.PinRuntimeComputerSource(ctx, db.PinRuntimeComputerSourceParams{
-		RuntimeInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID,
+	pinned, err := q.PinInstanceComputerSource(ctx, db.PinInstanceComputerSourceParams{
+		ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID,
 		ComputerID: owner.ComputerID, VersionID: version.ID,
 	})
 	if err != nil {
@@ -135,4 +136,20 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 		return empty, err
 	}
 	return computerPublicationResult{ComputerID: version.ComputerID, VersionID: version.ID}, nil
+}
+
+func (s *Server) writeComputerPublicationError(w http.ResponseWriter, err error) {
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, errStaleRunFinalization) || isDeterministicWorkerAdmission(err) {
+		writeError(w, conflict(errors.New("computer publication authority changed")))
+		return
+	}
+	if errorStatus(err) < 500 {
+		writeError(w, err)
+		return
+	}
+	s.log.Error("Computer object publication failed", "error", err)
+	writeError(w, errors.New("computer object publication failed"))
 }

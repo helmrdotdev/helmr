@@ -78,7 +78,7 @@ variables {
   worker_ami_id                            = "ami-00000000000000000"
 
   create_worker                       = false
-  worker_instance_type                = "c8i.xlarge"
+  worker_host_type                    = "c8i.xlarge"
   worker_enable_nested_virtualization = true
   worker_capacity_vcpus               = 8
   worker_capacity_memory_mib          = 16384
@@ -88,7 +88,6 @@ variables {
   worker_vm_vcpus                     = 2
   worker_vm_memory_mib                = 4096
   worker_vm_scratch_disk_mib          = 32768
-  worker_substrate_cache_max_mib      = 32768
   worker_artifact_cache_max_mib       = 16384
 }
 

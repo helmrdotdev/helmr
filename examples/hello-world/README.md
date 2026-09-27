@@ -1,7 +1,7 @@
 # Hello World
 
-The smallest Helmr Task and Workspace declarations: build an image, define the
-Workspace that uses it, accept Task payload, and write a file during the Run.
+The smallest Helmr Task and Computer declarations: build an image, define the
+Computer that uses it, accept Task payload, and write a file during the Run.
 
 ```bash
 helmr deploy PATH/TO/hello-world --project PROJECT --env ENVIRONMENT
@@ -9,7 +9,7 @@ helmr deploy PATH/TO/hello-world --project PROJECT --env ENVIRONMENT
 
 ## Session lifecycle examples
 
-`tasks/session.ts` adds two editable Actors using the same Workspace:
+`tasks/session.ts` adds two editable Actors using the same Computer:
 
 - `checked-reply` emits finite output, performs a deterministic check, then
   completes with a required typed result or fails. Enqueue

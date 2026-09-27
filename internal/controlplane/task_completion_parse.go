@@ -4,15 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
-	"time"
 	"unicode/utf8"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 const (
@@ -20,8 +17,6 @@ const (
 	maxTaskCompletionErrorBytes   = 16 << 10
 	maxTaskCompletionMessageBytes = 1024
 )
-
-var taskWorkspaceDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type taskCompletionKind string
 
@@ -36,7 +31,7 @@ type parsedTaskCompletion struct {
 	kind        taskCompletionKind
 	output      json.RawMessage
 	errorObject json.RawMessage
-	capture     *parsedTaskComputerCapture
+	operationID uuid.UUID
 	fingerprint string
 }
 
@@ -87,124 +82,17 @@ func parseTaskCompletionRequest(request workerapi.CompleteTaskRequest) (parsedTa
 		return parsedTaskCompletion{}, errors.New("outcome must contain exactly one variant")
 	}
 
-	if request.Workspace.Captured == nil {
-		return parsedTaskCompletion{}, errors.New("workspace capture is required for every terminal outcome")
-	}
-	capture, normalizedCapture, err := parseTaskWorkspaceCapture(*request.Workspace.Captured)
+	parsed.operationID, err = parseCanonicalUUID("operation_id", request.OperationID)
 	if err != nil {
 		return parsedTaskCompletion{}, err
 	}
-	parsed.capture = &capture
-	normalized.Workspace.Captured = &normalizedCapture
+	normalized.OperationID = parsed.operationID.String()
 
 	parsed.fingerprint, err = terminalRequestFingerprint("task.complete.v0", normalized)
 	if err != nil {
 		return parsedTaskCompletion{}, fmt.Errorf("fingerprint task completion: %w", err)
 	}
 	return parsed, nil
-}
-
-func parseTaskWorkspaceCapture(capture workerapi.TaskWorkspaceCapture) (parsedTaskComputerCapture, workerapi.TaskWorkspaceCapture, error) {
-	if _, err := parseCanonicalUUID("workspace.captured.disk.computer_id", capture.Disk.ComputerID); err != nil {
-		return parsedTaskComputerCapture{}, capture, err
-	}
-	if err := capture.Disk.Root.Validate(capture.Disk.LogicalBytes); err != nil {
-		return parsedTaskComputerCapture{}, capture, err
-	}
-	receipt, normalized, err := parseWorkspaceFinalizationReceipt("workspace.captured.receipt", workspace.FinalizationCaptureKind, capture.Receipt, nil)
-	if err != nil {
-		return parsedTaskComputerCapture{}, capture, err
-	}
-	if capture.Disk.ComputerID != receipt.Fence.WorkspaceID {
-		return parsedTaskComputerCapture{}, capture, errors.New("captured Computer differs from finalization authority")
-	}
-	capture.Receipt = normalized
-	return parsedTaskComputerCapture{receipt: receipt, disk: capture.Disk}, capture, nil
-}
-
-func parseWorkspaceFinalizationReceipt(
-	label string,
-	kind string,
-	receipt workerapi.WorkspaceFinalizationReceipt,
-	target any,
-) (workspace.FinalizationRequest, workerapi.WorkspaceFinalizationReceipt, error) {
-	operationID, err := parseCanonicalUUID(label+".operation_id", receipt.OperationID)
-	if err != nil {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, err
-	}
-	if !taskWorkspaceDigestPattern.MatchString(receipt.RequestFingerprint) {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, fmt.Errorf("%s.request_fingerprint must be a SHA-256 digest", label)
-	}
-	if receipt.Fence.AttemptNumber <= 0 || receipt.Fence.ExpiresAt.IsZero() {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, fmt.Errorf("%s fence is invalid", label)
-	}
-	expiresAtUnixNano := receipt.Fence.ExpiresAt.UnixNano()
-	if !time.Unix(0, expiresAtUnixNano).Equal(receipt.Fence.ExpiresAt) {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, fmt.Errorf("%s.fence.expires_at is outside the finalization protocol range", label)
-	}
-	for _, field := range []struct {
-		name  string
-		value string
-	}{
-		{name: "worker_instance_id", value: receipt.Fence.WorkerInstanceID},
-		{name: "runtime_instance_id", value: receipt.Fence.RuntimeInstanceID},
-		{name: "workspace_id", value: receipt.Fence.WorkspaceID},
-		{name: "workspace_mount_id", value: receipt.Fence.WorkspaceMountID},
-		{name: "run_id", value: receipt.Fence.RunID},
-		{name: "run_lease_id", value: receipt.Fence.RunLeaseID},
-		{name: "workspace_lease_id", value: receipt.Fence.WorkspaceLeaseID},
-		{name: "base_workspace_version_id", value: receipt.Fence.BaseWorkspaceVersionID},
-	} {
-		if _, err := parseCanonicalUUID(label+".fence."+field.name, field.value); err != nil {
-			return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, err
-		}
-	}
-	if strings.TrimSpace(receipt.Fence.RuntimeIdentityID) == "" ||
-		strings.TrimSpace(receipt.Fence.RuntimeIdentityID) != receipt.Fence.RuntimeIdentityID {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, fmt.Errorf("%s.fence.runtime_identity_id is invalid", label)
-	}
-	if receipt.Fence.WorkerEpoch <= 0 || receipt.Fence.LeaseSequence <= 0 ||
-		receipt.Fence.OwnershipGeneration < 0 || receipt.Fence.WriterGeneration <= 0 ||
-		receipt.Fence.MountFencingGeneration <= 0 {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, fmt.Errorf("%s fence generations are invalid", label)
-	}
-	fence := workspace.FinalizationFence{
-		WorkerInstanceID: receipt.Fence.WorkerInstanceID, WorkerEpoch: receipt.Fence.WorkerEpoch,
-		RuntimeInstanceID: receipt.Fence.RuntimeInstanceID, RuntimeIdentityID: receipt.Fence.RuntimeIdentityID,
-		WorkspaceID: receipt.Fence.WorkspaceID, WorkspaceMountID: receipt.Fence.WorkspaceMountID,
-		RunID: receipt.Fence.RunID, AttemptNumber: uint32(receipt.Fence.AttemptNumber),
-		RunLeaseID: receipt.Fence.RunLeaseID, LeaseSequence: receipt.Fence.LeaseSequence,
-		WorkspaceLeaseID:    receipt.Fence.WorkspaceLeaseID,
-		OwnershipGeneration: receipt.Fence.OwnershipGeneration, WriterGeneration: receipt.Fence.WriterGeneration,
-		MountFencingGeneration: receipt.Fence.MountFencingGeneration,
-		ExpiresAtUnixNano:      expiresAtUnixNano, BaseWorkspaceVersionID: receipt.Fence.BaseWorkspaceVersionID,
-	}
-	request := workspace.FinalizationRequest{OperationID: operationID.String(), Fence: fence, Target: target}
-	expected, err := workspace.FinalizationFingerprint(kind, request)
-	if err != nil || expected != receipt.RequestFingerprint {
-		return workspace.FinalizationRequest{}, workerapi.WorkspaceFinalizationReceipt{}, fmt.Errorf("%s request fingerprint is invalid", label)
-	}
-	receipt.Fence.ExpiresAt = receipt.Fence.ExpiresAt.UTC()
-	return request, receipt, nil
-}
-
-func finalizationFenceMatchesLease(fence workspace.FinalizationFence, lease workerapi.RunLeaseAssignment) bool {
-	return fence.WorkerInstanceID == lease.WorkerInstanceID &&
-		fence.WorkerEpoch == lease.WorkerEpoch &&
-		fence.RuntimeInstanceID == lease.RuntimeInstanceID &&
-		fence.RuntimeIdentityID == lease.RuntimeIdentityID &&
-		fence.WorkspaceID == lease.WorkspaceID &&
-		fence.WorkspaceMountID == lease.WorkspaceMountID &&
-		fence.RunID == lease.RunID &&
-		fence.AttemptNumber == uint32(lease.AttemptNumber) &&
-		fence.RunLeaseID == lease.ID &&
-		fence.LeaseSequence == lease.LeaseSequence &&
-		fence.WorkspaceLeaseID == lease.WorkspaceLeaseID &&
-		fence.OwnershipGeneration == lease.OwnershipGeneration &&
-		fence.WriterGeneration == lease.WriterGeneration &&
-		fence.MountFencingGeneration == lease.MountFencingGeneration &&
-		fence.ExpiresAtUnixNano == lease.ExpiresAt.UnixNano() &&
-		fence.BaseWorkspaceVersionID == lease.BaseWorkspaceVersionID
 }
 
 func normalizeTaskFailure(label string, failure *workerapi.TaskFailure) (json.RawMessage, *workerapi.TaskFailure, error) {

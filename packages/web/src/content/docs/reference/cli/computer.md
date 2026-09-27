@@ -1,0 +1,43 @@
+---
+title: helmr computer
+description: Create, inspect, execute in, and delete Computers.
+sidebarLabel: computer
+---
+
+# `helmr computer`
+
+```text
+helmr computer create DECLARED_ID [--key KEY] [--idempotency-key KEY] [--json]
+helmr computer get (--id UUID | --key KEY) [--json]
+helmr computer delete (--id UUID | --key KEY) [--idempotency-key KEY] [--json]
+helmr computer exec (--id UUID | --key KEY) --idempotency-key KEY -- COMMAND [ARG...]
+```
+
+All commands also accept project/environment scope.
+
+`exec` accepts `--cwd`, repeated `--set-env NAME=VALUE`, `--stdin FILE`, and
+`--timeout` (default 5m, maximum 15m). It returns bounded stdout/stderr and exits
+with the remote process exit code. The `--` separator is required before the
+remote command.
+
+## Secret bindings at creation
+
+Use one JSON binding array with `--secrets-file`; it contains names and placements,
+never Secret values. The wire schema uses `allowed_origins` (SDK: `allowedOrigins`).
+
+```json
+[
+  {"secret":"github-token","env":{"name":"GH_TOKEN","mode":"protected","allowed_origins":["https://api.github.com"]}},
+  {"secret":"database-password","env":{"name":"PGPASSWORD","mode":"raw"}},
+  {"secret":"client-key","file":{"path":"/run/secrets/client.key"}}
+]
+```
+
+```sh
+helmr computer create reviewer --secrets-file bindings.json --idempotency-key create-reviewer
+```
+
+Bindings are fixed at Computer creation. See [Secrets](/docs/concepts/secrets)
+for client support, upstream trust, rotation, and revocation limits. Console
+Computers → Create Computer offers the same choices;
+Computer detail shows modes and origins without values.

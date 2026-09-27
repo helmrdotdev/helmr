@@ -30,7 +30,7 @@ const maxHeaderBytes = 64 << 10
 const maxCapturedConnections = 256
 const maxProtectedRequests = maxCapturedConnections
 
-var ErrTrustExpired = errors.New("workspace Secret transport has expired; create a new Workspace")
+var ErrTrustExpired = errors.New("computer Secret transport has expired; create a new Computer")
 var markerPattern = regexp.MustCompile(`hlmr_protected_[a-f0-9]{64}`)
 
 type Config struct {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestImageCommandUsesNamespaceInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd, err := imageCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/program/helmr/entry.mjs"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{ManagedProgram: true, CgroupNamespace: true, CgroupLeaf: leaf, StartProof: true})
+	cmd, err := imageCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/program/helmr/entry.mjs"}, "/computer", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{ManagedProgram: true, CgroupNamespace: true, CgroupLeaf: leaf, StartProof: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +27,7 @@ func TestImageCommandUsesNamespaceInit(t *testing.T) {
 	if len(cmd.Args) < 11 || cmd.Args[1] != imageRuntimeInitArg {
 		t.Fatalf("args = %#v", cmd.Args)
 	}
-	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != leaf || cmd.Args[9] != "true" || cmd.Args[10] != "/usr/bin/node" {
+	if cmd.Args[2] != "/image" || cmd.Args[3] != "/computer" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != leaf || cmd.Args[9] != "true" || cmd.Args[10] != "" || cmd.Args[11] != "/usr/bin/node" {
 		t.Fatalf("init args = %#v", cmd.Args)
 	}
 	if cmd.SysProcAttr == nil {
@@ -48,7 +49,7 @@ func TestImageCommandUsesNamespaceInit(t *testing.T) {
 }
 
 func TestImageCommandPtyUsesSessionWithoutSetpgid(t *testing.T) {
-	cmd, err := imageCommand(context.Background(), "/bin/sh", []string{"-l"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{Pty: true})
+	cmd, err := imageCommand(context.Background(), "/bin/sh", []string{"-l"}, "/computer", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, imageCommandOptions{Pty: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,5 +126,13 @@ func TestMountImageRuntimeFilesystemsRejectsSymlinkedMountPoints(t *testing.T) {
 				t.Fatal("expected symlinked runtime path rejection")
 			}
 		})
+	}
+}
+
+func TestImageRuntimeInitAcceptsZeroCommandArguments(t *testing.T) {
+	// Invalid uid stops before namespace syscalls while proving the fixed argv count.
+	err := runImageRuntimeInit([]string{"/image", "/", "invalid", "0", "false", "true", "command-1", "false", "/secrets/process-1", "/bin/true"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "uid") || strings.Contains(err.Error(), "missing") {
+		t.Fatalf("zero-argument command rejected at argv boundary: %v", err)
 	}
 }

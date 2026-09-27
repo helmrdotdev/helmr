@@ -3,41 +3,49 @@ package controlplane
 import (
 	"bytes"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func initializingComputerSourceRow(t *testing.T) db.ListRuntimeReconcileTargetsRow {
+func initializingComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTargetsRow {
 	t.Helper()
-	manifest, err := json.Marshal(deployment.SandboxManifest{Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}, Image: deployment.SandboxImageManifest{
-		Profile: computer.SeedProfile, ArtifactDigest: validDigest('a'), MediaType: computer.SeedMediaType,
-		Config: oci.RuntimeConfig{User: "1000", Env: []string{"HELLO=world"}},
-	}})
+	config, err := json.Marshal(deployment.ComputerConfig{
+		Architecture: deployment.ArchitectureX8664, RuntimeContract: deployment.RuntimeContract,
+		Profile:   computer.SeedProfile,
+		Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024},
+		Image:     oci.RuntimeConfig{User: "1000", Env: []string{"HELLO=world"}},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return db.ListRuntimeReconcileTargetsRow{
-		BaseWorkspaceVersionID:    pgvalue.UUID(uuid.NewV7()),
-		ComputerVersionStatus:     pgvalue.Text("initializing"),
-		WorkspaceLogicalSizeBytes: pgtype.Int8{Valid: true},
-		WorkspaceArchitecture:     "x86_64", ReservedGuestEphemeralDiskBytes: computer.SeedCapacity,
-		WorkspaceImageDigest: validDigest('a'), WorkspaceImageSizeBytes: 1024, WorkspaceImageMediaType: computer.SeedMediaType,
-		SandboxManifestVersion: deployment.DeploymentPlanFormatVersion, SandboxManifest: manifest,
+	spec, err := deployment.ParseComputerSpec(config, cas.Descriptor{Digest: dbtest.Digest("seed"), SizeBytes: 1024, MediaType: computer.SeedMediaType})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db.ListComputerInstanceReconcileTargetsRow{
+		PreparationDiskVersionID:  pgvalue.UUID(uuid.NewV7()),
+		ComputerDiskVersionStatus: pgvalue.Text("initializing"),
+		ComputerLogicalSizeBytes:  pgtype.Int8{Valid: true},
+		ComputerArchitecture:      "x86_64", ReservedGuestEphemeralDiskBytes: computer.SeedCapacity,
+		ComputerImageDigest: dbtest.Digest("seed"), ComputerImageSizeBytes: 1024, ComputerImageMediaType: computer.SeedMediaType,
+		ComputerConfig: spec.Config, ComputerSpecDigest: spec.Digest[:],
 	}
 }
 
-func committedComputerSourceRow(t *testing.T) db.ListRuntimeReconcileTargetsRow {
+func committedComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTargetsRow {
 	r := initializingComputerSourceRow(t)
-	r.ComputerVersionStatus = pgvalue.Text("committed")
+	r.ComputerDiskVersionStatus = pgvalue.Text("committed")
 	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -56,8 +64,8 @@ func committedComputerSourceRow(t *testing.T) db.ListRuntimeReconcileTargetsRow 
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.WorkspaceContentDigest = pgvalue.Text(root.Pack.Digest)
-	r.WorkspaceLogicalSizeBytes.Int64 = computer.SeedCapacity
+	r.ComputerContentDigest = pgvalue.Text(root.Pack.Digest)
+	r.ComputerLogicalSizeBytes.Int64 = computer.SeedCapacity
 	r.ComputerInitialConfig = []byte(`{"User":"original","Env":["ORIGINAL=yes"]}`)
 	return r
 }
@@ -68,15 +76,15 @@ func TestRuntimeComputerSourceSeparatesInitializationAndContinuation(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if source.Seed == nil || source.Root != nil || source.Config.User != "1000" || source.VersionID != pgvalue.UUIDString(initial.BaseWorkspaceVersionID) {
+	if source.Seed == nil || source.Root != nil || source.Config.User != "1000" || source.VersionID != pgvalue.UUIDString(initial.PreparationDiskVersionID) {
 		t.Fatalf("initial source: %+v", source)
 	}
 	for _, status := range []string{"committed", "private"} {
 		r := committedComputerSourceRow(t)
-		r.ComputerVersionStatus = pgvalue.Text(status)
+		r.ComputerDiskVersionStatus = pgvalue.Text(status)
 		// Deployment changes cannot reseed a Computer or replace its initial config.
-		r.SandboxManifest = []byte(`{"invalid":"unused"}`)
-		r.WorkspaceImageDigest = ""
+		r.ComputerConfig = []byte(`{"invalid":"unused"}`)
+		r.ComputerImageDigest = ""
 		source, err := projectRuntimeComputerSource(r)
 		if err != nil {
 			t.Fatal(err)
@@ -91,27 +99,37 @@ func TestRuntimeComputerSourceRejectsMissingOrConflictingAuthority(t *testing.T)
 	for _, test := range []struct {
 		name      string
 		committed bool
-		change    func(*db.ListRuntimeReconcileTargetsRow)
+		change    func(*db.ListComputerInstanceReconcileTargetsRow)
 	}{
-		{"missing-version", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.BaseWorkspaceVersionID.Valid = false }},
-		{"discarded", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerVersionStatus = pgvalue.Text("discarded") }},
-		{"capacity", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.ReservedGuestEphemeralDiskBytes /= 2 }},
-		{"architecture", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceArchitecture = "arm64" }},
-		{"seed-conflict", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceImageDigest = validDigest('c') }},
-		{"seed-format", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceImageMediaType = "application/oci" }},
-		{"seed-profile", false, func(r *db.ListRuntimeReconcileTargetsRow) {
-			r.SandboxManifest = []byte(`{"image":{"profile":"other"}}`)
+		{"missing-version", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.PreparationDiskVersionID.Valid = false }},
+		{"source-mismatch", true, func(r *db.ListComputerInstanceReconcileTargetsRow) {
+			r.SourceDiskVersionID = pgvalue.UUID(uuid.NewV7())
 		}},
-		{"initial-restore", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.RestoreCheckpointID = pgvalue.UUID(uuid.NewV7()) }},
-		{"initial-config", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`{}`) }},
-		{"initial-disk", false, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
-		{"missing-generation", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = nil }},
-		{"disk-conflict", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceContentDigest = pgvalue.Text(validDigest('c')) }},
-		{"generation-format", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
-		{"disk-capacity", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.WorkspaceLogicalSizeBytes.Int64 /= 2 }},
-		{"missing-config", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = nil }},
-		{"null-config", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`null`) }},
-		{"unknown-config", true, func(r *db.ListRuntimeReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`{"unexpected":true}`) }},
+		{"restore-without-source", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.SourceCheckpointID = pgvalue.UUID(uuid.NewV7()) }},
+		{"discarded", true, func(r *db.ListComputerInstanceReconcileTargetsRow) {
+			r.ComputerDiskVersionStatus = pgvalue.Text("discarded")
+		}},
+		{"capacity", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ReservedGuestEphemeralDiskBytes /= 2 }},
+		{"architecture", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerArchitecture = "arm64" }},
+		{"seed-conflict", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerImageDigest = dbtest.Digest("other") }},
+		{"seed-format", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerImageMediaType = "application/oci" }},
+		{"seed-profile", false, func(r *db.ListComputerInstanceReconcileTargetsRow) {
+			r.ComputerConfig = []byte(`{"image":{"profile":"other"}}`)
+		}},
+		{"initial-restore", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.SourceCheckpointID = pgvalue.UUID(uuid.NewV7()) }},
+		{"initial-config", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`{}`) }},
+		{"initial-disk", false, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
+		{"missing-generation", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerGenerationLocator = nil }},
+		{"disk-conflict", true, func(r *db.ListComputerInstanceReconcileTargetsRow) {
+			r.ComputerContentDigest = pgvalue.Text(dbtest.Digest("other"))
+		}},
+		{"generation-format", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerGenerationLocator = []byte(`{}`) }},
+		{"disk-capacity", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerLogicalSizeBytes.Int64 /= 2 }},
+		{"missing-config", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerInitialConfig = nil }},
+		{"null-config", true, func(r *db.ListComputerInstanceReconcileTargetsRow) { r.ComputerInitialConfig = []byte(`null`) }},
+		{"unknown-config", true, func(r *db.ListComputerInstanceReconcileTargetsRow) {
+			r.ComputerInitialConfig = []byte(`{"unexpected":true}`)
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r := initializingComputerSourceRow(t)

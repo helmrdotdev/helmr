@@ -1,91 +1,66 @@
-DROP TABLE IF EXISTS runtime_computer_object_pins;
-DROP TABLE IF EXISTS run_checkpoint_objects;
-ALTER TABLE run_checkpoints DROP CONSTRAINT IF EXISTS run_checkpoints_run_wait_id_fkey;
-DROP TABLE IF EXISTS run_waits;
-DROP TABLE IF EXISTS session_events CASCADE;
-DROP TABLE IF EXISTS session_messages;
-DROP TABLE IF EXISTS session_turns CASCADE;
-ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_dispatch_hold_attempt_fk;
-ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_dispatch_hold_run_fk;
-DROP TABLE IF EXISTS control_outbox;
-DROP TABLE IF EXISTS public_access_tokens;
-DROP TABLE IF EXISTS tokens;
-ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_restore_checkpoint_workspace_fkey;
-ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_restore_checkpoint_execution_fkey;
-DROP TABLE IF EXISTS run_checkpoints;
-DROP TABLE IF EXISTS secret_resolutions;
-ALTER TABLE computers DROP CONSTRAINT IF EXISTS computers_head_version_id_fkey;
-ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_base_workspace_version_id_fkey;
-ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_materialized_version_id_fkey;
-ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_base_workspace_version_fk;
-ALTER TABLE run_attempts DROP CONSTRAINT IF EXISTS run_attempts_base_workspace_version_fk;
-ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_retained_computer_source_fkey;
-DROP TABLE IF EXISTS computer_version_roots;
-DROP TABLE IF EXISTS computer_versions CASCADE;
-ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_owner_process_id_fkey;
-ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_reserved_process_id_workspace_id_fkey;
-DROP TABLE IF EXISTS workspace_processes;
-ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_computer_save_lease_fkey;
-DROP TABLE IF EXISTS workspace_leases;
-ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_runtime_instance_id_fkey;
-ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_runtime_instance_id_fkey;
-ALTER TABLE computers DROP CONSTRAINT IF EXISTS computers_recovery_runtime_fk;
-DROP TABLE IF EXISTS runtime_instances;
-DROP TABLE IF EXISTS workspace_mounts;
-DROP TABLE IF EXISTS workspace_secrets;
-ALTER TABLE computers DROP CONSTRAINT IF EXISTS computers_write_key_fkey;
-DROP TABLE IF EXISTS computer_object_edges;
-DROP TABLE IF EXISTS computer_object_keys;
-DROP TABLE IF EXISTS computer_objects;
-DROP TABLE IF EXISTS computer_data_keys;
-DROP TABLE IF EXISTS computers CASCADE;
-DROP TABLE IF EXISTS auth_sessions;
-ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_run_lease_id_fkey;
-ALTER TABLE telemetry_outbox DROP CONSTRAINT IF EXISTS telemetry_outbox_run_lease_id_fkey;
-DROP TABLE IF EXISTS run_leases;
-ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_current_attempt_fk;
-DROP TABLE IF EXISTS run_attempts;
-DROP TABLE IF EXISTS telemetry_outbox;
-DROP TABLE IF EXISTS worker_instance_credentials;
-ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_current_run_fk;
-ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_failure_run_fk;
-DROP TABLE IF EXISTS runs;
-DROP TABLE IF EXISTS sessions;
-DROP TABLE IF EXISTS schedule_secrets;
-DROP TABLE IF EXISTS schedules;
-DROP TABLE IF EXISTS idempotency_claims;
-DROP TABLE IF EXISTS runtime_substrates;
-DROP TABLE IF EXISTS deployment_definitions;
-ALTER TABLE environments DROP CONSTRAINT IF EXISTS environments_current_deployment_fk;
-DROP TABLE IF EXISTS deployments;
-DROP TABLE IF EXISTS artifacts;
-DROP TABLE IF EXISTS worker_instances;
-ALTER TABLE worker_groups DROP CONSTRAINT IF EXISTS worker_groups_primary_pool_fkey;
-DROP TABLE IF EXISTS worker_pool_cpu_shapes;
-DROP TABLE IF EXISTS worker_pools;
-DROP TABLE IF EXISTS worker_groups;
-DROP TABLE IF EXISTS worker_group_tokens;
-DROP TABLE IF EXISTS runtime_identities;
-ALTER TABLE secrets DROP CONSTRAINT IF EXISTS secrets_current_version_fk;
-DROP TABLE IF EXISTS secret_versions;
-DROP TABLE IF EXISTS secrets;
-DROP TYPE IF EXISTS telemetry_stream_kind;
+-- Drop the owned table set together so internal foreign-key cycles need no CASCADE.
+DROP TABLE IF EXISTS
+    computer_checkpoint_runs,
+    computer_specs,
+    computer_object_pins,
+    computer_instances,
+    run_waits,
+    computer_checkpoint_objects,
+    computer_checkpoints,
+    telemetry_outbox,
+    run_leases,
+    control_outbox,
+    public_access_tokens,
+    tokens,
+    secret_resolutions,
+    computer_disk_version_roots,
+    computer_disk_versions,
+    computer_object_edges,
+    computer_object_keys,
+    computer_objects,
+    computer_data_keys,
+    computer_commands,
+    session_events,
+    session_messages,
+    session_turns,
+    run_attempts,
+    runs,
+    sessions,
+    computer_secrets,
+    computers,
+    schedule_secrets,
+    schedules,
+    idempotency_claims,
+    deployment_definitions,
+    deployments,
+    artifacts,
+    worker_host_credentials,
+    worker_hosts,
+    worker_pool_cpu_shapes,
+    worker_pools,
+    vm_platforms,
+    worker_groups,
+    worker_group_tokens,
+    cas_objects,
+    cas_upload_reclaims,
+    cas_blobs,
+    secret_versions,
+    secrets,
+    device_codes,
+    api_keys,
+    magic_links,
+    invitations,
+    auth_sessions,
+    environments,
+    projects,
+    org_members,
+    auth_identities,
+    users,
+    regions,
+    organizations;
+
 DROP TYPE IF EXISTS wait_kind;
 DROP TYPE IF EXISTS artifact_kind;
-DROP TABLE IF EXISTS cas_objects;
-DROP TABLE IF EXISTS cas_upload_reclaims;
-DROP TABLE IF EXISTS cas_blobs;
-DROP TABLE IF EXISTS device_codes;
-DROP TABLE IF EXISTS api_keys;
-DROP TABLE IF EXISTS magic_links;
 DROP TYPE IF EXISTS magic_link_purpose;
-DROP TABLE IF EXISTS invitations;
-DROP TABLE IF EXISTS environments;
-DROP TABLE IF EXISTS projects;
-ALTER TABLE organizations DROP COLUMN IF EXISTS default_region_id;
-DROP TABLE IF EXISTS regions;
-DROP TABLE IF EXISTS org_members;
 DROP TYPE IF EXISTS org_member_role;
-DROP TABLE IF EXISTS auth_identities;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS organizations;
+DROP TYPE IF EXISTS telemetry_stream_kind;

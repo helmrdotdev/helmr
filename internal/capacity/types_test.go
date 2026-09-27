@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 func TestWorkerTemplateValidation(t *testing.T) {
@@ -13,7 +13,6 @@ func TestWorkerTemplateValidation(t *testing.T) {
 		Schema:    WorkerTemplateSchema,
 		Runtime:   testRuntimeProfile(t),
 		CPUShapes: testCPUShapes(4),
-		Substrate: SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v1"},
 		Capacity: ResourceVector{
 			CPUMillis: 8000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 128 << 30,
 			VMSlots: 2,
@@ -54,22 +53,21 @@ func validTestWorkerTemplate(t *testing.T) WorkerTemplate {
 		Schema:    WorkerTemplateSchema,
 		Runtime:   testRuntimeProfile(t),
 		CPUShapes: testCPUShapes(4),
-		Substrate: SubstrateProfile{Format: SubstrateFormatExt4, Contract: SubstrateContractExt4},
 		Capacity:  ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
 		PerVM:     ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}
 }
 
-func testRuntimeProfile(t *testing.T) runtimeid.Profile {
+func testRuntimeProfile(t *testing.T) vmplatform.Profile {
 	t.Helper()
-	profile := runtimeid.Profile{
-		Arch: "x86_64", Contract: runtimeid.Contract,
+	profile := vmplatform.Profile{
+		Arch: "x86_64", Contract: vmplatform.Contract,
 		VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 		FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 		FirecrackerVersion:        "1.16.1",
 		SnapshotFormatVersion:     "6.0.0",
 		HostKernelRelease:         "6.8.0-1024-aws",
-		CPUTemplate:               runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
+		CPUTemplate:               vmplatform.CPUTemplateSelector{Kind: vmplatform.CPUTemplateNone},
 		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
@@ -82,10 +80,10 @@ func testRuntimeProfile(t *testing.T) runtimeid.Profile {
 	return profile
 }
 
-func testCPUShapes(count int) []runtimeid.CPUShape {
-	shapes := make([]runtimeid.CPUShape, count)
+func testCPUShapes(count int) []vmplatform.CPUShape {
+	shapes := make([]vmplatform.CPUShape, count)
 	for index := range shapes {
-		shapes[index] = runtimeid.CPUShape{
+		shapes[index] = vmplatform.CPUShape{
 			VCPUCount:       int32(index + 1),
 			CPUConfigDigest: "sha256:" + strings.Repeat(string(rune('4'+index)), 64),
 		}

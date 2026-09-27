@@ -79,8 +79,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			ResumeAttachID:                request.ResumeAttachID,
 			Kind:                          workerapi.RunWaitKindChild,
 			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
-			Workspace:                     task.waitWorkspace,
-			Checkpointer:                  task.checkpointer,
+			Computer:                      task.waitComputer,
 			Resume: func(resumeCtx context.Context, decision WaitResumeDecision) error {
 				if err := task.beforeWaitResume(resumeCtx, decision); err != nil {
 					return err
@@ -161,7 +160,7 @@ func workerChildTaskInvokeRequest(
 		TaskDeclaredID: requested.GetDeclaredId(),
 		Method:         requested.GetMethod(),
 		PayloadPresent: requested.GetPayloadPresent(),
-		Workspace:      json.RawMessage(requested.GetWorkspaceJson()),
+		Computer:       json.RawMessage(requested.GetComputerJson()),
 		Options:        json.RawMessage(requested.GetOptionsJson()),
 	}
 	if requested.PayloadJson != nil {

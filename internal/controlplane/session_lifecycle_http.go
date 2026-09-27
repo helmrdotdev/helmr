@@ -268,6 +268,11 @@ func writeSessionRequestError(w http.ResponseWriter, err error) {
 
 func (s *Server) writeSessionOperationError(w http.ResponseWriter, err error) {
 	var operation *session.OperationError
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
+		return
+	}
 	var collision idempotency.ConflictError
 	var transport apiError
 	switch {
@@ -417,9 +422,9 @@ func projectSessionTurn(view session.TurnView) (api.SessionTurn, error) {
 	if event := view.TerminalEvent; event != nil {
 		id := pgvalue.UUIDString(event.ID)
 		response.TerminalEventID = &id
-		if event.WorkspaceVersionID.Valid {
-			version := pgvalue.UUIDString(event.WorkspaceVersionID)
-			response.WorkspaceVersionID = &version
+		if event.ComputerDiskVersionID.Valid {
+			version := pgvalue.UUIDString(event.ComputerDiskVersionID)
+			response.ComputerDiskVersionID = &version
 		}
 		var data struct {
 			Result json.RawMessage `json:"result"`

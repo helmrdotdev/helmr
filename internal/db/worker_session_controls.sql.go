@@ -24,7 +24,7 @@ WITH RECURSIVE source_owners AS (
      WHERE child.parent_owns_lifecycle IS TRUE
        AND parent.environment_id = $1
 )
-SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at, source_owners.id AS source_owner_run_id
+SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.computer_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at, source_owners.id AS source_owner_run_id
   FROM sessions s
   LEFT JOIN source_owners ON source_owners.session_id = s.id
  WHERE s.environment_id = $1
@@ -58,7 +58,7 @@ func (q *Queries) LockWorkerControlActors(ctx context.Context, arg LockWorkerCon
 			&i.Session.EnvironmentID,
 			&i.Session.ActorDeclaredID,
 			&i.Session.DeploymentDefinitionID,
-			&i.Session.WorkspaceID,
+			&i.Session.ComputerID,
 			&i.Session.Key,
 			&i.Session.CurrentRunID,
 			&i.Session.ConsecutiveExecutionLosses,
@@ -105,20 +105,20 @@ func (q *Queries) LockWorkerControlActors(ctx context.Context, arg LockWorkerCon
 
 const lockWorkerControlSecrets = `-- name: LockWorkerControlSecrets :many
 SELECT
-    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
+    computer_secrets.computer_id, computer_secrets.environment_id, computer_secrets.placement_kind, computer_secrets.placement_target, computer_secrets.secret_id, computer_secrets.mode, computer_secrets.allowed_origins, computer_secrets.placeholder, computer_secrets.created_at,
     secrets.status AS secret_status,
     secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
-FROM workspace_secrets
-JOIN secrets ON secrets.id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = ANY($1::uuid[])
-ORDER BY workspace_secrets.secret_id, workspace_secrets.workspace_id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+FROM computer_secrets
+JOIN secrets ON secrets.id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = ANY($1::uuid[])
+ORDER BY computer_secrets.secret_id, computer_secrets.computer_id, computer_secrets.placement_kind, computer_secrets.placement_target
 FOR UPDATE OF secrets
 `
 
 type LockWorkerControlSecretsRow struct {
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ComputerID           pgtype.UUID        `json:"computer_id"`
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	PlacementKind        string             `json:"placement_kind"`
 	PlacementTarget      string             `json:"placement_target"`
@@ -133,8 +133,8 @@ type LockWorkerControlSecretsRow struct {
 	RevocationGeneration int64              `json:"revocation_generation"`
 }
 
-func (q *Queries) LockWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]LockWorkerControlSecretsRow, error) {
-	rows, err := q.db.Query(ctx, lockWorkerControlSecrets, workspaceIds)
+func (q *Queries) LockWorkerControlSecrets(ctx context.Context, computerIds []pgtype.UUID) ([]LockWorkerControlSecretsRow, error) {
+	rows, err := q.db.Query(ctx, lockWorkerControlSecrets, computerIds)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (q *Queries) LockWorkerControlSecrets(ctx context.Context, workspaceIds []p
 	for rows.Next() {
 		var i LockWorkerControlSecretsRow
 		if err := rows.Scan(
-			&i.WorkspaceID,
+			&i.ComputerID,
 			&i.EnvironmentID,
 			&i.PlacementKind,
 			&i.PlacementTarget,
@@ -169,19 +169,19 @@ func (q *Queries) LockWorkerControlSecrets(ctx context.Context, workspaceIds []p
 
 const readWorkerControlSecrets = `-- name: ReadWorkerControlSecrets :many
 SELECT
-    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.mode, workspace_secrets.allowed_origins, workspace_secrets.placeholder, workspace_secrets.created_at,
+    computer_secrets.computer_id, computer_secrets.environment_id, computer_secrets.placement_kind, computer_secrets.placement_target, computer_secrets.secret_id, computer_secrets.mode, computer_secrets.allowed_origins, computer_secrets.placeholder, computer_secrets.created_at,
     secrets.status AS secret_status,
     secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
-FROM workspace_secrets
-JOIN secrets ON secrets.id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = ANY($1::uuid[])
-ORDER BY workspace_secrets.secret_id, workspace_secrets.workspace_id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+FROM computer_secrets
+JOIN secrets ON secrets.id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = ANY($1::uuid[])
+ORDER BY computer_secrets.secret_id, computer_secrets.computer_id, computer_secrets.placement_kind, computer_secrets.placement_target
 `
 
 type ReadWorkerControlSecretsRow struct {
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	ComputerID           pgtype.UUID        `json:"computer_id"`
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	PlacementKind        string             `json:"placement_kind"`
 	PlacementTarget      string             `json:"placement_target"`
@@ -196,8 +196,8 @@ type ReadWorkerControlSecretsRow struct {
 	RevocationGeneration int64              `json:"revocation_generation"`
 }
 
-func (q *Queries) ReadWorkerControlSecrets(ctx context.Context, workspaceIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error) {
-	rows, err := q.db.Query(ctx, readWorkerControlSecrets, workspaceIds)
+func (q *Queries) ReadWorkerControlSecrets(ctx context.Context, computerIds []pgtype.UUID) ([]ReadWorkerControlSecretsRow, error) {
+	rows, err := q.db.Query(ctx, readWorkerControlSecrets, computerIds)
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (q *Queries) ReadWorkerControlSecrets(ctx context.Context, workspaceIds []p
 	for rows.Next() {
 		var i ReadWorkerControlSecretsRow
 		if err := rows.Scan(
-			&i.WorkspaceID,
+			&i.ComputerID,
 			&i.EnvironmentID,
 			&i.PlacementKind,
 			&i.PlacementTarget,

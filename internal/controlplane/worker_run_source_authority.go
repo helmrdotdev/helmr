@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,55 +20,47 @@ type workerRunSourceAuthority struct {
 	ProjectID     pgtype.UUID
 	EnvironmentID pgtype.UUID
 	DeploymentID  pgtype.UUID
-	WorkspaceID   pgtype.UUID
+	ComputerID    pgtype.UUID
 	RunID         pgtype.UUID
 	AttemptNumber int32
 }
 
-func authorizeWorkerRunSource(
-	ctx context.Context,
-	q db.Querier,
-	worker workerActor,
-	lease workerapi.RunLeaseFence,
-) (workerRunSourceAuthority, error) {
+func authorizeWorkerRunSource(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence) (workerRunSourceAuthority, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return workerRunSourceAuthority{}, fmt.Errorf("%w: invalid receipt", errStaleWorkerRunSource)
 	}
-	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:      worker.WorkerEpoch})
+	authority, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, lease))
+	return validateWorkerRunSource(authority, err)
+}
+
+func authorizeWorkerRunSourceForComputer(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence, target pgtype.UUID) (workerRunSourceAuthority, error) {
+	parsed, err := parseRunLeaseFence(lease)
+	if err != nil {
+		return workerRunSourceAuthority{}, fmt.Errorf("%w: invalid receipt", errStaleWorkerRunSource)
+	}
+	authority, err := run.LockLiveExecutionForComputer(ctx, tx, workerExecutionFence(worker, parsed, lease), target)
+	if errors.Is(err, run.ErrExecutionTargetNotFound) {
+		return workerRunSourceAuthority{}, errComputerNotFound
+	}
+	return validateWorkerRunSource(authority, err)
+}
+
+func workerExecutionFence(worker workerActor, parsed parsedRunLeaseFence, lease workerapi.RunLeaseFence) run.ExecutionFence {
+	return run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}
+}
+
+func validateWorkerRunSource(authority run.ExecutionAuthority, err error) (workerRunSourceAuthority, error) {
+	if errors.Is(err, run.ErrExecutionWorkerClaims) {
+		return workerRunSourceAuthority{}, errStaleWorkerClaims
+	}
 	if err != nil {
 		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
 	}
-	authority, err := lockLiveRunLeaseAuthority(
-		ctx, q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, locators,
-	)
-	return validateWorkerRunSource(authority, locators, err)
-}
-
-func validateWorkerRunSource(authority runLeaseClaimAuthority, locators db.GetLiveRunLeaseLocatorsRow, err error) (workerRunSourceAuthority, error) {
-	if errors.Is(err, errStaleWorkerClaims) {
-		return workerRunSourceAuthority{}, err
-	}
-	if err != nil ||
-		authority.run.Status != db.RunStatusRunning ||
-		authority.runLease.Status != db.RunLeaseStatusRunning ||
-		!authority.run.ActiveStartedAt.Valid ||
-		!authority.attempt.EntrypointEnteredAt.Valid ||
-		authority.attempt.TerminalAt.Valid ||
-		authority.runLease.FinalizationOperationID.Valid {
+	if authority.Run.Status != db.RunStatusRunning || authority.Lease.Status != db.RunLeaseStatusRunning || !authority.Run.ActiveStartedAt.Valid || !authority.Attempt.EntrypointEnteredAt.Valid || authority.Attempt.TerminalAt.Valid || authority.Lease.FinalizationOperationID.Valid {
 		return workerRunSourceAuthority{}, fmt.Errorf("%w: live authority mismatch", errStaleWorkerRunSource)
 	}
-	return workerRunSourceAuthority{
-		OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID,
-		DeploymentID:  authority.run.DeploymentID,
-		WorkspaceID:   locators.WorkspaceID, RunID: locators.RunID,
-		AttemptNumber: locators.AttemptNumber,
-	}, nil
+	return workerRunSourceAuthority{OrgID: authority.Run.OrgID, ProjectID: authority.Run.ProjectID, EnvironmentID: authority.Run.EnvironmentID, DeploymentID: authority.Run.DeploymentID, ComputerID: authority.Computer.ID, RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number}, nil
 }
 
 func staleWorkerRunSource(err error) error {

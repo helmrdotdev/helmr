@@ -34,13 +34,13 @@ accepts and validates JSON input through Standard Schema v1. A Task without
 `payload` rejects input. Payload is persisted as Run data and must not contain
 credentials.
 
-Task context exposes the current Run, Deployment, Workspace reference, and
+Task context exposes the current Run, Deployment, Computer reference, and
 abort signal. Runtime operations are available through SDK modules: structured
-logging, metadata, child task starts, Workspace operations, timers, Tokens, and
+logging, metadata, child task starts, Computer operations, timers, Tokens, and
 Actor Sessions.
 
-External callers start a Task with an existing Workspace. The CLI requires
-`--workspace`; `HelmrClient.tasks.start()` requires a `WorkspaceRef`. The
+External callers start a Task with an existing Computer. The CLI requires
+`--computer`; `HelmrClient.tasks.start()` requires a `ComputerRef`. The
 result is a typed `RunHandle`, not the Task output. Call `runs.wait(handle)` or
 retrieve the Run until it reaches a terminal state.
 

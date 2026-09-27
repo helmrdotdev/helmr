@@ -27,9 +27,9 @@ const maxTaskPayloadBytes = 16 << 20
 var (
 	errTaskStartInvalid           = errors.New("task start request is invalid")
 	errTaskNotDeployed            = errors.New("task declaration is not deployed")
-	errTaskWorkspaceNotFound      = errors.New("task start workspace was not found")
-	errTaskWorkspaceUnavailable   = errors.New("task start workspace cannot accept execution")
-	errTaskSecretUnavailable      = errors.New("task start workspace secret is unavailable")
+	errTaskComputerNotFound       = errors.New("task start computer was not found")
+	errTaskComputerUnavailable    = errors.New("task start computer cannot accept execution")
+	errTaskSecretUnavailable      = errors.New("task start computer secret is unavailable")
 	errTaskStartAuthority         = errors.New("task start authority is unavailable")
 	errTaskStartReceiptInvalid    = errors.New("task start idempotency receipt is invalid")
 	errTaskPayloadPresenceInvalid = errors.New("task payload presence does not match its declaration")
@@ -42,7 +42,7 @@ type taskStartRequest struct {
 	TaskDeclaredID string
 	PayloadPresent bool
 	Payload        json.RawMessage
-	WorkspaceID    uuid.UUID
+	ComputerID     uuid.UUID
 	IdempotencyKey string
 	QueueName      string
 	ConcurrencyKey *string
@@ -144,39 +144,49 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return errTaskPayloadPresenceInvalid
 		}
 
-		workspaceID := pgvalue.UUID(normalized.WorkspaceID)
-		workspace, err := work.q.LockWorkspaceAdmissionAuthority(
-			ctx,
-			db.LockWorkspaceAdmissionAuthorityParams{
-				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-				ID:            workspaceID,
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errTaskWorkspaceUnavailable
-		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
+		computerID := pgvalue.UUID(normalized.ComputerID)
+		bindings, err := work.q.LockComputerSecretsForAdmission(ctx, computerID)
 		if err != nil {
-			return fmt.Errorf("lock task start workspace secrets: %w", err)
+			return fmt.Errorf("lock task start computer secrets: %w", err)
 		}
 		for _, binding := range bindings {
 			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
 				return errTaskSecretUnavailable
 			}
 		}
-		if err != nil {
-			return fmt.Errorf("lock task start workspace authority: %w", err)
+		computer, err := work.q.LockComputerAdmissionAuthority(
+			ctx,
+			db.LockComputerAdmissionAuthorityParams{
+				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+				ID:            computerID,
+			},
+		)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errTaskComputerUnavailable
 		}
-		if workspace.OrgID != pgvalue.UUID(normalized.OrgID) ||
-			workspace.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			workspace.Status != db.WorkspaceStatusActive ||
-			(workspace.DesiredState != db.WorkspaceDesiredStateActive &&
-				workspace.DesiredState != db.WorkspaceDesiredStateStopped) ||
-			workspace.DirtyState != db.WorkspaceDirtyStateClean ||
-			!workspace.HeadVersionID.Valid ||
-			workspace.OwnerSessionID.Valid || workspace.OwnerRunID.Valid ||
-			workspace.HasActiveLease || workspace.HasActiveProcess {
-			return errTaskWorkspaceUnavailable
+		if err != nil {
+			return fmt.Errorf("lock task start computer authority: %w", err)
+		}
+		if computer.OrgID != pgvalue.UUID(normalized.OrgID) ||
+			computer.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
+			computer.Status != db.ComputerStatusActive ||
+			(computer.DesiredState != db.ComputerDesiredStateActive &&
+				computer.DesiredState != db.ComputerDesiredStateStopped) ||
+			computer.DirtyState == db.ComputerDirtyStateCaptureFailed ||
+			computer.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
+			!computer.HeadDiskVersionID.Valid {
+			return errTaskComputerUnavailable
+		}
+		if len(computer.PreparationFailure) > 0 {
+			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
+		}
+		canAdmit, err := computerCanAdmitProgram(ctx, work.q, computer.EnvironmentID, computer.ID,
+			computer.ComputerSpecID, program.DeploymentID)
+		if err != nil {
+			return err
+		}
+		if !canAdmit {
+			return errTaskComputerUnavailable
 		}
 		runID := uuid.NewV7()
 		rootSpanID, err := tracing.NewSpanID()
@@ -202,10 +212,10 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			ctx,
 			db.CreateRootRunFromCurrentDeploymentParams{
 				EntrypointDeclaredID: normalized.TaskDeclaredID,
-				WorkspaceID:          workspace.ID,
+				ComputerID:           computer.ID,
 				OrgID:                pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
-				BaseWorkspaceVersionID: workspace.HeadVersionID,
-				EnvironmentID:          pgvalue.UUID(normalized.EnvironmentID), ClaimID: claimID,
+				BaseComputerDiskVersionID: computer.HeadDiskVersionID,
+				EnvironmentID:             pgvalue.UUID(normalized.EnvironmentID), ClaimID: claimID,
 				ID: pgvalue.UUID(runID), CauseKind: "api",
 				Payload: normalized.Payload, Metadata: normalized.Metadata, Tags: normalized.Tags,
 				QueueName: admission.QueueName, ConcurrencyKey: pgvalue.TextPtr(normalized.ConcurrencyKey),
@@ -224,18 +234,17 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		if err != nil {
 			return fmt.Errorf("create task run: %w", err)
 		}
-		if _, err := work.q.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
-			RunID: run.ID, EnvironmentID: run.EnvironmentID, ID: workspace.ID,
-			ExpectedRevision:      workspace.Revision,
-			ExpectedHeadVersionID: workspace.HeadVersionID,
+		if _, err := work.q.TouchComputerForAdmission(ctx, db.TouchComputerForAdmissionParams{
+			EnvironmentID: run.EnvironmentID, ID: computer.ID,
+			ExpectedRevision: computer.Revision,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return errTaskWorkspaceUnavailable
+				return errTaskComputerUnavailable
 			}
-			return fmt.Errorf("reserve task workspace: %w", err)
+			return fmt.Errorf("record task computer admission: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, workspace.ID, run.ID, 1, workspaceSecretResolutions(bindings),
+			ctx, work.q, computer.ID, run.ID, 1, computerSecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record task run secret resolutions: %w", err)
 		}
@@ -268,16 +277,16 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 	if err := api.ValidateDefinitionID(request.TaskDeclaredID); err != nil {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 	}
-	if request.WorkspaceID == uuid.Nil() {
+	if request.ComputerID == uuid.Nil() {
 		return normalizedTaskStart{}, errTaskStartInvalid
 	}
-	workspaceRaw, err := json.Marshal(api.WorkspaceIDTarget{ID: request.WorkspaceID.String()})
+	computerRaw, err := json.Marshal(api.ComputerIDTarget{ID: request.ComputerID.String()})
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: encode workspace", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: encode computer", errTaskStartInvalid)
 	}
-	workspace, err := canonicalJSON(workspaceRaw)
+	computer, err := canonicalJSON(computerRaw)
 	if err != nil {
-		return normalizedTaskStart{}, fmt.Errorf("%w: canonicalize workspace", errTaskStartInvalid)
+		return normalizedTaskStart{}, fmt.Errorf("%w: canonicalize computer", errTaskStartInvalid)
 	}
 	if request.PayloadPresent {
 		payload, err := canonicalJSON(request.Payload)
@@ -331,7 +340,7 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 		taskStartRequest: request,
 		fingerprint: idempotency.TaskStartFingerprint{
 			PayloadPresent: request.PayloadPresent, Payload: request.Payload,
-			Workspace: workspace, QueueName: request.QueueName,
+			Computer: computer, QueueName: request.QueueName,
 			ConcurrencyKey: request.ConcurrencyKey, Priority: request.Priority,
 			QueuedTTLMS: request.QueuedTTLMS, RetryPolicy: request.RetryPolicy,
 			Metadata: request.Metadata, Tags: request.Tags,

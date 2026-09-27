@@ -11,7 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/oci"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -20,7 +20,7 @@ import (
 
 func preparedConfigImage(t *testing.T) []byte {
 	t.Helper()
-	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/workspace","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
+	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/computer","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
 	marshal := func(v any) []byte {
 		b, e := json.Marshal(v)
 		if e != nil {
@@ -63,32 +63,35 @@ func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
 			if err := os.WriteFile(path, body, 0600); err != nil {
 				t.Fatal(err)
 			}
-			mount := workerapi.WorkspaceMount{WorkspaceID: "workspace", WorkspaceMountPath: "/workspace", WorkspaceImage: workerapi.CASObject{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body))}}
-			var config *workspacev0.RuntimeImageConfig
+			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerMountPath: "/computer", ComputerImage: workerapi.CASObject{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body))}}
+			var config *computerv0.RuntimeImageConfig
 			if mounted {
 				var err error
-				config, err = readPreparedImageConfig(context.Background(), path, mount.WorkspaceImage)
+				config, err = readPreparedImageConfig(context.Background(), path, mount.ComputerImage)
 				if err != nil {
 					t.Fatal(err)
 				}
 				path = "/does-not-exist"
 			}
 			var reply bytes.Buffer
-			if err := frameio.WriteProtoFrame(&reply, &workspacev0.PrepareWorkspaceRuntimeResponse{Status: "prepared", RuntimeInstanceId: "runtime"}); err != nil {
+			if err := frameio.WriteProtoFrame(&reply, &computerv0.PrepareComputerRuntimeResponse{Status: "prepared", ComputerInstanceId: "runtime"}); err != nil {
 				t.Fatal(err)
 			}
 			stream := &scriptedGuestStream{read: bytes.NewReader(reply.Bytes())}
 			pool := &PreparedRuntimePool{}
-			if err := pool.prepareGuestRuntime(context.Background(), fakeGuestSession{stream: stream}, "runtime", mount, path, config); err != nil {
+			if err := pool.prepareGuestRuntime(context.Background(), fakeGuestSession{stream: stream}, "runtime", 2, mount, path, config); err != nil {
 				t.Fatal(err)
 			}
 			input := bytes.NewReader(stream.written.Bytes())
 			if _, _, err := wire.ReadStreamFrameHeader(input); err != nil {
 				t.Fatal(err)
 			}
-			var request workspacev0.PrepareWorkspaceRuntimeRequest
+			var request computerv0.PrepareComputerRuntimeRequest
 			if err := frameio.ReadProtoFrame(input, &request); err != nil {
 				t.Fatal(err)
+			}
+			if request.GetComputerId() != mount.ComputerID || request.GetWriterGeneration() != 2 || request.GetComputerInstanceId() != "runtime" {
+				t.Fatal("prepared physical identity changed")
 			}
 			if !proto.Equal(request.GetMountedImageConfig(), config) {
 				t.Fatalf("config = %v", request.GetMountedImageConfig())

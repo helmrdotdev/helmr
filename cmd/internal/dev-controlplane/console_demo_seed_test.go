@@ -47,7 +47,7 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 	var (
 		definitions   int
 		schedules     int
-		workspaces    int
+		computers     int
 		sessions      int
 		runs          int
 		queuedRuns    int
@@ -65,14 +65,14 @@ func TestDemoEnvironmentSeedWithFreshPostgres(t *testing.T) {
 		    (SELECT count(*) FROM tokens WHERE environment_id = $1),
 		    (SELECT status FROM schedules WHERE id = $2)
 	`, demoSeedEnvironmentID, demoSeedScheduleID).Scan(
-		&definitions, &schedules, &workspaces, &sessions, &runs, &queuedRuns, &tokens, &scheduleState,
+		&definitions, &schedules, &computers, &sessions, &runs, &queuedRuns, &tokens, &scheduleState,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if definitions != 3 || schedules != 1 || workspaces != 2 || sessions != 2 || runs != 4 || tokens != 2 {
+	if definitions != 3 || schedules != 1 || computers != 2 || sessions != 2 || runs != 4 || tokens != 2 {
 		t.Fatalf(
-			"definitions/schedules/workspaces/sessions/runs/tokens = %d/%d/%d/%d/%d/%d, want 3/1/2/2/4/2",
-			definitions, schedules, workspaces, sessions, runs, tokens,
+			"definitions/schedules/computers/sessions/runs/tokens = %d/%d/%d/%d/%d/%d, want 3/1/2/2/4/2",
+			definitions, schedules, computers, sessions, runs, tokens,
 		)
 	}
 	if queuedRuns != 0 {

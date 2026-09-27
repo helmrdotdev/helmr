@@ -61,13 +61,13 @@ func (s *computerPreparationTransport) PublishInitialComputerGeneration(_ contex
 	}
 	s.root = r.Root
 	s.publications++
-	target := s.targets[r.RuntimeInstanceID]
-	return workerapi.InitialComputerGenerationResponse{ComputerID: target.Source.WorkspaceID, VersionID: target.Source.Computer.VersionID}, nil
+	target := s.targets[r.ComputerInstanceID]
+	return workerapi.InitialComputerGenerationResponse{ComputerID: target.Source.ComputerID, VersionID: target.Source.Computer.VersionID}, nil
 }
 func (s *computerPreparationTransport) ComputerSource(_ context.Context, r workerapi.ComputerSourceRequest) (workerapi.ComputerSourceMaterial, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return workerapi.ComputerSourceMaterial{Root: s.root, VersionID: s.targets[r.RuntimeInstanceID].Source.Computer.VersionID, WriteKeyID: preparationKey, Keys: []workerapi.ComputerKeyMaterial{{ID: preparationKey, Scope: "fixture", Key: bytes.Clone(s.key)}}}, nil
+	return workerapi.ComputerSourceMaterial{Root: s.root, VersionID: s.targets[r.ComputerInstanceID].Source.Computer.VersionID, WriteKeyID: preparationKey, Keys: []workerapi.ComputerKeyMaterial{{ID: preparationKey, Scope: "fixture", Key: bytes.Clone(s.key)}}}, nil
 }
 
 func TestComputerPreparationPublicationAndRestore(t *testing.T) {
@@ -102,7 +102,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{WorkspaceID: uuid.NewV7().String(), ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: computer.SeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
+	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: computer.SeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
 	const budget = 64 << 20
 	for _, failure := range []string{"capacity", "register", "upload", "commit", ""} {
 		t.Run("failure="+failure, func(t *testing.T) {
@@ -168,7 +168,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 }
 
 func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
-	store, mount := testWorkspaceMountArtifacts(t)
+	store, mount := testComputerMountArtifacts(t)
 	connector := &blockingMaterializingConnector{
 		started: make(chan string, 2), canceled: make(chan string, 2), failID: "runtime-0",
 	}
@@ -184,7 +184,7 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 	configureComputerPreparationTest(t, pool, items)
 	connector.failID = items[0].ID
 	client := &batchRuntimeClient{response: workerapi.RuntimeReconcileResponse{Items: items}}
-	pool.RuntimeInstances = client
+	pool.ComputerInstances = client
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- pool.ReconcileDesiredRuntimes(ctx, client) }()
@@ -224,14 +224,14 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 }
 
 func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.T) {
-	store, mount := testWorkspaceMountArtifacts(t)
+	store, mount := testComputerMountArtifacts(t)
 	connector := &blockingMaterializingConnector{started: make(chan string, 1), canceled: make(chan string, 1)}
 	pool := NewPreparedRuntimePool(connector, store, 1, nil)
 	pool.TempDir = t.TempDir()
 	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
 	client := &typedRuntimeClient{}
-	pool.RuntimeInstances = client
+	pool.ComputerInstances = client
 	target := runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
 	items := []workerapi.RuntimeReconcileTarget{target}
 	configureComputerPreparationTest(t, pool, items)

@@ -275,7 +275,7 @@ func TestConnectionNominatedMarkerFailsClosed(t *testing.T) {
 func TestExpiredTrustGivesSafeRecreationError(t *testing.T) {
 	response := httptest.NewRecorder()
 	denyTransportError(response, ErrTrustExpired)
-	if response.Code != 502 || !strings.Contains(response.Body.String(), "create a new Workspace") {
+	if response.Code != 502 || !strings.Contains(response.Body.String(), "create a new Computer") {
 		t.Fatal("expiry did not explain recreation")
 	}
 	response = httptest.NewRecorder()

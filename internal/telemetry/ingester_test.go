@@ -208,12 +208,16 @@ func testIngestor(store ingestStore, writer IngestWriter) *Ingestor {
 }
 
 type fakeIngestWriter struct {
-	eventCalls  int
-	eventResult []RejectedRow
-	eventErr    error
-	eventHook   func(context.Context)
-	runLogCalls int
-	runLogErr   error
+	commandLogRows   []CommandLogRecord
+	commandLogResult []RejectedRow
+	commandLogErr    error
+	commandLogCalls  int
+	eventCalls       int
+	eventResult      []RejectedRow
+	eventErr         error
+	eventHook        func(context.Context)
+	runLogCalls      int
+	runLogErr        error
 }
 
 func (w *fakeIngestWriter) WriteEvents(ctx context.Context, _ []EventRecord) ([]RejectedRow, error) {
@@ -230,22 +234,24 @@ func (w *fakeIngestWriter) WriteRunLogs(context.Context, []RunLogRecord) ([]Reje
 }
 
 type fakeIngestStore struct {
-	failureCalls    int
-	failedIDs       []int64
-	failureErr      error
-	writtenCalls    int
-	writtenIDs      []int64
-	writtenCounts   []int32
-	writtenResult   *int64
-	writtenErr      error
-	written         chan struct{}
-	pruned          chan db.PruneTelemetryOutboxWrittenParams
-	eventClaims     []db.ClaimEventIngestBatchParams
-	eventClaimCalls atomic.Int32
-	eventRows       []db.ClaimEventIngestBatchRow
-	claimHook       func(context.Context)
-	runLogClaims    []db.ClaimRunLogIngestBatchParams
-	runLogRows      []db.ClaimRunLogIngestBatchRow
+	commandLogClaims []db.ClaimCommandLogIngestBatchParams
+	commandLogRows   []db.ClaimCommandLogIngestBatchRow
+	failureCalls     int
+	failedIDs        []int64
+	failureErr       error
+	writtenCalls     int
+	writtenIDs       []int64
+	writtenCounts    []int32
+	writtenResult    *int64
+	writtenErr       error
+	written          chan struct{}
+	pruned           chan db.PruneTelemetryOutboxWrittenParams
+	eventClaims      []db.ClaimEventIngestBatchParams
+	eventClaimCalls  atomic.Int32
+	eventRows        []db.ClaimEventIngestBatchRow
+	claimHook        func(context.Context)
+	runLogClaims     []db.ClaimRunLogIngestBatchParams
+	runLogRows       []db.ClaimRunLogIngestBatchRow
 }
 
 func (s *fakeIngestStore) ClaimEventIngestBatch(ctx context.Context, params db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error) {
@@ -416,7 +422,7 @@ func TestIngestOperationBudgetPreservesLeaseHeadroomAndCallerDeadline(t *testing
 }
 
 func TestIngestCadenceWaitsAfterNonemptyCycleWithoutHoldingClaims(t *testing.T) {
-	started := make(chan time.Time, 3)
+	started := make(chan time.Time, 6)
 	store := &fakeIngestStore{claimHook: func(context.Context) { started <- time.Now() }, eventRows: []db.ClaimEventIngestBatchRow{{OrgID: pgvalue.NewUUIDv7(), ProjectID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.NewUUIDv7(), SubjectID: pgvalue.NewUUIDv7()}}}
 	i := testIngestor(store, &fakeIngestWriter{})
 	i.pollEvery = 60 * time.Millisecond
@@ -424,7 +430,8 @@ func TestIngestCadenceWaitsAfterNonemptyCycleWithoutHoldingClaims(t *testing.T) 
 	done := make(chan error, 1)
 	go func() { done <- i.runIngest(ctx) }()
 	first := <-started
-	<-started // The log claim follows the event claim within the same cycle.
+	<-started // Run and exec logs follow events within the same cycle.
+	<-started
 	second := <-started
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
@@ -436,4 +443,17 @@ func TestIngestCadenceWaitsAfterNonemptyCycleWithoutHoldingClaims(t *testing.T) 
 	if store.writtenCalls != 1 {
 		t.Fatal("successful event was not acknowledged in its cycle")
 	}
+}
+
+func (w *fakeIngestWriter) WriteCommandLogs(_ context.Context, rows []CommandLogRecord) ([]RejectedRow, error) {
+	w.commandLogCalls++
+	w.commandLogRows = append([]CommandLogRecord(nil), rows...)
+	return w.commandLogResult, w.commandLogErr
+}
+func (s *fakeIngestStore) ClaimCommandLogIngestBatch(ctx context.Context, params db.ClaimCommandLogIngestBatchParams) ([]db.ClaimCommandLogIngestBatchRow, error) {
+	if s.claimHook != nil {
+		s.claimHook(ctx)
+	}
+	s.commandLogClaims = append(s.commandLogClaims, params)
+	return s.commandLogRows, nil
 }

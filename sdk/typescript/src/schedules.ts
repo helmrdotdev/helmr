@@ -10,11 +10,11 @@ import { resourceID } from "./internal/id"
 import { timestampString } from "./internal/timestamp"
 import type { PayloadSchema } from "./schema/payload"
 import {
-  encodeWorkspaceSecrets,
+  encodeComputerSecrets,
   inspectSandboxDefinition,
   type Sandbox,
-  type WorkspaceSecretBinding,
-} from "./workspace"
+  type ComputerSecretBinding,
+} from "./computer"
 
 export type Cron = Readonly<{
   pattern: string
@@ -43,9 +43,9 @@ export type ScheduledTaskConfig<
 > = RunDefaults & Readonly<{
     id: TIdentifier
     cron: Cron
-    workspace: Readonly<{
+    computer: Readonly<{
       sandbox: Sandbox
-      secrets?: readonly WorkspaceSecretBinding[]
+      secrets?: readonly ComputerSecretBinding[]
     }>
     run(
       payload: ScheduledTaskPayload,
@@ -66,25 +66,25 @@ export function scheduledTask<
   validateScheduleMembers(config)
   validateCron(config.cron)
   if (
-    typeof config.workspace !== "object" ||
-    config.workspace === null ||
-    Array.isArray(config.workspace)
+    typeof config.computer !== "object" ||
+    config.computer === null ||
+    Array.isArray(config.computer)
   ) {
-    throw new Error("schedule workspace must be an object")
+    throw new Error("schedule computer must be an object")
   }
-  const unknownWorkspaceMember = Object.keys(config.workspace).find(
+  const unknownComputerMember = Object.keys(config.computer).find(
     (key) => key !== "sandbox" && key !== "secrets",
   )
-  if (unknownWorkspaceMember !== undefined) {
+  if (unknownComputerMember !== undefined) {
     throw new Error(
-      `schedule workspace has unknown member ${JSON.stringify(unknownWorkspaceMember)}`,
+      `schedule computer has unknown member ${JSON.stringify(unknownComputerMember)}`,
     )
   }
-  const sandbox = config.workspace.sandbox
+  const sandbox = config.computer.sandbox
   if (inspectSandboxDefinition(sandbox) === undefined) {
-    throw new Error("schedule workspace requires a Sandbox definition")
+    throw new Error("schedule computer requires a Sandbox definition")
   }
-  const secrets = encodeWorkspaceSecrets(config.workspace.secrets)
+  const secrets = encodeComputerSecrets(config.computer.secrets)
   return createScheduledTask({
     id: config.id,
     payload: scheduledTaskSchema,
@@ -98,7 +98,7 @@ export function scheduledTask<
     schedule: {
       cron: config.cron.pattern,
       timezone: config.cron.timezone,
-      workspace: {
+      computer: {
         sandbox,
         secrets,
       },
@@ -110,7 +110,7 @@ function validateScheduleMembers(value: object): void {
   const allowed = new Set([
     "id",
     "cron",
-    "workspace",
+    "computer",
     "run",
     "queue",
     "maxDuration",

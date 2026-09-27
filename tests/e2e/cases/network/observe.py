@@ -17,7 +17,7 @@ profile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(profile)
 cfg = json.loads((profile.CONFIG / 'config.json').read_text())
 query = """SELECT json_build_object('run_id',r.id,'attempt',r.current_attempt_number,
- 'runtime_id',l.runtime_instance_id)::text FROM runs r
+ 'runtime_id',l.computer_instance_id)::text FROM runs r
  JOIN run_leases l ON l.id=r.current_run_lease_id AND l.run_id=r.id
  WHERE r.id=:'run_id'::uuid AND l.terminal_at IS NULL;"""
 raw = profile.service_run(cfg['binaries']['psql'], '-h', str(profile.DATA), '-p', '55432', '-d', 'helmr',

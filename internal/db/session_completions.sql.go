@@ -11,104 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const advanceActorWorkspaceHead = `-- name: AdvanceActorWorkspaceHead :one
-UPDATE computers
-   SET head_version_id = $1,
-       revision = revision + 1,
-       last_activity_at = $2,
-       updated_at = $2
- WHERE computers.id = $3
-   AND computers.environment_id = $4
-   AND EXISTS (
-       SELECT 1 FROM environments
-        WHERE environments.id = computers.environment_id
-          AND environments.org_id = $5
-          AND environments.project_id = $6
-   )
-   AND computers.owner_session_id = $7
-   AND computers.owner_run_id IS NULL
-   AND computers.ownership_generation = $8
-   AND computers.writer_generation = $9
-   AND computers.head_version_id = $10
-   AND computers.status = 'active'
-   AND computers.desired_state = 'active'
-   AND computers.dirty_state = 'clean'
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
-`
-
-type AdvanceActorWorkspaceHeadParams struct {
-	NewHeadVersionID      pgtype.UUID        `json:"new_head_version_id"`
-	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
-	ID                    pgtype.UUID        `json:"id"`
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
-	OrgID                 pgtype.UUID        `json:"org_id"`
-	ProjectID             pgtype.UUID        `json:"project_id"`
-	SessionID             pgtype.UUID        `json:"session_id"`
-	OwnershipGeneration   int64              `json:"ownership_generation"`
-	WriterGeneration      int64              `json:"writer_generation"`
-	ExpectedHeadVersionID pgtype.UUID        `json:"expected_head_version_id"`
-}
-
-type AdvanceActorWorkspaceHeadRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActorWorkspaceHeadParams) (AdvanceActorWorkspaceHeadRow, error) {
-	row := q.db.QueryRow(ctx, advanceActorWorkspaceHead,
-		arg.NewHeadVersionID,
-		arg.CompletedAt,
-		arg.ID,
-		arg.EnvironmentID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.SessionID,
-		arg.OwnershipGeneration,
-		arg.WriterGeneration,
-		arg.ExpectedHeadVersionID,
-	)
-	var i AdvanceActorWorkspaceHeadRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
 const completeActorAttempt = `-- name: CompleteActorAttempt :one
 UPDATE run_attempts
    SET terminal_session_input_sequence = $1,
@@ -118,12 +20,12 @@ UPDATE run_attempts
        terminal_at = $5
  WHERE run_id = $6
    AND number = $7
-   AND workspace_id = $8
+   AND computer_id = $8
    AND entrypoint_kind = 'actor'
    AND session_input_start_sequence IS NOT NULL
    AND entrypoint_entered_at IS NOT NULL
    AND terminal_at IS NULL
-RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, session_input_start_sequence, base_workspace_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
+RETURNING run_id, number, entrypoint_kind, computer_id, entrypoint_entered_at, session_input_start_sequence, base_computer_disk_version_id, terminal_session_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at, computer_payload_required
 `
 
 type CompleteActorAttemptParams struct {
@@ -134,7 +36,7 @@ type CompleteActorAttemptParams struct {
 	CompletedAt                  pgtype.Timestamptz `json:"completed_at"`
 	RunID                        pgtype.UUID        `json:"run_id"`
 	Number                       int32              `json:"number"`
-	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	ComputerID                   pgtype.UUID        `json:"computer_id"`
 }
 
 func (q *Queries) CompleteActorAttempt(ctx context.Context, arg CompleteActorAttemptParams) (RunAttempt, error) {
@@ -146,17 +48,17 @@ func (q *Queries) CompleteActorAttempt(ctx context.Context, arg CompleteActorAtt
 		arg.CompletedAt,
 		arg.RunID,
 		arg.Number,
-		arg.WorkspaceID,
+		arg.ComputerID,
 	)
 	var i RunAttempt
 	err := row.Scan(
 		&i.RunID,
 		&i.Number,
 		&i.EntrypointKind,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.EntrypointEnteredAt,
 		&i.SessionInputStartSequence,
-		&i.BaseWorkspaceVersionID,
+		&i.BaseComputerDiskVersionID,
 		&i.TerminalSessionInputSequence,
 		&i.TerminalOutcome,
 		&i.TerminalReasonCode,
@@ -175,7 +77,7 @@ WITH created_run AS (
         deployment_id, deployment_definition_id, entrypoint_kind,
         entrypoint_declared_id, cause_kind, session_id,
         session_input_start_sequence, session_input_high_watermark,
-        workspace_id, base_workspace_version_id, metadata, tags,
+        computer_id, base_computer_disk_version_id, metadata, tags,
         queue_name, concurrency_key, queue_concurrency_limit, priority,
         queue_origin_at, queue_score_at, queued_expires_at,
         max_active_duration_ms, retry_policy, trace_id, root_span_id
@@ -184,7 +86,7 @@ WITH created_run AS (
            definitions.deployment_id, sessions.deployment_definition_id, 'actor',
            sessions.actor_declared_id, 'continuation', sessions.id,
            sessions.committed_input_sequence, sessions.next_input_sequence - 1,
-           sessions.workspace_id, computers.head_version_id,
+           sessions.computer_id, computers.head_disk_version_id,
            sessions.run_metadata, sessions.run_tags,
            sessions.run_queue_name, sessions.run_concurrency_key,
            sessions.run_queue_concurrency_limit, sessions.run_priority,
@@ -202,42 +104,34 @@ WITH created_run AS (
        AND definitions.kind = 'actor'
        AND definitions.declared_id = sessions.actor_declared_id
       JOIN computers
-        ON computers.id = sessions.workspace_id
-       AND computers.owner_session_id = sessions.id
-       AND computers.owner_run_id IS NULL
-       AND computers.head_version_id IS NOT NULL
+        ON computers.id = sessions.computer_id
+       AND computers.environment_id = sessions.environment_id
+       AND computers.head_disk_version_id IS NOT NULL
      WHERE sessions.environment_id = $5
        AND sessions.id = $6
-       AND sessions.workspace_id = $7
+       AND sessions.computer_id = $7
        AND sessions.current_run_id IS NULL
        AND sessions.run_generation = $8
        AND sessions.status IN ('open', 'closing') AND sessions.cancel_requested_at IS NULL
        AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND (sessions.status = 'open' OR sessions.committed_input_sequence < sessions.close_sequence)
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = computers.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = computers.id
-              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-       )
+       AND computers.status='active' AND computers.desired_state='active'
+       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL
+       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN runs r ON r.id=l.run_id
+         WHERE r.session_id=sessions.id AND l.process_reconciled_at IS NULL)
 	ON CONFLICT (session_id)
 	    WHERE session_id IS NOT NULL
 	      AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
 	DO NOTHING
-    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
+    RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, computer_id, base_computer_disk_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, instance_preparation_count, next_instance_preparation_at, terminal_at, computer_payload_required
 ), created_attempt AS (
     INSERT INTO run_attempts (
-        run_id, number, entrypoint_kind, workspace_id,
-        session_input_start_sequence, base_workspace_version_id
+        run_id, number, entrypoint_kind, computer_id,
+        session_input_start_sequence, base_computer_disk_version_id
     )
-    SELECT created_run.id, 1, 'actor', created_run.workspace_id,
-           created_run.session_input_start_sequence, created_run.base_workspace_version_id
+    SELECT created_run.id, 1, 'actor', created_run.computer_id,
+           created_run.session_input_start_sequence, created_run.base_computer_disk_version_id
       FROM created_run
     RETURNING run_id
 ), claimed_actor AS (
@@ -252,7 +146,7 @@ WITH created_run AS (
        AND created_attempt.run_id = created_run.id
     RETURNING sessions.id
 )
-SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.runtime_preparation_count, created_run.next_runtime_preparation_at, created_run.terminal_at, created_run.computer_payload_required
+SELECT created_run.id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.session_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.computer_id, created_run.base_computer_disk_version_id, created_run.session_input_start_sequence, created_run.session_input_high_watermark, created_run.payload, created_run.output, created_run.failure, created_run.status, created_run.revision, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.instance_preparation_count, created_run.next_instance_preparation_at, created_run.terminal_at, created_run.computer_payload_required
   FROM created_run
   JOIN claimed_actor ON claimed_actor.id = created_run.session_id
 `
@@ -264,7 +158,7 @@ type CreateActorContinuationRunParams struct {
 	RootSpanID            string             `json:"root_span_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	SessionID             pgtype.UUID        `json:"session_id"`
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ComputerID            pgtype.UUID        `json:"computer_id"`
 	ExpectedRunGeneration int64              `json:"expected_run_generation"`
 }
 
@@ -286,8 +180,8 @@ type CreateActorContinuationRunRow struct {
 	ScheduleTimezone          pgtype.Text        `json:"schedule_timezone"`
 	ParentRunID               pgtype.UUID        `json:"parent_run_id"`
 	ParentOwnsLifecycle       pgtype.Bool        `json:"parent_owns_lifecycle"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	BaseWorkspaceVersionID    pgtype.UUID        `json:"base_workspace_version_id"`
+	ComputerID                pgtype.UUID        `json:"computer_id"`
+	BaseComputerDiskVersionID pgtype.UUID        `json:"base_computer_disk_version_id"`
 	SessionInputStartSequence pgtype.Int8        `json:"session_input_start_sequence"`
 	SessionInputHighWatermark pgtype.Int8        `json:"session_input_high_watermark"`
 	Payload                   []byte             `json:"payload"`
@@ -318,8 +212,8 @@ type CreateActorContinuationRunRow struct {
 	FirstLeaseAt              pgtype.Timestamptz `json:"first_lease_at"`
 	StartedAt                 pgtype.Timestamptz `json:"started_at"`
 	RetryAt                   pgtype.Timestamptz `json:"retry_at"`
-	RuntimePreparationCount   int32              `json:"runtime_preparation_count"`
-	NextRuntimePreparationAt  pgtype.Timestamptz `json:"next_runtime_preparation_at"`
+	InstancePreparationCount  int32              `json:"instance_preparation_count"`
+	NextInstancePreparationAt pgtype.Timestamptz `json:"next_instance_preparation_at"`
 	TerminalAt                pgtype.Timestamptz `json:"terminal_at"`
 	ComputerPayloadRequired   pgtype.Bool        `json:"computer_payload_required"`
 }
@@ -332,7 +226,7 @@ func (q *Queries) CreateActorContinuationRun(ctx context.Context, arg CreateActo
 		arg.RootSpanID,
 		arg.EnvironmentID,
 		arg.SessionID,
-		arg.WorkspaceID,
+		arg.ComputerID,
 		arg.ExpectedRunGeneration,
 	)
 	var i CreateActorContinuationRunRow
@@ -354,8 +248,8 @@ func (q *Queries) CreateActorContinuationRun(ctx context.Context, arg CreateActo
 		&i.ScheduleTimezone,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
+		&i.ComputerID,
+		&i.BaseComputerDiskVersionID,
 		&i.SessionInputStartSequence,
 		&i.SessionInputHighWatermark,
 		&i.Payload,
@@ -386,8 +280,8 @@ func (q *Queries) CreateActorContinuationRun(ctx context.Context, arg CreateActo
 		&i.FirstLeaseAt,
 		&i.StartedAt,
 		&i.RetryAt,
-		&i.RuntimePreparationCount,
-		&i.NextRuntimePreparationAt,
+		&i.InstancePreparationCount,
+		&i.NextInstancePreparationAt,
 		&i.TerminalAt,
 		&i.ComputerPayloadRequired,
 	)
@@ -411,7 +305,7 @@ UPDATE sessions
    AND current_run_id = $2 AND run_generation = $7
    AND status IN ('open', 'closing')
    AND cancel_requested_at IS NULL
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type FailActorSessionParams struct {
@@ -440,7 +334,7 @@ func (q *Queries) FailActorSession(ctx context.Context, arg FailActorSessionPara
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Key,
 		&i.CurrentRunID,
 		&i.ConsecutiveExecutionLosses,
@@ -491,14 +385,14 @@ UPDATE runs
        terminal_at = $3,
        updated_at = $3
  WHERE id = $4
-   AND workspace_id = $5
+   AND computer_id = $5
    AND entrypoint_kind = 'actor'
    AND session_id = $6
    AND status = 'running'
    AND current_attempt_number = $7
    AND current_run_lease_id = $8
    AND active_started_at IS NULL
-RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
+RETURNING id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, computer_id, base_computer_disk_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, instance_preparation_count, next_instance_preparation_at, terminal_at, computer_payload_required
 `
 
 type FinishActorRunParams struct {
@@ -506,7 +400,7 @@ type FinishActorRunParams struct {
 	Failure       []byte             `json:"failure"`
 	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
 	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ComputerID    pgtype.UUID        `json:"computer_id"`
 	SessionID     pgtype.UUID        `json:"session_id"`
 	AttemptNumber int32              `json:"attempt_number"`
 	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
@@ -518,7 +412,7 @@ func (q *Queries) FinishActorRun(ctx context.Context, arg FinishActorRunParams) 
 		arg.Failure,
 		arg.CompletedAt,
 		arg.ID,
-		arg.WorkspaceID,
+		arg.ComputerID,
 		arg.SessionID,
 		arg.AttemptNumber,
 		arg.RunLeaseID,
@@ -542,8 +436,8 @@ func (q *Queries) FinishActorRun(ctx context.Context, arg FinishActorRunParams) 
 		&i.ScheduleTimezone,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
+		&i.ComputerID,
+		&i.BaseComputerDiskVersionID,
 		&i.SessionInputStartSequence,
 		&i.SessionInputHighWatermark,
 		&i.Payload,
@@ -574,8 +468,8 @@ func (q *Queries) FinishActorRun(ctx context.Context, arg FinishActorRunParams) 
 		&i.FirstLeaseAt,
 		&i.StartedAt,
 		&i.RetryAt,
-		&i.RuntimePreparationCount,
-		&i.NextRuntimePreparationAt,
+		&i.InstancePreparationCount,
+		&i.NextInstancePreparationAt,
 		&i.TerminalAt,
 		&i.ComputerPayloadRequired,
 	)
@@ -588,11 +482,11 @@ SELECT run_leases.terminal_request_fingerprint
   JOIN run_attempts
     ON run_attempts.run_id = run_leases.run_id
    AND run_attempts.number = run_leases.attempt_number
-   AND run_attempts.workspace_id = run_leases.workspace_id
+   AND run_attempts.computer_id = run_leases.computer_id
  WHERE run_leases.id = $1
    AND run_leases.lease_sequence = $2
    AND run_leases.worker_group_id = $3
-   AND run_leases.worker_instance_id = $4
+   AND run_leases.worker_host_id = $4
    AND run_leases.terminal_request_fingerprint IS NOT NULL
    AND run_leases.terminal_at IS NOT NULL
    AND run_attempts.entrypoint_kind = 'actor'
@@ -615,10 +509,10 @@ SELECT run_leases.terminal_request_fingerprint
 `
 
 type GetActorCompletionReplayParams struct {
-	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
-	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+	LeaseSequence int64       `json:"lease_sequence"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
 }
 
 func (q *Queries) GetActorCompletionReplay(ctx context.Context, arg GetActorCompletionReplayParams) (pgtype.Text, error) {
@@ -626,7 +520,7 @@ func (q *Queries) GetActorCompletionReplay(ctx context.Context, arg GetActorComp
 		arg.RunLeaseID,
 		arg.LeaseSequence,
 		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
+		arg.WorkerHostID,
 	)
 	var terminal_request_fingerprint pgtype.Text
 	err := row.Scan(&terminal_request_fingerprint)
@@ -643,12 +537,12 @@ UPDATE sessions
        updated_at = $2
  WHERE environment_id = $3
    AND id = $4
-   AND workspace_id = $5
+   AND computer_id = $5
    AND current_run_id = $6
    AND run_generation = $7
    AND status IN ('open', 'closing')
    AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type ReconcileActorTerminalRunParams struct {
@@ -656,7 +550,7 @@ type ReconcileActorTerminalRunParams struct {
 	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	ID                    pgtype.UUID        `json:"id"`
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ComputerID            pgtype.UUID        `json:"computer_id"`
 	RunID                 pgtype.UUID        `json:"run_id"`
 	ExpectedRunGeneration int64              `json:"expected_run_generation"`
 }
@@ -667,7 +561,7 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		arg.CompletedAt,
 		arg.EnvironmentID,
 		arg.ID,
-		arg.WorkspaceID,
+		arg.ComputerID,
 		arg.RunID,
 		arg.ExpectedRunGeneration,
 	)
@@ -677,7 +571,7 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Key,
 		&i.CurrentRunID,
 		&i.ConsecutiveExecutionLosses,
@@ -710,100 +604,6 @@ func (q *Queries) ReconcileActorTerminalRun(ctx context.Context, arg ReconcileAc
 		&i.UpdatedAt,
 		&i.ClosedAt,
 		&i.FailedAt,
-	)
-	return i, err
-}
-
-const releaseActorWorkspaceOwner = `-- name: ReleaseActorWorkspaceOwner :one
-UPDATE computers
-   SET owner_session_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       last_activity_at = $1,
-       updated_at = $1
- WHERE computers.id = $2
-   AND computers.environment_id = $3
-   AND computers.owner_session_id = $4
-   AND computers.owner_run_id IS NULL
-   AND computers.ownership_generation = $5
-   AND computers.writer_generation = $6
-   AND ((computers.status = 'active' AND computers.desired_state = 'active' AND computers.dirty_state = 'clean')
-        OR (computers.status = 'recovery_required' AND computers.recovery_failure IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM runtime_instances r WHERE r.workspace_id=computers.id AND r.reclaimed_at IS NULL)))
-   AND NOT EXISTS (
-       SELECT 1 FROM workspace_leases
-        WHERE workspace_leases.workspace_id = computers.id
-          AND workspace_leases.status IN ('active', 'releasing')
-   )
-   AND NOT EXISTS (
-       SELECT 1 FROM workspace_processes
-        WHERE workspace_processes.workspace_id = computers.id
-          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-   )
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
-`
-
-type ReleaseActorWorkspaceOwnerParams struct {
-	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
-	ID                  pgtype.UUID        `json:"id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	SessionID           pgtype.UUID        `json:"session_id"`
-	OwnershipGeneration int64              `json:"ownership_generation"`
-	WriterGeneration    int64              `json:"writer_generation"`
-}
-
-type ReleaseActorWorkspaceOwnerRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) ReleaseActorWorkspaceOwner(ctx context.Context, arg ReleaseActorWorkspaceOwnerParams) (ReleaseActorWorkspaceOwnerRow, error) {
-	row := q.db.QueryRow(ctx, releaseActorWorkspaceOwner,
-		arg.CompletedAt,
-		arg.ID,
-		arg.EnvironmentID,
-		arg.SessionID,
-		arg.OwnershipGeneration,
-		arg.WriterGeneration,
-	)
-	var i ReleaseActorWorkspaceOwnerRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
 	)
 	return i, err
 }

@@ -50,9 +50,9 @@ func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
 		t.Fatal("private material was not encrypted")
 	}
 	other := root
-	other.WorkspaceID = uuid.NewV7()
+	other.ComputerID = uuid.NewV7()
 	if _, _, err := store.ProxyLeaf(other, []string{"api.github.com"}); err == nil {
-		t.Fatal("cross-Workspace signer decrypt succeeded")
+		t.Fatal("cross-Computer signer decrypt succeeded")
 	}
 	if err := ValidateProxyTrust(root.Certificate, root.NotAfter, root.NotAfter); !errors.Is(err, ErrProxyTrustExpired) {
 		t.Fatalf("expiry=%v", err)

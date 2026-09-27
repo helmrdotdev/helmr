@@ -11,7 +11,7 @@ const base = image("hello-world")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const helloWorldWorkspace = sandbox({ id: "hello-world" })
+export const helloWorldComputer = sandbox({ id: "hello-world" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

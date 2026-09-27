@@ -86,7 +86,7 @@ def compile_config(raw):
         'SETUP_TOKEN': secrets.token_urlsafe(32), 'COMPUTER_WRAPPING_KEY_ID': 'verification',
         'EMAIL_PROVIDER': 'none',
     }
-    for key in ['AUTH_KEY', 'TOKEN_CREDENTIAL_KEY', 'WORKSPACE_FENCING_KEY', 'ENCRYPTION_KEY',
+    for key in ['AUTH_KEY', 'TOKEN_CREDENTIAL_KEY', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY',
                 'WORKER_TOKEN_SIGNING_KEY', 'COMPUTER_WRAPPING_KEY']:
         owned[key] = base64.b64encode(secrets.token_bytes(32)).decode()
     ch = {}
@@ -114,7 +114,7 @@ def compile_config(raw):
         'CHECKPOINT_ENCRYPTION_KEY': base64.b64encode(secrets.token_bytes(32)).decode(),
     })
     worker.setdefault('WORKER_COMPUTER_SAVE_EVERY', '30s')
-    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'WORKSPACE_FENCING_KEY', 'ENCRYPTION_KEY']}
+    dispatcher = {key: cp[key] for key in ['DATABASE_URL', 'CLICKHOUSE_URL', 'COMPUTER_FENCING_KEY', 'ENCRYPTION_KEY']}
     dispatcher.update(CLICKHOUSE_USER=ch['CLICKHOUSE_INGESTER_USER'], CLICKHOUSE_PASSWORD=ch['CLICKHOUSE_INGESTER_PASSWORD'])
     for values in [cp, worker, dispatcher, ch]:
         environment(values)

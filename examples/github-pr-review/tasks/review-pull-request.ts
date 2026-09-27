@@ -10,7 +10,7 @@ const base = image("github-pr-review")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const githubPRReviewWorkspace = sandbox({ id: "github-pr-review" })
+export const githubPRReviewComputer = sandbox({ id: "github-pr-review" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

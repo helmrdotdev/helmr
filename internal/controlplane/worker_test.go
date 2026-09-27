@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,7 +22,7 @@ import (
 func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
 	worker := workerActor{WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 1}
 	capabilities := validWorkerCapabilities(t)
-	if got := workerActivationParams(worker, capabilities, []byte(`{}`)).MaxRuntimeStarts; got != capabilities.ExecutionSlotsAvailable {
+	if got := workerActivationParams(worker, capabilities, []byte(`{}`)).MaxVMStarts; got != capabilities.ExecutionSlotsAvailable {
 		t.Fatalf("max runtime starts = %d, want %d", got, capabilities.ExecutionSlotsAvailable)
 	}
 }
@@ -30,19 +30,19 @@ func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
 func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 	t.Helper()
 	c := workerapi.Capabilities{
-		Runtime: runtimeid.Profile{
-			Arch: "x86_64", Contract: runtimeid.Contract,
+		Runtime: vmplatform.Profile{
+			Arch: "x86_64", Contract: vmplatform.Contract,
 			VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 			FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 			FirecrackerVersion:        "1.16.1",
 			SnapshotFormatVersion:     "6.0.0",
 			HostKernelRelease:         "6.8.0-1024-aws",
-			CPUTemplate:               runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
+			CPUTemplate:               vmplatform.CPUTemplateSelector{Kind: vmplatform.CPUTemplateNone},
 			KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 			InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 			RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
 		},
-		CPUShapes: []runtimeid.CPUShape{
+		CPUShapes: []vmplatform.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
@@ -50,8 +50,6 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 			FirecrackerVersion: "1.16.1", HostKernelRelease: "6.8.0-1024-aws",
 			MicrocodeVersion: "0x2b000643", BIOSVersion: "1.0", BIOSRevision: "1.0",
 		},
-		SubstrateFormat:           capacity.SubstrateFormatExt4,
-		SubstrateContract:         capacity.SubstrateContractExt4,
 		MaxVCPUs:                  8,
 		MaxMemoryMiB:              16 << 10,
 		VMMilliCPU:                2_000,
@@ -74,8 +72,8 @@ func validWorkerCapabilities(t *testing.T) workerapi.Capabilities {
 
 func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.T) {
 	want := validWorkerCapabilities(t)
-	want.Runtime.CPUTemplate = runtimeid.CPUTemplateSelector{
-		Kind:   runtimeid.CPUTemplateCustom,
+	want.Runtime.CPUTemplate = vmplatform.CPUTemplateSelector{
+		Kind:   vmplatform.CPUTemplateCustom,
 		Digest: "sha256:" + strings.Repeat("6", 64),
 	}
 	var err error
@@ -85,7 +83,7 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 	}
 
 	input := want
-	input.CPUShapes = append([]runtimeid.CPUShape(nil), want.CPUShapes...)
+	input.CPUShapes = append([]vmplatform.CPUShape(nil), want.CPUShapes...)
 	input.Runtime.ID = " \t" + input.Runtime.ID + "\n"
 	input.Runtime.Arch = " " + input.Runtime.Arch + " "
 	input.Runtime.Contract = "\t" + input.Runtime.Contract + "\n"
@@ -107,8 +105,6 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 	input.CPUEnvironment.MicrocodeVersion = " " + input.CPUEnvironment.MicrocodeVersion + " "
 	input.CPUEnvironment.BIOSVersion = " " + input.CPUEnvironment.BIOSVersion + " "
 	input.CPUEnvironment.BIOSRevision = " " + input.CPUEnvironment.BIOSRevision + " "
-	input.SubstrateFormat = " " + input.SubstrateFormat + " "
-	input.SubstrateContract = " " + input.SubstrateContract + " "
 
 	got, err := normalizeWorkerCapabilities(input)
 	if err != nil {
@@ -128,10 +124,7 @@ func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 	want := capacity.WorkerTemplate{
 		Schema:    capacity.WorkerTemplateSchema,
 		Runtime:   capabilities.Runtime,
-		CPUShapes: append([]runtimeid.CPUShape(nil), capabilities.CPUShapes...),
-		Substrate: capacity.SubstrateProfile{
-			Format: capacity.SubstrateFormatExt4, Contract: capacity.SubstrateContractExt4,
-		},
+		CPUShapes: append([]vmplatform.CPUShape(nil), capabilities.CPUShapes...),
 		Capacity: capacity.ResourceVector{
 			CPUMillis: 8_000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 64 << 30,
 			VMSlots: 4,
@@ -161,9 +154,7 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 
 	got := sealWorkerPoolParams(controlplaneTestWorkerGroupID, poolID, template)
 	want := db.SealWorkerPoolParams{
-		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
-		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
-		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
+		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
 		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
 		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
 		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
@@ -179,10 +170,10 @@ func TestSealWorkerPoolParamsDerivePendingPoolContract(t *testing.T) {
 	}
 }
 
-func TestRuntimeIdentityParamsDeriveCompleteProfile(t *testing.T) {
+func TestVMPlatformParamsDeriveCompleteProfile(t *testing.T) {
 	profile := validWorkerCapabilities(t).Runtime
-	profile.CPUTemplate = runtimeid.CPUTemplateSelector{
-		Kind:   runtimeid.CPUTemplateCustom,
+	profile.CPUTemplate = vmplatform.CPUTemplateSelector{
+		Kind:   vmplatform.CPUTemplateCustom,
 		Digest: "sha256:" + strings.Repeat("6", 64),
 	}
 	var err error
@@ -191,24 +182,24 @@ func TestRuntimeIdentityParamsDeriveCompleteProfile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := runtimeIdentityParams(profile)
-	want := db.UpsertRuntimeIdentityParams{
-		ID:                        profile.ID,
-		RuntimeArch:               profile.Arch,
-		VMRuntimeContract:         profile.Contract,
-		VMRuntimeDescriptorDigest: profile.VMRuntimeDescriptorDigest,
-		FirecrackerDigest:         profile.FirecrackerDigest,
-		FirecrackerVersion:        profile.FirecrackerVersion,
-		SnapshotFormatVersion:     profile.SnapshotFormatVersion,
-		HostKernelRelease:         profile.HostKernelRelease,
-		CPUTemplateKind:           string(profile.CPUTemplate.Kind),
-		CPUTemplateDigest:         pgtype.Text{String: profile.CPUTemplate.Digest, Valid: true},
-		KernelDigest:              profile.KernelDigest,
-		InitramfsDigest:           profile.InitramfsDigest,
-		RootfsDigest:              profile.RootfsDigest,
+	got := vmPlatformParams(profile)
+	want := db.UpsertVMPlatformParams{
+		ID:                    profile.ID,
+		Arch:                  profile.Arch,
+		Contract:              profile.Contract,
+		DescriptorDigest:      profile.VMRuntimeDescriptorDigest,
+		FirecrackerDigest:     profile.FirecrackerDigest,
+		FirecrackerVersion:    profile.FirecrackerVersion,
+		SnapshotFormatVersion: profile.SnapshotFormatVersion,
+		HostKernelRelease:     profile.HostKernelRelease,
+		CPUTemplateKind:       string(profile.CPUTemplate.Kind),
+		CPUTemplateDigest:     pgtype.Text{String: profile.CPUTemplate.Digest, Valid: true},
+		KernelDigest:          profile.KernelDigest,
+		InitramfsDigest:       profile.InitramfsDigest,
+		RootfsDigest:          profile.RootfsDigest,
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("runtime identity params = %#v, want %#v", got, want)
+		t.Fatalf("VM platform params = %#v, want %#v", got, want)
 	}
 }
 
@@ -237,8 +228,8 @@ func TestWorkerPoolMatchesRejectsCPUShapeOrTemplateMismatch(t *testing.T) {
 
 	t.Run("CPU template", func(t *testing.T) {
 		changed := template
-		changed.Runtime.CPUTemplate = runtimeid.CPUTemplateSelector{
-			Kind:   runtimeid.CPUTemplateCustom,
+		changed.Runtime.CPUTemplate = vmplatform.CPUTemplateSelector{
+			Kind:   vmplatform.CPUTemplateCustom,
 			Digest: "sha256:" + strings.Repeat("6", 64),
 		}
 		var err error
@@ -257,10 +248,6 @@ func TestNormalizeWorkerCapabilitiesEnforcesExecutionContract(t *testing.T) {
 		name   string
 		mutate func(*workerapi.Capabilities)
 	}{
-		{name: "substrate required", mutate: func(c *workerapi.Capabilities) {
-			c.SubstrateFormat = ""
-			c.SubstrateContract = ""
-		}},
 		{name: "execution slots required", mutate: func(c *workerapi.Capabilities) {
 			c.ExecutionSlotsAvailable = 0
 		}},
@@ -286,8 +273,8 @@ func TestNormalizeWorkerCapabilitiesRejectsCPUShapeOrTemplateMismatch(t *testing
 
 	t.Run("CPU template identity", func(t *testing.T) {
 		capabilities := validWorkerCapabilities(t)
-		capabilities.Runtime.CPUTemplate = runtimeid.CPUTemplateSelector{
-			Kind:   runtimeid.CPUTemplateCustom,
+		capabilities.Runtime.CPUTemplate = vmplatform.CPUTemplateSelector{
+			Kind:   vmplatform.CPUTemplateCustom,
 			Digest: "sha256:" + strings.Repeat("6", 64),
 		}
 		if _, err := normalizeWorkerCapabilities(capabilities); err == nil || !strings.Contains(err.Error(), "runtime.id") {
@@ -307,9 +294,7 @@ func sealedWorkerPool(
 		WorkerGroupID:                   pgvalue.UUID(groupID),
 		Name:                            name,
 		Status:                          "active",
-		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
-		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
-		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
+		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
 		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
 		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
 		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
@@ -329,8 +314,8 @@ func sealedWorkerPool(
 }
 
 func TestWorkerRoleReadinessReportsMissingObservation(t *testing.T) {
-	readiness := workerRoleReadiness(db.GetWorkerInstanceStatusRow{
-		Status: db.WorkerInstanceStatusActive,
+	readiness := workerRoleReadiness(db.GetWorkerHostStatusRow{
+		Status: db.WorkerHostStatusActive,
 	}, false, pgtype.Text{})
 	if readiness.Ready || readiness.PausedReason != "observation_missing" {
 		t.Fatalf("readiness = %+v, want observation_missing", readiness)

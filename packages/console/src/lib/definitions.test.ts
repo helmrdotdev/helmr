@@ -45,17 +45,17 @@ function captureRequests(body: unknown) {
   return calls;
 }
 
-test("starts a task with a workspace target and payload", async () => {
+test("starts a task with a computer target and payload", async () => {
   const calls = captureRequests({ run_id: "run-1" });
   const result = await startTask("send/email", scope, {
-    workspace: { id: "ws-1" },
+    computer: { id: "ws-1" },
     payload: { to: "a@example.com" },
     idempotency_key: "key-1",
   });
   expect(calls[0]?.url).toBe("/api/projects/project-1/environments/env-1/tasks/send%2Femail/start");
   expect(calls[0]?.init?.method).toBe("POST");
   expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-    workspace: { id: "ws-1" },
+    computer: { id: "ws-1" },
     payload: { to: "a@example.com" },
     idempotency_key: "key-1",
   });
@@ -64,14 +64,14 @@ test("starts a task with a workspace target and payload", async () => {
 
 test("starts a task without a payload when none is given", async () => {
   const calls = captureRequests({ run_id: "run-2" });
-  await startTask("nightly", scope, { workspace: { id: "ws-1" }, idempotency_key: "key-2" });
-  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ workspace: { id: "ws-1" }, idempotency_key: "key-2" });
+  await startTask("nightly", scope, { computer: { id: "ws-1" }, idempotency_key: "key-2" });
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ computer: { id: "ws-1" }, idempotency_key: "key-2" });
 });
 
-test("starts an actor with a workspace, key and initial input", async () => {
+test("starts an actor with a computer, key and initial input", async () => {
   const calls = captureRequests({ session_id: "sess-1", run_id: "run-3" });
   const result = await startActor("support/agent", scope, {
-    workspace: { id: "ws-2" },
+    computer: { id: "ws-2" },
     key: "customer-42",
     input: { greeting: "hi" },
     idempotency_key: "key-3",
@@ -79,7 +79,7 @@ test("starts an actor with a workspace, key and initial input", async () => {
   expect(calls[0]?.url).toBe("/api/projects/project-1/environments/env-1/actors/support%2Fagent/start");
   expect(calls[0]?.init?.method).toBe("POST");
   expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
-    workspace: { id: "ws-2" },
+    computer: { id: "ws-2" },
     key: "customer-42",
     input: { greeting: "hi" },
     idempotency_key: "key-3",
@@ -89,6 +89,6 @@ test("starts an actor with a workspace, key and initial input", async () => {
 
 test("starts an actor without optional key or input", async () => {
   const calls = captureRequests({ session_id: "sess-2", run_id: "run-4" });
-  await startActor("agent", scope, { workspace: { id: "ws-2" }, idempotency_key: "key-4" });
-  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ workspace: { id: "ws-2" }, idempotency_key: "key-4" });
+  await startActor("agent", scope, { computer: { id: "ws-2" }, idempotency_key: "key-4" });
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ computer: { id: "ws-2" }, idempotency_key: "key-4" });
 });

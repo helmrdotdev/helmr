@@ -17,7 +17,7 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 		writeError(w, badRequest(errors.New("invalid computer generation request")))
 		return
 	}
-	id, err := ids.Parse(request.RuntimeInstanceID)
+	id, err := ids.Parse(request.ComputerInstanceID)
 	if err != nil || request.DesiredVersion <= 0 {
 		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
 		return
@@ -28,7 +28,7 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 	}
 	worker := workerFromContext(r.Context())
 	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{
-		RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion,
+		RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion,
 	}, ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
 	result, err := s.publishInitialComputerGeneration(r.Context(), fence, initialComputerPublication{Root: request.Root, Config: request.Config})
 	if err != nil {

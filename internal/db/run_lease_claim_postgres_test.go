@@ -18,17 +18,17 @@ import (
 var runLeaseTestWorkerGroup = pgvalue.UUID(runtest.WorkerGroupID)
 
 type runLeaseClaimFixture struct {
-	pool                  *pgxpool.Pool
-	queries               *Queries
-	orgID                 uuid.UUID
-	projectID             uuid.UUID
-	environmentID         uuid.UUID
-	deploymentID          uuid.UUID
-	taskDefinitionID      uuid.UUID
-	workspaceDefinitionID uuid.UUID
-	workerID              uuid.UUID
-	runtimeIdentityID     string
-	base                  runtest.Fixture
+	pool                 *pgxpool.Pool
+	queries              *Queries
+	orgID                uuid.UUID
+	projectID            uuid.UUID
+	environmentID        uuid.UUID
+	deploymentID         uuid.UUID
+	taskDefinitionID     uuid.UUID
+	computerDefinitionID uuid.UUID
+	workerID             uuid.UUID
+	vmPlatformID         string
+	base                 runtest.Fixture
 }
 
 type runLeaseWork struct {
@@ -40,7 +40,7 @@ func TestRunLeaseClaimReadinessFailsClosedWithoutObservation(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE worker_instances SET observed_at = NULL WHERE id = $1`,
+		`UPDATE worker_hosts SET observed_at = NULL WHERE id = $1`,
 		fixture.workerID,
 	); err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	starting := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 
 	rows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8, WorkerHostID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,16 +86,12 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		t.Fatalf("discovery mutated assigned lease to state=%s claimed_at=%v", state, claimedAt)
 	}
 	if _, err := fixture.pool.Exec(ctx, `
-UPDATE workspace_mounts
-   SET status = 'failed', failed_at = now(), terminal_at = now(),
-       terminal_reason_code = 'test_failure'
- WHERE id = (SELECT workspace_mount_id FROM workspace_leases
-              WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
+UPDATE computer_instances SET mount_state='failed' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, starting.leaseID); err != nil {
 		t.Fatal(err)
 	}
 	rows, err = fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
 		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8,
-		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		WorkerHostID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -104,17 +100,13 @@ UPDATE workspace_mounts
 		t.Fatalf("discovery after Mount failure = %+v, want only healthy assigned lease", rows)
 	}
 	if _, err := fixture.pool.Exec(ctx, `
-UPDATE workspace_mounts
-   SET status = 'mounted', failed_at = NULL, terminal_at = NULL,
-       terminal_reason_code = NULL
- WHERE id = (SELECT workspace_mount_id FROM workspace_leases
-              WHERE owner_run_lease_id = $1)`, starting.leaseID); err != nil {
+UPDATE computer_instances SET mount_state='mounted' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, starting.leaseID); err != nil {
 		t.Fatal(err)
 	}
 
 	secretLocators, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +119,7 @@ UPDATE workspace_mounts
 
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -136,81 +128,18 @@ UPDATE workspace_mounts
 		t.Fatalf("locator run = %s, want %s", pgvalue.UUIDString(locators.RunID), assigned.runID)
 	}
 	if locators.RunWaitID.Valid ||
-		locators.SuspendCheckpointID.Valid ||
-		locators.CheckpointPrivateWorkspaceVersionID.Valid {
+		locators.SuspendCheckpointID.Valid {
 		t.Fatalf("fresh locator exposed restore authority: %+v", locators)
-	}
-	source, err := fixture.queries.GetRunCheckpointSource(ctx, GetRunCheckpointSourceParams{
-		SourceWorkspaceLeaseID: locators.WorkspaceLeaseID,
-		SourceRunLeaseID:       pgvalue.UUID(assigned.leaseID),
-		RunID:                  locators.RunID,
-		AttemptNumber:          locators.AttemptNumber,
-		WorkspaceID:            locators.WorkspaceID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if source.RunLease.ID != pgvalue.UUID(assigned.leaseID) ||
-		source.WorkspaceLease.ID != locators.WorkspaceLeaseID ||
-		source.WorkspaceLease.OwnerRunLeaseID != source.RunLease.ID ||
-		source.RuntimeInstance.ID != locators.RuntimeInstanceID {
-		t.Fatal("checkpoint source did not return one Run/Workspace Lease and Runtime receipt")
-	}
-	if _, err := fixture.queries.GetRunCheckpointSource(ctx, GetRunCheckpointSourceParams{
-		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.NewV7()),
-		SourceRunLeaseID:       pgvalue.UUID(assigned.leaseID),
-		RunID:                  locators.RunID,
-		AttemptNumber:          locators.AttemptNumber,
-		WorkspaceID:            locators.WorkspaceID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("mismatched source Workspace Lease error = %v, want no rows", err)
-	}
-	if _, err := fixture.queries.LockRunLeaseClaimWait(ctx, LockRunLeaseClaimWaitParams{
-		ID:                pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID:     locators.EnvironmentID,
-		RunID:             locators.RunID,
-		AttemptNumber:     locators.AttemptNumber,
-		WorkspaceID:       locators.WorkspaceID,
-		CurrentRunLeaseID: pgvalue.UUID(assigned.leaseID),
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing restore Wait error = %v, want no rows", err)
-	}
-	if _, err := fixture.queries.LockRestorableRunCheckpoint(ctx, LockRestorableRunCheckpointParams{
-		ID:            pgvalue.UUID(uuid.NewV7()),
-		RunID:         locators.RunID,
-		AttemptNumber: locators.AttemptNumber,
-		RunWaitID:     pgvalue.UUID(uuid.NewV7()),
-		WorkspaceID:   locators.WorkspaceID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
-	}
-	if _, err := fixture.queries.LockReadyRunCheckpoint(ctx, LockReadyRunCheckpointParams{
-		ID:            pgvalue.UUID(uuid.NewV7()),
-		RunID:         locators.RunID,
-		AttemptNumber: locators.AttemptNumber,
-		RunWaitID:     pgvalue.UUID(uuid.NewV7()),
-		WorkspaceID:   locators.WorkspaceID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
-	}
-	if _, err := fixture.queries.GetRunCheckpointSource(ctx, GetRunCheckpointSourceParams{
-		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.NewV7()),
-		SourceRunLeaseID:       pgvalue.UUID(uuid.NewV7()),
-		RunID:                  locators.RunID,
-		AttemptNumber:          locators.AttemptNumber,
-		WorkspaceID:            locators.WorkspaceID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing source Runtime error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 2,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale sequence locator error = %v, want no rows", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(uuid.NewV7()),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(uuid.NewV7()),
 		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-worker locator error = %v, want no rows", err)
 	}
@@ -222,20 +151,20 @@ UPDATE workspace_mounts
 	locked := New(tx)
 	run, err := locked.LockRunLeaseClaimRun(ctx, LockRunLeaseClaimRunParams{
 		ID: locators.RunID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, WorkspaceID: locators.WorkspaceID,
+		EnvironmentID: locators.EnvironmentID, ComputerID: locators.ComputerID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := locked.LockRunLeaseClaimWorkspace(ctx, LockRunLeaseClaimWorkspaceParams{
-		ID: locators.WorkspaceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+	computer, err := locked.LockRunLeaseClaimComputer(ctx, LockRunLeaseClaimComputerParams{
+		ID: locators.ComputerID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := locked.LockRunLeaseClaimAttempt(ctx, LockRunLeaseClaimAttemptParams{
-		RunID: locators.RunID, Number: locators.AttemptNumber, WorkspaceID: locators.WorkspaceID,
+		RunID: locators.RunID, Number: locators.AttemptNumber, ComputerID: locators.ComputerID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,46 +178,24 @@ UPDATE workspace_mounts
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := locked.LockRunLeaseClaimRuntime(ctx, LockRunLeaseClaimRuntimeParams{
-		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+	instance, err := locked.LockRunLeaseClaimInstance(ctx, LockRunLeaseClaimInstanceParams{
+		ID: locators.ComputerInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
 		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, WorkspaceID: locators.WorkspaceID,
-	}); err != nil {
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, ComputerID: locators.ComputerID,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := locked.LockRunLeaseClaimLease(ctx, LockRunLeaseClaimLeaseParams{
 		ID: pgvalue.UUID(assigned.leaseID), RunID: locators.RunID,
-		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
+		ComputerID: locators.ComputerID, AttemptNumber: locators.AttemptNumber,
 		LeaseSequence: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	mount, err := locked.LockRunLeaseClaimMount(ctx, LockRunLeaseClaimMountParams{
-		ID: locators.WorkspaceMountID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, RuntimeInstanceID: locators.RuntimeInstanceID, WorkspaceID: locators.WorkspaceID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspaceLease, err := locked.LockRunLeaseClaimWorkspaceLease(ctx, LockRunLeaseClaimWorkspaceLeaseParams{
-		ID: locators.WorkspaceLeaseID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
-		WorkerEpoch: 1, RuntimeInstanceID: locators.RuntimeInstanceID, WorkspaceID: locators.WorkspaceID,
-		WorkspaceMountID: locators.WorkspaceMountID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if run.CurrentRunLeaseID != pgvalue.UUID(assigned.leaseID) ||
-		workspaceLease.OwnerRunLeaseID != pgvalue.UUID(assigned.leaseID) ||
-		workspaceLease.MountFencingGeneration != mount.FencingGeneration ||
-		workspaceLease.OwnershipGeneration != workspace.OwnershipGeneration ||
-		workspaceLease.WriterGeneration != workspace.WriterGeneration {
-		t.Fatal("locked claim authority is not one exact attachment")
+	if run.CurrentRunLeaseID != pgvalue.UUID(assigned.leaseID) || instance.ComputerID != computer.ID || instance.WriterGeneration != computer.WriterGeneration || instance.ID != locators.ComputerInstanceID || instance.WriterGeneration != locators.WriterGeneration || instance.MountState != "mounted" {
+		t.Fatal("claim is not attached to the current physical writer")
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -296,7 +203,7 @@ UPDATE workspace_mounts
 
 	claimed, err := fixture.queries.MarkRunLeaseStarting(ctx, MarkRunLeaseStartingParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -307,7 +214,7 @@ UPDATE workspace_mounts
 	firstClaimedAt := claimed.ClaimedAt.Time
 	if _, err := fixture.queries.MarkRunLeaseStarting(ctx, MarkRunLeaseStartingParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second claim update error = %v, want no rows", err)
 	}
@@ -317,9 +224,9 @@ UPDATE workspace_mounts
 		  FROM run_leases
 		 WHERE run_id = $1
 		   AND attempt_number = 1
-		   AND workspace_id = $2
+		   AND computer_id = $2
 		   AND id = $3
-	`, pgvalue.UUID(assigned.runID), locators.WorkspaceID, pgvalue.UUID(assigned.leaseID)).Scan(&replayedClaimedAt); err != nil {
+	`, pgvalue.UUID(assigned.runID), locators.ComputerID, pgvalue.UUID(assigned.leaseID)).Scan(&replayedClaimedAt); err != nil {
 		t.Fatal(err)
 	}
 	if !replayedClaimedAt.Valid || !replayedClaimedAt.Time.Equal(firstClaimedAt) {
@@ -328,7 +235,7 @@ UPDATE workspace_mounts
 	unclaimed := fixture.addWork(t, ctx, "assigned", time.Now())
 
 	if _, err := fixture.pool.Exec(ctx,
-		`UPDATE worker_instances SET status = 'draining', draining_at = now() WHERE id = $1`,
+		`UPDATE worker_hosts SET status = 'draining', draining_at = now() WHERE id = $1`,
 		fixture.workerID,
 	); err != nil {
 		t.Fatal(err)
@@ -340,7 +247,7 @@ UPDATE workspace_mounts
 		t.Fatal(err)
 	}
 	drainingRows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, RowLimit: 8, WorkerHostID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -364,25 +271,25 @@ UPDATE workspace_mounts
 	}
 	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(unclaimed.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining assigned Secret locator: %v", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining replay Secret locator: %v", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining replay claim locator: %v", err)
 	}
 	if _, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining starting lease start locator: %v", err)
 	}
@@ -398,15 +305,15 @@ UPDATE runs
  WHERE id = $1`, pgvalue.UUID(assigned.runID)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, GetRunEntrypointLocatorsParams{
+	if _, err := fixture.queries.GetLiveRunLeaseLocators(ctx, GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 1}); err != nil {
 		t.Fatalf("draining running lease entrypoint locator: %v", err)
 	}
-	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, GetRunEntrypointLocatorsParams{
+	if _, err := fixture.queries.GetLiveRunLeaseLocators(ctx, GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID),
 		WorkerEpoch: 2}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale draining entrypoint locator error = %v, want no rows", err)
 	}
@@ -416,17 +323,17 @@ func newRunLeaseClaimFixture(t *testing.T, _ context.Context) runLeaseClaimFixtu
 	t.Helper()
 	base := runtest.New(t)
 	return runLeaseClaimFixture{
-		pool:                  base.Pool,
-		queries:               New(base.Pool),
-		orgID:                 base.OrgID,
-		projectID:             base.ProjectID,
-		environmentID:         base.EnvironmentID,
-		deploymentID:          base.DeploymentID,
-		taskDefinitionID:      base.TaskDefinitionID,
-		workspaceDefinitionID: base.WorkspaceDefinitionID,
-		workerID:              base.WorkerID,
-		runtimeIdentityID:     base.RuntimeIdentityID,
-		base:                  base,
+		pool:                 base.Pool,
+		queries:              New(base.Pool),
+		orgID:                base.OrgID,
+		projectID:            base.ProjectID,
+		environmentID:        base.EnvironmentID,
+		deploymentID:         base.DeploymentID,
+		taskDefinitionID:     base.TaskDefinitionID,
+		computerDefinitionID: base.ComputerDefinitionID,
+		workerID:             base.WorkerID,
+		vmPlatformID:         base.VMPlatformID,
+		base:                 base,
 	}
 }
 
@@ -468,7 +375,7 @@ func TestRunLeaseDiscoveryOrdersByCreationWithinState(t *testing.T) {
 		first, second = second, first
 	}
 	rows, err := fixture.queries.DiscoverWorkerRunLeaseWork(ctx, DiscoverWorkerRunLeaseWorkParams{
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1, RowLimit: 8,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1, RowLimit: 8,
 	})
 	if err != nil {
 		t.Fatal(err)

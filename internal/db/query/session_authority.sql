@@ -35,13 +35,13 @@ WITH allocated AS (
     UPDATE sessions SET next_event_sequence = next_event_sequence + 1
      WHERE sessions.environment_id = sqlc.arg(environment_id) AND sessions.id = sqlc.arg(session_id)
        AND next_event_sequence <= 9007199254740991
-    RETURNING sessions.id, sessions.workspace_id, sessions.next_event_sequence - 1 AS sequence
+    RETURNING sessions.id, sessions.computer_id, sessions.next_event_sequence - 1 AS sequence
 )
-INSERT INTO session_events (id, environment_id, session_id, workspace_id, turn_id, message_id, sequence, kind, data,
- producer_run_id, producer_attempt_number, run_generation, workspace_version_id)
-SELECT sqlc.arg(id), sqlc.arg(environment_id), allocated.id, allocated.workspace_id, sqlc.narg(turn_id), sqlc.narg(message_id), allocated.sequence,
+INSERT INTO session_events (id, environment_id, session_id, computer_id, turn_id, message_id, sequence, kind, data,
+ producer_run_id, producer_attempt_number, run_generation, computer_disk_version_id)
+SELECT sqlc.arg(id), sqlc.arg(environment_id), allocated.id, allocated.computer_id, sqlc.narg(turn_id), sqlc.narg(message_id), allocated.sequence,
  sqlc.arg(kind), sqlc.arg(data), sqlc.narg(producer_run_id), sqlc.narg(producer_attempt_number),
- sqlc.narg(run_generation), sqlc.narg(workspace_version_id) FROM allocated
+ sqlc.narg(run_generation), sqlc.narg(computer_disk_version_id) FROM allocated
 RETURNING *;
 
 -- name: GetSessionEvent :one

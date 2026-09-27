@@ -15,11 +15,31 @@ import (
 )
 
 func lockSession(ctx context.Context, q db.Querier, target Target) (db.Session, error) {
+	locator, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.Session{}, &OperationError{Code: "session_not_found"}
+	}
+	if err != nil {
+		return db.Session{}, err
+	}
+	if err := lockSessionComputer(ctx, q, locator.EnvironmentID, locator.ComputerID); err != nil {
+		return db.Session{}, err
+	}
 	s, err := q.LockSessionTurnAuthority(ctx, db.LockSessionTurnAuthorityParams{EnvironmentID: pgvalue.UUID(target.EnvironmentID), ID: pgvalue.UUID(target.SessionID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s, &OperationError{Code: "session_not_found"}
 	}
 	return s, err
+}
+
+func lockSessionComputer(ctx context.Context, q db.Querier, environmentID, computerID pgtype.UUID) error {
+	if _, err := q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{EnvironmentID: environmentID, ID: computerID}); err != nil {
+		return err
+	}
+	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{EnvironmentID: environmentID, ComputerID: computerID}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	return nil
 }
 
 func claimOperation(ctx context.Context, q db.Querier, request ControlRequest, name string, fingerprint any) (db.IdempotencyClaim, error) {
@@ -153,5 +173,5 @@ func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (Admissi
 }
 
 func appendLifecycleEvent(ctx context.Context, q db.Querier, actor db.Session, turnID, messageID pgtype.UUID, kind string, data json.RawMessage, version pgtype.UUID) (db.SessionEvent, error) {
-	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID, MessageID: messageID, Kind: kind, Data: data, WorkspaceVersionID: version})
+	return q.AppendSessionEvent(ctx, db.AppendSessionEventParams{ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, TurnID: turnID, MessageID: messageID, Kind: kind, Data: data, ComputerDiskVersionID: version})
 }

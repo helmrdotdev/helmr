@@ -56,12 +56,12 @@ WITH bound AS (
        AND s.current_run_id=run_waits.run_id AND s.run_generation=$3
        AND s.dispatch_hold_id IS NULL AND t.status='running' AND t.attempt_number=run_waits.attempt_number
        AND t.settlement_started_at IS NULL AND t.interrupt_requested_at IS NULL)
- RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.workspace_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.actor_speculative_input_sequence, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.checkpoint_request_version, run_waits.checkpoint_ack_version, run_waits.checkpoint_due_at, run_waits.suspend_checkpoint_id, run_waits.resume_attach_id, run_waits.resume_request_version, run_waits.resume_ack_version, run_waits.base_workspace_version_id, run_waits.base_workspace_content_digest, run_waits.resume_workspace_version_id, run_waits.ownership_generation, run_waits.parent_writer_generation, run_waits.child_writer_generation, run_waits.resume_writer_generation, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at, run_waits.computer_payload_required
+ RETURNING run_waits.id, run_waits.environment_id, run_waits.run_id, run_waits.computer_id, run_waits.turn_session_id, run_waits.turn_id, run_waits.turn_run_generation, run_waits.kind, run_waits.condition_status, run_waits.due_at, run_waits.timeout_at, run_waits.idle_timeout_ms, run_waits.token_id, run_waits.child_run_id, run_waits.child_target_declared_id, run_waits.child_claim_id, run_waits.child_request, run_waits.session_id, run_waits.after_input_sequence, run_waits.condition_result, run_waits.condition_error, run_waits.condition_terminal_at, run_waits.condition_reason_code, run_waits.completed_turn_id, run_waits.suspension_status, run_waits.token_registration_run_revision, run_waits.registration_request_fingerprint, run_waits.expected_run_revision, run_waits.attempt_number, run_waits.current_run_lease_id, run_waits.prior_run_lease_id, run_waits.suspend_checkpoint_id, run_waits.metadata, run_waits.tags, run_waits.suspension_terminal_at, run_waits.suspension_reason_code, run_waits.suspension_error, run_waits.created_at, run_waits.updated_at, run_waits.computer_payload_required
 ), unreadied AS (
  UPDATE session_turns SET ready_run_lease_id=NULL FROM bound
  WHERE session_turns.id=bound.turn_id RETURNING session_turns.id
 )
-SELECT bound.id, bound.environment_id, bound.run_id, bound.workspace_id, bound.turn_session_id, bound.turn_id, bound.turn_run_generation, bound.kind, bound.condition_status, bound.due_at, bound.timeout_at, bound.idle_timeout_ms, bound.token_id, bound.child_run_id, bound.child_target_declared_id, bound.child_claim_id, bound.child_request, bound.session_id, bound.after_input_sequence, bound.condition_result, bound.condition_error, bound.condition_terminal_at, bound.condition_reason_code, bound.completed_turn_id, bound.suspension_status, bound.token_registration_run_revision, bound.registration_request_fingerprint, bound.expected_run_revision, bound.attempt_number, bound.actor_speculative_input_sequence, bound.current_run_lease_id, bound.prior_run_lease_id, bound.checkpoint_request_version, bound.checkpoint_ack_version, bound.checkpoint_due_at, bound.suspend_checkpoint_id, bound.resume_attach_id, bound.resume_request_version, bound.resume_ack_version, bound.base_workspace_version_id, bound.base_workspace_content_digest, bound.resume_workspace_version_id, bound.ownership_generation, bound.parent_writer_generation, bound.child_writer_generation, bound.resume_writer_generation, bound.metadata, bound.tags, bound.suspension_terminal_at, bound.suspension_reason_code, bound.suspension_error, bound.created_at, bound.updated_at, bound.computer_payload_required FROM bound JOIN unreadied ON unreadied.id=bound.turn_id
+SELECT bound.id, bound.environment_id, bound.run_id, bound.computer_id, bound.turn_session_id, bound.turn_id, bound.turn_run_generation, bound.kind, bound.condition_status, bound.due_at, bound.timeout_at, bound.idle_timeout_ms, bound.token_id, bound.child_run_id, bound.child_target_declared_id, bound.child_claim_id, bound.child_request, bound.session_id, bound.after_input_sequence, bound.condition_result, bound.condition_error, bound.condition_terminal_at, bound.condition_reason_code, bound.completed_turn_id, bound.suspension_status, bound.token_registration_run_revision, bound.registration_request_fingerprint, bound.expected_run_revision, bound.attempt_number, bound.current_run_lease_id, bound.prior_run_lease_id, bound.suspend_checkpoint_id, bound.metadata, bound.tags, bound.suspension_terminal_at, bound.suspension_reason_code, bound.suspension_error, bound.created_at, bound.updated_at, bound.computer_payload_required FROM bound JOIN unreadied ON unreadied.id=bound.turn_id
 `
 
 type BindRunWaitTurnParams struct {
@@ -75,7 +75,7 @@ type BindRunWaitTurnRow struct {
 	ID                             pgtype.UUID        `json:"id"`
 	EnvironmentID                  pgtype.UUID        `json:"environment_id"`
 	RunID                          pgtype.UUID        `json:"run_id"`
-	WorkspaceID                    pgtype.UUID        `json:"workspace_id"`
+	ComputerID                     pgtype.UUID        `json:"computer_id"`
 	TurnSessionID                  pgtype.UUID        `json:"turn_session_id"`
 	TurnID                         pgtype.UUID        `json:"turn_id"`
 	TurnRunGeneration              pgtype.Int8        `json:"turn_run_generation"`
@@ -101,23 +101,9 @@ type BindRunWaitTurnRow struct {
 	RegistrationRequestFingerprint pgtype.Text        `json:"registration_request_fingerprint"`
 	ExpectedRunRevision            int64              `json:"expected_run_revision"`
 	AttemptNumber                  int32              `json:"attempt_number"`
-	ActorSpeculativeInputSequence  pgtype.Int8        `json:"actor_speculative_input_sequence"`
 	CurrentRunLeaseID              pgtype.UUID        `json:"current_run_lease_id"`
 	PriorRunLeaseID                pgtype.UUID        `json:"prior_run_lease_id"`
-	CheckpointRequestVersion       int64              `json:"checkpoint_request_version"`
-	CheckpointAckVersion           int64              `json:"checkpoint_ack_version"`
-	CheckpointDueAt                pgtype.Timestamptz `json:"checkpoint_due_at"`
 	SuspendCheckpointID            pgtype.UUID        `json:"suspend_checkpoint_id"`
-	ResumeAttachID                 pgtype.UUID        `json:"resume_attach_id"`
-	ResumeRequestVersion           int64              `json:"resume_request_version"`
-	ResumeAckVersion               int64              `json:"resume_ack_version"`
-	BaseWorkspaceVersionID         pgtype.UUID        `json:"base_workspace_version_id"`
-	BaseWorkspaceContentDigest     pgtype.Text        `json:"base_workspace_content_digest"`
-	ResumeWorkspaceVersionID       pgtype.UUID        `json:"resume_workspace_version_id"`
-	OwnershipGeneration            pgtype.Int8        `json:"ownership_generation"`
-	ParentWriterGeneration         pgtype.Int8        `json:"parent_writer_generation"`
-	ChildWriterGeneration          pgtype.Int8        `json:"child_writer_generation"`
-	ResumeWriterGeneration         pgtype.Int8        `json:"resume_writer_generation"`
 	Metadata                       []byte             `json:"metadata"`
 	Tags                           []string           `json:"tags"`
 	SuspensionTerminalAt           pgtype.Timestamptz `json:"suspension_terminal_at"`
@@ -140,7 +126,7 @@ func (q *Queries) BindRunWaitTurn(ctx context.Context, arg BindRunWaitTurnParams
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.TurnSessionID,
 		&i.TurnID,
 		&i.TurnRunGeneration,
@@ -166,23 +152,9 @@ func (q *Queries) BindRunWaitTurn(ctx context.Context, arg BindRunWaitTurnParams
 		&i.RegistrationRequestFingerprint,
 		&i.ExpectedRunRevision,
 		&i.AttemptNumber,
-		&i.ActorSpeculativeInputSequence,
 		&i.CurrentRunLeaseID,
 		&i.PriorRunLeaseID,
-		&i.CheckpointRequestVersion,
-		&i.CheckpointAckVersion,
-		&i.CheckpointDueAt,
 		&i.SuspendCheckpointID,
-		&i.ResumeAttachID,
-		&i.ResumeRequestVersion,
-		&i.ResumeAckVersion,
-		&i.BaseWorkspaceVersionID,
-		&i.BaseWorkspaceContentDigest,
-		&i.ResumeWorkspaceVersionID,
-		&i.OwnershipGeneration,
-		&i.ParentWriterGeneration,
-		&i.ChildWriterGeneration,
-		&i.ResumeWriterGeneration,
 		&i.Metadata,
 		&i.Tags,
 		&i.SuspensionTerminalAt,
@@ -247,7 +219,7 @@ const clearSessionDispatchHold = `-- name: ClearSessionDispatchHold :one
 UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_reason=NULL,dispatch_hold_run_id=NULL,
  dispatch_hold_attempt_number=NULL,dispatch_hold_run_generation=NULL,revision=revision+1,updated_at=now()
 WHERE environment_id=$1 AND id=$2 AND dispatch_hold_id=$3 AND active_turn_id IS NULL
- AND current_run_id IS NULL AND dispatch_hold_reason = 'interrupted' RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+ AND current_run_id IS NULL AND dispatch_hold_reason = 'interrupted' RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type ClearSessionDispatchHoldParams struct {
@@ -264,7 +236,7 @@ func (q *Queries) ClearSessionDispatchHold(ctx context.Context, arg ClearSession
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Key,
 		&i.CurrentRunID,
 		&i.ConsecutiveExecutionLosses,
@@ -310,7 +282,7 @@ WHERE environment_id=$3 AND id=$4
  AND current_run_id=$5 AND run_generation=$6
  AND dispatch_hold_id=$7 AND dispatch_hold_reason='interrupt_requested'
  AND active_turn_id IS NOT DISTINCT FROM $8
-RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type CompleteSessionInterruptionParams struct {
@@ -341,7 +313,7 @@ func (q *Queries) CompleteSessionInterruption(ctx context.Context, arg CompleteS
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Key,
 		&i.CurrentRunID,
 		&i.ConsecutiveExecutionLosses,
@@ -434,7 +406,7 @@ WITH allocated AS (
  UPDATE sessions SET next_input_sequence=next_input_sequence+1,revision=revision+1,updated_at=now()
  WHERE sessions.environment_id=$4 AND sessions.id=$5
    AND status='open' AND next_input_sequence <= 9007199254740991
- RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at,next_input_sequence-1 AS sequence
+ RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at,next_input_sequence-1 AS sequence
 )
 INSERT INTO session_turns(id,environment_id,session_id,sequence,data,source_run_id)
 SELECT $1,allocated.environment_id,allocated.id,allocated.sequence,$2,$3
@@ -598,7 +570,7 @@ UPDATE sessions SET dispatch_hold_id=$1,dispatch_hold_reason=$2,
  dispatch_hold_run_id=$3,dispatch_hold_attempt_number=$4,
  dispatch_hold_run_generation=run_generation,revision=revision+1,updated_at=now()
 WHERE sessions.environment_id=$5 AND sessions.id=$6
- AND current_run_id=$3 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+ AND current_run_id=$3 AND status IN ('open','closing') RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 `
 
 type HoldSessionExecutionParams struct {
@@ -625,7 +597,7 @@ func (q *Queries) HoldSessionExecution(ctx context.Context, arg HoldSessionExecu
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Key,
 		&i.CurrentRunID,
 		&i.ConsecutiveExecutionLosses,
@@ -663,7 +635,7 @@ func (q *Queries) HoldSessionExecution(ctx context.Context, arg HoldSessionExecu
 }
 
 const listSessionEvents = `-- name: ListSessionEvents :many
-SELECT e.id, e.environment_id, e.session_id, e.turn_id, e.message_id, e.workspace_id, e.sequence, e.kind, e.data, e.producer_run_id, e.producer_attempt_number, e.run_generation, e.workspace_version_id, e.created_at,r.deployment_id FROM session_events e
+SELECT e.id, e.environment_id, e.session_id, e.turn_id, e.message_id, e.computer_id, e.sequence, e.kind, e.data, e.producer_run_id, e.producer_attempt_number, e.run_generation, e.computer_disk_version_id, e.created_at,r.deployment_id FROM session_events e
 LEFT JOIN runs r ON r.id=e.producer_run_id
 WHERE e.environment_id=$1 AND e.session_id=$2 AND e.sequence > $3
 ORDER BY e.sequence LIMIT $4
@@ -682,14 +654,14 @@ type ListSessionEventsRow struct {
 	SessionID             pgtype.UUID        `json:"session_id"`
 	TurnID                pgtype.UUID        `json:"turn_id"`
 	MessageID             pgtype.UUID        `json:"message_id"`
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ComputerID            pgtype.UUID        `json:"computer_id"`
 	Sequence              int64              `json:"sequence"`
 	Kind                  string             `json:"kind"`
 	Data                  []byte             `json:"data"`
 	ProducerRunID         pgtype.UUID        `json:"producer_run_id"`
 	ProducerAttemptNumber pgtype.Int4        `json:"producer_attempt_number"`
 	RunGeneration         pgtype.Int8        `json:"run_generation"`
-	WorkspaceVersionID    pgtype.UUID        `json:"workspace_version_id"`
+	ComputerDiskVersionID pgtype.UUID        `json:"computer_disk_version_id"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 	DeploymentID          pgtype.UUID        `json:"deployment_id"`
 }
@@ -714,14 +686,14 @@ func (q *Queries) ListSessionEvents(ctx context.Context, arg ListSessionEventsPa
 			&i.SessionID,
 			&i.TurnID,
 			&i.MessageID,
-			&i.WorkspaceID,
+			&i.ComputerID,
 			&i.Sequence,
 			&i.Kind,
 			&i.Data,
 			&i.ProducerRunID,
 			&i.ProducerAttemptNumber,
 			&i.RunGeneration,
-			&i.WorkspaceVersionID,
+			&i.ComputerDiskVersionID,
 			&i.CreatedAt,
 			&i.DeploymentID,
 		); err != nil {
@@ -818,20 +790,20 @@ func (q *Queries) LockSessionMessage(ctx context.Context, arg LockSessionMessage
 }
 
 const lockWorkerSessionOperationActors = `-- name: LockWorkerSessionOperationActors :many
-SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.workspace_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at FROM sessions s
+SELECT s.id, s.environment_id, s.actor_declared_id, s.deployment_definition_id, s.computer_id, s.key, s.current_run_id, s.consecutive_execution_losses, s.run_generation, s.revision, s.active_turn_id, s.dispatch_hold_id, s.dispatch_hold_run_id, s.dispatch_hold_attempt_number, s.dispatch_hold_run_generation, s.dispatch_hold_reason, s.failure, s.failure_run_id, s.next_input_sequence, s.committed_input_sequence, s.next_event_sequence, s.run_queue_name, s.run_concurrency_key, s.run_queue_concurrency_limit, s.run_priority, s.run_queue_ttl_ms, s.run_max_active_duration_ms, s.run_retry_policy, s.run_metadata, s.run_tags, s.status, s.close_sequence, s.cancel_requested_at, s.created_at, s.updated_at, s.closed_at, s.failed_at FROM sessions s
 WHERE s.environment_id=$1
- AND (s.id=$2 OR s.id=(SELECT w.owner_session_id FROM computers w WHERE w.id=$3))
+ AND (s.id=$2 OR s.id=(SELECT r.session_id FROM runs r WHERE r.id=$3 AND r.environment_id=$1))
 ORDER BY s.id FOR UPDATE OF s
 `
 
 type LockWorkerSessionOperationActorsParams struct {
-	EnvironmentID     pgtype.UUID `json:"environment_id"`
-	TargetSessionID   pgtype.UUID `json:"target_session_id"`
-	SourceWorkspaceID pgtype.UUID `json:"source_workspace_id"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	TargetSessionID pgtype.UUID `json:"target_session_id"`
+	SourceRunID     pgtype.UUID `json:"source_run_id"`
 }
 
 func (q *Queries) LockWorkerSessionOperationActors(ctx context.Context, arg LockWorkerSessionOperationActorsParams) ([]Session, error) {
-	rows, err := q.db.Query(ctx, lockWorkerSessionOperationActors, arg.EnvironmentID, arg.TargetSessionID, arg.SourceWorkspaceID)
+	rows, err := q.db.Query(ctx, lockWorkerSessionOperationActors, arg.EnvironmentID, arg.TargetSessionID, arg.SourceRunID)
 	if err != nil {
 		return nil, err
 	}
@@ -844,7 +816,7 @@ func (q *Queries) LockWorkerSessionOperationActors(ctx context.Context, arg Lock
 			&i.EnvironmentID,
 			&i.ActorDeclaredID,
 			&i.DeploymentDefinitionID,
-			&i.WorkspaceID,
+			&i.ComputerID,
 			&i.Key,
 			&i.CurrentRunID,
 			&i.ConsecutiveExecutionLosses,
@@ -888,35 +860,55 @@ func (q *Queries) LockWorkerSessionOperationActors(ctx context.Context, arg Lock
 	return items, nil
 }
 
+const ownedRunScopesReconciled = `-- name: OwnedRunScopesReconciled :one
+WITH RECURSIVE owned(id) AS (
+ SELECT r.id FROM runs r WHERE r.parent_run_id=$1 AND r.parent_owns_lifecycle
+ UNION
+ SELECT r.id FROM runs r JOIN owned p ON p.id=r.parent_run_id WHERE r.parent_owns_lifecycle
+)
+SELECT (NOT EXISTS(SELECT 1 FROM runs r JOIN owned o ON o.id=r.id
+ WHERE r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed'))
+ AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id WHERE l.process_reconciled_at IS NULL))::boolean AS reconciled
+`
+
+func (q *Queries) OwnedRunScopesReconciled(ctx context.Context, runID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, ownedRunScopesReconciled, runID)
+	var reconciled bool
+	err := row.Scan(&reconciled)
+	return reconciled, err
+}
+
 const readWorkerSessionControl = `-- name: ReadWorkerSessionControl :one
 SELECT s.dispatch_hold_id, s.dispatch_hold_reason, s.active_turn_id
 FROM run_leases l
 JOIN runs r ON r.id=l.run_id AND r.current_run_lease_id=l.id
- AND r.current_attempt_number=l.attempt_number AND r.workspace_id=l.workspace_id
+ AND r.current_attempt_number=l.attempt_number AND r.computer_id=l.computer_id
 JOIN sessions s ON s.id=r.session_id AND s.current_run_id=r.id
 JOIN run_attempts a ON a.run_id=r.id AND a.number=l.attempt_number
-JOIN worker_instances wi ON wi.id=l.worker_instance_id AND wi.worker_group_id=l.worker_group_id AND wi.current_epoch=l.worker_epoch
+JOIN worker_hosts wi ON wi.id=l.worker_host_id AND wi.worker_group_id=l.worker_group_id AND wi.current_epoch=l.worker_epoch
 JOIN worker_groups wg ON wg.id=l.worker_group_id
-JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id AND wl.workspace_id=l.workspace_id
-JOIN runtime_instances rt ON rt.id=l.runtime_instance_id AND rt.runtime_identity_id=l.runtime_identity_id
+JOIN computer_instances rt ON rt.id=l.computer_instance_id
 WHERE l.id=$1 AND l.lease_sequence=$2
- AND l.worker_group_id=$3 AND l.worker_instance_id=$4 AND l.worker_epoch=$5
+ AND l.worker_group_id=$3 AND l.worker_host_id=$4 AND l.worker_epoch=$5
  AND l.status IN ('running','checkpointing') AND l.expires_at>statement_timestamp()
  AND l.finalization_operation_id IS NULL AND r.status IN ('running','waiting')
  AND a.entrypoint_entered_at IS NOT NULL AND a.terminal_at IS NULL
  AND s.run_generation=$6 AND s.status IN ('open','closing')
  AND wi.status IN ('active','draining') AND wg.status IN ('active','draining')
- AND wl.status='active' AND wl.expires_at>statement_timestamp()
+ AND rt.computer_id=l.computer_id AND rt.writer_generation=l.writer_generation
+ AND rt.worker_host_id=l.worker_host_id AND rt.worker_epoch=l.worker_epoch
+ AND rt.writer_expires_at>clock_timestamp() AND rt.mount_state='mounted'
+ AND wi.lost_at IS NULL AND wi.termination_ready_at IS NULL
  AND rt.observed_state='ready' AND rt.reclaimed_at IS NULL
 `
 
 type ReadWorkerSessionControlParams struct {
-	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
-	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-	RunGeneration    int64       `json:"run_generation"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+	LeaseSequence int64       `json:"lease_sequence"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch   int64       `json:"worker_epoch"`
+	RunGeneration int64       `json:"run_generation"`
 }
 
 type ReadWorkerSessionControlRow struct {
@@ -930,7 +922,7 @@ func (q *Queries) ReadWorkerSessionControl(ctx context.Context, arg ReadWorkerSe
 		arg.RunLeaseID,
 		arg.LeaseSequence,
 		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
+		arg.WorkerHostID,
 		arg.WorkerEpoch,
 		arg.RunGeneration,
 	)
@@ -974,37 +966,25 @@ func (q *Queries) RunWaitTurnCurrent(ctx context.Context, id pgtype.UUID) (bool,
 	return current, err
 }
 
-const sessionOwnedExecutionsExcluded = `-- name: SessionOwnedExecutionsExcluded :one
+const sessionExecutionScopesReconciled = `-- name: SessionExecutionScopesReconciled :one
 WITH RECURSIVE owned(id) AS (
- SELECT c.id FROM runs c WHERE c.parent_run_id=$1 AND c.parent_owns_lifecycle
+ SELECT r.id FROM runs r WHERE r.session_id=$1
  UNION
- SELECT c.id FROM owned p JOIN runs c ON c.parent_run_id=p.id WHERE c.parent_owns_lifecycle
-), runtimes(id) AS (
- -- A terminal worker finalization receipt already proves this program quiesced.
- -- Its Workspace runtime may remain warm; only unproved execution needs reclaim.
- SELECT l.runtime_instance_id FROM run_leases l JOIN owned o ON o.id=l.run_id
- WHERE NOT (l.status IN ('completed','failed') AND l.terminal_request_fingerprint IS NOT NULL
-   AND l.finalization_operation_id IS NOT NULL AND l.terminal_at IS NOT NULL)
- UNION
- SELECT rt.id FROM runtime_instances rt JOIN owned o ON o.id=rt.reserved_run_id
+ SELECT r.id FROM runs r JOIN owned p ON p.id=r.parent_run_id WHERE r.parent_owns_lifecycle
 )
-SELECT (NOT EXISTS(SELECT 1 FROM runs r JOIN owned o ON o.id=r.id
- WHERE r.current_run_lease_id IS NOT NULL OR r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed'))
- AND NOT EXISTS(SELECT 1 FROM runtime_instances rt JOIN runtimes ON runtimes.id=rt.id
- WHERE rt.reclaimed_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM workspace_leases wl JOIN run_leases l ON l.id=wl.owner_run_lease_id JOIN owned o ON o.id=l.run_id
- WHERE wl.status IN ('active','releasing')))::boolean AS excluded
+SELECT (NOT EXISTS (SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id
+ WHERE l.process_reconciled_at IS NULL))::boolean AS reconciled
 `
 
-func (q *Queries) SessionOwnedExecutionsExcluded(ctx context.Context, parentRunID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, sessionOwnedExecutionsExcluded, parentRunID)
-	var excluded bool
-	err := row.Scan(&excluded)
-	return excluded, err
+func (q *Queries) SessionExecutionScopesReconciled(ctx context.Context, sessionID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, sessionExecutionScopesReconciled, sessionID)
+	var reconciled bool
+	err := row.Scan(&reconciled)
+	return reconciled, err
 }
 
 const sessionRecoveryHeadCommitted = `-- name: SessionRecoveryHeadCommitted :one
-SELECT EXISTS(SELECT 1 FROM computer_versions
+SELECT EXISTS(SELECT 1 FROM computer_disk_versions
  WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND status='committed') AS committed
 `
 
@@ -1072,8 +1052,8 @@ SELECT EXISTS (
  JOIN sessions s ON s.id=t.session_id AND s.active_turn_id=t.id AND s.current_run_id=t.run_id AND s.run_generation=t.run_generation
  JOIN runs r ON r.id=t.run_id AND r.current_attempt_number=t.attempt_number
  JOIN run_leases l ON l.id=t.ready_run_lease_id AND l.id=r.current_run_lease_id AND l.run_id=r.id AND l.attempt_number=t.attempt_number
- JOIN worker_instances w ON w.id=l.worker_instance_id AND w.current_epoch=l.worker_epoch
- JOIN runtime_instances ri ON ri.id=l.runtime_instance_id
+ JOIN worker_hosts w ON w.id=l.worker_host_id AND w.current_epoch=l.worker_epoch
+ JOIN computer_instances ri ON ri.id=l.computer_instance_id
  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3
    AND s.status IN ('open','closing') AND s.cancel_requested_at IS NULL AND s.dispatch_hold_id IS NULL
    AND t.status='running' AND t.interrupt_requested_at IS NULL AND t.settlement_started_at IS NULL
@@ -1094,21 +1074,6 @@ func (q *Queries) SessionTurnMessageReady(ctx context.Context, arg SessionTurnMe
 	var ready bool
 	err := row.Scan(&ready)
 	return ready, err
-}
-
-const sessionWriterExcluded = `-- name: SessionWriterExcluded :one
-SELECT NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_leases.workspace_id=$1 AND status IN ('active','releasing'))
- AND NOT EXISTS(SELECT 1 FROM workspace_processes WHERE workspace_processes.workspace_id=$1 AND status IN ('pending','starting','running','exit_requested'))
- AND NOT EXISTS(SELECT 1 FROM runtime_instances WHERE runtime_instances.workspace_id=$1 AND reclaimed_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM run_waits w JOIN runs c ON c.id=w.child_run_id WHERE w.workspace_id=$1
-  AND c.parent_owns_lifecycle AND c.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS excluded
-`
-
-func (q *Queries) SessionWriterExcluded(ctx context.Context, workspaceID pgtype.UUID) (pgtype.Bool, error) {
-	row := q.db.QueryRow(ctx, sessionWriterExcluded, workspaceID)
-	var excluded pgtype.Bool
-	err := row.Scan(&excluded)
-	return excluded, err
 }
 
 const setSessionTurnMessageReady = `-- name: SetSessionTurnMessageReady :one

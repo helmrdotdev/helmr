@@ -78,7 +78,7 @@ func LoadControlPlane() (ControlPlane, error) {
 	}{
 		{"AUTH_KEY", &cfg.AuthKey},
 		{"TOKEN_CREDENTIAL_KEY", &cfg.TokenCredentialKey},
-		{"WORKSPACE_FENCING_KEY", &cfg.WorkspaceFencingKey},
+		{"COMPUTER_FENCING_KEY", &cfg.ComputerFencingKey},
 		{"ENCRYPTION_KEY", &cfg.EncryptionKey},
 		{"WORKER_TOKEN_SIGNING_KEY", &cfg.WorkerTokenSigningKey},
 	} {

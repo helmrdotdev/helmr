@@ -1,5 +1,6 @@
 import type {
   SessionOperationOptions,
+  CursorPage,
   SessionCloseReceipt,
   SessionCancelReceipt,
   SessionAdmissionReceipt,
@@ -27,17 +28,18 @@ import type {
   TokenWaitOptions,
 } from "../tokens"
 import type {
-  WorkspaceCreateRequest,
-  WorkspaceDeleteRequest,
-  WorkspaceDeleteReceipt,
-  WorkspaceExecRequest,
-  WorkspaceExecResult,
-  Workspace,
-} from "../workspace"
+  ComputerCreateRequest,
+  ComputerMembersQuery,
+  ComputerMember,
+  ComputerDeleteRequest,
+  ComputerDeleteReceipt,
+  Computer,
+} from "../computer"
 
 const runtimeOperationsSymbol = Symbol.for("helmr.sdk.v0.runtime_operations")
 
 export interface RuntimeOperations {
+  readonly computerMembers: (computerId: string, query: ComputerMembersQuery, signal?: AbortSignal) => Promise<CursorPage<ComputerMember>>
   readonly taskStart: (
     target: Readonly<{ declaredId: string; payloadPresent: boolean }>,
     payload: JsonValue | undefined,
@@ -108,25 +110,20 @@ export interface RuntimeOperations {
     request: SessionResumeRequest,
     signal?: AbortSignal,
   ) => Promise<SessionResumeReceipt>
-  readonly workspaceCreate: (
+  readonly computerCreate: (
     declaredId: string,
-    request?: WorkspaceCreateRequest,
+    request?: ComputerCreateRequest,
     signal?: AbortSignal,
-  ) => Promise<Readonly<{ workspaceId: string }>>
-  readonly workspaceRetrieve: (
-    workspaceId: string,
+  ) => Promise<Readonly<{ computerId: string }>>
+  readonly computerRetrieve: (
+    computerId: string,
     signal?: AbortSignal,
-  ) => Promise<Workspace>
-  readonly workspaceExec: (
-    workspaceId: string,
-    request: WorkspaceExecRequest,
+  ) => Promise<Computer>
+  readonly computerDelete: (
+    computerId: string,
+    request?: ComputerDeleteRequest,
     signal?: AbortSignal,
-  ) => Promise<WorkspaceExecResult>
-  readonly workspaceDelete: (
-    workspaceId: string,
-    request?: WorkspaceDeleteRequest,
-    signal?: AbortSignal,
-  ) => Promise<WorkspaceDeleteReceipt>
+  ) => Promise<ComputerDeleteReceipt>
   readonly tokenCreate: (
     request: TokenCreateRequest,
   ) => Promise<TokenCreateResult>

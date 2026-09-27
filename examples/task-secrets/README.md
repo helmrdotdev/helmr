@@ -1,7 +1,7 @@
-# Workspace Secrets
+# Computer Secrets
 
 This Task expects `API_TOKEN` after the Secret has been attached to the selected
-Workspace. Values are delivered to an admitted Workspace process and must not
+Computer. Values are delivered to an admitted Computer process and must not
 be passed through Task payload.
 
 ```bash

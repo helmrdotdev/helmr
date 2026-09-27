@@ -5,13 +5,13 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -241,151 +241,68 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	}
 }
 
-func TestExecuteWorkspacePollsExactProcessAndReturnsTerminalResult(t *testing.T) {
-	const workspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	const processID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		switch requests {
-		case 1:
-			if r.Method != http.MethodPost || r.URL.Path != "/v1/workspaces/"+workspaceID+"/exec" {
-				t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+func TestExecuteComputerAdmissionAndIndependentRetrieval(t *testing.T) {
+	const computerID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+	const commandID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
+	for _, scoped := range []bool{false, true} {
+		t.Run(fmt.Sprint(scoped), func(t *testing.T) {
+			requests := 0
+			prefix := "/v1"
+			if scoped {
+				prefix = "/api/projects/project/environments/environment"
 			}
-			writeTestJSON(t, w, http.StatusAccepted, api.WorkspaceExecProcess{
-				ProcessID: processID, Status: api.WorkspaceExecProcessStatusPending,
-			})
-		case 2:
-			if r.Method != http.MethodGet || r.URL.Path != "/v1/workspaces/"+workspaceID+"/exec/"+processID {
-				t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if requests == 1 {
+					if r.Method != "POST" || r.URL.Path != prefix+"/computers/"+computerID+"/exec" {
+						t.Errorf("admission %s %s", r.Method, r.URL.Path)
+					}
+					writeTestJSON(t, w, 202, api.CommandReceipt{CommandID: commandID})
+					return
+				}
+				if r.Method != "GET" || r.URL.Path != prefix+"/commands/"+commandID {
+					t.Errorf("retrieve %s %s", r.Method, r.URL.Path)
+				}
+				exitCode := int32(17)
+				writeTestJSON(t, w, 200, api.CommandInfo{ID: commandID, ComputerID: computerID, Status: "exited", Outcome: &api.CommandOutcome{CommandID: commandID, Kind: "exited", TerminalAt: time.Now(), ExitCode: &exitCode}})
+			}))
+			defer server.Close()
+			options := []Option{WithHTTPClient(server.Client())}
+			if scoped {
+				options = append(options, WithSessionScopedRoutes())
 			}
-			exitCode, stdout, stderr := int32(0), "b2sK", ""
-			writeTestJSON(t, w, http.StatusOK, api.WorkspaceExecProcess{
-				ProcessID: processID, Status: api.WorkspaceExecProcessStatusExited,
-				ExitCode: &exitCode, StdoutBase64: &stdout, StderrBase64: &stderr,
-			})
-		default:
-			t.Fatalf("unexpected request %d", requests)
-		}
-	}))
-	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := client.ExecuteWorkspace(t.Context(), workspaceID, api.ExecuteWorkspaceRequest{}, WorkspaceScopeOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.ExitCode != 0 || result.StdoutBase64 != "b2sK" || result.StderrBase64 != "" || requests != 2 {
-		t.Fatalf("result = %+v, requests = %d", result, requests)
+			client, err := New(server.URL, options...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scope := ComputerScopeOptions{}
+			if scoped {
+				scope = ComputerScopeOptions{ProjectID: "project", EnvironmentID: "environment"}
+			}
+			receipt, err := client.ExecuteComputer(t.Context(), computerID, api.ExecuteComputerRequest{}, scope)
+			if err != nil || receipt.CommandID != commandID || requests != 1 {
+				t.Fatalf("admission %+v %v requests=%d", receipt, err, requests)
+			}
+			info, err := client.RetrieveCommand(t.Context(), commandID, scope)
+			if err != nil || info.Outcome == nil || *info.Outcome.ExitCode != 17 || requests != 2 {
+				t.Fatalf("retrieve %+v %v requests=%d", info, err, requests)
+			}
+		})
 	}
 }
 
-func TestExecuteWorkspaceTerminalReplayAndFailurePreserveHighLevelSemantics(t *testing.T) {
-	const workspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	const processID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-	failed := false
+func TestRetrieveCommandRejectsIDDrift(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/projects/project/environments/environment/workspaces/"+workspaceID+"/exec" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
-		if failed {
-			writeTestJSON(t, w, http.StatusOK, api.WorkspaceExecProcess{
-				ProcessID: processID, Status: api.WorkspaceExecProcessStatusFailed,
-				Error: &api.WorkspaceExecProcessError{TerminalReasonCode: "workspace_exec_placement_timed_out"},
-			})
-			return
-		}
-		exitCode, stdout, stderr := int32(17), "", "ZXJy"
-		writeTestJSON(t, w, http.StatusOK, api.WorkspaceExecProcess{
-			ProcessID: processID, Status: api.WorkspaceExecProcessStatusExited,
-			ExitCode: &exitCode, StdoutBase64: &stdout, StderrBase64: &stderr,
-		})
-	}))
-	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()), WithSessionScopedRoutes())
-	if err != nil {
-		t.Fatal(err)
-	}
-	opts := WorkspaceScopeOptions{ProjectID: "project", EnvironmentID: "environment"}
-	result, err := client.ExecuteWorkspace(t.Context(), workspaceID, api.ExecuteWorkspaceRequest{}, opts)
-	if err != nil || result.ExitCode != 17 || result.StderrBase64 != "ZXJy" {
-		t.Fatalf("terminal replay = %+v, %v", result, err)
-	}
-	failed = true
-	_, err = client.ExecuteWorkspace(t.Context(), workspaceID, api.ExecuteWorkspaceRequest{}, opts)
-	var httpErr *httpclient.Error
-	if !errors.As(err, &httpErr) || httpErr.Code != "workspace_exec_placement_timed_out" || httpErr.StatusCode != 422 {
-		t.Fatalf("failure = %#v", err)
-	}
-}
-
-func TestExecuteWorkspaceStopsPollingWhenContextIsCancelled(t *testing.T) {
-	const workspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	const processID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-	var requests atomic.Int32
-	admitted := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requestNumber := requests.Add(1)
-		writeTestJSON(t, w, http.StatusAccepted, api.WorkspaceExecProcess{
-			ProcessID: processID, Status: api.WorkspaceExecProcessStatusPending,
-		})
-		if requestNumber == 1 {
-			close(admitted)
-		}
+		writeTestJSON(t, w, 200, api.CommandInfo{ID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37"})
 	}))
 	defer server.Close()
 	client, err := New(server.URL, WithHTTPClient(server.Client()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() {
-		_, err := client.ExecuteWorkspace(ctx, workspaceID, api.ExecuteWorkspaceRequest{}, WorkspaceScopeOptions{})
-		done <- err
-	}()
-	<-admitted
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) {
+	_, err = client.RetrieveCommand(t.Context(), "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36", ComputerScopeOptions{})
+	if err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("error = %v", err)
-	}
-	if requests.Load() != 1 {
-		t.Fatalf("requests = %d, want only admission", requests.Load())
-	}
-}
-
-func TestExecuteWorkspaceRejectsPollProcessIDDrift(t *testing.T) {
-	const workspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
-	const processID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
-	const wrongProcessID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc37"
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if requests == 2 && r.URL.Path != "/v1/workspaces/"+workspaceID+"/exec/"+processID {
-			t.Fatalf("poll path = %s", r.URL.Path)
-		}
-		responseProcessID := processID
-		if requests == 2 {
-			responseProcessID = wrongProcessID
-		}
-		writeTestJSON(t, w, http.StatusAccepted, api.WorkspaceExecProcess{
-			ProcessID: responseProcessID, Status: api.WorkspaceExecProcessStatusPending,
-		})
-	}))
-	defer server.Close()
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.ExecuteWorkspace(t.Context(), workspaceID, api.ExecuteWorkspaceRequest{}, WorkspaceScopeOptions{})
-	if err == nil || !strings.Contains(err.Error(), "changed process ID") {
-		t.Fatalf("error = %v", err)
-	}
-	if requests != 2 {
-		t.Fatalf("requests = %d, want admission and one exact poll", requests)
 	}
 }
 
@@ -454,7 +371,7 @@ func TestStartTask(t *testing.T) {
 		if err := json.Unmarshal(body, &request); err != nil {
 			t.Fatal(err)
 		}
-		if request.Workspace.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
+		if request.Computer.ID != "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32" {
 			t.Fatalf("request = %+v", request)
 		}
 		_ = json.NewEncoder(w).Encode(api.StartTaskResponse{RunID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"})
@@ -465,10 +382,10 @@ func TestStartTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspaceID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+	computerID := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 	started, err := client.StartTask(context.Background(), "deploy", api.StartTaskRequest{
-		Payload:   json.RawMessage(`{"env":"prod"}`),
-		Workspace: api.WorkspaceIDTarget{ID: workspaceID},
+		Payload:  json.RawMessage(`{"env":"prod"}`),
+		Computer: api.ComputerIDTarget{ID: computerID},
 	}, EnvironmentScopeOptions{})
 	if err != nil {
 		t.Fatal(err)

@@ -3,7 +3,7 @@
 The TypeScript runtime executes SDK Task and Actor handlers and translates their
 waits, streams, metadata and outcomes into the guest protocol. `guestd` launches
 the verified platform-owned Node 24.21 runtime, fixed entry and module preload.
-It does not use the Workspace image's Node for Program control code.
+It does not use the Computer image's Node for Program control code.
 
 `packages/module-execution` supplies the same native source adapter to config,
 declaration analysis and runtime. Installed JavaScript remains native; reached
@@ -11,17 +11,17 @@ TypeScript/JSX transforms in process with original source URLs. The runtime read
 source/export locators from the admitted Program index. Its entry and preload
 belong to the Runtime artifact, not the customer Program.
 
-The Runtime carries its own C and C++ runtime so Node runs in any Workspace
+The Runtime carries its own C and C++ runtime so Node runs in any Computer
 image, including musl ones: the loader, the glibc components and libstdc++ come
 from a digest-pinned Debian stable image (`nix/packages/debian-images.json`).
 Node depends on every glibc component directly, including those it does not
-use itself, so an addon or Workspace library that names one always receives the
+use itself, so an addon or Computer library that names one always receives the
 Runtime's copy rather than a mismatched one from the image. Every other shared
 library resolves as in an ordinary process: the object's RPATH, then the
-Workspace image's `ld.so.cache` and standard directories. The Workspace image
+Computer image's `ld.so.cache` and standard directories. The Computer image
 owns those libraries; a missing or too-new one is the ordinary loader error.
 
-Arbitrary Workspace commands retain their image tools and environment. No ambient
+Arbitrary Computer commands retain their image tools and environment. No ambient
 loader is injected into them. Public authoring APIs belong in `sdk/`; declaration
 analysis belongs in `compiler/`; this layer owns execution and protocol handling.
 

@@ -22,8 +22,8 @@ import (
 
 type typedRuntimeClient struct {
 	targets      []workerapi.RuntimeReconcileResponse
-	closed       []workerapi.RuntimeInstanceStateRequest
-	failed       []workerapi.RuntimeInstanceStateRequest
+	closed       []workerapi.ComputerInstanceStateRequest
+	failed       []workerapi.ComputerInstanceStateRequest
 	failedErrors []error
 }
 
@@ -186,9 +186,9 @@ func (*stuckPreparedRuntimeSession) Close(context.Context) error { return nil }
 func TestPreparedRuntimePoolCloseHonorsDeadlineWhileMonitorIsStuck(t *testing.T) {
 	session := &stuckPreparedRuntimeSession{waitStarted: make(chan struct{}), releaseWait: make(chan struct{})}
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-	pool.RuntimeInstances = &typedRuntimeClient{}
+	pool.ComputerInstances = &typedRuntimeClient{}
 	entry := preparedRuntimeEntry{
-		session: session, poolKey: "runtime-key", runtimeInstanceID: "runtime-1", runtimeEpoch: 7,
+		session: session, poolKey: "runtime-key", computerInstanceID: "runtime-1", runtimeEpoch: 7,
 		target: workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 1, ObservedVersion: 0},
 		exit:   newPreparedRuntimeSignal(), ready: newPreparedRuntimeSignal(),
 	}
@@ -236,38 +236,38 @@ func (c *batchRuntimeClient) ListRuntimeReconcileTargets(context.Context) (worke
 	return c.response, nil
 }
 
-func (*batchRuntimeClient) MarkRuntimeInstanceReady(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	return workerapi.RuntimeInstance{}, nil
+func (*batchRuntimeClient) MarkComputerInstanceReady(context.Context, workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	return workerapi.ComputerInstance{}, nil
 }
 
-func (*batchRuntimeClient) MarkRuntimeInstanceClosed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	return workerapi.RuntimeInstance{ID: request.ID}, nil
+func (*batchRuntimeClient) MarkComputerInstanceClosed(_ context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	return workerapi.ComputerInstance{ID: request.ID}, nil
 }
 
-func (*batchRuntimeClient) MarkRuntimeInstanceFailed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	return workerapi.RuntimeInstance{ID: request.ID}, nil
+func (*batchRuntimeClient) MarkComputerInstanceFailed(_ context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	return workerapi.ComputerInstance{ID: request.ID}, nil
 }
-func (c *typedRuntimeClient) MarkRuntimeInstanceReady(context.Context, workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	return workerapi.RuntimeInstance{}, nil
+func (c *typedRuntimeClient) MarkComputerInstanceReady(context.Context, workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	return workerapi.ComputerInstance{}, nil
 }
-func (c *typedRuntimeClient) MarkRuntimeInstanceClosed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
+func (c *typedRuntimeClient) MarkComputerInstanceClosed(_ context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	c.closed = append(c.closed, request)
-	return workerapi.RuntimeInstance{ID: request.ID}, nil
+	return workerapi.ComputerInstance{ID: request.ID}, nil
 }
-func (c *typedRuntimeClient) MarkRuntimeInstanceFailed(_ context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
+func (c *typedRuntimeClient) MarkComputerInstanceFailed(_ context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
 	c.failed = append(c.failed, request)
 	if len(c.failedErrors) > 0 {
 		err := c.failedErrors[0]
 		c.failedErrors = c.failedErrors[1:]
-		return workerapi.RuntimeInstance{}, err
+		return workerapi.ComputerInstance{}, err
 	}
-	return workerapi.RuntimeInstance{ID: request.ID}, nil
+	return workerapi.ComputerInstance{ID: request.ID}, nil
 }
 
 func TestStopRuntimeTargetRequiresExclusiveMatchingLocalEpoch(t *testing.T) {
 	session := &closeTrackingRuntimeSession{}
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-	pool.entries["runtime-key"] = []preparedRuntimeEntry{{session: session, runtimeInstanceID: "runtime-1", runtimeEpoch: 7}}
+	pool.entries["runtime-key"] = []preparedRuntimeEntry{{session: session, computerInstanceID: "runtime-1", runtimeEpoch: 7}}
 	client := &typedRuntimeClient{}
 	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err != nil {
@@ -287,7 +287,7 @@ func TestStopRuntimeTargetRequiresExclusiveMatchingLocalEpoch(t *testing.T) {
 	}
 }
 
-func TestStopRuntimeTargetDefersToCheckedOutWorkspaceRuntime(t *testing.T) {
+func TestStopRuntimeTargetDefersToCheckedOutComputerRuntime(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.mu.Lock()
 	pool.markRuntimeCheckedOutLocked("runtime-1", 7)
@@ -365,7 +365,7 @@ func TestReconcileDesiredRuntimesSkipsActiveRedelivery(t *testing.T) {
 	pool := NewPreparedRuntimePool(connector, nil, 2, nil)
 	session := &blockingCloseRuntimeSession{started: make(chan struct{}), release: make(chan struct{})}
 	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, Action: workerapi.RuntimeReconcileClose}
-	pool.entries[target.ID] = []preparedRuntimeEntry{{session: session, runtimeInstanceID: target.ID, runtimeEpoch: 7}}
+	pool.entries[target.ID] = []preparedRuntimeEntry{{session: session, computerInstanceID: target.ID, runtimeEpoch: 7}}
 	client := &batchRuntimeClient{
 		response: workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}},
 		polled:   make(chan struct{}, 4),
@@ -391,13 +391,13 @@ func TestReconcileDesiredRuntimesSkipsActiveRedelivery(t *testing.T) {
 }
 
 func TestReconcileDesiredRuntimesBacksOffWhenCapacityIsFull(t *testing.T) {
-	store, mount := testWorkspaceMountArtifacts(t)
+	store, mount := testComputerMountArtifacts(t)
 	connector := &blockingMaterializingConnector{started: make(chan string, 1)}
 	pool := NewPreparedRuntimePool(connector, store, 2, nil)
 	pool.TempDir = t.TempDir()
 	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	pool.RuntimeInstances = &batchRuntimeClient{}
+	pool.ComputerInstances = &batchRuntimeClient{}
 	if err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("occupied", 7)); err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +406,7 @@ func TestReconcileDesiredRuntimesBacksOffWhenCapacityIsFull(t *testing.T) {
 		response: workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}},
 		polled:   make(chan struct{}, 4),
 	}
-	pool.RuntimeInstances = client
+	pool.ComputerInstances = client
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- pool.ReconcileDesiredRuntimes(ctx, client) }()
@@ -460,14 +460,14 @@ func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T)
 }
 
 func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
-	registry := NewWorkspaceMountSessions()
-	unregister := registry.RegisterWorkspaceMountSession(
-		workerapi.WorkspaceMount{ID: "unrelated-mount"},
+	registry := NewComputerMountSessions()
+	unregister := registry.RegisterComputerMountSession(
+		workerapi.ComputerInstanceAssignment{ComputerInstanceID: "unrelated-instance"},
 		&closeTrackingRuntimeSession{},
 		"channel-token",
 	)
 	defer unregister()
-	borrowed, err := registry.OpenWorkspaceMountSession(context.Background(), "unrelated-mount")
+	borrowed, err := registry.OpenComputerInstanceSession(context.Background(), "unrelated-instance")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +475,7 @@ func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 
 	pool := NewPreparedRuntimePool(&cleanupRuntimeConnector{}, unavailableRuntimeCAS{}, 1, nil)
 	client := &typedRuntimeClient{}
-	pool.RuntimeInstances = client
+	pool.ComputerInstances = client
 	if err := pool.warmRuntimeTarget(context.Background(), client, retryableWarmTarget(), func() {}); err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +486,7 @@ func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 
 func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *testing.T) {
 	pool := NewPreparedRuntimePool(&cleanupRuntimeConnector{}, unavailableRuntimeCAS{}, 1, nil)
-	pool.entries["occupied"] = []preparedRuntimeEntry{{runtimeInstanceID: "occupied", runtimeEpoch: 7}}
+	pool.entries["occupied"] = []preparedRuntimeEntry{{computerInstanceID: "occupied", runtimeEpoch: 7}}
 	client := &typedRuntimeClient{}
 
 	err := pool.warmRuntimeTarget(context.Background(), client, retryableWarmTarget(), func() {})
@@ -520,15 +520,15 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 		t.Fatalf("reservation = %+v, want %+v", got, wantVector)
 	}
 
-	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
-	mount.RuntimeInstanceID = target.ID
+	mount := preparedRuntimeComputerMountFromSource(target.Source)
+	mount.ComputerInstanceID = target.ID
 	mount.RuntimeEpoch = target.WorkerEpoch
-	key := runtimeInstanceIDFromWorkspaceMount(mount)
+	key := computerInstanceIDFromComputerMount(mount)
 	ready := newPreparedRuntimeSignal()
 	ready.finish(nil)
 	pool.entries[key] = []preparedRuntimeEntry{{
 		session: &closeTrackingRuntimeSession{}, poolKey: key,
-		runtimeInstanceID: target.ID, runtimeEpoch: target.WorkerEpoch,
+		computerInstanceID: target.ID, runtimeEpoch: target.WorkerEpoch,
 		target: target, exit: newPreparedRuntimeSignal(), ready: ready,
 	}}
 
@@ -548,30 +548,30 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 
 func TestPreparedRuntimeSourcePreservesComputerReservationAuthority(t *testing.T) {
 	source := workerapi.RuntimeSource{
-		WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000701",
-		DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000702",
-		Computer:               &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
+		ComputerID:     "019c10d5-a6f7-7af1-8f5f-000000000701",
+		ComputerSpecID: "019c10d5-a6f7-7af1-8f5f-000000000702",
+		Computer:       &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000703"},
 	}
-	mount := preparedRuntimeWorkspaceMountFromSource(source)
-	if mount.WorkspaceID != source.WorkspaceID || mount.Target.BaseWorkspaceVersionID != source.Computer.VersionID {
+	mount := preparedRuntimeComputerMountFromSource(source)
+	if mount.ComputerID != source.ComputerID || mount.Target.BaseComputerDiskVersionID != source.Computer.VersionID {
 		t.Fatalf("mount = %#v, want reserved Computer version without a tree artifact", mount)
 	}
 }
 
-func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t *testing.T) {
+func TestPreparedRuntimeRejectsComputerArchitectureOutsideWorkerCertification(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.RuntimeArchitecture = deployment.ArchitectureX8664
 	_, closeProgram, err := pool.prepareProgram(
 		context.Background(),
 		t.TempDir(),
 		workerapi.RuntimeReconcileTarget{Source: workerapi.RuntimeSource{
-			WorkspaceArchitecture: "aarch64",
+			ComputerArchitecture: "aarch64",
 		}},
 	)
 	if closeErr := closeProgram(); closeErr != nil {
 		t.Fatal(closeErr)
 	}
-	if err == nil || !strings.Contains(err.Error(), "does not match workspace architecture") {
+	if err == nil || !strings.Contains(err.Error(), "does not match computer architecture") {
 		t.Fatalf("error = %v", err)
 	}
 }
@@ -659,7 +659,7 @@ func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
 	session := &closeTrackingRuntimeSession{err: errors.New("close failed")}
 	pool.entries["runtime-key"] = []preparedRuntimeEntry{{
 		session: session, poolKey: "runtime-key",
-		runtimeInstanceID: target.ID, runtimeEpoch: target.WorkerEpoch, target: target,
+		computerInstanceID: target.ID, runtimeEpoch: target.WorkerEpoch, target: target,
 	}}
 	client := &typedRuntimeClient{}
 
@@ -689,11 +689,11 @@ func newPreparedRuntimeCapacity(t *testing.T, vmSlots int64) *capacity.Ledger {
 	return ledger
 }
 
-func runtimePreparationTarget(mount workerapi.WorkspaceMount, id string, epoch int64) workerapi.RuntimeReconcileTarget {
+func runtimePreparationTarget(mount workerapi.ComputerInstanceAssignment, id string, epoch int64) workerapi.RuntimeReconcileTarget {
 	target := retryableWarmTarget()
 	target.ID = id
 	target.WorkerEpoch = epoch
-	target.Source.RuntimeIdentityID = mount.RuntimeIdentityID
+	target.Source.VMPlatformID = mount.VMPlatformID
 	target.Source.RootfsDigest = mount.RootfsDigest
 	return target
 }
@@ -702,9 +702,9 @@ func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTar
 	return workerapi.RuntimeReconcileTarget{
 		ID: id, WorkerEpoch: epoch,
 		Source: workerapi.RuntimeSource{
-			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
-			Computer:               &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704"},
-			ReservedCPUMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
+			ComputerSpecID:    "019c10d5-a6f7-7af1-8f5f-000000000703",
+			Computer:          &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704"},
+			ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
 		},
 	}
@@ -714,9 +714,9 @@ func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 	return workerapi.RuntimeReconcileTarget{
 		ID: "019c10d5-a6f7-7af1-8f5f-000000000503", WorkerEpoch: 7, DesiredVersion: 1, Action: workerapi.RuntimeReconcilePrepare, PreparationExpiresAt: time.Now().Add(time.Minute),
 		Source: workerapi.RuntimeSource{
-			WorkspaceID:            "019c10d5-a6f7-7af1-8f5f-000000000702",
-			DeploymentDefinitionID: "019c10d5-a6f7-7af1-8f5f-000000000703",
-			WorkspaceArchitecture:  "x86_64", ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: computer.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
+			ComputerID:           "019c10d5-a6f7-7af1-8f5f-000000000702",
+			ComputerSpecID:       "019c10d5-a6f7-7af1-8f5f-000000000703",
+			ComputerArchitecture: "x86_64", ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: computer.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
 			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: computer.SeedCapacity, Root: ptrGenerationRoot(computer.SeedCapacity)},
 		},
 	}

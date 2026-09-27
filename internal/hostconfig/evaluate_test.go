@@ -73,12 +73,12 @@ func evaluate(t *testing.T, project string) (Document, string, error) {
 
 // A monorepo: dependencies are hoisted above the project, one helper is an
 // extensionless TypeScript import, one arrives through a tsconfig path, and a
-// workspace package ships TypeScript source with an enum.
+// computer package ships TypeScript source with an enum.
 func TestEvaluateUsesOrdinaryHostImportsOnce(t *testing.T) {
-	workspace := t.TempDir()
-	project := filepath.Join(workspace, "apps", "agent")
-	installSDK(t, filepath.Join(workspace, "node_modules"), "current")
-	writeTree(t, workspace, map[string]string{
+	computer := t.TempDir()
+	project := filepath.Join(computer, "apps", "agent")
+	installSDK(t, filepath.Join(computer, "node_modules"), "current")
+	writeTree(t, computer, map[string]string{
 		"node_modules/cjs-names/package.json": `{"name":"cjs-names","main":"index.js"}`,
 		"node_modules/cjs-names/index.js":     `module.exports = { secret: "NPM_TOKEN" }`,
 		"node_modules/esm-dirs/package.json":  `{"name":"esm-dirs","type":"module","exports":"./index.js"}`,
@@ -106,10 +106,10 @@ export default defineConfig({
 })
 `,
 	})
-	if err := os.MkdirAll(filepath.Join(workspace, "node_modules", "@acme"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(computer, "node_modules", "@acme"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(filepath.Join(workspace, "packages", "setup"), filepath.Join(workspace, "node_modules", "@acme", "setup")); err != nil {
+	if err := os.Symlink(filepath.Join(computer, "packages", "setup"), filepath.Join(computer, "node_modules", "@acme", "setup")); err != nil {
 		t.Fatal(err)
 	}
 	evaluations := filepath.Join(t.TempDir(), "evaluations")

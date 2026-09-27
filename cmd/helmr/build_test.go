@@ -17,7 +17,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
+func TestBuildComputerImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 	original := runDockerBuildx
 	t.Cleanup(func() { runDockerBuildx = original })
 	var requests []dockerBuildxRequest
@@ -25,8 +25,8 @@ func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 		requests = append(requests, request)
 		return nil
 	}
-	workspaceBuild := func(declaredID, ref string) builder.WorkspaceBuild {
-		return builder.WorkspaceBuild{
+	computerBuild := func(declaredID, ref string) builder.ComputerBuild {
+		return builder.ComputerBuild{
 			DeclaredID: declaredID,
 			Build: imagebuild.Build{
 				Root: "root",
@@ -39,18 +39,18 @@ func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 		}
 	}
 	stage := t.TempDir()
-	workspaceContext := t.TempDir()
-	inputs, err := buildWorkspaceImages(
+	computerContext := t.TempDir()
+	inputs, err := buildComputerImages(
 		context.Background(),
 		&cobra.Command{},
 		stage,
-		workspaceContext,
+		computerContext,
 		t.TempDir(),
 		map[string]string{"helmr_installed": "installed"},
-		[]builder.WorkspaceBuild{
-			workspaceBuild("first", "ubuntu:24.04"),
-			workspaceBuild("middle", "alpine:3.22"),
-			workspaceBuild("third", "docker.io/library/ubuntu:24.04"),
+		[]builder.ComputerBuild{
+			computerBuild("first", "ubuntu:24.04"),
+			computerBuild("middle", "alpine:3.22"),
+			computerBuild("third", "docker.io/library/ubuntu:24.04"),
 		},
 		dockerBuildRunner{},
 	)
@@ -60,15 +60,15 @@ func TestBuildWorkspaceImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 	if len(requests) != 2 {
 		t.Fatalf("BuildKit requests = %d, want 2", len(requests))
 	}
-	firstPath := "/workspace/images/workspace-000.oci.tar"
+	firstPath := "/computer/images/computer-000.oci.tar"
 	if len(inputs) != 3 ||
 		inputs[0]["declaredId"] != "first" || inputs[0]["path"] != firstPath ||
-		inputs[1]["declaredId"] != "middle" || inputs[1]["path"] != "/workspace/images/workspace-001.oci.tar" ||
+		inputs[1]["declaredId"] != "middle" || inputs[1]["path"] != "/computer/images/computer-001.oci.tar" ||
 		inputs[2]["declaredId"] != "third" || inputs[2]["path"] != firstPath {
-		t.Fatalf("workspace inputs = %+v", inputs)
+		t.Fatalf("computer inputs = %+v", inputs)
 	}
-	if requests[0].Output != filepath.Join(workspaceContext, "workspace-000.oci.tar") ||
-		requests[1].Output != filepath.Join(workspaceContext, "workspace-001.oci.tar") {
+	if requests[0].Output != filepath.Join(computerContext, "computer-000.oci.tar") ||
+		requests[1].Output != filepath.Join(computerContext, "computer-001.oci.tar") {
 		t.Fatalf("BuildKit requests = %+v", requests)
 	}
 }

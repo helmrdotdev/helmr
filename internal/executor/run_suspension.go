@@ -11,12 +11,9 @@ import (
 )
 
 type RunWaitClient interface {
-	RegisterCheckpoint(context.Context, workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error)
 	CreateRunWait(context.Context, workerapi.CreateRunWaitRequest) (workerapi.CreateRunWaitResponse, error)
 	PollRunWait(context.Context, workerapi.RunWaitPollRequest) (workerapi.RunWaitPollResponse, error)
 	AcknowledgeRunWaitResume(context.Context, workerapi.RunWaitResumeAckRequest) (workerapi.RunWaitResumeAckResponse, error)
-	MarkCheckpointReady(context.Context, workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error)
-	MarkCheckpointFailed(context.Context, workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error)
 }
 
 type ControlPlaneRunWaits struct {
@@ -24,13 +21,9 @@ type ControlPlaneRunWaits struct {
 }
 
 type RestoreAcknowledgement struct {
-	Lease                workerapi.RunLeaseAssignment
-	RunWaitID            string
-	CheckpointID         string
-	ResumeAttachID       string
-	CorrelationID        string
-	ResumeRequestVersion int64
-	Phases               []workerapi.CheckpointPhase
+	Lease        workerapi.RunLeaseAssignment
+	RunWaitID    string
+	CheckpointID string
 }
 
 type RestoreAcknowledger interface {
@@ -38,28 +31,19 @@ type RestoreAcknowledger interface {
 }
 
 func (w ControlPlaneRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
-	client, ok := w.Client.(interface {
-		AcknowledgeRunResumeRelease(context.Context, workerapi.RunResumeReleaseRequest) (workerapi.RunResumeReleaseResponse, error)
-	})
-	if !ok {
-		return errors.New("exact run resume release client is required")
+	if w.Client == nil {
+		return errors.New("run wait control plane client is required")
 	}
-	response, err := client.AcknowledgeRunResumeRelease(ctx, workerapi.RunResumeReleaseRequest{
-		Lease:                request.Lease.Fence(),
-		RunWaitID:            request.RunWaitID,
-		CheckpointID:         request.CheckpointID,
-		ResumeAttachID:       request.ResumeAttachID,
-		ResumeRequestVersion: request.ResumeRequestVersion,
+	response, err := w.Client.AcknowledgeRunWaitResume(ctx, workerapi.RunWaitResumeAckRequest{
+		Lease: request.Lease.Fence(), RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
 	})
 	if err != nil {
 		return err
 	}
-	if response.Lease != request.Lease.Fence() ||
-		response.RunWaitID != request.RunWaitID || response.CheckpointID != request.CheckpointID ||
-		response.ResumeAttachID != request.ResumeAttachID ||
-		response.ResumeRequestVersion != request.ResumeRequestVersion {
-		return errors.New("run resume release response did not match exact guest proof")
+	if response.RunID != request.Lease.RunID || response.RunWaitID != request.RunWaitID || response.CheckpointID != request.CheckpointID {
+		return errors.New("run wait resume acknowledgement did not match restored member")
 	}
+
 	return nil
 }
 
@@ -124,7 +108,7 @@ func (w ControlPlaneRunWaits) ContinueRunWait(
 		switch intent.Status {
 		case workerapi.RunWaitPollStatusWaiting:
 		case workerapi.RunWaitPollStatusResumeRequested:
-			if intent.ResumeKind == "" || (intent.RequireAck && intent.RequestVersion <= 0) {
+			if intent.ResumeKind == "" {
 				return errors.New("run wait resume request fence and kind are invalid")
 			}
 			if request.Resume == nil {
@@ -137,20 +121,7 @@ func (w ControlPlaneRunWaits) ContinueRunWait(
 			if err := request.Resume(ctx, WaitResumeDecision{Kind: intent.ResumeKind, Data: payload}); err != nil {
 				return err
 			}
-			if intent.RequireAck {
-				lease, err := request.currentLeaseAssignment()
-				if err != nil {
-					return err
-				}
-				if _, err := w.Client.AcknowledgeRunWaitResume(ctx, workerapi.RunWaitResumeAckRequest{
-					Lease: lease.Fence(), RunWaitID: opened.RunWaitID, ResumeRequestVersion: intent.RequestVersion,
-				}); err != nil {
-					return fmt.Errorf("acknowledge run wait resume: %w", err)
-				}
-			}
 			return nil
-		case workerapi.RunWaitPollStatusCheckpointRequested:
-			return w.handleCheckpointDecision(ctx, request, intent)
 		case workerapi.RunWaitPollStatusTerminal:
 			return errors.New("run wait became terminal before resume")
 		default:
@@ -161,101 +132,6 @@ func (w ControlPlaneRunWaits) ContinueRunWait(
 		}
 		if pollDelay < time.Second {
 			pollDelay *= 2
-		}
-	}
-}
-
-func (w ControlPlaneRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent workerapi.RunWaitPollResponse) (resultErr error) {
-	if intent.CheckpointID == "" || intent.RequestVersion <= 0 {
-		return errors.New("checkpoint request id and version are required")
-	}
-	failCheckpoint := func(err error) error {
-		lease, leaseErr := request.currentLeaseAssignment()
-		if leaseErr != nil {
-			return errors.Join(err, leaseErr)
-		}
-		failedRequest := workerapi.CheckpointFailedRequest{
-			Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
-			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
-		}
-		for {
-			if _, failErr := w.Client.MarkCheckpointFailed(ctx, failedRequest); failErr == nil {
-				var releaseErr *checkpointSourceReleaseError
-				if errors.As(err, &releaseErr) {
-					return errors.Join(ErrDetached, err)
-				}
-				return ErrDetached
-			} else if !checkpointReadyRetryable(failErr) {
-				return errors.Join(err, failErr)
-			} else if sleepErr := sleepWithContext(ctx, 250*time.Millisecond); sleepErr != nil {
-				return errors.Join(err, failErr, sleepErr)
-			}
-		}
-	}
-	if request.Checkpointer == nil {
-		return failCheckpoint(errors.New("run checkpoint support is required"))
-	}
-	lease, err := request.currentLeaseAssignment()
-	if err != nil {
-		return err
-	}
-	checkpointRequest := CheckpointRequest{
-		Execution: request.Execution, TurnID: request.TurnID,
-		RunID:         lease.RunID,
-		RunWaitID:     intent.RunWaitID,
-		CorrelationID: request.CorrelationID,
-		CheckpointID:  intent.CheckpointID,
-	}
-	checkpointRequest.AttemptNumber = lease.AttemptNumber
-	checkpointRequest.RunLeaseID = lease.ID
-	checkpointRequest.ResumeAttachID = request.ResumeAttachID
-	checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
-	checkpointRequest.Register = func(ctx context.Context, manifest workerapi.CheckpointManifest) error {
-		registration := workerapi.RegisterCheckpointRequest{Lease: lease.Fence(), RequestVersion: intent.RequestVersion, RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Manifest: manifest}
-		for {
-			_, err := w.Client.RegisterCheckpoint(ctx, registration)
-			if err == nil {
-				return nil
-			}
-			if !checkpointReadyRetryable(err) {
-				return err
-			}
-			if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
-				return err
-			}
-		}
-	}
-	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, checkpointRequest)
-	if err != nil {
-		return failCheckpoint(err)
-	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		defer cancel()
-		if err := request.Checkpointer.ReleaseCheckpointSource(cleanupCtx); err != nil {
-			resultErr = errors.Join(resultErr, &checkpointSourceReleaseError{err: err})
-		}
-	}()
-	if checkpoint.Manifest.RuntimeState.Computer == nil {
-		err := errors.New("paired Computer disk is required before parking")
-		return failCheckpoint(err)
-	}
-	lease, err = request.currentLeaseAssignment()
-	if err != nil {
-		return err
-	}
-	readyRequest := workerapi.CheckpointReadyRequest{
-		Lease: lease.Fence(), RequestVersion: intent.RequestVersion,
-		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
-		Manifest: checkpoint.Manifest,
-	}
-	for {
-		if _, err := w.Client.MarkCheckpointReady(ctx, readyRequest); err == nil {
-			return ErrDetached
-		} else if !checkpointReadyRetryable(err) {
-			return failCheckpoint(fmt.Errorf("mark checkpoint ready: %w", err))
-		} else if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
-			return err
 		}
 	}
 }
@@ -296,15 +172,6 @@ func (request WaitRequest) currentLeaseAssignment() (workerapi.RunLeaseAssignmen
 		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment is required for durable waits")
 	}
 	return request.LeaseAssignment, nil
-}
-
-func checkpointReadyRetryable(err error) bool {
-	var status interface{ HTTPStatusCode() int }
-	if errors.As(err, &status) {
-		code := status.HTTPStatusCode()
-		return code < 400 || code >= 500
-	}
-	return true
 }
 
 func sleepWithContext(ctx context.Context, duration time.Duration) error {

@@ -42,7 +42,7 @@ func newRootCommand() *cobra.Command {
 		runCommand(),
 		scheduleCommand(),
 		tokenCommand(),
-		workspaceCommand(),
+		computerCommand(),
 		projectCommand(),
 		envCommand(),
 		secretCommand(),

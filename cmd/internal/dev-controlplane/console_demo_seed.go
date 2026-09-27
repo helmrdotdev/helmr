@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/jackc/pgx/v5"
@@ -16,16 +18,17 @@ const (
 
 	demoSeedDeploymentID        = "00000000-0000-7000-8000-000000000501"
 	demoSeedProgramArtifactID   = "00000000-0000-7000-8000-000000000502"
+	demoSeedComputerSpecID      = "00000000-0000-7000-8000-000000000504"
 	demoSeedImageArtifactID     = "00000000-0000-7000-8000-000000000503"
 	demoSeedTaskDefinitionID    = "00000000-0000-7000-8000-000000000511"
 	demoSeedActorDefinitionID   = "00000000-0000-7000-8000-000000000512"
 	demoSeedSandboxDefinitionID = "00000000-0000-7000-8000-000000000513"
 	demoSeedScheduleID          = "00000000-0000-7000-8000-000000000521"
 
-	demoSeedWorkspaceActorID        = "00000000-0000-7000-8000-000000000601"
-	demoSeedWorkspaceTaskID         = "00000000-0000-7000-8000-000000000602"
-	demoSeedWorkspaceActorVersionID = "00000000-0000-7000-8000-000000000603"
-	demoSeedWorkspaceTaskVersionID  = "00000000-0000-7000-8000-000000000604"
+	demoSeedComputerActorID        = "00000000-0000-7000-8000-000000000601"
+	demoSeedComputerTaskID         = "00000000-0000-7000-8000-000000000602"
+	demoSeedComputerActorVersionID = "00000000-0000-7000-8000-000000000603"
+	demoSeedComputerTaskVersionID  = "00000000-0000-7000-8000-000000000604"
 
 	demoSeedSessionOpenID   = "00000000-0000-7000-8000-000000000701"
 	demoSeedSessionFailedID = "00000000-0000-7000-8000-000000000702"
@@ -48,7 +51,7 @@ const (
 
 func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	taskManifest, taskDigest, err := manifestDigest(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * 1-5","timezone":"UTC","workspace":{"sandboxId":"demo-sandbox"}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * 1-5","timezone":"UTC","computer":{"sandboxId":"demo-sandbox"}}}`,
 	)
 	if err != nil {
 		return err
@@ -65,7 +68,7 @@ func seedDemoEnvironmentData(ctx context.Context, tx pgx.Tx) error {
 	}
 
 	programDigest := demoDigest("demo-program")
-	imageDigest := demoDigest("demo-workspace-image")
+	imageDigest := demoDigest("demo-computer-image")
 	bundleDigest := demoDigest("demo-bundle")
 	runtimeDigest := demoDigest("demo-runtime")
 	queueConfig := `{"formatVersion":0,"queues":[{"concurrencyLimit":2,"name":"default"},{"name":"priority"}]}`
@@ -78,7 +81,7 @@ WITH lifetimes AS (
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
     ($1::uuid, $2, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-    ($1::uuid, $3, 1, 'application/octet-stream')
+    ($1::uuid, $3, 1, 'application/vnd.helmr.computer.seed.v0+filepack')
 `, demoSeedOrgID, programDigest, imageDigest); err != nil {
 		return err
 	}
@@ -87,7 +90,7 @@ INSERT INTO artifacts (
     id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type
 ) VALUES
     ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-    ($6::uuid, $2::uuid, $3::uuid, $4::uuid, $7, 'workspace_image', 1, 'application/octet-stream')
+    ($6::uuid, $2::uuid, $3::uuid, $4::uuid, $7, 'computer_image', 1, 'application/vnd.helmr.computer.seed.v0+filepack')
 `, demoSeedProgramArtifactID, demoSeedOrgID, demoSeedProjectID, demoSeedEnvironmentID,
 		programDigest, demoSeedImageArtifactID, imageDigest); err != nil {
 		return err
@@ -111,17 +114,40 @@ UPDATE environments
 `, demoSeedEnvironmentID, demoSeedDeploymentID); err != nil {
 		return err
 	}
+	manifest := deployment.SandboxManifest{
+		Image:     deployment.SandboxImageManifest{Profile: computer.SeedProfile, ArtifactDigest: imageDigest, MediaType: computer.SeedMediaType},
+		Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
+	}
+	spec, err := deployment.CompileComputerSpec(manifest, deployment.BundleComputerImageArtifact{
+		Profile: computer.SeedProfile, Architecture: deployment.ArchitectureX8664,
+		Digest: imageDigest, MediaType: computer.SeedMediaType, SizeBytes: 1,
+	})
+	if err != nil {
+		return err
+	}
+	rawManifest, err := json.Marshal(manifest)
+	if err != nil {
+		return err
+	}
+	sandboxManifest, sandboxDigest, err = manifestDigest(string(rawManifest))
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO computer_specs(id,environment_id,config,digest,seed_artifact_id,seed_digest,seed_size_bytes,seed_media_type)
+	 VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, demoSeedComputerSpecID, demoSeedEnvironmentID, spec.Config, spec.Digest[:], demoSeedImageArtifactID, spec.Seed.Digest, spec.Seed.SizeBytes, spec.Seed.MediaType); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO deployment_definitions (
     id, environment_id, deployment_id, kind, declared_id,
-    manifest_version, manifest, manifest_digest, artifact_id
+    manifest_version, manifest, manifest_digest, computer_spec_id
 ) VALUES
     ($1::uuid, $4::uuid, $5::uuid, 'task', 'demo-task', 0, $6::jsonb, $7, NULL),
     ($2::uuid, $4::uuid, $5::uuid, 'actor', 'demo-actor', 0, $8::jsonb, $9, NULL),
     ($3::uuid, $4::uuid, $5::uuid, 'sandbox', 'demo-sandbox', 0, $10::jsonb, $11, $12::uuid)
 `, demoSeedTaskDefinitionID, demoSeedActorDefinitionID, demoSeedSandboxDefinitionID,
 		demoSeedEnvironmentID, demoSeedDeploymentID,
-		taskManifest, taskDigest, actorManifest, actorDigest, sandboxManifest, sandboxDigest, demoSeedImageArtifactID); err != nil {
+		taskManifest, taskDigest, actorManifest, actorDigest, sandboxManifest, sandboxDigest, demoSeedComputerSpecID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -137,30 +163,29 @@ INSERT INTO schedules (
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO computers (
-    id, environment_id, region_id, sandbox_declared_id, deployment_definition_id,
-    head_version_id, key, owner_session_id
-) VALUES
-    ($1::uuid, $3::uuid, current_setting('helmr.seed_region_id'), 'demo-sandbox', $4::uuid, $5::uuid, 'demo-actor', $7::uuid),
-    ($2::uuid, $3::uuid, current_setting('helmr.seed_region_id'), 'demo-sandbox', $4::uuid, $6::uuid, NULL, NULL)
-`, demoSeedWorkspaceActorID, demoSeedWorkspaceTaskID, demoSeedEnvironmentID,
-		demoSeedSandboxDefinitionID, demoSeedWorkspaceActorVersionID, demoSeedWorkspaceTaskVersionID,
-		demoSeedSessionOpenID); err != nil {
+    id, environment_id, region_id, sandbox_declared_id,
+    head_disk_version_id, key
+, computer_spec_id, creation_deployment_id) VALUES
+    ($1::uuid, $3::uuid, current_setting('helmr.seed_region_id'), 'demo-sandbox', $5::uuid, 'demo-actor', (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$3::uuid AND id=$4::uuid), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$3::uuid AND id=$4::uuid)),
+    ($2::uuid, $3::uuid, current_setting('helmr.seed_region_id'), 'demo-sandbox', $6::uuid, NULL, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$3::uuid AND id=$4::uuid), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$3::uuid AND id=$4::uuid))
+`, demoSeedComputerActorID, demoSeedComputerTaskID, demoSeedEnvironmentID,
+		demoSeedSandboxDefinitionID, demoSeedComputerActorVersionID, demoSeedComputerTaskVersionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-INSERT INTO computer_versions (
+INSERT INTO computer_disk_versions (
     id, environment_id, computer_id, root_pack_digest, status,
-    ownership_generation, writer_generation, published_at, logical_bytes
+    writer_generation, published_at, logical_bytes
 ) VALUES
-    ($1::uuid, $3::uuid, $4::uuid, NULL, 'initializing', 0, 0, NULL, 0),
-    ($2::uuid, $3::uuid, $5::uuid, NULL, 'initializing', 0, 0, NULL, 0)
-`, demoSeedWorkspaceActorVersionID, demoSeedWorkspaceTaskVersionID, demoSeedEnvironmentID,
-		demoSeedWorkspaceActorID, demoSeedWorkspaceTaskID); err != nil {
+    ($1::uuid, $3::uuid, $4::uuid, NULL, 'initializing', 0, NULL, 0),
+    ($2::uuid, $3::uuid, $5::uuid, NULL, 'initializing', 0, NULL, 0)
+`, demoSeedComputerActorVersionID, demoSeedComputerTaskVersionID, demoSeedEnvironmentID,
+		demoSeedComputerActorID, demoSeedComputerTaskID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO sessions (
-    id, environment_id, actor_declared_id, deployment_definition_id, workspace_id,
+    id, environment_id, actor_declared_id, deployment_definition_id, computer_id,
     current_run_id, next_input_sequence, committed_input_sequence, next_event_sequence,
     run_queue_name, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags,
     status
@@ -176,7 +201,7 @@ INSERT INTO sessions (
         $6::jsonb, ARRAY[$7::text], 'open'
     )
 `, demoSeedSessionOpenID, demoSeedSessionFailedID, demoSeedEnvironmentID,
-		demoSeedActorDefinitionID, demoSeedWorkspaceActorID, demoSeedMarkerMetadata, demoSeedMarkerTag); err != nil {
+		demoSeedActorDefinitionID, demoSeedComputerActorID, demoSeedMarkerMetadata, demoSeedMarkerTag); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -184,7 +209,7 @@ INSERT INTO runs (
     id, org_id, project_id, environment_id, deployment_id, deployment_definition_id,
     entrypoint_kind, entrypoint_declared_id, cause_kind, session_id,
     session_input_start_sequence, session_input_high_watermark,
-    workspace_id, base_workspace_version_id, payload, status, revision, current_attempt_number,
+    computer_id, base_computer_disk_version_id, payload, status, revision, current_attempt_number,
     metadata, tags, queue_name, queue_origin_at, queue_score_at, max_active_duration_ms,
     retry_policy, trace_id, root_span_id, terminal_at, output, failure
 ) VALUES
@@ -228,14 +253,14 @@ INSERT INTO runs (
     )
 `, demoSeedRunTaskSucceededID, demoSeedRunTaskFailedID, demoSeedRunActorHistoryID, demoSeedRunActorFailedID,
 		demoSeedOrgID, demoSeedProjectID, demoSeedEnvironmentID, demoSeedDeploymentID, demoSeedTaskDefinitionID,
-		demoSeedWorkspaceActorID, demoSeedWorkspaceActorVersionID, demoSeedWorkspaceTaskID, demoSeedWorkspaceTaskVersionID,
+		demoSeedComputerActorID, demoSeedComputerActorVersionID, demoSeedComputerTaskID, demoSeedComputerTaskVersionID,
 		demoSeedMarkerMetadata, demoSeedMarkerTag, demoSeedActorDefinitionID,
 		demoSeedSessionOpenID, demoSeedSessionFailedID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO run_attempts (
-    run_id, number, entrypoint_kind, workspace_id, base_workspace_version_id,
+    run_id, number, entrypoint_kind, computer_id, base_computer_disk_version_id,
     entrypoint_entered_at, terminal_outcome, terminal_reason_code, terminal_at,
     session_input_start_sequence, terminal_session_input_sequence
 ) VALUES
@@ -244,8 +269,8 @@ INSERT INTO run_attempts (
     ($3::uuid, 1, 'actor', $5::uuid, $6::uuid, now() - interval '48 minutes', 'succeeded', 'completed', now() - interval '45 minutes', 1, 1),
     ($4::uuid, 1, 'actor', $5::uuid, $6::uuid, now() - interval '18 minutes', 'failed', 'actor_failed', now() - interval '15 minutes', 2, 2)
 `, demoSeedRunTaskSucceededID, demoSeedRunTaskFailedID, demoSeedRunActorHistoryID, demoSeedRunActorFailedID,
-		demoSeedWorkspaceActorID, demoSeedWorkspaceActorVersionID,
-		demoSeedWorkspaceTaskID, demoSeedWorkspaceTaskVersionID); err != nil {
+		demoSeedComputerActorID, demoSeedComputerActorVersionID,
+		demoSeedComputerTaskID, demoSeedComputerTaskVersionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
@@ -271,15 +296,15 @@ VALUES ($1::uuid, $3::uuid, $4::uuid, 1, '{"prompt":"Synthetic demo input"}'),
 	}
 	if _, err := tx.Exec(ctx, `
 INSERT INTO session_events (
-    id, environment_id, session_id, workspace_id, turn_id, sequence, kind, data, workspace_version_id
+    id, environment_id, session_id, computer_id, turn_id, sequence, kind, data, computer_disk_version_id
 ) VALUES
     ('00000000-0000-7000-8000-000000000731', $4::uuid, $5::uuid, $6::uuid, $1::uuid, 1, 'turn.enqueued', '{"input":{"prompt":"Synthetic demo input"}}', NULL),
     ($3::uuid, $4::uuid, $5::uuid, $6::uuid, $1::uuid, 2, 'output', '{"reply":"Synthetic demo output"}', NULL),
-    ('00000000-0000-7000-8000-000000000724', $4::uuid, $5::uuid, $6::uuid, $1::uuid, 3, 'turn.completed', jsonb_build_object('workspace_version_id',$7::text), $7::uuid),
+    ('00000000-0000-7000-8000-000000000724', $4::uuid, $5::uuid, $6::uuid, $1::uuid, 3, 'turn.completed', jsonb_build_object('computer_disk_version_id',$7::text), $7::uuid),
     ('00000000-0000-7000-8000-000000000732', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 4, 'turn.enqueued', '{"input":{"prompt":"Follow-up demo input"}}', NULL),
-    ('00000000-0000-7000-8000-000000000725', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 5, 'turn.failed', jsonb_build_object('error', jsonb_build_object('message','Synthetic demo test failure'),'workspace_version_id',$7::text), $7::uuid)
+    ('00000000-0000-7000-8000-000000000725', $4::uuid, $5::uuid, $6::uuid, $2::uuid, 5, 'turn.failed', jsonb_build_object('error', jsonb_build_object('message','Synthetic demo test failure'),'computer_disk_version_id',$7::text), $7::uuid)
 `, demoSeedSessionTurnID, demoSeedSessionTurnID2, demoSeedSessionOutputEventID,
-		demoSeedEnvironmentID, demoSeedSessionOpenID, demoSeedWorkspaceActorID, demoSeedWorkspaceActorVersionID); err != nil {
+		demoSeedEnvironmentID, demoSeedSessionOpenID, demoSeedComputerActorID, demoSeedComputerActorVersionID); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `

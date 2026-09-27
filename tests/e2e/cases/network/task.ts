@@ -22,6 +22,6 @@ export const networkTask = task({
     if (!blocked) throw new Error("metadata endpoint returned an HTTP response")
     await logger.info("verification network observed", { marker, phase: "observed", positiveStatus: positive.status, blocked })
     await tokens.ref(finishToken).wait({ timeout: "8m", idleTimeout: "8m" }).unwrap()
-    return { marker, blocked, positiveStatus: positive.status, runId: ctx.run.id, workspaceId: ctx.workspace.id }
+    return { marker, blocked, positiveStatus: positive.status, runId: ctx.run.id, computerId: ctx.computer.id }
   },
 })

@@ -21,7 +21,7 @@ WITH activated AS (
        AND committed_input_sequence + 1 = $6
        AND EXISTS (SELECT 1 FROM runs WHERE runs.id = sessions.current_run_id
                    AND current_attempt_number = $2 AND status IN ('running', 'waiting'))
-    RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+    RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 )
 UPDATE session_turns SET status = 'running', run_generation = activated.run_generation,
        run_id = $1, attempt_number = $2
@@ -75,14 +75,14 @@ WITH allocated AS (
     UPDATE sessions SET next_event_sequence = next_event_sequence + 1
      WHERE sessions.environment_id = $2 AND sessions.id = $11
        AND next_event_sequence <= 9007199254740991
-    RETURNING sessions.id, sessions.workspace_id, sessions.next_event_sequence - 1 AS sequence
+    RETURNING sessions.id, sessions.computer_id, sessions.next_event_sequence - 1 AS sequence
 )
-INSERT INTO session_events (id, environment_id, session_id, workspace_id, turn_id, message_id, sequence, kind, data,
- producer_run_id, producer_attempt_number, run_generation, workspace_version_id)
-SELECT $1, $2, allocated.id, allocated.workspace_id, $3, $4, allocated.sequence,
+INSERT INTO session_events (id, environment_id, session_id, computer_id, turn_id, message_id, sequence, kind, data,
+ producer_run_id, producer_attempt_number, run_generation, computer_disk_version_id)
+SELECT $1, $2, allocated.id, allocated.computer_id, $3, $4, allocated.sequence,
  $5, $6, $7, $8,
  $9, $10 FROM allocated
-RETURNING id, environment_id, session_id, turn_id, message_id, workspace_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, workspace_version_id, created_at
+RETURNING id, environment_id, session_id, turn_id, message_id, computer_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, computer_disk_version_id, created_at
 `
 
 type AppendSessionEventParams struct {
@@ -95,7 +95,7 @@ type AppendSessionEventParams struct {
 	ProducerRunID         pgtype.UUID `json:"producer_run_id"`
 	ProducerAttemptNumber pgtype.Int4 `json:"producer_attempt_number"`
 	RunGeneration         pgtype.Int8 `json:"run_generation"`
-	WorkspaceVersionID    pgtype.UUID `json:"workspace_version_id"`
+	ComputerDiskVersionID pgtype.UUID `json:"computer_disk_version_id"`
 	SessionID             pgtype.UUID `json:"session_id"`
 }
 
@@ -110,7 +110,7 @@ func (q *Queries) AppendSessionEvent(ctx context.Context, arg AppendSessionEvent
 		arg.ProducerRunID,
 		arg.ProducerAttemptNumber,
 		arg.RunGeneration,
-		arg.WorkspaceVersionID,
+		arg.ComputerDiskVersionID,
 		arg.SessionID,
 	)
 	var i SessionEvent
@@ -120,21 +120,21 @@ func (q *Queries) AppendSessionEvent(ctx context.Context, arg AppendSessionEvent
 		&i.SessionID,
 		&i.TurnID,
 		&i.MessageID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Sequence,
 		&i.Kind,
 		&i.Data,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
 		&i.RunGeneration,
-		&i.WorkspaceVersionID,
+		&i.ComputerDiskVersionID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getSessionEvent = `-- name: GetSessionEvent :one
-SELECT id, environment_id, session_id, turn_id, message_id, workspace_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, workspace_version_id, created_at FROM session_events WHERE environment_id = $1 AND session_id = $2 AND id = $3
+SELECT id, environment_id, session_id, turn_id, message_id, computer_id, sequence, kind, data, producer_run_id, producer_attempt_number, run_generation, computer_disk_version_id, created_at FROM session_events WHERE environment_id = $1 AND session_id = $2 AND id = $3
 `
 
 type GetSessionEventParams struct {
@@ -152,21 +152,21 @@ func (q *Queries) GetSessionEvent(ctx context.Context, arg GetSessionEventParams
 		&i.SessionID,
 		&i.TurnID,
 		&i.MessageID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Sequence,
 		&i.Kind,
 		&i.Data,
 		&i.ProducerRunID,
 		&i.ProducerAttemptNumber,
 		&i.RunGeneration,
-		&i.WorkspaceVersionID,
+		&i.ComputerDiskVersionID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const lockSessionTurnAuthority = `-- name: LockSessionTurnAuthority :one
-SELECT id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at FROM sessions WHERE environment_id = $1 AND id = $2 FOR UPDATE
+SELECT id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at FROM sessions WHERE environment_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LockSessionTurnAuthorityParams struct {
@@ -182,7 +182,7 @@ func (q *Queries) LockSessionTurnAuthority(ctx context.Context, arg LockSessionT
 		&i.EnvironmentID,
 		&i.ActorDeclaredID,
 		&i.DeploymentDefinitionID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.Key,
 		&i.CurrentRunID,
 		&i.ConsecutiveExecutionLosses,
@@ -299,7 +299,7 @@ WITH advanced AS (
  WHERE sessions.environment_id = $6 AND sessions.id = $7
    AND active_turn_id = $4 AND sessions.run_generation = $8
    AND committed_input_sequence + 1 = $5 AND dispatch_hold_id IS NULL
- RETURNING id, environment_id, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
+ RETURNING id, environment_id, actor_declared_id, deployment_definition_id, computer_id, key, current_run_id, consecutive_execution_losses, run_generation, revision, active_turn_id, dispatch_hold_id, dispatch_hold_run_id, dispatch_hold_attempt_number, dispatch_hold_run_generation, dispatch_hold_reason, failure, failure_run_id, next_input_sequence, committed_input_sequence, next_event_sequence, run_queue_name, run_concurrency_key, run_queue_concurrency_limit, run_priority, run_queue_ttl_ms, run_max_active_duration_ms, run_retry_policy, run_metadata, run_tags, status, close_sequence, cancel_requested_at, created_at, updated_at, closed_at, failed_at
 )
 UPDATE session_turns SET status = $1, ready_run_lease_id = NULL, terminal_event_id = $2,
  terminal_request_fingerprint = $3

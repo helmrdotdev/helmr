@@ -6,7 +6,7 @@ const base = image("helmr-fault-probe")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
 
-export const faultProbeWorkspace = sandbox({ id: "helmr-fault-probe" })
+export const faultProbeComputer = sandbox({ id: "helmr-fault-probe" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

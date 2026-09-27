@@ -12,18 +12,18 @@ import (
 )
 
 const listCheckpointObjects = `-- name: ListCheckpointObjects :many
-SELECT checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status, availability_required FROM run_checkpoint_objects WHERE checkpoint_id=$1 ORDER BY role
+SELECT checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status, availability_required FROM computer_checkpoint_objects WHERE checkpoint_id=$1 ORDER BY role
 `
 
-func (q *Queries) ListCheckpointObjects(ctx context.Context, checkpointID pgtype.UUID) ([]RunCheckpointObject, error) {
+func (q *Queries) ListCheckpointObjects(ctx context.Context, checkpointID pgtype.UUID) ([]ComputerCheckpointObject, error) {
 	rows, err := q.db.Query(ctx, listCheckpointObjects, checkpointID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RunCheckpointObject
+	var items []ComputerCheckpointObject
 	for rows.Next() {
-		var i RunCheckpointObject
+		var i ComputerCheckpointObject
 		if err := rows.Scan(
 			&i.CheckpointID,
 			&i.Role,
@@ -44,7 +44,7 @@ func (q *Queries) ListCheckpointObjects(ctx context.Context, checkpointID pgtype
 }
 
 const registerCheckpointManifest = `-- name: RegisterCheckpointManifest :execrows
-UPDATE run_checkpoints SET manifest=$1
+UPDATE computer_checkpoints SET manifest=$1
  WHERE id=$2 AND status='creating'
    AND (manifest IS NULL OR manifest=$1)
 `
@@ -67,14 +67,14 @@ WITH lifetime AS (
     INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, $3)
     ON CONFLICT DO NOTHING
 )
-INSERT INTO run_checkpoint_objects (checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status)
+INSERT INTO computer_checkpoint_objects (checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status)
 SELECT id, $1, $2, $3, $4, status
-  FROM run_checkpoints WHERE id=$5 AND status='creating'
-ON CONFLICT (checkpoint_id, role) DO UPDATE SET role=run_checkpoint_objects.role
- WHERE run_checkpoint_objects.digest=EXCLUDED.digest
-   AND run_checkpoint_objects.size_bytes=EXCLUDED.size_bytes
-   AND run_checkpoint_objects.media_type=EXCLUDED.media_type
-   AND run_checkpoint_objects.checkpoint_status='creating'
+  FROM computer_checkpoints WHERE id=$5 AND status='creating'
+ON CONFLICT (checkpoint_id, role) DO UPDATE SET role=computer_checkpoint_objects.role
+ WHERE computer_checkpoint_objects.digest=EXCLUDED.digest
+   AND computer_checkpoint_objects.size_bytes=EXCLUDED.size_bytes
+   AND computer_checkpoint_objects.media_type=EXCLUDED.media_type
+   AND computer_checkpoint_objects.checkpoint_status='creating'
 RETURNING checkpoint_id, role, digest, size_bytes, media_type, checkpoint_status, availability_required
 `
 
@@ -89,7 +89,7 @@ type RegisterCheckpointObjectParams struct {
 // Caller locks the current checkpoint source and owns the enclosing transaction.
 // Registration never observes remote existence or grants guest execution. The
 // entire four-object set must succeed or roll back; exact replays preserve candidate identity.
-func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (RunCheckpointObject, error) {
+func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterCheckpointObjectParams) (ComputerCheckpointObject, error) {
 	row := q.db.QueryRow(ctx, registerCheckpointObject,
 		arg.Role,
 		arg.Digest,
@@ -97,7 +97,7 @@ func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterChec
 		arg.MediaType,
 		arg.CheckpointID,
 	)
-	var i RunCheckpointObject
+	var i ComputerCheckpointObject
 	err := row.Scan(
 		&i.CheckpointID,
 		&i.Role,
@@ -111,10 +111,10 @@ func (q *Queries) RegisterCheckpointObject(ctx context.Context, arg RegisterChec
 }
 
 const requireRegisteredCheckpointManifest = `-- name: RequireRegisteredCheckpointManifest :one
-SELECT id FROM run_checkpoints
+SELECT id FROM computer_checkpoints
  WHERE id=$1 AND status='creating'
    AND manifest=$2
-   AND (SELECT count(*) FROM run_checkpoint_objects WHERE checkpoint_id=run_checkpoints.id AND checkpoint_status='creating')=4
+   AND (SELECT count(*) FROM computer_checkpoint_objects WHERE checkpoint_id=computer_checkpoints.id AND checkpoint_status='creating')=4
 `
 
 type RequireRegisteredCheckpointManifestParams struct {

@@ -21,7 +21,7 @@ INSERT INTO artifacts (
     kind,
     size_bytes,
     media_type,
-    created_by_worker_instance_id
+    created_by_worker_host_id
 ) VALUES (
     $1,
     $2,
@@ -33,19 +33,19 @@ INSERT INTO artifacts (
     $8,
     $9
 )
-RETURNING id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+RETURNING id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_host_id, created_at
 `
 
 type CreateArtifactParams struct {
-	ID                        pgtype.UUID  `json:"id"`
-	OrgID                     pgtype.UUID  `json:"org_id"`
-	ProjectID                 pgtype.UUID  `json:"project_id"`
-	EnvironmentID             pgtype.UUID  `json:"environment_id"`
-	Digest                    string       `json:"digest"`
-	Kind                      ArtifactKind `json:"kind"`
-	SizeBytes                 int64        `json:"size_bytes"`
-	MediaType                 string       `json:"media_type"`
-	CreatedByWorkerInstanceID pgtype.UUID  `json:"created_by_worker_instance_id"`
+	ID                    pgtype.UUID  `json:"id"`
+	OrgID                 pgtype.UUID  `json:"org_id"`
+	ProjectID             pgtype.UUID  `json:"project_id"`
+	EnvironmentID         pgtype.UUID  `json:"environment_id"`
+	Digest                string       `json:"digest"`
+	Kind                  ArtifactKind `json:"kind"`
+	SizeBytes             int64        `json:"size_bytes"`
+	MediaType             string       `json:"media_type"`
+	CreatedByWorkerHostID pgtype.UUID  `json:"created_by_worker_host_id"`
 }
 
 func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) (Artifact, error) {
@@ -58,7 +58,7 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 		arg.Kind,
 		arg.SizeBytes,
 		arg.MediaType,
-		arg.CreatedByWorkerInstanceID,
+		arg.CreatedByWorkerHostID,
 	)
 	var i Artifact
 	err := row.Scan(
@@ -70,14 +70,14 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 		&i.Kind,
 		&i.SizeBytes,
 		&i.MediaType,
-		&i.CreatedByWorkerInstanceID,
+		&i.CreatedByWorkerHostID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getArtifact = `-- name: GetArtifact :one
-SELECT id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
+SELECT id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_host_id, created_at
   FROM artifacts
  WHERE org_id = $1
    AND project_id = $2
@@ -109,7 +109,7 @@ func (q *Queries) GetArtifact(ctx context.Context, arg GetArtifactParams) (Artif
 		&i.Kind,
 		&i.SizeBytes,
 		&i.MediaType,
-		&i.CreatedByWorkerInstanceID,
+		&i.CreatedByWorkerHostID,
 		&i.CreatedAt,
 	)
 	return i, err

@@ -1,6 +1,6 @@
 ---
 title: Configuration reference
-description: Task project, Workspace, image, and Run configuration.
+description: Task project, Computer, image, and Run configuration.
 sidebarLabel: Configuration
 ---
 
@@ -70,7 +70,7 @@ scripts, development dependencies, native compilation and executables shipped
 by dependencies behave as they do on an ordinary Linux machine. Installation
 runs as an unprivileged user.
 
-`builder()` is its own role, not a Workspace `image()`: it always starts from
+`builder()` is its own role, not a Computer `image()`: it always starts from
 Helmr's builder image and offers only `copy(source, destination)` and
 `run(argv)`.
 
@@ -80,7 +80,7 @@ Helmr's builder image and offers only `copy(source, destination)` and
   `[` and `$` mean themselves in sources and destinations. A source may not
   contain `*`, `?` or `\` (copy its directory instead); a destination may not
   contain `\`. Destinations under `/opt/helmr`, `/nix` and
-  `/workspace` belong to Helmr; use locations such as `/usr/local` or
+  `/computer` belong to Helmr; use locations such as `/usr/local` or
   `/opt/<name>`.
 - `run` executes an argv without a shell, on Linux, as root with working
   directory `/`, `HOME=/root`, `TMPDIR=/tmp` and `XDG_CACHE_HOME=/root/.cache`.
@@ -92,7 +92,7 @@ Helmr's builder image and offers only `copy(source, destination)` and
   modules are evaluated with Helmr's own compiler, Runtime and builder mounted
   read-only from the pinned image; final assembly uses the pinned image alone.
 - What the environment installs is a build input and is not exported: only the
-  installed project tree becomes the Program. Workspace images declare their
+  installed project tree becomes the Program. Computer images declare their
   own runtime packages.
 
 ```ts
@@ -153,15 +153,15 @@ produce native artifacts before the tree is frozen.
 Native code has two distinct targets. Addons loaded by Program code run inside
 the platform Node: x86_64 Linux, that Node's ABI, and the Runtime's own glibc
 and libstdc++ (currently glibc 2.41), which are always used instead of the
-Workspace image's. Other shared libraries an addon links resolve the ordinary
-way inside the Workspace: the addon's RPATH, then the image's `ld.so.cache` and
-standard library directories. The Workspace image therefore supplies them: a
+Computer image's. Other shared libraries an addon links resolve the ordinary
+way inside the Computer: the addon's RPATH, then the image's `ld.so.cache` and
+standard library directories. The Computer image therefore supplies them: a
 project that compiles against `libvips-dev` in its build environment installs
-`libvips42` in the Workspace images that run it. A missing library, or one built
+`libvips42` in the Computer images that run it. A missing library, or one built
 against a newer glibc than the Runtime's, fails with the usual loader error
 when the addon is imported. Executables that Program code spawns are ordinary
-Workspace processes: they use the Workspace image's loader and libraries, and
-Helmr injects nothing into them. One installed tree serves every Workspace of a
+Computer processes: they use the Computer image's loader and libraries, and
+Helmr injects nothing into them. One installed tree serves every Computer of a
 Deployment; a musl image can run it when its native code is self-contained.
 
 Missing imports fail when reached. Unused optional dependencies are not eagerly
@@ -169,8 +169,8 @@ resolved. The retained tree includes dormant files and assets; admission binds
 all of their bytes, executable modes, directory entries and symlink targets.
 Declaration indexes identify original source paths and exports, not generated
 customer bundles. Runtime compilation cannot load generated source from a mutable
-Workspace. Put Program control code in the captured project; arbitrary commands
-and tools inside a Workspace remain under the Workspace image's own execution
+Computer. Put Program control code in the captured project; arbitrary commands
+and tools inside a Computer remain under the Computer image's own execution
 rules.
 
 ## Config and language semantics
@@ -222,7 +222,7 @@ Program. Deliberate path-directed image metadata lookups, user filesystem access
 custom hooks and process effects remain native image authority. These module
 rules are not a tenant sandbox or a guarantee that arbitrary image-dependent
 code behaves identically during build and execution. Helmr does not inject
-`NODE_OPTIONS` into arbitrary Workspace tools.
+`NODE_OPTIONS` into arbitrary Computer tools.
 
 ## Runtime configuration
 
@@ -234,7 +234,7 @@ code behaves identically during build and execution. Helmr does not inject
 | `image` | `from`, `run`, `copy`, `copyFrom`, `workdir`, `env`, `user` |
 | `source` | `file(path)`, `directory(path)` |
 
-SDK Workspace creation uses plain Secret names:
+SDK Computer creation uses plain Secret names:
 
 ```ts
 secrets: [

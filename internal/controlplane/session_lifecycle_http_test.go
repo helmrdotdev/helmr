@@ -108,7 +108,7 @@ func TestSessionTurnProjectionPreservesAbsentResultAndJSONNull(t *testing.T) {
 			t.Fatal(err)
 		}
 		value, present := envelope["result"]
-		if present != test.present || present && string(value) != "null" || result.TerminalEventID == nil || result.WorkspaceVersionID != nil || envelope["workspace_version_id"] != nil {
+		if present != test.present || present && string(value) != "null" || result.TerminalEventID == nil || result.ComputerDiskVersionID != nil || envelope["computer_disk_version_id"] != nil {
 			t.Fatalf("terminal view lost presence: %s", raw)
 		}
 	}

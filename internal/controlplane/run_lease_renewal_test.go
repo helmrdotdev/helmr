@@ -3,304 +3,168 @@ package controlplane
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousExpiry(t *testing.T) {
-	server, store, worker, first := validRunLeaseRenewalFixture(t)
+func renewalFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workerActor, workerapi.RunLeaseFence, time.Time) {
+	t.Helper()
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now(),max_active_duration_ms=3600000 WHERE id=$1`, work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '1 millisecond',expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, work.LeaseID)
+	var expiry time.Time
+	if err := f.Pool.QueryRow(t.Context(), `SELECT expires_at FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&expiry); err != nil {
+		t.Fatal(err)
+	}
+	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	fence := workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}
+	return &Server{tx: f.Pool}, f, work, worker, fence, expiry
+}
 
-	second, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, first.Fence(), first.ExpiresAt,
-	)
+func TestRenewRunLeaseRetainsOnlyPreviousReceiptAndProjectsAttemptBase(t *testing.T) {
+	s, f, work, w, fence, expiry := renewalFixture(t)
+	first, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, expiry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.ExpiresAt.After(first.ExpiresAt) || store.renewalWrites != 2 {
-		t.Fatalf("first renewal = %+v, writes = %d", second, store.renewalWrites)
-	}
-	wantCalls := []string{
-		"renewal_locators", "run", "workspace", "attempt", "worker_group", "worker",
-		"runtime", "renewal_lease", "workspace_mount", "workspace_lease",
-		"renewal_time", "renew_run_lease", "renew_workspace_lease", "commit",
-	}
-	if !slices.Equal(store.calls, wantCalls) {
-		t.Fatalf("calls = %v, want %v", store.calls, wantCalls)
-	}
-	store.calls = nil
-	replayed, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, first.Fence(), first.ExpiresAt,
-	)
+	second, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, first.ExpiresAt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed != second || store.renewalWrites != 2 {
-		t.Fatalf("replay = %+v, writes = %d", replayed, store.renewalWrites)
+	if !second.ExpiresAt.After(first.ExpiresAt) {
+		t.Fatal("second renewal did not advance")
 	}
-	if slices.Contains(store.calls, "renew_run_lease") || slices.Contains(store.calls, "renew_workspace_lease") {
-		t.Fatalf("replay changed authority: %v", store.calls)
+	replay, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, first.ExpiresAt)
+	if err != nil || !replay.ExpiresAt.Equal(second.ExpiresAt) {
+		t.Fatalf("last receipt replay: %+v %v", replay, err)
 	}
-
-	store.renewalTime.Time = store.renewalTime.Time.Add(time.Minute)
-	third, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, second.Lease, second.ExpiresAt,
-	)
-	if err != nil {
+	if _, err = s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, expiry); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("two-renewals-old receipt accepted: %v", err)
+	}
+	var base string
+	if err = f.Pool.QueryRow(t.Context(), `SELECT base_computer_disk_version_id::text FROM run_attempts WHERE run_id=$1 AND number=1`, work.RunID).Scan(&base); err != nil {
 		t.Fatal(err)
 	}
-	if !third.ExpiresAt.After(second.ExpiresAt) || store.renewalWrites != 4 {
-		t.Fatalf("second renewal = %+v, writes = %d", third, store.renewalWrites)
-	}
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, first.Fence(), first.ExpiresAt,
-	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("two-generation-old expiry error = %v, want stale", err)
+	if second.Lease != fence || second.BaseComputerDiskVersionID != base {
+		t.Fatalf("renewal projection changed logical fence/base: %+v", second)
 	}
 }
 
-func TestRenewRunLeaseRejectsUnexpectedExpiry(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	expectedExpiry := assignment.ExpiresAt.Add(time.Second)
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), expectedExpiry,
-	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale", err)
+func TestRenewRunLeaseDoesNotWriteWhenHorizonDoesNotAdvance(t *testing.T) {
+	s, f, work, w, fence, _ := renewalFixture(t)
+	var expiry time.Time
+	if err := f.Pool.QueryRow(t.Context(), `UPDATE run_leases SET expires_at=clock_timestamp()+interval '10 minutes' WHERE id=$1 RETURNING expires_at`, work.LeaseID).Scan(&expiry); err != nil {
+		t.Fatal(err)
 	}
-	if store.renewalWrites != 0 {
-		t.Fatalf("writes = %d, want zero", store.renewalWrites)
+	var before string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l)::text FROM run_leases l WHERE id=$1`, work.LeaseID).Scan(&before); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRenewRunLeaseRejectsStaleSequence(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	assignment.LeaseSequence++
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale", err)
+	renewed, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, expiry)
+	if err != nil || !renewed.ExpiresAt.Equal(expiry) {
+		t.Fatalf("no-extension=%+v %v", renewed, err)
 	}
-}
-
-func TestRenewRunLeaseRejectsPriorWorkerEpoch(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	worker.WorkerEpoch++
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale", err)
+	var same bool
+	if err = f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l)::text=$2 FROM run_leases l WHERE id=$1`, work.LeaseID, before).Scan(&same); err != nil || !same {
+		t.Fatalf("no-extension wrote lease: %v %v", same, err)
 	}
 }
 
 func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	store.authority.workerGroup.Status = db.WorkerGroupStatusDraining
-	store.authority.worker.Status = db.WorkerInstanceStatusDraining
-
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
-	server, store, worker, _ := validRunLeaseRenewalFixture(t)
-	restored := pgvalue.UUID(uuid.NewV7())
-	if restored == store.authority.attempt.BaseWorkspaceVersionID {
-		t.Fatal("restored frontier unexpectedly matches the Attempt base")
-	}
-	store.authority.workspaceLease.BaseWorkspaceVersionID = restored
-	store.authority.workspaceMount.MaterializedVersionID = restored
-	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
-		run: store.authority.run, attempt: store.authority.attempt, runtime: store.authority.runtime,
-		runLease:  store.authority.runLease,
-		workspace: store.authority.workspace, workspaceMount: store.authority.workspaceMount,
-		workspaceLease: store.authority.workspaceLease,
-	})
+	s, f, work, w, fence, expiry := renewalFixture(t)
+	drained, err := db.New(f.Pool).DrainWorkerHost(t.Context(), db.DrainWorkerHostParams{ID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), ExpectedEpoch: pgtype.Int8{Int64: 1, Valid: true}, ExpectedClaimVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	); err != nil {
-		t.Fatal(err)
+	w.ClaimVersion = drained.ClaimVersion
+	renewed, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, expiry)
+	if err != nil || !renewed.ExpiresAt.After(expiry) {
+		t.Fatalf("draining renewal=%+v %v", renewed, err)
 	}
 }
 
-func TestRenewRunLeaseReturnsCurrentExpiryWhenOperationalHorizonDoesNotAdvance(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	store.authority.runLease.ExpiresAt.Time = store.renewalTime.Time.Add(run.LeaseTTL)
-	store.authority.workspaceLease.ExpiresAt = store.authority.runLease.ExpiresAt
-	assignment.ExpiresAt = store.authority.runLease.ExpiresAt.Time
+func TestRenewRunLeaseRejectsStaleAuthorityWithoutWriting(t *testing.T) {
+	for _, kind := range []string{"sequence", "epoch", "elapsed budget", "active deadline"} {
+		t.Run(kind, func(t *testing.T) {
+			s, f, work, w, fence, expiry := renewalFixture(t)
+			switch kind {
+			case "sequence":
+				fence.LeaseSequence++
+			case "epoch":
+				w.WorkerEpoch++
+			case "elapsed budget":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_elapsed_ms=max_active_duration_ms WHERE id=$1`, work.RunID)
+			case "active deadline":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_started_at=clock_timestamp()-interval '2 hours' WHERE id=$1`, work.RunID)
+			}
+			var before string
+			if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l)::text FROM run_leases l WHERE id=$1`, work.LeaseID).Scan(&before); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, expiry); !errors.Is(err, errStaleRunLeaseClaim) {
+				t.Fatalf("stale renewal=%v", err)
+			}
+			var same bool
+			if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l)::text=$2 FROM run_leases l WHERE id=$1`, work.LeaseID, before).Scan(&same); err != nil || !same {
+				t.Fatalf("rejected renewal wrote lease: %v %v", same, err)
+			}
+		})
+	}
+}
 
-	renewed, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	)
+func TestRenewRunLeaseRejectsExpiryDuringComputerLockWait(t *testing.T) {
+	s, f, work, w, fence, expiry := renewalFixture(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	blocker, err := f.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := workerapi.RunLeaseRenewResponse{
-		Lease: assignment.Fence(), ExpiresAt: assignment.ExpiresAt,
-		BaseWorkspaceVersionID: assignment.BaseWorkspaceVersionID,
-	}
-	if renewed != want || store.renewalWrites != 0 {
-		t.Fatalf("renewed = %+v, writes = %d", renewed, store.renewalWrites)
-	}
-}
-
-func TestRenewRunLeaseUsesOperationalHorizon(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-
-	renewed, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	)
-	if err != nil {
+	defer blocker.Rollback(context.Background())
+	var pid int32
+	if err = blocker.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
 		t.Fatal(err)
 	}
-	want := store.renewalTime.Time.Add(run.LeaseTTL)
-	if !renewed.ExpiresAt.Equal(want) {
-		t.Fatalf("expiry = %s, want %s", renewed.ExpiresAt, want)
+	dbtest.MustExec(t, ctx, blocker, `SELECT id FROM computers WHERE id=(SELECT computer_id FROM runs WHERE id=$1) FOR UPDATE`, work.RunID)
+	done := make(chan error, 1)
+	go func() { _, e := s.renewRunLease(ctx, w, pgvalue.UUID(work.LeaseID), fence, expiry); done <- e }()
+	for {
+		var blocked, expired bool
+		if err = f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity a WHERE $1=ANY(pg_blocking_pids(a.pid))),expires_at<clock_timestamp() FROM run_leases WHERE id=$2`, pid, work.LeaseID).Scan(&blocked, &expired); err != nil {
+			t.Fatal(err)
+		}
+		if blocked && expired {
+			break
+		}
+		select {
+		case e := <-done:
+			t.Fatalf("renewal did not wait: %v", e)
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-}
-
-func TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	store.renewalTime.Time = store.authority.runLease.ExpiresAt.Time
-
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale", err)
-	}
-	if store.renewalWrites != 0 {
-		t.Fatalf("writes = %d, want zero", store.renewalWrites)
-	}
-}
-
-func TestRenewRunLeaseRejectsExhaustedActiveBudget(t *testing.T) {
-	server, store, worker, assignment := validRunLeaseRenewalFixture(t)
-	store.authority.run.ActiveStartedAt.Time = store.renewalTime.Time.Add(-time.Hour)
-	store.authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
-	store.authority.run.ActiveElapsedMs = 0
-	if _, err := server.renewRunLease(
-		context.Background(), worker, store.authority.runLease.ID, assignment.Fence(), assignment.ExpiresAt,
-	); !errors.Is(err, errStaleRunLeaseClaim) {
-		t.Fatalf("error = %v, want stale", err)
-	}
-	if store.renewalWrites != 0 {
-		t.Fatalf("writes = %d, want zero", store.renewalWrites)
-	}
-}
-
-func validRunLeaseRenewalFixture(
-	t *testing.T,
-) (*Server, *runLeaseClaimStore, workerActor, workerapi.RunLeaseAssignment) {
-	t.Helper()
-	worker, claimLocators, authority := validRunLeaseClaimFixture()
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	authority.run.Status = db.RunStatusRunning
-	authority.run.StartedAt = pgvalue.Timestamptz(now.Add(-time.Minute))
-	authority.run.ActiveStartedAt = authority.run.StartedAt
-	authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
-	authority.run.ActiveElapsedMs = 0
-	authority.runLease.Status = db.RunLeaseStatusRunning
-	authority.runLease.StartDeadlineAt = pgvalue.Timestamptz(now.Add(-30 * time.Second))
-	authority.runLease.StartedAt = authority.run.StartedAt
-	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(time.Minute))
-	authority.workspaceMount.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.WorkspaceID = authority.workspace.ID
-	authority.workspaceLease.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
-	authority.workspaceLease.ExpiresAt = authority.runLease.ExpiresAt
-
-	store := &runLeaseClaimStore{
-		authority: authority,
-		renewal: db.GetLiveRunLeaseLocatorsRow{
-			OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
-			EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
-			WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
-			RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
-			WorkspaceLeaseID: claimLocators.WorkspaceLeaseID,
-			WorkspaceMountID: claimLocators.WorkspaceMountID,
-		},
-		renewalTime: pgvalue.Timestamptz(now),
-	}
-	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{
-		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
-		runLease:  authority.runLease,
-		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
-	})
-	if err != nil {
+	if err = blocker.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return &Server{db: store}, store, worker, assignment
-}
-
-func (s *runLeaseClaimStore) GetLiveRunLeaseLocators(
-	_ context.Context,
-	params db.GetLiveRunLeaseLocatorsParams,
-) (db.GetLiveRunLeaseLocatorsRow, error) {
-	s.calls = append(s.calls, "renewal_locators")
-	lease := s.authority.runLease
-	if params.ID != lease.ID ||
-		params.LeaseSequence != lease.LeaseSequence ||
-		params.WorkerGroupID != lease.WorkerGroupID ||
-		params.WorkerInstanceID != lease.WorkerInstanceID ||
-		params.WorkerEpoch != lease.WorkerEpoch {
-		return db.GetLiveRunLeaseLocatorsRow{}, pgx.ErrNoRows
+	select {
+	case e := <-done:
+		if !errors.Is(e, errStaleRunLeaseClaim) {
+			t.Fatalf("expired renewal=%v", e)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
 	}
-	return s.renewal, nil
-}
-
-func (s *runLeaseClaimStore) LockLiveRunLease(
-	context.Context,
-	db.LockLiveRunLeaseParams,
-) (db.RunLease, error) {
-	s.calls = append(s.calls, "renewal_lease")
-	return s.authority.runLease, nil
-}
-
-func (s *runLeaseClaimStore) GetRunLeaseRenewalTime(context.Context) (pgtype.Timestamptz, error) {
-	s.calls = append(s.calls, "renewal_time")
-	return s.renewalTime, nil
-}
-
-func (s *runLeaseClaimStore) RenewRunLeaseExpiry(
-	_ context.Context,
-	params db.RenewRunLeaseExpiryParams,
-) (db.RunLease, error) {
-	s.calls = append(s.calls, "renew_run_lease")
-	if !s.authority.runLease.ExpiresAt.Time.Equal(params.PreviousExpiresAt.Time) {
-		return db.RunLease{}, errStaleRunLeaseClaim
+	var untouched bool
+	if err = f.Pool.QueryRow(ctx, `SELECT expires_at=$2 AND previous_expires_at IS NULL FROM run_leases WHERE id=$1`, work.LeaseID, expiry).Scan(&untouched); err != nil || !untouched {
+		t.Fatalf("expired renewal changed receipt: %v %v", untouched, err)
 	}
-	s.authority.runLease.PreviousExpiresAt = s.authority.runLease.ExpiresAt
-	s.authority.runLease.RenewedAt = params.RenewedAt
-	s.authority.runLease.ExpiresAt = params.ExpiresAt
-	s.renewalWrites++
-	return s.authority.runLease, nil
-}
-
-func (s *runLeaseClaimStore) RenewRunWorkspaceLeaseExpiry(
-	_ context.Context,
-	params db.RenewRunWorkspaceLeaseExpiryParams,
-) (db.WorkspaceLease, error) {
-	s.calls = append(s.calls, "renew_workspace_lease")
-	if !s.authority.workspaceLease.ExpiresAt.Time.Equal(params.PreviousExpiresAt.Time) {
-		return db.WorkspaceLease{}, errStaleRunLeaseClaim
-	}
-	s.authority.workspaceLease.RenewedAt = params.RenewedAt
-	s.authority.workspaceLease.ExpiresAt = params.ExpiresAt
-	s.renewalWrites++
-	return s.authority.workspaceLease, nil
 }

@@ -20,7 +20,7 @@ type runConsumer struct {
 	discoveryGeneration uint64
 }
 
-type workspaceConsumer struct{ runner *Runner }
+type computerConsumer struct{ runner *Runner }
 
 type fatalWorkerError struct{ err error }
 
@@ -36,7 +36,7 @@ func NewRunConsumer(runner *Runner) Consumer {
 	}
 }
 
-func NewWorkspaceConsumer(runner *Runner) Consumer { return workspaceConsumer{runner: runner} }
+func NewComputerConsumer(runner *Runner) Consumer { return computerConsumer{runner: runner} }
 
 func (c *runConsumer) acquireRunLease(ctx context.Context) (workerapi.RunLeaseWork, error) {
 	c.mu.Lock()
@@ -180,20 +180,20 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}, true, nil
 }
 
-func (c workspaceConsumer) Claim(ctx context.Context) (Work, bool, error) {
+func (c computerConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	r := c.runner
 	if r.materializer == nil {
 		return nil, false, nil
 	}
-	claimed, err := r.client.ClaimWorkspaceMount(ctx, r.capabilities)
+	claimed, err := r.client.ClaimComputerInstance(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("claim workspace mount: %w", err)
+		return nil, false, fmt.Errorf("claim computer mount: %w", err)
 	}
-	if claimed.Mount == nil {
+	if claimed.Assignment == nil {
 		return nil, false, nil
 	}
-	mount := *claimed.Mount
+	mount := *claimed.Assignment
 	return func(workCtx context.Context) error {
-		return r.materializer.RunWorkspaceMount(workCtx, mount, r.client)
+		return r.materializer.RunComputerMount(workCtx, mount, r.client)
 	}, true, nil
 }

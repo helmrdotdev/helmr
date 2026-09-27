@@ -41,7 +41,7 @@ export const usecases = [
   id: "bug-hunter",
   payload: z.object({ errorId: z.string() }),
   run: async (event, ctx) => {
-    const brief = \`Reproduce error \${event.errorId} in /workspace, find the root cause and write a fix.\``,
+    const brief = \`Reproduce error \${event.errorId} in /computer, find the root cause and write a fix.\``,
     meta: '      metadata: { subject: "Post the root cause and fix?" }',
     action: "    if (decision.approved) await postReport(event.errorId, output)",
   },
@@ -103,7 +103,7 @@ export const harnesses = [
     for await (const message of query({
       prompt: brief,
       options: {
-        cwd: "/workspace",
+        cwd: "/computer",
         permissionMode: "bypassPermissions", // the microVM is the sandbox
         allowDangerouslySkipPermissions: true
       }
@@ -119,7 +119,7 @@ export const harnesses = [
     imports: 'import { Codex } from "@openai/codex-sdk"',
     agent: `    const codex = new Codex()
     const thread = codex.startThread({
-      workingDirectory: "/workspace",
+      workingDirectory: "/computer",
       sandboxMode: "danger-full-access" // the microVM is the sandbox
     })
     const nativeTurn = await thread.run(brief)
@@ -134,7 +134,7 @@ export const harnesses = [
     agent: `    const result = await Agent.prompt(brief, {
       apiKey: process.env.CURSOR_API_KEY!, // protected env: the VM only holds a placeholder
       model: { id: "composer-2.5" },
-      local: { cwd: "/workspace" }
+      local: { cwd: "/computer" }
     })
     const output = result.result ?? ""`,
   },
@@ -165,7 +165,7 @@ export const harnesses = [
     icon: logos.pi,
     imports: 'import { createAgentSession, SessionManager } from "@earendil-works/pi-coding-agent"',
     agent: `    const { session: nativeSession } = await createAgentSession({
-      cwd: "/workspace",
+      cwd: "/computer",
       sessionManager: SessionManager.inMemory()
     })
     let output = ""
@@ -187,7 +187,7 @@ import { bedrock } from "@ai-sdk/amazon-bedrock"`,
       model: bedrock("anthropic.claude-sonnet-4-6"), // or Vertex, Ollama — any provider the AI SDK speaks
       tools: {
         sh: tool({
-          description: "Run a shell command in /workspace",
+          description: "Run a shell command in /computer",
           inputSchema: z.object({ cmd: z.string() }),
           execute: ({ cmd }) => sh(cmd)
         })

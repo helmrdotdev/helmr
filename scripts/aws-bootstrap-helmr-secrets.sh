@@ -77,7 +77,7 @@ random_base64url_32() {
 put_secret worker_token_signing_key "$(random_base64_32)"
 put_secret auth_key "$(random_base64_32)"
 put_secret encryption_key "$(random_base64_32)"
-put_secret workspace_fencing_key "$(random_base64_32)"
+put_secret computer_fencing_key "$(random_base64_32)"
 put_secret token_credential_key "$(random_base64_32)"
 put_secret checkpoint_encryption_key "$(random_base64_32)"
 computer_wrapping_key_secret_arn="$(secret_arn_optional computer_wrapping_key)"

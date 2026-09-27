@@ -538,10 +538,9 @@ variable "retained_worker_generations" {
           throughput = number
         })
         disk = object({
-          total_mib           = number
-          reserve_mib         = number
-          substrate_cache_mib = number
-          artifact_cache_mib  = number
+          total_mib          = number
+          reserve_mib        = number
+          artifact_cache_mib = number
         })
         lifecycle = object({
           health_check_grace_period_seconds               = number
@@ -622,7 +621,6 @@ variable "retained_worker_generations" {
       generation.generation_inputs.per_vm.cpu_millis % 1000 == 0 &&
       generation.generation_inputs.per_vm.memory_mib > 0 &&
       generation.generation_inputs.per_vm.guest_ephemeral_disk_mib > 0 &&
-      generation.generation_inputs.supply.disk.substrate_cache_mib > 0 &&
       generation.generation_inputs.supply.disk.artifact_cache_mib > 0 &&
       can(base64decode(generation.sealed_provider_definition.user_data_base64)) &&
       can(jsondecode(generation.sealed_provider_definition.permission_policy_json)) &&
@@ -675,7 +673,7 @@ variable "worker_ami_id" {
   nullable    = true
 }
 
-variable "worker_instance_type" {
+variable "worker_host_type" {
   description = "EC2 instance type for the smoke worker."
   type        = string
   default     = "c8i.xlarge"
@@ -751,11 +749,7 @@ variable "worker_execution_slots" {
   default  = null
   nullable = true
 }
-variable "worker_substrate_cache_max_mib" {
-  type     = number
-  default  = null
-  nullable = true
-}
+
 variable "worker_artifact_cache_max_mib" {
   type     = number
   default  = null

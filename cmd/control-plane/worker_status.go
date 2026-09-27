@@ -77,12 +77,12 @@ func runWorkerGroupStatusCommand(ctx context.Context, output io.Writer, args []s
 	})
 }
 
-func runWorkerInstanceStatusCommand(ctx context.Context, output io.Writer, args []string) error {
+func runWorkerHostStatusCommand(ctx context.Context, output io.Writer, args []string) error {
 	if len(args) == 0 {
-		return errors.New("worker-instance command is required: status or lose")
+		return errors.New("worker-host command is required: status or lose")
 	}
 	command := args[0]
-	flags := flag.NewFlagSet("worker-instance "+command, flag.ContinueOnError)
+	flags := flag.NewFlagSet("worker-host "+command, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	var groupID string
 	var resourceID string
@@ -96,10 +96,10 @@ func runWorkerInstanceStatusCommand(ctx context.Context, output io.Writer, args 
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("worker-instance command has unexpected positional arguments")
+		return errors.New("worker-host command has unexpected positional arguments")
 	}
 	if command != "status" && command != "lose" {
-		return fmt.Errorf("unknown worker-instance command %q", command)
+		return fmt.Errorf("unknown worker-host command %q", command)
 	}
 	parsedGroupID, err := ids.Parse(groupID)
 	if err != nil {

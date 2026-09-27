@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
@@ -173,10 +173,10 @@ func TestTurnSettlementCancellationUnblocksDecisionAndStopsComputer(t *testing.T
 	}
 }
 
-type turnRenewalMounts struct{ WorkspaceMountSessionRegistry }
+type turnRenewalMounts struct{ ComputerMountSessionRegistry }
 
-func (turnRenewalMounts) RenewWorkspaceAuthority(_ context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
-	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+func (turnRenewalMounts) RenewComputerAuthority(_ context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
+	fence := proto.Clone(request.GetPrevious().GetFence()).(*computerv0.ComputerAuthorityFence)
 	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
 	return fence, nil
 }
@@ -189,7 +189,7 @@ func TestTurnSettlementAllowsConcurrentLeaseRenewal(t *testing.T) {
 	defer host.Close()
 	defer guest.Close()
 	_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease, authority: freshWorkspaceAuthority(&claim, "channel"), mounts: turnRenewalMounts{}}
+	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: cp, lease: claim.Lease, authority: freshComputerAuthority(&claim, "channel", testComputerMount(claim.Lease)), mounts: turnRenewalMounts{}}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
@@ -215,7 +215,7 @@ func TestTurnSettlementAllowsConcurrentLeaseRenewal(t *testing.T) {
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
-	if task.lease.ExpiresAt != next.ExpiresAt || task.lease.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID {
+	if task.lease.ExpiresAt != next.ExpiresAt || task.lease.BaseComputerDiskVersionID != claim.Lease.BaseComputerDiskVersionID {
 		t.Fatal("renewal changed settlement base or failed to advance expiry")
 	}
 }

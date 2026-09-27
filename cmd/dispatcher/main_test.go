@@ -20,7 +20,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	databaseURL := newSmokeDatabase(t, ctx)
 	t.Setenv("DATABASE_URL", databaseURL)
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:1")
-	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 
 	runCtx, cancel := context.WithCancel(context.Background())

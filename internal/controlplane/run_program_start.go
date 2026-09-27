@@ -32,11 +32,11 @@ func encodeProgramStart(
 	if err != nil {
 		return nil, err
 	}
-	workspaceID, err := requiredClaimUUIDString("workspace ID", run.WorkspaceID)
+	computerID, err := requiredClaimUUIDString("computer ID", run.ComputerID)
 	if err != nil {
 		return nil, err
 	}
-	baseWorkspaceVersionID, err := requiredClaimUUIDString("base workspace version ID", attempt.BaseWorkspaceVersionID)
+	baseComputerDiskVersionID, err := requiredClaimUUIDString("base computer version ID", attempt.BaseComputerDiskVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func encodeProgramStart(
 		attempt.Number <= 0 ||
 		attempt.Number != run.CurrentAttemptNumber ||
 		attempt.EntrypointKind != run.EntrypointKind ||
-		attempt.WorkspaceID != run.WorkspaceID ||
+		attempt.ComputerID != run.ComputerID ||
 		definition.ID != run.DeploymentDefinitionID ||
 		definition.EnvironmentID != run.EnvironmentID ||
 		definition.DeploymentID != run.DeploymentID ||
@@ -64,14 +64,14 @@ func encodeProgramStart(
 		return nil, err
 	}
 	message := &programv0.ProgramStart{
-		EntrypointDeclaredId:   run.EntrypointDeclaredID,
-		RunId:                  runID,
-		AttemptNumber:          uint32(attempt.Number),
-		Cause:                  cause,
-		DeploymentId:           deploymentID,
-		DeploymentVersion:      deploymentVersion,
-		WorkspaceId:            workspaceID,
-		BaseWorkspaceVersionId: baseWorkspaceVersionID,
+		EntrypointDeclaredId:      run.EntrypointDeclaredID,
+		RunId:                     runID,
+		AttemptNumber:             uint32(attempt.Number),
+		Cause:                     cause,
+		DeploymentId:              deploymentID,
+		DeploymentVersion:         deploymentVersion,
+		ComputerId:                computerID,
+		BaseComputerDiskVersionId: baseComputerDiskVersionID,
 	}
 
 	switch run.EntrypointKind {
@@ -162,7 +162,7 @@ func programStartActor(
 		!run.SessionID.Valid ||
 		actor.ID != run.SessionID ||
 		actor.DeploymentDefinitionID != run.DeploymentDefinitionID ||
-		actor.WorkspaceID != run.WorkspaceID ||
+		actor.ComputerID != run.ComputerID ||
 		actor.ActorDeclaredID != run.EntrypointDeclaredID ||
 		actor.CurrentRunID != run.ID || actor.RunGeneration <= 0 ||
 		actor.DispatchHoldID.Valid ||

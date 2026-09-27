@@ -19,11 +19,11 @@ current_run_lease AS (
            run_leases.attempt_number AS attempt_number
       FROM run_leases
       JOIN runs ON runs.id = run_leases.run_id
-               AND runs.workspace_id = run_leases.workspace_id
+               AND runs.computer_id = run_leases.computer_id
      WHERE run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
        AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND run_leases.worker_host_id = sqlc.arg(worker_host_id)
        AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number

@@ -21,7 +21,7 @@ import { Runs } from "./routes/runs";
 import { Sessions } from "./routes/sessions";
 import { Tokens } from "./routes/tokens";
 import { TokenDetail } from "./routes/token-detail";
-import { Workspaces } from "./routes/workspaces";
+import { Computers } from "./routes/computers";
 import { Deployments } from "./routes/deployments";
 import { DeploymentDetail } from "./routes/deployment-detail";
 import { ApiKeys } from "./routes/api-keys";
@@ -33,7 +33,7 @@ import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
-import { WorkspaceDetail } from "./routes/workspace-detail";
+import { ComputerDetail } from "./routes/computer-detail";
 import { SessionDetail } from "./routes/session-detail";
 import { AdminRegions } from "./routes/admin-regions";
 import { AdminWorkerGroups } from "./routes/admin-worker-groups";
@@ -234,7 +234,7 @@ function AppShell(props: { children?: JSX.Element }) {
           <TabLink href="/runs">Runs</TabLink>
           <TabLink href="/sessions">Sessions</TabLink>
           <TabLink href="/tokens">Tokens</TabLink>
-          <TabLink href="/workspaces">Workspaces</TabLink>
+          <TabLink href="/computers">Computers</TabLink>
           <TabLink href="/deployments">Deployments</TabLink>
         </nav>
         <div class={"flex items-center gap-2"}>
@@ -299,8 +299,8 @@ export function App() {
       <Route path="/sessions/:session_id" component={wrap(SessionDetail)} />
       <Route path="/tokens" component={wrap(Tokens)} />
       <Route path="/tokens/:token_id" component={wrap(TokenDetail)} />
-      <Route path="/workspaces" component={wrap(Workspaces)} />
-      <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
+      <Route path="/computers" component={wrap(Computers)} />
+      <Route path="/computers/:computer_id" component={wrap(ComputerDetail)} />
       <Route path="/deployments" component={wrap(Deployments)} />
       <Route path="/deployments/:deployment_id" component={wrap(DeploymentDetail)} />
       <Route path="/projects/new" component={() => <RequireAuth requirement="organization"><ProjectNew /></RequireAuth>} />

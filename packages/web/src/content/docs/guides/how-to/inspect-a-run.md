@@ -12,7 +12,7 @@ helmr run get RUN_ID --project agents --env development
 helmr run wait RUN_ID --project agents --env development --timeout 10m
 ```
 
-The snapshot includes status, entrypoint, Deployment, Workspace, current
+The snapshot includes status, entrypoint, Deployment, Computer, current
 attempt, cause, metadata, tags, timestamps, and terminal output or failure.
 
 Use logs for process output and structured application logging:

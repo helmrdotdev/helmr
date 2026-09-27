@@ -18,12 +18,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -317,6 +317,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	beginner := &deploymentPromotionCountingBeginner{pool: fixture.pool}
 	fixture.server.tx = beginner
 
+	flushDeploymentMeasurementStats(t, fixture.pool)
 	var walBefore string
 	var tempFilesBefore, tempBytesBefore int64
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -335,6 +336,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 		t.Fatalf("maximum promotion status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 
+	flushDeploymentMeasurementStats(t, fixture.pool)
 	var walBytes, tempFilesAfter, tempBytesAfter int64
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(), $1::pg_lsn)::bigint,
@@ -404,6 +406,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		done <- fixture.promoteContext(ctx, t, fixture.scheduledID, principal, "", "")
@@ -415,7 +418,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 			"promotion completed before bulk Secret replacement: status=%d body=%s",
 			completed.Code, completed.Body.String(),
 		)
-	case <-time.After(5 * time.Second):
+	case <-time.After(65 * time.Second):
 		var query, waitType, waitEvent string
 		if err := fixture.pool.QueryRow(t.Context(), `
 			SELECT query, coalesce(wait_event_type, ''), coalesce(wait_event, '')
@@ -563,7 +566,7 @@ func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *
 	if _, err := admission.Exec(t.Context(), `SET LOCAL lock_timeout = '500ms'`); err != nil {
 		t.Fatal(err)
 	}
-	// Workspace Secret insertion takes this FK key-share lock after admission
+	// Computer Secret insertion takes this FK key-share lock after admission
 	// locks the schedule. It must coexist with promotion's Secret lock.
 	if _, err := admission.Exec(t.Context(), `
 		SELECT id
@@ -593,11 +596,11 @@ func prepareDeploymentPromotionScaleFixture(
 ) (int, int) {
 	t.Helper()
 	const scheduleCount = 9_999
-	placements := make([]api.WorkspaceSecret, workspace.MaxSecretPlacements)
+	placements := make([]api.ComputerSecret, computer.MaxSecretPlacements)
 	queries := db.New(fixture.pool)
 	for index := range placements {
 		name := fmt.Sprintf("SECRET_%02d", index)
-		placements[index] = api.WorkspaceSecret{Name: name, Env: &api.SecretEnv{Name: name, Mode: "raw"}}
+		placements[index] = api.ComputerSecret{Name: name, Env: &api.SecretEnv{Name: name, Mode: "raw"}}
 		secretID, versionID := uuid.NewV7(), uuid.NewV7()
 		if _, err := queries.CreateSecret(t.Context(), db.CreateSecretParams{
 			ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
@@ -615,7 +618,7 @@ func prepareDeploymentPromotionScaleFixture(
 		},
 		Schedule: &deployment.ScheduleManifest{
 			Cron: "0 9 * * *", Timezone: "UTC",
-			Workspace: deployment.ScheduleWorkspaceManifest{
+			Computer: deployment.ScheduleComputerManifest{
 				SandboxDeclaredID: "reporting", Secrets: placements,
 			},
 		},
@@ -626,7 +629,7 @@ func prepareDeploymentPromotionScaleFixture(
 	var imageID pgtype.UUID
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT id FROM artifacts
-		 WHERE environment_id = $1 AND kind = 'workspace_image'
+		 WHERE environment_id = $1 AND kind = 'computer_image'
 		 LIMIT 1
 	`, fixture.environmentID).Scan(&imageID); err != nil {
 		t.Fatal(err)
@@ -641,14 +644,14 @@ func prepareDeploymentPromotionScaleFixture(
 		ManifestVersion: deployment.DeploymentPlanFormatVersion,
 		Ids:             make([]pgtype.UUID, definitionCount), Kinds: make([]string, definitionCount),
 		DeclaredIds: make([]string, definitionCount), Manifests: make([][]byte, definitionCount),
-		ManifestDigests: make([][]byte, definitionCount), ArtifactIds: make([]pgtype.UUID, definitionCount),
+		ManifestDigests: make([][]byte, definitionCount), ComputerSpecIds: make([]pgtype.UUID, definitionCount),
 	}
 	params.Ids[0] = pgvalue.UUID(uuid.NewV7())
 	params.Kinds[0] = string(deployment.DefinitionKindSandbox)
 	params.DeclaredIds[0] = "reporting"
 	params.Manifests[0] = []byte(`{}`)
 	params.ManifestDigests[0] = make([]byte, 32)
-	params.ArtifactIds[0] = imageID
+	params.ComputerSpecIds[0] = pgvalue.UUID(dbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, imageID))
 	for index := 1; index < definitionCount; index++ {
 		params.Ids[index] = pgvalue.UUID(uuid.NewV7())
 		params.Kinds[index] = string(deployment.DefinitionKindTask)
@@ -908,14 +911,14 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		       ($1, $4, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $5, 1, 'application/vnd.helmr.deployment-bundle.v0+json'),
 		       ($1, $6, 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		       ($1, $7, 1, 'application/octet-stream'),
+		       ($1, $7, 1, 'application/vnd.helmr.computer.seed.v0+filepack'),
 		       ($1, $8, 1, 'application/vnd.helmr.runtime.v0+squashfs')
 	`, fixture.orgID, digests[0], digests[1], digests[2], digests[3],
 		digests[4], digests[5], digests[6])
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES ($1, $4, $5, $6, $7, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs'),
-		       ($2, $4, $5, $6, $8, 'workspace_image', 1, 'application/octet-stream'),
+		       ($2, $4, $5, $6, $8, 'computer_image', 1, 'application/vnd.helmr.computer.seed.v0+filepack'),
 		       ($3, $4, $5, $9, $7, 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+squashfs')
 	`, programID, imageID, otherProgramID, fixture.orgID, fixture.projectID,
 		fixture.environmentID, digests[4], digests[5], fixture.otherEnvID)
@@ -930,7 +933,7 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		fixture.otherEnvID, "other", digests[3], digests[6], otherProgramID, queueConfig)
 
 	scheduledManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
 	)
 	canonical, digest, err := deployment.CanonicalManifestAndDigest(scheduledManifest)
 	if err != nil {
@@ -940,11 +943,11 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployment_definitions (
 		    id, environment_id, deployment_id, kind, declared_id,
-		    manifest_version, manifest, manifest_digest, artifact_id
+		    manifest_version, manifest, manifest_digest, computer_spec_id
 		) VALUES
 		    ($1, $3, $4, 'sandbox', 'reporting', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'), $5),
 		    ($2, $3, $4, 'task', 'daily-report', 0, $6::jsonb, $7, NULL)
-	`, sandboxID, taskID, fixture.environmentID, fixture.scheduledID, imageID,
+	`, sandboxID, taskID, fixture.environmentID, fixture.scheduledID, dbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageID),
 		canonical, digest[:])
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
@@ -978,4 +981,26 @@ func insertPromotionDeployment(
 
 func sha256Digest(n int) string {
 	return "sha256:" + fmt.Sprintf("%064x", n)
+}
+
+// pg_stat_database includes asynchronously published per-backend counters. Flush
+// fixture work before the baseline and measured work before the final sample;
+// otherwise setup spills can be attributed to promotion and final spills missed.
+func flushDeploymentMeasurementStats(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	connections := pool.AcquireAllIdle(t.Context())
+	defer func() {
+		for _, connection := range connections {
+			connection.Release()
+		}
+	}()
+	for _, connection := range connections {
+		if _, err := connection.Exec(t.Context(), `SELECT pg_stat_force_next_flush()`); err != nil {
+			t.Fatal(err)
+		}
+		// A round trip lets the backend finish its post-transaction stats publication.
+		if _, err := connection.Exec(t.Context(), `SELECT 1`); err != nil {
+			t.Fatal(err)
+		}
+	}
 }

@@ -27,7 +27,7 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(errors.New("invalid computer object request")))
 		return
 	}
-	id, err := ids.Parse(request.RuntimeInstanceID)
+	id, err := ids.Parse(request.ComputerInstanceID)
 	if err != nil || request.DesiredVersion <= 0 {
 		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
 		return
@@ -38,7 +38,7 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	worker := workerFromContext(r.Context())
-	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion}, ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
+	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion}, ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
 	var uploaded *cas.Object
 	if certify {
 		// Restrict storage lookup to an exact registration belonging to this physical

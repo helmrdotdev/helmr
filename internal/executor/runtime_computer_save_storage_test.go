@@ -62,7 +62,7 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	defer disk.Close()
 	owner := &runtimeComputerSaves{}
 	client := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
-	_, err = owner.attach(client.runtime, client.computer, func() *workerapi.ComputerSaveBeginRequest { return &workerapi.ComputerSaveBeginRequest{} })
+	err = owner.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: client.runtime, WriterGeneration: 2}, client.computer)
 	if err != nil {
 		t.Fatal(err)
 	}

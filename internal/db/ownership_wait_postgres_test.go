@@ -1,8 +1,12 @@
-package db
+package db_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"testing"
 	"time"
 	"uuid"
@@ -13,22 +17,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func ownershipTimerWait(t *testing.T, f runLeaseClaimFixture, work runLeaseWork) RunWait {
+func ownershipTimerWait(t *testing.T, f ownershipWaitFixture, work runtest.RunLease) db.RunWait {
 	t.Helper()
-	startTaskCompletionWork(t, t.Context(), f, work)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='running',started_at=claimed_at WHERE id=$1`, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET entrypoint_entered_at=now() WHERE run_id=$1`, work.RunID)
 	var version int64
-	if err := f.pool.QueryRow(t.Context(), "SELECT revision FROM runs WHERE id=$1", work.runID).Scan(&version); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), "SELECT revision FROM runs WHERE id=$1", work.RunID).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	w, err := f.queries.RegisterTimerRunWait(t.Context(), RegisterTimerRunWaitParams{
-		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.environmentID),
-		DueAt:                          pgvalue.Timestamptz(time.Now().Add(-time.Second)),
+	w, err := f.queries.RegisterTimerRunWait(t.Context(), db.RegisterTimerRunWaitParams{
+		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
+		DueAt:                          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		IdleTimeoutMs:                  pgtype.Int8{Int64: 30000, Valid: true},
 		RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("ownership-wait")),
-		AttemptNumber:                  1, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
-		CheckpointDueAt: pgvalue.Timestamptz(time.Now().Add(-time.Second)),
-		ResumeAttachID:  pgvalue.UUID(uuid.NewV7()), Metadata: []byte("{}"), Tags: []string{},
-		RunID: pgvalue.UUID(work.runID), ExpectedRunningRevision: version,
+		AttemptNumber:                  1, CurrentRunLeaseID: pgvalue.UUID(work.LeaseID),
+		Metadata: []byte("{}"), Tags: []string{},
+		RunID: pgvalue.UUID(work.RunID), ExpectedRunningRevision: version,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -36,40 +41,40 @@ func ownershipTimerWait(t *testing.T, f runLeaseClaimFixture, work runLeaseWork)
 	return w
 }
 
-func ownershipRunWaitSnapshot(t *testing.T, f runLeaseClaimFixture, w RunWait) []byte {
+func ownershipRunWaitSnapshot(t *testing.T, f ownershipWaitFixture, w db.RunWait) []byte {
 	t.Helper()
 	var result []byte
-	if err := f.pool.QueryRow(t.Context(), "SELECT jsonb_build_array(to_jsonb(r),to_jsonb(w)) FROM runs r JOIN run_waits w ON w.run_id=r.id WHERE w.id=$1", w.ID).Scan(&result); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), "SELECT jsonb_build_array(to_jsonb(r),to_jsonb(w)) FROM runs r JOIN run_waits w ON w.run_id=r.id WHERE w.id=$1", w.ID).Scan(&result); err != nil {
 		t.Fatal(err)
 	}
 	return result
 }
 
 func TestOwnershipHotWaitRejectsBeforeAnyMutation(t *testing.T) {
-	f := newRunLeaseClaimFixture(t, t.Context())
-	work := f.addWork(t, t.Context(), "starting", time.Now().Add(-time.Minute))
+	f := newOwnershipWaitFixture(t)
+	work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	w := ownershipTimerWait(t, f, work)
-	valid := CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: w.AttemptNumber}
+	valid := db.CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: w.AttemptNumber}
 	for _, test := range []struct {
 		name   string
-		mutate func(*CompleteHotRunWaitParams)
+		mutate func(*db.CompleteHotRunWaitParams)
 	}{
-		{"missing wait", func(p *CompleteHotRunWaitParams) { p.ID = pgvalue.UUID(uuid.NewV7()) }},
-		{"wrong version", func(p *CompleteHotRunWaitParams) { p.ExpectedRunRevision++ }},
-		{"wrong attempt", func(p *CompleteHotRunWaitParams) { p.AttemptNumber++ }},
-		{"wrong lease", func(p *CompleteHotRunWaitParams) { p.CurrentRunLeaseID = pgvalue.UUID(uuid.NewV7()) }},
-		{"record on timer", func(p *CompleteHotRunWaitParams) { p.CompletedTurnID = pgvalue.UUID(uuid.NewV7()) }},
+		{"missing wait", func(p *db.CompleteHotRunWaitParams) { p.ID = pgvalue.UUID(uuid.NewV7()) }},
+		{"wrong version", func(p *db.CompleteHotRunWaitParams) { p.ExpectedRunRevision++ }},
+		{"wrong attempt", func(p *db.CompleteHotRunWaitParams) { p.AttemptNumber++ }},
+		{"wrong lease", func(p *db.CompleteHotRunWaitParams) { p.CurrentRunLeaseID = pgvalue.UUID(uuid.NewV7()) }},
+		{"record on timer", func(p *db.CompleteHotRunWaitParams) { p.CompletedTurnID = pgvalue.UUID(uuid.NewV7()) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := ownershipRunWaitSnapshot(t, f, w)
 			p := valid
 			test.mutate(&p)
-			tx, err := f.pool.Begin(t.Context())
+			tx, err := f.Pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(t.Context())
-			if _, err := New(tx).CompleteHotRunWait(t.Context(), p); !errors.Is(err, pgx.ErrNoRows) {
+			if _, err := db.New(tx).CompleteHotRunWait(t.Context(), p); !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("rejection=%v", err)
 			}
 			if err := tx.Commit(t.Context()); err != nil {
@@ -100,17 +105,17 @@ func TestOwnershipLastLockedWaitRejectsCheckpointRequestRace(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			ctx := t.Context()
-			f := newRunLeaseClaimFixture(t, ctx)
-			work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+			f := newOwnershipWaitFixture(t)
+			work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 			w := ownershipTimerWait(t, f, work)
 			checkpointID := uuid.NewV7()
-			tx, err := f.pool.Begin(ctx)
+			tx, err := f.Pool.Begin(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(ctx)
-			dbtest.MustExec(t, ctx, tx, "SELECT id FROM runs WHERE id=$1 FOR UPDATE", w.RunID)
-			conn, err := f.pool.Acquire(ctx)
+			ownershipBeginCapture(t, f, work, tx, pgvalue.UUID(checkpointID))
+			conn, err := f.Pool.Acquire(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -118,35 +123,28 @@ func TestOwnershipLastLockedWaitRejectsCheckpointRequestRace(t *testing.T) {
 			pid := conn.Conn().PgConn().PID()
 			done := make(chan error, 1)
 			go func() {
-				q := New(conn)
+				q := db.New(conn)
 				if fail {
-					_, err := q.FailHotRunWait(ctx, FailHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: w.AttemptNumber, ReasonCode: pgvalue.Text("timer_failed")})
+					_, err := q.FailHotRunWait(ctx, db.FailHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: w.AttemptNumber, ReasonCode: pgvalue.Text("timer_failed")})
 					done <- err
 				} else {
-					_, err := q.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: w.AttemptNumber})
+					_, err := q.CompleteHotRunWait(ctx, db.CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: w.AttemptNumber})
 					done <- err
 				}
 			}()
 			deadline := time.Now().Add(10 * time.Second)
 			for {
 				var blocked bool
-				if err := f.pool.QueryRow(ctx, "SELECT cardinality(pg_blocking_pids($1))>0", pid).Scan(&blocked); err != nil {
+				if err := f.Pool.QueryRow(ctx, "SELECT cardinality(pg_blocking_pids($1))>0", pid).Scan(&blocked); err != nil {
 					t.Fatal(err)
 				}
 				if blocked {
 					break
 				}
 				if time.Now().After(deadline) {
-					t.Fatal("completion did not reach Run lock")
+					t.Fatal("completion did not reach db.Run lock")
 				}
 				time.Sleep(time.Millisecond)
-			}
-			dbtest.MustExec(t, ctx, tx, `
-   INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id)
-   SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4
-  `, checkpointID, work.runID, w.ID, work.leaseID)
-			if _, err := New(tx).RequestRunWaitCheckpoint(ctx, RequestRunWaitCheckpointParams{ID: w.ID, RunID: w.RunID, AttemptNumber: w.AttemptNumber, CurrentRunLeaseID: w.CurrentRunLeaseID, SuspendCheckpointID: pgvalue.UUID(checkpointID)}); err != nil {
-				t.Fatal(err)
 			}
 			if err := tx.Commit(ctx); err != nil {
 				t.Fatal(err)
@@ -154,16 +152,16 @@ func TestOwnershipLastLockedWaitRejectsCheckpointRequestRace(t *testing.T) {
 			if err := <-done; !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("stale transition=%v", err)
 			}
-			got, err := f.queries.GetRunWait(ctx, GetRunWaitParams{ID: w.ID, RunID: w.RunID, AttemptNumber: w.AttemptNumber})
+			got, err := f.queries.GetRunWait(ctx, db.GetRunWaitParams{ID: w.ID, RunID: w.RunID, AttemptNumber: w.AttemptNumber})
 			if err != nil {
 				t.Fatal(err)
 			}
-			var state RunStatus
+			var state db.RunStatus
 			var version int64
-			if err := f.pool.QueryRow(ctx, "SELECT status,revision FROM runs WHERE id=$1", w.RunID).Scan(&state, &version); err != nil {
+			if err := f.Pool.QueryRow(ctx, "SELECT status,revision FROM runs WHERE id=$1", w.RunID).Scan(&state, &version); err != nil {
 				t.Fatal(err)
 			}
-			if state != RunStatusWaiting || version != w.ExpectedRunRevision || got.SuspensionStatus != RunWaitStatusCheckpointing || got.ConditionStatus != WaitStatusPending {
+			if state != db.RunStatusWaiting || version != w.ExpectedRunRevision || got.SuspensionStatus != db.RunWaitStatusCheckpointing || got.ConditionStatus != db.WaitStatusPending {
 				t.Fatalf("partial mutation run=%s/%d wait=%+v", state, version, got)
 			}
 		})
@@ -174,39 +172,35 @@ func TestOwnershipActorInputStoredRoleGatesAllSuspensions(t *testing.T) {
 	for _, state := range []string{"hot", "checkpointing", "parked"} {
 		t.Run(state, func(t *testing.T) {
 			ctx := t.Context()
-			f := newRunLeaseClaimFixture(t, ctx)
-			work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-			sessionID := f.convertToActor(t, ctx, work, `{"enabled":false}`)
+			f := newOwnershipWaitFixture(t)
+			work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+			sessionID := f.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 			w := ownershipTimerWait(t, f, work)
-			dbtest.MustExec(t, ctx, f.pool, "UPDATE run_waits SET kind='actor_input',due_at=NULL,session_id=$2,after_input_sequence=2 WHERE id=$1", w.ID, sessionID)
+			dbtest.MustExec(t, ctx, f.Pool, "UPDATE run_waits SET kind='actor_input',due_at=NULL,session_id=$2,after_input_sequence=2 WHERE id=$1", w.ID, sessionID)
 			checkpointID := uuid.NewV7()
 			if state != "hot" {
-				dbtest.MustExec(t, ctx, f.pool, `
-    INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id)
-    SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4
-   `, checkpointID, work.runID, w.ID, work.leaseID)
-				dbtest.MustExec(t, ctx, f.pool, "UPDATE run_waits SET suspension_status='checkpointing',suspend_checkpoint_id=$2 WHERE id=$1", w.ID, checkpointID)
+				ownershipCapture(t, f, work, pgvalue.UUID(checkpointID))
 			}
 			if state == "parked" {
-				dbtest.MustExec(t, ctx, f.pool, "UPDATE run_waits SET suspension_status='parked',prior_run_lease_id=current_run_lease_id,current_run_lease_id=NULL WHERE id=$1", w.ID)
-				dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET current_run_lease_id=NULL WHERE id=$1", w.RunID)
+				dbtest.MustExec(t, ctx, f.Pool, "UPDATE run_waits SET suspension_status='parked',prior_run_lease_id=current_run_lease_id,current_run_lease_id=NULL WHERE id=$1", w.ID)
+				dbtest.MustExec(t, ctx, f.Pool, "UPDATE runs SET current_run_lease_id=NULL WHERE id=$1", w.RunID)
 			}
 			inputID, outputID := uuid.NewV7(), uuid.NewV7()
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')", inputID, f.environmentID, sessionID)
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_events(id,environment_id,session_id,workspace_id,sequence,kind,data,producer_run_id,producer_attempt_number,run_generation) SELECT $1,$2,$3,workspace_id,10,'output','{}',$4,1,1 FROM sessions WHERE id=$3", outputID, f.environmentID, sessionID, work.runID)
-			other := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+			dbtest.MustExec(t, ctx, f.Pool, "INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')", inputID, f.EnvironmentID, sessionID)
+			dbtest.MustExec(t, ctx, f.Pool, "INSERT INTO session_events(id,environment_id,session_id,computer_id,sequence,kind,data,producer_run_id,producer_attempt_number,run_generation) SELECT $1,$2,$3,computer_id,10,'output','{}',$4,1,1 FROM sessions WHERE id=$3", outputID, f.EnvironmentID, sessionID, work.RunID)
+			other := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 			otherSession := uuid.NewV7()
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO sessions(id,environment_id,actor_declared_id,deployment_definition_id,workspace_id,run_queue_name,run_max_active_duration_ms,run_retry_policy) SELECT $1,s.environment_id,s.actor_declared_id,s.deployment_definition_id,r.workspace_id,s.run_queue_name,s.run_max_active_duration_ms,s.run_retry_policy FROM sessions s CROSS JOIN runs r WHERE s.id=$2 AND r.id=$3", otherSession, sessionID, other.runID)
+			dbtest.MustExec(t, ctx, f.Pool, "INSERT INTO sessions(id,environment_id,actor_declared_id,deployment_definition_id,computer_id,run_queue_name,run_max_active_duration_ms,run_retry_policy) SELECT $1,s.environment_id,s.actor_declared_id,s.deployment_definition_id,r.computer_id,s.run_queue_name,s.run_max_active_duration_ms,s.run_retry_policy FROM sessions s CROSS JOIN runs r WHERE s.id=$2 AND r.id=$3", otherSession, sessionID, other.RunID)
 			otherInput := uuid.NewV7()
-			dbtest.MustExec(t, ctx, f.pool, "INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')", otherInput, f.environmentID, otherSession)
-			complete := func(q *Queries, id pgtype.UUID) (RunWait, error) {
+			dbtest.MustExec(t, ctx, f.Pool, "INSERT INTO session_turns(id,environment_id,session_id,sequence,data) VALUES ($1,$2,$3,10,'{}')", otherInput, f.EnvironmentID, otherSession)
+			complete := func(q *db.Queries, id pgtype.UUID) (db.RunWait, error) {
 				switch state {
 				case "hot":
-					return q.CompleteHotRunWait(ctx, CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, CompletedTurnID: id})
+					return q.CompleteHotRunWait(ctx, db.CompleteHotRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, CompletedTurnID: id})
 				case "checkpointing":
-					return q.CompleteCheckpointingRunWait(ctx, CompleteCheckpointingRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, CompletedTurnID: id})
+					return q.CompleteCheckpointingRunWait(ctx, db.CompleteCheckpointingRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, CurrentRunLeaseID: w.CurrentRunLeaseID, CompletedTurnID: id})
 				default:
-					return q.CompleteParkedRunWait(ctx, CompleteParkedRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, PriorRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, SuspendCheckpointID: pgvalue.UUID(checkpointID), CompletedTurnID: id})
+					return q.CompleteParkedRunWait(ctx, db.CompleteParkedRunWaitParams{ID: w.ID, RunID: w.RunID, ExpectedRunRevision: w.ExpectedRunRevision, PriorRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, SuspendCheckpointID: pgvalue.UUID(checkpointID), CompletedTurnID: id})
 				}
 			}
 			for _, test := range []struct {
@@ -217,12 +211,12 @@ func TestOwnershipActorInputStoredRoleGatesAllSuspensions(t *testing.T) {
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					before := ownershipRunWaitSnapshot(t, f, w)
-					tx, err := f.pool.Begin(ctx)
+					tx, err := f.Pool.Begin(ctx)
 					if err != nil {
 						t.Fatal(err)
 					}
 					defer tx.Rollback(ctx)
-					if _, err := complete(New(tx), test.id); !errors.Is(err, pgx.ErrNoRows) {
+					if _, err := complete(db.New(tx), test.id); !errors.Is(err, pgx.ErrNoRows) {
 						t.Fatalf("rejection=%v", err)
 					}
 					if err := tx.Commit(ctx); err != nil {
@@ -237,7 +231,7 @@ func TestOwnershipActorInputStoredRoleGatesAllSuspensions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.CompletedTurnID != pgvalue.UUID(inputID) || got.ConditionStatus != WaitStatusCompleted {
+			if got.CompletedTurnID != pgvalue.UUID(inputID) || got.ConditionStatus != db.WaitStatusCompleted {
 				t.Fatalf("completion=%+v", got)
 			}
 		})
@@ -248,26 +242,25 @@ func TestOwnershipFailureTransitionsRejectBeforeMutation(t *testing.T) {
 	for _, state := range []string{"hot", "checkpointing", "parked"} {
 		t.Run(state, func(t *testing.T) {
 			ctx := t.Context()
-			f := newRunLeaseClaimFixture(t, ctx)
-			work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+			f := newOwnershipWaitFixture(t)
+			work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 			w := ownershipTimerWait(t, f, work)
 			checkpointID := pgvalue.UUID(uuid.NewV7())
 			if state != "hot" {
-				dbtest.MustExec(t, ctx, f.pool, `INSERT INTO run_checkpoints(id,run_id,attempt_number,run_wait_id,source_run_lease_id,source_workspace_lease_id,workspace_id,base_workspace_version_id) SELECT $1,$2,1,$3,$4,id,workspace_id,base_workspace_version_id FROM workspace_leases WHERE owner_run_lease_id=$4`, checkpointID, work.runID, w.ID, work.leaseID)
-				dbtest.MustExec(t, ctx, f.pool, "UPDATE run_waits SET suspension_status='checkpointing',suspend_checkpoint_id=$2 WHERE id=$1", w.ID, checkpointID)
+				ownershipCapture(t, f, work, checkpointID)
 			}
 			if state == "parked" {
-				dbtest.MustExec(t, ctx, f.pool, "UPDATE run_waits SET suspension_status='parked',prior_run_lease_id=current_run_lease_id,current_run_lease_id=NULL WHERE id=$1", w.ID)
-				dbtest.MustExec(t, ctx, f.pool, "UPDATE runs SET current_run_lease_id=NULL WHERE id=$1", w.RunID)
+				dbtest.MustExec(t, ctx, f.Pool, "UPDATE run_waits SET suspension_status='parked',prior_run_lease_id=current_run_lease_id,current_run_lease_id=NULL WHERE id=$1", w.ID)
+				dbtest.MustExec(t, ctx, f.Pool, "UPDATE runs SET current_run_lease_id=NULL WHERE id=$1", w.RunID)
 			}
-			fail := func(q *Queries, id pgtype.UUID, version int64) (RunWait, error) {
+			fail := func(q *db.Queries, id pgtype.UUID, version int64) (db.RunWait, error) {
 				switch state {
 				case "hot":
-					return q.FailHotRunWait(ctx, FailHotRunWaitParams{ID: id, RunID: w.RunID, ExpectedRunRevision: version, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, ReasonCode: pgvalue.Text("timeout")})
+					return q.FailHotRunWait(ctx, db.FailHotRunWaitParams{ID: id, RunID: w.RunID, ExpectedRunRevision: version, CurrentRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, ReasonCode: pgvalue.Text("timeout")})
 				case "checkpointing":
-					return q.FailCheckpointingRunWait(ctx, FailCheckpointingRunWaitParams{ID: id, RunID: w.RunID, ExpectedRunRevision: version, CurrentRunLeaseID: w.CurrentRunLeaseID, ReasonCode: pgvalue.Text("timeout")})
+					return q.FailCheckpointingRunWait(ctx, db.FailCheckpointingRunWaitParams{ID: id, RunID: w.RunID, ExpectedRunRevision: version, CurrentRunLeaseID: w.CurrentRunLeaseID, ReasonCode: pgvalue.Text("timeout")})
 				default:
-					return q.FailParkedRunWait(ctx, FailParkedRunWaitParams{ID: id, RunID: w.RunID, ExpectedRunRevision: version, PriorRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, SuspendCheckpointID: checkpointID, ReasonCode: pgvalue.Text("timeout")})
+					return q.FailParkedRunWait(ctx, db.FailParkedRunWaitParams{ID: id, RunID: w.RunID, ExpectedRunRevision: version, PriorRunLeaseID: w.CurrentRunLeaseID, AttemptNumber: 1, SuspendCheckpointID: checkpointID, ReasonCode: pgvalue.Text("timeout")})
 				}
 			}
 			for _, test := range []struct {
@@ -277,18 +270,18 @@ func TestOwnershipFailureTransitionsRejectBeforeMutation(t *testing.T) {
 				{pgvalue.UUID(uuid.NewV7()), w.ExpectedRunRevision}, {w.ID, w.ExpectedRunRevision + 1},
 			} {
 				before := ownershipRunWaitSnapshot(t, f, w)
-				tx, err := f.pool.Begin(ctx)
+				tx, err := f.Pool.Begin(ctx)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := fail(New(tx), test.id, test.version); !errors.Is(err, pgx.ErrNoRows) {
+				if _, err := fail(db.New(tx), test.id, test.version); !errors.Is(err, pgx.ErrNoRows) {
 					t.Fatalf("rejection=%v", err)
 				}
 				if err := tx.Commit(ctx); err != nil {
 					t.Fatal(err)
 				}
 				if !bytes.Equal(before, ownershipRunWaitSnapshot(t, f, w)) {
-					t.Fatal("failed rejection durably moved Run/Wait")
+					t.Fatal("failed rejection durably moved db.Run/Wait")
 				}
 			}
 			if _, err := fail(f.queries, w.ID, w.ExpectedRunRevision); err != nil {
@@ -302,5 +295,37 @@ func TestOwnershipFailureTransitionsRejectBeforeMutation(t *testing.T) {
 				t.Fatal("repeated failure mutated rows")
 			}
 		})
+	}
+}
+
+type ownershipWaitFixture struct {
+	runtest.Fixture
+	queries *db.Queries
+}
+
+func newOwnershipWaitFixture(t *testing.T) ownershipWaitFixture {
+	f := runtest.New(t)
+	return ownershipWaitFixture{Fixture: f, queries: db.New(f.Pool)}
+}
+func ownershipCapture(t *testing.T, f ownershipWaitFixture, work runtest.RunLease, id pgtype.UUID) {
+	t.Helper()
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(context.Background())
+	ownershipBeginCapture(t, f, work, tx, id)
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+func ownershipBeginCapture(t *testing.T, f ownershipWaitFixture, work runtest.RunLease, tx pgx.Tx, id pgtype.UUID) {
+	t.Helper()
+	p := db.BeginComputerCheckpointParams{CheckpointID: id, EnvironmentID: pgvalue.UUID(f.EnvironmentID)}
+	if err := tx.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,i.membership_revision,i.desired_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&p.ComputerInstanceID, &p.WriterGeneration, &p.MembershipRevision, &p.DesiredVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dispatch.BeginComputerCapture(t.Context(), tx, p); err != nil {
+		t.Fatal(err)
 	}
 }

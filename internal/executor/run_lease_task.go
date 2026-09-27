@@ -11,13 +11,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -29,13 +26,11 @@ var (
 )
 
 type RunLeaseControlPlane interface {
-	RunComputerPublicationClient
 	ClaimRunLease(context.Context, workerapi.RunLeaseWork) (workerapi.RunLeaseClaimResponse, error)
 	AcknowledgeRunStart(context.Context, workerapi.RunStartRequest) (workerapi.RunStartResponse, error)
 	AcknowledgeRunEntrypoint(context.Context, workerapi.RunEntrypointRequest) error
 	RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
 	BeginRunFinalization(context.Context, workerapi.BeginRunFinalizationRequest) (workerapi.BeginRunFinalizationResponse, error)
-	RegisterRunFinalization(context.Context, workerapi.RegisterRunFinalizationRequest) error
 	CompleteTask(context.Context, workerapi.CompleteTaskRequest) error
 	CompleteActor(context.Context, workerapi.CompleteActorRequest) error
 	CommitActorTurn(context.Context, workerapi.CommitActorTurnRequest) (workerapi.CommitActorTurnResponse, error)
@@ -51,12 +46,11 @@ type ActorRuntimeControlPlane interface {
 	ReadRunSessionEvents(context.Context, workerapi.ReadSessionEventsRequest) (workerapi.ReadSessionEventsResponse, error)
 }
 
-type WorkspaceRuntimeControlPlane interface {
-	CreateRunWorkspace(context.Context, workerapi.CreateWorkspaceRequest) (workerapi.CreateWorkspaceResponse, error)
-	RetrieveRunWorkspace(context.Context, workerapi.RetrieveWorkspaceRequest) (workerapi.RetrieveWorkspaceResponse, error)
-	ExecuteRunWorkspace(context.Context, workerapi.ExecuteWorkspaceRequest) (workerapi.ExecuteWorkspaceResponse, error)
-	PollRunWorkspaceExec(context.Context, workerapi.PollWorkspaceExecRequest) (workerapi.ExecuteWorkspaceResponse, error)
-	DeleteRunWorkspace(context.Context, workerapi.DeleteWorkspaceRequest) (workerapi.DeleteWorkspaceResponse, error)
+type ComputerRuntimeControlPlane interface {
+	CreateRunComputer(context.Context, workerapi.CreateComputerRequest) (workerapi.CreateComputerResponse, error)
+	RetrieveRunComputer(context.Context, workerapi.RetrieveComputerRequest) (workerapi.RetrieveComputerResponse, error)
+	ListRunComputerMembers(context.Context, workerapi.ComputerMembersRequest) (workerapi.ComputerMembersResponse, error)
+	DeleteRunComputer(context.Context, workerapi.DeleteComputerRequest) (workerapi.DeleteComputerResponse, error)
 }
 
 type RunLeaseTaskResult struct {
@@ -71,22 +65,17 @@ type RunLeaseTaskRenewal struct {
 }
 
 type RunLeaseTask interface {
-	QuiesceComputerSaves(context.Context) error
 	Close()
 	Wait(context.Context) (RunLeaseTaskResult, error)
 	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
-	BeginWorkspaceFinalization(context.Context, workerapi.RunLeaseAssignment, workerapi.RunLeaseAssignment, string, workerapi.RunFinalizationKind) error
-	CaptureWorkspace(context.Context) (workerapi.TaskWorkspaceCapture, error)
 }
 
 func (task *guestRunLeaseTask) Close() {
-	if task.saveDetach != nil {
-		task.saveDetach()
-	}
 	if task.program.protocol != nil {
 		_ = task.program.protocol.Close()
 	}
 	task.mu.Lock()
+	task.finished = true
 	task.clearCapabilities()
 	task.mu.Unlock()
 }
@@ -96,26 +85,22 @@ type RunLeaseTaskRunner interface {
 }
 
 type guestRunLeaseTask struct {
-	saveDetach      func()
-	saveWaiting     int
-	stopMu          sync.Mutex
-	stopDeadline    time.Time
-	program         freshProgram
-	mounts          WorkspaceMountSessionRegistry
-	store           cas.Store
-	controlPlane    RunLeaseControlPlane
-	waits           *ControlPlaneRunWaits
-	checkpointer    Checkpointer
-	terminalCapture *terminalComputerCapturer
-	waitWorkspace   workerapi.Workspace
-	orgID           string
+	resumeWait   *programv0.ResumeAttach
+	captures     *ComputerCaptureRuns
+	stopMu       sync.Mutex
+	stopDeadline time.Time
+	program      freshProgram
+	mounts       ComputerMountSessionRegistry
+	store        cas.Store
+	controlPlane RunLeaseControlPlane
+	waits        *ControlPlaneRunWaits
+	waitComputer workerapi.Computer
+	orgID        string
 
 	renewalGate      sync.Mutex
 	mu               sync.Mutex
 	lease            workerapi.RunLeaseAssignment
-	authority        *workspacev0.WorkspaceRunAuthority
-	operationID      string
-	finalizingKind   workerapi.RunFinalizationKind
+	authority        *computerv0.ComputerRunAuthority
 	checkpointFrozen bool
 	finished         bool
 }
@@ -130,7 +115,7 @@ func (task *guestRunLeaseTask) callRunSourceRuntime(
 		// advance only its expiry. Neither external Control Plane I/O nor retry
 		// delays may hold the lock needed by that renewal.
 		task.mu.Lock()
-		if task.finished || task.finalizingKind != "" {
+		if task.finished {
 			task.mu.Unlock()
 			return errRunSourceOperationUnavailable
 		}
@@ -153,27 +138,23 @@ func (r ProgramRunner) StartRunLeaseTask(
 	claim *workerapi.RunLeaseClaimResponse,
 	controlPlane RunLeaseControlPlane,
 ) (RunLeaseTask, error) {
-	if r.CAS == nil {
-		return nil, errors.New("run lease task CAS is required")
+	if r.CAS == nil || r.ComputerCaptures == nil {
+		return nil, errors.New("run lease task CAS and Computer capture registry are required")
 	}
 	target, err := runLeaseMountTarget(claim)
 	if err != nil {
 		return nil, err
 	}
-	checkpointBase, err := checkpointWorkspaceBase(target)
+	_, err = checkpointComputerBase(target)
 	if err != nil {
 		return nil, err
 	}
 	var program freshProgram
-	if claim != nil && claim.Execution.Restore != nil {
-		program, err = r.startResumedProgram(ctx, claim, controlPlane)
+	var resumedWait *programv0.ResumeAttach
+	if claim.ProgramResume != nil {
+		program, resumedWait, err = r.startRestoredProgram(ctx, claim, controlPlane)
 	} else {
-		program, err = r.startNewProgram(
-			ctx,
-			claim,
-			controlPlane,
-			runLeaseProgramEventSink{controlPlane: controlPlane},
-		)
+		program, err = r.startNewProgram(ctx, claim, controlPlane, runLeaseProgramEventSink{controlPlane: controlPlane})
 	}
 	if err != nil {
 		return nil, err
@@ -181,71 +162,38 @@ func (r ProgramRunner) StartRunLeaseTask(
 	authority := program.authority
 	program.authority = nil
 	task := &guestRunLeaseTask{
+		resumeWait:   resumedWait,
+		captures:     r.ComputerCaptures,
 		program:      program,
-		mounts:       r.WorkspaceMounts,
+		mounts:       r.ComputerMounts,
 		store:        r.CAS,
 		controlPlane: controlPlane,
 		lease:        program.lease,
 		authority:    authority,
 		orgID:        program.mount.OrgID,
-		waitWorkspace: waitWorkspaceForRun(
+		waitComputer: waitComputerForRun(
 			program.mount,
-			claim.Lease,
-			claim.Workspace.Target,
+			claim.Computer.Target,
 		),
 	}
-	if session, ok := program.session.(vm.ComputerCaptureSession); ok {
-		task.terminalCapture = &terminalComputerCapturer{session: session, publication: func(lease workerapi.RunLeaseAssignment, op string) computer.ContinuationPublication {
-			return runComputerPublisher{client: controlPlane, objects: r.CheckpointObjects, request: workerapi.RunComputerObjectRequest{Lease: lease.Fence(), OperationID: op}}
-		}}
-	}
+
 	task.program.protocol = newProgramProtocol(program.session.Stream())
 	if waitClient, ok := controlPlane.(RunWaitClient); ok {
 		task.waits = &ControlPlaneRunWaits{Client: waitClient}
 	}
-	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
-		task.checkpointer = &runtimeCheckpointer{
-			publication: func(req CheckpointRequest) computer.ContinuationPublication {
-				return runComputerPublisher{client: controlPlane, objects: r.CheckpointObjects, request: workerapi.RunComputerObjectRequest{Lease: program.lease.Fence(), Checkpoint: &workerapi.ComputerCheckpointPublication{ID: req.CheckpointID, RunWaitID: req.RunWaitID, RequestVersion: req.CheckpointRequestVersion}}}
-			},
-			objects: r.CheckpointObjects, capacity: r.Capacity,
-			session:    checkpointable,
-			encryptor:  r.CheckpointEncryptor,
-			tempDir:    r.tempDir(),
-			stream:     task.programStream(),
-			protocol:   task.program.protocol,
-			workspace:  checkpointBase,
-			runEvent:   task.processCheckpointRunEvent,
-			freezeGate: &task.renewalGate,
-			onFrozen:   task.markCheckpointFrozen,
-		}
-	}
-	owner, ok := program.session.(interface {
-		AttachComputerSaveAuthority(string, string, func() *workerapi.ComputerSaveBeginRequest) (func(), error)
-	})
-	if !ok {
-		task.Close()
-		return nil, errors.New("run physical mount save owner is missing")
-	}
-	task.saveDetach, err = owner.AttachComputerSaveAuthority(program.lease.RuntimeInstanceID, program.mount.WorkspaceID, task.computerSaveAuthority)
-	if err != nil {
-		task.Close()
-		return nil, err
-	}
 	return task, nil
 }
 
-func waitWorkspaceForRun(
-	mount workerapi.WorkspaceMount,
-	lease workerapi.RunLeaseAssignment,
+func waitComputerForRun(
+	mount workerapi.ComputerInstanceAssignment,
 	target workerapi.ComputerMountTarget,
-) workerapi.Workspace {
-	return workerapi.Workspace{
-		ID:                     mount.WorkspaceID,
-		WorkspaceMountID:       mount.ID,
-		FencingGeneration:      lease.MountFencingGeneration,
-		BaseWorkspaceVersionID: target.BaseWorkspaceVersionID,
-		MountPath:              mount.WorkspaceMountPath,
+) workerapi.Computer {
+	return workerapi.Computer{
+		ID:                        mount.ComputerID,
+		ComputerInstanceID:        mount.ComputerInstanceID,
+		WriterGeneration:          mount.WriterGeneration,
+		BaseComputerDiskVersionID: target.BaseComputerDiskVersionID,
+		MountPath:                 mount.ComputerMountPath,
 	}
 }
 
@@ -303,14 +251,14 @@ func (task *guestRunLeaseTask) CurrentWorkerRunLeaseAssignment() workerapi.RunLe
 func workerRunLeaseFromAssignment(orgID string, assignment workerapi.RunLeaseAssignment) workerapi.RunLease {
 	return workerapi.RunLease{
 		ID: assignment.ID, OrgID: orgID, RunID: assignment.RunID,
-		WorkerGroupID:     assignment.WorkerGroupID,
-		WorkerInstanceID:  assignment.WorkerInstanceID,
-		WorkerEpoch:       assignment.WorkerEpoch,
-		LeaseSequence:     assignment.LeaseSequence,
-		RuntimeInstanceID: assignment.RuntimeInstanceID,
-		AttemptNumber:     assignment.AttemptNumber,
-		Trace:             assignment.Trace,
-		ExpiresAt:         assignment.ExpiresAt,
+		WorkerGroupID:      assignment.WorkerGroupID,
+		WorkerHostID:       assignment.WorkerHostID,
+		WorkerEpoch:        assignment.WorkerEpoch,
+		LeaseSequence:      assignment.LeaseSequence,
+		ComputerInstanceID: assignment.ComputerInstanceID,
+		AttemptNumber:      assignment.AttemptNumber,
+		Trace:              assignment.Trace,
+		ExpiresAt:          assignment.ExpiresAt,
 	}
 }
 
@@ -326,8 +274,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.R
 		return err
 	}
 	runtimeWait.Leases = task
-	runtimeWait.Workspace = task.waitWorkspace
-	runtimeWait.Checkpointer = task.checkpointer
+	runtimeWait.Computer = task.waitComputer
 	runtimeWait.Resume = func(resumeCtx context.Context, decision WaitResumeDecision) error {
 		if err := task.beforeWaitResume(resumeCtx, decision); err != nil {
 			return err
@@ -403,11 +350,11 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 		*programv0.RunEvent_SessionCloseRequested,
 		*programv0.RunEvent_SessionEventsRequested:
 		return task.handleResourceRuntime(ctx, event)
-	case *programv0.RunEvent_WorkspaceCreateRequested,
-		*programv0.RunEvent_WorkspaceRetrieveRequested,
-		*programv0.RunEvent_WorkspaceExecRequested,
-		*programv0.RunEvent_WorkspaceDeleteRequested:
-		return task.handleWorkspaceRuntime(ctx, event)
+	case *programv0.RunEvent_ComputerCreateRequested,
+		*programv0.RunEvent_ComputerRetrieveRequested,
+		*programv0.RunEvent_ComputerMembersRequested,
+		*programv0.RunEvent_ComputerDeleteRequested:
+		return task.handleComputerRuntime(ctx, event)
 	default:
 		return errors.New("unsupported program event while checkpoint pause is pending")
 	}
@@ -427,6 +374,12 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 		}()
 	}
 
+	if task.resumeWait != nil {
+		if err := task.continueRestoredWait(ctx, task.resumeWait); err != nil {
+			return RunLeaseTaskResult{}, err
+		}
+		task.resumeWait = nil
+	}
 	if task.program.entrypoint != nil && task.program.entrypoint.GetActor() != nil {
 		outcome, quiesced, err := task.program.awaitActorCompletion(
 			ctx,
@@ -570,7 +523,7 @@ func (task *guestRunLeaseTask) RenewRunLease(
 	defer task.renewalGate.Unlock()
 	task.mu.Lock()
 	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != "" {
+	if task.finished {
 		return RunLeaseTaskRenewal{}, errors.New("run lease task is not renewable")
 	}
 	previous := task.lease
@@ -610,10 +563,10 @@ func renewRunLeaseAuthority(
 	controlPlane interface {
 		RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
 	},
-	mounts WorkspaceMountSessionRegistry,
+	mounts ComputerMountSessionRegistry,
 	previous workerapi.RunLeaseAssignment,
-	authority *workspacev0.WorkspaceRunAuthority,
-) (workerapi.RunLeaseAssignment, *workspacev0.WorkspaceAuthorityFence, error) {
+	authority *computerv0.ComputerRunAuthority,
+) (workerapi.RunLeaseAssignment, *computerv0.ComputerAuthorityFence, error) {
 	renewed, err := renewControlPlaneRunLeaseAuthority(ctx, controlPlane, previous)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, nil, err
@@ -623,13 +576,13 @@ func renewRunLeaseAuthority(
 	}
 	guestCtx, cancelGuest := context.WithDeadline(context.Background(), renewed.ExpiresAt)
 	defer cancelGuest()
-	var fence *workspacev0.WorkspaceAuthorityFence
-	if err := retryWorkspaceAuthorityTransport(guestCtx, func(requestCtx context.Context) error {
+	var fence *computerv0.ComputerAuthorityFence
+	if err := retryComputerAuthorityTransport(guestCtx, func(requestCtx context.Context) error {
 		var requestErr error
-		fence, requestErr = mounts.RenewWorkspaceAuthority(
+		fence, requestErr = mounts.RenewComputerAuthority(
 			requestCtx,
-			&workspacev0.RenewWorkspaceAuthorityRequest{
-				Previous:             proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority),
+			&computerv0.RenewComputerAuthorityRequest{
+				Previous:             proto.Clone(authority).(*computerv0.ComputerRunAuthority),
 				NewExpiresAtUnixNano: renewed.ExpiresAt.UnixNano(),
 			},
 		)
@@ -640,7 +593,7 @@ func renewRunLeaseAuthority(
 		}
 		return workerapi.RunLeaseAssignment{}, nil, err
 	}
-	return renewed, proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence), nil
+	return renewed, proto.Clone(fence).(*computerv0.ComputerAuthorityFence), nil
 }
 
 func renewControlPlaneRunLeaseAuthority(
@@ -664,9 +617,9 @@ func renewControlPlaneRunLeaseAuthority(
 		return workerapi.RunLeaseAssignment{}, err
 	}
 	if response.Lease != previous.Fence() ||
-		response.BaseWorkspaceVersionID != previous.BaseWorkspaceVersionID {
+		response.BaseComputerDiskVersionID != previous.BaseComputerDiskVersionID {
 		return workerapi.RunLeaseAssignment{}, errors.New(
-			"run lease renewal response changed its fence or workspace frontier",
+			"run lease renewal response changed its fence or computer frontier",
 		)
 	}
 	renewed := previous
@@ -680,7 +633,7 @@ func renewControlPlaneRunLeaseAuthority(
 	return renewed, nil
 }
 
-func retryWorkspaceAuthorityTransport(
+func retryComputerAuthorityTransport(
 	ctx context.Context,
 	request func(context.Context) error,
 ) error {
@@ -695,7 +648,7 @@ func retryWorkspaceAuthorityTransport(
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, errWorkspaceControlTransport) {
+		if !errors.Is(err, errComputerControlTransport) {
 			return err
 		}
 		timer := time.NewTimer(delay)
@@ -712,94 +665,6 @@ func retryWorkspaceAuthorityTransport(
 			}
 		}
 	}
-}
-
-func (task *guestRunLeaseTask) BeginWorkspaceFinalization(
-	ctx context.Context,
-	previous workerapi.RunLeaseAssignment,
-	frozen workerapi.RunLeaseAssignment,
-	operationID string,
-	kind workerapi.RunFinalizationKind,
-) error {
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished {
-		return errors.New("run lease task is already finalized")
-	}
-	if !equalRunLeaseAssignment(task.lease, previous) {
-		return errors.New("workspace finalization previous receipt is not current")
-	}
-	if err := validateRunLeaseExpiryAdvance(previous, frozen); err != nil {
-		return err
-	}
-	if !frozen.ExpiresAt.After(previous.ExpiresAt) {
-		return errors.New("workspace finalization expiry did not advance")
-	}
-	if strings.TrimSpace(operationID) == "" ||
-		kind != workerapi.RunFinalizationCapture {
-		return errors.New("workspace finalization identity is invalid")
-	}
-	response, err := task.mounts.BeginWorkspaceFinalization(
-		ctx,
-		&workspacev0.BeginWorkspaceFinalizationRequest{
-			Previous:                      proto.Clone(task.authority).(*workspacev0.WorkspaceRunAuthority),
-			FinalizationExpiresAtUnixNano: frozen.ExpiresAt.UnixNano(),
-			OperationId:                   operationID,
-			Kind:                          string(kind),
-		},
-	)
-	if err != nil {
-		return err
-	}
-	task.authority.Fence = proto.Clone(response.GetFence()).(*workspacev0.WorkspaceAuthorityFence)
-	task.lease = frozen
-	task.operationID = operationID
-	task.finalizingKind = kind
-	return nil
-}
-
-func (task *guestRunLeaseTask) CaptureWorkspace(
-	ctx context.Context,
-) (workerapi.TaskWorkspaceCapture, error) {
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.finalizingKind != workerapi.RunFinalizationCapture {
-		return workerapi.TaskWorkspaceCapture{}, errors.New("run lease task is not capturing")
-	}
-	envelope, err := task.finalizationEnvelope(workspace.FinalizationCaptureKind, nil)
-	if err != nil {
-		return workerapi.TaskWorkspaceCapture{}, err
-	}
-	if task.terminalCapture == nil {
-		return workerapi.TaskWorkspaceCapture{}, errors.New("host Computer finalization is unavailable")
-	}
-	disk, err := task.terminalCapture.capture(ctx, task.lease, task.operationID, task.controlPlane.RegisterRunFinalization)
-	if err != nil {
-		return workerapi.TaskWorkspaceCapture{}, err
-	}
-	task.finished = true
-	task.clearCapabilities()
-	return workerapi.TaskWorkspaceCapture{Receipt: workerWorkspaceFinalizationReceipt(&workspacev0.WorkspaceFinalizationReceipt{OperationId: envelope.OperationId, RequestFingerprint: envelope.RequestFingerprint, Fence: envelope.Authority.Fence}), Disk: disk}, nil
-}
-
-func (task *guestRunLeaseTask) finalizationEnvelope(
-	kind string,
-	target any,
-) (*workspacev0.WorkspaceFinalizationEnvelope, error) {
-	fence := executorFinalizationFence(task.authority.GetFence())
-	fingerprint, err := workspace.FinalizationFingerprint(kind, workspace.FinalizationRequest{
-		OperationID: task.operationID,
-		Fence:       fence,
-		Target:      target,
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &workspacev0.WorkspaceFinalizationEnvelope{
-		OperationId:        task.operationID,
-		RequestFingerprint: fingerprint,
-		Authority:          proto.Clone(task.authority).(*workspacev0.WorkspaceRunAuthority),
-	}, nil
 }
 
 func (task *guestRunLeaseTask) clearCapabilities() {
@@ -830,18 +695,18 @@ func runLeaseMountTarget(claim *workerapi.RunLeaseClaimResponse) (workerapi.Comp
 	if claim == nil {
 		return workerapi.ComputerMountTarget{}, errors.New("run lease claim is required")
 	}
-	target := claim.Workspace.Target
-	if target.BaseWorkspaceVersionID != claim.Lease.BaseWorkspaceVersionID {
+	target := claim.Computer.Target
+	if target.BaseComputerDiskVersionID != claim.Lease.BaseComputerDiskVersionID {
 		return workerapi.ComputerMountTarget{}, errors.New("computer mount target does not match lease base")
 	}
 	return target, validateComputerMountTarget(target)
 }
 
-func checkpointWorkspaceBase(target workerapi.ComputerMountTarget) (workerapi.CheckpointWorkspaceBase, error) {
+func checkpointComputerBase(target workerapi.ComputerMountTarget) (workerapi.CheckpointComputerBase, error) {
 	if err := validateComputerMountTarget(target); err != nil {
-		return workerapi.CheckpointWorkspaceBase{}, err
+		return workerapi.CheckpointComputerBase{}, err
 	}
-	return workerapi.CheckpointWorkspaceBase{MountPath: "/workspace"}, nil
+	return workerapi.CheckpointComputerBase{MountPath: "/computer"}, nil
 }
 
 func workerTaskOutcome(outcome *programv0.TaskOutcome) (workerapi.TaskOutcome, error) {
@@ -867,29 +732,6 @@ func workerTaskOutcome(outcome *programv0.TaskOutcome) (workerapi.TaskOutcome, e
 	}
 }
 
-func workerWorkspaceFinalizationReceipt(
-	receipt *workspacev0.WorkspaceFinalizationReceipt,
-) workerapi.WorkspaceFinalizationReceipt {
-	if receipt == nil {
-		return workerapi.WorkspaceFinalizationReceipt{}
-	}
-	fence := receipt.GetFence()
-	return workerapi.WorkspaceFinalizationReceipt{
-		OperationID: receipt.GetOperationId(), RequestFingerprint: receipt.GetRequestFingerprint(),
-		Fence: workerapi.WorkspaceFinalizationFence{
-			WorkerInstanceID: fence.GetWorkerInstanceId(), WorkerEpoch: fence.GetWorkerEpoch(),
-			RuntimeInstanceID: fence.GetRuntimeInstanceId(), RuntimeIdentityID: fence.GetRuntimeIdentityId(),
-			WorkspaceID: fence.GetWorkspaceId(), WorkspaceMountID: fence.GetWorkspaceMountId(),
-			RunID: fence.GetRunId(), AttemptNumber: int32(fence.GetAttemptNumber()),
-			RunLeaseID: fence.GetRunLeaseId(), LeaseSequence: fence.GetLeaseSequence(),
-			WorkspaceLeaseID: fence.GetWorkspaceLeaseId(), OwnershipGeneration: fence.GetOwnershipGeneration(),
-			WriterGeneration: fence.GetWriterGeneration(), MountFencingGeneration: fence.GetMountFencingGeneration(),
-			ExpiresAt:              time.Unix(0, fence.GetExpiresAtUnixNano()).UTC(),
-			BaseWorkspaceVersionID: fence.GetBaseWorkspaceVersionId(),
-		},
-	}
-}
-
 func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure {
 	failure := workerapi.TaskFailure{Message: message}
 	if details != nil {
@@ -899,21 +741,3 @@ func canonicalTaskFailure(message string, details *string) workerapi.TaskFailure
 }
 
 var _ RunLeaseTaskRunner = ProgramRunner{}
-
-func (task *guestRunLeaseTask) QuiesceComputerSaves(ctx context.Context) error {
-	owner, ok := task.program.session.(interface{ QuiesceComputerSaves(context.Context) error })
-	if !ok {
-		return errors.New("run physical mount save owner is missing")
-	}
-	return owner.QuiesceComputerSaves(ctx)
-}
-
-func (task *guestRunLeaseTask) computerSaveAuthority() *workerapi.ComputerSaveBeginRequest {
-	task.mu.Lock()
-	defer task.mu.Unlock()
-	if task.finished || task.checkpointFrozen || task.finalizingKind != "" || task.saveWaiting > 0 || !task.lease.ExpiresAt.After(time.Now()) {
-		return nil
-	}
-	fence := task.lease.Fence()
-	return &workerapi.ComputerSaveBeginRequest{Lease: &fence}
-}

@@ -50,24 +50,24 @@ func (q *Queries) CreateComputerKey(ctx context.Context, arg CreateComputerKeyPa
 const getRuntimeComputerWriteKey = `-- name: GetRuntimeComputerWriteKey :one
 
 SELECT k.id, k.environment_id, k.computer_id, k.wrapping_key_id, k.wrapped_key, k.created_at, k.retired_at, k.available
-  FROM runtime_instances r
-  JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.workspace_id
+  FROM computer_instances r
+  JOIN computers c ON c.environment_id=r.environment_id AND c.id=r.computer_id
   JOIN computer_data_keys k ON k.environment_id=c.environment_id AND k.computer_id=c.id
-    AND k.id=COALESCE(r.computer_write_key_id,c.write_key_id) AND k.available
+    AND k.id=COALESCE(r.write_key_id,c.write_key_id) AND k.available
  WHERE r.id=$1 AND r.environment_id=$2
-   AND r.workspace_id=$3 AND r.reclaimed_at IS NULL
+   AND r.computer_id=$3 AND r.reclaimed_at IS NULL
 `
 
 type GetRuntimeComputerWriteKeyParams struct {
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	EnvironmentID     pgtype.UUID `json:"environment_id"`
-	ComputerID        pgtype.UUID `json:"computer_id"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	ComputerID         pgtype.UUID `json:"computer_id"`
 }
 
 // The owning operation holds Computer and Runtime authority. No caller-provided
 // key selection is accepted. Provider I/O happens only after committing these pins.
 func (q *Queries) GetRuntimeComputerWriteKey(ctx context.Context, arg GetRuntimeComputerWriteKeyParams) (ComputerDataKey, error) {
-	row := q.db.QueryRow(ctx, getRuntimeComputerWriteKey, arg.RuntimeInstanceID, arg.EnvironmentID, arg.ComputerID)
+	row := q.db.QueryRow(ctx, getRuntimeComputerWriteKey, arg.ComputerInstanceID, arg.EnvironmentID, arg.ComputerID)
 	var i ComputerDataKey
 	err := row.Scan(
 		&i.ID,
@@ -105,7 +105,7 @@ const listUnreferencedComputerKeys = `-- name: ListUnreferencedComputerKeys :man
 SELECT k.id FROM computer_data_keys k
 WHERE k.available
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
- AND NOT EXISTS(SELECT 1 FROM runtime_instances r WHERE r.retained_computer_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_write_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
 ORDER BY k.id LIMIT $1
 `
@@ -133,23 +133,23 @@ func (q *Queries) ListUnreferencedComputerKeys(ctx context.Context, rowLimit int
 }
 
 const pinRuntimeComputerKey = `-- name: PinRuntimeComputerKey :execrows
-UPDATE runtime_instances SET computer_write_key_id=$1
+UPDATE computer_instances SET write_key_id=$1
  WHERE id=$2 AND environment_id=$3
-   AND workspace_id=$4 AND reclaimed_at IS NULL
-   AND (computer_write_key_id IS NULL OR computer_write_key_id=$1)
+   AND computer_id=$4 AND reclaimed_at IS NULL
+   AND (write_key_id IS NULL OR write_key_id=$1)
 `
 
 type PinRuntimeComputerKeyParams struct {
-	KeyID             pgtype.UUID `json:"key_id"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	EnvironmentID     pgtype.UUID `json:"environment_id"`
-	ComputerID        pgtype.UUID `json:"computer_id"`
+	KeyID              pgtype.UUID `json:"key_id"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	ComputerID         pgtype.UUID `json:"computer_id"`
 }
 
 func (q *Queries) PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error) {
 	result, err := q.db.Exec(ctx, pinRuntimeComputerKey,
 		arg.KeyID,
-		arg.RuntimeInstanceID,
+		arg.ComputerInstanceID,
 		arg.EnvironmentID,
 		arg.ComputerID,
 	)
@@ -163,7 +163,7 @@ const retireUnreferencedComputerKey = `-- name: RetireUnreferencedComputerKey :e
 UPDATE computer_data_keys k SET retired_at=clock_timestamp(), wrapped_key=NULL
 WHERE k.id=$1 AND k.available
  AND NOT EXISTS(SELECT 1 FROM computers c WHERE c.write_key_id=k.id)
- AND NOT EXISTS(SELECT 1 FROM runtime_instances r WHERE r.retained_computer_write_key_id=k.id)
+ AND NOT EXISTS(SELECT 1 FROM computer_instances r WHERE r.retained_write_key_id=k.id)
  AND NOT EXISTS(SELECT 1 FROM computer_object_keys o WHERE o.key_id=k.id)
 `
 

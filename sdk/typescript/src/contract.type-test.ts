@@ -10,7 +10,7 @@ import {
   schedules,
   sessions,
   tokens,
-  workspaces,
+  computers,
   type JsonValue,
   type HelmrClient,
   type Actor,
@@ -45,8 +45,8 @@ import {
   type RecordWriter,
   type SourceDirectory,
   type SourceFile,
-  type WorkspaceRef,
-  type WorkspaceSecretBinding,
+  type ComputerRef,
+  type ComputerSecretBinding,
 } from "."
 
 const schema: PayloadSchema<{ readonly value: string }> = {
@@ -104,7 +104,7 @@ export function assertGreenfieldTypes(): void {
   }
   void writeValues
 
-  const placement: WorkspaceSecretBinding = { secret: "token", env: {name: "TOKEN", mode: "raw"} }
+  const placement: ComputerSecretBinding = { secret: "token", env: {name: "TOKEN", mode: "raw"} }
   const secretCreate: SecretCreateRequest = {
     name: "TOKEN",
     value: "secret",
@@ -143,9 +143,9 @@ export function assertGreenfieldTypes(): void {
   image("source-copy").copy(sourceFile)
   const prepared = configBuilder().copy("build/setup.sh", "/opt/setup.sh").run(["/bin/sh", "/opt/setup.sh"])
   defineConfig({ dirs: ["src"], build: { builder: prepared, installCommand: "./prepare.sh", secrets: ["NPM_TOKEN"] } })
-  // @ts-expect-error A Workspace image is not a build environment.
-  defineConfig({ build: { builder: image("workspace").from("debian") } })
-  // @ts-expect-error The build environment is not a Workspace image.
+  // @ts-expect-error A Computer image is not a build environment.
+  defineConfig({ build: { builder: image("computer").from("debian") } })
+  // @ts-expect-error The build environment is not a Computer image.
   sandbox({ id: "wrong-role" }).image(prepared)
   // @ts-expect-error Builder sources are captured project paths, not installed-tree selectors.
   configBuilder().copy(sourceFile, "/opt/setup.sh")
@@ -175,7 +175,7 @@ export function assertGreenfieldTypes(): void {
   // @ts-expect-error Sandbox values must be created by sandbox().
   const unbrandedSandbox: Sandbox = {
     id: "unbranded",
-    createWorkspace: async () => null as never,
+    createComputer: async () => null as never,
   }
   void unbrandedSandbox
 
@@ -191,18 +191,18 @@ export function assertGreenfieldTypes(): void {
   payloadTask.id satisfies "payload"
   const payloadInput: TaskInput<typeof payloadTask> = { value: "ok" }
   payloadInput.value satisfies string
-  const runtimeWorkspace = workspaces.ref(
+  const runtimeComputer = computers.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
   )
-  runtimeWorkspace satisfies WorkspaceRef
+  runtimeComputer satisfies ComputerRef
   payloadTask.start(
     { value: "ok" },
-    { workspace: runtimeWorkspace },
+    { computer: runtimeComputer },
   )
   const childWait = payloadTask.call(
     { value: "ok" },
     {
-      workspace: runtimeWorkspace,
+      computer: runtimeComputer,
       idempotencyKey: "payload:ok",
     },
   )
@@ -212,15 +212,15 @@ export function assertGreenfieldTypes(): void {
   payloadTask.call(
     { value: "ok" },
     // @ts-expect-error task.call requires an explicit idempotency key.
-    { workspace: runtimeWorkspace },
+    { computer: runtimeComputer },
   )
   // @ts-expect-error a payload-bearing task call requires its payload position.
   payloadTask.call({
-    workspace: runtimeWorkspace,
+    computer: runtimeComputer,
     idempotencyKey: "payload:missing",
   })
   // @ts-expect-error a payload-bearing task always requires payload.
-  payloadTask.start({ workspace: runtimeWorkspace })
+  payloadTask.start({ computer: runtimeComputer })
   const client = null as unknown as HelmrClient
   client.tasks.retrieve("payload").then((info: TaskInfo) => {
     info.id satisfies string
@@ -234,12 +234,12 @@ export function assertGreenfieldTypes(): void {
     info.id satisfies string
     info.deploymentId satisfies string
   })
-  const clientWorkspace = client.workspaces.ref(
+  const clientComputer = client.computers.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
   )
-  clientWorkspace satisfies WorkspaceRef
-  client.sandboxes.createWorkspace("machine").then((workspace) => {
-    workspace satisfies WorkspaceRef
+  clientComputer satisfies ComputerRef
+  client.sandboxes.createComputer("machine").then((computer) => {
+    computer satisfies ComputerRef
   })
   sessions.ref(
     "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33",
@@ -261,19 +261,19 @@ export function assertGreenfieldTypes(): void {
   })
   client.tasks.start<typeof payloadTask>("payload", {
     payload: { value: "ok" },
-    workspace: clientWorkspace,
+    computer: clientComputer,
   })
   client.tasks.start<typeof payloadTask>(
     // @ts-expect-error a typed Task start requires that Task's declared ID.
     "other-task",
     {
       payload: { value: "ok" },
-      workspace: clientWorkspace,
+      computer: clientComputer,
     },
   )
   // @ts-expect-error the external typed Task envelope requires payload.
   client.tasks.start<typeof payloadTask>("payload", {
-    workspace: clientWorkspace,
+    computer: clientComputer,
   })
   const typedOutputTask = task({
     id: "typed-output",
@@ -284,7 +284,7 @@ export function assertGreenfieldTypes(): void {
   })
   const typedRun = client.tasks.start<typeof typedOutputTask>("typed-output", {
     payload: { value: "ok" },
-    workspace: clientWorkspace,
+    computer: clientComputer,
   })
   type TypedOutput = TaskOutput<typeof typedOutputTask>
   const typedOutput: TypedOutput = { value: "ok", count: 2 }
@@ -342,33 +342,33 @@ export function assertGreenfieldTypes(): void {
     run: () => null,
   } satisfies TaskConfig<"configured", never, never, null>
   task(configuredTask).id satisfies "configured"
-  noPayloadTask.start({ workspace: runtimeWorkspace })
+  noPayloadTask.start({ computer: runtimeComputer })
   noPayloadTask.call({
-    workspace: runtimeWorkspace,
+    computer: runtimeComputer,
     idempotencyKey: "no-payload",
   })
   // @ts-expect-error task.call requires an explicit idempotency key.
-  noPayloadTask.call({ workspace: runtimeWorkspace })
+  noPayloadTask.call({ computer: runtimeComputer })
   client.tasks.start<typeof noPayloadTask>("no-payload", {
-    workspace: clientWorkspace,
+    computer: clientComputer,
   })
   client.tasks.start<typeof noPayloadTask>("no-payload", {
     // @ts-expect-error the external no-payload Task envelope forbids payload.
     payload: null,
-    workspace: clientWorkspace,
+    computer: clientComputer,
   })
   // @ts-expect-error a no-payload task has no payload position.
-  noPayloadTask.start(null, { workspace: runtimeWorkspace })
+  noPayloadTask.start(null, { computer: runtimeComputer })
   // @ts-expect-error a no-payload task call has no payload position.
   noPayloadTask.call(null, {
-    workspace: runtimeWorkspace,
+    computer: runtimeComputer,
     idempotencyKey: "no-payload:unexpected",
   })
 
   const scheduled = schedules.task({
     id: "scheduled",
     cron: { pattern: "0 * * * *", timezone: "UTC" },
-    workspace: { sandbox: machine },
+    computer: { sandbox: machine },
     run(payload) {
       payload.scheduledAt satisfies Date
       return { scheduleId: payload.scheduleId }
@@ -432,14 +432,14 @@ export function assertGreenfieldTypes(): void {
     start: async () => null as never,
   }
   void unbrandedActor
-  operator.start({ workspace: runtimeWorkspace }).then((started) => {
+  operator.start({ computer: runtimeComputer }).then((started) => {
     started satisfies ActorStartResult
     const { run } = started
     client.runs.wait(run).unwrap().then((output) => {
       output satisfies null
     })
   })
-  client.actors.start("operator", { workspace: clientWorkspace }).then(({ run }) => {
+  client.actors.start("operator", { computer: clientComputer }).then(({ run }) => {
     client.runs.wait(run).unwrap().then((output) => {
       output satisfies null
     })

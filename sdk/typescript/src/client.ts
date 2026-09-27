@@ -1,3 +1,4 @@
+import type { CommandRef } from "./command"
 import type {
   CursorPage,
   JsonValue,
@@ -29,11 +30,12 @@ import type {
   Token,
   TokenStatus,
 } from "./tokens"
-import type { WorkspaceRef } from "./workspace"
+import type { ComputerRef } from "./computer"
 import {
-  createClientWorkspaces,
-  type ClientWorkspacesApi,
-} from "./client-workspace"
+  createClientComputers,
+  createClientCommandRef,
+  type ClientComputersApi,
+} from "./client-computer"
 import {
   createClientSandboxes,
   type ClientSandboxesApi,
@@ -60,7 +62,7 @@ import {
 } from "./client-secret"
 import type { RequestOptions } from "./request"
 import type { LogAttributes, RunLogLevel } from "./logger"
-import { workspaceRefID } from "./workspace"
+import { computerRefID } from "./computer"
 import {
   definitionItemQuery,
   definitionListQuery,
@@ -97,7 +99,7 @@ export interface ClientTokensApi {
 
 type ClientTaskRunRequest = RunOptions & Readonly<{
   idempotencyKey?: string
-  workspace: WorkspaceRef
+  computer: ComputerRef
 }>
 
 export type TaskStartRequest<TTask extends Task> =
@@ -150,7 +152,7 @@ export interface RunListItem {
   readonly id: string
   readonly status: RunStatus
   readonly entrypoint: Readonly<{ kind: RunEntrypointKind; id: string }>
-  readonly workspaceId: string
+  readonly computerId: string
   readonly sessionId?: string
   readonly currentAttemptNumber: number
   readonly createdAt: string
@@ -268,7 +270,8 @@ export class HelmrClient {
   readonly secrets: ClientSecretsApi
   readonly runs: ClientRunsApi
   readonly tokens: ClientTokensApi
-  readonly workspaces: ClientWorkspacesApi
+  readonly commands: Readonly<{ ref(id: string): CommandRef }>
+  readonly computers: ClientComputersApi
 
   constructor(options: HelmrClientOptions) {
     const transport = new ClientTransport(options)
@@ -281,7 +284,8 @@ export class HelmrClient {
     this.secrets = createClientSecrets(transport)
     this.runs = Object.freeze(new ClientRuns(transport))
     this.tokens = Object.freeze(new ClientTokens(transport))
-    this.workspaces = createClientWorkspaces(transport)
+    this.computers = createClientComputers(transport)
+    this.commands = Object.freeze({ ref: (id: string) => createClientCommandRef(id, transport) })
   }
 }
 
@@ -637,9 +641,9 @@ function parseRunListItem(value: unknown): RunListItem {
       kind,
       id: requiredStringFrom(entrypoint, "id", "Run list item.entrypoint"),
     }),
-    workspaceId: resourceID(
-      requiredStringFrom(run, "workspace_id", "Run list item"),
-      "Run list item.workspace_id",
+    computerId: resourceID(
+      requiredStringFrom(run, "computer_id", "Run list item"),
+      "Run list item.computer_id",
     ),
     ...(run["session_id"] === undefined
       ? {}
@@ -793,7 +797,7 @@ function taskStartRequest(
   request: ClientTaskRunRequest,
 ): Record<string, unknown> {
   return {
-    workspace: { id: workspaceRefID(request.workspace) },
+    computer: { id: computerRefID(request.computer) },
     ...(request.idempotencyKey === undefined
       ? {}
       : { idempotency_key: request.idempotencyKey }),
@@ -1014,9 +1018,9 @@ function parseRun<TOutput extends JsonValue = JsonValue>(
       ),
       version: requiredStringFrom(deployment, "version", "Run response.deployment"),
     }),
-    workspaceId: resourceID(
-      requiredStringFrom(run, "workspace_id", "Run response"),
-      "Run response.workspace_id",
+    computerId: resourceID(
+      requiredStringFrom(run, "computer_id", "Run response"),
+      "Run response.computer_id",
     ),
     ...(run["session_id"] === undefined
       ? {}

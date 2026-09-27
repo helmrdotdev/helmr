@@ -14,7 +14,7 @@ func TestDecodeStartTaskRequestIsClosedAndPayloadPresenceAware(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/",
-		strings.NewReader(`{"payload":null,"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
+		strings.NewReader(`{"payload":null,"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
 	)
 	decoded, payloadPresent, err := decodeStartTaskRequest(request)
 	if err != nil {
@@ -28,18 +28,18 @@ func TestDecodeStartTaskRequestIsClosedAndPayloadPresenceAware(t *testing.T) {
 		`null`,
 		`{}`,
 		`{"options":null}`,
-		`{"workspace":null}`,
-		`{"workspace":{"key":"workspace:1"}}`,
-		`{"workspace":{"key":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"unknown":true}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"queue":""}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"ttl":""}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"metadata":null}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"tags":[null]}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"retry":{"enabled":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"retry":{"backoff":{"factor":null}}}`,
+		`{"computer":null}`,
+		`{"computer":{"key":"computer:1"}}`,
+		`{"computer":{"key":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"unknown":true}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"queue":""}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"ttl":""}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"metadata":null}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"tags":[null]}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"retry":{"enabled":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"retry":{"backoff":{"factor":null}}}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		if _, _, err := decodeStartTaskRequest(request); err == nil {
@@ -55,10 +55,11 @@ func TestWriteTaskStartErrorUsesStableCodes(t *testing.T) {
 		status int
 		code   string
 	}{
+		{err: conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"}), status: http.StatusConflict, code: "computer_preparation_exhausted"},
 		{err: idempotency.ConflictError{}, status: http.StatusConflict, code: "idempotency_conflict"},
 		{err: errTaskNotDeployed, status: http.StatusNotFound, code: "task_not_deployed"},
-		{err: errTaskWorkspaceNotFound, status: http.StatusNotFound, code: "workspace_not_found"},
-		{err: errTaskWorkspaceUnavailable, status: http.StatusConflict, code: "workspace_unavailable"},
+		{err: errTaskComputerNotFound, status: http.StatusNotFound, code: "computer_not_found"},
+		{err: errTaskComputerUnavailable, status: http.StatusConflict, code: "computer_unavailable"},
 		{err: errTaskSecretUnavailable, status: http.StatusConflict, code: "secret_unavailable"},
 		{err: errTaskPayloadPresenceInvalid, status: http.StatusBadRequest, code: "invalid_task_start"},
 		{err: errors.New("database failed"), status: http.StatusServiceUnavailable, code: "task_start_authority_unavailable"},

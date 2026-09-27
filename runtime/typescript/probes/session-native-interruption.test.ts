@@ -1,5 +1,5 @@
 // Real native/SDK/runtime/DB interruption chain. Worker physical observations and
-// captured Workspace bytes are fixtures; the provider home stays on local disk.
+// captured Computer bytes are fixtures; the provider home stays on local disk.
 import { randomUUIDv7 } from "node:crypto"
 import { PassThrough } from "node:stream"
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"

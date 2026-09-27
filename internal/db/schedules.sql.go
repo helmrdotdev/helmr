@@ -183,10 +183,12 @@ func (q *Queries) ClaimDueSchedules(ctx context.Context, arg ClaimDueSchedulesPa
 	return items, nil
 }
 
-const createWorkspaceForScheduleFire = `-- name: CreateWorkspaceForScheduleFire :one
+const createComputerForScheduleFire = `-- name: CreateComputerForScheduleFire :one
 WITH selected_definition AS (
     SELECT schedules.environment_id,
            definition.id AS deployment_definition_id,
+           definition.computer_spec_id,
+           definition.deployment_id AS creation_deployment_id,
            definition.declared_id AS sandbox_declared_id,
            projects.default_region_id
       FROM schedules
@@ -203,55 +205,52 @@ WITH selected_definition AS (
        AND schedules.id = $3
        AND schedules.generation = $4
        AND schedules.status = 'active'
-), created_workspace AS (
+), created_computer AS (
     INSERT INTO computers (
         id,
         environment_id,
         region_id,
         sandbox_declared_id,
-        deployment_definition_id,
-        head_version_id,
+        head_disk_version_id,
         key
-    )
+    , computer_spec_id, creation_deployment_id)
     SELECT $5,
            selected_definition.environment_id,
            selected_definition.default_region_id,
            selected_definition.sandbox_declared_id,
-           selected_definition.deployment_definition_id,
            $6,
-           NULL
+           NULL, selected_definition.computer_spec_id, selected_definition.creation_deployment_id
+
       FROM selected_definition
-    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
+    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.computer_spec_id, computers.creation_deployment_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 ), created_version AS (
-    INSERT INTO computer_versions (
+    INSERT INTO computer_disk_versions (
         id,
         environment_id,
         computer_id,
         status,
         root_pack_digest,
         logical_bytes,
-        ownership_generation,
         writer_generation,
         published_at
     )
     SELECT $6,
-           created_workspace.environment_id,
-           created_workspace.id,
+           created_computer.environment_id,
+           created_computer.id,
            'initializing',
            NULL,
            0,
            0,
-           0,
            NULL
-      FROM created_workspace
+      FROM created_computer
     RETURNING computer_id
 )
-SELECT created_workspace.id, created_workspace.environment_id, created_workspace.region_id, created_workspace.sandbox_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.revision, created_workspace.owner_session_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.status, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
-  FROM created_workspace
-  JOIN created_version ON created_version.computer_id = created_workspace.id
+SELECT created_computer.id, created_computer.environment_id, created_computer.region_id, created_computer.sandbox_declared_id, created_computer.computer_spec_id, created_computer.creation_deployment_id, created_computer.key, created_computer.revision, created_computer.writer_generation, created_computer.head_disk_version_id, created_computer.status, created_computer.desired_state, created_computer.dirty_state, created_computer.last_activity_at, created_computer.created_at, created_computer.updated_at, created_computer.deleted_at
+  FROM created_computer
+  JOIN created_version ON created_version.computer_id = created_computer.id
 `
 
-type CreateWorkspaceForScheduleFireParams struct {
+type CreateComputerForScheduleFireParams struct {
 	SandboxDeclaredID  string      `json:"sandbox_declared_id"`
 	EnvironmentID      pgtype.UUID `json:"environment_id"`
 	ScheduleID         pgtype.UUID `json:"schedule_id"`
@@ -260,30 +259,28 @@ type CreateWorkspaceForScheduleFireParams struct {
 	InitialVersionID   pgtype.UUID `json:"initial_version_id"`
 }
 
-type CreateWorkspaceForScheduleFireRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+type CreateComputerForScheduleFireRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	RegionID             string             `json:"region_id"`
+	SandboxDeclaredID    pgtype.Text        `json:"sandbox_declared_id"`
+	ComputerSpecID       pgtype.UUID        `json:"computer_spec_id"`
+	CreationDeploymentID pgtype.UUID        `json:"creation_deployment_id"`
+	Key                  pgtype.Text        `json:"key"`
+	Revision             int64              `json:"revision"`
+	WriterGeneration     int64              `json:"writer_generation"`
+	HeadDiskVersionID    pgtype.UUID        `json:"head_disk_version_id"`
+	Status               string             `json:"status"`
+	DesiredState         string             `json:"desired_state"`
+	DirtyState           string             `json:"dirty_state"`
+	LastActivityAt       pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
-func (q *Queries) CreateWorkspaceForScheduleFire(ctx context.Context, arg CreateWorkspaceForScheduleFireParams) (CreateWorkspaceForScheduleFireRow, error) {
-	row := q.db.QueryRow(ctx, createWorkspaceForScheduleFire,
+func (q *Queries) CreateComputerForScheduleFire(ctx context.Context, arg CreateComputerForScheduleFireParams) (CreateComputerForScheduleFireRow, error) {
+	row := q.db.QueryRow(ctx, createComputerForScheduleFire,
 		arg.SandboxDeclaredID,
 		arg.EnvironmentID,
 		arg.ScheduleID,
@@ -291,20 +288,18 @@ func (q *Queries) CreateWorkspaceForScheduleFire(ctx context.Context, arg Create
 		arg.ID,
 		arg.InitialVersionID,
 	)
-	var i CreateWorkspaceForScheduleFireRow
+	var i CreateComputerForScheduleFireRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
 		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -426,7 +421,7 @@ func (q *Queries) GetScheduleByID(ctx context.Context, arg GetScheduleByIDParams
 }
 
 const getScheduledRunReceipt = `-- name: GetScheduledRunReceipt :one
-SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, runtime_preparation_count, next_runtime_preparation_at, terminal_at, computer_payload_required
+SELECT id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, session_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, computer_id, base_computer_disk_version_id, session_input_start_sequence, session_input_high_watermark, payload, output, failure, status, revision, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, instance_preparation_count, next_instance_preparation_at, terminal_at, computer_payload_required
   FROM runs
  WHERE environment_id = $1
    AND schedule_id = $2
@@ -461,8 +456,8 @@ func (q *Queries) GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRu
 		&i.ScheduleTimezone,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
+		&i.ComputerID,
+		&i.BaseComputerDiskVersionID,
 		&i.SessionInputStartSequence,
 		&i.SessionInputHighWatermark,
 		&i.Payload,
@@ -493,8 +488,8 @@ func (q *Queries) GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRu
 		&i.FirstLeaseAt,
 		&i.StartedAt,
 		&i.RetryAt,
-		&i.RuntimePreparationCount,
-		&i.NextRuntimePreparationAt,
+		&i.InstancePreparationCount,
+		&i.NextInstancePreparationAt,
 		&i.TerminalAt,
 		&i.ComputerPayloadRequired,
 	)

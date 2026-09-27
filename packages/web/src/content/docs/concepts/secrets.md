@@ -1,32 +1,32 @@
 ---
 title: Secrets
-description: Store credentials and choose how Workspaces use them.
+description: Store credentials and choose how Computers use them.
 ---
 
 # Secrets
 
 A Secret is a named, encrypted value scoped to one Project Environment. Create it
-once and reference its name when creating a Workspace. Secrets persist
-independently of Workspaces, so you can reuse them in new Workspaces and rotate
+once and reference its name when creating a Computer. Secrets persist
+independently of Computers, so you can reuse them in new Computers and rotate
 values without changing their names. Read APIs return metadata, not the value.
 
-A binding specifies how a Workspace uses a Secret. Bindings are fixed at
-Workspace creation; later Runs use those bindings and cannot override them.
+A binding specifies how a Computer uses a Secret. Bindings are fixed at
+Computer creation; later Runs use those bindings and cannot override them.
 
 ## Choose a delivery mode
 
-| Placement | What the Workspace receives | Use for |
+| Placement | What the Computer receives | Use for |
 | --- | --- | --- |
 | Protected env | A placeholder that Helmr replaces in outgoing HTTP headers for approved HTTPS origins. | API tokens used by proxy-compatible CLI tools and SDKs. |
 | Raw env | The Secret value in an environment variable. | Clients that need the actual value, such as database drivers or request-signing libraries. |
 | File | The Secret value as file contents. | SSH keys and other credentials that a tool reads from disk. |
 
-Raw env and file values can be read by processes in the Workspace. Protected env
-keeps the value outside the Workspace unless you also expose the same Secret
+Raw env and file values can be read by processes in the Computer. Protected env
+keeps the value outside the Computer unless you also expose the same Secret
 through a raw binding. Helmr never automatically falls back from protected to raw.
 
 ```ts
-const workspace = await client.sandboxes.createWorkspace("reviewer", {
+const computer = await client.sandboxes.createComputer("reviewer", {
   secrets: [
     {
       secret: "github-token",
@@ -44,7 +44,7 @@ const workspace = await client.sandboxes.createWorkspace("reviewer", {
 
 Secret names must match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`. Each binding has
 exactly one `env` or `file` target. Environment bindings require an explicit
-`mode`, and targets must be unique within the Workspace.
+`mode`, and targets must be unique within the Computer.
 
 Do not define a bound environment variable in image ENV or execution env, even
 with an empty value. Execution requests reject these collisions; image ENV
@@ -54,7 +54,7 @@ collisions fail at launch. Managed runtime paths, runtime variables such as
 ## Protected environment variables
 
 Use the environment variable directly in an HTTP header, such as
-`Authorization: Bearer <value>`. Helmr's proxy checks the Workspace's execution
+`Authorization: Bearer <value>`. Helmr's proxy checks the Computer's execution
 authorization and the destination before replacing the placeholder with the
 current Secret value. Invalid or revoked placeholders in inspected headers fail
 before the request is sent upstream.
@@ -71,14 +71,14 @@ Origins must use DNS hostnames. Hostnames are normalized to lowercase, the defau
 port `443` is omitted, and a trailing `/` is accepted. Wildcards, IP literals,
 user information, paths, queries, and fragments are not allowed.
 
-A Workspace accepts up to 64 Secret bindings, 16 origins per protected binding,
+A Computer accepts up to 64 Secret bindings, 16 origins per protected binding,
 and 256 origin entries in total. Duplicate origins within a binding count once;
 the same origin in different bindings and different ports count separately.
 
 The proxy connects only to public IPv4 addresses and also applies the Worker's
 blocked destinations. Private-network and IPv6 destinations are not supported.
 
-Allowed origins control where a Secret can be used, not all Workspace network
+Allowed origins control where a Secret can be used, not all Computer network
 access. Requests without credentials can still reach permitted destinations.
 HTTPS requests to other origins are tunneled without Secret substitution; a
 placeholder sent there remains a placeholder. The proxy does not automatically
@@ -89,11 +89,11 @@ forward credentials to a new origin after a redirect.
 Helmr routes traffic at the VM boundary. Programs use ordinary sockets without
 proxy environment variables or route configuration. Same-guest localhost HTTP,
 SSE, and WebSocket control traffic stays local. Only TCP ports named by the
-Workspace's protected origins enter the credential transport; all other ports
+Computer's protected origins enter the credential transport; all other ports
 retain ordinary network policy. On captured ports, unrelated TLS passes through
 without termination, preserving the upstream certificate and negotiated protocol.
 
-Protected HTTPS requires visible TLS SNI and trust in the Workspace's public CA.
+Protected HTTPS requires visible TLS SNI and trust in the Computer's public CA.
 Helmr provides a CA bundle through `SSL_CERT_FILE` and adds the CA for Node through
 `NODE_EXTRA_CA_CERTS`. Other certificate stores require explicit public-CA trust
 setup. Certificate pinning, mutual TLS, encrypted ClientHello (ECH), TLS without
@@ -104,7 +104,7 @@ verification to make a client work.
 
 HTTP/1.1 and HTTP/2 request/response streaming are supported, including SSE and
 streaming uploads. Every credential-bearing request or HTTP/2 stream checks live
-Workspace authorization. Upstream TLS verifies the exact service hostname at the
+Computer authorization. Upstream TLS verifies the exact service hostname at the
 policy-checked original IPv4 address. A shared address or matching port does not
 grant Secret access; HTTP authority must match the selected HTTPS origin.
 
@@ -140,38 +140,38 @@ value is restored from a guest snapshot.
 
 ## Delegation
 
-Code running in a Workspace can use only its existing Secret permissions when
-creating another Workspace, executing in an existing Workspace, or starting a
+Code running in a Computer can use only its existing Secret permissions when
+creating another Computer, executing in an existing Computer, or starting a
 child task. It cannot add a Secret, expand allowed origins, or change protected
 access to raw access. If it already has raw access to a Secret, it can delegate
 that Secret in either mode.
 
 Users who can create or deploy bindings choose the mode and allowed origins.
-Protected env protects against disclosure to Workspace processes; it does not
+Protected env protects against disclosure to Computer processes; it does not
 restrict authorized administrators from choosing raw delivery.
 
 ## Rotation and revocation
 
 Protected requests use the current Secret value. Rotation affects the next
-authorized request without recreating the Workspace. Revocation blocks subsequent
+authorized request without recreating the Computer. Revocation blocks subsequent
 credential resolution, but requests already authorized or sent may finish.
 
 Raw env and file values are selected when execution is admitted. Rotation does
 not rewrite running processes or values restored from snapshots. Revocation
-cannot erase values already delivered to a Workspace or saved in its snapshots;
+cannot erase values already delivered to a Computer or saved in its snapshots;
 remove those copies separately.
 
 Helmr does not refresh OAuth tokens or save credential changes made by a CLI back
 to a Secret. Manage token renewal separately and rotate the stored value when it
 changes. Storing a credential does not manage a provider's subscription session.
 
-## Workspace lifetime
+## Computer lifetime
 
-Protected env uses a Workspace-specific CA that is reused after restore. Its
-trust expires ten years after Workspace creation; after expiry, create a new
-Workspace to continue using protected env. Certificate private keys are not
-delivered to the Workspace. This technical limit does not change the recommended
-lifecycle: retain a Workspace for the work that needs it, then delete it.
+Protected env uses a Computer-specific CA that is reused after restore. Its
+trust expires ten years after Computer creation; after expiry, create a new
+Computer to continue using protected env. Certificate private keys are not
+delivered to the Computer. This technical limit does not change the recommended
+lifecycle: retain a Computer for the work that needs it, then delete it.
 
 See [Use secrets](/docs/guides/how-to/use-secrets) for creation, binding, rotation,
 and revocation commands. Keep credentials out of payloads, metadata, tags, logs,

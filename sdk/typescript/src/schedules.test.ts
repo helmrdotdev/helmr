@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { inspectDefinition } from "./internal"
 import { image } from "./image"
 import { schedules } from "./schedules"
-import { sandbox } from "./workspace"
+import { sandbox } from "./computer"
 
 const scheduler = sandbox({ id: "scheduler" })
   .image(image("scheduler").from("debian:bookworm-slim"))
@@ -13,21 +13,21 @@ test("scheduled Task retains its exact Sandbox definition", () => {
   const definition = schedules.task({
     id: "daily-report",
     cron: { pattern: "0 9 * * *", timezone: "UTC" },
-    workspace: { sandbox: scheduler },
+    computer: { sandbox: scheduler },
     run: () => null,
   })
   const internal = inspectDefinition(definition)
   if (internal?.kind !== "task" || internal.schedule === undefined) {
     throw new Error("scheduled Task definition is unavailable")
   }
-  expect(internal.schedule.workspace.sandbox).toBe(scheduler)
+  expect(internal.schedule.computer.sandbox).toBe(scheduler)
 })
 
 test("scheduled payload accepts Control RFC3339Nano timestamps", async () => {
   const definition = schedules.task({
     id: "daily-report",
     cron: { pattern: "0 9 * * *", timezone: "UTC" },
-    workspace: { sandbox: scheduler },
+    computer: { sandbox: scheduler },
     run: () => null,
   })
   const internal = inspectDefinition(definition)
@@ -53,7 +53,7 @@ test("scheduled payload rejects non-canonical Schedule IDs", async () => {
   const definition = schedules.task({
     id: "daily-report",
     cron: { pattern: "0 9 * * *", timezone: "UTC" },
-    workspace: { sandbox: scheduler },
+    computer: { sandbox: scheduler },
     run: () => null,
   })
   const internal = inspectDefinition(definition)
@@ -79,7 +79,7 @@ test("Schedule declarations reject Secret placement", () => {
   expect(() => schedules.task({
     id: "daily-report",
     cron: { pattern: "0 9 * * *", timezone: "UTC" },
-    workspace: { sandbox: scheduler },
+    computer: { sandbox: scheduler },
     secrets: [{ secret: "TOKEN", env: "TOKEN" }],
     run: () => null,
   } as never)).toThrow('unknown member "secrets"')

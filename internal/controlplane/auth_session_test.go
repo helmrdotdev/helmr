@@ -29,7 +29,7 @@ func TestSessionPermissionsAdvertiseEveryRoleGrant(t *testing.T) {
 		}
 	}
 	if got := sessionPermissions(auth.RoleViewer); !slices.Equal(got, []string{
-		"runs.read", "sessions.read", "tokens.read", "workspaces.read",
+		"runs.read", "sessions.read", "tokens.read", "computers.read",
 	}) {
 		t.Fatalf("viewer permissions = %v", got)
 	}

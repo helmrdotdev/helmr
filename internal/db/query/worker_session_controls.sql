@@ -1,27 +1,27 @@
 -- name: LockWorkerControlSecrets :many
 SELECT
-    workspace_secrets.*,
+    computer_secrets.*,
     secrets.status AS secret_status,
     secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
-FROM workspace_secrets
-JOIN secrets ON secrets.id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = ANY(sqlc.arg(workspace_ids)::uuid[])
-ORDER BY workspace_secrets.secret_id, workspace_secrets.workspace_id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+FROM computer_secrets
+JOIN secrets ON secrets.id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = ANY(sqlc.arg(computer_ids)::uuid[])
+ORDER BY computer_secrets.secret_id, computer_secrets.computer_id, computer_secrets.placement_kind, computer_secrets.placement_target
 FOR UPDATE OF secrets;
 
 -- name: ReadWorkerControlSecrets :many
 SELECT
-    workspace_secrets.*,
+    computer_secrets.*,
     secrets.status AS secret_status,
     secrets.revision AS secret_revision,
     secrets.current_version_id,
     secrets.revocation_generation
-FROM workspace_secrets
-JOIN secrets ON secrets.id = workspace_secrets.secret_id
-WHERE workspace_secrets.workspace_id = ANY(sqlc.arg(workspace_ids)::uuid[])
-ORDER BY workspace_secrets.secret_id, workspace_secrets.workspace_id, workspace_secrets.placement_kind, workspace_secrets.placement_target;
+FROM computer_secrets
+JOIN secrets ON secrets.id = computer_secrets.secret_id
+WHERE computer_secrets.computer_id = ANY(sqlc.arg(computer_ids)::uuid[])
+ORDER BY computer_secrets.secret_id, computer_secrets.computer_id, computer_secrets.placement_kind, computer_secrets.placement_target;
 
 -- name: LockWorkerControlActors :many
 WITH RECURSIVE source_owners AS (

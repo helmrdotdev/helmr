@@ -20,21 +20,21 @@ const (
 	DeploymentBundleMediaType = "application/vnd.helmr.deployment-bundle.v0+json"
 	DeploymentBundleTargetOS  = "linux"
 
-	MaxDeploymentBundleBytes           = 16 << 20
-	MaxDeploymentBundleWorkspaceImages = 256
-	MaxDeploymentBundleObjects         = 257
-	MaxDeploymentBundleObjectBytes     = int64(4 << 30)
-	MaxDeploymentBundleTotalBytes      = int64(4 << 30)
+	MaxDeploymentBundleBytes          = 16 << 20
+	MaxDeploymentBundleComputerImages = 256
+	MaxDeploymentBundleObjects        = 257
+	MaxDeploymentBundleObjectBytes    = int64(4 << 30)
+	MaxDeploymentBundleTotalBytes     = int64(4 << 30)
 )
 
 type DeploymentBundle struct {
-	Contract        string                   `json:"contract"`
-	Platform        DeploymentBundlePlatform `json:"platform"`
-	Plan            DeploymentPlan           `json:"plan"`
-	Runtime         DeploymentBundleRuntime  `json:"runtime"`
-	Program         ProgramOutput            `json:"program"`
-	WorkspaceImages []BundleWorkspaceImage   `json:"workspaceImages"`
-	Objects         []BundleObject           `json:"objects"`
+	Contract       string                   `json:"contract"`
+	Platform       DeploymentBundlePlatform `json:"platform"`
+	Plan           DeploymentPlan           `json:"plan"`
+	Runtime        DeploymentBundleRuntime  `json:"runtime"`
+	Program        ProgramOutput            `json:"program"`
+	ComputerImages []BundleComputerImage    `json:"computerImages"`
+	Objects        []BundleObject           `json:"objects"`
 }
 
 // DeploymentBundleAdmission is the exact Product release authority accepted by
@@ -78,12 +78,12 @@ type DeploymentBundleRuntime struct {
 	Artifact BundleObject `json:"artifact"`
 }
 
-type BundleWorkspaceImage struct {
-	DeclaredID string                       `json:"declaredId"`
-	Artifact   BundleWorkspaceImageArtifact `json:"artifact"`
+type BundleComputerImage struct {
+	DeclaredID string                      `json:"declaredId"`
+	Artifact   BundleComputerImageArtifact `json:"artifact"`
 }
 
-type BundleWorkspaceImageArtifact struct {
+type BundleComputerImageArtifact struct {
 	Profile      string              `json:"profile"`
 	Config       oci.RuntimeConfig   `json:"config"`
 	Architecture RuntimeArchitecture `json:"architecture"`
@@ -207,7 +207,7 @@ func ValidateDeploymentBundle(bundle DeploymentBundle) error {
 		return errors.New("deployment bundle program Runtime digest does not match runtime")
 	}
 
-	if _, err := validateBundleWorkspaceImages(bundle); err != nil {
+	if _, err := validateBundleComputerImages(bundle); err != nil {
 		return err
 	}
 	if err := validateProgramIndexDeployment(bundle.Program.Index, bundle.Plan); err != nil {
@@ -237,31 +237,31 @@ func validateBundleRuntime(runtime DeploymentBundleRuntime) error {
 	return nil
 }
 
-func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, error) {
-	if bundle.WorkspaceImages == nil {
-		return nil, errors.New("deployment bundle workspaceImages must be an array")
+func validateBundleComputerImages(bundle DeploymentBundle) ([]ComputerImage, error) {
+	if bundle.ComputerImages == nil {
+		return nil, errors.New("deployment bundle computerImages must be an array")
 	}
-	if len(bundle.WorkspaceImages) > MaxDeploymentBundleWorkspaceImages {
+	if len(bundle.ComputerImages) > MaxDeploymentBundleComputerImages {
 		return nil, fmt.Errorf(
-			"deployment bundle has more than %d workspace images",
-			MaxDeploymentBundleWorkspaceImages,
+			"deployment bundle has more than %d computer images",
+			MaxDeploymentBundleComputerImages,
 		)
 	}
 	sandboxes := deploymentPlanSandboxes(bundle.Plan)
-	if len(bundle.WorkspaceImages) != len(sandboxes) {
-		return nil, errors.New("deployment bundle workspaceImages do not match plan")
+	if len(bundle.ComputerImages) != len(sandboxes) {
+		return nil, errors.New("deployment bundle computerImages do not match plan")
 	}
-	images := make([]WorkspaceImage, 0, len(bundle.WorkspaceImages))
-	for index, image := range bundle.WorkspaceImages {
-		if index > 0 && image.DeclaredID <= bundle.WorkspaceImages[index-1].DeclaredID {
+	images := make([]ComputerImage, 0, len(bundle.ComputerImages))
+	for index, image := range bundle.ComputerImages {
+		if index > 0 && image.DeclaredID <= bundle.ComputerImages[index-1].DeclaredID {
 			return nil, fmt.Errorf(
-				"deployment bundle workspaceImages are not in canonical declaredId order at position %d",
+				"deployment bundle computerImages are not in canonical declaredId order at position %d",
 				index,
 			)
 		}
 		if image.DeclaredID != sandboxes[index].DeclaredID {
 			return nil, fmt.Errorf(
-				"deployment bundle workspaceImages[%d] declaredId does not match plan",
+				"deployment bundle computerImages[%d] declaredId does not match plan",
 				index,
 			)
 		}
@@ -271,37 +271,37 @@ func validateBundleWorkspaceImages(bundle DeploymentBundle) ([]WorkspaceImage, e
 			sandboxes[index].Sandbox.Image.Profile != image.Artifact.Profile ||
 			!reflect.DeepEqual(sandboxes[index].Sandbox.Image.Config, image.Artifact.Config) {
 			return nil, fmt.Errorf(
-				"deployment bundle workspaceImages[%d] artifact does not match plan",
+				"deployment bundle computerImages[%d] artifact does not match plan",
 				index,
 			)
 		}
 		artifact := image.Artifact
 		if artifact.Architecture != bundle.Platform.Architecture {
 			return nil, fmt.Errorf(
-				"deployment bundle workspaceImages[%d] architecture does not match platform",
+				"deployment bundle computerImages[%d] architecture does not match platform",
 				index,
 			)
 		}
 		object := BundleObject{
 			Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 		}
-		if err := validateBundleObject(object, fmt.Sprintf("workspaceImages[%d]", index)); err != nil {
+		if err := validateBundleObject(object, fmt.Sprintf("computerImages[%d]", index)); err != nil {
 			return nil, err
 		}
 		if artifact.Profile != computer.SeedProfile {
 			return nil, fmt.Errorf("deployment disk profile %q is unsupported", artifact.Profile)
 		}
-		if artifact.MediaType != WorkspaceImageArtifactMediaType {
+		if artifact.MediaType != ComputerImageArtifactMediaType {
 			return nil, fmt.Errorf(
-				"deployment bundle workspaceImages[%d] mediaType = %q, want %q",
+				"deployment bundle computerImages[%d] mediaType = %q, want %q",
 				index,
 				artifact.MediaType,
-				WorkspaceImageArtifactMediaType,
+				ComputerImageArtifactMediaType,
 			)
 		}
-		images = append(images, WorkspaceImage{
+		images = append(images, ComputerImage{
 			DeclaredID: image.DeclaredID,
-			Artifact: WorkspaceImageArtifact{
+			Artifact: ComputerImageArtifact{
 				Profile: artifact.Profile, Config: artifact.Config,
 				Architecture: artifact.Architecture,
 				Digest:       artifact.Digest,
@@ -323,14 +323,14 @@ func validateBundleObjectClosure(bundle DeploymentBundle) error {
 			MaxDeploymentBundleObjects,
 		)
 	}
-	expected := make(map[string]BundleObject, 1+len(bundle.WorkspaceImages))
+	expected := make(map[string]BundleObject, 1+len(bundle.ComputerImages))
 	program := BundleObject{
 		Digest:    bundle.Program.Artifact.Digest,
 		SizeBytes: bundle.Program.Artifact.SizeBytes,
 		MediaType: bundle.Program.Artifact.MediaType,
 	}
 	expected[program.Digest] = program
-	for _, image := range bundle.WorkspaceImages {
+	for _, image := range bundle.ComputerImages {
 		object := BundleObject{
 			Digest:    image.Artifact.Digest,
 			SizeBytes: image.Artifact.SizeBytes,
@@ -389,7 +389,7 @@ func validateBundleObject(object BundleObject, name string) error {
 		)
 	}
 	if object.MediaType != ProgramArtifactMediaType &&
-		object.MediaType != WorkspaceImageArtifactMediaType &&
+		object.MediaType != ComputerImageArtifactMediaType &&
 		object.MediaType != RuntimeArtifactMediaType {
 		return fmt.Errorf("deployment bundle %s mediaType %q is unsupported", name, object.MediaType)
 	}

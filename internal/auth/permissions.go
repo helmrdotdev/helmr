@@ -10,29 +10,29 @@ import (
 type Permission string
 
 const (
-	PermissionAPIKeysManage       Permission = "api_keys.manage"
-	PermissionMembersManage       Permission = "members.manage"
-	PermissionProjectsManage      Permission = "projects.manage"
-	PermissionRunsCreate          Permission = "runs.create"
-	PermissionRunsRead            Permission = "runs.read"
-	PermissionRunsManage          Permission = "runs.manage"
-	PermissionSessionsRead        Permission = "sessions.read"
-	PermissionActorsStart         Permission = "actors.start"
-	PermissionSessionsSend        Permission = "sessions.send"
-	PermissionSessionsClose       Permission = "sessions.close"
-	PermissionSessionsCancel      Permission = "sessions.cancel"
-	PermissionSessionsInterrupt   Permission = "sessions.interrupt"
-	PermissionSessionsResume      Permission = "sessions.resume"
-	PermissionTokensCreate        Permission = "tokens.create"
-	PermissionTokensRead          Permission = "tokens.read"
-	PermissionTokensComplete      Permission = "tokens.complete"
-	PermissionTokensCancel        Permission = "tokens.cancel"
-	PermissionWorkspacesCreate    Permission = "workspaces.create"
-	PermissionWorkspacesRead      Permission = "workspaces.read"
-	PermissionWorkspacesDelete    Permission = "workspaces.delete"
-	PermissionWorkspaceExecCreate Permission = "workspace.exec.create"
-	PermissionSecretsWrite        Permission = "secrets.write"
-	PermissionTasksDeploy         Permission = "tasks.deploy"
+	PermissionAPIKeysManage         Permission = "api_keys.manage"
+	PermissionMembersManage         Permission = "members.manage"
+	PermissionProjectsManage        Permission = "projects.manage"
+	PermissionRunsCreate            Permission = "runs.create"
+	PermissionRunsRead              Permission = "runs.read"
+	PermissionRunsManage            Permission = "runs.manage"
+	PermissionSessionsRead          Permission = "sessions.read"
+	PermissionActorsStart           Permission = "actors.start"
+	PermissionSessionsSend          Permission = "sessions.send"
+	PermissionSessionsClose         Permission = "sessions.close"
+	PermissionSessionsCancel        Permission = "sessions.cancel"
+	PermissionSessionsInterrupt     Permission = "sessions.interrupt"
+	PermissionSessionsResume        Permission = "sessions.resume"
+	PermissionTokensCreate          Permission = "tokens.create"
+	PermissionTokensRead            Permission = "tokens.read"
+	PermissionTokensComplete        Permission = "tokens.complete"
+	PermissionTokensCancel          Permission = "tokens.cancel"
+	PermissionComputersCreate       Permission = "computers.create"
+	PermissionComputersRead         Permission = "computers.read"
+	PermissionComputersDelete       Permission = "computers.delete"
+	PermissionComputerCommandCreate Permission = "computer.exec.create"
+	PermissionSecretsWrite          Permission = "secrets.write"
+	PermissionTasksDeploy           Permission = "tasks.deploy"
 )
 
 // AllPermissions lists every Permission in declaration order. Callers that
@@ -57,10 +57,10 @@ func AllPermissions() []Permission {
 		PermissionTokensRead,
 		PermissionTokensComplete,
 		PermissionTokensCancel,
-		PermissionWorkspacesCreate,
-		PermissionWorkspacesRead,
-		PermissionWorkspacesDelete,
-		PermissionWorkspaceExecCreate,
+		PermissionComputersCreate,
+		PermissionComputersRead,
+		PermissionComputersDelete,
+		PermissionComputerCommandCreate,
 		PermissionSecretsWrite,
 		PermissionTasksDeploy,
 	}
@@ -110,10 +110,10 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionTokensRead,
 			PermissionTokensComplete,
 			PermissionTokensCancel,
-			PermissionWorkspacesCreate,
-			PermissionWorkspacesRead,
-			PermissionWorkspacesDelete,
-			PermissionWorkspaceExecCreate,
+			PermissionComputersCreate,
+			PermissionComputersRead,
+			PermissionComputersDelete,
+			PermissionComputerCommandCreate,
 			PermissionTasksDeploy:
 			return true
 		default:
@@ -124,7 +124,7 @@ func RoleAllows(role Role, permission Permission) bool {
 		case PermissionRunsRead,
 			PermissionSessionsRead,
 			PermissionTokensRead,
-			PermissionWorkspacesRead:
+			PermissionComputersRead:
 			return true
 		default:
 			return false
@@ -151,10 +151,10 @@ func ParseAPIKeyGrant(value string) (Permission, bool) {
 		PermissionTokensRead,
 		PermissionTokensComplete,
 		PermissionTokensCancel,
-		PermissionWorkspacesCreate,
-		PermissionWorkspacesRead,
-		PermissionWorkspacesDelete,
-		PermissionWorkspaceExecCreate,
+		PermissionComputersCreate,
+		PermissionComputersRead,
+		PermissionComputersDelete,
+		PermissionComputerCommandCreate,
 		PermissionSecretsWrite,
 		PermissionTasksDeploy:
 		return permission, true

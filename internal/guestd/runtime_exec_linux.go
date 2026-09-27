@@ -57,6 +57,7 @@ func init() {
 }
 
 type imageCommandOptions struct {
+	SecretRoot      string
 	ManagedProgram  bool
 	CgroupNamespace bool
 	CgroupLeaf      string
@@ -68,11 +69,8 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 	if user == nil {
 		return nil, errors.New("image runtime user is required")
 	}
-	if opts.CgroupNamespace && !opts.ManagedProgram {
-		return nil, errors.New("program cgroup namespace requires managed program mounts")
-	}
 	if opts.CgroupNamespace {
-		if err := validateProgramCgroupLeaf(opts.CgroupLeaf); err != nil {
+		if err := validateProcessCgroupLeaf(opts.CgroupLeaf); err != nil {
 			return nil, err
 		}
 	} else if opts.CgroupLeaf != "" {
@@ -88,6 +86,7 @@ func imageCommand(ctx context.Context, runtimePath string, args []string, launch
 		strconv.FormatBool(opts.CgroupNamespace),
 		opts.CgroupLeaf,
 		strconv.FormatBool(opts.StartProof),
+		opts.SecretRoot,
 		runtimePath,
 	}
 	initArgs = append(initArgs, args...)
@@ -132,12 +131,9 @@ func runImageRuntimeInit(args []string, env []string) error {
 	default:
 		return fmt.Errorf("invalid cgroup namespace flag %q", args[5])
 	}
-	if cgroupNamespace && !managedProgram {
-		return errors.New("program cgroup namespace requires managed program mounts")
-	}
 	cgroupLeaf := args[6]
 	if cgroupNamespace {
-		if err := validateProgramCgroupLeaf(cgroupLeaf); err != nil {
+		if err := validateProcessCgroupLeaf(cgroupLeaf); err != nil {
 			return err
 		}
 	} else if cgroupLeaf != "" {
@@ -150,14 +146,15 @@ func runImageRuntimeInit(args []string, env []string) error {
 	default:
 		return fmt.Errorf("invalid start proof flag %q", args[7])
 	}
-	runtimePath := args[8]
-	runtimeArgs := args[9:]
+	secretRoot := args[8]
+	runtimePath := args[9]
+	runtimeArgs := args[10:]
 	if cgroupNamespace {
-		if err := enterProgramCgroupNamespace(cgroupLeaf); err != nil {
+		if err := enterProcessCgroupNamespace(cgroupLeaf); err != nil {
 			return err
 		}
 	}
-	if err := setupImageRuntimeNamespace(imageRoot, managedProgram); err != nil {
+	if err := setupImageRuntimeNamespace(imageRoot, managedProgram, secretRoot); err != nil {
 		return err
 	}
 	if err := pivotIntoImageRoot(imageRoot); err != nil {
@@ -166,7 +163,7 @@ func runImageRuntimeInit(args []string, env []string) error {
 	if err := syscall.Chdir(launchCwd); err != nil {
 		return fmt.Errorf("chdir launch cwd: %w", err)
 	}
-	if err := applyRuntimeIdentity(uid, gid); err != nil {
+	if err := applyVMPlatform(uid, gid); err != nil {
 		return err
 	}
 	argv := append([]string{runtimePath}, runtimeArgs...)
@@ -217,7 +214,7 @@ func parseInitUint32(name string, raw string) (uint32, error) {
 	return uint32(value), nil
 }
 
-func setupImageRuntimeNamespace(imageRoot string, managedProgram bool) error {
+func setupImageRuntimeNamespace(imageRoot string, managedProgram bool, secretRoot string) error {
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mount namespace private: %w", err)
 	}
@@ -259,7 +256,9 @@ func setupImageRuntimeNamespace(imageRoot string, managedProgram bool) error {
 		if err := mountManagedProgram(imageRoot); err != nil {
 			return err
 		}
-		if err := mountManagedSecretFiles(imageRoot); err != nil {
+	}
+	if secretRoot != "" {
+		if err := mountManagedSecretFiles(imageRoot, secretRoot); err != nil {
 			return err
 		}
 	}
@@ -283,8 +282,8 @@ func setupImageRuntimeNamespace(imageRoot string, managedProgram bool) error {
 	return nil
 }
 
-func mountManagedSecretFiles(imageRoot string) error {
-	info, err := os.Stat(managedProgramSecretRoot)
+func mountManagedSecretFiles(imageRoot, secretRoot string) error {
+	info, err := os.Stat(secretRoot)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -294,7 +293,7 @@ func mountManagedSecretFiles(imageRoot string) error {
 	if !info.IsDir() {
 		return errors.New("managed secret root is not a directory")
 	}
-	return filepath.WalkDir(managedProgramSecretRoot, func(source string, entry os.DirEntry, walkErr error) error {
+	return filepath.WalkDir(secretRoot, func(source string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -308,7 +307,7 @@ func mountManagedSecretFiles(imageRoot string) error {
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("managed secret source is not a regular file: %s", source)
 		}
-		relative, err := filepath.Rel(managedProgramSecretRoot, source)
+		relative, err := filepath.Rel(secretRoot, source)
 		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return errors.New("managed secret source escapes staging root")
 		}
@@ -437,7 +436,7 @@ func createRuntimeDevice(imageRoot string, device runtimeDevice) error {
 	return nil
 }
 
-func applyRuntimeIdentity(uid uint32, gid uint32) error {
+func applyVMPlatform(uid uint32, gid uint32) error {
 	if uid == 0 {
 		// Root inside an image-mode VM is the user-defined runtime root. The
 		// Firecracker VM is the isolation boundary, so keep root capabilities

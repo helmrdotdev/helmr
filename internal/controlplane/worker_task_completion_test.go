@@ -23,7 +23,6 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	lease := validRunLeaseAssignment(workerID)
 	lease.WorkerEpoch = 1
 	request.Lease = lease.Fence()
-	request.Workspace.Captured = validTaskWorkspaceCapture(t, lease)
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -36,9 +35,9 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	}
 	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID,
-		WorkerGroupID:    uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch:      2,
+		WorkerHostID:  workerID,
+		WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
+		WorkerEpoch:   2,
 	}))
 	response := httptest.NewRecorder()
 
@@ -57,7 +56,6 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	request := validTaskCompletionRequest(t)
 	lease := validRunLeaseAssignment(workerID)
 	request.Lease = lease.Fence()
-	request.Workspace.Captured = validTaskWorkspaceCapture(t, lease)
 	store := &workerTaskCompletionReplayStore{fingerprint: pgvalue.Text("sha256:different")}
 	var logs bytes.Buffer
 	server := &Server{log: slog.New(slog.NewTextHandler(&logs, nil)), db: store}
@@ -67,9 +65,9 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	}
 	httpRequest := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
-		WorkerInstanceID: workerID,
-		WorkerGroupID:    uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch:      lease.WorkerEpoch,
+		WorkerHostID:  workerID,
+		WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
+		WorkerEpoch:   lease.WorkerEpoch,
 	}))
 	response := httptest.NewRecorder()
 

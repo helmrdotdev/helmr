@@ -15,7 +15,7 @@ func TestVerificationResultCanonicalRoundTrip(t *testing.T) {
 		name   string
 		result VerificationResult
 	}{
-		{name: "workspace only", result: testWorkspaceVerificationResult(t)},
+		{name: "computer only", result: testComputerVerificationResult(t)},
 		{name: "program backed", result: testProgramVerificationResult(t)},
 		{name: "failed", result: testFailedVerificationResult()},
 	}
@@ -228,7 +228,7 @@ func TestVerificationFailureContract(t *testing.T) {
 	}
 }
 
-func testWorkspaceVerificationResult(t *testing.T) VerificationResult {
+func testComputerVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := testBuildPlan()
 	plan.Definitions = []DefinitionInput{plan.Definitions[2]}

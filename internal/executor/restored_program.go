@@ -2,348 +2,112 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
-	"github.com/helmrdotdev/helmr/internal/ids"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
-type resumedProgramAdmission struct {
-	execution            *programv0.SessionExecution
-	turnID               *string
-	runWaitID            string
-	checkpointID         string
-	resumeAttachID       string
-	resumeRequestVersion int64
-	correlationID        string
-	entrypointKind       string
-	entrypointDeclaredID string
-	decision             workerapi.RunLeaseDecision
-	start                workerapi.RunStartRequest
-}
-
-func (r ProgramRunner) startResumedProgram(
-	ctx context.Context,
-	claim *workerapi.RunLeaseClaimResponse,
-	controlPlane RunLeaseControlPlane,
-) (freshProgram, error) {
-	resume, err := validateResumedProgramClaim(claim)
-	if err != nil {
-		return freshProgram{}, err
+func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerapi.RunLeaseClaimResponse, control RunLeaseControlPlane) (freshProgram, *programv0.ResumeAttach, error) {
+	resume := claim.ProgramResume
+	waits, ok := control.(RunWaitClient)
+	if !ok || r.ComputerMounts == nil || resume == nil || resume.CheckpointID == "" || resume.RunWaitID == "" || (resume.EntrypointKind != "actor" && resume.EntrypointKind != "task") || len(claim.ProgramStart) != 0 || !claim.Lease.ExpiresAt.After(time.Now()) {
+		return freshProgram{}, nil, errors.New("restored Program claim is incomplete or inconsistent")
 	}
-	defer func() {
-		claim.Workspace.WriteCapability = ""
-	}()
-	waitClient, ok := controlPlane.(RunWaitClient)
-	if !ok {
-		return freshProgram{}, errors.New("restored program wait control plane is required")
-	}
-	admissionCtx, cancelAdmission := context.WithDeadline(ctx, claim.Lease.StartDeadlineAt)
-	defer cancelAdmission()
-	opened, err := r.WorkspaceMounts.OpenWorkspaceMountSession(admissionCtx, claim.Lease.WorkspaceMountID)
-	if err != nil {
-		return freshProgram{}, err
-	}
-	keepSession := false
-	defer func() {
-		if !keepSession {
-			_ = opened.Session.Close(context.Background())
-		}
-	}()
-	if opened.ControlSession == nil || opened.Session.Stream() == nil {
-		return freshProgram{}, errors.New("restored workspace mount control and resume streams are required")
-	}
-	if err := validateResumedProgramMount(
-		claim.Lease,
-		opened.Mount,
-		resume,
-	); err != nil {
-		return freshProgram{}, err
-	}
-	authority := freshWorkspaceAuthority(claim, opened.ChannelToken)
-	grant := &workspacev0.GrantProgramResumeRequest{
-		Authority: authority, RunWaitId: resume.runWaitID, CheckpointId: resume.checkpointID,
-		ResumeAttachId: resume.resumeAttachID, ResumeRequestVersion: resume.resumeRequestVersion,
-		CorrelationId: resume.correlationID,
-	}
-	if err := grantProgramResumeOnSession(admissionCtx, opened.ControlSession, grant); err != nil {
-		return freshProgram{}, fmt.Errorf("install resumed program authority: %w", err)
-	}
-	resume.start.Lease = claim.Lease.Fence()
-	var startResponse workerapi.RunStartResponse
-	if err := retryRunLeaseRequest(admissionCtx, func(requestCtx context.Context) error {
-		var requestErr error
-		startResponse, requestErr = controlPlane.AcknowledgeRunStart(requestCtx, resume.start)
-		if requestErr == nil && startResponse.Lease != resume.start.Lease {
-			return errors.New("resumed run start acknowledgement changed the run lease fence")
-		}
-		return requestErr
-	}); err != nil {
-		return freshProgram{}, fmt.Errorf("acknowledge resumed run start: %w", err)
-	}
-	state := &freshAdmissionState{
-		lease: claim.Lease, authority: authority, mounts: r.WorkspaceMounts,
-		controlPlane: controlPlane,
-	}
-	var entrypoint *programv0.EntrypointIdentity
-	if err := runWithFreshAdmissionRenewal(ctx, state, func(operationCtx context.Context) error {
-		attach := &programv0.ResumeAttach{
-			Execution: resume.execution, TurnId: resume.turnID,
-			RunId: claim.Lease.RunID, AttemptNumber: uint32(claim.Lease.AttemptNumber),
-			RunLeaseId: claim.Lease.ID, RunWaitId: resume.runWaitID, CheckpointId: resume.checkpointID,
-			ResumeAttachId: resume.resumeAttachID, ResumeRequestVersion: resume.resumeRequestVersion,
-			CorrelationId: resume.correlationID,
-		}
-		if err := writeFreshProgramContext(operationCtx, opened.Session, func(stream vm.Stream) error {
-			return frameio.WriteProtoFrame(stream, attach)
-		}); err != nil {
-			return fmt.Errorf("attach resumed program: %w", err)
-		}
-		kind, data, noResult, err := restoredProgramDecision(resume.decision)
+	attachCtx, cancel := context.WithDeadline(ctx, claim.Lease.ExpiresAt)
+	defer cancel()
+	var program freshProgram
+	var attached *programv0.ResumeAttach
+	err := retryRunLeaseRequest(attachCtx, func(attemptCtx context.Context) error {
+		opened, err := r.ComputerMounts.OpenComputerInstanceSession(attemptCtx, claim.Lease.ComputerInstanceID)
 		if err != nil {
 			return err
 		}
-		decision := &programv0.ResumeDecision{
-			RunWaitId: resume.runWaitID, Kind: kind, DataJson: string(data), RequireConsumedAck: true,
-			CheckpointId: resume.checkpointID, ResumeAttachId: resume.resumeAttachID,
-			ResumeRequestVersion: resume.resumeRequestVersion, RunLeaseId: claim.Lease.ID,
-			CorrelationId: resume.correlationID, NoResult: noResult,
+		keep := false
+		defer func() {
+			if !keep {
+				_ = opened.Session.Close(context.Background())
+			}
+		}()
+		if err := validateNewProgramMount(claim.Lease, opened.Mount); err != nil {
+			return err
 		}
-		if err := writeFreshProgramContext(operationCtx, opened.Session, func(stream vm.Stream) error {
-			return frameio.WriteProtoFrame(stream, decision)
-		}); err != nil {
-			return fmt.Errorf("apply resumed program decision: %w", err)
+		if opened.Mount.RestoreCheckpointID != resume.CheckpointID {
+			return errors.New("Program restore differs from local Computer")
 		}
-		ackCtx, cancelAck := context.WithTimeout(operationCtx, restoreAttachTimeout)
-		ack, err := readResumeAck(ackCtx, opened.Session)
-		cancelAck()
+		authority := freshComputerAuthority(claim, opened.ChannelToken, opened.Mount)
+		authority.Fence.BaseComputerDiskVersionId = claim.Lease.BaseComputerDiskVersionID
+		attach, err := grantProgramResumeOnSession(attemptCtx, opened.ControlSession, &computerv0.GrantProgramResumeRequest{Authority: authority, RunWaitId: resume.RunWaitID, CheckpointId: resume.CheckpointID})
 		if err != nil {
-			return fmt.Errorf("read resumed program proof: %w", err)
+			return err
 		}
-		if ack.GetRunWaitId() != resume.runWaitID || ack.GetCheckpointId() != resume.checkpointID ||
-			ack.GetResumeAttachId() != resume.resumeAttachID ||
-			ack.GetResumeRequestVersion() != resume.resumeRequestVersion ||
-			ack.GetRunLeaseId() != claim.Lease.ID || ack.GetCorrelationId() != resume.correlationID {
-			return errors.New("resumed program proof did not match exact authority")
+		if (attach.Execution != nil) != (resume.EntrypointKind == "actor") {
+			return errors.New("restored Program kind differs from Guest scope")
 		}
-		release := RestoreAcknowledgement{
-			RunWaitID: resume.runWaitID, CheckpointID: resume.checkpointID,
-			ResumeAttachID: resume.resumeAttachID, ResumeRequestVersion: resume.resumeRequestVersion,
-			CorrelationID: resume.correlationID,
-		}
-		if err := retryRunLeaseRequest(operationCtx, func(requestCtx context.Context) error {
-			release.Lease, _ = state.snapshot()
-			return (ControlPlaneRunWaits{Client: waitClient}).AcknowledgeRestore(requestCtx, release)
-		}); err != nil {
-			return fmt.Errorf("release resumed run wait: %w", err)
-		}
-		entrypoint, err = resumedEntrypoint(resume.entrypointKind, resume.entrypointDeclaredID)
-		return err
-	}); err != nil {
-		return freshProgram{}, err
-	}
-	lease, currentAuthority := state.snapshot()
-	keepSession = true
-	return freshProgram{
-		session: opened.Session, mount: opened.Mount, lease: lease, authority: currentAuthority,
-		entrypoint: entrypoint, execution: resume.execution,
-	}, nil
-}
-
-func validateResumedProgramClaim(
-	claim *workerapi.RunLeaseClaimResponse,
-) (resumedProgramAdmission, error) {
-	if claim == nil {
-		return resumedProgramAdmission{}, errors.New("run lease claim is required")
-	}
-	lease := claim.Lease
-	if strings.TrimSpace(lease.ID) == "" || strings.TrimSpace(lease.RunID) == "" || lease.AttemptNumber <= 0 ||
-		lease.LeaseSequence <= 0 || strings.TrimSpace(lease.RuntimeInstanceID) == "" ||
-		strings.TrimSpace(lease.RuntimeIdentityID) == "" || strings.TrimSpace(lease.WorkspaceID) == "" ||
-		strings.TrimSpace(lease.WorkspaceMountID) == "" || strings.TrimSpace(lease.WorkspaceLeaseID) == "" ||
-		strings.TrimSpace(lease.BaseWorkspaceVersionID) == "" || lease.MountFencingGeneration <= 0 ||
-		lease.StartDeadlineAt.IsZero() ||
-		!lease.StartDeadlineAt.After(time.Now()) ||
-		lease.ExpiresAt.IsZero() || !lease.ExpiresAt.After(time.Now()) ||
-		strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
-		return resumedProgramAdmission{}, errors.New("resumed program run lease assignment is incomplete")
-	}
-	if len(claim.Secrets) != 0 {
-		return resumedProgramAdmission{}, errors.New("resumed program cannot receive new secrets")
-	}
-	execution := claim.Execution
-	switch {
-	case execution.Restore != nil &&
-		execution.Fresh == nil:
-		restore := execution.Restore
-		admission := resumedProgramAdmission{
-			runWaitID:            strings.TrimSpace(restore.RunWaitID),
-			checkpointID:         strings.TrimSpace(restore.CheckpointID),
-			resumeAttachID:       strings.TrimSpace(restore.ResumeAttachID),
-			resumeRequestVersion: restore.ResumeRequestVersion,
-			correlationID:        strings.TrimSpace(restore.CorrelationID),
-			entrypointKind:       strings.TrimSpace(restore.EntrypointKind),
-			entrypointDeclaredID: strings.TrimSpace(restore.EntrypointDeclaredID),
-			decision:             restore.Decision,
-			start: workerapi.RunStartRequest{Restore: &workerapi.RunStartRestore{
-				RunWaitID:            restore.RunWaitID,
-				CheckpointID:         restore.CheckpointID,
-				ResumeAttachID:       restore.ResumeAttachID,
-				ResumeRequestVersion: restore.ResumeRequestVersion,
-			}},
-		}
-		if admission.entrypointKind == "actor" {
-			admission.execution = &programv0.SessionExecution{SessionId: restore.SessionID, RunId: lease.RunID, AttemptNumber: uint32(lease.AttemptNumber), RunGeneration: restore.RunGeneration}
-			admission.turnID = restore.TurnID
-			if restore.TurnID != nil && ids.Validate(*restore.TurnID) != nil {
-				return resumedProgramAdmission{}, errors.New("actor restore Turn identity is invalid")
+		if attach.Execution != nil {
+			if err := validateSessionExecution(attach.Execution, claim.Lease); err != nil {
+				return err
 			}
-			if err := validateSessionExecution(admission.execution, lease); err != nil {
-				return resumedProgramAdmission{}, err
-			}
-		} else if restore.SessionID != "" || restore.RunGeneration != 0 || restore.TurnID != nil {
-			return resumedProgramAdmission{}, errors.New("task restore has Actor execution scope")
 		}
-		if admission.runWaitID == "" ||
-			admission.checkpointID == "" ||
-			admission.resumeAttachID == "" ||
-			admission.resumeRequestVersion <= 0 ||
-			admission.correlationID == "" ||
-			admission.entrypointDeclaredID == "" ||
-			len(restore.Manifest) == 0 {
-			return resumedProgramAdmission{}, errors.New(
-				"program restore authority is incomplete",
-			)
+		if attached != nil && !proto.Equal(attached, attach) {
+			return errors.New("restored attachment changed during retry")
 		}
-		var checkpoint workerapi.CheckpointManifest
-		if err := json.Unmarshal(restore.Manifest, &checkpoint); err != nil {
-			return resumedProgramAdmission{}, fmt.Errorf(
-				"decode restored program checkpoint: %w",
-				err,
-			)
+		attached = attach
+		stop := context.AfterFunc(attemptCtx, func() { _ = opened.Session.Close(context.Background()) })
+		defer stop()
+		if err := frameio.WriteProtoFrame(opened.Session.Stream(), attach); err != nil {
+			return err
 		}
-		if checkpoint.RecoveryPoint.ID != admission.checkpointID ||
-			checkpoint.RecoveryPoint.RunID != lease.RunID ||
-			checkpoint.RecoveryPoint.AttemptNumber != lease.AttemptNumber ||
-			checkpoint.RecoveryPoint.RunWaitID != admission.runWaitID ||
-			checkpoint.RecoveryPoint.CorrelationID != admission.correlationID {
-			return resumedProgramAdmission{}, errors.New(
-				"restored program checkpoint identity is inconsistent",
-			)
+		// Reconnect the retained wait without resolving its logical condition. The
+		// durable acknowledgement below makes its current condition pollable again.
+		decision := &programv0.ResumeDecision{Kind: "waiting", RequireConsumedAck: true, RunWaitId: attach.RunWaitId, CorrelationId: attach.CorrelationId, CheckpointId: attach.CheckpointId, ResumeAttachId: attach.ResumeAttachId, ResumeRequestVersion: attach.ResumeRequestVersion, RunLeaseId: attach.RunLeaseId}
+		if err := frameio.WriteProtoFrame(opened.Session.Stream(), decision); err != nil {
+			return err
 		}
-		return admission, nil
-	default:
-		return resumedProgramAdmission{}, errors.New(
-			"run lease execution must contain exactly one restored program",
-		)
-	}
+		ack, err := readResumeAck(attemptCtx, opened.Session)
+		if err != nil {
+			return err
+		}
+		expected := &programv0.ResumeAck{RunWaitId: attach.RunWaitId, CorrelationId: attach.CorrelationId, CheckpointId: attach.CheckpointId, ResumeAttachId: attach.ResumeAttachId, ResumeRequestVersion: attach.ResumeRequestVersion, RunLeaseId: attach.RunLeaseId}
+		if !proto.Equal(ack, expected) {
+			return errors.New("restored Program acknowledgement differs from attachment")
+		}
+		if err := (ControlPlaneRunWaits{Client: waits}).AcknowledgeRestore(attemptCtx, RestoreAcknowledgement{Lease: claim.Lease, RunWaitID: attach.RunWaitId, CheckpointID: attach.CheckpointId}); err != nil {
+			return err
+		}
+		identity := &programv0.EntrypointIdentity{Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}}}
+		if resume.EntrypointKind == "actor" {
+			identity.Kind = &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}}
+		}
+		program = freshProgram{session: opened.Session, mount: opened.Mount, lease: claim.Lease, authority: authority, execution: attach.Execution, entrypoint: identity}
+		keep = true
+		return nil
+	})
+	return program, attached, err
 }
 
-func validateResumedProgramMount(
-	lease workerapi.RunLeaseAssignment,
-	mount workerapi.WorkspaceMount,
-	resume resumedProgramAdmission,
-) error {
-	if mount.ID != lease.WorkspaceMountID {
-		return errors.New("resumed workspace mount ID does not match the claimed physical authority")
+func (task *guestRunLeaseTask) continueRestoredWait(ctx context.Context, attach *programv0.ResumeAttach) error {
+	if task.waits == nil {
+		return errors.New("restored wait client is required")
 	}
-	if mount.WorkspaceID != lease.WorkspaceID {
-		return errors.New("resumed Workspace ID does not match the claimed physical authority")
-	}
-	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
-		return errors.New("resumed Runtime Instance does not match the claimed physical authority")
-	}
-	if mount.Target.BaseWorkspaceVersionID != lease.BaseWorkspaceVersionID {
-		return errors.New("resumed base Workspace version does not match the claimed physical authority")
-	}
-	if mount.RestoreCheckpointID != resume.checkpointID {
-		return errors.New("resumed restore checkpoint does not match the claimed physical authority")
-	}
-	return nil
-}
-
-func resumedEntrypoint(
-	kind string,
-	declaredID string,
-) (*programv0.EntrypointIdentity, error) {
-	switch kind {
-	case "task":
-		return &programv0.EntrypointIdentity{
-			DeclaredId: declaredID,
-			Kind: &programv0.EntrypointIdentity_Task{
-				Task: &programv0.TaskEntrypoint{},
-			},
-		}, nil
-	case "actor":
-		return &programv0.EntrypointIdentity{
-			DeclaredId: declaredID,
-			Kind: &programv0.EntrypointIdentity_Actor{
-				Actor: &programv0.ActorEntrypoint{},
-			},
-		}, nil
-	default:
-		return nil, errors.New("resumed program entrypoint kind is unsupported")
-	}
-}
-
-func restoredProgramDecision(decision workerapi.RunLeaseDecision) (string, json.RawMessage, bool, error) {
-	count := 0
-	if decision.Completed != nil {
-		count++
-	}
-	if decision.Failed != nil {
-		count++
-	}
-	if decision.Cancelled != nil {
-		count++
-	}
-	if count != 1 {
-		return "", nil, false, errors.New("restored program decision must contain exactly one terminal condition")
-	}
-	if completed := decision.Completed; completed != nil {
-		if (completed.NoResult == nil) == (completed.ResultJSON == nil) {
-			return "", nil, false, errors.New("completed restored program decision must contain exactly one result variant")
+	request := WaitRequest{Execution: attach.Execution, TurnID: attach.TurnId, Leases: task, Computer: task.waitComputer, CorrelationID: attach.CorrelationId, RunWaitID: attach.RunWaitId, ResumeAttachID: attach.ResumeAttachId}
+	request.Resume = func(ctx context.Context, decision WaitResumeDecision) error {
+		if err := task.beforeWaitResume(ctx, decision); err != nil {
+			return err
 		}
-		if completed.NoResult != nil {
-			return "completed", nil, true, nil
+		data := string(decision.Data)
+		if data == "" {
+			data = "null"
 		}
-		if completed.ResultJSON != nil {
-			if !json.Valid(completed.ResultJSON) {
-				return "", nil, false, errors.New("restored program result is not valid JSON")
-			}
-			return "completed", append(json.RawMessage(nil), completed.ResultJSON...), false, nil
-		}
+		return wire.WriteResumeDecision(task.programStream(), &programv0.ResumeDecision{RunWaitId: attach.RunWaitId, CorrelationId: attach.CorrelationId, ResumeAttachId: attach.ResumeAttachId, Kind: decision.Kind, DataJson: data})
 	}
-	if failed := decision.Failed; failed != nil {
-		return restoredProgramFailureDecision("failed", failed.ReasonCode, failed.Error)
-	}
-	cancelled := decision.Cancelled
-	return restoredProgramFailureDecision("cancelled", cancelled.ReasonCode, cancelled.Error)
-}
-
-func restoredProgramFailureDecision(kind, reason string, detail json.RawMessage) (string, json.RawMessage, bool, error) {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return "", nil, false, errors.New("restored program failure reason is required")
-	}
-	if detail != nil && !json.Valid(detail) {
-		return "", nil, false, errors.New("restored program failure detail is not valid JSON")
-	}
-	payload := struct {
-		ReasonCode string          `json:"reason_code"`
-		Error      json.RawMessage `json:"error,omitempty"`
-	}{ReasonCode: reason, Error: detail}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "", nil, false, fmt.Errorf("encode restored program failure: %w", err)
-	}
-	return kind, encoded, false, nil
+	opened := workerapi.CreateRunWaitResponse{RunID: task.lease.RunID, RunWaitID: attach.RunWaitId, ResumeAttachID: attach.ResumeAttachId}
+	return task.runHotWait(ctx, request, func(ctx context.Context, request WaitRequest) error {
+		return task.waits.ContinueRunWait(ctx, request, opened)
+	})
 }

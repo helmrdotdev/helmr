@@ -39,8 +39,8 @@ func TestControlPlaneRoutesMatchCurrentProtocol(t *testing.T) {
 DELETE /api/invitations/{id}
 DELETE /api/members/{userID}
 DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
-DELETE /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
-DELETE /v1/workspaces/{workspaceID}
+DELETE /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
+DELETE /v1/computers/{computerID}
 GET /admin/api/v1/regions
 GET /admin/api/v1/regions/{regionID}
 GET /admin/api/v1/worker-groups
@@ -55,6 +55,11 @@ GET /api/projects/{projectID}/environments/{environmentID}
 GET /api/projects/{projectID}/environments/{environmentID}/actors
 GET /api/projects/{projectID}/environments/{environmentID}/actors/{actorID}
 GET /api/projects/{projectID}/environments/{environmentID}/api-keys
+GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}
+GET /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}/logs
+GET /api/projects/{projectID}/environments/{environmentID}/computers
+GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}
+GET /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/members
 GET /api/projects/{projectID}/environments/{environmentID}/deployments
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/current
 GET /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}
@@ -77,19 +82,21 @@ GET /api/projects/{projectID}/environments/{environmentID}/tasks
 GET /api/projects/{projectID}/environments/{environmentID}/tasks/{taskID}
 GET /api/projects/{projectID}/environments/{environmentID}/tokens
 GET /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}
-GET /api/projects/{projectID}/environments/{environmentID}/workspaces
-GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
-GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec/{processID}
 GET /api/projects/{projectRef}
 GET /api/regions
 GET /capacity/v1/worker-groups/resolve
 GET /capacity/v1/worker-groups/{workerGroupID}/pools/resolve
-GET /capacity/v1/worker-instances
-GET /capacity/v1/worker-instances/{workerInstanceID}
+GET /capacity/v1/worker-hosts
+GET /capacity/v1/worker-hosts/{workerHostID}
 GET /healthz
 GET /readyz
 GET /v1/actors
 GET /v1/actors/{actorID}
+GET /v1/commands/{commandID}
+GET /v1/commands/{commandID}/logs
+GET /v1/computers
+GET /v1/computers/{computerID}
+GET /v1/computers/{computerID}/members
 GET /v1/deployments
 GET /v1/deployments/current
 GET /v1/deployments/{deploymentID}
@@ -112,9 +119,6 @@ GET /v1/tasks
 GET /v1/tasks/{taskID}
 GET /v1/tokens
 GET /v1/tokens/{tokenID}
-GET /v1/workspaces
-GET /v1/workspaces/{workspaceID}
-GET /v1/workspaces/{workspaceID}/exec/{processID}
 GET /worker/v1/instance
 OPTIONS /api/public/tokens/{tokenID}/complete
 PATCH /admin/api/v1/regions/{regionID}
@@ -150,11 +154,13 @@ POST /api/projects
 POST /api/projects/{projectID}/environments
 POST /api/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start
 POST /api/projects/{projectID}/environments/{environmentID}/api-keys
+POST /api/projects/{projectID}/environments/{environmentID}/commands/{commandID}/cancel
+POST /api/projects/{projectID}/environments/{environmentID}/computers/{computerID}/exec
 POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize
 POST /api/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan
 POST /api/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/promote
 POST /api/projects/{projectID}/environments/{environmentID}/runs/{runID}/cancel
-POST /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/workspaces
+POST /api/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}/computers
 POST /api/projects/{projectID}/environments/{environmentID}/secrets
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/revoke
 POST /api/projects/{projectID}/environments/{environmentID}/secrets/{secretID}/rotate
@@ -169,18 +175,19 @@ POST /api/projects/{projectID}/environments/{environmentID}/tasks/{taskDeclaredI
 POST /api/projects/{projectID}/environments/{environmentID}/tokens
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete
-POST /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/exec
 POST /api/public/tokens/{tokenID}/complete
 POST /api/token-callbacks/{tokenID}/{callbackSecret}
 POST /capacity/v1/worker-groups/{workerGroupID}/plan
-POST /capacity/v1/worker-instances/{workerInstanceID}/drain
-POST /capacity/v1/worker-instances/{workerInstanceID}/lost
+POST /capacity/v1/worker-hosts/{workerHostID}/drain
+POST /capacity/v1/worker-hosts/{workerHostID}/lost
 POST /v1/actors/{actorDeclaredID}/start
+POST /v1/commands/{commandID}/cancel
+POST /v1/computers/{computerID}/exec
 POST /v1/deployment-bundles/finalize
 POST /v1/deployment-bundles/upload-plan
 POST /v1/deployments/{deploymentID}/promote
 POST /v1/runs/{runID}/cancel
-POST /v1/sandboxes/{sandboxID}/workspaces
+POST /v1/sandboxes/{sandboxID}/computers
 POST /v1/secrets
 POST /v1/secrets/{secretID}/revoke
 POST /v1/secrets/{secretID}/rotate
@@ -195,7 +202,14 @@ POST /v1/tasks/{taskDeclaredID}/start
 POST /v1/tokens
 POST /v1/tokens/{tokenID}/cancel
 POST /v1/tokens/{tokenID}/complete
-POST /v1/workspaces/{workspaceID}/exec
+POST /worker/v1/computer/checkpoints/failed
+POST /worker/v1/computer/checkpoints/objects/certify
+POST /worker/v1/computer/checkpoints/objects/register
+POST /worker/v1/computer/checkpoints/objects/reuse
+POST /worker/v1/computer/checkpoints/ready
+POST /worker/v1/computer/checkpoints/register
+POST /worker/v1/computer/restores/ack
+POST /worker/v1/computer/restores/plan
 POST /worker/v1/enrollment
 POST /worker/v1/instance/activate
 POST /worker/v1/instance/drain
@@ -205,12 +219,21 @@ POST /worker/v1/instance/observations
 POST /worker/v1/instance/recover
 POST /worker/v1/instance/token
 POST /worker/v1/run/actors/start
-POST /worker/v1/run/checkpoints/failed
-POST /worker/v1/run/checkpoints/ready
-POST /worker/v1/run/checkpoints/register
-POST /worker/v1/run/computer-objects/certify
-POST /worker/v1/run/computer-objects/register
-POST /worker/v1/run/computer-objects/reuse
+POST /worker/v1/run/computer-commands/claim
+POST /worker/v1/run/computer-commands/complete
+POST /worker/v1/run/computer-commands/logs/append
+POST /worker/v1/run/computer-commands/reconcile
+POST /worker/v1/run/computer-instances/claim
+POST /worker/v1/run/computer-instances/closed
+POST /worker/v1/run/computer-instances/computer-source
+POST /worker/v1/run/computer-instances/failed
+POST /worker/v1/run/computer-instances/initialization/generation
+POST /worker/v1/run/computer-instances/initialization/key
+POST /worker/v1/run/computer-instances/initialization/objects/certify
+POST /worker/v1/run/computer-instances/initialization/objects/register
+POST /worker/v1/run/computer-instances/ready
+POST /worker/v1/run/computer-instances/reconcile
+POST /worker/v1/run/computer-instances/renew
 POST /worker/v1/run/computer-saves/abandon
 POST /worker/v1/run/computer-saves/adopt
 POST /worker/v1/run/computer-saves/begin
@@ -218,26 +241,18 @@ POST /worker/v1/run/computer-saves/objects/certify
 POST /worker/v1/run/computer-saves/objects/register
 POST /worker/v1/run/computer-saves/objects/reuse
 POST /worker/v1/run/computer-saves/publish
+POST /worker/v1/run/computers/create
+POST /worker/v1/run/computers/delete
+POST /worker/v1/run/computers/members
+POST /worker/v1/run/computers/retrieve
 POST /worker/v1/run/finalization/begin
-POST /worker/v1/run/finalization/register
 POST /worker/v1/run/leases/claim
 POST /worker/v1/run/leases/discover
 POST /worker/v1/run/leases/entrypoint
 POST /worker/v1/run/leases/renew
-POST /worker/v1/run/leases/resume-release
 POST /worker/v1/run/leases/start
 POST /worker/v1/run/logs/append
 POST /worker/v1/run/metadata/update
-POST /worker/v1/run/runtime-instances/closed
-POST /worker/v1/run/runtime-instances/computer-source
-POST /worker/v1/run/runtime-instances/failed
-POST /worker/v1/run/runtime-instances/initialization/generation
-POST /worker/v1/run/runtime-instances/initialization/key
-POST /worker/v1/run/runtime-instances/initialization/objects/certify
-POST /worker/v1/run/runtime-instances/initialization/objects/register
-POST /worker/v1/run/runtime-instances/ready
-POST /worker/v1/run/runtime-instances/reconcile
-POST /worker/v1/run/runtime-substrates/register
 POST /worker/v1/run/secret-proxy/prepare
 POST /worker/v1/run/secret-proxy/resolve
 POST /worker/v1/run/sessions/cancel
@@ -266,22 +281,6 @@ POST /worker/v1/run/turns/settlement/begin
 POST /worker/v1/run/waits/create
 POST /worker/v1/run/waits/poll
 POST /worker/v1/run/waits/resume-ack
-POST /worker/v1/run/workspace-execs/claim
-POST /worker/v1/run/workspace-execs/complete
-POST /worker/v1/run/workspace-mounts/capture
-POST /worker/v1/run/workspace-mounts/claim
-POST /worker/v1/run/workspace-mounts/computer-objects/certify
-POST /worker/v1/run/workspace-mounts/computer-objects/register
-POST /worker/v1/run/workspace-mounts/computer-objects/reuse
-POST /worker/v1/run/workspace-mounts/fail
-POST /worker/v1/run/workspace-mounts/mounted
-POST /worker/v1/run/workspace-mounts/renew
-POST /worker/v1/run/workspace-mounts/stop
-POST /worker/v1/run/workspaces/create
-POST /worker/v1/run/workspaces/delete
-POST /worker/v1/run/workspaces/exec
-POST /worker/v1/run/workspaces/exec/poll
-POST /worker/v1/run/workspaces/retrieve
 PUT /capacity/v1/worker-groups/{workerGroupID}/primary-pools
 `), "\n")
 	if !slices.IsSorted(want) {
@@ -312,7 +311,7 @@ func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
 		{name: "Developer API not found", method: http.MethodGet, path: "/v1/missing", status: http.StatusNotFound, code: "not_found"},
 		{name: "Capacity not found", method: http.MethodGet, path: "/capacity/v1/missing", status: http.StatusNotFound, code: "not_found"},
 		{name: "Worker not found", method: http.MethodGet, path: "/worker/v1/missing", status: http.StatusNotFound, code: "not_found"},
-		{name: "old Capacity root", method: http.MethodGet, path: "/api/capacity/v0/worker-instances", status: http.StatusNotFound, code: "not_found"},
+		{name: "old Capacity root", method: http.MethodGet, path: "/api/capacity/v0/worker-hosts", status: http.StatusNotFound, code: "not_found"},
 		{name: "old Worker root", method: http.MethodGet, path: "/api/worker/v0/instance", status: http.StatusNotFound, code: "not_found"},
 		{name: "method not allowed", method: http.MethodPost, path: "/healthz", status: http.StatusMethodNotAllowed, code: "method_not_allowed"},
 	} {
@@ -358,8 +357,8 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 		authorization string
 		status        int
 	}{
-		{name: "Capacity missing", path: "/capacity/v1/worker-instances", status: http.StatusUnauthorized},
-		{name: "Capacity foreign", path: "/capacity/v1/worker-instances", authorization: "Bearer hlmr_test_product", status: http.StatusUnauthorized},
+		{name: "Capacity missing", path: "/capacity/v1/worker-hosts", status: http.StatusUnauthorized},
+		{name: "Capacity foreign", path: "/capacity/v1/worker-hosts", authorization: "Bearer hlmr_test_product", status: http.StatusUnauthorized},
 		{name: "Save missing", path: "/worker/v1/run/computer-saves/begin", status: http.StatusUnauthorized},
 		{name: "Save foreign", path: "/worker/v1/run/computer-saves/publish", authorization: "Bearer " + capacityTestToken(), status: http.StatusUnauthorized},
 		{name: "Worker missing", path: "/worker/v1/instance", status: http.StatusUnauthorized},
@@ -368,7 +367,7 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, test.path, nil)
-			if test.path == "/worker/v1/instance" || test.path == "/capacity/v1/worker-instances" {
+			if test.path == "/worker/v1/instance" || test.path == "/capacity/v1/worker-hosts" {
 				request.Method = http.MethodGet
 			}
 			request.Header.Set("Authorization", test.authorization)
@@ -391,7 +390,7 @@ func TestWorkerRouteRejectsMalformedJWTGroupBeforeDatabase(t *testing.T) {
 		"iat":                 now.Add(-time.Minute).Unix(),
 		"exp":                 now.Add(time.Hour).Unix(),
 		"worker_group_id":     "not-a-uuid",
-		"worker_instance_id":  "01900000-0000-7000-8000-000000000711",
+		"worker_host_id":      "01900000-0000-7000-8000-000000000711",
 		"credential_id":       "01900000-0000-7000-8000-000000000712",
 		"worker_epoch":        1,
 		"claim_version":       1,
@@ -431,7 +430,7 @@ func TestMachineRoutesPreserveRequestBodyLimits(t *testing.T) {
 		path   string
 		length int64
 	}{
-		{name: "Capacity common limit", path: "/capacity/v1/worker-instances/01900000-0000-7000-8000-000000000000/lost", length: apiRequestBodyLimit + 1},
+		{name: "Capacity common limit", path: "/capacity/v1/worker-hosts/01900000-0000-7000-8000-000000000000/lost", length: apiRequestBodyLimit + 1},
 		{name: "Worker common limit", path: "/worker/v1/instance/observations", length: apiRequestBodyLimit + 1},
 		{name: "Capacity mutation limit", path: "/capacity/v1/worker-groups/01900000-0000-7000-8000-000000000000/plan", length: capacityRequestBodyLimit + 1},
 	} {

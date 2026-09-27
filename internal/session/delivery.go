@@ -126,7 +126,7 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.ControlOutbox) 
 		return w.retry(ctx, message, err, outbox.RetryAfter(message.Attempts))
 	}
 	if deferred {
-		return w.retry(ctx, message, errors.New("session input continuation is waiting for workspace authority"), outbox.RetryAfter(message.Attempts))
+		return w.retry(ctx, message, errors.New("session input continuation is waiting for computer authority"), outbox.RetryAfter(message.Attempts))
 	}
 	_, err = w.store.DeliverControlOutbox(ctx, db.DeliverControlOutboxParams{
 		ID: message.ID, ClaimedBy: message.ClaimedBy, ClaimAttempt: message.Attempts,

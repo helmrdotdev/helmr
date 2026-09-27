@@ -14,7 +14,7 @@ func TestResourceReadsPreserveUnknownDiagnostics(t *testing.T) {
 	scheduleFailure := &api.ScheduleFailure{Code: "future_schedule_failure", Message: "diagnosis", Details: json.RawMessage(`{"custom":1}`)}
 	session := actorStatusFixture()
 	session.Status = api.SessionStatusFailed
-	session.Failure = &api.SessionFailure{Code: "future_session_failure", Message: "diagnosis", Details: api.SessionFailureDetails{RunID: session.WorkspaceID}}
+	session.Failure = &api.SessionFailure{Code: "future_session_failure", Message: "diagnosis", Details: api.SessionFailureDetails{RunID: session.ComputerID}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/schedules/"+testScheduleID {
 			_ = json.NewEncoder(w).Encode(api.ScheduleResponse{ID: testScheduleID, TaskID: "nightly", Status: api.ScheduleStatusErrored, LastFailure: scheduleFailure})

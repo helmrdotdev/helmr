@@ -63,23 +63,23 @@ func TestCredentialKeyRejectsInvalidAuthority(t *testing.T) {
 	}
 }
 
-func TestGenerateWorkerInstanceSecret(t *testing.T) {
+func TestGenerateWorkerHostSecret(t *testing.T) {
 	hashSecret := make([]byte, MACKeySize)
 	for index := range hashSecret {
 		hashSecret[index] = byte(index + 1)
 	}
-	generated, err := GenerateWorkerInstanceSecret(hashSecret)
+	generated, err := GenerateWorkerHostSecret(hashSecret)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(generated.Raw, WorkerInstanceSecretPrefix) {
-		t.Fatalf("raw = %q, want prefix %q", generated.Raw, WorkerInstanceSecretPrefix)
+	if !strings.HasPrefix(generated.Raw, WorkerHostSecretPrefix) {
+		t.Fatalf("raw = %q, want prefix %q", generated.Raw, WorkerHostSecretPrefix)
 	}
-	if WorkerInstanceSecretPrefix != "hlmr_wi_" {
-		t.Fatalf("WorkerInstanceSecretPrefix = %q, want hlmr_wi_", WorkerInstanceSecretPrefix)
+	if WorkerHostSecretPrefix != "hlmr_wi_" {
+		t.Fatalf("WorkerHostSecretPrefix = %q, want hlmr_wi_", WorkerHostSecretPrefix)
 	}
-	randomPart := generated.Raw[len(WorkerInstanceSecretPrefix):]
-	wantKeyPrefix := WorkerInstanceSecretPrefix + randomPart[:8]
+	randomPart := generated.Raw[len(WorkerHostSecretPrefix):]
+	wantKeyPrefix := WorkerHostSecretPrefix + randomPart[:8]
 	if generated.KeyPrefix != wantKeyPrefix {
 		t.Fatalf("KeyPrefix = %q, want %q", generated.KeyPrefix, wantKeyPrefix)
 	}

@@ -6,7 +6,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { HelmrClient, type WorkspaceRef } from "@helmr/sdk"
+import { HelmrClient, type ComputerRef } from "@helmr/sdk"
 import type { networkTask } from "./task"
 import { deadline } from "../../support/deadline"
 
@@ -18,7 +18,7 @@ await mkdir(evidenceDir, { recursive: false, mode: 0o700 })
 const client = new HelmrClient({ url: apiUrl, apiKey })
 const marker = randomUUID(), tokenIds: string[] = []
 const evidence: Record<string, unknown> = { case: "metadata-isolation", marker, startedAt: new Date().toISOString(), passed: false }
-let workspace: WorkspaceRef | undefined, runId: string | undefined, failure: unknown
+let computer: ComputerRef | undefined, runId: string | undefined, failure: unknown
 const request = () => ({ signal: deadline(30_000) })
 const terminal = new Set(["succeeded", "failed", "system_failed", "cancelled", "expired"])
 async function phase(name: string) {
@@ -47,9 +47,9 @@ async function observe() {
 try {
   for (const name of ["start", "finish"]) tokenIds.push((await client.tokens.create({ timeout: "10m", idempotencyKey: `${marker}:${name}` }, request())).id)
   evidence["tokenIds"] = tokenIds
-  workspace = await client.sandboxes.createWorkspace("verification", { key: marker, idempotencyKey: `${marker}:workspace` }, request())
-  evidence["workspaceId"] = workspace.id
-  const run = await client.tasks.start<typeof networkTask>("verification-network", { workspace,
+  computer = await client.sandboxes.createComputer("verification", { key: marker, idempotencyKey: `${marker}:computer` }, request())
+  evidence["computerId"] = computer.id
+  const run = await client.tasks.start<typeof networkTask>("verification-network", { computer,
     payload: { marker, startToken: tokenIds[0]!, finishToken: tokenIds[1]! }, idempotencyKey: `${marker}:run` }, request())
   runId = run.id
   evidence["runId"] = runId
@@ -66,7 +66,7 @@ try {
   assert(after.denied_packets > before.denied_packets, "no native denied packet observed; timeout alone is insufficient")
   await client.tokens.complete(tokenIds[1]!, { result: {}, idempotencyKey: `${marker}:finish` }, request())
   const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
-  assert.deepEqual(output, { marker, blocked: true, positiveStatus: 200, runId, workspaceId: workspace.id })
+  assert.deepEqual(output, { marker, blocked: true, positiveStatus: 200, runId, computerId: computer.id })
   evidence["output"] = output
   evidence["passed"] = true
 } catch (error) {
@@ -83,7 +83,7 @@ try {
       for (const id of tokenIds) if ((await client.tokens.retrieve(id, request())).status === "pending")
         await client.tokens.cancel(id, { idempotencyKey: `${marker}:cancel:${id}` }, request())
     }],
-    ["workspaceCleanup", workspace ? () => workspace!.delete({ idempotencyKey: `${marker}:delete` }, request()) : undefined],
+    ["computerCleanup", computer ? () => computer!.delete({ idempotencyKey: `${marker}:delete` }, request()) : undefined],
   ] as const) {
     if (!cleanup) continue
     try { await cleanup(); evidence[name] = "request-accepted" }

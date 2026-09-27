@@ -19,8 +19,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 const (
@@ -66,7 +66,7 @@ type CPUShapeEvidence struct {
 }
 
 type boundHostRuntimeEvidence struct {
-	identity        runtimeid.Profile
+	identity        vmplatform.Profile
 	shapes          []CPUShapeEvidence
 	firecrackerPath string
 }
@@ -86,7 +86,7 @@ func (store *hostRuntimeEvidenceStore) bind(evidence HostRuntimeEvidence, maxVCP
 	if err := ValidateCPUShapeEvidence(evidence.CPUShapes, maxVCPUCount); err != nil {
 		return err
 	}
-	identity, err := evidence.RuntimeIdentity()
+	identity, err := evidence.VMPlatform()
 	if err != nil {
 		return err
 	}
@@ -111,13 +111,13 @@ func (store *hostRuntimeEvidenceStore) bind(evidence HostRuntimeEvidence, maxVCP
 	return nil
 }
 
-func (store *hostRuntimeEvidenceStore) runtimeIdentity() (runtimeid.Profile, error) {
+func (store *hostRuntimeEvidenceStore) vmPlatform() (vmplatform.Profile, error) {
 	if store == nil {
-		return runtimeid.Profile{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
+		return vmplatform.Profile{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
 	}
 	evidence := store.value.Load()
 	if evidence == nil {
-		return runtimeid.Profile{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
+		return vmplatform.Profile{}, errors.New("host runtime evidence is not bound to the Firecracker connector")
 	}
 	return evidence.identity, nil
 }
@@ -154,18 +154,18 @@ func (store *hostRuntimeEvidenceStore) firecrackerExecutable() (string, error) {
 	return evidence.firecrackerPath, nil
 }
 
-// RuntimeIdentity returns the complete canonical runtime selector bound by
+// VMPlatform returns the complete canonical runtime selector bound by
 // this evidence. The ID is recomputed and checked rather than trusted.
-func (evidence HostRuntimeEvidence) RuntimeIdentity() (runtimeid.Profile, error) {
-	identity, err := deriveHostRuntimeIdentity(evidence)
+func (evidence HostRuntimeEvidence) VMPlatform() (vmplatform.Profile, error) {
+	identity, err := deriveHostVMPlatform(evidence)
 	if err != nil {
-		return runtimeid.Profile{}, err
+		return vmplatform.Profile{}, err
 	}
 	if evidence.RuntimeID == "" {
-		return runtimeid.Profile{}, errors.New("host runtime evidence runtime ID is required")
+		return vmplatform.Profile{}, errors.New("host runtime evidence runtime ID is required")
 	}
 	if evidence.RuntimeID != identity.ID {
-		return runtimeid.Profile{}, fmt.Errorf(
+		return vmplatform.Profile{}, fmt.Errorf(
 			"host runtime evidence runtime ID %s does not match canonical ID %s",
 			evidence.RuntimeID,
 			identity.ID,
@@ -174,21 +174,21 @@ func (evidence HostRuntimeEvidence) RuntimeIdentity() (runtimeid.Profile, error)
 	return identity, nil
 }
 
-func deriveHostRuntimeIdentity(evidence HostRuntimeEvidence) (runtimeid.Profile, error) {
+func deriveHostVMPlatform(evidence HostRuntimeEvidence) (vmplatform.Profile, error) {
 	if err := evidence.CPUTemplateSelector.Validate(); err != nil {
-		return runtimeid.Profile{}, err
+		return vmplatform.Profile{}, err
 	}
-	var cpuTemplate runtimeid.CPUTemplateSelector
+	var cpuTemplate vmplatform.CPUTemplateSelector
 	switch evidence.CPUTemplateSelector.Kind {
 	case CPUTemplateNone:
-		cpuTemplate.Kind = runtimeid.CPUTemplateNone
+		cpuTemplate.Kind = vmplatform.CPUTemplateNone
 	case CPUTemplateCustom:
-		cpuTemplate.Kind = runtimeid.CPUTemplateCustom
+		cpuTemplate.Kind = vmplatform.CPUTemplateCustom
 		cpuTemplate.Digest = evidence.CPUTemplateSelector.Digest
 	default:
-		return runtimeid.Profile{}, fmt.Errorf("CPU template selector kind %q is not supported", evidence.CPUTemplateSelector.Kind)
+		return vmplatform.Profile{}, fmt.Errorf("CPU template selector kind %q is not supported", evidence.CPUTemplateSelector.Kind)
 	}
-	identity := runtimeid.Profile{
+	identity := vmplatform.Profile{
 		Arch:                      evidence.RuntimeArch,
 		Contract:                  evidence.VMRuntimeContract,
 		VMRuntimeDescriptorDigest: evidence.VMRuntimeDescriptorDigest,
@@ -204,7 +204,7 @@ func deriveHostRuntimeIdentity(evidence HostRuntimeEvidence) (runtimeid.Profile,
 	var err error
 	identity.ID, err = identity.ExpectedID()
 	if err != nil {
-		return runtimeid.Profile{}, fmt.Errorf("derive host runtime identity: %w", err)
+		return vmplatform.Profile{}, fmt.Errorf("derive host runtime identity: %w", err)
 	}
 	return identity, nil
 }
@@ -388,7 +388,7 @@ func inspectHostRuntime(
 	if err != nil {
 		return HostRuntimeEvidence{}, err
 	}
-	runtimeArchitecture, err := runtimeid.ArchitectureFromGo(artifacts.Arch)
+	runtimeArchitecture, err := vmplatform.ArchitectureFromGo(artifacts.Arch)
 	if err != nil {
 		return HostRuntimeEvidence{}, fmt.Errorf("derive runtime architecture from artifacts: %w", err)
 	}
@@ -494,7 +494,7 @@ func inspectHostRuntime(
 		RootfsDigest:    artifacts.Rootfs.Digest,
 		firecrackerPath: firecrackerPath,
 	}
-	identity, err := deriveHostRuntimeIdentity(evidence)
+	identity, err := deriveHostVMPlatform(evidence)
 	if err != nil {
 		return HostRuntimeEvidence{}, err
 	}

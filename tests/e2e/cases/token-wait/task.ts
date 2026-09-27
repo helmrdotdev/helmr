@@ -1,7 +1,7 @@
 import { image, sandbox, task, tokens } from "@helmr/sdk"
 import { z } from "zod"
 
-export const tokenWorkspace = sandbox({ id: "verification-token" })
+export const tokenComputer = sandbox({ id: "verification-token" })
   .image(image("verification-token").from("node:24-bookworm-slim"))
   .resources({ cpu: 1, memory: "1GiB" })
 

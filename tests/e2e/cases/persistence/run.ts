@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { HelmrClient, type WorkspaceRef } from "@helmr/sdk"
+import { HelmrClient, type ComputerRef } from "@helmr/sdk"
 import type { persistenceTask } from "./task"
 
 const apiUrl = process.env["HELMR_API_URL"]
@@ -19,7 +19,7 @@ await mkdir(evidenceDir, { recursive: false, mode: 0o700 })
 const client = new HelmrClient({ url: apiUrl, apiKey })
 const marker = randomUUID()
 const evidence: Record<string, unknown> = { case: "persistence", marker, startedAt: new Date().toISOString(), passed: false }
-let workspace: WorkspaceRef | undefined
+let computer: ComputerRef | undefined
 let tokenId: string | undefined
 let failure: unknown
 const request = () => ({ signal: deadline(30_000) })
@@ -31,10 +31,10 @@ try {
   const token = await client.tokens.create({ timeout: "10m", idempotencyKey: `token:${marker}` }, request())
   tokenId = token.id
   evidence["tokenId"] = tokenId
-  workspace = await client.sandboxes.createWorkspace("verification", { key: marker, idempotencyKey: `workspace:${marker}` }, request())
-  evidence["workspaceId"] = workspace.id
+  computer = await client.sandboxes.createComputer("verification", { key: marker, idempotencyKey: `computer:${marker}` }, request())
+  evidence["computerId"] = computer.id
   const run = await client.tasks.start<typeof persistenceTask>("verification-persistence", {
-    workspace, payload: { marker, tokenId }, idempotencyKey: `run:${marker}`,
+    computer, payload: { marker, tokenId }, idempotencyKey: `run:${marker}`,
   }, request())
   evidence["runId"] = run.id
   const parked = await observe("wait-parked", run.id)
@@ -53,7 +53,7 @@ try {
   evidence["nonceBefore"] = nonce
   await client.tokens.complete(tokenId, { result: { resume: true }, idempotencyKey: `resume:${marker}` }, request())
   const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
-  assert.deepEqual(output, { marker, nonce, runId: run.id, workspaceId: workspace.id })
+  assert.deepEqual(output, { marker, nonce, runId: run.id, computerId: computer.id })
   const restored = await observe("verify-restored", run.id)
   assert.equal(restored.checkpoint_id, parked.checkpoint_id, "resume did not use the observed checkpoint")
   assert.equal(restored.prior_runtime_id, parked.prior_runtime_id)
@@ -69,7 +69,7 @@ try {
       const token = await client.tokens.retrieve(tokenId!, request())
       if (token.status === "pending") await client.tokens.cancel(tokenId!, { idempotencyKey: `cancel:${marker}` }, request())
     } : undefined],
-    ["workspaceCleanup", workspace ? () => workspace!.delete({ idempotencyKey: `delete:${marker}` }, request()) : undefined],
+    ["computerCleanup", computer ? () => computer!.delete({ idempotencyKey: `delete:${marker}` }, request()) : undefined],
   ] as const) {
     if (!cleanup) { evidence[name] = "creation-unconfirmed"; continue }
     try { await cleanup(); evidence[name] = "request-accepted" }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"slices"
 	"strconv"
@@ -48,7 +47,7 @@ type runSnapshotRecord struct {
 	entrypointDeclaredID string
 	deploymentID         pgtype.UUID
 	deploymentVersion    string
-	workspaceID          pgtype.UUID
+	computerID           pgtype.UUID
 	actorID              pgtype.UUID
 	parentRunID          pgtype.UUID
 	currentAttemptNumber int32
@@ -143,6 +142,11 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rejection *run.CancellationRejectionError
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
+		return
+	}
 	var collision idempotency.ConflictError
 	if errors.As(err, &rejection) {
 		writeError(w, conflict(codedError{code: rejection.Code, message: rejection.Code}))
@@ -513,10 +517,10 @@ func runStatusStrings(statuses []db.RunStatus) []string {
 func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, error) {
 	runID := pgvalue.UUIDString(record.id)
 	deploymentID := pgvalue.UUIDString(record.deploymentID)
-	workspaceID := pgvalue.UUIDString(record.workspaceID)
+	computerID := pgvalue.UUIDString(record.computerID)
 	if ids.Validate(runID) != nil ||
 		ids.Validate(deploymentID) != nil ||
-		ids.Validate(workspaceID) != nil ||
+		ids.Validate(computerID) != nil ||
 		!record.createdAt.Valid {
 		return api.RunSnapshotResponse{}, errors.New("run projection authority is invalid")
 	}
@@ -548,7 +552,7 @@ func projectRunSnapshot(record runSnapshotRecord) (api.RunSnapshotResponse, erro
 		Deployment: api.DeploymentReference{
 			ID: deploymentID, Version: record.deploymentVersion,
 		},
-		WorkspaceID: workspaceID, CurrentAttemptNumber: record.currentAttemptNumber,
+		ComputerID: computerID, CurrentAttemptNumber: record.currentAttemptNumber,
 		Cause: cause, Metadata: json.RawMessage(record.metadata),
 		Tags: append([]string{}, record.tags...), CreatedAt: record.createdAt.Time.UTC(),
 	}
@@ -652,30 +656,12 @@ func projectRunCause(record runSnapshotRecord) (api.RunCauseResponse, error) {
 	}
 }
 
-func projectRunFailure(raw []byte) (api.RunFailureResponse, error) {
-	var response api.RunFailureResponse
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&response); err != nil || response.Code == "" ||
-		response.Message == "" || len(response.Details) == 0 {
-		return api.RunFailureResponse{}, errors.New("run failure projection is invalid")
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return api.RunFailureResponse{}, errors.New("run failure projection is invalid")
-	}
-	var details map[string]json.RawMessage
-	if err := json.Unmarshal(response.Details, &details); err != nil || details == nil {
-		return api.RunFailureResponse{}, errors.New("run failure details are invalid")
-	}
-	return response, nil
-}
-
 func runSnapshotRecordFromGet(row db.GetRunSnapshotRow) runSnapshotRecord {
 	return runSnapshotRecord{
 		id: row.ID, status: row.Status,
 		entrypointKind: row.EntrypointKind, entrypointDeclaredID: row.EntrypointDeclaredID,
 		deploymentID: row.DeploymentID, deploymentVersion: row.DeploymentVersion,
-		workspaceID: row.WorkspaceID, actorID: row.SessionID,
+		computerID: row.ComputerID, actorID: row.SessionID,
 		parentRunID:          row.ParentRunID,
 		currentAttemptNumber: row.CurrentAttemptNumber, causeKind: row.CauseKind,
 		scheduleID: row.ScheduleID, scheduledAt: row.ScheduledAt,
@@ -692,14 +678,14 @@ func projectRunListItem(row db.ListRunListItemsRow) (api.RunListItem, error) {
 		return api.RunListItem{}, err
 	}
 	runID := pgvalue.UUIDString(row.ID)
-	workspaceID := pgvalue.UUIDString(row.WorkspaceID)
-	if ids.Validate(runID) != nil || ids.Validate(workspaceID) != nil || !row.CreatedAt.Valid {
+	computerID := pgvalue.UUIDString(row.ComputerID)
+	if ids.Validate(runID) != nil || ids.Validate(computerID) != nil || !row.CreatedAt.Valid {
 		return api.RunListItem{}, errors.New("run list projection authority is invalid")
 	}
 	item := api.RunListItem{
 		ID: runID, Status: status,
-		Entrypoint:  api.RunEntrypointResponse{Kind: row.EntrypointKind, ID: row.EntrypointDeclaredID},
-		WorkspaceID: workspaceID, CurrentAttemptNumber: row.CurrentAttemptNumber,
+		Entrypoint: api.RunEntrypointResponse{Kind: row.EntrypointKind, ID: row.EntrypointDeclaredID},
+		ComputerID: computerID, CurrentAttemptNumber: row.CurrentAttemptNumber,
 		CreatedAt: row.CreatedAt.Time.UTC(),
 	}
 	if row.SessionID.Valid {

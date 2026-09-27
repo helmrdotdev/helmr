@@ -298,7 +298,7 @@ function normalizeBuild(value) {
   const builderValue = descriptors["builder"]?.value;
   if (builderValue !== void 0 && !isBuilder(builderValue)) {
     throw new Error(
-      "config build.builder must be created by builder(); image() describes a Workspace image, not the build environment"
+      "config build.builder must be created by builder(); image() describes a Computer image, not the build environment"
     );
   }
   const installCommand = descriptors["installCommand"]?.value;
@@ -697,11 +697,23 @@ function inspectImage(value) {
   return { key: imageValue.key, steps: imageValue.steps };
 }
 
-// sdk/typescript/src/workspace.ts
+// sdk/typescript/src/computer.ts
 var sandboxDefinitionBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.sandbox");
-var workspaceAddressBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.workspace-address");
-var workspaces = Object.freeze({
-  ref: createWorkspaceRef
+var computerAddressBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.computer-address");
+function encodeComputerMembersQuery(query) {
+  if (query.cursor !== void 0 && (typeof query.cursor !== "string" || query.cursor.length === 0)) {
+    throw new Error("Computer member cursor must be a nonempty string");
+  }
+  if (query.limit !== void 0 && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
+    throw new Error("Computer member limit must be an integer in [1,100]");
+  }
+  return {
+    ...query.cursor === void 0 ? {} : { cursor: query.cursor },
+    ...query.limit === void 0 ? {} : { limit: query.limit }
+  };
+}
+var computers = Object.freeze({
+  ref: createComputerRef
 });
 function inspectSandboxDefinition(value) {
   if (typeof value !== "object" || value === null) return void 0;
@@ -716,38 +728,34 @@ function inspectSandboxDefinition(value) {
   validateTaskId(internal.id);
   return internal;
 }
-function createWorkspaceRef(id) {
-  const workspaceID = resourceID(id, "Workspace ID");
+function createComputerRef(id) {
+  const computerID = resourceID(id, "Computer ID");
   const operations = {
-    retrieve(options) {
-      return currentRuntimeOperations().workspaceRetrieve(
-        workspaceID,
-        options?.signal
-      );
+    members(query = {}, options) {
+      return currentRuntimeOperations().computerMembers(computerID, encodeComputerMembersQuery(query), options?.signal);
     },
-    exec(request, options) {
-      return currentRuntimeOperations().workspaceExec(
-        workspaceID,
-        request,
+    retrieve(options) {
+      return currentRuntimeOperations().computerRetrieve(
+        computerID,
         options?.signal
       );
     },
     delete(request, options) {
-      return currentRuntimeOperations().workspaceDelete(
-        workspaceID,
+      return currentRuntimeOperations().computerDelete(
+        computerID,
         request,
         options?.signal
       );
     }
   };
-  return brandWorkspaceAddress({ id: workspaceID, ...operations });
+  return brandComputerAddress({ id: computerID, ...operations });
 }
-function brandWorkspaceAddress(value) {
-  resourceID(value.id, "Workspace ID");
-  return freezeWorkspaceAddress(value);
+function brandComputerAddress(value) {
+  resourceID(value.id, "Computer ID");
+  return freezeComputerAddress(value);
 }
-function freezeWorkspaceAddress(value) {
-  Object.defineProperty(value, workspaceAddressBrand, { value: true });
+function freezeComputerAddress(value) {
+  Object.defineProperty(value, computerAddressBrand, { value: true });
   return Object.freeze(value);
 }
 
@@ -1062,7 +1070,7 @@ function compileProgramExports(located) {
     programDeclarations: Object.freeze(programDeclarations)
   });
 }
-function normalizeWorkspaceResources(resources) {
+function normalizeComputerResources(resources) {
   return Object.freeze({
     milliCpu: normalizeCpu(resources.cpu),
     memoryMiB: normalizeIecMiB(resources.memory, "memory")
@@ -1143,7 +1151,7 @@ function compileDefinition(definition, options, queues, sandboxExports) {
         declaredId: definition.id,
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
-          resources: normalizeWorkspaceResources(definition.resources)
+          resources: normalizeComputerResources(definition.resources)
         }
       };
   }
@@ -1151,7 +1159,7 @@ function compileDefinition(definition, options, queues, sandboxExports) {
 function compileSchedule(definition, sandboxExports) {
   const schedule = definition.schedule;
   if (schedule === void 0) throw new Error("Task schedule is undefined");
-  const sandbox = inspectSandboxDefinition(schedule.workspace.sandbox);
+  const sandbox = inspectSandboxDefinition(schedule.computer.sandbox);
   if (sandbox === void 0) {
     throw new Error(
       `task ${JSON.stringify(definition.id)} schedule has an invalid Sandbox definition`
@@ -1163,7 +1171,7 @@ function compileSchedule(definition, sandboxExports) {
       `task ${JSON.stringify(definition.id)} schedule references unexported Sandbox ${JSON.stringify(sandbox.id)}`
     );
   }
-  if (exported !== schedule.workspace.sandbox) {
+  if (exported !== schedule.computer.sandbox) {
     throw new Error(
       `task ${JSON.stringify(definition.id)} schedule references a different Sandbox object than the exported definition ${JSON.stringify(sandbox.id)}`
     );
@@ -1171,9 +1179,9 @@ function compileSchedule(definition, sandboxExports) {
   return {
     cron: schedule.cron,
     timezone: schedule.timezone,
-    workspace: {
+    computer: {
       sandboxId: sandbox.id,
-      secrets: schedule.workspace.secrets
+      secrets: schedule.computer.secrets
     }
   };
 }
@@ -1420,11 +1428,11 @@ function programDeclaration(definition) {
 }
 function normalizeCpu(cpu) {
   if (!Number.isFinite(cpu) || cpu <= 0) {
-    throw new Error("workspace cpu must be a finite positive number");
+    throw new Error("computer cpu must be a finite positive number");
   }
   const text = cpu.toString();
   const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text);
-  if (match === null) throw new Error("workspace cpu cannot be normalized");
+  if (match === null) throw new Error("computer cpu cannot be normalized");
   const integer = match[1];
   const fraction = match[2] ?? "";
   const exponent = Number(match[3] ?? "0");
@@ -1436,21 +1444,21 @@ function normalizeCpu(cpu) {
   } else {
     const divisor = 10n ** BigInt(-scale);
     if (significand % divisor !== 0n) {
-      throw new Error("workspace cpu must resolve to whole milliCPU");
+      throw new Error("computer cpu must resolve to whole milliCPU");
     }
     milliCpu = significand / divisor;
   }
-  return safePositiveNumber(milliCpu, "workspace milliCPU");
+  return safePositiveNumber(milliCpu, "computer milliCPU");
 }
 function normalizeIecMiB(value, label) {
   const match = /^([1-9]\d*)(MiB|GiB)$/.exec(value);
   if (match === null) {
     throw new Error(
-      `workspace ${label} must be a positive canonical integer suffixed by MiB or GiB`
+      `computer ${label} must be a positive canonical integer suffixed by MiB or GiB`
     );
   }
   const result = BigInt(match[1]) * (match[2] === "GiB" ? 1024n : 1n);
-  return safePositiveNumber(result, `workspace ${label} MiB`);
+  return safePositiveNumber(result, `computer ${label} MiB`);
 }
 function normalizeDuration(value, label, minimumMs, maximumMs) {
   const match = /^([1-9][0-9]*)(ms|s|m|h|d)$/.exec(value);

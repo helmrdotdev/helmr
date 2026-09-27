@@ -20,7 +20,7 @@ SELECT run_leases.environment_id,
  WHERE run_leases.id = sqlc.arg(run_lease_id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
-   AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND run_leases.worker_host_id = sqlc.arg(worker_host_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
 ;
 

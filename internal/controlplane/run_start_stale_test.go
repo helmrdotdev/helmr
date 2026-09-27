@@ -12,20 +12,24 @@ import (
 	"strings"
 	"testing"
 
+	"time"
+
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestStaleRunStartPreservesPublicSentinelAndFailurePoint(t *testing.T) {
-	err := staleAuthority(staleAuthorityRunStart, runStartFailureCheckpointValidation, errStaleRunLeaseClaim)
+	err := staleAuthority(staleAuthorityRunStart, "execution", errStaleRunLeaseClaim)
 	if !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatal("typed start failure did not preserve stale Run Lease sentinel")
 	}
 	point, ok := staleAuthorityPointOf(err)
-	if !ok || point != string(runStartFailureCheckpointValidation) {
-		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, runStartFailureCheckpointValidation)
+	if !ok || point != string("execution") {
+		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, "execution")
 	}
 	if err.Error() != "run start authority is stale" {
 		t.Fatalf("error = %q; want operation-owned stale diagnostic", err)
@@ -34,7 +38,7 @@ func TestStaleRunStartPreservesPublicSentinelAndFailurePoint(t *testing.T) {
 
 func TestStaleRunStartDoesNotClassifyUnrelatedErrors(t *testing.T) {
 	original := errors.New("storage unavailable")
-	err := staleAuthority(staleAuthorityRunStart, runStartFailureRuntime, original)
+	err := staleAuthority(staleAuthorityRunStart, "outer", original)
 	if !errors.Is(err, original) {
 		t.Fatal("unrelated error was replaced")
 	}
@@ -44,31 +48,34 @@ func TestStaleRunStartDoesNotClassifyUnrelatedErrors(t *testing.T) {
 }
 
 func TestStaleRunStartKeepsInnermostFailurePoint(t *testing.T) {
-	err := staleAuthority(staleAuthorityRunStart, runStartFailureCheckpoint, errStaleRunLeaseClaim)
-	err = staleAuthority(staleAuthorityRunStart, runStartFailureRuntime, err)
+	err := staleAuthority(staleAuthorityRunStart, "inner", errStaleRunLeaseClaim)
+	err = staleAuthority(staleAuthorityRunStart, "outer", err)
 	point, ok := staleAuthorityPointOf(err)
-	if !ok || point != string(runStartFailureCheckpoint) {
-		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, runStartFailureCheckpoint)
+	if !ok || point != string("inner") {
+		t.Fatalf("failure point = %q, %v; want %q, true", point, ok, "inner")
 	}
 }
 
 func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T) {
-	worker, _, authority := validRunLeaseClaimFixture()
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "starting", time.Now())
+	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
 	const secretSentinel = "https://signed.invalid/object?credential=secret-sentinel"
 	store := &staleRunStartStore{
+		pool:    f.Pool,
 		failure: errors.Join(pgx.ErrNoRows, errors.New(secretSentinel)),
 	}
 	var logs bytes.Buffer
 	server := &Server{
 		log: slog.New(slog.NewJSONHandler(&logs, nil)),
-		db:  store,
+		db:  db.New(f.Pool),
+		tx:  store,
 	}
 	body, err := json.Marshal(workerapi.RunStartRequest{
 		Lease: workerapi.RunLeaseFence{
-			ID:            pgvalue.UUIDString(authority.runLease.ID),
-			LeaseSequence: authority.runLease.LeaseSequence,
+			ID:            pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)),
+			LeaseSequence: 1,
 		},
-		Fresh: &workerapi.RunStartFresh{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,15 +100,15 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 	for _, want := range []string{
 		`"code":"run_start_stale"`,
 		`"message":"run start authority is stale"`,
-		`"details":{"point":"locators"}`,
+		`"details":{"point":"execution"}`,
 	} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Fatalf("public conflict body missing %s: %s", want, response.Body)
 		}
 	}
 	for _, want := range []string{
-		`"failure_point":"locators"`,
-		`"run_lease_id":"` + pgvalue.UUIDString(authority.runLease.ID) + `"`,
+		`"failure_point":"execution"`,
+		`"run_lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `"`,
 		`"lease_sequence":1`,
 		fmt.Sprintf(`"worker_epoch":%d`, worker.WorkerEpoch),
 	} {
@@ -115,33 +122,36 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 }
 
 type staleRunStartStore struct {
-	db.Querier
-	failure    error
-	committed  bool
-	rolledBack bool
+	pool                  *pgxpool.Pool
+	failure               error
+	committed, rolledBack bool
 }
 
-func (s *staleRunStartStore) BeginQuerier(context.Context) (db.Querier, transaction, error) {
-	return s, staleRunStartTransaction{store: s}, nil
-}
-
-func (s *staleRunStartStore) GetRunLeaseStartLocators(
-	context.Context,
-	db.GetRunLeaseStartLocatorsParams,
-) (db.GetRunLeaseStartLocatorsRow, error) {
-	return db.GetRunLeaseStartLocatorsRow{}, s.failure
+func (s *staleRunStartStore) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return staleRunStartTransaction{Tx: tx, store: s}, nil
 }
 
 type staleRunStartTransaction struct {
+	pgx.Tx
 	store *staleRunStartStore
 }
 
-func (tx staleRunStartTransaction) Commit(context.Context) error {
+func (tx staleRunStartTransaction) QueryRow(context.Context, string, ...any) pgx.Row {
+	return staleRunStartRow{err: tx.store.failure}
+}
+func (tx staleRunStartTransaction) Commit(ctx context.Context) error {
 	tx.store.committed = true
-	return nil
+	return tx.Tx.Commit(ctx)
+}
+func (tx staleRunStartTransaction) Rollback(ctx context.Context) error {
+	tx.store.rolledBack = true
+	return tx.Tx.Rollback(ctx)
 }
 
-func (tx staleRunStartTransaction) Rollback(context.Context) error {
-	tx.store.rolledBack = true
-	return nil
-}
+type staleRunStartRow struct{ err error }
+
+func (row staleRunStartRow) Scan(...any) error { return row.err }

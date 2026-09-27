@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { z } from "zod"
 
-// Application-owned state, captured with the Workspace. Keep this directory out
+// Application-owned state, captured with the Computer. Keep this directory out
 // of commits and preserve it when preparing the next Run's repository checkout.
 export async function conversation(cwd: string, sessionId: string, provider: "codex" | "claude") {
   const directory = join(cwd, ".helmr", "issue-fixer", encodeURIComponent(sessionId), provider)

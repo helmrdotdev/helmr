@@ -39,7 +39,7 @@ const base = image("helmr-agent-toolchain-smoke")
   .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
-export const agentToolchainSmokeWorkspace = sandbox({ id: "helmr-agent-toolchain-smoke" })
+export const agentToolchainSmokeComputer = sandbox({ id: "helmr-agent-toolchain-smoke" })
   .image(base)
   .resources({ cpu: 2, memory: "4GiB" })
 

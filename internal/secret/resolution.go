@@ -32,7 +32,7 @@ type ProcessResolutionStore interface {
 func CreateAttemptResolutions(
 	ctx context.Context,
 	store AttemptResolutionStore,
-	workspaceID pgtype.UUID,
+	computerID pgtype.UUID,
 	runID pgtype.UUID,
 	attemptNumber int32,
 	resolutions []Resolution,
@@ -45,7 +45,7 @@ func CreateAttemptResolutions(
 	}
 	ids, kinds, targets, secretIDs, versionIDs, generations := resolutionColumns(resolutions)
 	count, err := store.CreateAttemptSecretResolutions(ctx, db.CreateAttemptSecretResolutionsParams{
-		WorkspaceID: workspaceID, RunID: runID,
+		ComputerID: computerID, RunID: runID,
 		AttemptNumber: pgtype.Int4{Int32: attemptNumber, Valid: true},
 		Ids:           ids, PlacementKinds: kinds, PlacementTargets: targets,
 		SecretIds: secretIDs, SecretVersionIds: versionIDs,
@@ -57,8 +57,8 @@ func CreateAttemptResolutions(
 func CreateProcessResolutions(
 	ctx context.Context,
 	store ProcessResolutionStore,
-	workspaceID pgtype.UUID,
-	processID pgtype.UUID,
+	computerID pgtype.UUID,
+	commandID pgtype.UUID,
 	resolutions []Resolution,
 ) error {
 	if len(resolutions) == 0 {
@@ -69,7 +69,7 @@ func CreateProcessResolutions(
 	}
 	ids, kinds, targets, secretIDs, versionIDs, generations := resolutionColumns(resolutions)
 	count, err := store.CreateProcessSecretResolutions(ctx, db.CreateProcessSecretResolutionsParams{
-		WorkspaceID: workspaceID, ProcessID: processID,
+		ComputerID: computerID, CommandID: commandID,
 		Ids: ids, PlacementKinds: kinds, PlacementTargets: targets,
 		SecretIds: secretIDs, SecretVersionIds: versionIDs,
 		RevocationGenerations: generations,

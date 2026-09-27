@@ -24,15 +24,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 )
 
 const (
-	managedProgramSecretRoot       = "/var/lib/helmr/run-secrets"
 	managedProgramNode             = "/opt/helmr/runtime/bin/node"
 	managedProgramEntry            = "/opt/helmr/runtime/helmr/entry.mjs"
 	managedRuntimeMetadata         = "/var/lib/helmr/program/runtime/helmr/runtime.json"
@@ -59,8 +58,8 @@ type programProcess struct {
 	controlWriter *os.File
 	proofReader   *os.File
 	proofWriter   *os.File
-	cgroup        programCgroup
-	workspaceRoot string
+	cgroup        processCgroup
+	computerRoot  string
 	secretPaths   []string
 	waitOnce      sync.Once
 	waitDone      chan struct{}
@@ -115,7 +114,7 @@ func handleProgramRunConnection(
 	conn io.ReadWriteCloser,
 	logger *slog.Logger,
 	waitingRegistry *waitingRunRegistry,
-	registry *workspaceOperationRegistry,
+	registry *computerOperationRegistry,
 	header wire.StreamHeader,
 	bodyLen uint64,
 ) error {
@@ -140,15 +139,15 @@ func handleProgramRunConnection(
 	if runID == "" {
 		return errors.New("program run run_id is required")
 	}
-	workspaceMountID := strings.TrimSpace(header.WorkspaceMountID)
-	if workspaceMountID == "" {
-		return errors.New("program run workspace_mount_id is required")
+	computerInstanceID := strings.TrimSpace(header.ComputerInstanceID)
+	if computerInstanceID == "" {
+		return errors.New("program run computer_instance_id is required")
 	}
-	workspaceID := strings.TrimSpace(header.WorkspaceID)
-	if workspaceID == "" {
-		return errors.New("program run workspace_id is required")
+	computerID := strings.TrimSpace(header.ComputerID)
+	if computerID == "" {
+		return errors.New("program run computer_id is required")
 	}
-	var authority workspacev0.WorkspaceRunAuthority
+	var authority computerv0.ComputerRunAuthority
 	if err := frameio.ReadProtoFrame(programConn, &authority); err != nil {
 		return fmt.Errorf("read program run authority: %w", err)
 	}
@@ -156,19 +155,19 @@ func handleProgramRunConnection(
 	if fence == nil {
 		return errors.New("program run authority fence is required")
 	}
-	if strings.TrimSpace(fence.GetWorkspaceMountId()) != workspaceMountID {
-		return errors.New("program run authority workspace_mount_id does not match header")
+	if strings.TrimSpace(fence.GetComputerInstanceId()) != computerInstanceID {
+		return errors.New("program run authority computer_instance_id does not match header")
 	}
-	if strings.TrimSpace(fence.GetWorkspaceId()) != workspaceID {
-		return errors.New("program run authority workspace_id does not match header")
+	if strings.TrimSpace(fence.GetComputerId()) != computerID {
+		return errors.New("program run authority computer_id does not match header")
 	}
 	entry, releaseMount, ok := registry.acquireAuthorityMount(
-		workspaceMountID,
-		workspaceID,
+		computerInstanceID,
+		computerID,
 		authority.GetChannelToken(),
 	)
 	if !ok {
-		return errors.New("program run authority is not valid for the workspace mount")
+		return errors.New("program run authority is not valid for the computer mount")
 	}
 	defer releaseMount()
 	var request programv0.ProgramRunRequest
@@ -199,7 +198,7 @@ func handleProgramRunConnection(
 		return err
 	}
 	defer clearProgramSecretValues(secrets)
-	releaseProgram, err := registry.admitProgram(entry, &authority, time.Now())
+	releaseProgram, err := registry.admitProgram(entry, &authority, time.Now)
 	if err != nil {
 		return err
 	}
@@ -220,7 +219,7 @@ func handleProgramRunConnection(
 			"starting Program",
 			"run_id", request.GetRunId(),
 			"attempt_number", request.GetAttemptNumber(),
-			"workspace_id", workspaceID,
+			"computer_id", computerID,
 		)
 	}
 	return superviseProgram(ctx, programConn, &request, process, waitingRegistry)
@@ -441,8 +440,8 @@ func validateProgramSecretFilePath(value string) error {
 		value == "/" {
 		return errors.New("program secret file placement is invalid")
 	}
-	if value == "/run/helmr" || strings.HasPrefix(value, "/run/helmr/") || value == "/workspace" ||
-		strings.HasPrefix(value, "/workspace/") ||
+	if value == "/run/helmr" || strings.HasPrefix(value, "/run/helmr/") || value == "/computer" ||
+		strings.HasPrefix(value, "/computer/") ||
 		value == "/var/lib/helmr" ||
 		strings.HasPrefix(value, "/var/lib/helmr/") ||
 		isReservedRuntimePath(value) {
@@ -456,7 +455,7 @@ func validateProgramSecretFilePath(value string) error {
 
 func newProgramProcess(
 	ctx context.Context,
-	entry *workspaceMountEntry,
+	entry *computerMountEntry,
 	request *programv0.ProgramRunRequest,
 	secrets []*programv0.ProgramSecret,
 ) (*programProcess, func(), error) {
@@ -472,10 +471,10 @@ func newProgramProcess(
 		return nil, func() {}, err
 	}
 	if entry.runtimeUser == nil {
-		return nil, func() {}, errors.New("workspace runtime user is not resolved")
+		return nil, func() {}, errors.New("computer runtime user is not resolved")
 	}
-	if filepath.Clean(entry.workspaceMount) != defaultRuntimeWorkdir {
-		return nil, func() {}, errors.New("workspace durable root must be /workspace")
+	if filepath.Clean(entry.computerMount) != defaultRuntimeWorkdir {
+		return nil, func() {}, errors.New("computer durable root must be /computer")
 	}
 	if err := prepareLaunchPath(
 		entry.imageRoot,
@@ -484,7 +483,7 @@ func newProgramProcess(
 	); err != nil {
 		return nil, func() {}, fmt.Errorf("prepare program cwd: %w", err)
 	}
-	if err := entry.prepareWorkspaceOwner(); err != nil {
+	if err := entry.prepareComputerOwner(); err != nil {
 		return nil, func() {}, err
 	}
 	env := managedRuntimeEnv(
@@ -496,7 +495,7 @@ func newProgramProcess(
 	if err != nil {
 		return nil, func() {}, err
 	}
-	secretCleanup, err := stageProgramSecrets(
+	secretRoot, secretCleanup, err := stageProgramSecrets(
 		entry.imageRoot,
 		secrets,
 		entry.runtimeUser,
@@ -526,6 +525,7 @@ func newProgramProcess(
 		entry.runtimeUser,
 		imageCommandOptions{
 			ManagedProgram:  true,
+			SecretRoot:      secretRoot,
 			CgroupNamespace: true,
 			CgroupLeaf:      cgroupLeaf,
 			StartProof:      true,
@@ -576,7 +576,7 @@ func newProgramProcess(
 		secretCleanup()
 		return nil, func() {}, err
 	}
-	cgroup, err := createProgramCgroup(cgroupLeaf)
+	cgroup, err := createProcessCgroup(cgroupLeaf)
 	if err != nil {
 		closeProgramFiles(stdin, stdout, stderr, controlReader, controlWriter, proofReader, proofWriter)
 		cleanupRuntime()
@@ -606,8 +606,8 @@ func newProgramProcess(
 		proofReader:   proofReader,
 		proofWriter:   proofWriter,
 		cgroup:        cgroup,
-		workspaceRoot: entry.workspaceRoot,
-		secretPaths:   programWorkspaceSecretPaths(entry.workspaceRoot, secrets),
+		computerRoot:  entry.computerRoot,
+		secretPaths:   programComputerSecretPaths(entry.computerRoot, secrets),
 		waitDone:      make(chan struct{}),
 	}
 	cleanup := func() {
@@ -638,22 +638,22 @@ func managedProgramNodeFlags() ([]string, error) {
 	return append([]string(nil), metadata.ProgramNodeFlags...), nil
 }
 
-func programWorkspaceSecretPaths(workspaceRoot string, secrets []*programv0.ProgramSecret) []string {
+func programComputerSecretPaths(computerRoot string, secrets []*programv0.ProgramSecret) []string {
 	paths := make([]string, 0, len(secrets))
 	for _, secret := range secrets {
 		placement, ok := secret.GetPlacement().(*programv0.ProgramSecret_File)
 		if !ok {
 			continue
 		}
-		const workspacePrefix = "/workspace/"
-		if !strings.HasPrefix(placement.File, workspacePrefix) {
+		const computerPrefix = "/computer/"
+		if !strings.HasPrefix(placement.File, computerPrefix) {
 			continue
 		}
-		relative := strings.TrimPrefix(placement.File, workspacePrefix)
+		relative := strings.TrimPrefix(placement.File, computerPrefix)
 		if relative == "" || filepath.Clean(relative) != relative {
 			continue
 		}
-		paths = append(paths, filepath.Join(workspaceRoot, relative))
+		paths = append(paths, filepath.Join(computerRoot, relative))
 	}
 	return paths
 }
@@ -663,20 +663,16 @@ func stageProgramSecrets(
 	secrets []*programv0.ProgramSecret,
 	runtimeUser *resolvedRuntimeUser,
 	env *[]string,
-) (func(), error) {
+) (string, func(), error) {
 	defer clearProgramSecretValues(secrets)
 	if err := validateProgramSecrets(secrets); err != nil {
-		return func() {}, err
+		return "", func() {}, err
 	}
-	if err := os.RemoveAll(managedProgramSecretRoot); err != nil {
-		return func() {}, err
+	secretRoot, err := mkdirGuestdTemp("secrets-")
+	if err != nil {
+		return "", func() {}, err
 	}
-	if err := os.MkdirAll(managedProgramSecretRoot, 0o700); err != nil {
-		return func() {}, err
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(managedProgramSecretRoot)
-	}
+	cleanup := func() { _ = os.RemoveAll(secretRoot) }
 	var targetCleanups []func()
 	cleanupAll := func() {
 		for index := len(targetCleanups) - 1; index >= 0; index-- {
@@ -689,42 +685,42 @@ func stageProgramSecrets(
 		case *programv0.ProgramSecret_Env:
 			if envHasKey(*env, placement.Env) {
 				cleanupAll()
-				return func() {}, errSecretEnvCollision
+				return "", func() {}, errSecretEnvCollision
 			}
 			*env = setEnvValue(*env, placement.Env, string(secret.GetValue()))
 		case *programv0.ProgramSecret_File:
-			targetCleanup, err := prepareProgramSecretTarget(
+			targetCleanup, err := acquireProgramSecretTarget(
 				imageRoot,
 				placement.File,
 			)
 			if err != nil {
 				cleanupAll()
-				return func() {}, err
+				return "", func() {}, err
 			}
 			targetCleanups = append(targetCleanups, targetCleanup)
 			relative := strings.TrimPrefix(placement.File, "/")
 			parent := filepath.Dir(relative)
 			if parent != "." {
 				if err := mkdirAllNoSymlink(
-					managedProgramSecretRoot,
+					secretRoot,
 					filepath.ToSlash(parent),
 					0o700,
 				); err != nil {
 					cleanupAll()
-					return func() {}, err
+					return "", func() {}, err
 				}
 			}
 			target, err := confinedLayerPath(
-				managedProgramSecretRoot,
+				secretRoot,
 				relative,
 			)
 			if err != nil {
 				cleanupAll()
-				return func() {}, err
+				return "", func() {}, err
 			}
 			if err := writeFileNoFollow(target, secret.GetValue(), 0o400); err != nil {
 				cleanupAll()
-				return func() {}, err
+				return "", func() {}, err
 			}
 			if runtimeUser != nil && os.Geteuid() == 0 {
 				if err := os.Chown(
@@ -733,12 +729,12 @@ func stageProgramSecrets(
 					int(runtimeUser.GID),
 				); err != nil {
 					cleanupAll()
-					return func() {}, err
+					return "", func() {}, err
 				}
 			}
 		}
 	}
-	return cleanupAll, nil
+	return secretRoot, cleanupAll, nil
 }
 
 func prepareProgramSecretTarget(
@@ -1304,7 +1300,7 @@ func relayProgram(
 					}
 					delete(pendingRuntimeOperations, correlationID)
 					if pendingPause != nil && len(pendingRuntimeOperations) == 0 {
-						resumed, err := pauseAndResumeProgram(
+						resumed, waiting, err := pauseAndResumeProgram(
 							ctx, request, pendingWait, pendingPause, process, stream,
 							waits, outputs, events, controlErrors,
 						)
@@ -1313,7 +1309,9 @@ func relayProgram(
 						}
 						conn = resumed
 						pendingPause = nil
-						pendingWait = nil
+						if !waiting {
+							pendingWait = nil
+						}
 						hostControls = readProgramHostControl(resumed)
 						continue
 					}
@@ -1361,17 +1359,22 @@ func relayProgram(
 					hostControls = readProgramHostControl(conn)
 					continue
 				}
-				resumed, err := pauseAndResumeProgram(ctx, request, pendingWait, control.pause, process, stream, waits, outputs, events, controlErrors)
+				resumed, waiting, err := pauseAndResumeProgram(ctx, request, pendingWait, control.pause, process, stream, waits, outputs, events, controlErrors)
 				if err != nil {
 					return err
 				}
 				conn = resumed
-				pendingWait = nil
+				if !waiting {
+					pendingWait = nil
+				}
 				hostControls = readProgramHostControl(resumed)
 			default:
 				return errors.New("program host control is empty")
 			}
 		case rebound := <-stream.rebind:
+			if !stream.isCurrentConnection(rebound) {
+				continue
+			}
 			conn = rebound
 			hostControls = readProgramHostControl(rebound)
 		case <-ctx.Done():
@@ -1595,14 +1598,14 @@ func runtimeResourceOperationIdentity(event *programv0.RunEvent) (string, string
 		return strings.TrimSpace(value.SessionTurnInterruptRequested.GetCorrelationId()), "Turn interruption", true
 	case *programv0.RunEvent_SessionResumeRequested:
 		return strings.TrimSpace(value.SessionResumeRequested.GetCorrelationId()), "Session resume", true
-	case *programv0.RunEvent_WorkspaceCreateRequested:
-		return strings.TrimSpace(value.WorkspaceCreateRequested.GetCorrelationId()), "workspace create", true
-	case *programv0.RunEvent_WorkspaceRetrieveRequested:
-		return strings.TrimSpace(value.WorkspaceRetrieveRequested.GetCorrelationId()), "workspace retrieve", true
-	case *programv0.RunEvent_WorkspaceExecRequested:
-		return strings.TrimSpace(value.WorkspaceExecRequested.GetCorrelationId()), "workspace exec", true
-	case *programv0.RunEvent_WorkspaceDeleteRequested:
-		return strings.TrimSpace(value.WorkspaceDeleteRequested.GetCorrelationId()), "workspace delete", true
+	case *programv0.RunEvent_ComputerCreateRequested:
+		return strings.TrimSpace(value.ComputerCreateRequested.GetCorrelationId()), "computer create", true
+	case *programv0.RunEvent_ComputerMembersRequested:
+		return strings.TrimSpace(value.ComputerMembersRequested.GetCorrelationId()), "computer members", true
+	case *programv0.RunEvent_ComputerRetrieveRequested:
+		return strings.TrimSpace(value.ComputerRetrieveRequested.GetCorrelationId()), "computer retrieve", true
+	case *programv0.RunEvent_ComputerDeleteRequested:
+		return strings.TrimSpace(value.ComputerDeleteRequested.GetCorrelationId()), "computer delete", true
 	default:
 		return "", "", false
 	}
@@ -1645,16 +1648,16 @@ func pauseAndResumeProgram(
 	outputs *programOutputCoordinator,
 	events <-chan *programv0.RunEvent,
 	controlErrors <-chan error,
-) (programConnection, error) {
+) (programConnection, bool, error) {
 	if registry == nil {
-		return nil, errors.New("waiting run registry is required")
+		return nil, false, errors.New("waiting run registry is required")
 	}
 	if err := validateProgramCheckpointPause(run, wait, pause); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	registration, err := registry.registerProgram(pause)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	retainRegistration := false
 	defer func() {
@@ -1663,14 +1666,14 @@ func pauseAndResumeProgram(
 		}
 	}()
 	if err := process.cgroup.freeze(ctx); err != nil {
-		return nil, fmt.Errorf("freeze program cgroup: %w", err)
+		return nil, false, fmt.Errorf("freeze program cgroup: %w", err)
 	}
 	if outputs == nil {
-		return nil, errors.New("program output checkpoint coordinator is required")
+		return nil, false, errors.New("program output checkpoint coordinator is required")
 	}
 	resumeOutputs, err := outputs.pause(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("pause program output streams: %w", err)
+		return nil, false, fmt.Errorf("pause program output streams: %w", err)
 	}
 	outputsResumed := false
 	defer func() {
@@ -1680,15 +1683,16 @@ func pauseAndResumeProgram(
 	}()
 	syscall.Sync()
 	if err := stream.writeCheckpointPauseReady(pause.GetRunWaitId(), pause.GetCheckpointId()); err != nil {
-		return nil, fmt.Errorf("write program checkpoint pause proof: %w", err)
+		return nil, false, fmt.Errorf("write program checkpoint pause proof: %w", err)
 	}
+	registration.markFrozen()
 	var resumed programConnection
 	var attach *programv0.ResumeAttach
 	var decision *programv0.ResumeDecision
 	for decision == nil {
 		attached, candidateAttach, err := registration.wait(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("wait for program resume attach: %w", err)
+			return nil, false, fmt.Errorf("wait for program resume attach: %w", err)
 		}
 		candidate, ok := attached.(programConnection)
 		if !ok {
@@ -1703,7 +1707,7 @@ func pauseAndResumeProgram(
 		if readErr != nil {
 			_ = candidate.Close()
 			if err := ctx.Err(); err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			continue
 		}
@@ -1729,25 +1733,25 @@ func pauseAndResumeProgram(
 		}
 	}()
 	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
-		return nil, fmt.Errorf("stage program resume decision: %w", err)
+		return nil, false, fmt.Errorf("stage program resume decision: %w", err)
 	}
 	previous, didAdopt := stream.replaceConn(resumed)
 	if !didAdopt {
-		return nil, errors.New("program event stream closed before resume")
+		return nil, false, errors.New("program event stream closed before resume")
 	}
 	adopted = true
 	if previous != nil && previous != resumed {
 		_ = previous.Close()
 	}
 	if err := process.cgroup.thaw(ctx); err != nil {
-		return nil, fmt.Errorf("thaw program cgroup: %w", err)
+		return nil, false, fmt.Errorf("thaw program cgroup: %w", err)
 	}
 	consumed, err := awaitProgramResumeConsumed(ctx, events, controlErrors)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if err := promoteProgramResumeLease(run, pause, attach, consumed); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	ack := &programv0.ResumeAck{
 		RunWaitId: pause.GetRunWaitId(), CheckpointId: pause.GetCheckpointId(),
@@ -1759,15 +1763,22 @@ func pauseAndResumeProgram(
 	stream.retainResumeReplay(ctx, registration, decision, ack)
 	if err := stream.writeResumeAck(ack); err != nil {
 		_ = resumed.Close()
-		select {
-		case resumed = <-stream.rebind:
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		for {
+			select {
+			case rebound := <-stream.rebind:
+				if !stream.isCurrentConnection(rebound) {
+					continue
+				}
+				resumed = rebound
+			case <-ctx.Done():
+				return nil, false, ctx.Err()
+			}
+			break
 		}
 	}
 	resumeOutputs()
 	outputsResumed = true
-	return resumed, nil
+	return resumed, decision.GetKind() == "waiting", nil
 }
 
 func promoteProgramResumeLease(
@@ -1798,6 +1809,11 @@ func validateResumeDecisionAuthority(decision *programv0.ResumeDecision) error {
 		return errors.New("program resume decision is required")
 	}
 	switch decision.GetKind() {
+	case "waiting":
+		if !decision.GetRequireConsumedAck() || decision.GetDataJson() != "" || decision.GetNoResult() {
+			return errors.New("waiting reattachment cannot contain a logical result")
+		}
+		return nil
 	case "completed":
 		hasResult := decision.GetDataJson() != ""
 		if decision.GetNoResult() == hasResult {
@@ -2309,13 +2325,13 @@ func (stream *programEventStream) retainResumeReplay(
 			if !ok {
 				continue
 			}
-			replayed, err := readResumeDecisionUntilDone(resumed, stream.done)
+			replayed, err := readResumeDecisionUntilDone(resumed, stream.done, registration.slot.retired)
 			if err != nil || !proto.Equal(replayed, decision) ||
 				!proto.Equal(attach, registration.slot.accepted) {
 				_ = resumed.Close()
 				continue
 			}
-			previous, err := stream.replaceConnWithResumeAck(resumed, ack)
+			previous, err := stream.replaceConnWithCurrentResumeAck(registration, resumed, ack)
 			if err != nil {
 				continue
 			}
@@ -2331,7 +2347,7 @@ func (stream *programEventStream) retainResumeReplay(
 	}()
 }
 
-func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (*programv0.ResumeDecision, error) {
+func readResumeDecisionUntilDone(conn programConnection, done, retired <-chan struct{}) (*programv0.ResumeDecision, error) {
 	type result struct {
 		decision *programv0.ResumeDecision
 		err      error
@@ -2348,6 +2364,9 @@ func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (
 	select {
 	case result := <-read:
 		return result.decision, result.err
+	case <-retired:
+		_ = conn.Close()
+		return nil, errors.New("program resume receipt retired")
 	case <-done:
 		_ = conn.Close()
 		return nil, errors.New("program event stream closed during resume replay")
@@ -2571,4 +2590,71 @@ func forwardSessionStop(process *programProcess, stop *programv0.SessionStop) er
 		return err
 	}
 	return frameio.WriteProtoFrame(process.stdin, &programv0.ResumeDecision{Kind: "session_stop", DataJson: string(data)})
+}
+
+var programSecretTargets = struct {
+	sync.Mutex
+	entries map[string]*programSecretTarget
+}{entries: make(map[string]*programSecretTarget)}
+
+type programSecretTarget struct {
+	references int
+	cleanup    func()
+}
+
+func acquireProgramSecretTarget(imageRoot, guestPath string) (func(), error) {
+	key := filepath.Join(imageRoot, strings.TrimPrefix(guestPath, "/"))
+	programSecretTargets.Lock()
+	defer programSecretTargets.Unlock()
+	target := programSecretTargets.entries[key]
+	if target == nil {
+		cleanup, err := prepareProgramSecretTarget(imageRoot, guestPath)
+		if err != nil {
+			return func() {}, err
+		}
+		target = &programSecretTarget{cleanup: cleanup}
+		programSecretTargets.entries[key] = target
+	}
+	target.references++
+	return sync.OnceFunc(func() {
+		programSecretTargets.Lock()
+		defer programSecretTargets.Unlock()
+		target.references--
+		if target.references == 0 {
+			target.cleanup()
+			delete(programSecretTargets.entries, key)
+		}
+	}), nil
+}
+
+func (stream *programEventStream) replaceConnWithCurrentResumeAck(registration waitingRunRegistration, resumed programConnection, ack *programv0.ResumeAck) (programConnection, error) {
+	registration.registry.mu.Lock()
+	grant := registration.slot.granted
+	registration.registry.mu.Unlock()
+	if grant == nil {
+		_ = resumed.Close()
+		return nil, errors.New("resume replay has no authority")
+	}
+	grant.lock()
+	defer grant.unlock()
+	if !grant.valid(time.Now()) {
+		_ = resumed.Close()
+		return nil, errors.New("resume replay authority is no longer current")
+	}
+	registration.slot.replayMu.Lock()
+	defer registration.slot.replayMu.Unlock()
+	registration.registry.mu.Lock()
+	current := registration.registry.slots[registration.runWaitID] == registration.slot
+	registration.registry.mu.Unlock()
+	if !current {
+		_ = resumed.Close()
+		return nil, errors.New("resume replay receipt retired")
+	}
+	return stream.replaceConnWithResumeAck(resumed, ack)
+}
+
+func (stream *programEventStream) isCurrentConnection(conn programConnection) bool {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return !stream.closed && stream.conn == conn
 }

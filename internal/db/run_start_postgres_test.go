@@ -18,11 +18,11 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	locators := fixture.freshRunStartLocators(t, ctx, work)
 
-	var originalWorkspaceActivity time.Time
+	var originalComputerActivity time.Time
 	if err := fixture.pool.QueryRow(ctx,
 		`SELECT last_activity_at FROM computers WHERE id = $1`,
-		locators.WorkspaceID,
-	).Scan(&originalWorkspaceActivity); err != nil {
+		locators.ComputerID,
+	).Scan(&originalComputerActivity); err != nil {
 		t.Fatal(err)
 	}
 
@@ -30,6 +30,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback(context.Background())
 	queries := New(tx)
 	lease, err := queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators))
 	if err != nil {
@@ -38,16 +39,16 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	run, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, ExpectedRevision: 1,
+		ComputerID: locators.ComputerID, ExpectedRevision: 1,
 		AttemptNumber: locators.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
-		ID: locators.WorkspaceID, OrgID: workUUID(fixture.orgID),
+	computer, err := queries.TouchRunComputerActivity(ctx, TouchRunComputerActivityParams{
+		ID: locators.ComputerID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 1,
+		WriterGeneration: locators.WriterGeneration,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -62,8 +63,8 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	if run.Status != RunStatusRunning || !run.StartedAt.Valid || !run.ActiveStartedAt.Valid {
 		t.Fatalf("run = status %s started_at %v active_started_at %v", run.Status, run.StartedAt, run.ActiveStartedAt)
 	}
-	if !workspace.LastActivityAt.Time.After(originalWorkspaceActivity) {
-		t.Fatalf("Workspace activity = %s, want after %s", workspace.LastActivityAt.Time, originalWorkspaceActivity)
+	if !computer.LastActivityAt.Time.After(originalComputerActivity) {
+		t.Fatalf("Computer activity = %s, want after %s", computer.LastActivityAt.Time, originalComputerActivity)
 	}
 
 	if _, err := fixture.pool.Exec(ctx,
@@ -101,7 +102,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	}
 	if _, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: workUUID(fixture.workerID),
 		WorkerEpoch: 1}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired replay error = %v, want no rows", err)
 	}
@@ -125,7 +126,7 @@ func TestCloseRunActiveIntervalForCheckpointUsesDatabaseTimeAndExactFence(t *tes
 	params := CloseRunActiveIntervalForCheckpointParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
+		ComputerID: locators.ComputerID, AttemptNumber: locators.AttemptNumber,
 		RunLeaseID: workUUID(work.leaseID),
 	}
 	elapsed, err := fixture.queries.CloseRunActiveIntervalForCheckpoint(ctx, params)
@@ -159,6 +160,7 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback(context.Background())
 	queries := New(tx)
 	if _, err := queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators)); err != nil {
 		t.Fatal(err)
@@ -166,17 +168,17 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	if _, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, ExpectedRevision: 1,
+		ComputerID: locators.ComputerID, ExpectedRevision: 1,
 		AttemptNumber: locators.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
-		ID: locators.WorkspaceID, OrgID: workUUID(fixture.orgID),
+	if _, err := queries.TouchRunComputerActivity(ctx, TouchRunComputerActivityParams{
+		ID: locators.ComputerID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 2,
+		WriterGeneration: locators.WriterGeneration + 1,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("mismatched Workspace fence error = %v, want no rows", err)
+		t.Fatalf("mismatched Computer fence error = %v, want no rows", err)
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
@@ -213,12 +215,12 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	}
 }
 
-func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
+func TestRunEntrypointReceiptAndLiveLeaseLocators(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	start := fixture.freshRunStartLocators(t, ctx, work)
-	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := fixture.queries.GetLiveRunLeaseLocators(ctx, fixture.liveRunLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("pre-start entrypoint error = %v, want no rows", err)
 	}
 
@@ -226,6 +228,7 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer tx.Rollback(context.Background())
 	queries := New(tx)
 	if _, err := queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, start)); err != nil {
 		t.Fatal(err)
@@ -233,15 +236,15 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	if _, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: start.WorkspaceID, ExpectedRevision: 1,
+		ComputerID: start.ComputerID, ExpectedRevision: 1,
 		AttemptNumber: start.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
-		ID: start.WorkspaceID, OrgID: workUUID(fixture.orgID),
+	if _, err := queries.TouchRunComputerActivity(ctx, TouchRunComputerActivityParams{
+		ID: start.ComputerID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 1,
+		WriterGeneration: start.WriterGeneration,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,11 +252,11 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	locators := fixture.runEntrypointLocators(t, ctx, work)
+	locators := fixture.liveRunLocators(t, ctx, work)
 	attempt, err := fixture.queries.MarkRunEntrypointEntered(ctx, MarkRunEntrypointEnteredParams{
-		RunID:       locators.RunID,
-		Number:      locators.AttemptNumber,
-		WorkspaceID: locators.WorkspaceID,
+		RunID:      locators.RunID,
+		Number:     locators.AttemptNumber,
+		ComputerID: locators.ComputerID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -264,9 +267,9 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	enteredAt := attempt.EntrypointEnteredAt.Time
 
 	if _, err := fixture.queries.MarkRunEntrypointEntered(ctx, MarkRunEntrypointEnteredParams{
-		RunID:       locators.RunID,
-		Number:      locators.AttemptNumber,
-		WorkspaceID: locators.WorkspaceID,
+		RunID:      locators.RunID,
+		Number:     locators.AttemptNumber,
+		ComputerID: locators.ComputerID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("replay mutation error = %v, want no rows", err)
 	}
@@ -274,27 +277,27 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	if !state.EntrypointEnteredAt.Valid || !state.EntrypointEnteredAt.Time.Equal(enteredAt) {
 		t.Fatalf("replay changed entrypoint timestamp: got %v want %v", state.EntrypointEnteredAt, enteredAt)
 	}
-	if replay := fixture.runEntrypointLocators(t, ctx, work); replay.RunID != locators.RunID {
+	if replay := fixture.liveRunLocators(t, ctx, work); replay.RunID != locators.RunID {
 		t.Fatalf("replay Run = %s, want %s", pgvalue.UUIDString(replay.RunID), pgvalue.UUIDString(locators.RunID))
 	}
 
 	waitID := pgvalue.UUID(uuid.NewV7())
 	if _, err := fixture.pool.Exec(ctx, `
 		INSERT INTO run_waits (
-			id, environment_id, run_id, workspace_id, kind, condition_status,
+			id, environment_id, run_id, computer_id, kind, condition_status,
 			due_at, suspension_status, expected_run_revision, attempt_number,
-			current_run_lease_id, resume_attach_id
+			current_run_lease_id
 		) VALUES (
 			$1, $2, $3, $4, 'timer', 'pending',
-			now() + interval '1 minute', 'hot', 2, $5, $6, $7
+			now() + interval '1 minute', 'hot', 2, $5, $6
 		)
-	`, waitID, workUUID(fixture.environmentID), locators.RunID, locators.WorkspaceID,
-		locators.AttemptNumber, workUUID(work.leaseID), pgvalue.UUID(uuid.NewV7()),
+	`, waitID, workUUID(fixture.environmentID), locators.RunID, locators.ComputerID,
+		locators.AttemptNumber, workUUID(work.leaseID),
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("post-entry Wait error = %v, want no rows", err)
+	if live, err := fixture.queries.GetLiveRunLeaseLocators(ctx, fixture.liveRunLocatorParams(work)); err != nil || live.RunWaitID != waitID {
+		t.Fatalf("live wait locator = %+v, error = %v", live, err)
 	}
 	if _, err := fixture.pool.Exec(ctx, `DELETE FROM run_waits WHERE id = $1`, waitID); err != nil {
 		t.Fatal(err)
@@ -312,7 +315,7 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := fixture.queries.GetLiveRunLeaseLocators(ctx, fixture.liveRunLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired entrypoint error = %v, want no rows", err)
 	}
 }
@@ -325,7 +328,7 @@ func (fixture runLeaseClaimFixture) freshRunStartLocators(
 	t.Helper()
 	locators, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: workUUID(fixture.workerID),
 		WorkerEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -333,25 +336,25 @@ func (fixture runLeaseClaimFixture) freshRunStartLocators(
 	return locators
 }
 
-func (fixture runLeaseClaimFixture) runEntrypointLocators(
+func (fixture runLeaseClaimFixture) liveRunLocators(
 	t *testing.T,
 	ctx context.Context,
 	work runLeaseWork,
-) GetRunEntrypointLocatorsRow {
+) GetLiveRunLeaseLocatorsRow {
 	t.Helper()
-	locators, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work))
+	locators, err := fixture.queries.GetLiveRunLeaseLocators(ctx, fixture.liveRunLocatorParams(work))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return locators
 }
 
-func (fixture runLeaseClaimFixture) runEntrypointLocatorParams(
+func (fixture runLeaseClaimFixture) liveRunLocatorParams(
 	work runLeaseWork,
-) GetRunEntrypointLocatorsParams {
-	return GetRunEntrypointLocatorsParams{
+) GetLiveRunLeaseLocatorsParams {
+	return GetLiveRunLeaseLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
-		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerHostID: workUUID(fixture.workerID),
 		WorkerEpoch: 1}
 }
 
@@ -361,11 +364,10 @@ func (fixture runLeaseClaimFixture) freshRunLeaseRunningParams(
 ) MarkRunLeaseRunningParams {
 	return MarkRunLeaseRunningParams{
 		ID: workUUID(work.leaseID), RunID: workUUID(work.runID),
-		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
+		ComputerID: locators.ComputerID, AttemptNumber: locators.AttemptNumber,
 		LeaseSequence: 1, WorkerGroupID: runLeaseTestWorkerGroup,
-		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-		RuntimeIdentityID: fixture.runtimeIdentityID,
+		WorkerHostID: workUUID(fixture.workerID), WorkerEpoch: 1,
+		ComputerInstanceID: locators.ComputerInstanceID,
 	}
 }
 
@@ -374,15 +376,15 @@ func workUUID(value [16]byte) pgtype.UUID {
 }
 
 type freshRunStartState struct {
-	LeaseState            RunLeaseStatus
-	RunStatus             RunStatus
-	LeaseStartedAt        pgtype.Timestamptz
-	RunStartedAt          pgtype.Timestamptz
-	ActiveStartedAt       pgtype.Timestamptz
-	Revision              int64
-	ActiveElapsedMs       int64
-	WorkspaceLastActivity pgtype.Timestamptz
-	EntrypointEnteredAt   pgtype.Timestamptz
+	LeaseState           RunLeaseStatus
+	RunStatus            RunStatus
+	LeaseStartedAt       pgtype.Timestamptz
+	RunStartedAt         pgtype.Timestamptz
+	ActiveStartedAt      pgtype.Timestamptz
+	Revision             int64
+	ActiveElapsedMs      int64
+	ComputerLastActivity pgtype.Timestamptz
+	EntrypointEnteredAt  pgtype.Timestamptz
 }
 
 func (fixture runLeaseClaimFixture) freshRunStartState(
@@ -404,7 +406,7 @@ func (fixture runLeaseClaimFixture) freshRunStartState(
 		       run_attempts.entrypoint_entered_at
 		  FROM run_leases
 		  JOIN runs ON runs.id = run_leases.run_id
-		  JOIN computers ON computers.id = runs.workspace_id
+		  JOIN computers ON computers.id = runs.computer_id
 		  JOIN run_attempts
 		    ON run_attempts.run_id = runs.id
 		   AND run_attempts.number = run_leases.attempt_number
@@ -417,7 +419,7 @@ func (fixture runLeaseClaimFixture) freshRunStartState(
 		&state.ActiveStartedAt,
 		&state.Revision,
 		&state.ActiveElapsedMs,
-		&state.WorkspaceLastActivity,
+		&state.ComputerLastActivity,
 		&state.EntrypointEnteredAt,
 	); err != nil {
 		t.Fatal(err)

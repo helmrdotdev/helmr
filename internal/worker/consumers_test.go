@@ -69,36 +69,28 @@ func (c *runConsumerTestClient) DiscoverRunLeases(context.Context) (workerapi.Ru
 	return c.response, nil
 }
 
-func (*runConsumerTestClient) ClaimWorkspaceMount(context.Context, workerapi.Capabilities) (workerapi.WorkspaceMountClaimResponse, error) {
-	return workerapi.WorkspaceMountClaimResponse{}, nil
+func (*runConsumerTestClient) ClaimComputerInstance(context.Context) (workerapi.ComputerInstanceClaimResponse, error) {
+	return workerapi.ComputerInstanceClaimResponse{}, nil
 }
 
-func (*runConsumerTestClient) RenewWorkspaceMount(context.Context, workerapi.WorkspaceMountRenewRequest) (workerapi.WorkspaceMountResponse, error) {
-	return workerapi.WorkspaceMountResponse{}, nil
+func (*runConsumerTestClient) RenewComputerInstance(context.Context, workerapi.ComputerInstanceRenewRequest) (workerapi.ComputerInstanceRenewResponse, error) {
+	return workerapi.ComputerInstanceRenewResponse{}, nil
 }
 
-func (*runConsumerTestClient) MarkWorkspaceMountMounted(context.Context, workerapi.WorkspaceMountMountedRequest) (workerapi.WorkspaceMountResponse, error) {
-	return workerapi.WorkspaceMountResponse{}, nil
+func (*runConsumerTestClient) MarkComputerInstanceClosed(context.Context, workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	return workerapi.ComputerInstance{}, nil
 }
 
-func (*runConsumerTestClient) CaptureWorkspaceMount(context.Context, workerapi.WorkspaceMountCaptureRequest) (workerapi.WorkspaceMountCaptureResponse, error) {
-	return workerapi.WorkspaceMountCaptureResponse{}, nil
+func (*runConsumerTestClient) MarkComputerInstanceFailed(context.Context, workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	return workerapi.ComputerInstance{}, nil
 }
 
-func (*runConsumerTestClient) StopWorkspaceMount(context.Context, workerapi.WorkspaceMountStopRequest) (workerapi.WorkspaceMountResponse, error) {
-	return workerapi.WorkspaceMountResponse{}, nil
+func (*runConsumerTestClient) ClaimComputerCommand(context.Context, workerapi.ComputerCommandClaimRequest) (workerapi.ComputerCommandClaimResponse, error) {
+	return workerapi.ComputerCommandClaimResponse{}, nil
 }
 
-func (*runConsumerTestClient) FailWorkspaceMount(context.Context, workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error) {
-	return workerapi.WorkspaceMountResponse{}, nil
-}
-
-func (*runConsumerTestClient) ClaimWorkspaceExec(context.Context, workerapi.WorkspaceExecClaimRequest) (workerapi.WorkspaceExecClaimResponse, error) {
-	return workerapi.WorkspaceExecClaimResponse{}, nil
-}
-
-func (*runConsumerTestClient) CompleteWorkspaceExec(context.Context, workerapi.WorkspaceExecCompleteRequest) (workerapi.WorkspaceMountResponse, error) {
-	return workerapi.WorkspaceMountResponse{}, nil
+func (*runConsumerTestClient) CompleteComputerCommand(context.Context, workerapi.ComputerCommandCompleteRequest) error {
+	return nil
 }
 
 type runConsumerTestExecutor struct {
@@ -527,14 +519,10 @@ func TestRunConsumerReservesInitiatorBeforePublishingToWaiters(t *testing.T) {
 	})
 }
 
-func (*runConsumerTestClient) RegisterExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+func (*runConsumerTestClient) AppendCommandLog(context.Context, workerapi.CommandLogAppendRequest) error {
 	return nil
 }
 
-func (*runConsumerTestClient) CertifyExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
-	return nil
-}
-
-func (*runConsumerTestClient) ReuseExecComputerObject(context.Context, workerapi.ExecComputerObjectRequest) error {
+func (*runConsumerTestClient) ReconcileComputerCommand(context.Context, workerapi.ComputerCommandCompleteRequest) error {
 	return nil
 }

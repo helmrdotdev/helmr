@@ -169,7 +169,7 @@ failed test alone does not require recreation.
 ## First ordinary Task case
 
 The `tests/e2e/cases/task` fixture contains just a sandbox and a Task that
-round-trips a unique marker through the guest filesystem and returns run/workspace
+round-trips a unique marker through the guest filesystem and returns run/computer
 identities. It has no package-install layer, Actor dependency, combined smoke suite
 or case registry. Add or remove ordinary `tests/e2e/cases/<behavior>/` files with
 the behavior that needs them.

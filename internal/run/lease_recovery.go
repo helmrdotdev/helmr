@@ -16,33 +16,14 @@ import (
 
 type ExecutionLeaseRecoveryRequest struct {
 	RunID         uuid.UUID
-	WorkspaceID   uuid.UUID
+	ComputerID    uuid.UUID
 	AttemptNumber int32
 	RunLeaseID    uuid.UUID
 }
 
-// LockExecutionLeaseRecovery locks the complete ownership subtree affected by
-// losing a shared Computer. Run ancestry and Computer assignment are immutable;
-// the canonical graph locker revalidates the discovered subtree under locks.
+// LockExecutionLeaseRecovery locks the addressed logical scope and its owned
+// descendants. Sharing a Computer does not transfer failure to an ancestor.
 func LockExecutionLeaseRecovery(ctx context.Context, tx pgx.Tx, request OwnedFinalizationRequest) (OwnedFinalization, error) {
-	rows, err := db.New(tx).ListCancellationLineage(ctx, db.ListCancellationLineageParams{
-		TargetID: pgvalue.UUID(request.RunID), MaxDepth: maxCancellationGraphSize,
-	})
-	if err != nil {
-		return OwnedFinalization{}, err
-	}
-	if len(rows) == 0 || len(rows) > maxCancellationGraphSize {
-		return OwnedFinalization{}, cancellationAuthority("execution recovery lineage is incomplete", nil)
-	}
-	for _, row := range rows {
-		if row.Cycle {
-			return OwnedFinalization{}, cancellationAuthority("execution recovery lineage contains a cycle", nil)
-		}
-	}
-	computer := rows[len(rows)-1].WorkspaceID
-	for i := len(rows) - 1; i >= 0 && rows[i].WorkspaceID == computer; i-- {
-		request.RunID = uuid.UUID(rows[i].ID.Bytes)
-	}
 	return LockOwnedFinalization(ctx, tx, request)
 }
 
@@ -83,12 +64,12 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	request ExecutionLeaseRecoveryRequest,
 ) (bool, error) {
 	if g.tx == nil || len(g.descendants) == 0 ||
-		request.RunID == uuid.Nil() || request.WorkspaceID == uuid.Nil() ||
+		request.RunID == uuid.Nil() || request.ComputerID == uuid.Nil() ||
 		request.AttemptNumber <= 0 || request.RunLeaseID == uuid.Nil() {
 		return false, errors.New("Run execution lease recovery authority is invalid")
 	}
 	target, found := g.locked[request.RunID]
-	if !found || target.id != request.RunID || target.workspaceID != request.WorkspaceID ||
+	if !found || target.id != request.RunID || target.computerID != request.ComputerID ||
 		target.currentAttemptNumber != request.AttemptNumber ||
 		!target.currentRunLeaseID.Valid ||
 		uuid.UUID(target.currentRunLeaseID.Bytes) != request.RunLeaseID {
@@ -99,7 +80,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		ctx,
 		db.GetRunExecutionLeaseLossAuthorityParams{
 			RunID:         pgvalue.UUID(request.RunID),
-			WorkspaceID:   pgvalue.UUID(request.WorkspaceID),
+			ComputerID:    pgvalue.UUID(request.ComputerID),
 			AttemptNumber: request.AttemptNumber,
 			RunLeaseID:    pgvalue.UUID(request.RunLeaseID),
 		},
@@ -116,7 +97,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	}
 	if (authority.RunLeaseStatus == string(db.RunLeaseStatusAssigned) ||
 		authority.RunLeaseStatus == string(db.RunLeaseStatusStarting)) &&
-		!(target.actorID.Valid && (authority.ActorDispatchHoldID.Valid || authority.HasResumeWait)) {
+		!authority.HasResumeWait && !(target.actorID.Valid && authority.ActorDispatchHoldID.Valid) {
 		targetGraph, err := g.executionTarget(request.RunID)
 		if err != nil {
 			return false, err
@@ -140,7 +121,7 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 	case db.RunLeaseStatusRunning, db.RunLeaseStatusCheckpointing:
 		if _, err := q.StopLostRunActiveInterval(ctx, db.StopLostRunActiveIntervalParams{
 			LossAt: pgvalue.Timestamptz(loss.at), RunID: authority.RunID,
-			WorkspaceID: authority.WorkspaceID, ExpectedRevision: authority.Revision,
+			ComputerID: authority.ComputerID, ExpectedRevision: authority.Revision,
 			AttemptNumber: authority.CurrentAttemptNumber, RunLeaseID: authority.RunLeaseID,
 		}); err != nil {
 			return false, cancellationAuthority("stop lost Run active interval", err)
@@ -152,16 +133,6 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 		// Preserve its immutable finalization receipt on the terminal Lease.
 	default:
 		return false, nil
-	}
-	// Retain the committed source and require physical exclusion before cold retry.
-	if leaseStatus == db.RunLeaseStatusRunning || leaseStatus == db.RunLeaseStatusCheckpointing || leaseStatus == db.RunLeaseStatusFinalizing {
-		affected, err := q.RequireLostRunComputerRecovery(ctx, db.RequireLostRunComputerRecoveryParams{
-			WorkspaceID: authority.WorkspaceID, RunLeaseID: authority.RunLeaseID,
-			RecoveryID: pgvalue.UUID(uuid.NewV7()), RecoveryReason: pgvalue.Text(loss.reason),
-		})
-		if err != nil || affected != 1 {
-			return false, cancellationAuthority("require lost Computer recovery", err)
-		}
 	}
 	status := db.RunStatusSystemFailed
 	message := executionLeaseLossMessage(loss.reason)
@@ -186,13 +157,13 @@ func (g OwnedFinalization) RecoverExecutionLeaseLoss(
 // identity in the same transaction after LockExecutionLeaseRecovery.
 func (g OwnedFinalization) FailCheckpointExecution(ctx context.Context, request ExecutionLeaseRecoveryRequest, message string) error {
 	target, found := g.locked[request.RunID]
-	if g.tx == nil || !found || target.workspaceID != request.WorkspaceID ||
+	if g.tx == nil || !found || target.computerID != request.ComputerID ||
 		target.currentAttemptNumber != request.AttemptNumber || target.currentRunLeaseID != pgvalue.UUID(request.RunLeaseID) {
 		return cancellationAuthority("checkpoint failure target is not locked", nil)
 	}
 	q := db.New(g.tx)
 	a, err := q.GetRunExecutionLeaseLossAuthority(ctx, db.GetRunExecutionLeaseLossAuthorityParams{
-		RunID: pgvalue.UUID(request.RunID), WorkspaceID: pgvalue.UUID(request.WorkspaceID),
+		RunID: pgvalue.UUID(request.RunID), ComputerID: pgvalue.UUID(request.ComputerID),
 		AttemptNumber: request.AttemptNumber, RunLeaseID: pgvalue.UUID(request.RunLeaseID),
 	})
 	if err != nil {
@@ -200,10 +171,6 @@ func (g OwnedFinalization) FailCheckpointExecution(ctx context.Context, request 
 	}
 	if !a.ObservedAt.Valid || !a.ActiveStartedAt.Valid {
 		return cancellationAuthority("checkpoint failure active timestamps are missing", nil)
-	}
-	affected, err := q.RequireLostRunComputerRecovery(ctx, db.RequireLostRunComputerRecoveryParams{WorkspaceID: a.WorkspaceID, RunLeaseID: a.RunLeaseID, RecoveryID: pgvalue.UUID(uuid.NewV7()), RecoveryReason: pgvalue.Text("checkpoint_failed")})
-	if err != nil || affected != 1 {
-		return cancellationAuthority("require unsaved Computer recovery", err)
 	}
 	loss := executionLeaseLoss{at: a.ObservedAt.Time, reason: "checkpoint_failed", state: db.RunLeaseStatusFailed}
 	status := db.RunStatusSystemFailed
@@ -263,10 +230,9 @@ func decideExecutionLeaseLoss(
 		}
 		add(epochAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
 	}
-	add(authority.RuntimeLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
-	add(authority.MountLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
-	add(authority.RuntimeFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
-	add(authority.MountFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
+	add(authority.WriterExpiresAt, "physical_loss", "computer_writer_expired", db.RunLeaseStatusLost)
+	add(authority.InstanceLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
+	add(authority.InstanceFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
 	if len(candidates) == 0 {
 		return executionLeaseLoss{}, false, nil
 	}
@@ -310,7 +276,7 @@ func recoverExecutionPrestartLease(
 		return db.Run{}, err
 	}
 	cleared, err := q.ClearFreshPrestartRunLease(ctx, db.ClearFreshPrestartRunLeaseParams{
-		RunID: authority.RunID, WorkspaceID: authority.WorkspaceID,
+		RunID: authority.RunID, ComputerID: authority.ComputerID,
 		ExpectedRevision: authority.Revision, AttemptNumber: authority.CurrentAttemptNumber,
 		RunLeaseID: authority.RunLeaseID,
 	})
@@ -330,7 +296,7 @@ func (g OwnedFinalization) recordClearedExecutionPrestart(cleared db.Run) error 
 	updated.currentRunLeaseID = cleared.CurrentRunLeaseID
 	updated.revision = cleared.Revision
 	updated.status = cleared.Status
-	updated.runtimePreparationCount = cleared.RuntimePreparationCount
+	updated.instancePreparationCount = cleared.InstancePreparationCount
 	g.descendants[0] = updated
 	g.locked[updated.id] = updated
 	return nil
@@ -346,12 +312,6 @@ func terminalizeExecutionLeasePhysicalAuthority(
 	if err := terminalizeExecutionLeaseFences(ctx, q, authority, loss, errorPayload); err != nil {
 		return err
 	}
-	if err := q.CloseRunRuntimes(ctx, db.CloseRunRuntimesParams{
-		ReasonCode: loss.reason, RunLeaseID: authority.RunLeaseID,
-		RunID: authority.RunID,
-	}); err != nil {
-		return cancellationAuthority("request lost Run runtime cleanup", err)
-	}
 	return nil
 }
 
@@ -362,13 +322,7 @@ func terminalizeExecutionLeaseFences(
 	loss executionLeaseLoss,
 	errorPayload json.RawMessage,
 ) error {
-	affected, err := q.FenceRunWorkspaceLease(ctx, db.FenceRunWorkspaceLeaseParams{
-		ReasonCode: loss.reason, ErrorPayload: errorPayload, RunLeaseID: authority.RunLeaseID,
-	})
-	if err != nil || affected != 1 {
-		return cancellationAuthority("terminalize lost Run Workspace lease", err)
-	}
-	affected, err = q.TerminalizeRunLease(ctx, db.TerminalizeRunLeaseParams{
+	affected, err := q.TerminalizeRunLease(ctx, db.TerminalizeRunLeaseParams{
 		Status: string(loss.state), ReasonCode: loss.reason, ErrorPayload: errorPayload,
 		ID: authority.RunLeaseID, RunID: authority.RunID,
 	})
@@ -414,7 +368,7 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	// every scope sharing the lost Computer has the same recovery failure.
 	for i := len(g.descendants) - 1; i > 0; i-- {
 		child := g.descendants[i]
-		if child.workspaceID == target.workspaceID {
+		if child.computerID == target.computerID {
 			if err := terminateLockedRun(ctx, g.tx, child, termFor(child.id)); err != nil {
 				return err
 			}
@@ -437,19 +391,13 @@ func (g OwnedFinalization) failCurrentForLeaseLoss(
 	}
 	wait, found := g.waitsByChild[target.id]
 	if !found {
-		if parent.workspaceID != target.workspaceID {
-			return nil
-		}
-		return cancellationAuthority("lost child wait is missing", nil)
+		return nil
 	}
-	if parent.workspaceID != target.workspaceID {
-		result, err := marshalChildFailureResult(target.id, term.reasonCode, term.errorMessage)
-		if err != nil {
-			return err
-		}
-		return resolveDifferentWorkspaceChildWait(ctx, g.tx, parent, wait, result)
+	result, err := marshalChildFailureResult(target.id, term.reasonCode, term.errorMessage)
+	if err != nil {
+		return err
 	}
-	return cancellationAuthority("lost Computer owner was not included in recovery graph", nil)
+	return resolveChildResult(ctx, g.tx, parent, wait, result)
 }
 
 func leaseLossError(code, message string, retryable bool) (json.RawMessage, error) {

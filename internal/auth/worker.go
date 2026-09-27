@@ -23,7 +23,7 @@ var (
 
 type WorkerClaims struct {
 	WorkerGroupID     string
-	WorkerInstanceID  string
+	WorkerHostID      string
 	CredentialID      string
 	WorkerEpoch       int64
 	ClaimVersion      int64
@@ -34,7 +34,7 @@ type WorkerClaims struct {
 
 type workerJWTClaims struct {
 	WorkerGroupID     string `json:"worker_group_id"`
-	WorkerInstanceID  string `json:"worker_instance_id"`
+	WorkerHostID      string `json:"worker_host_id"`
 	CredentialID      string `json:"credential_id"`
 	WorkerEpoch       int64  `json:"worker_epoch"`
 	ClaimVersion      int64  `json:"claim_version"`
@@ -50,11 +50,11 @@ func IssueWorkerToken(signingKey []byte, payload WorkerClaims) (string, error) {
 		return "", err
 	}
 	claims := workerJWTClaims{
-		WorkerGroupID: payload.WorkerGroupID, WorkerInstanceID: payload.WorkerInstanceID,
+		WorkerGroupID: payload.WorkerGroupID, WorkerHostID: payload.WorkerHostID,
 		CredentialID: payload.CredentialID, WorkerEpoch: payload.WorkerEpoch,
 		ClaimVersion: payload.ClaimVersion, GroupClaimVersion: payload.GroupClaimVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer: WorkerTokenIssuer, Subject: payload.WorkerInstanceID,
+			Issuer: WorkerTokenIssuer, Subject: payload.WorkerHostID,
 			Audience: jwt.ClaimStrings{WorkerTokenAudience},
 			IssuedAt: jwt.NewNumericDate(payload.IssuedAt), ExpiresAt: jwt.NewNumericDate(payload.ExpiresAt),
 		},
@@ -106,7 +106,7 @@ func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (Worke
 	}
 
 	payload := WorkerClaims{
-		WorkerGroupID: claims.WorkerGroupID, WorkerInstanceID: claims.WorkerInstanceID,
+		WorkerGroupID: claims.WorkerGroupID, WorkerHostID: claims.WorkerHostID,
 		CredentialID: claims.CredentialID, WorkerEpoch: claims.WorkerEpoch,
 		ClaimVersion: claims.ClaimVersion, GroupClaimVersion: claims.GroupClaimVersion,
 	}
@@ -119,8 +119,8 @@ func VerifyWorkerToken(signingKey []byte, rawToken string, now time.Time) (Worke
 	if err := validateWorkerClaims(payload); err != nil {
 		return WorkerClaims{}, fmt.Errorf("%w: %w", ErrInvalidWorkerToken, err)
 	}
-	if claims.Subject != payload.WorkerInstanceID {
-		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_instance_id", ErrInvalidWorkerToken)
+	if claims.Subject != payload.WorkerHostID {
+		return WorkerClaims{}, fmt.Errorf("%w: subject does not match worker_host_id", ErrInvalidWorkerToken)
 	}
 	if claims.Issuer != WorkerTokenIssuer || len(claims.Audience) != 1 || claims.Audience[0] != WorkerTokenAudience {
 		return WorkerClaims{}, fmt.Errorf("%w: non-canonical issuer or audience", ErrInvalidWorkerToken)
@@ -139,8 +139,8 @@ func validateWorkerClaims(payload WorkerClaims) error {
 	if payload.WorkerGroupID == "" || strings.TrimSpace(payload.WorkerGroupID) != payload.WorkerGroupID {
 		return errors.New("worker_group_id must be nonempty and canonical")
 	}
-	if payload.WorkerInstanceID == "" || strings.TrimSpace(payload.WorkerInstanceID) != payload.WorkerInstanceID {
-		return errors.New("worker_instance_id must be nonempty and canonical")
+	if payload.WorkerHostID == "" || strings.TrimSpace(payload.WorkerHostID) != payload.WorkerHostID {
+		return errors.New("worker_host_id must be nonempty and canonical")
 	}
 	if payload.CredentialID == "" || strings.TrimSpace(payload.CredentialID) != payload.CredentialID {
 		return errors.New("credential_id must be nonempty and canonical")
