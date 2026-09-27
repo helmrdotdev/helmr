@@ -14,6 +14,7 @@ A removed or renamed selected case must fail selection rather than silently pass
 | Normal Task execution and guest filesystem results | Dedicated host and `cases/task.ts` | Persistence, Actor continuation or provider lifecycle |
 | Checkpoint and same-host restore | Dedicated host and `cases/persistence.ts` | Cross-host recovery or Actor continuation |
 | Actor state across Turns and checkpoint restore | Dedicated host and `cases/actor.ts` | Host-loss or cross-host recovery |
+| Guest IPv4 metadata denial | Dedicated host and `cases/network.ts` | General isolation, IPv6 or destination-specific packet tracing |
 | IAM, managed capacity, rollout or cross-host behavior | Cloud-owned managed validation for the exact claim | Unselected cases or full scope closure |
 
 The dedicated-host Task, same-host persistence and Actor continuation cases

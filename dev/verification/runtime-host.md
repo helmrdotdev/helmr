@@ -347,3 +347,15 @@ Offline assertion-sensitivity checks use
 memory, reset counters, changed identity, retried Runs, wrong checkpoints and hot
 VM reuse. Type checking and the real PostgreSQL query check validate source/query
 boundaries only. The complete Actor case still needs the integrated checkpoint.
+
+## Guest IPv4 metadata case
+
+Run `cases/network.ts` on the dedicated host with the same API/key/evidence
+environment as persistence. It first requires successful public HTTPS from the
+guest, then takes a native policy/counter baseline on that Run's exact retained
+VM. A request to the IPv4 metadata index must return no HTTP response; the
+metadata address must be in the installed deny set and the same namespace's
+`run_denied` counter must increase. Token waits keep that VM alive for observation.
+No credential path or IMDS token is requested. The counter is shared by several
+deny rules, so this is not destination-specific tracing, IPv6 coverage or general
+network-isolation qualification. The new case still requires live execution.
