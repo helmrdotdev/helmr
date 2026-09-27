@@ -35,6 +35,7 @@ first task. You'll need a running control plane and worker; the
 - [TypeScript SDK](https://helmr.dev/docs/reference/sdk/overview/)
 - [REST API](https://helmr.dev/docs/reference/rest-api/overview/)
 - [Examples](examples/)
+- [Development verification](tests/e2e/README.md)
 
 Early, active development. APIs and deployment details may change before a
 stable release.

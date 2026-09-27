@@ -21,6 +21,8 @@ locals {
   parent_image         = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
   distribution_regions = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : sort(distinct(var.distribution_regions))
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
+    install_host_script               = trimsuffix(file("${path.module}/templates/install-worker-host.sh"), "\n")
+    install_host_digest               = filesha256("${path.module}/templates/install-worker-host.sh")
     prepare_root_script               = trimsuffix(file("${path.module}/templates/prepare-root.sh"), "\n")
     prepare_root_digest               = filesha256("${path.module}/templates/prepare-root.sh")
     host_artifacts_bundle_s3_uri      = var.host_artifacts_bundle_s3_uri

@@ -69,7 +69,7 @@ let
           bun audit
           actionlint
           scripts/security-checks.sh
-          bash -n scripts/dev-console-stack.sh
+          bash -n dev/local/start.sh
           bash tests/buildkit_steps_test.sh
           bash tests/ci_workflow_test.sh
           bash tests/install_test.sh
@@ -79,13 +79,11 @@ let
           bash tests/release_manifest_verify_test.sh
           bash tests/release_worker_ami_cleanup_test.sh
           bash tests/release_worker_image_identity_test.sh
-          bash tests/pre_aws_release_gate_test.sh
           bash tests/aws_bootstrap_helmr_secrets_test.sh
           bash tests/aws_release_artifacts_test.sh
           bash tests/platform_release_materialize_test.sh
           bash tests/platform_release_publish_test.sh
           bash tests/publish_materialized_platform_release_test.sh
-          bash tests/release_smoke_selector_test.sh
           bash tests/runtime_naming_contract_test.sh
           bash tests/worker_host_bundle_test.sh
           bash tests/worker_runtime_bundle_test.sh
@@ -256,7 +254,7 @@ ciApps
     app "dev" "run the local Helmr control plane and console dashboard"
       (toolsets.appRuntime ++ [ pkgsClickHouse.clickhouse ])
       ''
-        exec ./scripts/dev-console-stack.sh "$@"
+        exec ./dev/local/start.sh "$@"
       '';
   measure-dispatch = app "measure-dispatch" "measure PostgreSQL dispatch discovery" toolsets.base ''
     exec ./scripts/measure-dispatch.sh "$@"
@@ -337,7 +335,7 @@ ciApps
         export PLAYWRIGHT_BROWSERS_PATH=${pkgsUnstable.playwright-driver.browsers}
         export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
         bun install --frozen-lockfile --ignore-scripts
-        bash scripts/dev-console-stack.test.sh
+        bash tests/local_stack_test.sh
         bun run test:browser
       '';
 

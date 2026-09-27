@@ -15,8 +15,8 @@ images/*/out/
 .bin/
 **/.terraform/
 **/.terraform.lock.hcl
-dev/workflows/vendor/
-dev/schedule-workflows/vendor/
+examples/issue-fixer/vendor/
+tests/e2e/fixtures/schedule/vendor/
 *.tfstate
 *.tfstate.*
 *.tfvars

@@ -135,7 +135,7 @@ func TestSessionNativeLocalPostgres(t *testing.T) {
 				}
 				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 				defer cancel()
-				bundleDir, err := os.MkdirTemp(filepath.Join(root, "dev/workflows/probes"), ".local-runtime-")
+				bundleDir, err := os.MkdirTemp(filepath.Join(root, "examples/issue-fixer/probes"), ".local-runtime-")
 				if err != nil {
 					t.Fatal(err)
 				}

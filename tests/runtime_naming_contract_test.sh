@@ -51,16 +51,16 @@ reject_text 'files=(cpu-template-helper firecracker helmr-worker' \
 reject_text 'helmr-worker' "${root}/scripts/materialize-worker-host-bundle.sh" \
   "Worker bundle producer still names the removed member"
 reject_text '"helmr-worker"' \
-  "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
+  "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker bundle manifest or installer still names the removed member"
 reject_text 'firecracker helmr-worker' \
-  "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
+  "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker bundle installer still names the removed member"
 reject_text '/usr/local/bin/helmr-worker' \
-  "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
+  "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker AMI still installs or starts the removed executable"
 require_text 'ExecStart=/usr/local/bin/worker' \
-  "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
+  "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker AMI unit does not start the canonical binary"
 
 # Repository destinations are now constructed by the unprivileged artifact builder.
@@ -87,7 +87,7 @@ require_text 'request.Header.Set("user-agent", "helmr-controlplane")' \
 require_text 'default     = "helmr-worker"' \
   "${root}/infra/aws/modules/worker/variables.tf" "Worker systemd service identity changed"
 require_text 'cat >/etc/systemd/system/helmr-worker.service' \
-  "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
+  "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker systemd unit path changed"
 require_text '/system.slice/helmr-worker.service/supervisor' \
   "${root}/internal/worker/verifier_host_linux_test.go" "Worker unit-derived cgroup identity changed"
@@ -112,7 +112,7 @@ for variables in infra/aws/modules/release-artifacts/variables.tf \
     "${root}/${variables}" "${variables} does not require an exact Helmr release tag"
 done
 require_text '.schema == "helmr.worker-host-artifacts.v0"' \
-  "${root}/infra/aws/modules/worker-image/templates/build-worker-image.sh.tftpl" \
+  "${root}/infra/aws/modules/worker-image/templates/install-worker-host.sh" \
   "Worker host-artifact schema identity changed"
 require_text 'scripts/build-controlplane-image.sh' "${root}/tests/release_workflow_test.sh" \
   "internal Control Plane image-builder filename changed"

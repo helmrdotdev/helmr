@@ -79,10 +79,10 @@ verify: generate fmt test lint build
 dev: dev-console-stack
 
 dev-console-stack:
-	./scripts/dev-console-stack.sh
+	./dev/local/start.sh
 
 dev-reset:
-	./scripts/dev-reset.sh
+	./dev/local/reset.sh
 
 images boot-artifacts:
 	$(MAKE) -C images/guest all

@@ -8,8 +8,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { claudeModel, codexModel } from "../../../dev/workflows/probes/native-model"
-import { conversation } from "../../../dev/workflows/tasks/issue-fixer/conversation"
+import { claudeModel, codexModel } from "../../../examples/issue-fixer/probes/native-model"
+import { conversation } from "../../../examples/issue-fixer/tasks/issue-fixer/conversation"
 
 const bridge = process.env.HELMR_LOCAL_BRIDGE
 const qualification = bridge ? test : test.skip
@@ -36,8 +36,8 @@ qualification("native Actor through runtime, SDK HTTP and Postgres", async () =>
     const saved = await conversation(directory, config.sessionId, config.provider)
     if (config.provider === "codex") await writeFile(join(saved.directory, "config.toml"), `model_provider = "fixture"\nmodel = "gpt-5.1-codex"\n[model_providers.fixture]\nname = "local fixture"\nbase_url = "http://127.0.0.1:${port}/v1"\nwire_api = "responses"\nrequires_openai_auth = false\n`)
     const definition = config.provider === "claude"
-      ? (await import("../../../dev/workflows/tasks/issue-fixer/claude")).claudeIssueFixer
-      : (await import("../../../dev/workflows/tasks/issue-fixer/codex")).codexIssueFixer
+      ? (await import("../../../examples/issue-fixer/tasks/issue-fixer/claude")).claudeIssueFixer
+      : (await import("../../../examples/issue-fixer/tasks/issue-fixer/codex")).codexIssueFixer
     const client = new HelmrClient({ url: bridge!, apiKey: "fixture" })
     const session = client.sessions.ref(config.sessionId)
     const first = await session.send({ issue: "first unique input" })
