@@ -40,7 +40,7 @@ injection into an ordinary behavior case. External agent examples live in
 | `persistence` (including `shared.run.ts`) | `cases/persistence` | Single-member and shared-Computer checkpoint and same-host restore |
 | `actor` | `cases/actor` | Actor Turns and same-host checkpoint restore |
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
-| `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
+| `runtime`, `computer-command`, `program-replacement.run.ts` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
 | `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
@@ -95,6 +95,22 @@ service updates and edited-initial-migration reset. Reuse a healthy host through
 the repair objective, clean up its test fixtures, then stop compute. Provider
 provisioning, retained storage costs and final retirement belong to deployment
 operations. A previous passing case does not qualify a changed case or artifact.
+
+## Compatible Program replacement
+
+`cases/runtime/program-replacement.run.ts` retains one Computer across two normal
+Deployment promotions. Build the ordinary selected project, then a second isolated
+copy changing only `runtimeSmoke`'s returned report to include
+`programRevision: "next"`. Verify both bundles have identical Computer images and
+Sandbox specifications and different Program identities. Set
+`HELMR_NEXT_BUNDLE_DIGEST` to the second bundle digest. Deploy the original bundle
+and start the driver. After `ready-for-deploy.json` appears in its evidence
+folder, promote the second bundle through the normal CLI; the driver then verifies
+new code, the selected deployment and preservation of the first Run's files.
+Restore the ordinary deployment after the case. Deployment orchestration stays
+outside the driver. Use host evidence to confirm the old instance was physically
+excluded before the replacement became ready; SDK results alone do not prove that
+boundary.
 
 ## Real PostgreSQL and Redis
 
