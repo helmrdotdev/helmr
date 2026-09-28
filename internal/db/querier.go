@@ -557,9 +557,6 @@ type Querier interface {
 	OwnedRunScopesReconciled(ctx context.Context, runID pgtype.UUID) (bool, error)
 	PinInstanceComputerSource(ctx context.Context, arg PinInstanceComputerSourceParams) (int64, error)
 	PinRuntimeComputerKey(ctx context.Context, arg PinRuntimeComputerKeyParams) (int64, error)
-	// Program preparation is acknowledged through the Instance desired version.
-	// It cannot change a resident Program or authorize any member by itself.
-	PrepareComputerInstanceProgram(ctx context.Context, arg PrepareComputerInstanceProgramParams) (ComputerInstance, error)
 	PromoteDeployment(ctx context.Context, arg PromoteDeploymentParams) error
 	PruneDeliveredControlOutbox(ctx context.Context, arg PruneDeliveredControlOutboxParams) (int64, error)
 	PruneExpiredComputerCommandResults(ctx context.Context, rowLimit int32) (int64, error)

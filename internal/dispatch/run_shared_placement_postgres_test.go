@@ -5,7 +5,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -58,42 +57,6 @@ func TestRunsAndCommandsSharePhysicalWriter(t *testing.T) {
 		t.Fatalf("duplicate grant=%v", err)
 	}
 }
-func TestRunWaitsForProgramPreparationAcknowledgement(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
-	// Start with an independently prepared Computer that has no resident Program.
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=2,observed_state='closed',observed_desired_version=2,terminal_at=now(),terminal_reason_code='test_exclusion',reclaimed_at=now(),reclaim_evidence='{"method":"host_reconciled"}',admission_state='closed',mount_state='unmounted',unmounted_at=now() WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, work.LeaseID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET epoch_guest_ephemeral_disk_bytes=68719476736,per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, f.WorkerID)
-	command := pendingSharedCommand(t, f, work)
-	initial, err := a.PlaceComputerCommand(t.Context(), command)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',ready_at=clock_timestamp(),observed_desired_version=desired_version,mount_state='mounted',mounted_at=clock_timestamp() WHERE id=$1`, initial.ComputerInstanceID)
-	candidate := queuedSharedRun(t, f, work)
-	loading, err := a.PlaceReadyRun(t.Context(), candidate)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loading.LeaseCreated {
-		t.Fatal("Run granted before Program was loaded")
-	}
-	i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: initial.ComputerInstanceID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if i.ProgramDeploymentID != pgvalue.UUID(f.DeploymentID) || i.DesiredVersion != 2 || i.ObservedDesiredVersion != 1 || i.WriterGeneration != 3 {
-		t.Fatalf("Program preparation=%+v", i)
-	}
-	if p, err := a.PlaceReadyRun(t.Context(), candidate); err != nil || p.LeaseCreated {
-		t.Fatalf("unacknowledged Program grant=%+v %v", p, err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_desired_version=desired_version WHERE id=$1`, i.ID)
-	p, err := a.PlaceReadyRun(t.Context(), candidate)
-	if err != nil || !p.LeaseCreated || p.Lease.WriterGeneration != 3 {
-		t.Fatalf("acknowledged Program grant=%+v %v", p, err)
-	}
-}
-
 func TestFreshRunQueueLimitRetainsSharedInstance(t *testing.T) {
 	f, work, a := commandPlacementFixture(t)
 	candidate := queuedSharedRun(t, f, work)

@@ -75,11 +75,6 @@ func (d *Authority) PlaceReadyRun(ctx context.Context, candidate ReadyRunCandida
 		if err != nil {
 			return ReadyRunPlacement{}, err
 		}
-	} else if !i.ProgramDeploymentID.Valid {
-		i, err = db.New(tx).PrepareComputerInstanceProgram(ctx, db.PrepareComputerInstanceProgramParams{ID: i.ID, EnvironmentID: r.EnvironmentID, WriterGeneration: i.WriterGeneration, DeploymentID: r.DeploymentID})
-		if err != nil {
-			return ReadyRunPlacement{}, classifyRunCandidateError(err)
-		}
 	} else if i.ProgramDeploymentID != r.DeploymentID {
 		return ReadyRunPlacement{}, ErrCapacityUnavailable
 	}

@@ -21,7 +21,7 @@ does not execute real workloads.
 
 ## Layout and selection
 
-- `cases/<behavior>/run.ts`: executable stimulus, assertions and fixture cleanup.
+- `cases/<behavior>/run.ts` and `*.run.ts`: executable stimulus, assertions and fixture cleanup.
 - `cases/<behavior>/task.ts`: guest Task/Actor/Sandbox definitions needed by that
   behavior. Related cases may use an existing fixture with a relative import.
 - `support/`: bounded waits and evidence/cleanup mechanics shared by actual callers.
@@ -37,12 +37,12 @@ injection into an ordinary behavior case. External agent examples live in
 | Cases | Fixture directories passed to preparation | Claim |
 | --- | --- | --- |
 | `task` | `cases/task` | Minimal marker round-trip and guest filesystem |
-| `persistence` | `cases/persistence` | Checkpoint and same-host restore |
+| `persistence` (including `shared.run.ts`) | `cases/persistence` | Single-member and shared-Computer checkpoint and same-host restore |
 | `actor` | `cases/actor` | Actor Turns and same-host checkpoint restore |
 | `network` | `cases/network` | Guest metadata denial plus exact host packet observation |
 | `runtime`, `computer-command` | `cases/runtime` | Runtime tools/files/logs; Computer idempotency/exec |
 | `token-wait`, `token-fanout` | `cases/token-wait` | Internal Token creation/resumption; shared Token fan-out and completion before wait |
-| `actor-continuity`, `child-tasks` (including `cancel-peer.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
+| `actor-continuity`, `child-tasks` (including `cancel-peer.run.ts`) | `cases/child-tasks` | Child modes, cancellation without stopping a shared-Computer peer, Actor continuation and ordered/paginated durable output |
 | `timer`, `run-cancel` | `cases/timer` | Timer completion or explicit cancellation |
 | `network-egress` | `cases/network-egress` | Public IPv4 succeeds, no IPv6 default route |
 | `computer-overwrite`, `concurrent-wait`, `invalid-payload`, `expected-error` | `cases/computer-overwrite` | Filesystem overwrite and exact negative contracts |
@@ -76,7 +76,8 @@ Other cases use only the native API and can target an explicitly authorized endp
 Different-Computer child calls require at least two available VM slots: a hot
 parent can retain its slot while its child runs. Before selecting `child-tasks`,
 check the dedicated Worker's advertised capacity. On a sufficiently sized host,
-`WORKER_CAPACITY_VCPUS=4` and `WORKER_CAPACITY_MEMORY_MIB=4096` allow two default
+`WORKER_CAPACITY_VCPUS=4`, `WORKER_CAPACITY_MEMORY_MIB=4096` and
+`WORKER_EXECUTION_SLOTS=2` allow two default
 2-vCPU / 2-GiB VMs; the backing disk and assigned NBD devices must cover both.
 Configure this before enrollment, following the host profile's replacement rules.
 Cases requiring Secret management or Computer exec need those exact API-key

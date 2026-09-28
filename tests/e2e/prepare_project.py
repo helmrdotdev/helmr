@@ -40,8 +40,8 @@ def main():
             shutil.copyfile(archive, target / archive.name)
             manifest.setdefault(section, {})[f'@helmr/{name}'] = f'file:.packages/{archive.name}'
         (output / 'package.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    (output / 'helmr.config.ts').write_text('import { defineConfig } from "@helmr/sdk"\nexport default defineConfig(' + json.dumps({'dirs': args.fixtures, 'ignorePatterns': ['**/run.ts', '**/*.test.*']}) + ')\n')
-    (output / '.helmrignore').write_text('node_modules/\n**/run.ts\n**/*.test.*\n**/observe.py\n')
+    (output / 'helmr.config.ts').write_text('import { defineConfig } from "@helmr/sdk"\nexport default defineConfig(' + json.dumps({'dirs': args.fixtures, 'ignorePatterns': ['**/run.ts', '**/*.run.ts', '**/*.test.*']}) + ')\n')
+    (output / '.helmrignore').write_text('node_modules/\n**/run.ts\n**/*.run.ts\n**/*.test.*\n**/observe.py\n')
     subprocess.run(['bun', 'install', '--ignore-scripts'], cwd=output, check=True)
     print(output)
 

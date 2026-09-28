@@ -15,6 +15,16 @@ import (
 )
 
 func TestProgramReplacementPreservesCapturedDisk(t *testing.T) {
+	for _, programless := range []bool{false, true} {
+		name := "resident-program"
+		if programless {
+			name = "preparation-only"
+		}
+		t.Run(name, func(t *testing.T) { testProgramReplacementPreservesCapturedDisk(t, programless) })
+	}
+}
+
+func testProgramReplacementPreservesCapturedDisk(t *testing.T, programless bool) {
 	f, old, _, capture := dispatchtest.Capture(t)
 	key, err := computer.NewFencingKey(make([]byte, 32))
 	if err != nil {
@@ -45,6 +55,19 @@ func TestProgramReplacementPreservesCapturedDisk(t *testing.T) {
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE computer_instance_id=$1`, capture.ComputerInstanceID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='cancelled',terminal_at=now(),failure='{"code":"cancelled","message":"Cancelled","details":{}}',current_run_lease_id=NULL,active_started_at=NULL WHERE computer_id=(SELECT computer_id FROM runs WHERE id=$1) AND id<>$1`, runID)
+	if programless {
+		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_waits WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, capture.ComputerInstanceID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `DELETE FROM run_leases WHERE computer_instance_id=$1`, capture.ComputerInstanceID)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET program_deployment_id=NULL,observed_state='allocated',observed_desired_version=0,ready_at=NULL,mount_state='pending',mounted_at=NULL WHERE id=$1`, capture.ComputerInstanceID)
+		if _, err = a.PlaceReadyRun(t.Context(), candidate); err == nil {
+			t.Fatal("preparing source accepted a Run")
+		}
+		var unchanged bool
+		if err = f.Pool.QueryRow(t.Context(), `SELECT program_deployment_id IS NULL AND desired_version=1 AND capture_checkpoint_id IS NULL FROM computer_instances WHERE id=$1`, capture.ComputerInstanceID).Scan(&unchanged); err != nil || !unchanged {
+			t.Fatalf("in-flight preparation changed: %v %v", unchanged, err)
+		}
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',observed_desired_version=desired_version,ready_at=now(),mount_state='mounted',mounted_at=now() WHERE id=$1`, capture.ComputerInstanceID)
+	}
 	if _, err = a.PlaceReadyRun(t.Context(), candidate); !errors.Is(err, dispatch.ErrCapacityUnavailable) {
 		t.Fatalf("capture start=%v", err)
 	}
@@ -112,7 +135,7 @@ func TestProgramReplacementPreservesCapturedDisk(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT head_disk_version_id FROM computers WHERE id=$1`, computerID).Scan(&head); err != nil || head != cp.PrivateComputerDiskVersionID {
 		t.Fatalf("promotion replay changed head: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=now(),max_vm_slots=8,per_vm_guest_ephemeral_disk_bytes=34359738368,epoch_guest_ephemeral_disk_bytes=274877906944 WHERE id=$1`, f.WorkerID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=now(),max_vm_slots=1,per_vm_guest_ephemeral_disk_bytes=34359738368,epoch_guest_ephemeral_disk_bytes=274877906944 WHERE id=$1`, f.WorkerID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_pools SET per_vm_guest_ephemeral_disk_bytes=34359738368,capacity_guest_ephemeral_disk_bytes=274877906944 WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, f.WorkerID)
 	placed, err := a.PlaceReadyRun(t.Context(), candidate)
 	if err != nil || placed.LeaseCreated {

@@ -31,7 +31,7 @@ func prepareComputerProgram(ctx context.Context, tx pgx.Tx, candidate ReadyRunCa
 	if err != nil {
 		return false, err
 	}
-	if !currentProgram.Valid || currentProgram == deploymentID {
+	if currentProgram == deploymentID {
 		return false, nil
 	}
 	source, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{EnvironmentID: environmentID, ID: instanceID})

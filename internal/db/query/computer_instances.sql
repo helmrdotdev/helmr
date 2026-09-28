@@ -111,18 +111,6 @@ UPDATE computer_instances SET observed_state='ready',observed_version=observed_v
  AND reclaimed_at IS NULL
  RETURNING *;
 
--- Program preparation is acknowledged through the Instance desired version.
--- It cannot change a resident Program or authorize any member by itself.
--- name: PrepareComputerInstanceProgram :one
-UPDATE computer_instances SET program_deployment_id=sqlc.arg(deployment_id),
- desired_version=desired_version+1,desired_at=clock_timestamp(),updated_at=clock_timestamp()
- WHERE id=sqlc.arg(id) AND environment_id=sqlc.arg(environment_id)
- AND writer_generation=sqlc.arg(writer_generation) AND admission_state='open'
- AND desired_state='ready' AND observed_state IN ('allocated','ready')
- AND writer_expires_at>clock_timestamp() AND reclaimed_at IS NULL
- AND program_deployment_id IS NULL
- RETURNING *;
-
 -- name: AdvanceComputerInstanceMembership :one
 UPDATE computer_instances SET membership_revision=membership_revision+1,updated_at=clock_timestamp()
  WHERE id=sqlc.arg(id) AND writer_generation=sqlc.arg(writer_generation) AND reclaimed_at IS NULL
