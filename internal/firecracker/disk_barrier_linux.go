@@ -13,9 +13,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/firecracker-microvm/firecracker-go-sdk/client/operations"
 
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
+
+// computerCaptureTimeout bounds the disk cut for live saves and checkpoints;
+// checkpoint memory serialization happens after this cut under its caller budget.
+const computerCaptureTimeout = 30 * time.Second
 
 // lockComputer serializes live disk cuts with irreversible checkpoint and close
 // holds. Waiting is cancellable; a timed-out Close can be retried.
@@ -39,14 +46,15 @@ func (s *guestSession) lockComputer(ctx context.Context) (func(), error) {
 }
 
 // captureContext lets Close cancel and join a disk operation before releasing
-// its device or backing descriptors. The caller owns computerBarrier.
+// its device or backing descriptors. The caller owns computerBarrier. The finite
+// capture budget also covers synchronous disk I/O delaying VMM API dispatch.
 func (s *guestSession) captureContext(ctx context.Context) (context.Context, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, nil, errors.New("computer session is closed")
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithTimeout(ctx, computerCaptureTimeout)
 	s.computerCancel = cancel
 	return ctx, func() {
 		cancel()
@@ -97,7 +105,9 @@ func (s *guestSession) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 	}
 	// Close cancels this operation and joins the barrier before stopping the
 	// machine. Even an in-flight resume cannot run after that physical stop.
-	err = s.machine.ResumeVM(ctx)
+	// Use the capture budget rather than the SDK default request cutoff: the
+	// synchronous block engine must finish in-flight I/O before API dispatch.
+	err = s.machine.ResumeVM(ctx, func(params *operations.PatchVMParams) { params.SetContext(ctx) })
 	if err != nil {
 		cut.Capture.Release()
 		return nil, fmt.Errorf("resume captured Computer: %w", err)
@@ -107,7 +117,7 @@ func (s *guestSession) CaptureComputer(ctx context.Context) (*vm.ComputerSnapsho
 }
 
 func (s *guestSession) capturePausedComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
-	if err := s.machine.PauseVM(ctx); err != nil {
+	if err := s.machine.PauseVM(ctx, func(params *operations.PatchVMParams) { params.SetContext(ctx) }); err != nil {
 		return nil, fmt.Errorf("pause Firecracker vm: %w", err)
 	}
 	if err := s.syncPausedDisks(ctx); err != nil {
