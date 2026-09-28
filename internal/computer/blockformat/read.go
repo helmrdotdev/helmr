@@ -62,21 +62,46 @@ func ReadPage(ctx context.Context, source RangeSource, scope string, key []byte,
 // ReadBlock reads only the segment header and one authenticated block frame.
 // The caller must have authenticated the parent that supplied this segment ref.
 func ReadBlock(ctx context.Context, source RangeSource, scope string, key []byte, r Ref, ordinal uint32) ([]byte, error) {
+	return readBlocks(ctx, source, scope, key, r, ordinal, 1)
+}
+
+// readBlocks batches only consecutive requested frames. Authentication remains
+// per record; a failed later frame never returns an authenticated prefix.
+func readBlocks(ctx context.Context, source RangeSource, scope string, key []byte, r Ref, ordinal, count uint32) ([]byte, error) {
 	h, err := Header(scope, r)
 	if err != nil {
 		return nil, err
 	}
 	const frame = BlockSize + 20
-	if len(key) != 32 || r.Kind != SegmentKind || ordinal >= r.Count || r.Size != int64(len(h))+int64(r.Count)*frame {
+	if len(key) != 32 || r.Kind != SegmentKind || count == 0 || ordinal >= r.Count || count > r.Count-ordinal ||
+		count > (MaxMetadata+1024)/frame || r.Size != int64(len(h))+int64(r.Count)*frame {
 		return nil, errors.New("invalid segment range")
 	}
 	header, err := readRange(ctx, source, r.Digest, r.Size, 0, int64(len(h)))
 	if err != nil {
 		return nil, err
 	}
-	b, err := readRange(ctx, source, r.Digest, r.Size, int64(len(h))+int64(ordinal)*frame, frame)
+	b, err := readRange(ctx, source, r.Digest, r.Size, int64(len(h))+int64(ordinal)*frame, int64(count)*frame)
 	if err != nil {
 		return nil, err
 	}
-	return OpenBlock(scope, key, r, ordinal, header, b)
+	out := make([]byte, int(count)*BlockSize)
+	for i := uint32(0); i < count; i++ {
+		if err := ctx.Err(); err != nil {
+			clear(out)
+			return nil, err
+		}
+		data, err := OpenBlock(scope, key, r, ordinal+i, header, b[int(i)*frame:int(i+1)*frame])
+		if err != nil {
+			clear(out)
+			return nil, err
+		}
+		copy(out[int(i)*BlockSize:], data)
+		clear(data)
+	}
+	if err := ctx.Err(); err != nil {
+		clear(out)
+		return nil, err
+	}
+	return out, nil
 }
