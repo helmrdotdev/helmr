@@ -16,6 +16,8 @@ images/*/out/
 **/.terraform/
 **/.terraform.lock.hcl
 examples/issue-fixer/vendor/
+dev/workflows/vendor/
+dev/schedule-workflows/vendor/
 tests/e2e/fixtures/schedule/vendor/
 *.tfstate
 *.tfstate.*
