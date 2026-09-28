@@ -148,7 +148,8 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 }
 
 const setRunCurrentLease = `-- name: SetRunCurrentLease :one
-UPDATE runs r SET current_run_lease_id=l.id,first_lease_at=COALESCE(r.first_lease_at,clock_timestamp()),
+UPDATE runs r SET status=CASE WHEN i.admission_state='restoring' THEN 'waiting' ELSE r.status END,
+ current_run_lease_id=l.id,first_lease_at=COALESCE(r.first_lease_at,clock_timestamp()),
  instance_preparation_count=0,next_instance_preparation_at=NULL,revision=r.revision+1,updated_at=clock_timestamp()
 FROM run_leases l,computer_instances i
 WHERE r.id=$1 AND r.environment_id=$2

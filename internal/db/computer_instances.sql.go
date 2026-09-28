@@ -613,7 +613,7 @@ SELECT i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.regi
  WHERE i.worker_host_id=$1 AND i.worker_epoch=$2
  AND i.worker_group_id=$3 AND i.reclaimed_at IS NULL
  AND (i.observed_desired_version<i.desired_version OR i.observed_state IN ('failed','lost')
-      OR i.admission_state IN ('checkpointing','restoring'))
+      OR i.admission_state='checkpointing')
  ORDER BY i.desired_at,i.id LIMIT $4
 `
 

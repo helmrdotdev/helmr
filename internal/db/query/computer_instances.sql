@@ -88,7 +88,7 @@ SELECT i.*,spec.config AS computer_config,spec.digest AS computer_spec_digest,
  WHERE i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)
  AND i.worker_group_id=sqlc.arg(worker_group_id) AND i.reclaimed_at IS NULL
  AND (i.observed_desired_version<i.desired_version OR i.observed_state IN ('failed','lost')
-      OR i.admission_state IN ('checkpointing','restoring'))
+      OR i.admission_state='checkpointing')
  ORDER BY i.desired_at,i.id LIMIT sqlc.arg(row_limit);
 
 -- name: MarkComputerInstanceMounting :one

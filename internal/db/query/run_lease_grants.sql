@@ -41,7 +41,8 @@ FROM admitted RETURNING *;
 -- Recheck decision-time deadlines after grant writes. The surrounding transaction
 -- rolls back the grant and membership change if this compare-and-set fails.
 -- name: SetRunCurrentLease :one
-UPDATE runs r SET current_run_lease_id=l.id,first_lease_at=COALESCE(r.first_lease_at,clock_timestamp()),
+UPDATE runs r SET status=CASE WHEN i.admission_state='restoring' THEN 'waiting' ELSE r.status END,
+ current_run_lease_id=l.id,first_lease_at=COALESCE(r.first_lease_at,clock_timestamp()),
  instance_preparation_count=0,next_instance_preparation_at=NULL,revision=r.revision+1,updated_at=clock_timestamp()
 FROM run_leases l,computer_instances i
 WHERE r.id=sqlc.arg(run_id) AND r.environment_id=sqlc.arg(environment_id)

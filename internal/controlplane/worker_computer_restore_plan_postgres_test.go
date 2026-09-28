@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 	"uuid"
@@ -384,6 +385,96 @@ func TestRestoredActorRejectsStaleStopScope(t *testing.T) {
 			_, _, err = (&Server{tx: f.Pool}).claimRunLease(t.Context(), w, pgvalue.UUID(leaseID), 2)
 			if !errors.Is(err, errStaleRunLeaseClaim) {
 				t.Fatalf("stale stop claim=%v", err)
+			}
+		})
+	}
+}
+
+func TestComputerRestorePlanAfterParkedWakeup(t *testing.T) {
+	for _, wakeCount := range []int{1, 2} {
+		t.Run(fmt.Sprintf("woken-%d", wakeCount), func(t *testing.T) {
+			f, worker, request, key := restorePlanFixture(t, false, false)
+			tx, err := f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			rows, err := tx.Query(t.Context(), `SELECT w.run_id,w.expected_run_revision,w.attempt_number,w.id,w.prior_run_lease_id,w.suspend_checkpoint_id
+ FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id
+ JOIN computer_instances i ON i.source_checkpoint_id=m.checkpoint_id WHERE i.id=$1 ORDER BY w.run_id LIMIT $2`, request.ComputerInstanceID, wakeCount)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wakeups []db.ResolveParkedTokenWaitParams
+			for rows.Next() {
+				var wake db.ResolveParkedTokenWaitParams
+				if err := rows.Scan(&wake.RunID, &wake.ExpectedRunRevision, &wake.AttemptNumber, &wake.WaitID, &wake.PriorRunLeaseID, &wake.SuspendCheckpointID); err != nil {
+					t.Fatal(err)
+				}
+				wake.ConditionStatus = "completed"
+				wake.ConditionResult = []byte(`{"resume":true}`)
+				wake.ConditionError = nil
+				wakeups = append(wakeups, wake)
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil || len(wakeups) != wakeCount {
+				t.Fatalf("wakeups=%d err=%v", len(wakeups), err)
+			}
+			for _, wake := range wakeups {
+				if _, err := db.New(tx).ResolveParkedTokenWait(t.Context(), wake); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tx.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var queued int
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runs r JOIN run_waits w ON w.run_id=r.id WHERE r.status='queued' AND w.suspension_status='resume_pending' AND w.expected_run_revision=r.revision`).Scan(&queued); err != nil || queued != wakeCount {
+				t.Fatalf("queued=%d err=%v", queued, err)
+			}
+			authority, err := dispatch.NewRunAuthority(f.Pool, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fence := dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(uuid.MustParse(request.ComputerInstanceID)), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: 1}
+			tx, err = f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := readRestorePlan(t, f, worker, request, key)
+			if err != nil || plan == nil || len(plan.Members) != 2 {
+				t.Fatalf("whole restored set missing: plan=%+v err=%v", plan, err)
+			}
+			var grants []dispatch.ComputerRestoreGrant
+			for _, member := range plan.Members {
+				grants = append(grants, dispatch.ComputerRestoreGrant{RunID: pgvalue.UUID(uuid.MustParse(member.RunID)), LeaseID: pgvalue.UUID(uuid.MustParse(member.Lease.ID)), LeaseSequence: member.Lease.LeaseSequence})
+			}
+			tx, err = f.Pool.Begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tx.Rollback(context.Background())
+			if _, err := dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, request.WriterGeneration, grants); err != nil {
+				t.Fatal(err)
+			}
+			if err := tx.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			var resumed, completed, pending int
+			err = f.Pool.QueryRow(t.Context(), `SELECT count(*),count(*) FILTER (WHERE w.condition_status='completed' AND w.condition_result='{"resume":true}'::jsonb),count(*) FILTER (WHERE w.condition_status='pending')
+ FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN run_leases l ON l.id=w.current_run_lease_id
+ WHERE l.computer_instance_id=$1 AND l.status='running' AND r.status='waiting' AND w.suspension_status='resuming' AND w.expected_run_revision=r.revision`, request.ComputerInstanceID).Scan(&resumed, &completed, &pending)
+			if err != nil || resumed != 2 || completed != wakeCount || pending != 2-wakeCount {
+				t.Fatalf("resumed=%d completed=%d pending=%d err=%v", resumed, completed, pending, err)
 			}
 		})
 	}

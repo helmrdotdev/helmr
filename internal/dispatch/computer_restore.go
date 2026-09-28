@@ -114,7 +114,9 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, fence 
 		if err != nil {
 			return checkpoint, err
 		}
-		if !current || r.Status != db.RunStatusWaiting || r.CurrentAttemptNumber != m.AttemptNumber || r.CurrentRunLeaseID.Valid {
+		restorable := r.Status == db.RunStatusWaiting && (wait.SuspensionStatus == "parked" || wait.SuspensionStatus == "resume_pending") ||
+			r.Status == db.RunStatusQueued && wait.SuspensionStatus == "resume_pending"
+		if !current || !restorable || r.CurrentAttemptNumber != m.AttemptNumber || r.CurrentRunLeaseID.Valid {
 			return checkpoint, pgx.ErrNoRows
 		}
 		lease, err := d.grantFreshRun(ctx, tx, r, i)

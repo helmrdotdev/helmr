@@ -20,6 +20,11 @@ import (
 func Restore(t *testing.T, idle bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, *dispatch.Authority, dispatch.ComputerPreparationFence) {
 	t.Helper()
 	f, worker, request, uploaded := ReadyCapture(t, idle, setup...)
+	return RestoreReadyCapture(t, f, worker, request, uploaded)
+}
+
+func RestoreReadyCapture(t *testing.T, f runtest.Fixture, worker dispatch.ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, uploaded []cas.Object) (runtest.Fixture, *dispatch.Authority, dispatch.ComputerPreparationFence) {
+	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

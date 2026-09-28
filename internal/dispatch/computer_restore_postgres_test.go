@@ -644,3 +644,51 @@ func TestComputerRestoreReconciliationExpiryIntentFailureRollsBack(t *testing.T)
 		t.Fatalf("expiry atomic=%v err=%v", unchanged, err)
 	}
 }
+
+func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
+	f, worker, request, uploaded := dispatchtest.ReadyCapture(t, false)
+	var wake db.ResolveCheckpointingTokenWaitParams
+	err := f.Pool.QueryRow(t.Context(), `SELECT w.id,w.run_id,w.expected_run_revision,w.current_run_lease_id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id LIMIT 1`, request.CheckpointID).Scan(&wake.WaitID, &wake.RunID, &wake.ExpectedRunRevision, &wake.CurrentRunLeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wake.ConditionStatus = "completed"
+	wake.ConditionResult = []byte(`{"resume":true}`)
+	if _, err := db.New(f.Pool).ResolveCheckpointingTokenWait(t.Context(), wake); err != nil {
+		t.Fatal(err)
+	}
+	f, authority, fence := dispatchtest.RestoreReadyCapture(t, f, worker, request, uploaded)
+	var parked bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='waiting' AND w.suspension_status='resume_pending' FROM runs r JOIN run_waits w ON w.run_id=r.id WHERE w.id=$1`, wake.WaitID).Scan(&parked); err != nil || !parked {
+		t.Fatalf("waiting wakeup=%v err=%v", parked, err)
+	}
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	grants := installedRestoreGrants(t, f, fence)
+	tx, err = f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var preserved bool
+	err = f.Pool.QueryRow(t.Context(), `SELECT r.status='waiting' AND w.suspension_status='resuming' AND w.expected_run_revision=r.revision AND w.condition_status='completed' AND w.condition_result='{"resume":true}'::jsonb AND l.status='running' FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN run_leases l ON l.id=w.current_run_lease_id WHERE w.id=$1`, wake.WaitID).Scan(&preserved)
+	if err != nil || !preserved {
+		t.Fatalf("restored resolved condition=%v err=%v", preserved, err)
+	}
+}
