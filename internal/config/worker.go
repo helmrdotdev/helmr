@@ -13,37 +13,37 @@ import (
 
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
-		ComputerDevices:              strings.Fields(envText("WORKER_COMPUTER_DEVICES")),
-		ComputerStagingMiB:           65536,
-		ControlPlaneURL:              envText("CONTROL_PLANE_URL"),
-		WorkerResourceID:             envText("WORKER_RESOURCE_ID"),
-		WorkerPoolName:               os.Getenv("WORKER_POOL_NAME"),
-		WorkerEnrollmentTokenFile:    envText("WORKER_ENROLLMENT_TOKEN_FILE"),
-		CASURI:                       envText("CAS_URI"),
-		WorkerInstanceCredentialPath: envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
-		PlatformStoreURI:             envText("PLATFORM_STORE_URI"),
-		WorkDir:                      envText("WORKER_WORK_DIR"),
-		ImagesDir:                    envText("WORKER_IMAGES_DIR"),
-		FirecrackerPath:              env("FIRECRACKER_PATH", "firecracker"),
-		CPUTemplateHelperPath:        env("CPU_TEMPLATE_HELPER_PATH", "cpu-template-helper"),
-		JailerPath:                   env("JAILER_PATH", "jailer"),
-		MkfsExt4Path:                 env("MKFS_EXT4_PATH", "/usr/local/libexec/helmr/mkfs.ext4"),
-		Mke2fsConfigPath:             env("MKE2FS_CONFIG_PATH", "/usr/share/helmr/mke2fs.conf"),
-		JailerNumaNode:               0,
-		JailerChrootDir:              envText("JAILER_CHROOT_DIR"),
-		CgroupVersion:                env("JAILER_CGROUP_VERSION", "2"),
-		NetworkLinkPool:              envText("WORKER_NETWORK_LINK_POOL"),
-		NetworkTranslationPool:       envText("WORKER_NETWORK_TRANSLATION_POOL"),
-		NetworkResolverIPv4:          envText("WORKER_NETWORK_RESOLVER_IPV4"),
-		IPPath:                       env("IP_PATH", "ip"),
-		NFTPath:                      env("NFT_PATH", "nft"),
-		VMVCPUCount:                  2,
-		VMMemoryMiB:                  2048,
-		VMScratchDiskMiB:             8192,
-		WorkerDiskReserveMiB:         1024,
-		VMInitTimeout:                30 * time.Second,
-		VMHealthTimeout:              30 * time.Second,
-		PollEvery:                    2 * time.Second,
+		ComputerDevices:           strings.Fields(envText("WORKER_COMPUTER_DEVICES")),
+		ComputerStagingMiB:        65536,
+		ControlPlaneURL:           envText("CONTROL_PLANE_URL"),
+		WorkerResourceID:          envText("WORKER_RESOURCE_ID"),
+		WorkerPoolName:            os.Getenv("WORKER_POOL_NAME"),
+		WorkerEnrollmentTokenFile: envText("WORKER_ENROLLMENT_TOKEN_FILE"),
+		CASURI:                    envText("CAS_URI"),
+		WorkerHostCredentialPath:  envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
+		PlatformStoreURI:          envText("PLATFORM_STORE_URI"),
+		WorkDir:                   envText("WORKER_WORK_DIR"),
+		ImagesDir:                 envText("WORKER_IMAGES_DIR"),
+		FirecrackerPath:           env("FIRECRACKER_PATH", "firecracker"),
+		CPUTemplateHelperPath:     env("CPU_TEMPLATE_HELPER_PATH", "cpu-template-helper"),
+		JailerPath:                env("JAILER_PATH", "jailer"),
+		MkfsExt4Path:              env("MKFS_EXT4_PATH", "/usr/local/libexec/helmr/mkfs.ext4"),
+		Mke2fsConfigPath:          env("MKE2FS_CONFIG_PATH", "/usr/share/helmr/mke2fs.conf"),
+		JailerNumaNode:            0,
+		JailerChrootDir:           envText("JAILER_CHROOT_DIR"),
+		CgroupVersion:             env("JAILER_CGROUP_VERSION", "2"),
+		NetworkLinkPool:           envText("WORKER_NETWORK_LINK_POOL"),
+		NetworkTranslationPool:    envText("WORKER_NETWORK_TRANSLATION_POOL"),
+		NetworkResolverIPv4:       envText("WORKER_NETWORK_RESOLVER_IPV4"),
+		IPPath:                    env("IP_PATH", "ip"),
+		NFTPath:                   env("NFT_PATH", "nft"),
+		VMVCPUCount:               2,
+		VMMemoryMiB:               2048,
+		VMScratchDiskMiB:          8192,
+		WorkerDiskReserveMiB:      1024,
+		VMInitTimeout:             30 * time.Second,
+		VMHealthTimeout:           30 * time.Second,
+		PollEvery:                 2 * time.Second,
 	}
 	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
 		return cfg, errors.New("WORKER_RESOURCE_ID is required and must not exceed 512 bytes")
@@ -115,12 +115,6 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkerDiskReserveMiB <= 0 {
 		return cfg, errors.New("WORKER_DISK_RESERVE_MIB must be positive")
 	}
-	if cfg.SubstrateCacheMaxMiB, err = envInt64("WORKER_SUBSTRATE_CACHE_MAX_MIB", cfg.SubstrateCacheMaxMiB); err != nil {
-		return cfg, err
-	}
-	if cfg.SubstrateCacheMaxMiB < 0 {
-		return cfg, errors.New("WORKER_SUBSTRATE_CACHE_MAX_MIB must be non-negative")
-	}
 	if cfg.ArtifactCacheMaxMiB, err = envInt64("WORKER_ARTIFACT_CACHE_MAX_MIB", cfg.ArtifactCacheMaxMiB); err != nil {
 		return cfg, err
 	}
@@ -168,9 +162,7 @@ func LoadWorker() (Worker, error) {
 	if cfg.PlatformStoreURI == "" {
 		return cfg, errors.New("PLATFORM_STORE_URI is required")
 	}
-	if cfg.SubstrateCacheMaxMiB > math.MaxInt64/(1024*1024) ||
-		cfg.ArtifactCacheMaxMiB > math.MaxInt64/(1024*1024) ||
-		cfg.SubstrateCacheMaxMiB > math.MaxInt64-cfg.ArtifactCacheMaxMiB {
+	if cfg.ArtifactCacheMaxMiB > math.MaxInt64/(1024*1024) {
 		return cfg, errors.New("worker cache capacity exceeds the supported byte range")
 	}
 	cfg.CheckpointKey, err = rootKey("CHECKPOINT_ENCRYPTION_KEY")
@@ -197,10 +189,10 @@ func LoadWorker() (Worker, error) {
 
 func LoadWorkerControlPlane() (WorkerControlPlane, error) {
 	cfg := WorkerControlPlane{
-		ControlPlaneURL:              envText("CONTROL_PLANE_URL"),
-		WorkerInstanceCredentialPath: envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
-		WorkDir:                      envText("WORKER_WORK_DIR"),
-		PollEvery:                    2 * time.Second,
+		ControlPlaneURL:          envText("CONTROL_PLANE_URL"),
+		WorkerHostCredentialPath: envText("WORKER_INSTANCE_CREDENTIAL_PATH"),
+		WorkDir:                  envText("WORKER_WORK_DIR"),
+		PollEvery:                2 * time.Second,
 	}
 	if cfg.ControlPlaneURL == "" {
 		return cfg, errors.New("CONTROL_PLANE_URL is required")

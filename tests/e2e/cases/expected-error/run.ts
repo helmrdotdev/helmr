@@ -1,10 +1,10 @@
 import { verify, assertEqual, deadline, waitRun } from "../../support/context"
-await verify("expected-error", async ({ client, marker, objects, workspace }) => {
-  const target = await workspace("helmr-edge-smoke")
+await verify("expected-error", async ({ client, marker, objects, computer }) => {
+  const target = await computer("helmr-edge-smoke")
   const run = await client.tasks.start(
     "edge-smoke",
     {
-      workspace: target,
+      computer: target,
       payload: { mode: "expected-error" },
       idempotencyKey: `expected-error:${marker}`,
     },

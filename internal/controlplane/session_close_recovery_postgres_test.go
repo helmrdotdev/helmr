@@ -97,27 +97,27 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 			}
 			waitDelivered(closeReceipt.ID)
 			var status string
-			var hold, current, owner *uuid.UUID
+			var hold, current, sessionComputer *uuid.UUID
 			read := func() {
 				t.Helper()
-				if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_id,s.current_run_id,w.owner_session_id FROM sessions s JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, started.SessionID).Scan(&status, &hold, &current, &owner); err != nil {
+				if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_id,s.current_run_id,s.computer_id FROM sessions s JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, started.SessionID).Scan(&status, &hold, &current, &sessionComputer); err != nil {
 					t.Fatal(err)
 				}
 			}
 			read()
 			if queued {
-				if status != "closing" || hold == nil || current != nil || owner == nil {
-					t.Fatalf("stopped execution dispatched held input: %s hold=%v run=%v owner=%v", status, hold, current, owner)
+				if status != "closing" || hold == nil || current != nil || sessionComputer == nil {
+					t.Fatalf("stopped execution dispatched held input: %s hold=%v run=%v sessionComputer=%v", status, hold, current, sessionComputer)
 				}
 				var resumed api.SessionResumeReceipt
 				call(f.server.resumeSessionHTTP, api.ResumeSessionRequest{HoldID: hold.String(), IdempotencyKey: "resume"}, &resumed)
 				waitDelivered(resumed.ID)
 				read()
-				if status != "closing" || hold != nil || current == nil || *current == started.BootRunID || owner == nil {
-					t.Fatalf("resume lost continuation: %s hold=%v run=%v owner=%v", status, hold, current, owner)
+				if status != "closing" || hold != nil || current == nil || *current == started.BootRunID || sessionComputer == nil {
+					t.Fatalf("resume lost continuation: %s hold=%v run=%v sessionComputer=%v", status, hold, current, sessionComputer)
 				}
-			} else if status != "closed" || hold != nil || current != nil || owner != nil {
-				t.Fatalf("drained stop did not close: %s hold=%v run=%v owner=%v", status, hold, current, owner)
+			} else if status != "closed" || hold != nil || current != nil || sessionComputer == nil {
+				t.Fatalf("drained stop did not close: %s hold=%v run=%v sessionComputer=%v", status, hold, current, sessionComputer)
 			}
 		})
 	}

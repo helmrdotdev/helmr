@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 type Placement struct {
@@ -21,7 +21,7 @@ type Placement struct {
 
 type RunRuntimeRequirements struct {
 	Resources ResourceVector
-	Runtime   runtimeid.Profile
+	Runtime   vmplatform.Profile
 	Placement Placement
 }
 
@@ -63,7 +63,7 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 			DiskMiB:   fields.RequestedDiskMiB,
 			Slots:     fields.RequestedExecutionSlots,
 		},
-		Runtime: runtimeid.Profile{
+		Runtime: vmplatform.Profile{
 			ID:              fields.RuntimeID,
 			Arch:            fields.RuntimeArch,
 			Contract:        fields.VMRuntimeContract,

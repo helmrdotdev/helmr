@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -50,54 +50,53 @@ type Store interface {
 	ListQueuedRunEligibleScopes(context.Context, db.ListQueuedRunEligibleScopesParams) ([]db.ListQueuedRunEligibleScopesRow, error)
 	ListQueuedRunPlanningUsage(context.Context, db.ListQueuedRunPlanningUsageParams) ([]db.ListQueuedRunPlanningUsageRow, error)
 	ListQueuedRunPlanningCandidatesForScopes(context.Context, db.ListQueuedRunPlanningCandidatesForScopesParams) ([]db.ListQueuedRunPlanningCandidatesForScopesRow, error)
-	ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error)
+	ListPendingComputerCommandCapacityCandidates(context.Context, db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error)
 }
 
 type item struct {
-	role              string
-	resources         ResourceVector
-	targetPoolID      pgtype.UUID
-	restore           *RestoreRequirements
-	runtimeIdentityID string
-	reason            string
-	key               string
+	role         string
+	resources    ResourceVector
+	targetPoolID pgtype.UUID
+	restore      *RestoreRequirements
+	vmPlatformID string
+	reason       string
+	key          string
 }
 
 type bin struct {
-	workerGroupID     uuid.UUID
-	workerPoolID      pgtype.UUID
-	resources         ResourceVector
-	runConsumers      int64
-	runtimeStarts     int64
-	supportsRun       bool
-	runtimeArch       string
-	runtimeContract   string
-	runtimeIdentityID string
-	runPaused         bool
-	runtimePaused     bool
-	perVM             ResourceVector
-	cpuShapes         []runtimeid.CPUShape
+	workerGroupID   uuid.UUID
+	workerPoolID    pgtype.UUID
+	resources       ResourceVector
+	instanceStarts  int64
+	supportsRun     bool
+	runtimeArch     string
+	runtimeContract string
+	vmPlatformID    string
+	runPaused       bool
+	runtimePaused   bool
+	perVM           ResourceVector
+	cpuShapes       []vmplatform.CPUShape
 }
 
 type RestoreRequirements struct {
-	WorkerGroupID     uuid.UUID
-	RuntimeIdentityID string
-	VCPUCount         int32
-	CPUConfigDigest   string
-	Resources         ResourceVector
+	WorkerGroupID   uuid.UUID
+	VMPlatformID    string
+	VCPUCount       int32
+	CPUConfigDigest string
+	Resources       ResourceVector
 }
 
 type Pool struct {
-	WorkerGroupID     uuid.UUID
-	RuntimeIdentityID string
-	PerVM             ResourceVector
-	CPUShapes         []runtimeid.CPUShape
+	WorkerGroupID uuid.UUID
+	VMPlatformID  string
+	PerVM         ResourceVector
+	CPUShapes     []vmplatform.CPUShape
 }
 
 func CanRestore(requirements RestoreRequirements, pool Pool) bool {
 	if requirements.WorkerGroupID == uuid.Nil() || pool.WorkerGroupID == uuid.Nil() ||
 		pool.WorkerGroupID != requirements.WorkerGroupID ||
-		requirements.RuntimeIdentityID == "" || pool.RuntimeIdentityID != requirements.RuntimeIdentityID ||
+		requirements.VMPlatformID == "" || pool.VMPlatformID != requirements.VMPlatformID ||
 		requirements.VCPUCount <= 0 || requirements.CPUConfigDigest == "" ||
 		!fitsPhysical(pool.PerVM, requirements.Resources) {
 		return false
@@ -339,7 +338,7 @@ func Plan(ctx context.Context, store Store, workerGroupID uuid.UUID, request Pla
 }
 
 func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, error) {
-	if !row.RuntimeIdentityID.Valid || !row.SubstrateFormat.Valid || !row.SubstrateContract.Valid ||
+	if !row.VMPlatformID.Valid ||
 		!row.CapacityCPUMillis.Valid || !row.CapacityMemoryBytes.Valid ||
 		!row.CapacityGuestEphemeralDiskBytes.Valid || !row.PerVMCPUMillis.Valid ||
 		!row.PerVMMemoryBytes.Valid || !row.PerVMGuestEphemeralDiskBytes.Valid ||
@@ -347,9 +346,9 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 		len(row.CPUShapeVCPUCounts) != len(row.CPUShapeConfigDigests) {
 		return poolPlan{}, errors.New("active Worker pool has an incomplete template")
 	}
-	shapes := make([]runtimeid.CPUShape, len(row.CPUShapeVCPUCounts))
+	shapes := make([]vmplatform.CPUShape, len(row.CPUShapeVCPUCounts))
 	for index := range row.CPUShapeVCPUCounts {
-		shapes[index] = runtimeid.CPUShape{
+		shapes[index] = vmplatform.CPUShape{
 			VCPUCount: row.CPUShapeVCPUCounts[index], CPUConfigDigest: row.CPUShapeConfigDigests[index],
 		}
 	}
@@ -365,16 +364,16 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 	workerGroupID := pgvalue.MustUUIDValue(row.WorkerGroupID)
 	template := bin{
 		workerGroupID: workerGroupID, workerPoolID: row.ID,
-		resources: resources, runConsumers: resources.VMSlots, runtimeStarts: resources.VMSlots,
+		resources: resources, instanceStarts: resources.VMSlots,
 		supportsRun: true,
-		runtimeArch: "x86_64", runtimeContract: runtimeid.Contract,
-		runtimeIdentityID: row.RuntimeIdentityID.String,
-		perVM:             perVM, cpuShapes: shapes,
+		runtimeArch: "x86_64", runtimeContract: vmplatform.Contract,
+		vmPlatformID: row.VMPlatformID.String,
+		perVM:        perVM, cpuShapes: shapes,
 	}
 	return poolPlan{
 		id: row.ID, max: max,
 		pool: Pool{
-			WorkerGroupID: workerGroupID, RuntimeIdentityID: row.RuntimeIdentityID.String,
+			WorkerGroupID: workerGroupID, VMPlatformID: row.VMPlatformID.String,
 			PerVM: perVM, CPUShapes: shapes,
 		},
 		template: template,
@@ -389,7 +388,7 @@ func capacityPoolPlan(row db.ListCapacityWorkerPoolsRow, max int32) (poolPlan, e
 func candidateMatchesBin(candidate item, target bin) bool {
 	if candidate.restore != nil {
 		return CanRestore(*candidate.restore, Pool{
-			WorkerGroupID: target.workerGroupID, RuntimeIdentityID: target.runtimeIdentityID,
+			WorkerGroupID: target.workerGroupID, VMPlatformID: target.vmPlatformID,
 			PerVM: target.perVM, CPUShapes: target.cpuShapes,
 		})
 	}
@@ -400,6 +399,7 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 	result := make([]item, 0, maximumPlanningCandidates)
 	accountedPoolIDs := make(map[[16]byte]struct{}, maximumPlanningPools)
 	complete := true
+	seenComputers := make(map[[16]byte]struct{})
 	{
 		remaining := maximumPlanningCandidates
 		var after db.ListQueuedRunEligibleScopesRow
@@ -453,8 +453,20 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 				if candidate.reason == "" && !admission.admit(row.QueueConcurrencyLimit) {
 					candidate.reason = reasonQueueConcurrency
 				}
-				result = append(result, candidate)
 				remaining--
+				if len(row.AccountedPoolIds) > 0 {
+					for _, poolID := range row.AccountedPoolIds {
+						accountedPoolIDs[poolID.Bytes] = struct{}{}
+					}
+					continue
+				}
+				if candidate.reason == "" {
+					if _, seen := seenComputers[row.ComputerID.Bytes]; seen {
+						continue
+					}
+					seenComputers[row.ComputerID.Bytes] = struct{}{}
+				}
+				result = append(result, candidate)
 			}
 			last := scopes[len(scopes)-1]
 			after = last
@@ -469,33 +481,36 @@ func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanS
 			complete = false
 		}
 	}
-	execs, err := store.ListPendingWorkspaceExecCapacityCandidates(ctx, db.ListPendingWorkspaceExecCapacityCandidatesParams{
+	commands, err := store.ListPendingComputerCommandCapacityCandidates(ctx, db.ListPendingComputerCommandCapacityCandidatesParams{
 		RegionID: group.RegionID,
 		RowLimit: maximumPlanningCandidates + 1,
 	})
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("list capacity planning Workspace Exec candidates: %w", err)
+		return nil, nil, false, fmt.Errorf("list capacity planning Computer Command candidates: %w", err)
 	}
-	if len(execs) > int(maximumPlanningCandidates) {
+	if len(commands) > int(maximumPlanningCandidates) {
 		complete = false
-		execs = execs[:maximumPlanningCandidates]
+		commands = commands[:maximumPlanningCandidates]
 	}
-	for _, row := range execs {
+	for _, row := range commands {
 		if len(row.AccountedPoolIds) > 0 {
 			for _, poolID := range row.AccountedPoolIds {
 				accountedPoolIDs[poolID.Bytes] = struct{}{}
 			}
 			continue
 		}
-		result = append(result, workspaceExecItem(row))
+		if _, seen := seenComputers[row.ComputerID.Bytes]; seen {
+			continue
+		}
+		seenComputers[row.ComputerID.Bytes] = struct{}{}
+		result = append(result, computerCommandItem(row))
 	}
 	return result, accountedPoolIDs, complete, nil
 }
 
 type queueAdmissionState struct {
-	activeRuns, activeLimit     int64
-	preparedRuns, preparedLimit int64
-	admitted                    int64
+	activeRuns, activeLimit int64
+	admitted                int64
 }
 
 func planningUsageParams(scopes []db.ListQueuedRunEligibleScopesRow) db.ListQueuedRunPlanningUsageParams {
@@ -533,13 +548,11 @@ func planningCandidateParams(scopes []db.ListQueuedRunEligibleScopesRow, limit i
 func queueAdmissionStateFromUsage(usage db.ListQueuedRunPlanningUsageRow) queueAdmissionState {
 	return queueAdmissionState{
 		activeRuns: usage.ActiveRuns, activeLimit: usage.ActiveLimit,
-		preparedRuns: usage.PreparedRuns, preparedLimit: usage.PreparedLimit,
 	}
 }
 
 func (s *queueAdmissionState) admit(candidateLimit pgtype.Int8) bool {
-	if exceedsQueueLimit(s.activeRuns+s.admitted, candidateLimit, s.activeLimit) ||
-		exceedsQueueLimit(s.preparedRuns+s.admitted, candidateLimit, s.preparedLimit) {
+	if exceedsQueueLimit(s.activeRuns+s.admitted, candidateLimit, s.activeLimit) {
 		return false
 	}
 	s.admitted++
@@ -555,12 +568,12 @@ func exceedsQueueLimit(used int64, candidateLimit pgtype.Int8, pinnedLimit int64
 }
 
 func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
-	result := freshExecutionItem(fmt.Sprintf("%x", row.RunID.Bytes), row.WorkspaceManifestVersion, row.WorkspaceManifest)
+	result := freshExecutionItem(fmt.Sprintf("computer:%x", row.ComputerID.Bytes), row.ComputerConfig)
 	if result.reason != "" {
 		return result
 	}
 	resources := result.resources
-	if row.RequiredRuntimeIdentityID != "" {
+	if row.RequiredVMPlatformID != "" {
 		if !row.RequiredWorkerGroupID.Valid || row.RequiredVMVCPUCount <= 0 ||
 			row.RequiredCPUConfigDigest == "" || row.RequiredCPUMillis <= 0 ||
 			row.RequiredMemoryBytes <= 0 || row.RequiredGuestEphemeralDiskBytes <= 0 {
@@ -572,23 +585,29 @@ func runItem(row db.ListQueuedRunPlanningCandidatesForScopesRow) item {
 			GuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes, VMSlots: 1,
 		}
 		result.restore = &RestoreRequirements{
-			WorkerGroupID: pgvalue.MustUUIDValue(row.RequiredWorkerGroupID), RuntimeIdentityID: row.RequiredRuntimeIdentityID,
+			WorkerGroupID: pgvalue.MustUUIDValue(row.RequiredWorkerGroupID), VMPlatformID: row.RequiredVMPlatformID,
 			VCPUCount: row.RequiredVMVCPUCount, CPUConfigDigest: row.RequiredCPUConfigDigest,
 			Resources: resources,
 		}
 	}
 	result.resources = resources
-	result.runtimeIdentityID = row.RequiredRuntimeIdentityID
+	result.vmPlatformID = row.RequiredVMPlatformID
 	return result
 }
 
-func workspaceExecItem(row db.ListPendingWorkspaceExecCapacityCandidatesRow) item {
-	return freshExecutionItem(fmt.Sprintf("workspace-exec:%x", row.ProcessID.Bytes), row.WorkspaceManifestVersion, row.WorkspaceManifest)
+func computerCommandItem(row db.ListPendingComputerCommandCapacityCandidatesRow) item {
+	return runItem(db.ListQueuedRunPlanningCandidatesForScopesRow{
+		ComputerID: row.ComputerID, ComputerConfig: row.ComputerConfig,
+		RequiredWorkerGroupID: row.RequiredWorkerGroupID, RequiredVMPlatformID: row.RequiredVMPlatformID,
+		RequiredVMVCPUCount: row.RequiredVMVCPUCount, RequiredCPUConfigDigest: row.RequiredCPUConfigDigest,
+		RequiredCPUMillis: row.RequiredCPUMillis, RequiredMemoryBytes: row.RequiredMemoryBytes,
+		RequiredGuestEphemeralDiskBytes: row.RequiredGuestEphemeralDiskBytes,
+	})
 }
 
-func freshExecutionItem(key string, manifestVersion int32, manifestJSON []byte) item {
+func freshExecutionItem(key string, configJSON []byte) item {
 	result := item{role: "run", key: key}
-	manifest, err := deployment.ParseSandboxManifest(manifestVersion, manifestJSON)
+	manifest, err := deployment.ParseComputerConfig(configJSON)
 	if err != nil {
 		result.reason = reasonInvalidWorkload
 		return result
@@ -600,7 +619,7 @@ func freshExecutionItem(key string, manifestVersion int32, manifestJSON []byte) 
 	}
 	resources := ResourceVector{
 		CPUMillis: manifest.Resources.MilliCPU, MemoryBytes: manifest.Resources.MemoryMiB * mebibyte,
-		GuestEphemeralDiskBytes: compute.WorkspaceGuestEphemeralDiskMiB * mebibyte,
+		GuestEphemeralDiskBytes: compute.ComputerGuestEphemeralDiskMiB * mebibyte,
 		VMSlots:                 1,
 	}
 	result.resources = resources
@@ -635,20 +654,20 @@ func binFromRow(row db.ListWorkerCapacityBinsRow) bin {
 			GuestEphemeralDiskBytes: row.AvailableGuestEphemeralDiskBytes,
 			VMSlots:                 row.AvailableVMSlots,
 		},
-		runConsumers: row.AvailableRunConsumers, runtimeStarts: row.AvailableRuntimeStarts, supportsRun: true,
-		runtimeArch:     row.RuntimeArch,
-		runtimeContract: row.VMRuntimeContract, runtimeIdentityID: row.RuntimeIdentityID.String,
+		instanceStarts: row.AvailableInstanceStarts, supportsRun: true,
+		runtimeArch:     row.Arch,
+		runtimeContract: row.Contract, vmPlatformID: row.VMPlatformID.String,
 		runPaused:     row.RunPausedReason.Valid,
-		runtimePaused: row.RuntimePausedReason.Valid,
+		runtimePaused: row.VMPausedReason.Valid,
 		perVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis, MemoryBytes: row.PerVMMemoryBytes,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes,
 		},
 	}
 	if len(row.CPUShapeVCPUCounts) == len(row.CPUShapeConfigDigests) {
-		result.cpuShapes = make([]runtimeid.CPUShape, len(row.CPUShapeVCPUCounts))
+		result.cpuShapes = make([]vmplatform.CPUShape, len(row.CPUShapeVCPUCounts))
 		for index := range row.CPUShapeVCPUCounts {
-			result.cpuShapes[index] = runtimeid.CPUShape{
+			result.cpuShapes[index] = vmplatform.CPUShape{
 				VCPUCount: row.CPUShapeVCPUCounts[index], CPUConfigDigest: row.CPUShapeConfigDigests[index],
 			}
 		}
@@ -660,16 +679,13 @@ func incompatibility(candidate item, target bin) string {
 	if candidate.role == "run" && !target.supportsRun {
 		return reasonRunRole
 	}
-	if target.runtimeArch != "x86_64" || target.runtimeContract != runtimeid.Contract {
+	if target.runtimeArch != "x86_64" || target.runtimeContract != vmplatform.Contract {
 		return reasonRuntimeCompatibility
 	}
-	if candidate.role == "run" && candidate.runtimeIdentityID != "" && candidate.runtimeIdentityID != target.runtimeIdentityID {
+	if candidate.role == "run" && candidate.vmPlatformID != "" && candidate.vmPlatformID != target.vmPlatformID {
 		return reasonRuntimeCompatibility
 	}
 	if !fitsResources(target.resources, candidate.resources) {
-		return reasonPerInstanceResources
-	}
-	if candidate.role == "run" && target.runConsumers <= 0 {
 		return reasonPerInstanceResources
 	}
 	if candidate.role == "run" && !fitsPhysical(target.perVM, candidate.resources) {
@@ -682,7 +698,7 @@ func place(target *bin, candidate item) bool {
 	if incompatibility(candidate, *target) != "" {
 		return false
 	}
-	if candidate.role == "run" && (target.runPaused || target.runtimePaused || target.runtimeStarts <= 0) {
+	if candidate.role == "run" && (target.runPaused || target.runtimePaused || target.instanceStarts <= 0) {
 		return false
 	}
 	target.resources.CPUMillis -= candidate.resources.CPUMillis
@@ -690,8 +706,7 @@ func place(target *bin, candidate item) bool {
 	target.resources.GuestEphemeralDiskBytes -= candidate.resources.GuestEphemeralDiskBytes
 	if candidate.role == "run" {
 		target.resources.VMSlots--
-		target.runConsumers--
-		target.runtimeStarts--
+		target.instanceStarts--
 	}
 	return true
 }

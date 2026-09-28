@@ -8,13 +8,13 @@ import {
   source,
   task,
   sandbox,
-  workspaces,
+  computers,
   type JsonValue,
   type PayloadSchema,
 } from "@helmr/sdk"
 import {
   analyze,
-  normalizeWorkspaceResources,
+  normalizeComputerResources,
 } from "./compile"
 import {
   encodeVerificationResultFrame,
@@ -108,13 +108,13 @@ describe("declaration analysis", () => {
         slot: "handler",
       },
     ])
-    const workspaceDefinition = result.buildPlan.definitions[3]
-    expect(workspaceDefinition?.kind).toBe("sandbox")
-    if (workspaceDefinition?.kind !== "sandbox") throw new Error("Sandbox missing")
-    expect(workspaceDefinition.manifest.imageBuild).not.toHaveProperty(
+    const computerDefinition = result.buildPlan.definitions[3]
+    expect(computerDefinition?.kind).toBe("sandbox")
+    if (computerDefinition?.kind !== "sandbox") throw new Error("Sandbox missing")
+    expect(computerDefinition.manifest.imageBuild).not.toHaveProperty(
       "formatVersion",
     )
-    expect(workspaceDefinition.manifest.resources).toEqual({
+    expect(computerDefinition.manifest.resources).toEqual({
       milliCpu: 125,
       memoryMiB: 1024,
     })
@@ -246,7 +246,7 @@ describe("declaration analysis", () => {
 
   test("normalizes resources exactly and rejects rounding or aliases", () => {
     expect(
-      normalizeWorkspaceResources({
+      normalizeComputerResources({
         cpu: 1e-3,
         memory: "1GiB",
       }),
@@ -257,7 +257,7 @@ describe("declaration analysis", () => {
 
     for (const cpu of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.0001]) {
       expect(() =>
-        normalizeWorkspaceResources({
+        normalizeComputerResources({
           cpu,
           memory: "1MiB",
         }),
@@ -265,7 +265,7 @@ describe("declaration analysis", () => {
     }
     for (const memory of ["01MiB", "1GB", "1.5GiB", " 1GiB", "+1MiB"]) {
       expect(() =>
-        normalizeWorkspaceResources({
+        normalizeComputerResources({
           cpu: 1,
           memory,
         }),
@@ -285,7 +285,7 @@ describe("declaration analysis", () => {
     const result = analyze({
       architecture: "x86_64",
       exports: [{
-        sourcePath: "src/workspace.ts",
+        sourcePath: "src/computer.ts",
         exportName: "machine",
         value: machine,
       }],
@@ -328,7 +328,7 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [{
-          sourcePath: "src/workspace.ts",
+          sourcePath: "src/computer.ts",
           exportName: "machine",
           value: sandbox({ id: "machine" })
             .image(forged as never)
@@ -338,14 +338,14 @@ describe("declaration analysis", () => {
     ).toThrow("image run step has unknown members")
   })
 
-  test("normalizes scheduler-owned payload and declarative workspace", () => {
+  test("normalizes scheduler-owned payload and declarative computer", () => {
     const maintenance = sandbox({ id: "maintenance" })
       .image(image("maintenance").from("debian:bookworm-slim"))
       .resources({ cpu: 1, memory: "1GiB" })
     const scheduled = schedules.task({
       id: "nightly",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: {
+      computer: {
         sandbox: maintenance,
         secrets: [{ secret: "TOKEN", env: {name: "TOKEN", mode: "raw"} }],
       },
@@ -372,7 +372,7 @@ describe("declaration analysis", () => {
     expect(definition.manifest.schedule).toEqual({
       cron: "0 3 * * *",
       timezone: "UTC",
-      workspace: {
+      computer: {
         sandboxId: "maintenance",
         secrets: [{ secret: "TOKEN", env: {name: "TOKEN", mode: "raw"} }],
       },
@@ -389,7 +389,7 @@ describe("declaration analysis", () => {
     const scheduled = schedules.task({
       id: "nightly",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: { sandbox: maintenance },
+      computer: { sandbox: maintenance },
       run: () => null,
     })
     expect(() => analyze({
@@ -412,7 +412,7 @@ describe("declaration analysis", () => {
     const scheduled = schedules.task({
       id: "nightly",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: { sandbox: referenced },
+      computer: { sandbox: referenced },
       run: () => null,
     })
     expect(() => analyze({
@@ -441,7 +441,7 @@ describe("declaration analysis", () => {
     const scheduled = schedules.task({
       id: "nightly",
       cron: { pattern: "0 3 * * *", timezone: "UTC" },
-      workspace: { sandbox: maintenance },
+      computer: { sandbox: maintenance },
       run: () => null,
     })
     const result = analyze({
@@ -459,7 +459,7 @@ describe("declaration analysis", () => {
         },
         {
           sourcePath: "src/index.ts",
-          exportName: "workspace",
+          exportName: "computer",
           value: maintenance,
         },
       ],
@@ -469,7 +469,7 @@ describe("declaration analysis", () => {
     )).toHaveLength(1)
     expect(result.buildPlan.definitions[0]).toMatchObject({
       kind: "task",
-      manifest: { schedule: { workspace: { sandboxId: "maintenance" } } },
+      manifest: { schedule: { computer: { sandboxId: "maintenance" } } },
     })
   })
 
@@ -525,7 +525,7 @@ describe("declaration analysis", () => {
         schedules.task({
           id: `valid-${index}`,
           cron: { pattern, timezone: "UTC" },
-          workspace: { sandbox: maintenance },
+          computer: { sandbox: maintenance },
           run: () => null,
         }),
       ).not.toThrow()
@@ -534,7 +534,7 @@ describe("declaration analysis", () => {
       schedules.task({
         id: "timezone",
         cron: { pattern: "0 3 * * *", timezone: "utc" },
-        workspace: { sandbox: maintenance },
+        computer: { sandbox: maintenance },
         run: () => null,
       }),
     ).not.toThrow()
@@ -542,7 +542,7 @@ describe("declaration analysis", () => {
       schedules.task({
         id: "empty",
         cron: { pattern: "", timezone: "UTC" },
-        workspace: { sandbox: maintenance },
+        computer: { sandbox: maintenance },
         run: () => null,
       }),
     ).toThrow()
@@ -579,19 +579,19 @@ describe("declaration analysis", () => {
     const machine = sandbox({ id: "machine" })
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 1, memory: "1GiB" })
-    const workspaceOnly = analyze({
+    const computerOnly = analyze({
       architecture: "x86_64",
       exports: [{
-        sourcePath: "src/workspace.ts",
+        sourcePath: "src/computer.ts",
         exportName: "machine",
         value: machine,
       }],
     })
-    const workspaceResult = decodeAnalysisFrame(
-      encodeVerificationResultFrame(successfulVerificationResult(workspaceOnly)),
+    const computerResult = decodeAnalysisFrame(
+      encodeVerificationResultFrame(successfulVerificationResult(computerOnly)),
     ) as { declarations: unknown[]; files: unknown[] }
-    expect(workspaceResult.declarations).toEqual([])
-    expect(workspaceResult.files).toHaveLength(1)
+    expect(computerResult.declarations).toEqual([])
+    expect(computerResult.files).toHaveLength(1)
 
     expect(decodeAnalysisFrame(
       encodeVerificationResultFrame(failedVerificationResult("module import failed")),

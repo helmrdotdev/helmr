@@ -1,7 +1,7 @@
 import { verify, assert, assertEqual, waitRun, deadline } from "../../support/context"
 import type { tokenTask } from "../token-wait/task"
 
-await verify("token-fanout", async ({ client, marker, objects, workspace, cleanup }) => {
+await verify("token-fanout", async ({ client, marker, objects, computer, cleanup }) => {
   const token = await client.tokens.create({ timeout: "10m", idempotencyKey: `token:${marker}` })
   objects.token_ids.push(token.id)
   cleanup(async () => {
@@ -9,9 +9,9 @@ await verify("token-fanout", async ({ client, marker, objects, workspace, cleanu
       await client.tokens.cancel(token.id, { idempotencyKey: `cancel:${marker}` })
   })
   async function start(suffix: string) {
-    const target = await workspace("verification-token", suffix)
+    const target = await computer("verification-token", suffix)
     const run = await client.tasks.start<typeof tokenTask>("verification-token", {
-      workspace: target,
+      computer: target,
       payload: { marker, tokenId: token.id },
       idempotencyKey: `run:${suffix}:${marker}`,
     })

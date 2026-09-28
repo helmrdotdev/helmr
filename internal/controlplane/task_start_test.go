@@ -9,15 +9,15 @@ import (
 )
 
 func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
-	workspaceID := uuid.NewV7()
+	computerID := uuid.NewV7()
 	ttl := int64(60_000)
 	concurrencyKey := "customer:1"
 	normalized, err := normalizeTaskStart(taskStartRequest{
 		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
 		EnvironmentID: uuid.NewV7(), TaskDeclaredID: "resize-image",
 		PayloadPresent: true, Payload: json.RawMessage(`{"b":2,"a":1}`),
-		WorkspaceID: workspaceID,
-		QueueName:   "images", ConcurrencyKey: &concurrencyKey, QueuedTTLMS: &ttl,
+		ComputerID: computerID,
+		QueueName:  "images", ConcurrencyKey: &concurrencyKey, QueuedTTLMS: &ttl,
 		Metadata: json.RawMessage(`{"source":"backend"}`),
 		Tags:     []string{" resize ", "image", "image"},
 	})
@@ -36,11 +36,11 @@ func TestNormalizeTaskStartCanonicalizesCallerSemantics(t *testing.T) {
 }
 
 func TestNormalizeTaskStartRejectsInvalidCallerValues(t *testing.T) {
-	workspaceID := uuid.NewV7()
+	computerID := uuid.NewV7()
 	base := taskStartRequest{
 		OrgID: uuid.NewV7(), ProjectID: uuid.NewV7(),
 		EnvironmentID: uuid.NewV7(), TaskDeclaredID: "task",
-		WorkspaceID: workspaceID,
+		ComputerID: computerID,
 	}
 	invalidKey := " leading"
 	request := base

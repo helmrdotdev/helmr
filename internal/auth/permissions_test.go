@@ -60,7 +60,7 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 	}
 }
 
-func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
+func TestGranularComputerPermissionsDoNotEscalate(t *testing.T) {
 	orgID := uuid.New()
 	scope := Scope{
 		OrgID:         orgID,
@@ -74,18 +74,18 @@ func TestGranularWorkspacePermissionsDoNotEscalate(t *testing.T) {
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Permissions: []Permission{
-			PermissionWorkspacesRead,
+			PermissionComputersRead,
 			PermissionRunsRead,
 		},
 	}
 
 	for _, permission := range []Permission{
-		PermissionWorkspacesCreate,
-		PermissionWorkspacesDelete,
-		PermissionWorkspaceExecCreate,
+		PermissionComputersCreate,
+		PermissionComputersDelete,
+		PermissionComputerCommandCreate,
 	} {
 		if actor.HasPermission(permission, scope) {
-			t.Fatalf("read-only workspace grants allowed %s", permission)
+			t.Fatalf("read-only computer grants allowed %s", permission)
 		}
 	}
 }

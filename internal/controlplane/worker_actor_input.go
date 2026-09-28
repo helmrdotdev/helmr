@@ -3,39 +3,63 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"net/http"
+
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"net/http"
 )
 
-// Lock both source and addressed Session in UUID order before physical Run
-// authority. Reciprocal Actor sends must not invert Session -> Run lock order.
-func authorizeWorkerSessionOperation(ctx context.Context, q db.Querier, worker workerActor, lease workerapi.RunLeaseFence, targetID pgtype.UUID) (workerRunSourceAuthority, error) {
+// Secret locks precede physical authority; source and target Sessions are then
+// locked together, in UUID order, before the source Run lineage.
+func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (workerRunSourceAuthority, error) {
+	q := db.New(tx)
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return workerRunSourceAuthority{}, err
 	}
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch})
+	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
 	if err != nil {
 		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
 	}
-	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.WorkspaceID); err != nil {
-		return workerRunSourceAuthority{}, err
+	computerIDs := []pgtype.UUID{loc.ComputerID}
+	if targetComputerID.Valid {
+		computerIDs = append(computerIDs, targetComputerID)
 	}
-	actors, err := q.LockWorkerSessionOperationActors(ctx, db.LockWorkerSessionOperationActorsParams{EnvironmentID: loc.EnvironmentID, TargetSessionID: targetID, SourceWorkspaceID: loc.WorkspaceID})
+	_, err = q.LockWorkerControlSecrets(ctx, computerIDs)
 	if err != nil {
 		return workerRunSourceAuthority{}, err
 	}
-	for _, actor := range actors {
-		if actor.WorkspaceID != loc.WorkspaceID {
-			continue
+	var authority run.ExecutionAuthority
+	if targetID.Valid {
+		authority, err = run.LockLiveExecutionForSession(ctx, tx, workerExecutionFence(worker, parsed, lease), targetID)
+	} else if targetComputerID.Valid {
+		authority, err = run.LockLiveExecutionForComputer(ctx, tx, workerExecutionFence(worker, parsed, lease), targetComputerID)
+	} else {
+		authority, err = run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, lease))
+	}
+	if errors.Is(err, run.ErrExecutionTargetNotFound) {
+		if targetID.Valid {
+			return workerRunSourceAuthority{}, &session.OperationError{Code: "session_not_found"}
 		}
+		return workerRunSourceAuthority{}, errActorStartComputerNotFound
+	}
+	source, err := validateWorkerRunSource(authority, err)
+	if err != nil {
+		return workerRunSourceAuthority{}, err
+	}
+	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
+		return workerRunSourceAuthority{}, err
+	}
+	actor := authority.Session
+	if actor.ID.Valid {
 		if actor.DispatchHoldID.Valid {
 			return workerRunSourceAuthority{}, &session.OperationError{Code: "session_held"}
 		}
@@ -49,7 +73,7 @@ func authorizeWorkerSessionOperation(ctx context.Context, q db.Querier, worker w
 			}
 		}
 	}
-	return authorizeWorkerRunSource(ctx, q, worker, lease)
+	return source, nil
 }
 func (s *Server) workerSendSession(w http.ResponseWriter, r *http.Request) {
 	s.workerAdmitSession(w, r, session.SendMessageOrEnqueue)
@@ -92,7 +116,7 @@ func (s *Server) workerAdmitSession(w http.ResponseWriter, r *http.Request, mode
 	}
 	var receipt session.AdmissionReceipt
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.q, workerFromContext(r.Context()), request.Lease, pgvalue.UUID(targetID))
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, pgvalue.UUID(targetID), pgtype.UUID{})
 		if err != nil {
 			return err
 		}

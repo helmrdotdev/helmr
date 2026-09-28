@@ -7,7 +7,7 @@ import {
   timers,
   sessions,
   task,
-  workspaces,
+  computers,
   type JsonValue,
   type Turn,
 } from "@helmr/sdk"
@@ -24,7 +24,7 @@ const ids = {
   hold: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc15",
   message: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc16",
   deployment: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc17",
-  workspace: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc18",
+  computer: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc18",
 }
 type Event = programProto.RunEvent["event"]
 function wire(
@@ -73,8 +73,8 @@ function harness(
     attemptNumber: 1,
     deploymentId: ids.deployment,
     deploymentVersion: "v1",
-    workspaceId: ids.workspace,
-    baseWorkspaceVersionId: ids.event,
+    computerId: ids.computer,
+    baseComputerDiskVersionId: ids.event,
     cause: { kind: { case: "actorStart", value: {} } },
     entrypoint: {
       case: "actor",
@@ -214,7 +214,7 @@ function harness(
         })
       } else if (event.case === "turnSettleRequested")
         reply(
-          { event_id: ids.event, workspace_version_id: ids.event },
+          { event_id: ids.event, computer_disk_version_id: ids.event },
           "committed",
         )
       else if (
@@ -561,7 +561,8 @@ test("managed waits retain exact Turn scope and the single consuming gate", asyn
   await run.outcome
 })
 
-test("stop aborts an active Token wait without exposing its result or consuming it", async () => {
+for (const kind of ["failed", "cancelled"] as const) {
+test(`stop aborts an active Token wait with ${kind} without exposing its result or consuming it`, async () => {
   const waiting = deferred()
   let cancel: (() => void) | undefined
   let exposed = false
@@ -582,7 +583,7 @@ test("stop aborts an active Token wait without exposing its result or consuming 
     ["work"],
     (event, reply) => {
       if (event.case === "runWaitRequested" && event.value.kind === "token") {
-        cancel = () => reply({ reason_code: "session_stopped" }, "cancelled")
+        cancel = () => reply({ reason_code: "session_stopped" }, kind)
         waiting.resolve()
         return true
       }
@@ -602,6 +603,8 @@ test("stop aborts an active Token wait without exposing its result or consuming 
   if (last.case !== "actorOutcome") assert.fail("missing outcome")
   assert.equal(last.value.outcome.case, "interrupted")
 })
+
+}
 
 test("a cancelled shared Token does not interrupt its Actor", async () => {
   const run = harness(
@@ -874,7 +877,7 @@ test("Actor child calls carry exact Turn identity while Task results stay generi
       async run(session) {
         const turn = (await session.receive())!
         const result = await child.call({
-          workspace: workspaces.ref(ids.workspace),
+          computer: computers.ref(ids.computer),
           idempotencyKey: "owned-child",
         })
         assert.equal(result.ok, true)
@@ -1196,7 +1199,7 @@ test("null-Turn stop waits for a pending committed settlement response", async (
       if (event.case !== "turnSettleRequested") return false
       committed = () =>
         reply(
-          { event_id: ids.event, workspace_version_id: ids.event },
+          { event_id: ids.event, computer_disk_version_id: ids.event },
           "committed",
         )
       requested.resolve()
@@ -1300,7 +1303,7 @@ test("a committed settlement cannot contradict an exact active-Turn stop", async
       if (event.case !== "turnSettleRequested") return false
       committed = () =>
         reply(
-          { event_id: ids.event, workspace_version_id: ids.event },
+          { event_id: ids.event, computer_disk_version_id: ids.event },
           "committed",
         )
       requested.resolve()

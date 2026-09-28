@@ -215,3 +215,53 @@ func TestIntegrityDoesNotConflateKeysWithCorruptContent(t *testing.T) {
 		t.Fatalf("corrupt identity classification: %v", err)
 	}
 }
+
+func TestConsecutiveBlockRanges(t *testing.T) {
+	records := make([][]byte, 66)
+	for i := range records {
+		records[i] = bytes.Repeat([]byte{byte(i)}, BlockSize)
+	}
+	ref, raw, key := recordsFixture(t, SegmentKind, records)
+	header, _ := Header("scope", ref)
+	const frame = BlockSize + 20
+	for _, failure := range []string{"", "later frame", "short", "long", "cancel"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			source := &rangeReply{raw: raw}
+			source.mutate = func(n int, b []byte) []byte {
+				if n != 2 {
+					return b
+				}
+				switch failure {
+				case "later frame":
+					b[len(b)-1] ^= 1
+				case "short":
+					return b[:len(b)-1]
+				case "long":
+					return append(b, 0)
+				case "cancel":
+					cancel()
+				}
+				return b
+			}
+			got, err := readBlocks(ctx, source, "scope", key, ref, 1, 64)
+			if failure != "" {
+				if err == nil || got != nil {
+					t.Fatal("failed batch returned plaintext")
+				}
+			} else if err != nil || !bytes.Equal(got, bytes.Join(records[1:65], nil)) {
+				t.Fatalf("consecutive range: %v", err)
+			}
+			if source.calls != 2 || source.closed != 2 || source.requested != int64(len(header)+64*frame) {
+				t.Fatalf("batch did not use exactly two bounded reads: calls=%d closed=%d bytes=%d", source.calls, source.closed, source.requested)
+			}
+		})
+	}
+	for _, request := range [][2]uint32{{0, 0}, {65, 2}, {1, ^uint32(0)}} {
+		source := &rangeReply{raw: raw}
+		if got, err := readBlocks(t.Context(), source, "scope", key, ref, request[0], request[1]); err == nil || got != nil || source.calls != 0 {
+			t.Fatal("invalid batch performed I/O")
+		}
+	}
+}

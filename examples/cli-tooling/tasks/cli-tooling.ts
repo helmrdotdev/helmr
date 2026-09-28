@@ -19,7 +19,7 @@ const base = image("cli-tooling")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const cliToolingWorkspace = sandbox({ id: "cli-tooling" })
+export const cliToolingComputer = sandbox({ id: "cli-tooling" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

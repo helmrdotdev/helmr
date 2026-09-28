@@ -17,11 +17,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func computerSavePublicationKey(r db.RuntimeInstance) []byte {
-	return computerPublicationKey("save/"+strconv.FormatInt(r.ComputerSaveSequence, 10), r.ID, r.ComputerSaveVersionID)
+func computerSavePublicationKey(r db.ComputerInstance) []byte {
+	return computerPublicationKey("save/"+strconv.FormatInt(r.SaveSequence, 10), r.ID, r.SaveDiskVersionID)
 }
 
 // recordComputerSaveObject revalidates live authority on both sides of remote
@@ -36,10 +35,10 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 	}
 	var uploaded *cas.Object
 	apply := func(mode string) error {
-		_, err := s.withComputerSave(ctx, worker, request, computerSaveWrite, func(tx pgx.Tx, q *db.Queries, r db.RuntimeInstance, l db.WorkspaceLease) error {
+		_, err := s.withComputerSave(ctx, worker, request, computerSaveWrite, func(tx pgx.Tx, q *db.Queries, r db.ComputerInstance) error {
 			key := computerSavePublicationKey(r)
 			if mode == "verify" {
-				row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.EnvironmentID, ComputerID: r.WorkspaceID, Digest: descriptor.digest})
+				row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.EnvironmentID, ComputerID: r.ComputerID, Digest: descriptor.digest})
 				if err != nil {
 					return err
 				}
@@ -50,10 +49,10 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 				if !reflect.DeepEqual(prior, inspection) {
 					return computerObjectConflict("save object differs from registered inspection")
 				}
-				_, err = q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: r.ID, PublicationKey: key, RuntimeDesiredVersion: r.DesiredVersion, Digest: descriptor.digest})
+				_, err = q.RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: r.ID, PublicationKey: key, InstanceDesiredVersion: r.DesiredVersion, Digest: descriptor.digest})
 				return err
 			}
-			keys, err := q.ListRuntimeComputerSourceKeys(ctx, r.ID)
+			keys, err := q.ListInstanceComputerSourceKeys(ctx, r.ID)
 			if err != nil {
 				return err
 			}
@@ -61,15 +60,15 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 			for _, k := range keys {
 				allowed[pgvalue.UUIDString(k.ID)] = true
 			}
-			write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: r.ID, EnvironmentID: r.EnvironmentID, ComputerID: r.WorkspaceID})
+			write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: r.ID, EnvironmentID: r.EnvironmentID, ComputerID: r.ComputerID})
 			if err != nil {
 				return err
 			}
-			if !r.ComputerWriteKeyID.Valid || r.ComputerWriteKeyID != write.ID {
+			if !r.WriteKeyID.Valid || r.WriteKeyID != write.ID {
 				return computerObjectConflict("save write key is not retained")
 			}
 			allowed[pgvalue.UUIDString(write.ID)] = true
-			owner := dispatch.ComputerPreparation{OrgID: r.OrgID, ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID, ComputerID: r.WorkspaceID, LogicalBytes: r.ReservedGuestEphemeralDiskBytes}
+			owner := dispatch.ComputerPreparation{OrgID: r.OrgID, ProjectID: r.ProjectID, EnvironmentID: r.EnvironmentID, ComputerID: r.ComputerID, LogicalBytes: r.ReservedGuestEphemeralDiskBytes}
 			return recordComputerObjectLocked(ctx, tx, owner, r.ID, key, r.DesiredVersion, inspection, uploaded, mode == "reuse", allowed)
 		})
 		return err
@@ -107,8 +106,12 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 	if err != nil {
 		return zero, err
 	}
+	receipt, err := computerSaveReceiptParams(worker, request)
+	if err != nil {
+		return zero, err
+	}
 	replay := func() (computerPublicationResult, error) {
-		v, err := s.db.GetWorkerComputerSave(ctx, db.GetWorkerComputerSaveParams{SaveID: pgvalue.UUID(id), Sequence: pgtype.Int8{Int64: request.Sequence, Valid: true}, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch})
+		v, err := s.db.GetWorkerComputerSave(ctx, receipt)
 		if err != nil {
 			return zero, err
 		}
@@ -121,11 +124,11 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 		return result, err
 	}
 	var result computerPublicationResult
-	_, err = s.withComputerSave(ctx, worker, request, computerSaveWrite, func(tx pgx.Tx, q *db.Queries, r db.RuntimeInstance, l db.WorkspaceLease) error {
+	_, err = s.withComputerSave(ctx, worker, request, computerSaveWrite, func(tx pgx.Tx, q *db.Queries, r db.ComputerInstance) error {
 		if root.LogicalBytes != r.ReservedGuestEphemeralDiskBytes {
 			return computerObjectConflict("save capacity differs from Computer")
 		}
-		object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.EnvironmentID, ComputerID: r.WorkspaceID, Digest: root.Pack.Digest})
+		object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: r.EnvironmentID, ComputerID: r.ComputerID, Digest: root.Pack.Digest})
 		if err != nil {
 			return err
 		}
@@ -142,14 +145,14 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 		if err = inspected.Pack.CheckRoot(locator, root.LogicalBytes); err != nil {
 			return err
 		}
-		if _, err = q.RequireRuntimeComputerObjectPin(ctx, db.RequireRuntimeComputerObjectPinParams{RuntimeInstanceID: r.ID, PublicationKey: computerSavePublicationKey(r), RuntimeDesiredVersion: r.DesiredVersion, Digest: root.Pack.Digest}); err != nil {
+		if _, err = q.RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: r.ID, PublicationKey: computerSavePublicationKey(r), InstanceDesiredVersion: r.DesiredVersion, Digest: root.Pack.Digest}); err != nil {
 			return err
 		}
 		encoded, err := json.Marshal(root)
 		if err != nil {
 			return err
 		}
-		v, err := q.PublishRuntimeComputerSave(ctx, db.PublishRuntimeComputerSaveParams{RuntimeInstanceID: r.ID, SaveID: pgvalue.UUID(id), Sequence: request.Sequence, RootPackDigest: pgvalue.Text(root.Pack.Digest), LogicalBytes: root.LogicalBytes, Fingerprint: fingerprint[:], Locator: encoded})
+		v, err := q.PublishComputerInstanceSave(ctx, db.PublishComputerInstanceSaveParams{ComputerInstanceID: r.ID, EnvironmentID: r.EnvironmentID, WorkerHostID: r.WorkerHostID, WorkerEpoch: r.WorkerEpoch, WriterGeneration: r.WriterGeneration, WriterTokenHash: r.WriterTokenHash, DesiredVersion: r.DesiredVersion, SaveID: pgvalue.UUID(id), Sequence: request.Sequence, RootPackDigest: pgvalue.Text(root.Pack.Digest), LogicalBytes: root.LogicalBytes, Fingerprint: fingerprint[:], Locator: encoded})
 		if err != nil {
 			return err
 		}
@@ -168,29 +171,15 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 // abandonComputerSave is called only after the host has cancelled and joined
 // every producer/upload for this operation. Published saves require source
 // adoption instead; they cannot be abandoned. Lost execution authority leaves
-// retention to the existing physical Runtime reclamation path.
+// retention to the existing physical Runtime reclamation path. Abandonment keeps
+// object pins until that reclamation: the live disk can still reuse the same
+// ciphertext in a later save or checkpoint, even after this producer has joined.
 func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest) error {
-	if _, err := parseCanonicalUUID("save_id", request.SaveID); err != nil {
+	receipt, err := computerSaveReceiptParams(worker, request)
+	if err != nil {
 		return badRequest(err)
 	}
-	if request.Sequence <= 0 || (request.Lease == nil && (request.OrgID == "" || request.WorkspaceMountID == "")) || (request.Lease != nil && (request.OrgID != "" || request.WorkspaceMountID != "")) {
-		return badRequest(errors.New("one execution authority and positive save sequence required"))
-	}
-	params := db.IsComputerSaveAbandonedParams{Sequence: request.Sequence, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch}
-	if request.Lease != nil {
-		parsed, err := parseRunLeaseFence(*request.Lease)
-		if err != nil {
-			return badRequest(err)
-		}
-		params.RunLeaseID = pgvalue.UUID(parsed.leaseID)
-		params.LeaseSequence = request.Lease.LeaseSequence
-	} else {
-		org, mount, err := parseWorkspaceWorkerIDs(request.OrgID, request.WorkspaceMountID)
-		if err != nil {
-			return badRequest(err)
-		}
-		params.OrgID, params.MountID = org, mount
-	}
+	params := db.IsComputerSaveAbandonedParams{Sequence: request.Sequence, ComputerInstanceID: receipt.ComputerInstanceID, EnvironmentID: receipt.EnvironmentID, WorkerHostID: receipt.WorkerHostID, WorkerGroupID: receipt.WorkerGroupID, WorkerEpoch: receipt.WorkerEpoch, WriterGeneration: receipt.WriterGeneration}
 	absent := func() bool {
 		result, err := s.db.IsComputerSaveAbandoned(ctx, params)
 		return err == nil && result.Valid && result.Bool
@@ -200,16 +189,15 @@ func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, re
 	if absent() {
 		return nil
 	}
-	_, err := s.withComputerSave(ctx, worker, request, computerSaveAbandon, func(tx pgx.Tx, q *db.Queries, r db.RuntimeInstance, l db.WorkspaceLease) error {
-		cleared, err := q.AbandonRuntimeComputerSave(ctx, db.AbandonRuntimeComputerSaveParams{RuntimeInstanceID: r.ID, WorkerInstanceID: r.WorkerInstanceID, WorkerEpoch: r.WorkerEpoch, Sequence: r.ComputerSaveSequence, SaveID: r.ComputerSaveVersionID, LeaseID: l.ID})
+	_, err = s.withComputerSave(ctx, worker, request, computerSaveAbandon, func(tx pgx.Tx, q *db.Queries, r db.ComputerInstance) error {
+		cleared, err := q.AbandonComputerInstanceSave(ctx, db.AbandonComputerInstanceSaveParams{ComputerInstanceID: r.ID, EnvironmentID: r.EnvironmentID, WriterGeneration: r.WriterGeneration, WriterTokenHash: r.WriterTokenHash, WorkerHostID: r.WorkerHostID, WorkerEpoch: r.WorkerEpoch, Sequence: r.SaveSequence, SaveID: r.SaveDiskVersionID})
 		if err != nil {
 			return err
 		}
 		if cleared != 1 {
 			return computerObjectConflict("save operation changed during abandonment")
 		}
-		_, err = tx.Exec(ctx, `DELETE FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND publication_key=$2`, r.ID, computerSavePublicationKey(r))
-		return err
+		return nil
 	})
 	if err != nil && absent() {
 		return nil

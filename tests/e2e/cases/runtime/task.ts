@@ -31,14 +31,14 @@ const base = image("helmr-runtime-smoke")
   .run(["npm", "install", "-g", "bun@1.3.13"])
   .workdir("/sandbox")
 
-export const runtimeSmokeWorkspace = sandbox({ id: "helmr-runtime-smoke" })
+export const runtimeSmokeComputer = sandbox({ id: "helmr-runtime-smoke" })
   .image(base)
   .resources({ cpu: 2, memory: "2GiB" })
 
 export const runtimeSmokePayload = z.object({
   scenario: z.string().default("release-smoke"),
   marker: z.string().optional(),
-  expectedWorkspaceMarker: z.string().optional(),
+  expectedComputerMarker: z.string().optional(),
   expectedEnvironment: z.enum(["production", "staging", "unknown"]).default("unknown"),
   exerciseToken: z.boolean().default(false),
   externalTokenId: z.uuidv7().optional(),
@@ -75,11 +75,11 @@ export const runtimeSmoke = task({
         attemptNumber: ctx.run.attemptNumber,
         deploymentId: ctx.deployment.id,
         deploymentVersion: ctx.deployment.version,
-        workspace: { id: ctx.workspace.id },
+        computer: { id: ctx.computer.id },
       },
     })
 
-    checks.push(await collectCheck("sandbox-filesystem", () => checkWorkspace(marker, input.largeFileKiB, input.expectedWorkspaceMarker)))
+    checks.push(await collectCheck("sandbox-filesystem", () => checkComputer(marker, input.largeFileKiB, input.expectedComputerMarker)))
     checks.push(await collectCheck("source-bundle", () => checkBundledGuides()))
     checks.push(await collectCheck("node-version", () => checkCommand("node-version", ["node", "--version"])))
     checks.push(await collectCheck("bun-version", () => checkCommand("bun-version", ["bun", "--version"])))
@@ -151,7 +151,7 @@ export const runtimeSmoke = task({
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
     if (failures.length > 0) {
-      console.error({ phase: "runtime-smoke", marker, failures })
+      console.error(JSON.stringify({ phase: "runtime-smoke", marker, failures }))
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)
     }
     await metadata.set("smoke.phase", "complete")
@@ -166,12 +166,19 @@ async function collectCheck(name: string, run: () => Promise<Check>): Promise<Ch
     return {
       name,
       ok: false,
-      detail: error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      detail: error instanceof Error ? {
+        message: error.message,
+        name: error.name,
+        ...Object.fromEntries(["code", "signal", "killed", "stdout", "stderr"].flatMap((key) => {
+          const value = (error as unknown as Record<string, unknown>)[key]
+          return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? [[key, value]] : []
+        })),
+      } : { message: String(error) },
     }
   }
 }
 
-async function checkWorkspace(marker: string, largeFileKiB: number, expectedPreviousMarker?: string): Promise<Check> {
+async function checkComputer(marker: string, largeFileKiB: number, expectedPreviousMarker?: string): Promise<Check> {
   const nestedDir = "sandbox-smoke/nested"
   await mkdir(nestedDir, { recursive: true })
   const id = randomUUID()

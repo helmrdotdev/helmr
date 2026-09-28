@@ -11,97 +11,57 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const drainWorkerInstance = `-- name: DrainWorkerInstance :one
+const drainWorkerHost = `-- name: DrainWorkerHost :one
 WITH transitioned AS (
-    UPDATE worker_instances
+    UPDATE worker_hosts
        SET status = 'draining',
-           claim_version = worker_instances.claim_version + 1,
+           claim_version = worker_hosts.claim_version + 1,
            draining_at = COALESCE(draining_at, now()), updated_at = now()
-     WHERE worker_instances.id = $1
-       AND worker_instances.worker_group_id = $2
-       AND worker_instances.current_epoch = $3
-       AND worker_instances.claim_version = $4
-       AND worker_instances.status = 'active'
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+     WHERE worker_hosts.id = $1
+       AND worker_hosts.worker_group_id = $2
+       AND worker_hosts.current_epoch = $3
+       AND worker_hosts.claim_version = $4
+       AND worker_hosts.status = 'active'
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, vm_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), target AS (
-    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.worker_pool_id, transitioned.status, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.runtime_identity_id, transitioned.substrate_format, transitioned.substrate_contract, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_runtime_starts, transitioned.cpu_environment, transitioned.cpu_environment_digest, transitioned.observed_at, transitioned.run_paused_reason, transitioned.runtime_paused_reason, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
+    SELECT transitioned.id, transitioned.resource_id, transitioned.worker_group_id, transitioned.worker_pool_id, transitioned.status, transitioned.claim_version, transitioned.current_epoch, transitioned.current_service_id, transitioned.vm_platform_id, transitioned.epoch_cpu_millis, transitioned.epoch_memory_bytes, transitioned.epoch_guest_ephemeral_disk_bytes, transitioned.per_vm_cpu_millis, transitioned.per_vm_memory_bytes, transitioned.per_vm_guest_ephemeral_disk_bytes, transitioned.max_vm_slots, transitioned.max_vm_starts, transitioned.cpu_environment, transitioned.cpu_environment_digest, transitioned.observed_at, transitioned.run_paused_reason, transitioned.vm_paused_reason, transitioned.epoch_started_at, transitioned.activated_at, transitioned.draining_at, transitioned.termination_ready_at, transitioned.lost_at, transitioned.created_at, transitioned.updated_at FROM transitioned
     UNION ALL
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.status, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
-      FROM worker_instances
-     WHERE worker_instances.id = $1
-       AND worker_instances.worker_group_id = $2
-       AND worker_instances.current_epoch = $3
-       AND worker_instances.status = 'draining'
-       AND worker_instances.claim_version IN ($4, $4 + 1)
+    SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+      FROM worker_hosts
+     WHERE worker_hosts.id = $1
+       AND worker_hosts.worker_group_id = $2
+       AND worker_hosts.current_epoch = $3
+       AND worker_hosts.status = 'draining'
+       AND worker_hosts.claim_version IN ($4, $4 + 1)
        AND NOT EXISTS (SELECT 1 FROM transitioned)
-), idle_mounts AS (
-    UPDATE workspace_mounts
-       SET status = 'unmounting',
-           finalization_action = 'discard',
-           finalization_reason_code = 'worker_draining',
-           finalization_error = NULL,
-           stopped_at = COALESCE(stopped_at, now()), updated_at = now()
-      FROM target
-     WHERE workspace_mounts.worker_instance_id = target.id
-       AND workspace_mounts.worker_epoch = target.current_epoch
-       AND (
-           workspace_mounts.status IN ('mounting', 'mounted')
-           OR (
-               workspace_mounts.status = 'unmounting'
-               AND workspace_mounts.finalization_action IS NULL
-           )
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM workspace_leases
-            WHERE workspace_leases.workspace_mount_id = workspace_mounts.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       )
-    RETURNING workspace_mounts.id
-), idle_runtimes AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed', desired_version = desired_version + 1,
-           desired_at = now(), desired_reason = 'worker_draining', updated_at = now()
-      FROM target
-     WHERE runtime_instances.worker_instance_id = target.id
-       AND runtime_instances.worker_epoch = target.current_epoch
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.desired_state <> 'closed'
-       AND runtime_instances.observed_state IN ('allocated', 'ready')
-       AND NOT EXISTS (
-           SELECT 1 FROM run_leases
-            WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
-       )
-       AND NOT EXISTS (
-           SELECT 1 FROM workspace_mounts
-            WHERE workspace_mounts.runtime_instance_id = runtime_instances.id
-              AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
-       )
-    RETURNING runtime_instances.id
+), draining_instances AS (
+    UPDATE computer_instances i SET admission_state='draining',updated_at=now()
+    FROM target WHERE i.worker_host_id=target.id AND i.worker_epoch=target.current_epoch
+      AND i.reclaimed_at IS NULL AND i.admission_state='open'
+    RETURNING i.id
 ), credential_fence AS (
-    UPDATE worker_instance_credentials
+    UPDATE worker_host_credentials
        SET claim_version = target.claim_version
       FROM target
-     WHERE worker_instance_credentials.worker_instance_id = target.id
-       AND worker_instance_credentials.revoked_at IS NULL
-       AND worker_instance_credentials.claim_version < target.claim_version
-    RETURNING worker_instance_credentials.id
+     WHERE worker_host_credentials.worker_host_id = target.id
+       AND worker_host_credentials.revoked_at IS NULL
+       AND worker_host_credentials.claim_version < target.claim_version
+    RETURNING worker_host_credentials.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_runtime_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.runtime_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.vm_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
- WHERE (SELECT count(*) FROM idle_mounts) >= 0
-   AND (SELECT count(*) FROM idle_runtimes) >= 0
+ WHERE (SELECT count(*) FROM draining_instances) >= 0
    AND (SELECT count(*) FROM credential_fence) >= 0
 `
 
-type DrainWorkerInstanceParams struct {
+type DrainWorkerHostParams struct {
 	ID                   pgtype.UUID `json:"id"`
 	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
 	ExpectedEpoch        pgtype.Int8 `json:"expected_epoch"`
 	ExpectedClaimVersion int64       `json:"expected_claim_version"`
 }
 
-type DrainWorkerInstanceRow struct {
+type DrainWorkerHostRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
 	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
@@ -110,9 +70,7 @@ type DrainWorkerInstanceRow struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat              string             `json:"substrate_format"`
-	SubstrateContract            string             `json:"substrate_contract"`
+	VMPlatformID                 pgtype.Text        `json:"vm_platform_id"`
 	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
@@ -120,12 +78,12 @@ type DrainWorkerInstanceRow struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	MaxVMStarts                  int32              `json:"max_vm_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
+	VMPausedReason               pgtype.Text        `json:"vm_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
@@ -135,14 +93,14 @@ type DrainWorkerInstanceRow struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstanceParams) (DrainWorkerInstanceRow, error) {
-	row := q.db.QueryRow(ctx, drainWorkerInstance,
+func (q *Queries) DrainWorkerHost(ctx context.Context, arg DrainWorkerHostParams) (DrainWorkerHostRow, error) {
+	row := q.db.QueryRow(ctx, drainWorkerHost,
 		arg.ID,
 		arg.WorkerGroupID,
 		arg.ExpectedEpoch,
 		arg.ExpectedClaimVersion,
 	)
-	var i DrainWorkerInstanceRow
+	var i DrainWorkerHostRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -152,9 +110,7 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.RuntimeIdentityID,
-		&i.SubstrateFormat,
-		&i.SubstrateContract,
+		&i.VMPlatformID,
 		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
@@ -162,12 +118,12 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxRuntimeStarts,
+		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.RuntimePausedReason,
+		&i.VMPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -179,66 +135,54 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 	return i, err
 }
 
-const fenceWorkerInstance = `-- name: FenceWorkerInstance :one
+const fenceWorkerHost = `-- name: FenceWorkerHost :one
 WITH target AS (
-    UPDATE worker_instances
+    UPDATE worker_hosts
        SET status = 'lost', claim_version = claim_version + 1,
            lost_at = COALESCE(lost_at, now()), updated_at = now()
-     WHERE worker_instances.id = $1
-       AND worker_instances.worker_group_id = $2
-       AND worker_instances.current_epoch = $3
-       AND worker_instances.claim_version = $4
-       AND worker_instances.status IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, runtime_identity_id, substrate_format, substrate_contract, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, runtime_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
+     WHERE worker_hosts.id = $1
+       AND worker_hosts.worker_group_id = $2
+       AND worker_hosts.current_epoch = $3
+       AND worker_hosts.claim_version = $4
+       AND worker_hosts.status IN ('active', 'draining')
+    RETURNING id, resource_id, worker_group_id, worker_pool_id, status, claim_version, current_epoch, current_service_id, vm_platform_id, epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes, max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest, observed_at, run_paused_reason, vm_paused_reason, epoch_started_at, activated_at, draining_at, termination_ready_at, lost_at, created_at, updated_at
 ), revoked_credentials AS (
-    UPDATE worker_instance_credentials
+    UPDATE worker_host_credentials
        SET revoked_at = COALESCE(revoked_at, now())
       FROM target
-     WHERE worker_instance_credentials.worker_instance_id = target.id
-       AND worker_instance_credentials.revoked_at IS NULL
-    RETURNING worker_instance_credentials.id
-), lost_mounts AS (
-    UPDATE workspace_mounts
-       SET status = 'lost', lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $5, updated_at = now()
-      FROM target
-     WHERE workspace_mounts.worker_instance_id = target.id
-       AND workspace_mounts.worker_epoch = target.current_epoch
-       AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
-    RETURNING workspace_mounts.id
+     WHERE worker_host_credentials.worker_host_id = target.id
+       AND worker_host_credentials.revoked_at IS NULL
+    RETURNING worker_host_credentials.id
 ), lost_runtimes AS (
-    UPDATE runtime_instances
+    UPDATE computer_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), terminal_at = now(),
            terminal_reason_code = $5,
-           reserved_run_id = NULL, reserved_attempt_number = NULL,
-           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
-           reservation_expires_at = NULL, updated_at = now()
+           mount_state='lost', admission_state='closed', updated_at=now()
       FROM target
-     WHERE runtime_instances.worker_instance_id = target.id
-       AND runtime_instances.worker_epoch = target.current_epoch
-       AND runtime_instances.reclaimed_at IS NULL
-       AND runtime_instances.observed_state IN ('allocated', 'ready')
-    RETURNING runtime_instances.id
+     WHERE computer_instances.worker_host_id = target.id
+       AND computer_instances.worker_epoch = target.current_epoch
+       AND computer_instances.reclaimed_at IS NULL
+       AND computer_instances.observed_state IN ('allocated', 'ready')
+    RETURNING computer_instances.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.runtime_identity_id, target.substrate_format, target.substrate_contract, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_runtime_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.runtime_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.worker_pool_id, target.status, target.claim_version, target.current_epoch, target.current_service_id, target.vm_platform_id, target.epoch_cpu_millis, target.epoch_memory_bytes, target.epoch_guest_ephemeral_disk_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_guest_ephemeral_disk_bytes, target.max_vm_slots, target.max_vm_starts, target.cpu_environment, target.cpu_environment_digest, target.observed_at, target.run_paused_reason, target.vm_paused_reason, target.epoch_started_at, target.activated_at, target.draining_at, target.termination_ready_at, target.lost_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
-   AND (SELECT count(*) FROM lost_mounts) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0
 UNION ALL
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.status, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at
-  FROM worker_instances
- WHERE worker_instances.id = $1
-   AND worker_instances.worker_group_id = $2
-   AND worker_instances.current_epoch = $3
-   AND worker_instances.status = 'lost'
-   AND worker_instances.claim_version = $4 + 1
+SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at
+  FROM worker_hosts
+ WHERE worker_hosts.id = $1
+   AND worker_hosts.worker_group_id = $2
+   AND worker_hosts.current_epoch = $3
+   AND worker_hosts.status = 'lost'
+   AND worker_hosts.claim_version = $4 + 1
    AND NOT EXISTS (SELECT 1 FROM target)
 LIMIT 1
 `
 
-type FenceWorkerInstanceParams struct {
+type FenceWorkerHostParams struct {
 	ID                   pgtype.UUID `json:"id"`
 	WorkerGroupID        pgtype.UUID `json:"worker_group_id"`
 	ExpectedEpoch        pgtype.Int8 `json:"expected_epoch"`
@@ -246,7 +190,7 @@ type FenceWorkerInstanceParams struct {
 	ReasonCode           pgtype.Text `json:"reason_code"`
 }
 
-type FenceWorkerInstanceRow struct {
+type FenceWorkerHostRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
 	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
@@ -255,9 +199,7 @@ type FenceWorkerInstanceRow struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat              string             `json:"substrate_format"`
-	SubstrateContract            string             `json:"substrate_contract"`
+	VMPlatformID                 pgtype.Text        `json:"vm_platform_id"`
 	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
@@ -265,12 +207,12 @@ type FenceWorkerInstanceRow struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	MaxVMStarts                  int32              `json:"max_vm_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
+	VMPausedReason               pgtype.Text        `json:"vm_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
@@ -280,15 +222,15 @@ type FenceWorkerInstanceRow struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error) {
-	row := q.db.QueryRow(ctx, fenceWorkerInstance,
+func (q *Queries) FenceWorkerHost(ctx context.Context, arg FenceWorkerHostParams) (FenceWorkerHostRow, error) {
+	row := q.db.QueryRow(ctx, fenceWorkerHost,
 		arg.ID,
 		arg.WorkerGroupID,
 		arg.ExpectedEpoch,
 		arg.ExpectedClaimVersion,
 		arg.ReasonCode,
 	)
-	var i FenceWorkerInstanceRow
+	var i FenceWorkerHostRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -298,9 +240,7 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.RuntimeIdentityID,
-		&i.SubstrateFormat,
-		&i.SubstrateContract,
+		&i.VMPlatformID,
 		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
@@ -308,12 +248,12 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxRuntimeStarts,
+		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.RuntimePausedReason,
+		&i.VMPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -325,59 +265,50 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 	return i, err
 }
 
-const getWorkerInstanceStatus = `-- name: GetWorkerInstanceStatus :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.worker_pool_id, worker_instances.status, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_contract, worker_instances.epoch_cpu_millis, worker_instances.epoch_memory_bytes, worker_instances.epoch_guest_ephemeral_disk_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_guest_ephemeral_disk_bytes, worker_instances.max_vm_slots, worker_instances.max_runtime_starts, worker_instances.cpu_environment, worker_instances.cpu_environment_digest, worker_instances.observed_at, worker_instances.run_paused_reason, worker_instances.runtime_paused_reason, worker_instances.epoch_started_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.termination_ready_at, worker_instances.lost_at, worker_instances.created_at, worker_instances.updated_at,
-       runtime_identities.rootfs_digest,
-       runtime_identities.vm_runtime_contract,
-       runtime_identities.runtime_arch,
+const getWorkerHostStatus = `-- name: GetWorkerHostStatus :one
+SELECT worker_hosts.id, worker_hosts.resource_id, worker_hosts.worker_group_id, worker_hosts.worker_pool_id, worker_hosts.status, worker_hosts.claim_version, worker_hosts.current_epoch, worker_hosts.current_service_id, worker_hosts.vm_platform_id, worker_hosts.epoch_cpu_millis, worker_hosts.epoch_memory_bytes, worker_hosts.epoch_guest_ephemeral_disk_bytes, worker_hosts.per_vm_cpu_millis, worker_hosts.per_vm_memory_bytes, worker_hosts.per_vm_guest_ephemeral_disk_bytes, worker_hosts.max_vm_slots, worker_hosts.max_vm_starts, worker_hosts.cpu_environment, worker_hosts.cpu_environment_digest, worker_hosts.observed_at, worker_hosts.run_paused_reason, worker_hosts.vm_paused_reason, worker_hosts.epoch_started_at, worker_hosts.activated_at, worker_hosts.draining_at, worker_hosts.termination_ready_at, worker_hosts.lost_at, worker_hosts.created_at, worker_hosts.updated_at,
+       vm_platforms.rootfs_digest,
+       vm_platforms.contract,
+       vm_platforms.arch,
 	       COALESCE((
-	           worker_instances.status = 'active'
+	           worker_hosts.status = 'active'
 	           AND worker_groups.status = 'active'
-           AND worker_instances.observed_at >= transaction_timestamp()
+           AND worker_hosts.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
-           AND worker_instances.run_paused_reason IS NULL
+           AND worker_hosts.run_paused_reason IS NULL
        ), false)::boolean AS run_ready,
 	       COALESCE((
-	           worker_instances.status = 'active'
+	           worker_hosts.status = 'active'
 	           AND worker_groups.status = 'active'
-           AND worker_instances.observed_at >= transaction_timestamp()
+           AND worker_hosts.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
-           AND worker_instances.runtime_paused_reason IS NULL
+           AND worker_hosts.vm_paused_reason IS NULL
        ), false)::boolean AS runtime_ready,
        COALESCE((
-           worker_instances.status = 'active'
+           worker_hosts.status = 'active'
            AND worker_groups.status = 'active'
-           AND worker_instances.observed_at >= transaction_timestamp()
+           AND worker_hosts.observed_at >= transaction_timestamp()
                - $1::bigint * interval '1 second'
-	           AND worker_instances.run_paused_reason IS NULL
-	           AND worker_instances.runtime_paused_reason IS NULL
+	           AND worker_hosts.run_paused_reason IS NULL
+	           AND worker_hosts.vm_paused_reason IS NULL
        ), false)::boolean AS all_configured_roles_ready,
-       ((SELECT count(*) FROM run_leases
-         WHERE run_leases.worker_instance_id = worker_instances.id
-           AND run_leases.worker_epoch = worker_instances.current_epoch
-           AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')) +
-        (SELECT count(*) FROM workspace_mounts
-         WHERE workspace_mounts.worker_instance_id = worker_instances.id
-           AND workspace_mounts.worker_epoch = worker_instances.current_epoch
-           AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')) +
-        (SELECT count(*) FROM runtime_instances
-         WHERE runtime_instances.worker_instance_id = worker_instances.id
-           AND runtime_instances.worker_epoch = worker_instances.current_epoch
-           AND runtime_instances.observed_state IN ('allocated', 'ready')))::int AS active_executions
-  FROM worker_instances
-  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-  LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
- WHERE worker_instances.id = $2
-   AND worker_instances.worker_group_id = $3
+       (SELECT count(*)::int FROM computer_instances i
+          WHERE i.worker_host_id=worker_hosts.id AND i.worker_epoch=worker_hosts.current_epoch
+            AND i.reclaimed_at IS NULL) AS active_instances
+  FROM worker_hosts
+  JOIN worker_groups ON worker_groups.id = worker_hosts.worker_group_id
+  LEFT JOIN vm_platforms ON vm_platforms.id = worker_hosts.vm_platform_id
+ WHERE worker_hosts.id = $2
+   AND worker_hosts.worker_group_id = $3
 `
 
-type GetWorkerInstanceStatusParams struct {
+type GetWorkerHostStatusParams struct {
 	ObservationFreshnessSeconds int64       `json:"observation_freshness_seconds"`
 	ID                          pgtype.UUID `json:"id"`
 	WorkerGroupID               pgtype.UUID `json:"worker_group_id"`
 }
 
-type GetWorkerInstanceStatusRow struct {
+type GetWorkerHostStatusRow struct {
 	ID                           pgtype.UUID        `json:"id"`
 	ResourceID                   string             `json:"resource_id"`
 	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
@@ -386,9 +317,7 @@ type GetWorkerInstanceStatusRow struct {
 	ClaimVersion                 int64              `json:"claim_version"`
 	CurrentEpoch                 pgtype.Int8        `json:"current_epoch"`
 	CurrentServiceID             pgtype.UUID        `json:"current_service_id"`
-	RuntimeIdentityID            pgtype.Text        `json:"runtime_identity_id"`
-	SubstrateFormat              string             `json:"substrate_format"`
-	SubstrateContract            string             `json:"substrate_contract"`
+	VMPlatformID                 pgtype.Text        `json:"vm_platform_id"`
 	EpochCPUMillis               int64              `json:"epoch_cpu_millis"`
 	EpochMemoryBytes             int64              `json:"epoch_memory_bytes"`
 	EpochGuestEphemeralDiskBytes int64              `json:"epoch_guest_ephemeral_disk_bytes"`
@@ -396,12 +325,12 @@ type GetWorkerInstanceStatusRow struct {
 	PerVMMemoryBytes             int64              `json:"per_vm_memory_bytes"`
 	PerVMGuestEphemeralDiskBytes int64              `json:"per_vm_guest_ephemeral_disk_bytes"`
 	MaxVMSlots                   int32              `json:"max_vm_slots"`
-	MaxRuntimeStarts             int32              `json:"max_runtime_starts"`
+	MaxVMStarts                  int32              `json:"max_vm_starts"`
 	CPUEnvironment               []byte             `json:"cpu_environment"`
 	CPUEnvironmentDigest         pgtype.Text        `json:"cpu_environment_digest"`
 	ObservedAt                   pgtype.Timestamptz `json:"observed_at"`
 	RunPausedReason              pgtype.Text        `json:"run_paused_reason"`
-	RuntimePausedReason          pgtype.Text        `json:"runtime_paused_reason"`
+	VMPausedReason               pgtype.Text        `json:"vm_paused_reason"`
 	EpochStartedAt               pgtype.Timestamptz `json:"epoch_started_at"`
 	ActivatedAt                  pgtype.Timestamptz `json:"activated_at"`
 	DrainingAt                   pgtype.Timestamptz `json:"draining_at"`
@@ -410,17 +339,17 @@ type GetWorkerInstanceStatusRow struct {
 	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	RootfsDigest                 pgtype.Text        `json:"rootfs_digest"`
-	VMRuntimeContract            pgtype.Text        `json:"vm_runtime_contract"`
-	RuntimeArch                  pgtype.Text        `json:"runtime_arch"`
+	Contract                     pgtype.Text        `json:"contract"`
+	Arch                         pgtype.Text        `json:"arch"`
 	RunReady                     bool               `json:"run_ready"`
 	RuntimeReady                 bool               `json:"runtime_ready"`
 	AllConfiguredRolesReady      bool               `json:"all_configured_roles_ready"`
-	ActiveExecutions             int32              `json:"active_executions"`
+	ActiveInstances              int32              `json:"active_instances"`
 }
 
-func (q *Queries) GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInstanceStatusParams) (GetWorkerInstanceStatusRow, error) {
-	row := q.db.QueryRow(ctx, getWorkerInstanceStatus, arg.ObservationFreshnessSeconds, arg.ID, arg.WorkerGroupID)
-	var i GetWorkerInstanceStatusRow
+func (q *Queries) GetWorkerHostStatus(ctx context.Context, arg GetWorkerHostStatusParams) (GetWorkerHostStatusRow, error) {
+	row := q.db.QueryRow(ctx, getWorkerHostStatus, arg.ObservationFreshnessSeconds, arg.ID, arg.WorkerGroupID)
+	var i GetWorkerHostStatusRow
 	err := row.Scan(
 		&i.ID,
 		&i.ResourceID,
@@ -430,9 +359,7 @@ func (q *Queries) GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInst
 		&i.ClaimVersion,
 		&i.CurrentEpoch,
 		&i.CurrentServiceID,
-		&i.RuntimeIdentityID,
-		&i.SubstrateFormat,
-		&i.SubstrateContract,
+		&i.VMPlatformID,
 		&i.EpochCPUMillis,
 		&i.EpochMemoryBytes,
 		&i.EpochGuestEphemeralDiskBytes,
@@ -440,12 +367,12 @@ func (q *Queries) GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInst
 		&i.PerVMMemoryBytes,
 		&i.PerVMGuestEphemeralDiskBytes,
 		&i.MaxVMSlots,
-		&i.MaxRuntimeStarts,
+		&i.MaxVMStarts,
 		&i.CPUEnvironment,
 		&i.CPUEnvironmentDigest,
 		&i.ObservedAt,
 		&i.RunPausedReason,
-		&i.RuntimePausedReason,
+		&i.VMPausedReason,
 		&i.EpochStartedAt,
 		&i.ActivatedAt,
 		&i.DrainingAt,
@@ -454,12 +381,12 @@ func (q *Queries) GetWorkerInstanceStatus(ctx context.Context, arg GetWorkerInst
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RootfsDigest,
-		&i.VMRuntimeContract,
-		&i.RuntimeArch,
+		&i.Contract,
+		&i.Arch,
 		&i.RunReady,
 		&i.RuntimeReady,
 		&i.AllConfiguredRolesReady,
-		&i.ActiveExecutions,
+		&i.ActiveInstances,
 	)
 	return i, err
 }
@@ -473,282 +400,40 @@ WITH candidate_scopes AS (
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $9::text) AS sort_key
       FROM runs
       JOIN computers ON computers.environment_id = runs.environment_id
-                     AND computers.id = runs.workspace_id
+                     AND computers.id = runs.computer_id
      WHERE runs.status = 'queued'
        AND ($10::text = '' OR computers.region_id = $10)
        AND runs.current_run_lease_id IS NULL
-       AND (runs.next_runtime_preparation_at IS NULL
-            OR runs.next_runtime_preparation_at <= transaction_timestamp())
+       AND (runs.next_instance_preparation_at IS NULL
+            OR runs.next_instance_preparation_at <= transaction_timestamp())
+
+       AND computers.status='active' AND computers.desired_state='active'
+       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
+       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND runs.active_elapsed_ms < runs.max_active_duration_ms
+       AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
+         AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
+       AND (runs.entrypoint_kind='task' OR EXISTS(SELECT 1 FROM sessions a
+         WHERE a.id=runs.session_id AND a.current_run_id=runs.id AND a.computer_id=runs.computer_id
+           AND a.status IN ('open','closing') AND a.cancel_requested_at IS NULL
+           AND a.dispatch_hold_id IS NULL))
+       AND (runs.parent_owns_lifecycle IS NOT TRUE OR EXISTS(SELECT 1 FROM runs parent
+         WHERE parent.id=runs.parent_run_id AND parent.status IN ('queued','running','waiting','retry_delayed')))
        AND (
-           (runs.entrypoint_kind = 'task'
-            AND runs.session_id IS NULL
-            AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-            AND (
-              (computers.owner_run_id = runs.id
-               AND computers.owner_session_id IS NULL
-               AND (NOT EXISTS (
-               SELECT 1
-                 FROM run_waits
-                WHERE run_waits.run_id = runs.id
-                  AND run_waits.suspension_status IN (
-                      'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-                  )
-            ) OR EXISTS (
-               SELECT 1
-                 FROM run_waits
-                 JOIN run_checkpoints
-                   ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-                  AND run_checkpoints.run_id = run_waits.run_id
-                  AND run_checkpoints.attempt_number = run_waits.attempt_number
-                  AND run_checkpoints.run_wait_id = run_waits.id
-                  AND run_checkpoints.workspace_id = run_waits.workspace_id
-                  AND run_checkpoints.status = 'ready'
-                  AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-                 JOIN computer_versions
-                   ON computer_versions.computer_id = run_checkpoints.workspace_id
-                  AND computer_versions.id = run_checkpoints.private_workspace_version_id
-                  AND computer_versions.status = 'private'
-                WHERE run_waits.run_id = runs.id
-                  AND run_waits.suspension_status = 'resume_pending'
-              )))
-              OR EXISTS (
-                  SELECT 1
-                    FROM run_waits AS edge
-                    JOIN runs AS parent
-                      ON parent.environment_id = edge.environment_id
-                     AND parent.id = edge.run_id
-                     AND parent.workspace_id = edge.workspace_id
-                     AND parent.status = 'waiting'
-                     AND parent.current_run_lease_id IS NULL
-                    JOIN run_checkpoints AS checkpoint
-                      ON checkpoint.id = edge.suspend_checkpoint_id
-                     AND checkpoint.run_id = edge.run_id
-                     AND checkpoint.attempt_number =
-                         edge.attempt_number
-                     AND checkpoint.run_wait_id = edge.id
-                     AND checkpoint.workspace_id = edge.workspace_id
-                     AND checkpoint.status = 'ready'
-                    JOIN computer_versions AS base
-                      ON base.computer_id = edge.workspace_id
-                     AND base.id = edge.base_workspace_version_id
-                     AND base.status = 'private'
-                   WHERE edge.child_run_id = runs.id
-                     AND edge.kind = 'child'
-                     AND runs.parent_run_id = edge.run_id
-                     AND runs.parent_owns_lifecycle IS TRUE
-                     AND edge.workspace_id = runs.workspace_id
-                     AND edge.condition_status = 'pending'
-                     AND edge.suspension_status = 'parked'
-                     AND EXISTS (SELECT 1 FROM run_attempts origin
-                         WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
-                           AND origin.workspace_id = edge.workspace_id
-                           AND origin.base_workspace_version_id = edge.base_workspace_version_id)
-                     AND edge.ownership_generation IS NOT NULL
-                     AND edge.parent_writer_generation IS NOT NULL
-                     AND (
-                         edge.child_writer_generation IS NULL
-                         OR EXISTS (
-                             SELECT 1
-                               FROM run_leases AS prior_child_lease
-                               JOIN workspace_leases AS prior_child_workspace_lease
-                                 ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
-                                AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
-                                AND (
-                                    (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
-                                    OR (
-                                        prior_child_lease.status = 'expired'
-                                        AND prior_child_workspace_lease.status = 'expired'
-                                        AND prior_child_lease.terminal_reason_code IN ('lease_expired', 'worker_lost', 'runtime_failed')
-                                        AND prior_child_workspace_lease.terminal_reason_code = prior_child_lease.terminal_reason_code
-                                        AND EXISTS (
-                                            SELECT 1 FROM run_waits AS resume_edge
-                                            JOIN run_checkpoints AS resume_checkpoint
-                                              ON resume_checkpoint.id = resume_edge.suspend_checkpoint_id
-                                             AND resume_checkpoint.run_id = resume_edge.run_id
-                                             AND resume_checkpoint.attempt_number = resume_edge.attempt_number
-                                             AND resume_checkpoint.run_wait_id = resume_edge.id
-                                             AND resume_checkpoint.workspace_id = resume_edge.workspace_id
-                                             AND resume_checkpoint.status = 'ready'
-                                             AND (resume_checkpoint.expires_at IS NULL OR resume_checkpoint.expires_at > transaction_timestamp())
-                                             AND resume_checkpoint.source_run_lease_id = resume_edge.prior_run_lease_id
-                                            JOIN runtime_instances AS restored_runtime
-                                              ON restored_runtime.id = prior_child_lease.runtime_instance_id
-                                             AND restored_runtime.workspace_id = prior_child_lease.workspace_id
-                                             AND restored_runtime.runtime_identity_id = prior_child_lease.runtime_identity_id
-                                             AND restored_runtime.restore_checkpoint_id = resume_checkpoint.id
-                                             AND prior_child_workspace_lease.runtime_instance_id = restored_runtime.id
-                                           WHERE resume_edge.run_id = runs.id
-                                             AND resume_edge.attempt_number = prior_child_lease.attempt_number
-                                             AND prior_child_lease.attempt_number = runs.current_attempt_number
-                                             AND resume_edge.workspace_id = runs.workspace_id
-                                             AND resume_edge.suspension_status = 'resume_pending'
-                                             AND resume_edge.current_run_lease_id IS NULL
-                                             AND resume_edge.checkpoint_request_version > 0
-                                             AND resume_edge.checkpoint_ack_version = resume_edge.checkpoint_request_version
-                                             AND resume_edge.resume_request_version > resume_edge.resume_ack_version
-                                             AND prior_child_workspace_lease.base_workspace_version_id =
-                                                 COALESCE(resume_edge.resume_workspace_version_id, resume_checkpoint.private_workspace_version_id)
-                                        )
-                                    )
-                                    OR (prior_child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
-                                        AND runs.base_workspace_version_id = edge.base_workspace_version_id
-                                        AND prior_child_lease.attempt_number = runs.current_attempt_number)
-                                    OR EXISTS (
-                                        SELECT 1
-                                          FROM computer_versions AS retry_version
-                                          JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
-                                          AND prior_child_lease.finalization_root = retry_root.locator
-                                         WHERE retry_version.id = runs.base_workspace_version_id
-                                           AND retry_version.computer_id = runs.workspace_id
-                                           AND retry_version.status = 'private'
-                                           AND retry_version.source_workspace_lease_id = prior_child_workspace_lease.id
-                                           AND retry_version.parent_version_id = prior_child_workspace_lease.base_workspace_version_id
-                                           AND retry_version.ownership_generation = prior_child_workspace_lease.ownership_generation
-                                           AND retry_version.writer_generation = prior_child_workspace_lease.writer_generation
-                                           AND prior_child_lease.attempt_number = runs.current_attempt_number - 1
-                                           AND prior_child_lease.status = 'failed'
-                                           AND prior_child_lease.terminal_at IS NOT NULL
-                                           AND prior_child_lease.terminal_request_fingerprint IS NOT NULL
-                                           AND prior_child_lease.finalization_operation_id IS NOT NULL
-                                    )
-                                    OR EXISTS (
-                                        SELECT 1
-                                          FROM run_waits AS prior_resume_edge
-                                         WHERE prior_resume_edge.run_id = runs.id
-                                           AND prior_resume_edge.attempt_number = prior_child_lease.attempt_number
-                                           AND prior_child_lease.attempt_number = runs.current_attempt_number
-                                           AND prior_resume_edge.workspace_id = runs.workspace_id
-                                           AND prior_resume_edge.suspension_status = 'resume_pending'
-                                           AND prior_resume_edge.ownership_generation = edge.ownership_generation
-                                           AND prior_resume_edge.resume_writer_generation IS NULL
-                                           AND prior_resume_edge.resume_workspace_version_id =
-                                               prior_child_workspace_lease.base_workspace_version_id
-                                    )
-                                )
-                                AND prior_child_workspace_lease.ownership_generation = edge.ownership_generation
-                                AND prior_child_workspace_lease.writer_generation = edge.child_writer_generation
-                                AND prior_child_workspace_lease.status IN ('released', 'fenced', 'expired')
-                              WHERE prior_child_lease.run_id = runs.id
-                                AND prior_child_lease.workspace_id = runs.workspace_id
-                                AND (
-                                    prior_child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
-                                    OR (
-                                        (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
-                                        AND EXISTS (
-                                            SELECT 1
-                                              FROM run_waits AS resume_edge
-                                              JOIN run_checkpoints AS resume_checkpoint
-                                                ON resume_checkpoint.id = resume_edge.suspend_checkpoint_id
-                                               AND resume_checkpoint.run_id = resume_edge.run_id
-                                               AND resume_checkpoint.attempt_number = resume_edge.attempt_number
-                                               AND resume_checkpoint.run_wait_id = resume_edge.id
-                                               AND resume_checkpoint.workspace_id = resume_edge.workspace_id
-                                               AND resume_checkpoint.status = 'ready'
-                                               AND (resume_checkpoint.expires_at IS NULL OR resume_checkpoint.expires_at > transaction_timestamp())
-                                               AND resume_checkpoint.source_run_lease_id = prior_child_lease.id
-                                               AND resume_checkpoint.source_workspace_lease_id = prior_child_workspace_lease.id
-                                               AND resume_checkpoint.base_workspace_version_id = prior_child_workspace_lease.base_workspace_version_id
-                                             WHERE resume_edge.run_id = runs.id
-                                               AND resume_edge.attempt_number = prior_child_lease.attempt_number
-                                               AND prior_child_lease.attempt_number = runs.current_attempt_number
-                                               AND resume_edge.workspace_id = runs.workspace_id
-                                               AND resume_edge.suspension_status = 'resume_pending'
-                                               AND resume_edge.prior_run_lease_id = prior_child_lease.id
-                                               AND resume_edge.checkpoint_request_version > 0
-                                               AND resume_edge.checkpoint_ack_version = resume_edge.checkpoint_request_version
-                                               AND resume_edge.resume_writer_generation IS NULL
-                                        )
-                                    )
-                                )
-                         )
-                     )
-              )
-            ))
-           OR
-           (runs.entrypoint_kind = 'actor'
-            AND runs.session_id IS NOT NULL
-            AND runs.cause_kind IN ('actor_start', 'continuation')
-            AND runs.parent_run_id IS NULL
-            AND computers.owner_session_id = runs.session_id
-            AND computers.owner_run_id IS NULL
-            AND EXISTS (
-                SELECT 1 FROM sessions
-                 WHERE sessions.id = runs.session_id
-                   AND sessions.workspace_id = runs.workspace_id
-                   AND sessions.current_run_id = runs.id
-                   AND sessions.status IN ('open', 'closing')
-                   AND sessions.dispatch_hold_id IS NULL
-                   AND runs.active_elapsed_ms < runs.max_active_duration_ms
-                   AND ((sessions.active_turn_id IS NULL AND runs.started_at IS NULL)
-                        OR EXISTS (SELECT 1 FROM run_waits AS continuation
-                                    WHERE continuation.run_id = runs.id
-                                      AND continuation.attempt_number = runs.current_attempt_number
-                                      AND continuation.suspension_status = 'resume_pending'))
-            )
-            AND EXISTS (
-                SELECT 1
-                  FROM run_attempts
-                 WHERE run_attempts.run_id = runs.id
-                   AND run_attempts.number = runs.current_attempt_number
-                   AND run_attempts.workspace_id = runs.workspace_id
-                   AND run_attempts.entrypoint_kind = 'actor'
-                   AND run_attempts.session_input_start_sequence = runs.session_input_start_sequence
-                   AND run_attempts.terminal_at IS NULL
-            )
-            AND (
-                NOT EXISTS (
-                    SELECT 1
-                      FROM run_waits
-                     WHERE run_waits.run_id = runs.id
-                       AND run_waits.suspension_status IN (
-                           'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-                       )
-                )
-                OR EXISTS (
-                SELECT 1
-                  FROM run_waits
-                  JOIN run_checkpoints
-                    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-                   AND run_checkpoints.run_id = run_waits.run_id
-                   AND run_checkpoints.attempt_number = run_waits.attempt_number
-                   AND run_checkpoints.run_wait_id = run_waits.id
-                   AND run_checkpoints.workspace_id = run_waits.workspace_id
-                   AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
-                   AND run_checkpoints.status = 'ready'
-                   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-                  JOIN computer_versions
-                    ON computer_versions.computer_id = run_checkpoints.workspace_id
-                   AND computer_versions.id = run_checkpoints.private_workspace_version_id
-                   AND computer_versions.status = 'private'
-                  JOIN run_leases AS restore_source_lease
-                    ON restore_source_lease.id = run_checkpoints.source_run_lease_id
-                   AND restore_source_lease.run_id = runs.id
-                   AND restore_source_lease.attempt_number = runs.current_attempt_number
-                   AND restore_source_lease.workspace_id = runs.workspace_id
-                   AND restore_source_lease.status = 'checkpointed'
-                  JOIN sessions AS restore_actor
-                    ON restore_actor.id = runs.session_id
-                   AND restore_actor.workspace_id = runs.workspace_id
-                   AND restore_actor.current_run_id = runs.id
-                   AND restore_actor.status IN ('open', 'closing')
-                   AND restore_actor.dispatch_hold_id IS NULL
-                   AND runs.active_elapsed_ms < runs.max_active_duration_ms
-                  JOIN run_attempts AS restore_attempt
-                    ON restore_attempt.run_id = runs.id
-                   AND restore_attempt.number = runs.current_attempt_number
-                   AND restore_attempt.workspace_id = runs.workspace_id
-                   AND restore_attempt.entrypoint_kind = 'actor'
-                   AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
-                   AND restore_attempt.terminal_at IS NULL
-                 WHERE run_waits.run_id = runs.id
-                   AND run_waits.suspension_status = 'resume_pending'
-                   AND runs.session_input_start_sequence <= runs.session_input_high_watermark
-                   AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
-                   AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
-                   AND run_checkpoints.actor_speculative_input_sequence
-                       BETWEEN restore_actor.committed_input_sequence
-                           AND restore_actor.next_input_sequence - 1
-            )))
+         NOT EXISTS(SELECT 1 FROM run_waits w WHERE w.run_id=runs.id
+           AND w.attempt_number=runs.current_attempt_number
+           AND w.suspension_status IN ('hot','checkpointing','parked','resume_pending','resuming'))
+         OR EXISTS(SELECT 1 FROM run_waits w
+           JOIN computer_checkpoint_runs m ON m.checkpoint_id=w.suspend_checkpoint_id AND m.run_wait_id=w.id
+             AND m.run_id=runs.id AND m.attempt_number=runs.current_attempt_number
+           JOIN computer_checkpoints c ON c.id=m.checkpoint_id AND c.computer_id=runs.computer_id
+           JOIN computer_disk_versions d ON d.id=c.private_computer_disk_version_id AND d.status='private'
+           JOIN run_leases l ON l.id=m.source_run_lease_id AND l.status='checkpointed'
+           WHERE w.run_id=runs.id AND w.suspension_status='resume_pending'
+             AND c.status='ready' AND c.resume_committed_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+             AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
+               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, computers.region_id,
@@ -887,50 +572,44 @@ SELECT input_scopes.scope_ordinal,
              runs.revision,
              runs.queue_score_at
         FROM runs
+        JOIN computers ON computers.id=runs.computer_id AND computers.environment_id=runs.environment_id
        WHERE runs.org_id = input_scopes.org_id
          AND runs.environment_id = input_scopes.environment_id
          AND coalesce(runs.concurrency_key, '') = input_scopes.concurrency_key
          AND runs.queue_name = input_scopes.queue_name
          AND runs.status = 'queued'
          AND runs.current_run_lease_id IS NULL
-         AND (runs.entrypoint_kind = 'task' OR EXISTS (
-             SELECT 1 FROM sessions
-              WHERE sessions.id = runs.session_id
-                AND sessions.current_run_id = runs.id
-                AND sessions.workspace_id = runs.workspace_id
-                AND sessions.status IN ('open', 'closing')
-                AND sessions.dispatch_hold_id IS NULL
-                   AND runs.active_elapsed_ms < runs.max_active_duration_ms
-                AND ((sessions.active_turn_id IS NULL AND runs.started_at IS NULL
-                      AND NOT EXISTS (SELECT 1 FROM run_waits WHERE run_waits.run_id = runs.id
-                          AND run_waits.suspension_status IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming')))
-                     OR EXISTS (
-                         SELECT 1 FROM run_waits
-                         JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-                          AND run_checkpoints.run_id = runs.id
-                          AND run_checkpoints.attempt_number = runs.current_attempt_number
-                          AND run_checkpoints.run_wait_id = run_waits.id
-                          AND run_checkpoints.workspace_id = runs.workspace_id
-                         JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
-                          AND computer_versions.computer_id = runs.workspace_id
-                         JOIN run_leases AS source_lease ON source_lease.id = run_checkpoints.source_run_lease_id
-                          AND source_lease.run_id = runs.id
-                          AND source_lease.attempt_number = runs.current_attempt_number
-                          AND source_lease.workspace_id = runs.workspace_id
-                         WHERE run_waits.run_id = runs.id
-                           AND run_waits.attempt_number = runs.current_attempt_number
-                           AND run_waits.workspace_id = runs.workspace_id
-                           AND run_waits.suspension_status = 'resume_pending'
-                           AND run_checkpoints.status = 'ready'
-                           AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                           AND computer_versions.status = 'private'
-                           AND source_lease.status = 'checkpointed'
-                           AND run_checkpoints.actor_speculative_input_sequence
-                               BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
-                     ))
-         ))
-         AND (runs.next_runtime_preparation_at IS NULL
-              OR runs.next_runtime_preparation_at <= transaction_timestamp())
+
+       AND computers.status='active' AND computers.desired_state='active'
+       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
+       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND runs.active_elapsed_ms < runs.max_active_duration_ms
+       AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
+         AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
+       AND (runs.entrypoint_kind='task' OR EXISTS(SELECT 1 FROM sessions a
+         WHERE a.id=runs.session_id AND a.current_run_id=runs.id AND a.computer_id=runs.computer_id
+           AND a.status IN ('open','closing') AND a.cancel_requested_at IS NULL
+           AND a.dispatch_hold_id IS NULL))
+       AND (runs.parent_owns_lifecycle IS NOT TRUE OR EXISTS(SELECT 1 FROM runs parent
+         WHERE parent.id=runs.parent_run_id AND parent.status IN ('queued','running','waiting','retry_delayed')))
+       AND (
+         NOT EXISTS(SELECT 1 FROM run_waits w WHERE w.run_id=runs.id
+           AND w.attempt_number=runs.current_attempt_number
+           AND w.suspension_status IN ('hot','checkpointing','parked','resume_pending','resuming'))
+         OR EXISTS(SELECT 1 FROM run_waits w
+           JOIN computer_checkpoint_runs m ON m.checkpoint_id=w.suspend_checkpoint_id AND m.run_wait_id=w.id
+             AND m.run_id=runs.id AND m.attempt_number=runs.current_attempt_number
+           JOIN computer_checkpoints c ON c.id=m.checkpoint_id AND c.computer_id=runs.computer_id
+           JOIN computer_disk_versions d ON d.id=c.private_computer_disk_version_id AND d.status='private'
+           JOIN run_leases l ON l.id=m.source_run_lease_id AND l.status='checkpointed'
+           WHERE w.run_id=runs.id AND w.suspension_status='resume_pending'
+             AND c.status='ready' AND c.resume_committed_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+             AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
+               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
+       )
+         AND (runs.next_instance_preparation_at IS NULL
+              OR runs.next_instance_preparation_at <= transaction_timestamp())
          AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
          AND (
              NOT input_scopes.after_set
@@ -1033,12 +712,13 @@ WITH input_scopes AS (
 SELECT input_scopes.scope_ordinal,
        candidates.org_id,
        candidates.run_id,
+       candidates.computer_id,
+       candidates.accounted_pool_ids,
        candidates.revision,
        candidates.queue_concurrency_limit,
-       candidates.workspace_manifest_version,
-       candidates.workspace_manifest,
+       candidates.computer_config,
        candidates.required_worker_group_id,
-       candidates.required_runtime_identity_id,
+       candidates.required_vm_platform_id,
        candidates.required_vm_vcpu_count,
        candidates.required_cpu_config_digest,
        candidates.required_cpu_millis,
@@ -1048,12 +728,15 @@ SELECT input_scopes.scope_ordinal,
  CROSS JOIN LATERAL (
 SELECT runs.org_id,
        runs.id AS run_id,
+       runs.computer_id,
+       ARRAY(SELECT h.worker_pool_id FROM computer_instances live
+         JOIN worker_hosts h ON h.id=live.worker_host_id
+         WHERE live.computer_id=runs.computer_id AND live.reclaimed_at IS NULL)::uuid[] AS accounted_pool_ids,
        runs.revision,
        runs.queue_concurrency_limit,
-       workspace_definitions.manifest_version AS workspace_manifest_version,
-       workspace_definitions.manifest AS workspace_manifest,
+       computer_specs.config AS computer_config,
        capacity_restore.worker_group_id AS required_worker_group_id,
-       COALESCE(capacity_restore.runtime_identity_id, '') AS required_runtime_identity_id,
+       COALESCE(capacity_restore.vm_platform_id, '') AS required_vm_platform_id,
        COALESCE(capacity_restore.vm_vcpu_count, 0)::integer AS required_vm_vcpu_count,
        COALESCE(capacity_restore.cpu_config_digest, '') AS required_cpu_config_digest,
        COALESCE(capacity_restore.requested_cpu_millis, 0)::bigint AS required_cpu_millis,
@@ -1062,44 +745,20 @@ SELECT runs.org_id,
        runs.queue_score_at AS candidate_score_at
   FROM runs
   JOIN computers ON computers.environment_id = runs.environment_id
-                 AND computers.id = runs.workspace_id
-  JOIN deployment_definitions AS workspace_definitions
-    ON workspace_definitions.environment_id = computers.environment_id
-   AND workspace_definitions.id = computers.deployment_definition_id
-   AND workspace_definitions.kind = 'sandbox'
+                 AND computers.id = runs.computer_id
+  JOIN computer_specs
+    ON computer_specs.environment_id = computers.environment_id
+   AND computer_specs.id = computers.computer_spec_id
   LEFT JOIN LATERAL (
-      SELECT source_lease.worker_group_id,
-             source_lease.requested_cpu_millis,
-             source_lease.requested_memory_bytes,
-             source_lease.requested_guest_ephemeral_disk_bytes,
-             source_runtime.runtime_identity_id,
-             source_runtime.vm_vcpu_count,
-             source_runtime.cpu_config_digest
-        FROM run_waits
-        JOIN run_checkpoints
-          ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-         AND run_checkpoints.run_id = run_waits.run_id
-         AND run_checkpoints.attempt_number = run_waits.attempt_number
-         AND run_checkpoints.run_wait_id = run_waits.id
-         AND run_checkpoints.workspace_id = run_waits.workspace_id
-         AND run_checkpoints.status = 'ready'
-         AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-        JOIN run_leases AS source_lease
-          ON source_lease.id = run_checkpoints.source_run_lease_id
-         AND source_lease.run_id = run_checkpoints.run_id
-         AND source_lease.attempt_number = run_checkpoints.attempt_number
-         AND source_lease.workspace_id = run_checkpoints.workspace_id
-         AND source_lease.status = 'checkpointed'
-        JOIN runtime_instances AS source_runtime
-          ON source_runtime.id = source_lease.runtime_instance_id
-         AND source_runtime.workspace_id = run_checkpoints.workspace_id
-         AND source_runtime.runtime_identity_id = source_lease.runtime_identity_id
-       WHERE run_waits.run_id = runs.id
-         AND run_waits.attempt_number = runs.current_attempt_number
-         AND run_waits.workspace_id = runs.workspace_id
-         AND run_waits.suspension_status = 'resume_pending'
-       ORDER BY run_waits.id
-       LIMIT 1
+      SELECT i.worker_group_id,i.reserved_cpu_millis AS requested_cpu_millis,
+             i.reserved_memory_bytes AS requested_memory_bytes,
+             i.reserved_guest_ephemeral_disk_bytes AS requested_guest_ephemeral_disk_bytes,
+             i.vm_platform_id,i.vm_vcpu_count,i.cpu_config_digest
+      FROM computer_checkpoints c
+      JOIN computer_instances i ON i.id=c.source_computer_instance_id
+      WHERE c.computer_id=runs.computer_id AND c.status='ready' AND c.resume_committed_at IS NULL
+        AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+      ORDER BY c.created_at DESC,c.id DESC LIMIT 1
   ) AS capacity_restore ON true
  WHERE runs.org_id = input_scopes.org_id
    AND (get_byte(uuid_send(runs.org_id), 15) & 63) =
@@ -1111,278 +770,37 @@ SELECT runs.org_id,
    AND runs.queue_name = input_scopes.queue_name
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND (runs.next_runtime_preparation_at IS NULL
-        OR runs.next_runtime_preparation_at <= transaction_timestamp())
-   AND (
-       (runs.entrypoint_kind = 'task'
-        AND runs.session_id IS NULL
-        AND runs.cause_kind IN ('api', 'manual', 'schedule', 'child')
-        AND (
-          (computers.owner_run_id = runs.id
-           AND computers.owner_session_id IS NULL
-           AND (NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_status IN (
-                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-              )
-        ) OR EXISTS (
-           SELECT 1
-             FROM run_waits
-             JOIN run_checkpoints
-               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-              AND run_checkpoints.run_id = run_waits.run_id
-              AND run_checkpoints.attempt_number = run_waits.attempt_number
-              AND run_checkpoints.run_wait_id = run_waits.id
-              AND run_checkpoints.workspace_id = run_waits.workspace_id
-              AND run_checkpoints.status = 'ready'
-              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-             JOIN computer_versions
-               ON computer_versions.computer_id = run_checkpoints.workspace_id
-              AND computer_versions.id = run_checkpoints.private_workspace_version_id
-              AND computer_versions.status = 'private'
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_status = 'resume_pending'
-          )))
-          OR EXISTS (
-              SELECT 1
-                FROM run_waits AS edge
-                JOIN runs AS parent
-                  ON parent.environment_id = edge.environment_id
-                 AND parent.id = edge.run_id
-                 AND parent.workspace_id = edge.workspace_id
-                 AND parent.status = 'waiting'
-                 AND parent.current_run_lease_id IS NULL
-                JOIN run_checkpoints AS checkpoint
-                  ON checkpoint.id = edge.suspend_checkpoint_id
-                 AND checkpoint.run_id = edge.run_id
-                 AND checkpoint.attempt_number = edge.attempt_number
-                 AND checkpoint.run_wait_id = edge.id
-                 AND checkpoint.workspace_id = edge.workspace_id
-                 AND checkpoint.status = 'ready'
-                JOIN computer_versions AS base
-                  ON base.computer_id = edge.workspace_id
-                 AND base.id = edge.base_workspace_version_id
-                 AND base.status = 'private'
-               WHERE edge.child_run_id = runs.id
-                 AND edge.kind = 'child'
-                     AND runs.parent_run_id = edge.run_id
-                     AND runs.parent_owns_lifecycle IS TRUE
-                 AND edge.workspace_id = runs.workspace_id
-                 AND edge.condition_status = 'pending'
-                 AND edge.suspension_status = 'parked'
-                 AND EXISTS (SELECT 1 FROM run_attempts origin
-                         WHERE origin.run_id = runs.id AND origin.number <= runs.current_attempt_number
-                           AND origin.workspace_id = edge.workspace_id
-                           AND origin.base_workspace_version_id = edge.base_workspace_version_id)
-                 AND edge.ownership_generation IS NOT NULL
-                 AND edge.parent_writer_generation IS NOT NULL
-                 AND (
-                     edge.child_writer_generation IS NULL
-                     OR EXISTS (
-                         SELECT 1
-                           FROM run_leases AS prior_child_lease
-                           JOIN workspace_leases AS prior_child_workspace_lease
-                             ON prior_child_workspace_lease.owner_run_lease_id = prior_child_lease.id
-                            AND prior_child_workspace_lease.workspace_id = prior_child_lease.workspace_id
-                            AND (
-                                (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
-                                OR (
-                                    prior_child_lease.status = 'expired'
-                                    AND prior_child_workspace_lease.status = 'expired'
-                                    AND prior_child_lease.terminal_reason_code IN ('lease_expired', 'worker_lost', 'runtime_failed')
-                                    AND prior_child_workspace_lease.terminal_reason_code = prior_child_lease.terminal_reason_code
-                                    AND EXISTS (
-                                        SELECT 1 FROM run_waits AS resume_edge
-                                        JOIN run_checkpoints AS resume_checkpoint
-                                          ON resume_checkpoint.id = resume_edge.suspend_checkpoint_id
-                                         AND resume_checkpoint.run_id = resume_edge.run_id
-                                         AND resume_checkpoint.attempt_number = resume_edge.attempt_number
-                                         AND resume_checkpoint.run_wait_id = resume_edge.id
-                                         AND resume_checkpoint.workspace_id = resume_edge.workspace_id
-                                         AND resume_checkpoint.status = 'ready'
-                                         AND (resume_checkpoint.expires_at IS NULL OR resume_checkpoint.expires_at > transaction_timestamp())
-                                         AND resume_checkpoint.source_run_lease_id = resume_edge.prior_run_lease_id
-                                        JOIN runtime_instances AS restored_runtime
-                                          ON restored_runtime.id = prior_child_lease.runtime_instance_id
-                                         AND restored_runtime.workspace_id = prior_child_lease.workspace_id
-                                         AND restored_runtime.runtime_identity_id = prior_child_lease.runtime_identity_id
-                                         AND restored_runtime.restore_checkpoint_id = resume_checkpoint.id
-                                         AND prior_child_workspace_lease.runtime_instance_id = restored_runtime.id
-                                       WHERE resume_edge.run_id = runs.id
-                                         AND resume_edge.attempt_number = prior_child_lease.attempt_number
-                                         AND prior_child_lease.attempt_number = runs.current_attempt_number
-                                         AND resume_edge.workspace_id = runs.workspace_id
-                                         AND resume_edge.suspension_status = 'resume_pending'
-                                         AND resume_edge.current_run_lease_id IS NULL
-                                         AND resume_edge.checkpoint_request_version > 0
-                                         AND resume_edge.checkpoint_ack_version = resume_edge.checkpoint_request_version
-                                         AND resume_edge.resume_request_version > resume_edge.resume_ack_version
-                                         AND prior_child_workspace_lease.base_workspace_version_id =
-                                             COALESCE(resume_edge.resume_workspace_version_id, resume_checkpoint.private_workspace_version_id)
-                                    )
-                                )
-                                OR (prior_child_workspace_lease.base_workspace_version_id = edge.base_workspace_version_id
-                                    AND runs.base_workspace_version_id = edge.base_workspace_version_id
-                                    AND prior_child_lease.attempt_number = runs.current_attempt_number)
-                                OR EXISTS (
-                                    SELECT 1
-                                      FROM computer_versions AS retry_version
-                                      JOIN computer_version_roots AS retry_root ON retry_root.version_id = retry_version.id AND retry_root.computer_id = retry_version.computer_id AND retry_root.environment_id = retry_version.environment_id
-                                      AND prior_child_lease.finalization_root = retry_root.locator
-                                     WHERE retry_version.id = runs.base_workspace_version_id
-                                       AND retry_version.computer_id = runs.workspace_id
-                                       AND retry_version.status = 'private'
-                                       AND retry_version.source_workspace_lease_id = prior_child_workspace_lease.id
-                                       AND retry_version.parent_version_id = prior_child_workspace_lease.base_workspace_version_id
-                                       AND retry_version.ownership_generation = prior_child_workspace_lease.ownership_generation
-                                       AND retry_version.writer_generation = prior_child_workspace_lease.writer_generation
-                                       AND prior_child_lease.attempt_number = runs.current_attempt_number - 1
-                                       AND prior_child_lease.status = 'failed'
-                                       AND prior_child_lease.terminal_at IS NOT NULL
-                                       AND prior_child_lease.terminal_request_fingerprint IS NOT NULL
-                                       AND prior_child_lease.finalization_operation_id IS NOT NULL
-                                )
-                                OR EXISTS (
-                                    SELECT 1
-                                      FROM run_waits AS prior_resume_edge
-                                     WHERE prior_resume_edge.run_id = runs.id
-                                       AND prior_resume_edge.attempt_number = prior_child_lease.attempt_number
-                                       AND prior_child_lease.attempt_number = runs.current_attempt_number
-                                       AND prior_resume_edge.workspace_id = runs.workspace_id
-                                       AND prior_resume_edge.suspension_status = 'resume_pending'
-                                       AND prior_resume_edge.ownership_generation = edge.ownership_generation
-                                       AND prior_resume_edge.resume_writer_generation IS NULL
-                                       AND prior_resume_edge.resume_workspace_version_id =
-                                           prior_child_workspace_lease.base_workspace_version_id
-                                )
-                            )
-                            AND prior_child_workspace_lease.ownership_generation = edge.ownership_generation
-                            AND prior_child_workspace_lease.writer_generation = edge.child_writer_generation
-                            AND prior_child_workspace_lease.status IN ('released', 'fenced', 'expired')
-                          WHERE prior_child_lease.run_id = runs.id
-                            AND prior_child_lease.workspace_id = runs.workspace_id
-                            AND (
-                                prior_child_lease.status IN ('failed', 'expired', 'lost', 'rejected')
-                                OR (
-                                    (prior_child_lease.status = 'checkpointed' AND prior_child_lease.attempt_number = runs.current_attempt_number)
-                                    AND EXISTS (
-                                        SELECT 1
-                                          FROM run_waits AS resume_edge
-                                          JOIN run_checkpoints AS resume_checkpoint
-                                            ON resume_checkpoint.id = resume_edge.suspend_checkpoint_id
-                                           AND resume_checkpoint.run_id = resume_edge.run_id
-                                           AND resume_checkpoint.attempt_number = resume_edge.attempt_number
-                                           AND resume_checkpoint.run_wait_id = resume_edge.id
-                                           AND resume_checkpoint.workspace_id = resume_edge.workspace_id
-                                           AND resume_checkpoint.status = 'ready'
-                                           AND (resume_checkpoint.expires_at IS NULL OR resume_checkpoint.expires_at > transaction_timestamp())
-                                           AND resume_checkpoint.source_run_lease_id = prior_child_lease.id
-                                           AND resume_checkpoint.source_workspace_lease_id = prior_child_workspace_lease.id
-                                           AND resume_checkpoint.base_workspace_version_id = prior_child_workspace_lease.base_workspace_version_id
-                                         WHERE resume_edge.run_id = runs.id
-                                           AND resume_edge.attempt_number = prior_child_lease.attempt_number
-                                           AND prior_child_lease.attempt_number = runs.current_attempt_number
-                                           AND resume_edge.workspace_id = runs.workspace_id
-                                           AND resume_edge.suspension_status = 'resume_pending'
-                                           AND resume_edge.prior_run_lease_id = prior_child_lease.id
-                                           AND resume_edge.checkpoint_request_version > 0
-                                           AND resume_edge.checkpoint_ack_version = resume_edge.checkpoint_request_version
-                                           AND resume_edge.resume_writer_generation IS NULL
-                                    )
-                                )
-                            )
-                     )
-                 )
-          )
-        ))
-       OR
-       (runs.entrypoint_kind = 'actor'
-        AND runs.session_id IS NOT NULL
-        AND runs.cause_kind IN ('actor_start', 'continuation')
-        AND runs.parent_run_id IS NULL
-        AND computers.owner_session_id = runs.session_id
-        AND computers.owner_run_id IS NULL
-        AND EXISTS (
-            SELECT 1 FROM sessions
-             WHERE sessions.id = runs.session_id
-               AND sessions.workspace_id = runs.workspace_id
-               AND sessions.current_run_id = runs.id
-               AND sessions.status IN ('open', 'closing')
-                   AND sessions.dispatch_hold_id IS NULL
-                   AND runs.active_elapsed_ms < runs.max_active_duration_ms
-                   AND ((sessions.active_turn_id IS NULL AND runs.started_at IS NULL)
-                        OR EXISTS (SELECT 1 FROM run_waits AS continuation
-                                    WHERE continuation.run_id = runs.id
-                                      AND continuation.attempt_number = runs.current_attempt_number
-                                      AND continuation.suspension_status = 'resume_pending'))
-        )
-        AND EXISTS (
-            SELECT 1
-              FROM run_attempts
-             WHERE run_attempts.run_id = runs.id
-               AND run_attempts.number = runs.current_attempt_number
-               AND run_attempts.workspace_id = runs.workspace_id
-               AND run_attempts.entrypoint_kind = 'actor'
-               AND run_attempts.session_input_start_sequence = runs.session_input_start_sequence
-               AND run_attempts.terminal_at IS NULL
-        )
-        AND (
-            NOT EXISTS (
-                SELECT 1
-                  FROM run_waits
-                 WHERE run_waits.run_id = runs.id
-                   AND run_waits.suspension_status IN (
-                       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-                   )
-            )
-            OR EXISTS (
-            SELECT 1
-              FROM run_waits
-              JOIN run_checkpoints
-                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-               AND run_checkpoints.run_id = run_waits.run_id
-               AND run_checkpoints.attempt_number = run_waits.attempt_number
-               AND run_checkpoints.run_wait_id = run_waits.id
-               AND run_checkpoints.workspace_id = run_waits.workspace_id
-               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
-               AND run_checkpoints.status = 'ready'
-               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-              JOIN computer_versions
-                ON computer_versions.computer_id = run_checkpoints.workspace_id
-               AND computer_versions.id = run_checkpoints.private_workspace_version_id
-               AND computer_versions.status = 'private'
-              JOIN run_leases AS restore_source_lease
-                    ON restore_source_lease.id = run_checkpoints.source_run_lease_id
-                   AND restore_source_lease.run_id = runs.id
-                   AND restore_source_lease.attempt_number = runs.current_attempt_number
-                   AND restore_source_lease.workspace_id = runs.workspace_id
-                   AND restore_source_lease.status = 'checkpointed'
-                  JOIN sessions AS restore_actor
-                ON restore_actor.id = runs.session_id
-               AND restore_actor.workspace_id = runs.workspace_id
-               AND restore_actor.current_run_id = runs.id
-               AND restore_actor.status IN ('open', 'closing')
-                   AND restore_actor.dispatch_hold_id IS NULL
-                   AND runs.active_elapsed_ms < runs.max_active_duration_ms
-              JOIN run_attempts AS restore_attempt
-                ON restore_attempt.run_id = runs.id
-               AND restore_attempt.number = runs.current_attempt_number
-               AND restore_attempt.workspace_id = runs.workspace_id
-               AND restore_attempt.entrypoint_kind = 'actor'
-               AND restore_attempt.session_input_start_sequence = runs.session_input_start_sequence
-               AND restore_attempt.terminal_at IS NULL
-             WHERE run_waits.run_id = runs.id
-               AND run_waits.suspension_status = 'resume_pending'
-               AND runs.session_input_start_sequence <= runs.session_input_high_watermark
-               AND restore_actor.committed_input_sequence >= runs.session_input_start_sequence
-               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
-               AND run_checkpoints.actor_speculative_input_sequence
-                   BETWEEN restore_actor.committed_input_sequence
-                       AND restore_actor.next_input_sequence - 1
-        )))
- )
+   AND (runs.next_instance_preparation_at IS NULL
+        OR runs.next_instance_preparation_at <= transaction_timestamp())
+
+       AND computers.status='active' AND computers.desired_state='active'
+       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL AND computers.preparation_failure IS NULL
+       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND runs.active_elapsed_ms < runs.max_active_duration_ms
+       AND EXISTS(SELECT 1 FROM run_attempts a WHERE a.run_id=runs.id
+         AND a.number=runs.current_attempt_number AND a.terminal_at IS NULL)
+       AND (runs.entrypoint_kind='task' OR EXISTS(SELECT 1 FROM sessions a
+         WHERE a.id=runs.session_id AND a.current_run_id=runs.id AND a.computer_id=runs.computer_id
+           AND a.status IN ('open','closing') AND a.cancel_requested_at IS NULL
+           AND a.dispatch_hold_id IS NULL))
+       AND (runs.parent_owns_lifecycle IS NOT TRUE OR EXISTS(SELECT 1 FROM runs parent
+         WHERE parent.id=runs.parent_run_id AND parent.status IN ('queued','running','waiting','retry_delayed')))
+       AND (
+         NOT EXISTS(SELECT 1 FROM run_waits w WHERE w.run_id=runs.id
+           AND w.attempt_number=runs.current_attempt_number
+           AND w.suspension_status IN ('hot','checkpointing','parked','resume_pending','resuming'))
+         OR EXISTS(SELECT 1 FROM run_waits w
+           JOIN computer_checkpoint_runs m ON m.checkpoint_id=w.suspend_checkpoint_id AND m.run_wait_id=w.id
+             AND m.run_id=runs.id AND m.attempt_number=runs.current_attempt_number
+           JOIN computer_checkpoints c ON c.id=m.checkpoint_id AND c.computer_id=runs.computer_id
+           JOIN computer_disk_versions d ON d.id=c.private_computer_disk_version_id AND d.status='private'
+           JOIN run_leases l ON l.id=m.source_run_lease_id AND l.status='checkpointed'
+           WHERE w.run_id=runs.id AND w.suspension_status='resume_pending'
+             AND c.status='ready' AND c.resume_committed_at IS NULL
+             AND (c.expires_at IS NULL OR c.expires_at>clock_timestamp())
+             AND (runs.session_id IS NULL OR EXISTS(SELECT 1 FROM sessions a WHERE a.id=runs.session_id
+               AND m.actor_speculative_input_sequence BETWEEN a.committed_input_sequence AND a.next_input_sequence-1)))
+       )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id
  LIMIT $1
@@ -1402,20 +820,21 @@ type ListQueuedRunPlanningCandidatesForScopesParams struct {
 }
 
 type ListQueuedRunPlanningCandidatesForScopesRow struct {
-	ScopeOrdinal                    int64       `json:"scope_ordinal"`
-	OrgID                           pgtype.UUID `json:"org_id"`
-	RunID                           pgtype.UUID `json:"run_id"`
-	Revision                        int64       `json:"revision"`
-	QueueConcurrencyLimit           pgtype.Int8 `json:"queue_concurrency_limit"`
-	WorkspaceManifestVersion        int32       `json:"workspace_manifest_version"`
-	WorkspaceManifest               []byte      `json:"workspace_manifest"`
-	RequiredWorkerGroupID           pgtype.UUID `json:"required_worker_group_id"`
-	RequiredRuntimeIdentityID       string      `json:"required_runtime_identity_id"`
-	RequiredVMVCPUCount             int32       `json:"required_vm_vcpu_count"`
-	RequiredCPUConfigDigest         string      `json:"required_cpu_config_digest"`
-	RequiredCPUMillis               int64       `json:"required_cpu_millis"`
-	RequiredMemoryBytes             int64       `json:"required_memory_bytes"`
-	RequiredGuestEphemeralDiskBytes int64       `json:"required_guest_ephemeral_disk_bytes"`
+	ScopeOrdinal                    int64         `json:"scope_ordinal"`
+	OrgID                           pgtype.UUID   `json:"org_id"`
+	RunID                           pgtype.UUID   `json:"run_id"`
+	ComputerID                      pgtype.UUID   `json:"computer_id"`
+	AccountedPoolIds                []pgtype.UUID `json:"accounted_pool_ids"`
+	Revision                        int64         `json:"revision"`
+	QueueConcurrencyLimit           pgtype.Int8   `json:"queue_concurrency_limit"`
+	ComputerConfig                  []byte        `json:"computer_config"`
+	RequiredWorkerGroupID           pgtype.UUID   `json:"required_worker_group_id"`
+	RequiredVMPlatformID            string        `json:"required_vm_platform_id"`
+	RequiredVMVCPUCount             int32         `json:"required_vm_vcpu_count"`
+	RequiredCPUConfigDigest         string        `json:"required_cpu_config_digest"`
+	RequiredCPUMillis               int64         `json:"required_cpu_millis"`
+	RequiredMemoryBytes             int64         `json:"required_memory_bytes"`
+	RequiredGuestEphemeralDiskBytes int64         `json:"required_guest_ephemeral_disk_bytes"`
 }
 
 func (q *Queries) ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, arg ListQueuedRunPlanningCandidatesForScopesParams) ([]ListQueuedRunPlanningCandidatesForScopesRow, error) {
@@ -1439,12 +858,13 @@ func (q *Queries) ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, 
 			&i.ScopeOrdinal,
 			&i.OrgID,
 			&i.RunID,
+			&i.ComputerID,
+			&i.AccountedPoolIds,
 			&i.Revision,
 			&i.QueueConcurrencyLimit,
-			&i.WorkspaceManifestVersion,
-			&i.WorkspaceManifest,
+			&i.ComputerConfig,
 			&i.RequiredWorkerGroupID,
-			&i.RequiredRuntimeIdentityID,
+			&i.RequiredVMPlatformID,
 			&i.RequiredVMVCPUCount,
 			&i.RequiredCPUConfigDigest,
 			&i.RequiredCPUMillis,
@@ -1493,32 +913,12 @@ WITH input_scopes AS (
            NULLIF(input_scopes.concurrency_key, '')::text
      WHERE run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
      GROUP BY input_scopes.scope_ordinal
-), prepared_usage AS (
-    SELECT input_scopes.scope_ordinal,
-           count(*)::bigint AS prepared_runs,
-           COALESCE(min(prepared_runs.queue_concurrency_limit), 0)::bigint AS prepared_limit
-      FROM runtime_instances
-      JOIN runs AS prepared_runs
-        ON prepared_runs.environment_id = runtime_instances.environment_id
-       AND prepared_runs.id = runtime_instances.reserved_run_id
-      JOIN input_scopes
-        ON input_scopes.environment_id = prepared_runs.environment_id
-       AND input_scopes.queue_name = prepared_runs.queue_name
-       AND prepared_runs.concurrency_key IS NOT DISTINCT FROM
-           NULLIF(input_scopes.concurrency_key, '')::text
-     WHERE runtime_instances.reserved_run_id IS NOT NULL
-       AND runtime_instances.reclaimed_at IS NULL
-     GROUP BY input_scopes.scope_ordinal
 )
 SELECT input_scopes.scope_ordinal,
-       COALESCE(active_usage.active_runs, 0)::bigint AS active_runs,
-       COALESCE(active_usage.active_limit, 0)::bigint AS active_limit,
-       COALESCE(prepared_usage.prepared_runs, 0)::bigint AS prepared_runs,
-       COALESCE(prepared_usage.prepared_limit, 0)::bigint AS prepared_limit
-  FROM input_scopes
-  LEFT JOIN active_usage USING (scope_ordinal)
-  LEFT JOIN prepared_usage USING (scope_ordinal)
- ORDER BY input_scopes.scope_ordinal
+       COALESCE(active_usage.active_runs,0)::bigint AS active_runs,
+       COALESCE(active_usage.active_limit,0)::bigint AS active_limit
+FROM input_scopes LEFT JOIN active_usage USING(scope_ordinal)
+ORDER BY input_scopes.scope_ordinal
 `
 
 type ListQueuedRunPlanningUsageParams struct {
@@ -1528,11 +928,9 @@ type ListQueuedRunPlanningUsageParams struct {
 }
 
 type ListQueuedRunPlanningUsageRow struct {
-	ScopeOrdinal  int64 `json:"scope_ordinal"`
-	ActiveRuns    int64 `json:"active_runs"`
-	ActiveLimit   int64 `json:"active_limit"`
-	PreparedRuns  int64 `json:"prepared_runs"`
-	PreparedLimit int64 `json:"prepared_limit"`
+	ScopeOrdinal int64 `json:"scope_ordinal"`
+	ActiveRuns   int64 `json:"active_runs"`
+	ActiveLimit  int64 `json:"active_limit"`
 }
 
 func (q *Queries) ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueuedRunPlanningUsageParams) ([]ListQueuedRunPlanningUsageRow, error) {
@@ -1544,13 +942,7 @@ func (q *Queries) ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueued
 	var items []ListQueuedRunPlanningUsageRow
 	for rows.Next() {
 		var i ListQueuedRunPlanningUsageRow
-		if err := rows.Scan(
-			&i.ScopeOrdinal,
-			&i.ActiveRuns,
-			&i.ActiveLimit,
-			&i.PreparedRuns,
-			&i.PreparedLimit,
-		); err != nil {
+		if err := rows.Scan(&i.ScopeOrdinal, &i.ActiveRuns, &i.ActiveLimit); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

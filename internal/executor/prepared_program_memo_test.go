@@ -199,7 +199,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	if _, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) { return index, nil }); err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: "memo-test", Source: workerapi.RuntimeSource{WorkspaceArchitecture: string(deployment.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
+	target := workerapi.RuntimeReconcileTarget{ID: "memo-test", Source: workerapi.RuntimeSource{ComputerArchitecture: string(deployment.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
 	run := func(want string) {
 		t.Helper()
 		dir := t.TempDir()
@@ -230,9 +230,9 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	target.Source.Program.DeploymentID = ""
 	run("deployment id")
 	target.Source.Program.DeploymentID = "deployment"
-	target.Source.WorkspaceArchitecture = "aarch64"
-	run("workspace architecture")
-	target.Source.WorkspaceArchitecture = string(deployment.ArchitectureX8664)
+	target.Source.ComputerArchitecture = "aarch64"
+	run("computer architecture")
+	target.Source.ComputerArchitecture = string(deployment.ArchitectureX8664)
 	for _, bad := range []deployment.ProgramIndex{{Architecture: deployment.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: deployment.RuntimeArchitecture("aarch64"), RuntimeContract: deployment.RuntimeContract}} {
 		pool.mu.Lock()
 		pool.programIndex = &bad

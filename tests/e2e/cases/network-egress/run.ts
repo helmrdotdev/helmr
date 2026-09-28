@@ -1,9 +1,9 @@
 import { verify, assertEqual, deadline } from "../../support/context"
-await verify("network-egress", async ({ client, marker, objects, workspace }) => {
-  const target = await workspace("helmr-network-smoke")
+await verify("network-egress", async ({ client, marker, objects, computer }) => {
+  const target = await computer("helmr-network-smoke")
   const run = await client.tasks.start(
     "network-smoke",
-    { workspace: target, payload: {}, idempotencyKey: `network-egress:${marker}` },
+    { computer: target, payload: {}, idempotencyKey: `network-egress:${marker}` },
     { signal: deadline(30_000) },
   )
   objects.run_ids.push(run.id)

@@ -249,7 +249,7 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 				RuntimeDigest:      "sha256:" + strings.Repeat("f", 64),
 			},
 		},
-		WorkspaceImages: []deployment.BundleWorkspaceImage{},
+		ComputerImages: []deployment.BundleComputerImage{},
 		Objects: []deployment.BundleObject{{
 			Digest: programDigest, SizeBytes: 4096, MediaType: deployment.ProgramArtifactMediaType,
 		}},

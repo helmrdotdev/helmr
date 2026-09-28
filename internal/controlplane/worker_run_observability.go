@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -101,7 +102,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		}
 		authority, err := lockReceiptRunMutation(
 			r.Context(),
-			work.q,
+			work.tx,
 			worker,
 			request.Lease,
 			parsed,
@@ -109,12 +110,12 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		if authority.run.EnvironmentID != replayContext.EnvironmentID ||
-			authority.run.ID != replayContext.RunID ||
-			authority.attempt.Number != replayContext.AttemptNumber {
+		if authority.Run.EnvironmentID != replayContext.EnvironmentID ||
+			authority.Run.ID != replayContext.RunID ||
+			authority.Attempt.Number != replayContext.AttemptNumber {
 			return errStaleRunLeaseClaim
 		}
-		next, err := applyRunMetadataMutation(authority.run.Metadata, mutation)
+		next, err := applyRunMetadataMutation(authority.Run.Metadata, mutation)
 		if err != nil {
 			return err
 		}
@@ -125,9 +126,9 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		revision, err := work.q.UpdateRunMetadata(
 			r.Context(),
 			db.UpdateRunMetadataParams{
-				Metadata: next, RunID: authority.run.ID,
-				AttemptNumber: authority.attempt.Number,
-				RunLeaseID:    authority.runLease.ID,
+				Metadata: next, RunID: authority.Run.ID,
+				AttemptNumber: authority.Attempt.Number,
+				RunLeaseID:    authority.Lease.ID,
 			},
 		)
 		if err != nil {
@@ -147,13 +148,13 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if _, err := work.q.CreateRunMetadataEvent(
 			r.Context(),
 			db.CreateRunMetadataEventParams{
-				OrgID: authority.run.OrgID, RunID: authority.run.ID,
+				OrgID: authority.Run.OrgID, RunID: authority.Run.ID,
 				IdempotencyKey: pgvalue.Text("metadata:" + operationID.String()),
-				ProjectID:      authority.run.ProjectID, EnvironmentID: authority.run.EnvironmentID,
-				RunLeaseID:    authority.runLease.ID,
-				AttemptNumber: pgtype.Int4{Int32: authority.attempt.Number, Valid: true},
-				TraceID:       authority.runLease.TraceID, SpanID: authority.runLease.SpanID,
-				ParentSpanID: authority.runLease.ParentSpanID, Traceparent: authority.runLease.Traceparent,
+				ProjectID:      authority.Run.ProjectID, EnvironmentID: authority.Run.EnvironmentID,
+				RunLeaseID:    authority.Lease.ID,
+				AttemptNumber: pgtype.Int4{Int32: authority.Attempt.Number, Valid: true},
+				TraceID:       authority.Lease.TraceID, SpanID: authority.Lease.SpanID,
+				ParentSpanID: authority.Lease.ParentSpanID, Traceparent: authority.Lease.Traceparent,
 				Payload:         payload,
 				SnapshotVersion: pgtype.Int8{Int64: revision, Valid: true},
 			},
@@ -170,6 +171,11 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		return err
 	})
 	if err != nil {
+		var expired idempotency.ExpiredError
+		if errors.As(err, &expired) {
+			writeError(w, gone(expired))
+			return
+		}
 		var conflictErr idempotency.ConflictError
 		if writeStaleWorkerClaims(w, err) {
 			return
@@ -292,34 +298,13 @@ func (s *Server) parseWorkerRunMutation(
 	return parsed, worker, nil
 }
 
-func lockReceiptRunMutation(
-	ctx context.Context,
-	q db.Querier,
-	worker workerActor,
-	lease workerapi.RunLeaseFence,
-	parsed parsedRunLeaseFence,
-) (runLeaseClaimAuthority, error) {
-	locators, err := q.GetLiveRunLeaseLocators(
-		ctx,
-		db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-			WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:      worker.WorkerEpoch},
-	)
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+func lockReceiptRunMutation(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence, parsed parsedRunLeaseFence) (run.ExecutionAuthority, error) {
+	authority, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+	if errors.Is(err, run.ErrExecutionWorkerClaims) {
+		return run.ExecutionAuthority{}, errStaleWorkerClaims
 	}
-	authority, err := lockLiveRunLeaseAuthority(
-		ctx,
-		q,
-		worker,
-		pgvalue.UUID(parsed.leaseID),
-		lease.LeaseSequence,
-		locators,
-	)
 	if err != nil {
-		return runLeaseClaimAuthority{}, err
+		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
 	}
 	return authority, nil
 }

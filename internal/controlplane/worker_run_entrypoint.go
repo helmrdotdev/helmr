@@ -45,7 +45,6 @@ func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request
 	}
 	if err := enterRunEntrypoint(
 		r.Context(),
-		s.db,
 		s.tx,
 		workerFromContext(r.Context()),
 		pgvalue.UUID(leaseID),

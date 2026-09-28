@@ -12,14 +12,14 @@ import (
 
 func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 	runID := pgvalue.UUID(uuid.NewV7())
-	workspaceID := pgvalue.UUID(uuid.NewV7())
+	computerID := pgvalue.UUID(uuid.NewV7())
 	environmentID := pgvalue.UUID(uuid.NewV7())
 	versionID := pgvalue.UUID(uuid.NewV7())
 	secretID := pgvalue.UUID(uuid.NewV7())
 	secretVersionID := pgvalue.UUID(uuid.NewV7())
 	store := &taskStore{
-		bindings: []db.LockWorkspaceSecretsForAdmissionRow{{
-			WorkspaceID:          workspaceID,
+		bindings: []db.LockComputerSecretsForAdmissionRow{{
+			ComputerID:           computerID,
 			PlacementKind:        "env",
 			PlacementTarget:      "API_TOKEN",
 			SecretID:             secretID,
@@ -31,11 +31,11 @@ func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 	}
 	created, err := CreateTask(context.Background(), store, TaskRequest{
 		Run: db.CreateAdmittedRootTaskRunParams{
-			EnvironmentID:          environmentID,
-			WorkspaceID:            workspaceID,
-			BaseWorkspaceVersionID: versionID,
+			EnvironmentID:             environmentID,
+			ComputerID:                computerID,
+			BaseComputerDiskVersionID: versionID,
 		},
-		WorkspaceRevision: 7,
+		ComputerRevision: 7,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,19 +50,19 @@ func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
 	if resolution.RunID != runID || resolution.SecretVersionIds[0] != secretVersionID || resolution.RevocationGenerations[0] != 3 {
 		t.Fatalf("Secret resolution = %+v", resolution)
 	}
-	if store.reserve.ExpectedRevision != 7 || store.reserve.ExpectedHeadVersionID != versionID {
-		t.Fatalf("Workspace reservation = %+v", store.reserve)
+	if store.admission.ExpectedRevision != 7 || store.admission.ID != computerID {
+		t.Fatalf("Computer admission = %+v", store.admission)
 	}
 }
 
 type taskStore struct {
-	bindings    []db.LockWorkspaceSecretsForAdmissionRow
+	bindings    []db.LockComputerSecretsForAdmissionRow
 	run         db.CreateAdmittedRootTaskRunRow
-	reserve     db.ReserveWorkspaceForRunParams
+	admission   db.TouchComputerForAdmissionParams
 	resolutions []db.CreateAttemptSecretResolutionsParams
 }
 
-func (s *taskStore) LockWorkspaceSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockWorkspaceSecretsForAdmissionRow, error) {
+func (s *taskStore) LockComputerSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockComputerSecretsForAdmissionRow, error) {
 	return s.bindings, nil
 }
 
@@ -70,9 +70,9 @@ func (s *taskStore) CreateAdmittedRootTaskRun(context.Context, db.CreateAdmitted
 	return s.run, nil
 }
 
-func (s *taskStore) ReserveWorkspaceForRun(_ context.Context, value db.ReserveWorkspaceForRunParams) (db.ReserveWorkspaceForRunRow, error) {
-	s.reserve = value
-	return db.ReserveWorkspaceForRunRow{}, nil
+func (s *taskStore) TouchComputerForAdmission(_ context.Context, value db.TouchComputerForAdmissionParams) (db.Computer, error) {
+	s.admission = value
+	return db.Computer{}, nil
 }
 
 func (s *taskStore) CreateAttemptSecretResolutions(_ context.Context, value db.CreateAttemptSecretResolutionsParams) (int64, error) {

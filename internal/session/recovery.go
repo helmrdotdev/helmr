@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// The Session and admission secrets are already locked. A terminal execution and
-// physical writer exclusion are required before replacing its logical authority.
-func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bindings []db.LockWorkspaceSecretsForAdmissionRow) (db.Session, bool, error) {
+// The Computer, Instance, Session and admission secrets are already locked.
+// Only reconciled process scopes can receive replacement logical authority.
+func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bindings []db.LockComputerSecretsForAdmissionRow) (db.Session, bool, error) {
 	if actor.DispatchHoldReason.String != "recovery_required" || !actor.CurrentRunID.Valid ||
 		(actor.Status != "open" && actor.Status != "closing") {
 		return actor, false, nil
@@ -28,39 +28,19 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	default:
 		return actor, true, nil
 	}
-	ws, err := q.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{EnvironmentID: actor.EnvironmentID, WorkspaceID: actor.WorkspaceID, SessionID: actor.ID})
+	ws, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, SessionID: actor.ID})
 	if err != nil {
 		return actor, false, err
 	}
-	var source, episode pgtype.UUID
-	var attempts int
-	var repairFailure []byte
-	var excluded bool
-	err = tx.QueryRow(ctx, `SELECT recovery_version_id,recovery_id,recovery_preparation_count,recovery_failure,
-		NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_id=c.id AND status IN ('active','releasing'))
-		AND NOT EXISTS(SELECT 1 FROM workspace_processes WHERE workspace_id=c.id AND status IN ('pending','starting','running','exit_requested'))
-		AND NOT EXISTS(SELECT 1 FROM runtime_instances WHERE workspace_id=c.id AND reclaimed_at IS NULL)
-		FROM computers c WHERE id=$1`, actor.WorkspaceID).Scan(&source, &episode, &attempts, &repairFailure, &excluded)
-	if err != nil || !excluded {
+	source, episode := ws.HeadDiskVersionID, ws.RecoveryID
+	repairFailure := ws.RecoveryFailure
+	reconciled, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
+	if err != nil || !reconciled {
 		return actor, true, err
 	}
-	ownedExcluded, err := q.SessionOwnedExecutionsExcluded(ctx, current.ID)
-	if err != nil || !ownedExcluded {
+	owned, err := q.OwnedRunScopesReconciled(ctx, current.ID)
+	if err != nil || !owned {
 		return actor, true, err
-	}
-	// The physical Runtime has been reclaimed. Its old mount cannot remain an
-	// active logical writer and prevent the replacement from mounting.
-	if _, err = tx.Exec(ctx, `UPDATE workspace_mounts m SET status='failed',failed_at=now(),terminal_at=now(),
-	 terminal_reason_code='execution_lost',updated_at=now() FROM runtime_instances r
-	 WHERE m.workspace_id=$1 AND m.runtime_instance_id=r.id AND r.reclaimed_at IS NOT NULL
-	 AND m.status IN ('mounting','mounted','unmounting')`, actor.WorkspaceID); err != nil {
-		return actor, false, err
-	}
-	if len(repairFailure) == 0 && attempts >= 8 {
-		repairFailure = []byte(`{"code":"computer_recovery_exhausted","message":"Computer preparation limit reached","details":{}}`)
-		if _, err = tx.Exec(ctx, `UPDATE computers SET recovery_failure=$2,status='recovery_required',desired_state='stopped',dirty_state='dirty_state_lost',revision=revision+1,updated_at=now() WHERE id=$1`, actor.WorkspaceID, repairFailure); err != nil {
-			return actor, false, err
-		}
 	}
 	if len(repairFailure) > 0 {
 		if actor.CancelRequestedAt.Valid {
@@ -73,13 +53,10 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if err = FailExecution(ctx, q, actor, repairFailure, "", now); err != nil {
 			return actor, false, err
 		}
-		if _, err = q.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{CompletedAt: now, ID: ws.ID, EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, OwnershipGeneration: ws.OwnershipGeneration, WriterGeneration: ws.WriterGeneration}); err != nil {
-			return actor, false, err
-		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		return actor, false, err
 	}
-	if !episode.Valid {
+	if current.Status == db.RunStatusFailed {
 		// A known terminal failure before Computer loss (for example exhausted
 		// initial preparation) cannot be repaired by replaying the Actor.
 		if len(current.Failure) == 0 {
@@ -95,16 +72,17 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if err = FailExecution(ctx, q, actor, current.Failure, "", now); err != nil {
 			return actor, false, err
 		}
-		if _, err = q.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{CompletedAt: now, ID: ws.ID, EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, OwnershipGeneration: ws.OwnershipGeneration, WriterGeneration: ws.WriterGeneration}); err != nil {
-			return actor, false, err
-		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		return actor, false, err
 	}
-	if source != ws.HeadVersionID {
+	if actor.CancelRequestedAt.Valid {
+		return settleCancelledFailedExecution(ctx, tx, actor, current.Failure)
+	}
+	if ws.Status != db.ComputerStatusActive || ws.DesiredState != db.ComputerDesiredStateActive ||
+		ws.DirtyState == db.ComputerDirtyStateCaptureFailed || ws.DirtyState == db.ComputerDirtyStateDirtyStateLost {
 		return actor, true, nil
 	}
-	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.WorkspaceID, ID: source})
+	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, ID: source})
 	if err != nil || !committed {
 		return actor, true, err
 	}
@@ -112,11 +90,8 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	if !actor.CancelRequestedAt.Valid && !bindingsCanAdmit(actor, bindings) {
 		return actor, true, nil
 	}
-	if !actor.CancelRequestedAt.Valid && (attempts >= 8 || actor.ConsecutiveExecutionLosses >= 7) {
+	if !actor.CancelRequestedAt.Valid && actor.ConsecutiveExecutionLosses >= 7 {
 		reason := "execution_loss_limit"
-		if attempts >= 8 {
-			reason = "computer_recovery_exhausted"
-		}
 		failure, _ := json.Marshal(map[string]any{"code": reason, "message": "Execution could not be resumed within the recovery limit", "details": map[string]any{}})
 		now, err := q.GetTaskCompletionTime(ctx)
 		if err == nil {
@@ -124,16 +99,6 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		}
 		if err != nil {
 			return actor, false, err
-		}
-		// The bounded Session bootstrap loop must not poison the Computer.
-		// A Computer whose own budget is exhausted remains unavailable.
-		if attempts < 8 {
-			_, err = tx.Exec(ctx, `UPDATE computers SET status='active',desired_state='active',dirty_state='clean',
-			 owner_session_id=NULL,ownership_generation=ownership_generation+1,revision=revision+1,updated_at=now()
-			 WHERE id=$1 AND recovery_id=$2 AND owner_session_id=$3`, actor.WorkspaceID, episode, actor.ID)
-			if err != nil {
-				return actor, false, err
-			}
 		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
 		return actor, false, err
@@ -174,12 +139,6 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 	if _, err = appendLifecycleEvent(ctx, q, actor, pgtype.UUID{}, pgtype.UUID{}, "session.execution_lost", body, source); err != nil {
 		return actor, false, err
 	}
-	// Active here admits physical preparation, not customer execution; the
-	// episode stays pending until the exact Runtime is ready.
-	if _, err = tx.Exec(ctx, `UPDATE computers SET status='active',desired_state='active',dirty_state='clean',revision=revision+1,updated_at=now()
-		WHERE id=$1 AND recovery_id=$2 AND status='recovery_required'`, actor.WorkspaceID, episode); err != nil {
-		return actor, false, err
-	}
 	var hold pgtype.UUID
 	var reason pgtype.Text
 	if interrupted {
@@ -200,16 +159,15 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		return actor, false, err
 	}
 	if actor.Status == "open" && !interrupted && actor.CommittedInputSequence < actor.NextInputSequence-1 {
-		if _, err = CreateContinuation(ctx, q, actor, db.LockActorInputWorkspaceRow{ID: actor.WorkspaceID}, bindings); err != nil {
+		if _, err = CreateContinuation(ctx, q, actor, db.Computer{ID: actor.ComputerID}, bindings); err != nil {
 			return actor, false, err
 		}
 	}
 	return actor, false, nil
 }
 
-// A parked or never-entered execution can be stopped without running customer
-// code again. Cancellation retires its continuation; physical exclusion is still
-// required. Only the published head is retained, not unpublished process state.
+// Stopping a Session retires only its execution. Peer scopes and their live
+// filesystem remain attached to the Computer.
 func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session) (db.Session, bool, error) {
 	if actor.DispatchHoldReason.String != "interrupt_requested" || !actor.CurrentRunID.Valid || (actor.Status != "open" && actor.Status != "closing") {
 		return actor, false, nil
@@ -222,29 +180,35 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 	if current.Status != db.RunStatusCancelled || current.CurrentRunLeaseID.Valid {
 		return actor, true, nil
 	}
-	ws, err := q.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, WorkspaceID: actor.WorkspaceID})
+	ws, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ComputerID: actor.ComputerID})
 	if err != nil {
 		return actor, false, err
 	}
-	if ws.Status != db.WorkspaceStatusActive || ws.DirtyState != db.WorkspaceDirtyStateClean || !ws.HeadVersionID.Valid {
+	if actor.ActiveTurnID.Valid && !ws.HeadDiskVersionID.Valid {
 		return actor, true, nil
 	}
-	excluded, err := q.SessionWriterExcluded(ctx, actor.WorkspaceID)
-	if err != nil || !excluded.Valid || !excluded.Bool {
+	excluded, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
+	if err != nil || !excluded {
 		return actor, true, err
 	}
-	owned, err := q.SessionOwnedExecutionsExcluded(ctx, current.ID)
+	owned, err := q.OwnedRunScopesReconciled(ctx, current.ID)
 	if err != nil || !owned {
 		return actor, true, err
 	}
-	committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.WorkspaceID, ID: ws.HeadVersionID})
-	if err != nil || !committed {
-		return actor, true, err
+	var versionID pgtype.UUID
+	if ws.HeadDiskVersionID.Valid {
+		committed, err := q.SessionRecoveryHeadCommitted(ctx, db.SessionRecoveryHeadCommittedParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, ID: ws.HeadDiskVersionID})
+		if err != nil {
+			return actor, false, err
+		}
+		if committed {
+			versionID = ws.HeadDiskVersionID
+		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE workspace_mounts SET status='failed',failed_at=now(),terminal_at=now(),terminal_reason_code='execution_interrupted',updated_at=now() WHERE workspace_id=$1 AND status IN ('mounting','mounted','unmounting')`, actor.WorkspaceID); err != nil {
-		return actor, false, err
+	if actor.ActiveTurnID.Valid && !versionID.Valid {
+		return actor, true, nil
 	}
-	if err = CompleteInterruption(ctx, q, actor, ws.HeadVersionID, ""); err != nil {
+	if err = CompleteInterruption(ctx, q, actor, versionID, ""); err != nil {
 		return actor, false, err
 	}
 	actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})

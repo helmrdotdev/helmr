@@ -12,7 +12,7 @@ const (
 )
 
 // SourceArchiveDescriptor describes the exact installed-tree source projection
-// used by the local bundle producer when it constructs a Workspace image.
+// used by the local bundle producer when it constructs a Computer image.
 // It is producer-local metadata and never becomes Control Plane build authority.
 type SourceArchiveDescriptor struct {
 	ArchiveDigest    string

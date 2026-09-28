@@ -4,11 +4,11 @@ SELECT run_leases.terminal_request_fingerprint
   JOIN run_attempts
     ON run_attempts.run_id = run_leases.run_id
    AND run_attempts.number = run_leases.attempt_number
-   AND run_attempts.workspace_id = run_leases.workspace_id
+   AND run_attempts.computer_id = run_leases.computer_id
  WHERE run_leases.id = sqlc.arg(run_lease_id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
-   AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND run_leases.worker_host_id = sqlc.arg(worker_host_id)
    AND run_leases.terminal_request_fingerprint IS NOT NULL
    AND run_leases.terminal_at IS NOT NULL
    AND run_attempts.entrypoint_kind = 'actor'
@@ -38,36 +38,12 @@ UPDATE run_attempts
        terminal_at = sqlc.arg(completed_at)
  WHERE run_id = sqlc.arg(run_id)
    AND number = sqlc.arg(number)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND entrypoint_kind = 'actor'
    AND session_input_start_sequence IS NOT NULL
    AND entrypoint_entered_at IS NOT NULL
    AND terminal_at IS NULL
 RETURNING *;
-
--- name: AdvanceActorWorkspaceHead :one
-UPDATE computers
-   SET head_version_id = sqlc.arg(new_head_version_id),
-       revision = revision + 1,
-       last_activity_at = sqlc.arg(completed_at),
-       updated_at = sqlc.arg(completed_at)
- WHERE computers.id = sqlc.arg(id)
-   AND computers.environment_id = sqlc.arg(environment_id)
-   AND EXISTS (
-       SELECT 1 FROM environments
-        WHERE environments.id = computers.environment_id
-          AND environments.org_id = sqlc.arg(org_id)
-          AND environments.project_id = sqlc.arg(project_id)
-   )
-   AND computers.owner_session_id = sqlc.arg(session_id)
-   AND computers.owner_run_id IS NULL
-   AND computers.ownership_generation = sqlc.arg(ownership_generation)
-   AND computers.writer_generation = sqlc.arg(writer_generation)
-   AND computers.head_version_id = sqlc.arg(expected_head_version_id)
-   AND computers.status = 'active'
-   AND computers.desired_state = 'active'
-   AND computers.dirty_state = 'clean'
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: FinishActorRun :one
 UPDATE runs
@@ -83,7 +59,7 @@ UPDATE runs
        terminal_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
  WHERE id = sqlc.arg(id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND entrypoint_kind = 'actor'
    AND session_id = sqlc.arg(session_id)
    AND status = 'running'
@@ -102,40 +78,12 @@ UPDATE sessions
        updated_at = sqlc.arg(completed_at)
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND current_run_id = sqlc.arg(run_id)
    AND run_generation = sqlc.arg(expected_run_generation)
    AND status IN ('open', 'closing')
    AND active_turn_id IS NULL AND dispatch_hold_id IS NULL
 RETURNING *;
-
--- name: ReleaseActorWorkspaceOwner :one
-UPDATE computers
-   SET owner_session_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       last_activity_at = sqlc.arg(completed_at),
-       updated_at = sqlc.arg(completed_at)
- WHERE computers.id = sqlc.arg(id)
-   AND computers.environment_id = sqlc.arg(environment_id)
-   AND computers.owner_session_id = sqlc.arg(session_id)
-   AND computers.owner_run_id IS NULL
-   AND computers.ownership_generation = sqlc.arg(ownership_generation)
-   AND computers.writer_generation = sqlc.arg(writer_generation)
-   AND ((computers.status = 'active' AND computers.desired_state = 'active' AND computers.dirty_state = 'clean')
-        OR (computers.status = 'recovery_required' AND computers.recovery_failure IS NOT NULL
-            AND NOT EXISTS (SELECT 1 FROM runtime_instances r WHERE r.workspace_id=computers.id AND r.reclaimed_at IS NULL)))
-   AND NOT EXISTS (
-       SELECT 1 FROM workspace_leases
-        WHERE workspace_leases.workspace_id = computers.id
-          AND workspace_leases.status IN ('active', 'releasing')
-   )
-   AND NOT EXISTS (
-       SELECT 1 FROM workspace_processes
-        WHERE workspace_processes.workspace_id = computers.id
-          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-   )
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at;
 
 -- name: CreateActorContinuationRun :one
 WITH created_run AS (
@@ -144,7 +92,7 @@ WITH created_run AS (
         deployment_id, deployment_definition_id, entrypoint_kind,
         entrypoint_declared_id, cause_kind, session_id,
         session_input_start_sequence, session_input_high_watermark,
-        workspace_id, base_workspace_version_id, metadata, tags,
+        computer_id, base_computer_disk_version_id, metadata, tags,
         queue_name, concurrency_key, queue_concurrency_limit, priority,
         queue_origin_at, queue_score_at, queued_expires_at,
         max_active_duration_ms, retry_policy, trace_id, root_span_id
@@ -153,7 +101,7 @@ WITH created_run AS (
            definitions.deployment_id, sessions.deployment_definition_id, 'actor',
            sessions.actor_declared_id, 'continuation', sessions.id,
            sessions.committed_input_sequence, sessions.next_input_sequence - 1,
-           sessions.workspace_id, computers.head_version_id,
+           sessions.computer_id, computers.head_disk_version_id,
            sessions.run_metadata, sessions.run_tags,
            sessions.run_queue_name, sessions.run_concurrency_key,
            sessions.run_queue_concurrency_limit, sessions.run_priority,
@@ -171,30 +119,22 @@ WITH created_run AS (
        AND definitions.kind = 'actor'
        AND definitions.declared_id = sessions.actor_declared_id
       JOIN computers
-        ON computers.id = sessions.workspace_id
-       AND computers.owner_session_id = sessions.id
-       AND computers.owner_run_id IS NULL
-       AND computers.head_version_id IS NOT NULL
+        ON computers.id = sessions.computer_id
+       AND computers.environment_id = sessions.environment_id
+       AND computers.head_disk_version_id IS NOT NULL
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
-       AND sessions.workspace_id = sqlc.arg(workspace_id)
+       AND sessions.computer_id = sqlc.arg(computer_id)
        AND sessions.current_run_id IS NULL
        AND sessions.run_generation = sqlc.arg(expected_run_generation)
        AND sessions.status IN ('open', 'closing') AND sessions.cancel_requested_at IS NULL
        AND sessions.active_turn_id IS NULL AND sessions.dispatch_hold_id IS NULL
        AND (sessions.status = 'open' OR sessions.committed_input_sequence < sessions.close_sequence)
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = computers.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = computers.id
-              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-       )
+       AND computers.status='active' AND computers.desired_state='active'
+       AND computers.deleted_at IS NULL AND computers.recovery_failure IS NULL
+       AND computers.dirty_state NOT IN ('capture_failed','dirty_state_lost')
+       AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN runs r ON r.id=l.run_id
+         WHERE r.session_id=sessions.id AND l.process_reconciled_at IS NULL)
 	ON CONFLICT (session_id)
 	    WHERE session_id IS NOT NULL
 	      AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
@@ -202,11 +142,11 @@ WITH created_run AS (
     RETURNING *
 ), created_attempt AS (
     INSERT INTO run_attempts (
-        run_id, number, entrypoint_kind, workspace_id,
-        session_input_start_sequence, base_workspace_version_id
+        run_id, number, entrypoint_kind, computer_id,
+        session_input_start_sequence, base_computer_disk_version_id
     )
-    SELECT created_run.id, 1, 'actor', created_run.workspace_id,
-           created_run.session_input_start_sequence, created_run.base_workspace_version_id
+    SELECT created_run.id, 1, 'actor', created_run.computer_id,
+           created_run.session_input_start_sequence, created_run.base_computer_disk_version_id
       FROM created_run
     RETURNING run_id
 ), claimed_actor AS (

@@ -122,7 +122,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 	case !health.FirecrackerHealthy:
 		decision.Reason = AdmissionFirecrackerUnavailable
 	case runtimeSlotConsumer(check.Consumer) &&
-		int32(len(check.Recovery.Quarantined)+check.Snapshot.Active["workspace"]) >= a.cfg.RuntimeSlotCount:
+		int32(len(check.Recovery.Quarantined)+check.Snapshot.Active["computer"]) >= a.cfg.RuntimeSlotCount:
 		decision.Reason = AdmissionRuntimeSlotsQuarantined
 	default:
 		decision.Allowed = true
@@ -134,7 +134,7 @@ func (a *HardAdmission) Evaluate(ctx context.Context, check AdmissionCheck) Admi
 }
 
 func runtimeSlotConsumer(consumer string) bool {
-	return consumer == "workspace" || consumer == "runtime"
+	return consumer == "computer" || consumer == "runtime"
 }
 
 func (a *HardAdmission) Observation() workerapi.Observation {
@@ -150,7 +150,7 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 	if datapathErr != nil {
 		reason := string(AdmissionDatapathUnverified)
 		observation.RunPausedReason = reason
-		observation.RuntimePausedReason = reason
+		observation.VMPausedReason = reason
 		return observation
 	}
 	for domain, current := range decisions {
@@ -159,14 +159,14 @@ func (a *HardAdmission) Observation() workerapi.Observation {
 		}
 		reason := string(current.Reason)
 		if current.Reason != AdmissionRuntimeSlotsQuarantined {
-			observation.RunPausedReason, observation.RuntimePausedReason = reason, reason
+			observation.RunPausedReason, observation.VMPausedReason = reason, reason
 			break
 		}
 		if domain == "run" {
 			observation.RunPausedReason = reason
 		}
 		if domain == "runtime" {
-			observation.RuntimePausedReason = reason
+			observation.VMPausedReason = reason
 		}
 	}
 	return observation

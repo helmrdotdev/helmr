@@ -17,14 +17,14 @@ func TestWorkerEnrollmentTokenSelectsGroupAndRecordsUse(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	params := db.EnrollWorkerInstanceParams{
+	params := db.EnrollWorkerHostParams{
 		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
-		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
+		WorkerHostID: pgvalue.NewUUIDv7(), ResourceID: "enrollment-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
 	}
-	credential, err := q.EnrollWorkerInstance(ctx, params)
+	credential, err := q.EnrollWorkerHost(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,16 +49,16 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
-	base := db.EnrollWorkerInstanceParams{
+	base := db.EnrollWorkerHostParams{
 		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
-		WorkerInstanceID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
+		WorkerHostID: pgvalue.NewUUIDv7(), ResourceID: "unknown-token-host",
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.New().String(), SecretHash: []byte("instance-secret"),
 	}
 	unknown := base
 	unknown.TokenHash = bytes.Repeat([]byte{1}, 32)
-	if _, err := q.EnrollWorkerInstance(ctx, unknown); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.EnrollWorkerHost(ctx, unknown); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("unknown token error = %v", err)
 	}
 	if _, err := q.TransitionWorkerGroupStatus(ctx, db.TransitionWorkerGroupStatusParams{
@@ -72,10 +72,10 @@ func TestWorkerEnrollmentRejectsUnknownTokenAndDrainingGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	draining := base
-	draining.WorkerInstanceID = pgvalue.NewUUIDv7()
+	draining.WorkerHostID = pgvalue.NewUUIDv7()
 	draining.CredentialID = pgvalue.NewUUIDv7()
 	draining.ResourceID = "draining-host"
-	if _, err := q.EnrollWorkerInstance(ctx, draining); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.EnrollWorkerHost(ctx, draining); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("draining group enrollment error = %v", err)
 	}
 }

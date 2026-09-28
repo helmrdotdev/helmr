@@ -82,21 +82,21 @@ func TestLoadDispatcherReadsConnectionConfig(t *testing.T) {
 	}
 }
 
-func TestLoadDispatcherRejectsInvalidWorkspaceFencingKey(t *testing.T) {
+func TestLoadDispatcherRejectsInvalidComputerFencingKey(t *testing.T) {
 	setDispatcherFencing(t)
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("CLICKHOUSE_URL", "https://clickhouse.example.test")
-	t.Setenv("WORKSPACE_FENCING_KEY", "AQ==")
+	t.Setenv("COMPUTER_FENCING_KEY", "AQ==")
 
 	if _, err := LoadDispatcher(); err == nil {
-		t.Fatal("expected Workspace fencing key error")
+		t.Fatal("expected Computer fencing key error")
 	}
 }
 
 func setDispatcherFencing(t *testing.T) {
 	t.Helper()
 	t.Setenv("ENCRYPTION_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
-	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 }
 
 func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
@@ -115,7 +115,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	t.Setenv("SETUP_TOKEN", "setup-token")
 	t.Setenv("AUTH_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("PUBLIC_URL", " https://helmr.example.test ")
 	t.Setenv("API_ORIGIN", " https://API.HELMR.EXAMPLE.TEST/ ")
 	t.Setenv("MAGIC_LINK_DEBUG_URLS", " true ")
@@ -130,7 +130,7 @@ func TestLoadControlPlaneReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.WorkspaceFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.DeploymentRuntimeDescriptorPath != "/etc/helmr/runtime.descriptor.json" || cfg.PlatformStoreURI != "s3://helmr-cas/runtimes" || !bytes.Equal(cfg.WorkerTokenSigningKey, bytes.Repeat([]byte{1}, 32)) || cfg.SetupToken != "setup-token" || !bytes.Equal(cfg.AuthKey, bytes.Repeat([]byte{4}, 32)) || !bytes.Equal(cfg.EncryptionKey, make([]byte, 32)) || !bytes.Equal(cfg.ComputerFencingKey, bytes.Repeat([]byte{2}, 32)) || !bytes.Equal(cfg.TokenCredentialKey, bytes.Repeat([]byte{3}, 32)) || cfg.PublicURL != "https://helmr.example.test" || cfg.APIOrigin != "https://api.helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -441,7 +441,7 @@ func setControlPlaneRequiredEnv(t *testing.T) {
 	setControlPlaneTokenCredentialEnv(t)
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", "/etc/helmr/runtime.descriptor.json")
 	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-cas/runtimes")
-	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 }
 
 func setControlPlaneTokenCredentialEnv(t *testing.T) {
@@ -460,7 +460,6 @@ func setWorkerRuntimeEnv(t *testing.T) {
 	t.Setenv("WORKER_NETWORK_TRANSLATION_POOL", "100.96.0.0/16")
 	t.Setenv("WORKER_NETWORK_RESOLVER_IPV4", "1.1.1.1")
 	t.Setenv("WORKER_NETWORK_BLOCKED_IPV4_CIDRS", "[]")
-	t.Setenv("WORKER_SUBSTRATE_CACHE_MAX_MIB", "8192")
 	t.Setenv("WORKER_ARTIFACT_CACHE_MAX_MIB", "4096")
 }
 
@@ -538,7 +537,6 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("WORKER_CAPACITY_VCPUS", " 8 ")
 	t.Setenv("WORKER_CAPACITY_MEMORY_MIB", " 16384 ")
 	t.Setenv("WORKER_DISK_RESERVE_MIB", " 2048 ")
-	t.Setenv("WORKER_SUBSTRATE_CACHE_MAX_MIB", " 32768 ")
 	t.Setenv("WORKER_ARTIFACT_CACHE_MAX_MIB", " 16384 ")
 	t.Setenv("WORKER_EXECUTION_SLOTS", " 4 ")
 	t.Setenv("VM_INIT_TIMEOUT", " 45s ")
@@ -551,7 +549,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.CASURI != "s3://helmr-cas" || cfg.WorkDir != "/var/lib/helmr/scratch/worker" || cfg.ImagesDir != "/var/lib/helmr/images" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerPoolName != "execution-v0" || cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CPUTemplateHelperPath != "/usr/bin/cpu-template-helper" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.SubstrateCacheMaxMiB != 32768 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
+	if cfg.WorkerPoolName != "execution-v0" || cfg.FirecrackerPath != "/usr/bin/firecracker" || cfg.CPUTemplateHelperPath != "/usr/bin/cpu-template-helper" || cfg.NetworkLinkPool != "169.254.128.0/18" || cfg.NetworkTranslationPool != "100.97.0.0/16" || cfg.NetworkResolverIPv4 != "1.0.0.1" || cfg.VMVCPUCount != 4 || cfg.VMMemoryMiB != 4096 || cfg.VMScratchDiskMiB != 12288 || cfg.WorkerCapacityVCPUs != 8 || cfg.WorkerCapacityMemoryMiB != 16384 || cfg.WorkerDiskReserveMiB != 2048 || cfg.ArtifactCacheMaxMiB != 16384 || cfg.WorkerExecutionSlots != 4 || cfg.VMInitTimeout != 45*time.Second || cfg.VMHealthTimeout != 90*time.Second {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if len(cfg.NetworkBlockedIPv4CIDRs) != 2 || cfg.NetworkBlockedIPv4CIDRs[1].String() != "169.254.0.0/16" {
@@ -664,7 +662,7 @@ func TestLoadWorkerControlPlaneReadsOnlyControlAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.WorkerInstanceCredentialPath != "/run/helmr/worker-credential.json" || cfg.PollEvery <= 0 {
+	if cfg.ControlPlaneURL != "https://api.example.test" || cfg.WorkerHostCredentialPath != "/run/helmr/worker-credential.json" || cfg.PollEvery <= 0 {
 		t.Fatalf("config = %+v", cfg)
 	}
 }

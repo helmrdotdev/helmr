@@ -6,24 +6,23 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestWaitWorkspaceForRunUsesCurrentClaimFrontier(t *testing.T) {
-	mount := workerapi.WorkspaceMount{
-		ID: "mount-1", WorkspaceID: "workspace-1", WorkspaceMountPath: "/workspace",
-		FencingGeneration: 4,
+func TestWaitComputerForRunUsesCurrentClaimFrontier(t *testing.T) {
+	mount := workerapi.ComputerInstanceAssignment{
+		ComputerID: "computer-1", ComputerMountPath: "/computer",
+		WriterGeneration: 4,
 		Target: workerapi.ComputerMountTarget{
-			BaseWorkspaceVersionID: "version-before-capture",
+			BaseComputerDiskVersionID: "version-before-capture",
 		},
 	}
-	lease := workerapi.RunLeaseAssignment{MountFencingGeneration: 9}
 	target := workerapi.ComputerMountTarget{
-		BaseWorkspaceVersionID: "version-after-capture",
+		BaseComputerDiskVersionID: "version-after-capture",
 	}
 
-	got := waitWorkspaceForRun(mount, lease, target)
-	if got.ID != mount.WorkspaceID || got.WorkspaceMountID != mount.ID || got.MountPath != mount.WorkspaceMountPath {
-		t.Fatalf("wait Workspace physical identity = %+v", got)
+	got := waitComputerForRun(mount, target)
+	if got.ID != mount.ComputerID || got.ComputerInstanceID != mount.ComputerInstanceID || got.MountPath != mount.ComputerMountPath {
+		t.Fatalf("wait Computer physical identity = %+v", got)
 	}
-	if got.FencingGeneration != lease.MountFencingGeneration || got.BaseWorkspaceVersionID != target.BaseWorkspaceVersionID || got.Artifact != nil {
-		t.Fatalf("wait Workspace logical frontier = %+v", got)
+	if got.WriterGeneration != mount.WriterGeneration || got.BaseComputerDiskVersionID != target.BaseComputerDiskVersionID || got.Artifact != nil {
+		t.Fatalf("wait Computer logical frontier = %+v", got)
 	}
 }

@@ -64,11 +64,11 @@ func (r *TimerWaitReconciler) reconcileOne(
 	if err != nil {
 		return false, err
 	}
-	workspaceLocator, err := db.New(r.db).GetWorkspace(ctx, db.GetWorkspaceParams{
+	computerLocator, err := db.New(r.db).GetComputer(ctx, db.GetComputerParams{
 		OrgID:         locator.OrgID,
 		ProjectID:     locator.ProjectID,
 		EnvironmentID: candidate.EnvironmentID,
-		ID:            candidate.WorkspaceID,
+		ID:            candidate.ComputerID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -82,7 +82,22 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
-	if _, err := q.LockWorkspaceSecretsForAdmission(ctx, candidate.WorkspaceID); err != nil {
+	if _, err := q.LockComputerSecretsForAdmission(ctx, candidate.ComputerID); err != nil {
+		return false, err
+	}
+	computer, err := q.LockRunLeaseClaimComputer(ctx, db.LockRunLeaseClaimComputerParams{
+		ID: locator.ComputerID, OrgID: locator.OrgID, ProjectID: locator.ProjectID,
+		EnvironmentID: locator.EnvironmentID, RegionID: computerLocator.RegionID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{
+		EnvironmentID: locator.EnvironmentID, ComputerID: locator.ComputerID,
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
 	}
 	if locator.SessionID.Valid {
@@ -100,30 +115,11 @@ func (r *TimerWaitReconciler) reconcileOne(
 			(actor.Status != "open" && actor.Status != "closing") {
 			return false, tx.Commit(ctx)
 		}
-	} else if locator.ParentRunID.Valid && locator.ParentOwnsLifecycle.Valid &&
-		locator.ParentOwnsLifecycle.Bool {
-		if _, err := q.LockRunFinalizationParentRun(ctx, db.LockRunFinalizationParentRunParams{
-			ID: locator.ParentRunID, OrgID: locator.OrgID,
-			ProjectID: locator.ProjectID, EnvironmentID: locator.EnvironmentID,
-		}); errors.Is(err, pgx.ErrNoRows) {
-			return false, tx.Commit(ctx)
-		} else if err != nil {
-			return false, err
-		}
 	}
+
 	run, err := q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
 		ID: locator.ID, OrgID: locator.OrgID, ProjectID: locator.ProjectID,
-		EnvironmentID: locator.EnvironmentID, WorkspaceID: locator.WorkspaceID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, tx.Commit(ctx)
-	}
-	if err != nil {
-		return false, err
-	}
-	workspace, err := q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
-		ID: locator.WorkspaceID, OrgID: locator.OrgID, ProjectID: locator.ProjectID,
-		EnvironmentID: locator.EnvironmentID, RegionID: workspaceLocator.RegionID,
+		EnvironmentID: locator.EnvironmentID, ComputerID: locator.ComputerID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
@@ -132,7 +128,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 		return false, err
 	}
 	attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-		RunID: run.ID, Number: candidate.AttemptNumber, WorkspaceID: workspace.ID,
+		RunID: run.ID, Number: candidate.AttemptNumber, ComputerID: computer.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
@@ -142,7 +138,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	}
 	wait, err := q.LockRunStartWait(ctx, db.LockRunStartWaitParams{
 		ID: candidate.ID, EnvironmentID: candidate.EnvironmentID,
-		RunID: candidate.RunID, WorkspaceID: candidate.WorkspaceID,
+		RunID: candidate.RunID, ComputerID: candidate.ComputerID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
@@ -157,7 +153,7 @@ func (r *TimerWaitReconciler) reconcileOne(
 	if !current {
 		return false, tx.Commit(ctx)
 	}
-	if !timerWaitAuthorityCurrent(run, workspace, attempt, wait) {
+	if !timerWaitAuthorityCurrent(run, computer, attempt, wait) {
 		return false, tx.Commit(ctx)
 	}
 	now, err := q.GetRunLeaseRenewalTime(ctx)
@@ -181,12 +177,12 @@ func (r *TimerWaitReconciler) reconcileOne(
 
 func timerWaitAuthorityCurrent(
 	run db.Run,
-	workspace db.LockRunLeaseClaimWorkspaceRow,
+	computer db.LockRunLeaseClaimComputerRow,
 	attempt db.RunAttempt,
 	wait db.RunWait,
 ) bool {
-	if workspace.Status != db.WorkspaceStatusActive ||
-		workspace.DesiredState != db.WorkspaceDesiredStateActive ||
+	if computer.Status != db.ComputerStatusActive ||
+		computer.DesiredState != db.ComputerDesiredStateActive ||
 		attempt.TerminalAt.Valid || run.Status != db.RunStatusWaiting ||
 		run.CurrentAttemptNumber != wait.AttemptNumber ||
 		run.Revision != wait.ExpectedRunRevision ||
@@ -198,6 +194,9 @@ func timerWaitAuthorityCurrent(
 		return run.CurrentRunLeaseID.Valid &&
 			run.CurrentRunLeaseID == wait.CurrentRunLeaseID &&
 			!wait.PriorRunLeaseID.Valid
+	case db.RunWaitStatusResuming:
+		return run.CurrentRunLeaseID.Valid && run.CurrentRunLeaseID == wait.CurrentRunLeaseID &&
+			wait.PriorRunLeaseID.Valid && wait.SuspendCheckpointID.Valid
 	case db.RunWaitStatusParked:
 		return !run.CurrentRunLeaseID.Valid &&
 			!wait.CurrentRunLeaseID.Valid &&

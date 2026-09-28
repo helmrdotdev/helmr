@@ -26,7 +26,7 @@ export const reviewer = actor({
 })
 ```
 
-`actor.start({ workspace, key?, idempotencyKey?, run?, signal? })` returns
+`actor.start({ computer, key?, idempotencyKey?, run?, signal? })` returns
 `{ session, run }`. Start does not accept initial input; enqueue work afterwards.
 One Run can process multiple Turns. A Run is execution, a Turn is one queued unit
 of work, and the Session is their stable interaction address.
@@ -97,7 +97,7 @@ physical convergence. Queued work stays retained. `session.resume({ holdId })`
 releases that exact converged hold; it never replays the interrupted Turn.
 `session.cancel()` rejects new input, records queued Turns as `cancelled`, and
 requests interruption of active work. It returns an acceptance receipt; poll
-`session.retrieve()` for `status: "closed"` before deleting its Workspace.
+`session.retrieve()` for `status: "closed"` before deleting its Computer.
 `cancelRequestedAt` remains visible on the Session. An active Turn uses the normal
 `interrupted` outcome after its stop and capture complete. Previously completed
 Turns and output remain unchanged.
@@ -107,13 +107,13 @@ await session.cancel({ idempotencyKey: "stop-review" })
 const state = await session.retrieve()
 // An accepted request does not prove physical termination.
 if (state.status === "closed") {
-  await client.workspaces.ref(state.workspaceId).delete()
+  await client.computers.ref(state.computerId).delete()
 }
 ```
 
 Cancellation can escalate a Session already closing. It cannot be undone with
 `resume()`. Closure waits until the old execution and its owned work are physically
-excluded before releasing Workspace ownership. Cancellation also works through a
+excluded before releasing Computer ownership. Cancellation also works through a
 runtime Session reference inside an Actor or Task.
 
 `session.close()` rejects new ordinary admission and drains accepted FIFO work.

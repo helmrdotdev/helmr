@@ -495,7 +495,7 @@ func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvi
 	for {
 		if s.registry.empty() {
 			status, err := s.cfg.ControlPlane.ObserveWorker(ctx, s.observation(StatusDraining, evidence))
-			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveExecutions == 0 {
+			if err == nil && status.Status == workerapi.StatusDraining && status.ActiveInstances == 0 {
 				return nil
 			}
 			if err != nil && ctx.Err() == nil {
@@ -660,16 +660,16 @@ func (s *Supervisor) observation(state Status, evidence RecoveryEvidence) worker
 	if s.cfg.AdmissionEvaluator != nil {
 		admissionObservation := s.cfg.AdmissionEvaluator.Observation()
 		observation.RunPausedReason = admissionObservation.RunPausedReason
-		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
+		observation.VMPausedReason = admissionObservation.VMPausedReason
 	}
 	if len(evidence.Quarantined) > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"
-		observation.RuntimePausedReason = "startup_recovery_leak"
+		observation.VMPausedReason = "startup_recovery_leak"
 		return observation
 	}
 	if state != StatusActive && state != StatusDraining {
 		observation.RunPausedReason = string(state)
-		observation.RuntimePausedReason = string(state)
+		observation.VMPausedReason = string(state)
 	}
 	return observation
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Pause only the first replay result, after PostgreSQL has completed its read.
@@ -164,11 +163,10 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 	query := func(request WaitRegistration) (db.GetTokenWaitRegistrationReplayRow, error) {
 		return fixture.queries.GetTokenWaitRegistrationReplay(ctx, db.GetTokenWaitRegistrationReplayParams{
 			WaitID: pgvalue.UUID(request.WaitID), RunLeaseID: pgvalue.UUID(request.RunLeaseID),
-			TokenID: pgvalue.UUID(request.TokenID), ResumeAttachID: pgvalue.UUID(request.ResumeAttachID),
+			TokenID:            pgvalue.UUID(request.TokenID),
 			RequestFingerprint: request.RequestFingerprint, Metadata: request.Metadata, Tags: request.Tags,
 			LeaseSequence: request.LeaseSequence, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-			WorkerInstanceID: pgvalue.UUID(request.WorkerInstanceID), WorkerEpoch: request.WorkerEpoch,
-			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
+			WorkerHostID: pgvalue.UUID(request.WorkerHostID), WorkerEpoch: request.WorkerEpoch,
 		})
 	}
 	if row, err := query(request); !errors.Is(err, pgx.ErrNoRows) {
@@ -185,7 +183,7 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 		!row.SuspensionStatus.Valid || row.SuspensionStatus.String != string(registered.SuspensionStatus) {
 		t.Fatalf("matched replay = %+v, %v; registered = %+v", row, err, registered)
 	}
-	for _, name := range []string{"metadata", "missing_lease", "wrong_lease", "zero_cursor", "non_token"} {
+	for _, name := range []string{"metadata", "missing_lease", "wrong_lease", "fingerprint", "non_token"} {
 		t.Run(name, func(t *testing.T) {
 			changed := request
 			switch name {
@@ -195,8 +193,8 @@ func TestTokenWaitRegistrationReplayClassifiesConflicts(t *testing.T) {
 				changed.RunLeaseID = uuid.NewV7()
 			case "wrong_lease":
 				changed.RunLeaseID = otherWork.leaseID
-			case "zero_cursor":
-				changed.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 0, Valid: true}
+			case "fingerprint":
+				changed.RequestFingerprint = dbtest.Digest("changed-request")
 			case "non_token":
 				dbtest.MustExec(t, ctx, fixture.pool, `UPDATE run_waits SET kind='timer', token_id=NULL, token_registration_run_revision=NULL, timeout_at=NULL, due_at=now() WHERE id=$1`, request.WaitID)
 			}

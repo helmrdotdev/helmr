@@ -6,16 +6,13 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type dispatchWorkerPoolFixture struct {
-	substrateFormat   string
-	substrateContract string
-
 	capacityCPUMillis               int64
 	capacityMemoryBytes             int64
 	capacityGuestEphemeralDiskBytes int64
@@ -34,7 +31,7 @@ func seedDispatchWorkerPool(
 ) {
 	t.Helper()
 	dbtest.MustExec(t, ctx, pool, `
-INSERT INTO runtime_identities (
+INSERT INTO vm_platforms (
     id, runtime_arch, vm_runtime_contract, vm_runtime_descriptor_digest,
     firecracker_digest, firecracker_version, snapshot_format_version,
     host_kernel_release, cpu_template_kind,
@@ -50,27 +47,25 @@ INSERT INTO runtime_identities (
 		dbtest.Digest("dispatch-kernel"),
 		dbtest.Digest("dispatch-initramfs"),
 		dbtest.Digest("dispatch-rootfs"),
-		runtimeid.Contract,
+		vmplatform.Contract,
 	)
 	dbtest.MustExec(t, ctx, pool, `
 INSERT INTO worker_pools (
     id, worker_group_id, name, status,
-    runtime_identity_id, substrate_format, substrate_contract,
+    vm_platform_id,
     capacity_cpu_millis, capacity_memory_bytes, capacity_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
     max_vm_slots, sealed_at
 ) VALUES (
     $1, $2, 'dispatch-test', 'active',
-    $3, $4, $5,
-    $6, $7, $8,
-    $9, $10, $11,
-    $12, now()
+    $3,
+    $4, $5, $6,
+    $7, $8, $9,
+    $10, now()
 )`,
 		dbtest.DefaultWorkerPoolID,
 		workerGroupID,
 		dbtest.DefaultRuntimeID,
-		spec.substrateFormat,
-		spec.substrateContract,
 		spec.capacityCPUMillis,
 		spec.capacityMemoryBytes,
 		spec.capacityGuestEphemeralDiskBytes,

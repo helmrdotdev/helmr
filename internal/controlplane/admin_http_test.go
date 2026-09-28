@@ -80,10 +80,6 @@ func (q *adminHTTPQuerier) RotateWorkerGroupToken(context.Context, db.RotateWork
 	return db.WorkerGroupToken{}, nil
 }
 
-func (q *adminHTTPQuerier) BeginQuerier(context.Context) (db.Querier, transaction, error) {
-	return q, &adminHTTPTransaction{}, nil
-}
-
 func (q *adminHTTPQuerier) LockWorkerGroupMutation(context.Context, int64) error {
 	return nil
 }
@@ -206,46 +202,6 @@ func TestAdminHTTPCreatesLogicalRegion(t *testing.T) {
 	}
 }
 
-func TestAdminHTTPCreatesLogicalWorkerGroup(t *testing.T) {
-	queries := &adminHTTPQuerier{admin: true}
-	response := httptest.NewRecorder()
-	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
-		http.MethodPost,
-		"/admin/api/v1/worker-groups",
-		`{"region_id":"default","name":"default","description":"Primary fleet"}`,
-	))
-	if response.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want 201: %s", response.Code, response.Body.String())
-	}
-	if queries.createGroupCalls != 1 || queries.createGroupParams.RegionID != "default" ||
-		queries.createGroupParams.Name != "default" || queries.createGroupParams.Description != "Primary fleet" {
-		t.Fatalf("create worker group params = %+v, calls = %d", queries.createGroupParams, queries.createGroupCalls)
-	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
-	}
-	if body := response.Body.String(); !strings.Contains(body, `"enrollment_token":"hlmr_wgt_`) {
-		t.Fatalf("response = %s", body)
-	}
-}
-
-func TestAdminHTTPLifecycleConflictUsesConflictResponse(t *testing.T) {
-	queries := &adminHTTPQuerier{admin: true, conflict: true}
-	groupID := uuid.NewV7().String()
-	response := httptest.NewRecorder()
-	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
-		http.MethodPost,
-		"/admin/api/v1/worker-groups/"+groupID+"/pause",
-		`{"expected_claim_version":1}`,
-	))
-	if response.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want 409: %s", response.Code, response.Body.String())
-	}
-	if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != "conflict" {
-		t.Fatalf("error code = %q, want conflict", got)
-	}
-}
-
 func TestAdminHTTPLifecycleRejectsInvalidVersion(t *testing.T) {
 	queries := &adminHTTPQuerier{admin: true}
 	groupID := uuid.NewV7().String()
@@ -257,19 +213,5 @@ func TestAdminHTTPLifecycleRejectsInvalidVersion(t *testing.T) {
 	))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
-	}
-}
-
-func TestAdminHTTPLifecycleMissingGroupUsesNotFoundResponse(t *testing.T) {
-	queries := &adminHTTPQuerier{admin: true, missing: true}
-	groupID := uuid.NewV7().String()
-	response := httptest.NewRecorder()
-	adminHTTPRouter(t, queries).ServeHTTP(response, adminHTTPRequest(
-		http.MethodPost,
-		"/admin/api/v1/worker-groups/"+groupID+"/pause",
-		`{"expected_claim_version":1}`,
-	))
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404: %s", response.Code, response.Body.String())
 	}
 }

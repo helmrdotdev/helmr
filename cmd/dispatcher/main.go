@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -23,7 +24,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/version"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -78,13 +78,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run placement lane lock: %w", err)
 	}
-	workspaceFencingKey, err := workspace.NewFencingKey(cfg.WorkspaceFencingKey)
+	computerFencingKey, err := computer.NewFencingKey(cfg.ComputerFencingKey)
 	if err != nil {
-		return fmt.Errorf("configure workspace fencing key: %w", err)
+		return fmt.Errorf("configure computer fencing key: %w", err)
 	}
 	runDispatchAuthority, err := dispatch.NewRunAuthority(
 		runDispatchPool,
-		workspaceFencingKey,
+		computerFencingKey,
 	)
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
@@ -137,7 +137,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	scheduleAuthority := deployment.NewScheduleAuthority()
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
-		return fmt.Errorf("configure scheduled Workspace CA encryption: %w", err)
+		return fmt.Errorf("configure scheduled Computer CA encryption: %w", err)
 	}
 	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority, secretStore.GenerateProxyTrust)
 	if err != nil {
@@ -161,16 +161,16 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	}
 	secretRevocationReconciler, err := secret.NewRevocationReconciler(
 		runDispatchPool,
-		secret.WorkspaceExecRecoverer(func(
+		secret.ComputerCommandRecoverer(func(
 			ctx context.Context,
-			candidate secret.WorkspaceExecCandidate,
+			candidate secret.ComputerCommandCandidate,
 		) error {
-			err := runDispatchAuthority.RecoverWorkspaceExec(
+			err := runDispatchAuthority.RecoverComputerCommand(
 				ctx,
-				dispatch.RecoverableWorkspaceExecCandidate{
+				dispatch.RecoverableComputerCommandCandidate{
 					OrgID:            candidate.OrgID,
-					ProcessID:        candidate.ProcessID,
-					WorkspaceID:      candidate.WorkspaceID,
+					CommandID:        candidate.CommandID,
+					ComputerID:       candidate.ComputerID,
 					ExpectedRevision: candidate.ExpectedRevision,
 				},
 			)

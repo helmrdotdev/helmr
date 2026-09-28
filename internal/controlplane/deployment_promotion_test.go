@@ -14,13 +14,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func TestReconcileSchedulesPinsPerFireWorkspaceAuthority(t *testing.T) {
+func TestReconcileSchedulesPinsPerFireComputerAuthority(t *testing.T) {
 	target := promotionTestDeployment()
 	scheduled := promotionTaskDefinition(
 		t,
 		target,
 		"daily-report",
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
 	)
 	ordinary := promotionTaskDefinition(
 		t,
@@ -73,7 +73,7 @@ func TestReconcileSchedulesRejectsMissingSandboxBeforeMutation(t *testing.T) {
 			t,
 			target,
 			"daily-report",
-			`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"missing","secrets":[]}}}`,
+			`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"missing","secrets":[]}}}`,
 		)},
 	}
 
@@ -92,7 +92,7 @@ func TestReconcileSchedulesRejectsDuplicateTasksBeforeMutation(t *testing.T) {
 	sandbox := promotionSandboxDefinition(target, "runtime")
 	first := promotionTaskDefinition(
 		t, target, "daily-report",
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"runtime","secrets":[]}}}`,
 	)
 	second := first
 	second.ID = pgvalue.UUID(uuid.NewV7())
@@ -115,8 +115,8 @@ func TestReconcileSchedulesLocksSecretsBeforeMutation(t *testing.T) {
 	sandbox := promotionSandboxDefinition(target, "runtime")
 	store := &promotionScheduleStore{
 		definitions: []db.DeploymentDefinition{
-			promotionTaskDefinition(t, target, "z-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[{"secret":"Z_TOKEN","env":{"name":"Z_TOKEN","mode":"raw"}}]}}}`),
-			promotionTaskDefinition(t, target, "a-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"runtime","secrets":[{"secret":"A_TOKEN","env":{"name":"A_TOKEN","mode":"raw"}}]}}}`),
+			promotionTaskDefinition(t, target, "z-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"runtime","secrets":[{"secret":"Z_TOKEN","env":{"name":"Z_TOKEN","mode":"raw"}}]}}}`),
+			promotionTaskDefinition(t, target, "a-task", `{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"runtime","secrets":[{"secret":"A_TOKEN","env":{"name":"A_TOKEN","mode":"raw"}}]}}}`),
 			sandbox,
 		},
 		secrets: map[string]db.Secret{
@@ -257,9 +257,9 @@ func (s *promotionScheduleStore) ReconcileSchedules(
 	return rows, nil
 }
 
-func (s *promotionScheduleStore) LockActiveSecretsByNameForWorkspaceCreate(
+func (s *promotionScheduleStore) LockActiveSecretsByNameForComputerCreate(
 	_ context.Context,
-	params db.LockActiveSecretsByNameForWorkspaceCreateParams,
+	params db.LockActiveSecretsByNameForComputerCreateParams,
 ) ([]db.Secret, error) {
 	s.events = append(s.events, "secrets")
 	s.lockedNames = append([]string(nil), params.Names...)
@@ -301,10 +301,10 @@ func (s *promotionScheduleStore) ArchiveOmittedSchedules(
 	return nil
 }
 
-func TestScheduleAndDirectWorkspaceOriginCapacity(t *testing.T) {
+func TestScheduleAndDirectComputerOriginCapacity(t *testing.T) {
 	for _, variant := range []string{"distinct", "repeated", "ports", "dedup"} {
 		t.Run(variant, func(t *testing.T) {
-			var bindings []api.WorkspaceSecret
+			var bindings []api.ComputerSecret
 			for i := 0; i < 16; i++ {
 				env := &api.SecretEnv{Name: fmt.Sprintf("TOKEN_%d", i), Mode: "protected"}
 				for j := 0; j < 16; j++ {
@@ -319,14 +319,14 @@ func TestScheduleAndDirectWorkspaceOriginCapacity(t *testing.T) {
 					}
 					env.AllowedOrigins = append(env.AllowedOrigins, value)
 				}
-				bindings = append(bindings, api.WorkspaceSecret{Name: "token", Env: env})
+				bindings = append(bindings, api.ComputerSecret{Name: "token", Env: env})
 			}
 			for _, extra := range []bool{false, true} {
 				if extra {
-					bindings = append(bindings, api.WorkspaceSecret{Name: "token", Env: &api.SecretEnv{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
+					bindings = append(bindings, api.ComputerSecret{Name: "token", Env: &api.SecretEnv{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
 				}
-				_, directErr := normalizeWorkspaceSecretPlacements(bindings)
-				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, deployment.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Workspace: deployment.ScheduleWorkspaceManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())
+				_, directErr := normalizeComputerSecretPlacements(bindings)
+				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, deployment.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Computer: deployment.ScheduleComputerManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())
 				wantErr := extra && variant != "dedup"
 				if (directErr != nil) != wantErr || (scheduleErr != nil) != wantErr {
 					t.Fatalf("extra=%v direct=%v scheduled=%v", extra, directErr, scheduleErr)

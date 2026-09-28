@@ -8,7 +8,7 @@ import (
 var ErrNoCapacity = errors.New("no compute capacity available")
 
 const (
-	WorkspaceGuestEphemeralDiskMiB = computer.SeedCapacity >> 20
+	ComputerGuestEphemeralDiskMiB = computer.SeedCapacity >> 20
 )
 
 type ResourceVector struct {

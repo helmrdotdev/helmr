@@ -7,13 +7,13 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 const (
@@ -121,14 +121,14 @@ type RetryManifest = retry.Manifest
 type RetryBackoff = retry.Backoff
 
 type ScheduleManifest struct {
-	Cron      string                    `json:"cron"`
-	Timezone  string                    `json:"timezone"`
-	Workspace ScheduleWorkspaceManifest `json:"workspace"`
+	Cron     string                   `json:"cron"`
+	Timezone string                   `json:"timezone"`
+	Computer ScheduleComputerManifest `json:"computer"`
 }
 
-type ScheduleWorkspaceManifest struct {
-	SandboxDeclaredID string                `json:"sandboxId"`
-	Secrets           []api.WorkspaceSecret `json:"secrets"`
+type ScheduleComputerManifest struct {
+	SandboxDeclaredID string               `json:"sandboxId"`
+	Secrets           []api.ComputerSecret `json:"secrets"`
 }
 
 type ResourcesManifest struct {
@@ -431,7 +431,7 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 			input.Sandbox.ImageBuild,
 			string(ArchitectureX8664),
 		); err != nil {
-			return fmt.Errorf("workspace imageBuild: %w", err)
+			return fmt.Errorf("computer imageBuild: %w", err)
 		}
 		if err := validateResourcesManifest(input.Sandbox.Resources); err != nil {
 			return fmt.Errorf("sandbox resources: %w", err)
@@ -483,24 +483,24 @@ func validateScheduleManifest(manifest ScheduleManifest) error {
 	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
 		return err
 	}
-	if err := api.ValidateSandboxDeclaredID(manifest.Workspace.SandboxDeclaredID); err != nil {
-		return fmt.Errorf("schedule workspace sandbox: %w", err)
+	if err := api.ValidateSandboxDeclaredID(manifest.Computer.SandboxDeclaredID); err != nil {
+		return fmt.Errorf("schedule computer sandbox: %w", err)
 	}
-	if manifest.Workspace.Secrets == nil {
-		return errors.New("schedule workspace secrets must be an array")
+	if manifest.Computer.Secrets == nil {
+		return errors.New("schedule computer secrets must be an array")
 	}
-	if len(manifest.Workspace.Secrets) > workspace.MaxSecretPlacements {
+	if len(manifest.Computer.Secrets) > computer.MaxSecretPlacements {
 		return fmt.Errorf(
-			"schedule workspace cannot contain more than %d secret placements",
-			workspace.MaxSecretPlacements,
+			"schedule computer cannot contain more than %d secret placements",
+			computer.MaxSecretPlacements,
 		)
 	}
-	placements := make([]workspace.SecretPlacement, 0, len(manifest.Workspace.Secrets))
-	for index, placement := range manifest.Workspace.Secrets {
-		if err := api.ValidateWorkspaceSecret(placement); err != nil {
-			return fmt.Errorf("schedule workspace secret %d: %w", index, err)
+	placements := make([]computer.SecretPlacement, 0, len(manifest.Computer.Secrets))
+	for index, placement := range manifest.Computer.Secrets {
+		if err := api.ValidateComputerSecret(placement); err != nil {
+			return fmt.Errorf("schedule computer secret %d: %w", index, err)
 		}
-		item := workspace.SecretPlacement{Name: placement.Name}
+		item := computer.SecretPlacement{Name: placement.Name}
 		if placement.Env != nil {
 			item.Kind, item.Target, item.Mode, item.AllowedOrigins = "env", placement.Env.Name, placement.Env.Mode, placement.Env.AllowedOrigins
 		} else {
@@ -508,8 +508,8 @@ func validateScheduleManifest(manifest ScheduleManifest) error {
 		}
 		placements = append(placements, item)
 	}
-	if _, err := workspace.NormalizeSecretPlacements(placements); err != nil {
-		return fmt.Errorf("schedule workspace secrets: %w", err)
+	if _, err := computer.NormalizeSecretPlacements(placements); err != nil {
+		return fmt.Errorf("schedule computer secrets: %w", err)
 	}
 	return nil
 }

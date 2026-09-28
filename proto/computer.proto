@@ -1,0 +1,272 @@
+syntax = "proto3";
+
+package helmr.computer.v0;
+
+import "program.proto";
+
+option go_package = "github.com/helmrdotdev/helmr/internal/proto/computer/v0;computerv0";
+
+message ComputerOperationEnvelope {
+  string operation_id = 1;
+  string computer_instance_id = 2;
+  string computer_id = 3;
+  string channel_token = 4;
+  uint64 writer_generation = 5;
+  string instance_lease_id = 6;
+  string write_lease_id = 7;
+  string fencing_token = 8;
+  int64 operation_expires_at_unix_nano = 9;
+  string request_fingerprint = 10;
+}
+
+message ComputerArtifact {
+  string digest = 1;
+  string media_type = 2;
+  string encoding = 3;
+  uint64 size_bytes = 4;
+  uint32 entry_count = 5;
+}
+
+message ComputerAuthorityFence {
+  string worker_host_id = 1;
+  int64 worker_epoch = 2;
+  string computer_instance_id = 3;
+  string vm_platform_id = 4;
+  string computer_id = 5;
+  string run_id = 7;
+  uint32 attempt_number = 8;
+  string run_lease_id = 9;
+  int64 lease_sequence = 10;
+  int64 writer_generation = 13;
+  int64 expires_at_unix_nano = 15;
+  string base_computer_disk_version_id = 16;
+}
+
+message ComputerRunAuthority {
+  ComputerAuthorityFence fence = 1;
+  string channel_token = 2;
+  string write_capability = 3;
+}
+
+message RenewComputerAuthorityRequest {
+  ComputerRunAuthority previous = 1;
+  int64 new_expires_at_unix_nano = 2;
+}
+
+message RenewComputerAuthorityResponse {
+  ComputerAuthorityFence fence = 1;
+  string error = 2;
+}
+
+message GrantProgramResumeRequest {
+  ComputerRunAuthority authority = 1;
+  string run_wait_id = 2;
+  string checkpoint_id = 3;
+}
+
+message GrantProgramResumeResponse {
+  ComputerAuthorityFence fence = 1;
+  helmr.program.v0.ResumeAttach attach = 2;
+}
+
+message CapturedRun {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_wait_id = 3;
+  string run_lease_id = 4;
+  string correlation_id = 5;
+}
+
+message ComputerRestoreIdentity {
+  string computer_id = 1;
+  string source_computer_instance_id = 2;
+  int64 writer_generation = 3;
+  string checkpoint_id = 4;
+  repeated CapturedRun runs = 5;
+}
+
+// One request seals and freezes the entire admitted set before VM capture.
+message ComputerCaptureRun {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_wait_id = 3;
+  string run_lease_id = 4;
+}
+
+message FreezeComputerRequest {
+  string computer_id = 1;
+  string computer_instance_id = 2;
+  int64 writer_generation = 3;
+  string checkpoint_id = 4;
+  int64 desired_version = 5;
+  int64 membership_revision = 6;
+  repeated ComputerCaptureRun runs = 7;
+}
+
+message FreezeComputerResponse {
+  ComputerRestoreIdentity identity = 1;
+  int64 desired_version = 2;
+  int64 membership_revision = 3;
+}
+
+message VerifyComputerRestoreRequest {
+  ComputerRestoreIdentity identity = 1;
+}
+
+message VerifyComputerRestoreResponse {
+  ComputerRestoreIdentity identity = 1;
+}
+
+message MaterializeComputerRequest {
+  ComputerOperationEnvelope envelope = 1;
+  string mount_path = 2;
+  ComputerMountTarget target = 3;
+  ComputerArtifact computer_image = 4;
+  bool use_prepared_runtime = 5;
+  string restored_checkpoint_id = 7;
+}
+
+message ComputerMountPhase {
+  string name = 1;
+  uint64 duration_ms = 2;
+  uint64 size_bytes = 3;
+  uint32 entry_count = 4;
+  string error = 5;
+}
+
+message MaterializeComputerResponse {
+  string status = 1;
+  string guestd_channel_token_hash = 2;
+  repeated ComputerMountPhase phases = 3;
+  ComputerMountTarget target = 4;
+}
+
+// OCI runtime settings verified by the worker for the mounted Computer.
+message RuntimeImageConfig {
+  repeated string env = 1;
+  string working_dir = 2;
+  string user = 3;
+  repeated string entrypoint = 4;
+  repeated string cmd = 5;
+}
+
+message PrepareComputerRuntimeRequest {
+  string computer_id = 5;
+  int64 writer_generation = 6;
+  string computer_instance_id = 1;
+  string mount_path = 2;
+  ComputerArtifact computer_image = 3;
+  // When present, the substrate is already mounted and no image frame follows.
+  RuntimeImageConfig mounted_image_config = 4;
+}
+
+message PrepareComputerRuntimeResponse {
+  string status = 1;
+  string computer_instance_id = 2;
+  repeated ComputerMountPhase phases = 3;
+}
+
+message HeartbeatComputerRequest {
+  ComputerOperationEnvelope envelope = 1;
+  string status = 2;
+  uint64 dirty_generation = 3;
+}
+
+message HeartbeatComputerResponse {
+  string status = 1;
+  bool stop_requested = 2;
+}
+
+// The host has already materialized the retained Computer generation.
+message ComputerMountTarget {
+  string base_computer_disk_version_id = 1;
+}
+
+
+message ComputerCommandAuthority {
+  string operation_id = 1;
+  string computer_instance_id = 2;
+  string computer_id = 3;
+  string channel_token = 4;
+  int64 writer_generation = 5;
+  int64 operation_expires_at_unix_nano = 6;
+  string request_fingerprint = 7;
+}
+
+message ComputerBasicExecRequest {
+  ComputerCommandAuthority envelope = 1;
+  string request_json = 2;
+  repeated ComputerSecretDelivery secrets = 3;
+  bytes stdin = 4;
+  map<string,string> protected_env = 5;
+  bytes proxy_ca = 6;
+}
+
+message ComputerBasicExecResult {
+  string error_json = 1;
+  int32 exit_code = 2;
+  string outcome = 5;
+  string request_fingerprint = 6;
+}
+
+message CommandOutputChunk {
+  string stream = 1;
+  uint64 sequence = 2;
+  int64 observed_at_unix_nano = 3;
+  bytes content = 4;
+}
+
+message ComputerBasicExecEvent {
+  oneof event {
+    CommandOutputChunk output = 1;
+    ComputerBasicExecResult result = 2;
+  }
+}
+
+message ComputerSecretDelivery {
+  string placement_kind = 1;
+  string placement_target = 2;
+  bytes value = 3;
+}
+
+message ComputerCommandReleaseRequest {
+ ComputerCommandAuthority authority = 1;
+}
+message ComputerCommandReleaseResponse {
+ bool released = 1;
+ string error = 2;
+}
+
+message ComputerCommandCancelRequest {
+ ComputerCommandAuthority authority = 1;
+}
+message ComputerCommandCancelResponse {
+ bool accepted = 1;
+ string error = 2;
+}
+
+// Installs the entire restored membership while admission remains sealed.
+message ComputerRestoreInstallation {
+  ComputerOperationEnvelope envelope = 1;
+  string checkpoint_id = 2;
+  int64 desired_version = 3;
+  repeated ComputerRunAuthority grants = 4;
+}
+
+message ComputerRestoreInstallationResponse {
+  ComputerRestoreInstallation installation = 1;
+}
+
+message ComputerRunCleanupRequest {
+  string computer_id = 1;
+  string computer_instance_id = 2;
+  int64 writer_generation = 3;
+  string channel_token = 4;
+  string run_id = 5;
+  uint32 attempt_number = 6;
+  string run_lease_id = 7;
+}
+message ComputerRunCleanupResponse {
+  bool reconciled = 1;
+  string error = 2;
+}

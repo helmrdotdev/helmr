@@ -17,7 +17,7 @@ buildGoModule {
     ];
   };
 
-  vendorHash = "sha256-7wlmi+xGFQcmwgELqYBb1pz0xdEwHF5F+j1scMk4NOk=";
+  vendorHash = "sha256-+FtnCDnqKjuIXSlUUsQBPdBZ3V6PxHQDMMWNPCqoqiQ=";
   subPackages = [ "cmd/internal/bundle-builder" ];
 
   # Static: the builder runs unchanged inside user-prepared environments.

@@ -9,7 +9,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -65,7 +64,7 @@ func (s *Server) workerCreateActorInputRunWait(
 		writeError(w, err)
 		return
 	}
-	timeoutAt, idleTimeout, checkpointDueAt, err := runWaitDeadlines(
+	timeoutAt, idleTimeout, err := runWaitDeadlines(
 		request, idleTimeoutDefault,
 	)
 	if err != nil {
@@ -92,82 +91,59 @@ func (s *Server) workerCreateActorInputRunWait(
 
 	var registered db.RunWait
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		lockedLocators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch: worker.WorkerEpoch})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if _, err := secret.LockAttemptDelivery(
-			r.Context(), work.q, lockedLocators.RunID, lockedLocators.AttemptNumber, lockedLocators.WorkspaceID,
-		); err != nil {
-			return fmt.Errorf("lock actor input wait secret authority: %w", err)
-		}
-		owner, err := lockRunFinalizationOwner(r.Context(), work.q, lockedLocators)
+		authority, err := lockWorkerWaitExecution(r.Context(), work.tx, worker, parsed, request.Lease)
 		if err != nil {
 			return err
 		}
-		authority, err := lockRenewableRunLeaseAuthority(
-			r.Context(), work.q, worker, pgvalue.UUID(parsed.leaseID), request.Lease.LeaseSequence, lockedLocators,
-		)
-		if err != nil {
-			return err
-		}
-		authority.actor = owner.actor
-		if authority.run.ParentRunID.Valid || authority.run.EntrypointKind != "actor" ||
-			authority.run.SessionID != pgvalue.UUID(sessionID) || authority.runLease.Status != db.RunLeaseStatusRunning {
+		if authority.Run.EntrypointKind != "actor" || authority.Run.SessionID != pgvalue.UUID(sessionID) {
 			return errStaleRunLeaseClaim
 		}
 		cursor := pgtype.Int8{Int64: params.AfterInputSequence, Valid: true}
-		if err := validateRunWaitActorCursor(authority, db.RunWait{Kind: db.WaitKindActorInput, ActorSpeculativeInputSequence: cursor}); err != nil {
-			return err
-		}
 		replayParams := db.GetActorInputRunWaitRegistrationReplayParams{
-			ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID, RunID: authority.run.ID,
-			WorkspaceID: authority.workspace.ID, SessionID: authority.actor.ID,
-			AfterInputSequence: cursor, ActorSpeculativeInputSequence: cursor,
-			AttemptNumber: authority.attempt.Number, ResumeAttachID: pgvalue.UUID(resumeAttachID),
+			ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run.EnvironmentID, RunID: authority.Run.ID,
+			ComputerID: authority.Computer.ID, SessionID: authority.Session.ID,
+			AfterInputSequence:             cursor,
+			AttemptNumber:                  authority.Attempt.Number,
 			RegistrationRequestFingerprint: pgvalue.Text(fingerprint), Metadata: metadata, Tags: tags,
-			RunLeaseID: authority.runLease.ID,
+			RunLeaseID: authority.Lease.ID,
 		}
 		registered, err = work.q.GetActorInputRunWaitRegistrationReplay(r.Context(), replayParams)
 		if err == nil {
-			if registered.CompletedTurnID.Valid && registered.CompletedTurnID != authority.actor.ActiveTurnID {
-				return session.ErrTurnScope
-			}
-			return nil
+			return session.ValidateWaitCursor(authority, registered, cursor)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		if existing, existingErr := work.q.GetRunWait(r.Context(), db.GetRunWaitParams{
-			RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, ID: pgvalue.UUID(waitID),
+			RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number, ID: pgvalue.UUID(waitID),
 		}); existingErr == nil || !errors.Is(existingErr, pgx.ErrNoRows) {
 			_ = existing
 			return errStaleRunLeaseClaim
 		}
-		if authority.run.Status != db.RunStatusRunning || authority.actor.ActiveTurnID.Valid || authority.actor.DispatchHoldID.Valid || params.AfterInputSequence != authority.actor.CommittedInputSequence {
+		if err := session.ValidateWaitCursor(authority, db.RunWait{Kind: db.WaitKindActorInput}, cursor); err != nil {
+			return err
+		}
+		if authority.Run.Status != db.RunStatusRunning || authority.Session.ActiveTurnID.Valid || authority.Session.DispatchHoldID.Valid || params.AfterInputSequence != authority.Session.CommittedInputSequence {
 			return errStaleRunLeaseClaim
 		}
 		registered, err = work.q.RegisterActorInputRunWait(r.Context(), db.RegisterActorInputRunWaitParams{
-			ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID, TimeoutAt: timeoutAt,
-			IdleTimeoutMs: idleTimeout, SessionID: authority.actor.ID, AfterInputSequence: cursor,
-			RegistrationRequestFingerprint: pgvalue.Text(fingerprint), AttemptNumber: authority.attempt.Number,
-			ActorSpeculativeInputSequence: cursor, CurrentRunLeaseID: authority.runLease.ID,
-			CheckpointDueAt: checkpointDueAt, ResumeAttachID: pgvalue.UUID(resumeAttachID), Metadata: metadata, Tags: tags,
-			RunID: authority.run.ID, ExpectedRunningRevision: authority.run.Revision,
+			ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run.EnvironmentID, TimeoutAt: timeoutAt,
+			IdleTimeoutMs: idleTimeout, SessionID: authority.Session.ID, AfterInputSequence: cursor,
+			RegistrationRequestFingerprint: pgvalue.Text(fingerprint), AttemptNumber: authority.Attempt.Number,
+			CurrentRunLeaseID: authority.Lease.ID,
+			Metadata:          metadata, Tags: tags,
+			RunID: authority.Run.ID, ExpectedRunningRevision: authority.Run.Revision,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
 		record, err := work.q.GetSessionTurnAtSequenceForUpdate(r.Context(), db.GetSessionTurnAtSequenceForUpdateParams{
-			EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID,
+			EnvironmentID: authority.Run.EnvironmentID, SessionID: authority.Session.ID,
 			Sequence: params.AfterInputSequence + 1,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			if authority.actor.Status == "closing" && authority.actor.CloseSequence.Valid &&
-				params.AfterInputSequence >= authority.actor.CloseSequence.Int64 {
+			if authority.Session.Status == "closing" && authority.Session.CloseSequence.Valid &&
+				params.AfterInputSequence >= authority.Session.CloseSequence.Int64 {
 				registered, err = session.FailWait(r.Context(), work.q, registered, "session_closed")
 				return err
 			}
@@ -182,7 +158,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
+	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrAuthority) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
 		writeError(w, conflict(errors.New("worker actor input wait receipt is stale")))
 		return
 	}
@@ -193,7 +169,7 @@ func (s *Server) workerCreateActorInputRunWait(
 	}
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(), ResumeAttachID: resumeAttachID.String(),
-		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID), RuntimeEpoch: worker.WorkerEpoch,
+		ComputerInstanceID: pgvalue.UUIDString(registrationLocators.ComputerInstanceID), RuntimeEpoch: worker.WorkerEpoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = actorInputWaitDecision(registered)

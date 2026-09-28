@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type ScheduleAuthority struct{}
@@ -73,9 +73,9 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		value := *manifest.Run.TTLMs
 		queuedTTL = &value
 	}
-	secretPlacements := make([]workspace.SecretPlacement, 0, len(manifest.Schedule.Workspace.Secrets))
-	for _, placement := range manifest.Schedule.Workspace.Secrets {
-		item := workspace.SecretPlacement{Name: placement.Name}
+	secretPlacements := make([]computer.SecretPlacement, 0, len(manifest.Schedule.Computer.Secrets))
+	for _, placement := range manifest.Schedule.Computer.Secrets {
+		item := computer.SecretPlacement{Name: placement.Name}
 		if placement.Env != nil {
 			item.Kind, item.Target, item.Mode, item.AllowedOrigins = "env", placement.Env.Name, placement.Env.Mode, placement.Env.AllowedOrigins
 		} else {
@@ -83,9 +83,9 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		}
 		secretPlacements = append(secretPlacements, item)
 	}
-	secretPlacements, err = workspace.NormalizeSecretPlacements(secretPlacements)
+	secretPlacements, err = computer.NormalizeSecretPlacements(secretPlacements)
 	if err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("normalize scheduled Workspace Secrets: %w", err)
+		return schedule.TaskRun{}, fmt.Errorf("normalize scheduled Computer Secrets: %w", err)
 	}
 	return schedule.TaskRun{
 		QueueName:             manifest.Run.Queue,
@@ -93,7 +93,7 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		QueuedTTLMS:           queuedTTL,
 		MaxActiveDurationMS:   manifest.Run.MaxDurationMs,
 		RetryPolicy:           retryPolicy,
-		SandboxDeclaredID:     manifest.Schedule.Workspace.SandboxDeclaredID,
+		SandboxDeclaredID:     manifest.Schedule.Computer.SandboxDeclaredID,
 		SecretPlacements:      secretPlacements,
 	}, nil
 }

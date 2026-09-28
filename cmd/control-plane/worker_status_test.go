@@ -19,10 +19,10 @@ func TestWorkerStatusCommandsRejectMalformedGroupBeforePersistence(t *testing.T)
 			return runWorkerGroupStatusCommand(context.Background(), io.Discard, []string{"pause", "--group-id", "not-a-group", "--expected-claim-version", "1"})
 		}},
 		{name: "instance status", run: func() error {
-			return runWorkerInstanceStatusCommand(context.Background(), io.Discard, []string{"status", "--group-id", "not-a-group", "--resource-id", "host-1"})
+			return runWorkerHostStatusCommand(context.Background(), io.Discard, []string{"status", "--group-id", "not-a-group", "--resource-id", "host-1"})
 		}},
 		{name: "instance mutation", run: func() error {
-			return runWorkerInstanceStatusCommand(context.Background(), io.Discard, []string{"lose", "--group-id", "not-a-group", "--resource-id", "host-1", "--expected-claim-version", "1"})
+			return runWorkerHostStatusCommand(context.Background(), io.Discard, []string{"lose", "--group-id", "not-a-group", "--resource-id", "host-1", "--expected-claim-version", "1"})
 		}},
 	}
 	for _, test := range tests {

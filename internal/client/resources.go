@@ -7,10 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -108,186 +106,160 @@ func (c *Client) StartTask(
 	return response, nil
 }
 
-type WorkspaceScopeOptions struct {
+type ComputerScopeOptions struct {
 	ProjectID     string
 	EnvironmentID string
 }
 
-func (c *Client) workspaceCollectionPath(opts WorkspaceScopeOptions) (string, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/workspaces")
+func (c *Client) computerCollectionPath(opts ComputerScopeOptions) (string, error) {
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/computers")
 	return path, err
 }
 
-func (c *Client) workspaceItemPath(workspaceID string, suffix string, opts WorkspaceScopeOptions) (string, error) {
-	path, err := c.workspaceCollectionPath(opts)
+func (c *Client) computerItemPath(computerID string, suffix string, opts ComputerScopeOptions) (string, error) {
+	path, err := c.computerCollectionPath(opts)
 	if err != nil {
 		return "", err
 	}
-	return environmentScopedResourcePath(path, workspaceID, suffix), nil
+	return environmentScopedResourcePath(path, computerID, suffix), nil
 }
 
-func (c *Client) workspaceResourcePath(workspaceID string, suffix string, opts WorkspaceScopeOptions) (string, error) {
-	if err := ids.Validate(workspaceID); err != nil {
+func (c *Client) computerResourcePath(computerID string, suffix string, opts ComputerScopeOptions) (string, error) {
+	if err := ids.Validate(computerID); err != nil {
 		return "", err
 	}
-	return c.workspaceItemPath(workspaceID, suffix, opts)
+	return c.computerItemPath(computerID, suffix, opts)
 }
 
-func (c *Client) CreateWorkspace(
+func (c *Client) CreateComputer(
 	ctx context.Context,
 	declaredID string,
-	input api.CreateWorkspaceRequest,
-	opts WorkspaceScopeOptions,
-) (api.WorkspaceSnapshot, error) {
-	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(declaredID)+"/workspaces")
+	input api.CreateComputerRequest,
+	opts ComputerScopeOptions,
+) (api.ComputerSnapshot, error) {
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/sandboxes/"+url.PathEscape(declaredID)+"/computers")
 	if err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ComputerSnapshot{}, err
 	}
-	var response api.WorkspaceSnapshot
+	var response api.ComputerSnapshot
 	if err := c.postJSON(ctx, path, input, &response); err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ComputerSnapshot{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) GetWorkspace(ctx context.Context, workspaceID string, opts WorkspaceScopeOptions) (api.WorkspaceSnapshot, error) {
-	path, err := c.workspaceResourcePath(workspaceID, "", opts)
+func (c *Client) GetComputer(ctx context.Context, computerID string, opts ComputerScopeOptions) (api.ComputerSnapshot, error) {
+	path, err := c.computerResourcePath(computerID, "", opts)
 	if err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ComputerSnapshot{}, err
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ComputerSnapshot{}, err
 	}
-	var response api.WorkspaceSnapshot
+	var response api.ComputerSnapshot
 	if err := c.doJSON(req, &response); err != nil {
-		return api.WorkspaceSnapshot{}, err
+		return api.ComputerSnapshot{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ListWorkspaces(
+func (c *Client) ListComputers(
 	ctx context.Context,
 	key *string,
-	opts WorkspaceScopeOptions,
-) (api.ListWorkspacesResponse, error) {
-	path, err := c.workspaceCollectionPath(opts)
+	opts ComputerScopeOptions,
+) (api.ListComputersResponse, error) {
+	path, err := c.computerCollectionPath(opts)
 	if err != nil {
-		return api.ListWorkspacesResponse{}, err
+		return api.ListComputersResponse{}, err
 	}
 	if key != nil {
 		path += "?" + url.Values{"key": []string{*key}}.Encode()
 	}
 	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return api.ListWorkspacesResponse{}, err
+		return api.ListComputersResponse{}, err
 	}
-	var response api.ListWorkspacesResponse
+	var response api.ListComputersResponse
 	if err := c.doJSON(req, &response); err != nil {
-		return api.ListWorkspacesResponse{}, err
+		return api.ListComputersResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) DeleteWorkspace(
+func (c *Client) DeleteComputer(
 	ctx context.Context,
-	workspaceID string,
-	input api.DeleteWorkspaceRequest,
-	opts WorkspaceScopeOptions,
-) (api.DeleteWorkspaceReceipt, error) {
-	path, err := c.workspaceResourcePath(workspaceID, "", opts)
+	computerID string,
+	input api.DeleteComputerRequest,
+	opts ComputerScopeOptions,
+) (api.DeleteComputerReceipt, error) {
+	path, err := c.computerResourcePath(computerID, "", opts)
 	if err != nil {
-		return api.DeleteWorkspaceReceipt{}, err
+		return api.DeleteComputerReceipt{}, err
 	}
-	var response api.DeleteWorkspaceReceipt
+	var response api.DeleteComputerReceipt
 	if err := c.deleteJSON(ctx, path, input, &response); err != nil {
-		return api.DeleteWorkspaceReceipt{}, err
+		return api.DeleteComputerReceipt{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ExecuteWorkspace(
-	ctx context.Context,
-	workspaceID string,
-	input api.ExecuteWorkspaceRequest,
-	opts WorkspaceScopeOptions,
-) (api.ExecuteWorkspaceResult, error) {
-	path, err := c.workspaceResourcePath(workspaceID, "/exec", opts)
+func (c *Client) ExecuteComputer(ctx context.Context, computerID string, input api.ExecuteComputerRequest, opts ComputerScopeOptions) (api.CommandReceipt, error) {
+	path, err := c.computerResourcePath(computerID, "/exec", opts)
 	if err != nil {
-		return api.ExecuteWorkspaceResult{}, err
+		return api.CommandReceipt{}, err
 	}
-	var process api.WorkspaceExecProcess
-	if err := c.postJSON(ctx, path, input, &process); err != nil {
-		return api.ExecuteWorkspaceResult{}, err
+	var receipt api.CommandReceipt
+	if err := c.postJSON(ctx, path, input, &receipt); err != nil {
+		return api.CommandReceipt{}, err
 	}
-	admittedProcessID := process.ProcessID
-	if err := ids.Validate(admittedProcessID); err != nil {
-		return api.ExecuteWorkspaceResult{}, fmt.Errorf("invalid workspace exec process ID: %w", err)
+	if err := ids.Validate(receipt.CommandID); err != nil {
+		return api.CommandReceipt{}, fmt.Errorf("invalid command ID: %w", err)
 	}
-	for {
-		if process.ProcessID != admittedProcessID {
-			return api.ExecuteWorkspaceResult{}, errors.New("workspace exec poll response changed process ID")
-		}
-		result, terminal, err := workspaceExecProcessResult(process)
-		if terminal || err != nil {
-			return result, err
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return api.ExecuteWorkspaceResult{}, ctx.Err()
-		case <-timer.C:
-		}
-		req, err := c.newRequest(ctx, http.MethodGet, path+"/"+url.PathEscape(admittedProcessID), nil)
-		if err != nil {
-			return api.ExecuteWorkspaceResult{}, err
-		}
-		if err := c.doJSON(req, &process); err != nil {
-			return api.ExecuteWorkspaceResult{}, err
-		}
-	}
+	return receipt, nil
 }
 
-func workspaceExecProcessResult(process api.WorkspaceExecProcess) (api.ExecuteWorkspaceResult, bool, error) {
-	switch process.Status {
-	case api.WorkspaceExecProcessStatusPending, api.WorkspaceExecProcessStatusRunning:
-		return api.ExecuteWorkspaceResult{}, false, nil
-	case api.WorkspaceExecProcessStatusExited:
-		if process.ExitCode == nil || process.StdoutBase64 == nil || process.StderrBase64 == nil {
-			return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec terminal response is incomplete")
-		}
-		return api.ExecuteWorkspaceResult{
-			ExitCode:     *process.ExitCode,
-			StdoutBase64: *process.StdoutBase64,
-			StderrBase64: *process.StderrBase64,
-		}, true, nil
-	case api.WorkspaceExecProcessStatusFailed:
-		if process.Error == nil {
-			return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec failure response is incomplete")
-		}
-		code := process.Error.TerminalReasonCode
-		message := "workspace exec failed"
-		switch code {
-		case "workspace_exec_timed_out":
-			message = "workspace exec timed out"
-		case "workspace_exec_output_limit_exceeded":
-			message = "workspace exec output limit was exceeded"
-		case "workspace_exec_placement_timed_out":
-			message = "workspace exec placement timed out"
-		case "workspace_exec_failed":
-		default:
-			return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec failure response has an invalid terminal reason")
-		}
-		return api.ExecuteWorkspaceResult{}, true, &httpclient.Error{
-			StatusCode: http.StatusUnprocessableEntity,
-			Status:     "422 Unprocessable Entity",
-			Code:       code,
-			Message:    message,
-		}
-	default:
-		return api.ExecuteWorkspaceResult{}, true, errors.New("workspace exec response has an invalid status")
+func (c *Client) RetrieveCommand(ctx context.Context, id string, opts ComputerScopeOptions) (api.CommandInfo, error) {
+	if err := ids.Validate(id); err != nil {
+		return api.CommandInfo{}, err
 	}
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/commands/"+url.PathEscape(id))
+	if err != nil {
+		return api.CommandInfo{}, err
+	}
+	request, err := c.newRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return api.CommandInfo{}, err
+	}
+	var result api.CommandInfo
+	if err := c.doJSON(request, &result); err != nil {
+		return api.CommandInfo{}, err
+	}
+	if result.ID != id {
+		return api.CommandInfo{}, errors.New("exec response changed ID")
+	}
+	return result, nil
+}
+
+func (c *Client) CancelCommand(ctx context.Context, id string, opts ComputerScopeOptions) (api.CommandCancelReceipt, error) {
+	if err := ids.Validate(id); err != nil {
+		return api.CommandCancelReceipt{}, err
+	}
+	path, err := c.environmentScopedPath(opts.ProjectID, opts.EnvironmentID, "/commands/"+url.PathEscape(id)+"/cancel")
+	if err != nil {
+		return api.CommandCancelReceipt{}, err
+	}
+	var receipt api.CommandCancelReceipt
+	if err := c.postJSON(ctx, path, nil, &receipt); err != nil {
+		return api.CommandCancelReceipt{}, err
+	}
+	if err := ids.Validate(receipt.ID); err != nil {
+		return api.CommandCancelReceipt{}, err
+	}
+	if receipt.TargetID != id || receipt.Status != "accepted" {
+		return api.CommandCancelReceipt{}, errors.New("invalid Command cancellation receipt")
+	}
+	return receipt, nil
 }
 
 type TokenScopeOptions struct {

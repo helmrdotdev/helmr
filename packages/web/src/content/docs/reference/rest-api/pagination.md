@@ -23,7 +23,7 @@ ID, or construct cursors.
 
 The SDK maps a collection page to `{ items, nextCursor? }`. Most SDK list
 limits validate in the inclusive range 1–100. Exact key filters such as a
-Workspace key, Actor key, or Schedule task ID cannot be combined with cursor
+Computer key, Actor key, or Schedule task ID cannot be combined with cursor
 pagination where their query type forbids it.
 
 Run logs and Run events also use finite cursor pages. Following is client-side

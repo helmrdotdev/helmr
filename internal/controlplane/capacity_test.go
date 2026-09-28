@@ -19,8 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
-	"github.com/jackc/pgx/v5"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -54,7 +53,7 @@ func TestCapacityRoutesRequireDedicatedBearer(t *testing.T) {
 		"malformed token": "Basic " + capacityTestToken(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/capacity/v1/worker-instances", nil)
+			request := httptest.NewRequest(http.MethodGet, "/capacity/v1/worker-hosts", nil)
 			request.Header.Set("Authorization", authorization)
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
@@ -62,227 +61,6 @@ func TestCapacityRoutesRequireDedicatedBearer(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
 			}
 		})
-	}
-}
-
-func TestCapacityPrimarySelectionIsAtomicAndReplaySafe(t *testing.T) {
-	group, pool := adminPoolFixture()
-	store := newAdminPoolStore(group, pool)
-	store.switched = group
-	store.switched.ClaimVersion++
-	store.switched.PrimaryPoolID = pool.ID
-
-	hash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{db: store, capacityTokenHash: hash}
-	router := chi.NewRouter()
-	server.mountCapacityRoutes(router)
-	poolID := pgvalue.UUIDString(pool.ID)
-	response := capacityJSON(t, capacityRequest(t, router, http.MethodPut,
-		"/capacity/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/primary-pools",
-		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, poolID),
-	), http.StatusOK)
-	assertCapacityJSONKeys(t, response, "applied", "worker_group")
-	responseGroup := capacityJSONObject(t, response["worker_group"])
-	assertCapacityJSONKeys(t, responseGroup, "claim_version", "id", "name", "primary_pool_id", "region_id", "status")
-	if response["applied"] != true || responseGroup["claim_version"] != float64(group.ClaimVersion+1) ||
-		responseGroup["primary_pool_id"] != poolID {
-		t.Fatalf("response = %#v", response)
-	}
-	if store.switchCalls != 1 || store.switchParams.PoolID != pool.ID {
-		t.Fatalf("set primary params = %+v, calls = %d", store.switchParams, store.switchCalls)
-	}
-	assertAdminPoolActions(t, store, "group", "pool", "switch")
-
-	replayGroup := store.switched
-	replayStore := newAdminPoolStore(replayGroup, pool)
-	replayServer := &Server{db: replayStore, capacityTokenHash: hash}
-	replayRouter := chi.NewRouter()
-	replayServer.mountCapacityRoutes(replayRouter)
-	replayed := capacityJSON(t, capacityRequest(t, replayRouter, http.MethodPut,
-		"/capacity/v1/worker-groups/"+pgvalue.UUIDString(group.ID)+"/primary-pools",
-		fmt.Sprintf(`{"expected_group_claim_version":%d,"pool_id":%q}`, group.ClaimVersion, poolID),
-	), http.StatusOK)
-	replayedGroup := capacityJSONObject(t, replayed["worker_group"])
-	if replayed["applied"] != false || replayedGroup["claim_version"] != float64(replayGroup.ClaimVersion) || replayStore.switchCalls != 0 {
-		t.Fatalf("replay = %#v, set calls = %d", replayed, replayStore.switchCalls)
-	}
-}
-
-func TestCapacityDrainUsesExactEpochAndClaimFence(t *testing.T) {
-	workerID := pgvalue.NewUUIDv7()
-	now := time.Now().UTC()
-	store := &capacityDrainStore{
-		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
-			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
-			UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
-		},
-		group: db.WorkerGroup{ID: controlplaneTestWorkerGroupDBID, RegionID: "us-east-1"},
-	}
-	store.draining = db.DrainWorkerInstanceRow{
-		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-		Status: string(db.WorkerInstanceStatusDraining), ClaimVersion: 8,
-		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-		DrainingAt:   pgtype.Timestamptz{Time: now, Valid: true},
-		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
-		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
-	}
-	hash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{db: store, capacityTokenHash: hash}
-	router := chi.NewRouter()
-	server.mountCapacityRoutes(router)
-	path := "/capacity/v1/worker-instances/" + uuid.UUID(workerID.Bytes).String() + "/drain"
-	result := capacityJSON(t, capacityRequest(t, router, http.MethodPost, path,
-		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
-	), http.StatusOK)
-	assertCapacityJSONKeys(t, result, "claim_version", "created_at", "current_epoch", "draining_at", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
-	if store.params.ExpectedEpoch.Int64 != 4 || store.params.ExpectedClaimVersion != 7 || store.params.WorkerGroupID != controlplaneTestWorkerGroupDBID {
-		t.Fatalf("drain params = %+v", store.params)
-	}
-	if result["status"] != "draining" || result["claim_version"] != float64(8) || result["current_epoch"] != float64(4) {
-		t.Fatalf("drain result = %#v", result)
-	}
-	replayed := capacityJSON(t, capacityRequest(t, router, http.MethodPost, path,
-		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
-	), http.StatusOK)
-	if !reflect.DeepEqual(replayed, result) {
-		t.Fatalf("exact replay = %#v, want %#v", replayed, result)
-	}
-	if store.groupCalls != 2 || store.queuedRunCalls != 2 || store.queuedExecCalls != 2 || store.drainCalls != 2 {
-		t.Fatalf("demand/drain calls = group:%d run:%d exec:%d drain:%d", store.groupCalls, store.queuedRunCalls, store.queuedExecCalls, store.drainCalls)
-	}
-}
-
-func TestCapacityDrainDefersForEligibleQueuedDemand(t *testing.T) {
-	workerID := pgvalue.NewUUIDv7()
-	store := &capacityDrainStore{
-		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, Status: string(db.WorkerInstanceStatusActive),
-			ClaimVersion: 7, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-		},
-		group:      db.WorkerGroup{ID: controlplaneTestWorkerGroupDBID, RegionID: "us-east-1"},
-		queuedRuns: []db.ListQueuedRunEligibleScopesRow{{RegionID: "us-east-1"}},
-	}
-	hash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := chi.NewRouter()
-	(&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes(router)
-	response := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
-		"/capacity/v1/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
-		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
-	), http.StatusConflict)
-	assertCapacityJSONKeys(t, response, "error")
-	errorObject := capacityJSONObject(t, response["error"])
-	assertCapacityJSONKeys(t, errorObject, "code", "message")
-	if errorObject["code"] != "queued_demand_present" {
-		t.Fatalf("queued demand error = %#v", response)
-	}
-	if store.drainCalls != 0 || store.queuedExecCalls != 0 {
-		t.Fatalf("drain calls = %d, Workspace Exec queries = %d", store.drainCalls, store.queuedExecCalls)
-	}
-}
-
-func TestCapacityDrainReplaySkipsQueuedDemandCheck(t *testing.T) {
-	workerID := pgvalue.NewUUIDv7()
-	store := &capacityDrainStore{
-		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, Status: string(db.WorkerInstanceStatusDraining),
-			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-		},
-		draining: db.DrainWorkerInstanceRow{
-			ID: workerID, WorkerGroupID: controlplaneTestWorkerGroupDBID, Status: string(db.WorkerInstanceStatusDraining),
-			ClaimVersion: 8, CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-		},
-	}
-	hash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := chi.NewRouter()
-	(&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes(router)
-	result := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
-		"/capacity/v1/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
-		`{"expected_epoch":4,"expected_claim_version":7,"require_zero_queued_demand":true}`,
-	), http.StatusOK)
-	if result["status"] != "draining" {
-		t.Fatalf("drain replay = %#v", result)
-	}
-	if store.groupCalls != 0 || store.drainCalls != 1 {
-		t.Fatalf("group calls = %d, drain calls = %d", store.groupCalls, store.drainCalls)
-	}
-}
-
-func TestCapacityStaleDrainReturnsConflict(t *testing.T) {
-	workerID := pgvalue.NewUUIDv7()
-	store := &capacityDrainStore{
-		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
-			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-		},
-		drainErr: pgx.ErrNoRows,
-	}
-	hash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	router := chi.NewRouter()
-	(&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes(router)
-	response := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
-		"/capacity/v1/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/drain",
-		`{"expected_epoch":4,"expected_claim_version":6}`,
-	), http.StatusConflict)
-	errorObject := capacityJSONObject(t, response["error"])
-	assertCapacityJSONKeys(t, errorObject, "code", "message")
-	if errorObject["code"] != "conflict" {
-		t.Fatalf("stale drain error = %#v", response)
-	}
-	if store.groupCalls != 0 || store.drainCalls != 1 {
-		t.Fatalf("ungated drain calls = group:%d drain:%d", store.groupCalls, store.drainCalls)
-	}
-}
-
-func TestCapacityProviderAbsenceUsesExactWorkerIdentity(t *testing.T) {
-	workerID := pgvalue.NewUUIDv7()
-	now := time.Now().UTC()
-	poolID := pgvalue.NewUUIDv7()
-	store := &capacityDrainStore{
-		instance: db.GetCapacityWorkerInstanceRow{
-			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			WorkerPoolID: poolID, Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
-			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
-			CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		},
-		providerAbsent: db.ConfirmWorkerInstanceProviderAbsentRow{
-			ID: workerID, ResourceID: "i-provider-absent", WorkerGroupID: controlplaneTestWorkerGroupDBID,
-			WorkerPoolID: poolID, Status: string(db.WorkerInstanceStatusLost), ClaimVersion: 8,
-			CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true}, LostAt: pgtype.Timestamptz{Time: now, Valid: true},
-			CreatedAt: pgtype.Timestamptz{Time: now, Valid: true}, UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		},
-	}
-	hash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{db: store, capacityTokenHash: hash}
-	router := chi.NewRouter()
-	server.mountCapacityRoutes(router)
-	result := capacityJSON(t, capacityRequest(t, router, http.MethodPost,
-		"/capacity/v1/worker-instances/"+uuid.UUID(workerID.Bytes).String()+"/lost", "",
-	), http.StatusOK)
-	assertCapacityJSONKeys(t, result, "claim_version", "created_at", "current_epoch", "id", "lost_at", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
-	if store.providerAbsentID != workerID || result["status"] != "lost" || result["claim_version"] != float64(8) || result["resource_id"] != "i-provider-absent" {
-		t.Fatalf("provider absence = id:%v result:%#v", store.providerAbsentID, result)
 	}
 }
 
@@ -297,9 +75,7 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current", Status: "active",
 	}, planPool: db.ListCapacityWorkerPoolsRow{
 		ID: poolID, WorkerGroupID: groupDBID, Name: "run-current",
-		RuntimeIdentityID:               pgtype.Text{String: template.Runtime.ID, Valid: true},
-		SubstrateFormat:                 pgtype.Text{String: template.Substrate.Format, Valid: true},
-		SubstrateContract:               pgtype.Text{String: template.Substrate.Contract, Valid: true},
+		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
 		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
 		CapacityMemoryBytes:             pgtype.Int8{Int64: template.Capacity.MemoryBytes, Valid: true},
 		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: template.Capacity.GuestEphemeralDiskBytes, Valid: true},
@@ -352,9 +128,9 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 		body   string
 	}{
 		{method: http.MethodGet, path: "/capacity/v1/worker-groups/resolve?region_id=aws-us-east-1&region_id=other&name=default"},
-		{method: http.MethodGet, path: "/capacity/v1/worker-instances?worker_group_id=not-a-group"},
-		{method: http.MethodGet, path: "/capacity/v1/worker-instances?worker_group_id=%20"},
-		{method: http.MethodGet, path: "/capacity/v1/worker-instances?worker_group_id=%20" + groupID + "%20"},
+		{method: http.MethodGet, path: "/capacity/v1/worker-hosts?worker_group_id=not-a-group"},
+		{method: http.MethodGet, path: "/capacity/v1/worker-hosts?worker_group_id=%20"},
+		{method: http.MethodGet, path: "/capacity/v1/worker-hosts?worker_group_id=%20" + groupID + "%20"},
 		{method: http.MethodPost, path: "/capacity/v1/worker-groups/not-a-group/plan", body: `{}`},
 		{method: http.MethodPost, path: "/capacity/v1/worker-groups/" + groupID + "/plan", body: `{}`},
 	} {
@@ -371,9 +147,9 @@ func TestCapacityResolveAndPlanHandlers(t *testing.T) {
 	}
 }
 
-func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
+func TestCapacityWorkerHostListParamsAreBounded(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/?worker_group_id="+controlplaneTestWorkerGroup+"&resource_id=host-1&resource_id=host-2&status=active&status=draining&has_unreclaimed_runtime=true&limit=50", nil)
-	params, err := capacityWorkerInstanceListParams(request)
+	params, err := capacityWorkerHostListParams(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,32 +157,32 @@ func TestCapacityWorkerInstanceListParamsAreBounded(t *testing.T) {
 		t.Fatalf("params = %+v", params)
 	}
 	for _, raw := range []string{"/?unsupported=active", "/?worker_group_id=", "/?worker_group_id=%20", "/?worker_group_id=%20" + controlplaneTestWorkerGroup + "%20", "/?worker_group_id=run-workers", "/?status=unknown", "/?resource_id=", "/?resource_id=host-1&resource_id=host-1", "/?has_unreclaimed_runtime=false", "/?has_unreclaimed_runtime=true&has_unreclaimed_runtime=true", "/?limit=0", "/?limit=501"} {
-		if _, err := capacityWorkerInstanceListParams(httptest.NewRequest(http.MethodGet, raw, nil)); err == nil {
+		if _, err := capacityWorkerHostListParams(httptest.NewRequest(http.MethodGet, raw, nil)); err == nil {
 			t.Fatalf("params for %q succeeded", raw)
 		}
 	}
 }
 
-func TestCapacityWorkerInstanceReadContract(t *testing.T) {
+func TestCapacityWorkerHostReadContract(t *testing.T) {
 	workerID := pgvalue.NewUUIDv7()
 	groupID := uuid.NewV7().String()
 	groupDBID := pgvalue.UUID(uuid.MustParse(groupID))
 	poolID := pgvalue.NewUUIDv7()
 	now := time.Now().UTC()
-	row := db.ListCapacityWorkerInstancesRow{
+	row := db.ListCapacityWorkerHostsRow{
 		ID: workerID, ResourceID: "host-opaque-1", WorkerGroupID: groupDBID, WorkerPoolID: poolID,
-		Status: string(db.WorkerInstanceStatusActive), ClaimVersion: 7,
+		Status: string(db.WorkerHostStatusActive), ClaimVersion: 7,
 		CurrentEpoch: pgtype.Int8{Int64: 4, Valid: true},
 		CreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 		UpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
 	}
 	store := &capacityDrainStore{
-		instance: db.GetCapacityWorkerInstanceRow{
+		instance: db.GetCapacityWorkerHostRow{
 			ID: row.ID, ResourceID: row.ResourceID, WorkerGroupID: row.WorkerGroupID,
 			WorkerPoolID: row.WorkerPoolID, Status: row.Status, ClaimVersion: row.ClaimVersion, CurrentEpoch: row.CurrentEpoch,
 			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		},
-		listed: []db.ListCapacityWorkerInstancesRow{row},
+		listed: []db.ListCapacityWorkerHostsRow{row},
 	}
 	hash, err := hashCapacityToken(capacityTestToken())
 	if err != nil {
@@ -416,12 +192,12 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	(&Server{db: store, capacityTokenHash: hash}).mountCapacityRoutes(router)
 
 	list := capacityJSON(t, capacityRequest(t, router, http.MethodGet,
-		"/capacity/v1/worker-instances?worker_group_id="+groupID+"&status=active&limit=1", "",
+		"/capacity/v1/worker-hosts?worker_group_id="+groupID+"&status=active&limit=1", "",
 	), http.StatusOK)
-	assertCapacityJSONKeys(t, list, "worker_instances")
-	instances, ok := list["worker_instances"].([]any)
+	assertCapacityJSONKeys(t, list, "worker_hosts")
+	instances, ok := list["worker_hosts"].([]any)
 	if !ok || len(instances) != 1 {
-		t.Fatalf("worker_instances = %#v", list["worker_instances"])
+		t.Fatalf("worker_hosts = %#v", list["worker_hosts"])
 	}
 	listed := capacityJSONObject(t, instances[0])
 	assertCapacityJSONKeys(t, listed, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
@@ -435,7 +211,7 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 	}
 
 	got := capacityJSON(t, capacityRequest(t, router, http.MethodGet,
-		"/capacity/v1/worker-instances/"+uuid.UUID(workerID.Bytes).String(), "",
+		"/capacity/v1/worker-hosts/"+uuid.UUID(workerID.Bytes).String(), "",
 	), http.StatusOK)
 	assertCapacityJSONKeys(t, got, "claim_version", "created_at", "current_epoch", "id", "resource_id", "status", "updated_at", "worker_group_id", "worker_pool_id")
 	if !reflect.DeepEqual(got, listed) {
@@ -445,16 +221,16 @@ func TestCapacityWorkerInstanceReadContract(t *testing.T) {
 
 type capacityDrainStore struct {
 	db.Querier
-	instance          db.GetCapacityWorkerInstanceRow
-	listed            []db.ListCapacityWorkerInstancesRow
-	listParams        db.ListCapacityWorkerInstancesParams
+	instance          db.GetCapacityWorkerHostRow
+	listed            []db.ListCapacityWorkerHostsRow
+	listParams        db.ListCapacityWorkerHostsParams
 	group             db.WorkerGroup
-	draining          db.DrainWorkerInstanceRow
+	draining          db.DrainWorkerHostRow
 	queuedRuns        []db.ListQueuedRunEligibleScopesRow
-	queuedExecs       []db.ListPendingWorkspaceExecCapacityCandidatesRow
-	providerAbsent    db.ConfirmWorkerInstanceProviderAbsentRow
+	queuedExecs       []db.ListPendingComputerCommandCapacityCandidatesRow
+	providerAbsent    db.ConfirmWorkerHostProviderAbsentRow
 	providerAbsentID  pgtype.UUID
-	params            db.DrainWorkerInstanceParams
+	params            db.DrainWorkerHostParams
 	drainErr          error
 	providerAbsentErr error
 	groupCalls        int
@@ -502,20 +278,20 @@ func (s *capacityPlanStore) ListQueuedRunPlanningCandidatesForScopes(context.Con
 	return nil, nil
 }
 
-func (s *capacityPlanStore) ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
+func (s *capacityPlanStore) ListPendingComputerCommandCapacityCandidates(context.Context, db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error) {
 	return nil, nil
 }
 
 func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 	t.Helper()
-	runtime := runtimeid.Profile{
-		Arch: "x86_64", Contract: runtimeid.Contract,
+	runtime := vmplatform.Profile{
+		Arch: "x86_64", Contract: vmplatform.Contract,
 		VMRuntimeDescriptorDigest: "sha256:" + strings.Repeat("a", 64),
 		FirecrackerDigest:         "sha256:" + strings.Repeat("b", 64),
 		FirecrackerVersion:        "1.16.1",
 		SnapshotFormatVersion:     "6.0.0",
 		HostKernelRelease:         "6.8.0-1024-aws",
-		CPUTemplate:               runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
+		CPUTemplate:               vmplatform.CPUTemplateSelector{Kind: vmplatform.CPUTemplateNone},
 		KernelDigest:              "sha256:" + strings.Repeat("1", 64),
 		InitramfsDigest:           "sha256:" + strings.Repeat("2", 64),
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
@@ -524,22 +300,21 @@ func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 	template := capacity.WorkerTemplate{
 		Schema:  capacity.WorkerTemplateSchema,
 		Runtime: runtime,
-		CPUShapes: []runtimeid.CPUShape{
+		CPUShapes: []vmplatform.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
-		Substrate: capacity.SubstrateProfile{Format: "ext4", Contract: "helmr.substrate.ext4.v1"},
-		Capacity:  capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
-		PerVM:     capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
+		Capacity: capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
+		PerVM:    capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}
 	return template
 }
 
-func (s *capacityDrainStore) GetCapacityWorkerInstance(context.Context, pgtype.UUID) (db.GetCapacityWorkerInstanceRow, error) {
+func (s *capacityDrainStore) GetCapacityWorkerHost(context.Context, pgtype.UUID) (db.GetCapacityWorkerHostRow, error) {
 	return s.instance, nil
 }
 
-func (s *capacityDrainStore) ListCapacityWorkerInstances(_ context.Context, params db.ListCapacityWorkerInstancesParams) ([]db.ListCapacityWorkerInstancesRow, error) {
+func (s *capacityDrainStore) ListCapacityWorkerHosts(_ context.Context, params db.ListCapacityWorkerHostsParams) ([]db.ListCapacityWorkerHostsRow, error) {
 	s.listParams = params
 	return s.listed, nil
 }
@@ -554,22 +329,18 @@ func (s *capacityDrainStore) ListQueuedRunEligibleScopes(context.Context, db.Lis
 	return s.queuedRuns, nil
 }
 
-func (s *capacityDrainStore) ListPendingWorkspaceExecCapacityCandidates(context.Context, db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
+func (s *capacityDrainStore) ListPendingComputerCommandCapacityCandidates(context.Context, db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error) {
 	s.queuedExecCalls++
 	return s.queuedExecs, nil
 }
 
-func (s *capacityDrainStore) BeginQuerier(context.Context) (db.Querier, transaction, error) {
-	return s, &adminHTTPTransaction{}, nil
-}
-
-func (s *capacityDrainStore) DrainWorkerInstance(_ context.Context, params db.DrainWorkerInstanceParams) (db.DrainWorkerInstanceRow, error) {
+func (s *capacityDrainStore) DrainWorkerHost(_ context.Context, params db.DrainWorkerHostParams) (db.DrainWorkerHostRow, error) {
 	s.drainCalls++
 	s.params = params
 	return s.draining, s.drainErr
 }
 
-func (s *capacityDrainStore) ConfirmWorkerInstanceProviderAbsent(_ context.Context, id pgtype.UUID) (db.ConfirmWorkerInstanceProviderAbsentRow, error) {
+func (s *capacityDrainStore) ConfirmWorkerHostProviderAbsent(_ context.Context, id pgtype.UUID) (db.ConfirmWorkerHostProviderAbsentRow, error) {
 	s.providerAbsentID = id
 	return s.providerAbsent, s.providerAbsentErr
 }

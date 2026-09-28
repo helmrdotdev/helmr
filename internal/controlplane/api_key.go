@@ -312,14 +312,14 @@ func normalizeAPIKeyScope(scope api.APIKeyScope) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeTokensComplete, true
 	case string(api.APIKeyScopeTokensCancel):
 		return api.APIKeyScopeTokensCancel, true
-	case string(api.APIKeyScopeWorkspacesCreate):
-		return api.APIKeyScopeWorkspacesCreate, true
-	case string(api.APIKeyScopeWorkspacesRead):
-		return api.APIKeyScopeWorkspacesRead, true
-	case string(api.APIKeyScopeWorkspacesDelete):
-		return api.APIKeyScopeWorkspacesDelete, true
-	case string(api.APIKeyScopeWorkspaceExecCreate):
-		return api.APIKeyScopeWorkspaceExecCreate, true
+	case string(api.APIKeyScopeComputersCreate):
+		return api.APIKeyScopeComputersCreate, true
+	case string(api.APIKeyScopeComputersRead):
+		return api.APIKeyScopeComputersRead, true
+	case string(api.APIKeyScopeComputersDelete):
+		return api.APIKeyScopeComputersDelete, true
+	case string(api.APIKeyScopeComputerCommandCreate):
+		return api.APIKeyScopeComputerCommandCreate, true
 	case string(api.APIKeyScopeSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(api.APIKeyScopeTasksDeploy):
@@ -359,14 +359,14 @@ func apiKeyScopePermission(scope api.APIKeyScope) (auth.Permission, bool) {
 		return auth.PermissionTokensComplete, true
 	case api.APIKeyScopeTokensCancel:
 		return auth.PermissionTokensCancel, true
-	case api.APIKeyScopeWorkspacesCreate:
-		return auth.PermissionWorkspacesCreate, true
-	case api.APIKeyScopeWorkspacesRead:
-		return auth.PermissionWorkspacesRead, true
-	case api.APIKeyScopeWorkspacesDelete:
-		return auth.PermissionWorkspacesDelete, true
-	case api.APIKeyScopeWorkspaceExecCreate:
-		return auth.PermissionWorkspaceExecCreate, true
+	case api.APIKeyScopeComputersCreate:
+		return auth.PermissionComputersCreate, true
+	case api.APIKeyScopeComputersRead:
+		return auth.PermissionComputersRead, true
+	case api.APIKeyScopeComputersDelete:
+		return auth.PermissionComputersDelete, true
+	case api.APIKeyScopeComputerCommandCreate:
+		return auth.PermissionComputerCommandCreate, true
 	case api.APIKeyScopeSecretsWrite:
 		return auth.PermissionSecretsWrite, true
 	case api.APIKeyScopeTasksDeploy:
@@ -406,14 +406,14 @@ func apiKeyPermissionScope(permission string) (api.APIKeyScope, bool) {
 		return api.APIKeyScopeTokensComplete, true
 	case string(auth.PermissionTokensCancel):
 		return api.APIKeyScopeTokensCancel, true
-	case string(auth.PermissionWorkspacesCreate):
-		return api.APIKeyScopeWorkspacesCreate, true
-	case string(auth.PermissionWorkspacesRead):
-		return api.APIKeyScopeWorkspacesRead, true
-	case string(auth.PermissionWorkspacesDelete):
-		return api.APIKeyScopeWorkspacesDelete, true
-	case string(auth.PermissionWorkspaceExecCreate):
-		return api.APIKeyScopeWorkspaceExecCreate, true
+	case string(auth.PermissionComputersCreate):
+		return api.APIKeyScopeComputersCreate, true
+	case string(auth.PermissionComputersRead):
+		return api.APIKeyScopeComputersRead, true
+	case string(auth.PermissionComputersDelete):
+		return api.APIKeyScopeComputersDelete, true
+	case string(auth.PermissionComputerCommandCreate):
+		return api.APIKeyScopeComputerCommandCreate, true
 	case string(auth.PermissionSecretsWrite):
 		return api.APIKeyScopeSecretsWrite, true
 	case string(auth.PermissionTasksDeploy):

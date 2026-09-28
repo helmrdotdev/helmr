@@ -305,7 +305,7 @@ function normalizeBuild(value: unknown): HelmrBuildConfig {
   const builderValue = descriptors["builder"]?.value
   if (builderValue !== undefined && !isBuilder(builderValue)) {
     throw new Error(
-      "config build.builder must be created by builder(); image() describes a Workspace image, not the build environment",
+      "config build.builder must be created by builder(); image() describes a Computer image, not the build environment",
     )
   }
   const installCommand = descriptors["installCommand"]?.value

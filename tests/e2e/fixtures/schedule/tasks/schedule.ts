@@ -4,7 +4,7 @@ const base = image("helmr-schedule-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
 
-export const scheduleSmokeWorkspace = sandbox({ id: "helmr-schedule-smoke" })
+export const scheduleSmokeComputer = sandbox({ id: "helmr-schedule-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 
@@ -14,7 +14,7 @@ export const scheduleSmoke = schedules.task({
     pattern: "* * * * *",
     timezone: "UTC",
   },
-  workspace: { sandbox: scheduleSmokeWorkspace },
+  computer: { sandbox: scheduleSmokeComputer },
   maxDuration: "5m",
   ttl: "5m",
   retry: { enabled: false },

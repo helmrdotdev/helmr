@@ -620,13 +620,13 @@ func linkAsTuntap(handle *netlink.Handle, name string) (*netlink.Tuntap, error) 
 }
 
 // Only the connector-owned qualification probe has no control-plane reservation.
-// Every real runtime must complete preparation, including Workspaces with no bindings.
+// Every real runtime must complete preparation, including Computers with no bindings.
 func (c *Connector) prepareSecretTransport(ctx context.Context, mode launchMode, runtimeID string, blocked []netip.Prefix) (*secretproxy.Proxy, error) {
 	if mode == startupProbeLaunch {
 		return nil, nil
 	}
 	if c.cfg.PrepareSecretTransport == nil {
-		return nil, errors.New("workspace Secret transport preparation is not configured")
+		return nil, errors.New("computer Secret transport preparation is not configured")
 	}
 	return c.cfg.PrepareSecretTransport(ctx, runtimeID, blocked)
 }
@@ -648,7 +648,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 	{
 		proxy, prepareErr := c.prepareSecretTransport(ctx, mode, m.OwnerID, blocked)
 		if prepareErr != nil {
-			return fmt.Errorf("prepare Workspace Secret transport: %w", prepareErr)
+			return fmt.Errorf("prepare Computer Secret transport: %w", prepareErr)
 		}
 		binding.secretProxy = proxy
 		if proxy != nil {
@@ -668,7 +668,7 @@ func (c *Connector) installRoutedPolicy(ctx context.Context, mode launchMode, bi
 			go func() {
 				if e := proxy.Serve(listener); e != nil {
 					select {
-					case binding.failure <- errors.New("workspace Secret transport stopped"):
+					case binding.failure <- errors.New("computer Secret transport stopped"):
 					default:
 					}
 				}

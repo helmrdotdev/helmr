@@ -35,7 +35,7 @@ func (task *guestRunLeaseTask) handleResourceRuntime(
 		*programv0.RunEvent_SessionEventsRequested:
 		return task.handleActorRuntime(ctx, event)
 	default:
-		return task.handleWorkspaceRuntime(ctx, event)
+		return task.handleComputerRuntime(ctx, event)
 	}
 }
 
@@ -251,13 +251,13 @@ func workerActorStartRequest(
 		Key:            requested.Key,
 		IdempotencyKey: requested.GetIdempotencyKey(), Run: run,
 	}
-	request.Workspace.ID = requested.GetWorkspaceId()
+	request.Computer.ID = requested.GetComputerId()
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
 		return workerapi.StartActorRequest{}, err
 	}
 	if err := api.ValidateActorStartOptions(api.ActorStartOptions{
-		Key:       request.Key,
-		Workspace: request.Workspace, Run: request.Run,
+		Key:      request.Key,
+		Computer: request.Computer, Run: request.Run,
 	}); err != nil {
 		return workerapi.StartActorRequest{}, err
 	}

@@ -9,7 +9,7 @@ const base = image("task-secrets")
   .run(["bun", "install"])
   .workdir("/sandbox")
 
-export const taskSecretsWorkspace = sandbox({ id: "task-secrets" })
+export const taskSecretsComputer = sandbox({ id: "task-secrets" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

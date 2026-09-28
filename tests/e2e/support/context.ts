@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { HelmrClient, type Run, type WorkspaceRef } from "@helmr/sdk"
+import { setTimeout as delay } from "node:timers/promises"
+import { HelmrClient, type Run, type ComputerRef } from "@helmr/sdk"
 import { deadline } from "./deadline"
 
 export { deadline }
@@ -48,17 +49,40 @@ export async function readTelemetry<T>(read: () => Promise<T>): Promise<T> {
     }
   }
 }
+export async function deleteComputer(ref: ComputerRef, idempotencyKey: string) {
+  const signal = deadline(120_000)
+  // Terminal outcomes can precede physical process reconciliation.
+  // Retry only that conflict, preserving the delete request's identity.
+  try {
+    for (;;) {
+      signal.throwIfAborted()
+      try {
+        return await ref.delete({ idempotencyKey }, { signal })
+      } catch (error) {
+        if (errorCode(error) !== "computer_busy") throw error
+      }
+      await delay(500, undefined, { signal })
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error(`Computer ${ref.id}: deletion did not complete within 120 seconds`, {
+        cause: error,
+      })
+    }
+    throw error
+  }
+}
 export async function verify(
   name: string,
   body: (context: {
     client: HelmrClient
     marker: string
     objects: Record<
-      "run_ids" | "workspace_ids" | "session_ids" | "token_ids" | "deployment_ids" | "schedule_ids",
+      "run_ids" | "computer_ids" | "session_ids" | "token_ids" | "deployment_ids" | "schedule_ids",
       string[]
     >
     cleanup: (action: () => Promise<unknown>) => void
-    workspace: (sandbox: string, suffix?: string) => Promise<WorkspaceRef>
+    computer: (sandbox: string, suffix?: string) => Promise<ComputerRef>
   }) => Promise<unknown>,
 ) {
   const url = process.env.HELMR_API_URL,
@@ -78,7 +102,7 @@ export async function verify(
     marker = randomUUID()
   const objects = {
     run_ids: [] as string[],
-    workspace_ids: [] as string[],
+    computer_ids: [] as string[],
     session_ids: [] as string[],
     token_ids: [] as string[],
     deployment_ids: [] as string[],
@@ -107,21 +131,18 @@ export async function verify(
       marker,
       objects,
       cleanup: (action) => cleanup.push(action),
-      workspace: async (sandbox, suffix = sandbox) => {
-        const ref = await client.sandboxes.createWorkspace(
+      computer: async (sandbox, suffix = sandbox) => {
+        const ref = await client.sandboxes.createComputer(
           sandbox,
           { key: `${suffix}-${marker}`, idempotencyKey: `create:${suffix}:${marker}` },
           { signal: deadline(30_000) },
         )
-        objects.workspace_ids.push(ref.id)
+        objects.computer_ids.push(ref.id)
         cleanup.push(async () => {
           try {
-            await ref.delete(
-              { idempotencyKey: `delete:${suffix}:${marker}` },
-              { signal: deadline(30_000) },
-            )
+            await deleteComputer(ref, `delete:${suffix}:${marker}`)
           } catch (error) {
-            if (errorCode(error) !== "workspace_not_found") throw error
+            if (errorCode(error) !== "computer_not_found") throw error
           }
         })
         return ref

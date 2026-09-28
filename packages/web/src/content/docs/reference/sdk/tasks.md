@@ -23,10 +23,10 @@ export const resize = task({
 
 Definition defaults are `queue`, `maxDuration`, `ttl`, and `retry`. Runtime
 options add `concurrencyKey`, `priority`, `metadata`, and `tags`. Every start
-requires a `WorkspaceRef`.
+requires a `ComputerRef`.
 
-`definition.start(payload?, { workspace, idempotencyKey?, ... })` returns a
-typed `RunHandle`. `definition.call(payload?, { workspace, idempotencyKey,
+`definition.start(payload?, { computer, idempotencyKey?, ... })` returns a
+typed `RunHandle`. `definition.call(payload?, { computer, idempotencyKey,
 ... })` waits and returns a `TaskWait`; `await wait` yields `{ ok, ... }` and
 `await wait.unwrap()` returns output or throws the Run failure.
 

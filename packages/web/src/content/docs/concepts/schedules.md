@@ -14,9 +14,9 @@ Sandbox, optional Secret placements, the Task handler, and ordinary Run
 defaults. Promotion validates and reconciles that declaration in the target
 Environment.
 
-Each logical fire creates a fresh keyless Workspace from the declared Sandbox
+Each logical fire creates a fresh keyless Computer from the declared Sandbox
 and placements, then creates a Run for the pinned scheduled Task. Retries of
-that Run retain its Workspace; the next fire receives another Workspace.
+that Run retain its Computer; the next fire receives another Computer.
 
 Scheduled handlers receive a Helmr-generated payload:
 

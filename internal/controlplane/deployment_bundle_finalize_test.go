@@ -218,7 +218,7 @@ func TestFinishFinalizedDeploymentBundleStopsBeforeTransactionAfterDisconnect(t 
 	image := deploymentFinalizeDiskFixture(t)
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
 	descriptor := cas.Descriptor{
-		Digest: digest, SizeBytes: int64(len(image)), MediaType: deployment.WorkspaceImageArtifactMediaType,
+		Digest: digest, SizeBytes: int64(len(image)), MediaType: deployment.ComputerImageArtifactMediaType,
 	}
 	store := &deploymentFinalizeObjectStore{descriptor: descriptor, body: image}
 	server := &Server{db: deploymentFinalizePossessionStore{}, deploymentVerifierSlots: make(chan struct{}, 1)}
@@ -321,7 +321,7 @@ func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 
 func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
 	body := deploymentFinalizeDiskFixture(t)
-	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.WorkspaceImageArtifactMediaType}
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.ComputerImageArtifactMediaType}
 	server := &Server{deploymentVerifierSlots: make(chan struct{}, 1)}
 	for _, kind := range []string{"valid", "digest", "size", "truncated", "trailing"} {
 		t.Run(kind, func(t *testing.T) {
@@ -352,7 +352,7 @@ func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
 
 func TestVerifyFinalizedDeploymentDiskCancellationIsNotInvalid(t *testing.T) {
 	body := deploymentFinalizeDiskFixture(t)
-	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.WorkspaceImageArtifactMediaType}
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.ComputerImageArtifactMediaType}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	store := cancellingDeploymentStore{body: body, cancel: cancel}

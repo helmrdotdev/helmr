@@ -7,7 +7,7 @@ const base = image("helmr-timer-smoke")
   .workdir("/sandbox")
   .workdir("/sandbox")
 
-export const timerSmokeWorkspace = sandbox({ id: "helmr-timer-smoke" })
+export const timerSmokeComputer = sandbox({ id: "helmr-timer-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

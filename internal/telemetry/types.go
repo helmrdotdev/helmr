@@ -20,6 +20,7 @@ func (e LaggingError) Error() string {
 }
 
 type Reader interface {
+	CommandLogReader
 	ListEvents(ctx context.Context, query EventQuery) (EventPage, error)
 	ListRunLogChunks(ctx context.Context, query RunLogChunkQuery) (RunLogChunkPage, error)
 }
@@ -58,6 +59,7 @@ type RunLogChunkPage struct {
 type IngestWriter interface {
 	WriteEvents(context.Context, []EventRecord) ([]RejectedRow, error)
 	WriteRunLogs(context.Context, []RunLogRecord) ([]RejectedRow, error)
+	WriteCommandLogs(context.Context, []CommandLogRecord) ([]RejectedRow, error)
 }
 
 type RejectedRow struct {

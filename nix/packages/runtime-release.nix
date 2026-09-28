@@ -19,7 +19,7 @@
 let
   architecture = "x86_64";
   loader = "ld-linux-x86-64.so.2";
-  # Every glibc component an addon or Workspace library can name must already
+  # Every glibc component an addon or Computer library can name must already
   # be loaded from the Runtime, so Node depends on the ones it does not link itself.
   nodeLibraries = [
     "libdl.so.2"
@@ -115,7 +115,7 @@ stdenvNoCC.mkDerivation {
     done
     patchelf --set-interpreter /opt/helmr/runtime/lib/${loader} "$tree/lib/libc.so.6"
 
-    # A wrong search path or dependency set would silently mix the Workspace
+    # A wrong search path or dependency set would silently mix the Computer
     # image's C runtime into Node, so the exact dynamic sections are required.
     require_dynamic() {
       if [ "$2" != "$3" ]; then

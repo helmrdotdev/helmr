@@ -1,55 +1,73 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5"
 )
 
-func checkpointRegistrationFixture(t *testing.T) (*actorCheckpointFixture, workerapi.RegisterCheckpointRequest) {
+type computerCheckpointFixture struct {
+	runtest.Fixture
+	server *Server
+	worker workerActor
+}
+
+func checkpointRegistrationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest) {
 	t.Helper()
-	f := newActorCheckpointFixtureWithInput(t, nil)
-	waitID := uuid.NewV7()
-	seq := int64(0)
-	params, _ := json.Marshal(workerActorInputWaitParams{SessionID: f.sessionID.String(), AfterInputSequence: seq})
-	f.workerCall(t, f.server.workerCreateRunWait, workerapi.CreateRunWaitRequest{CorrelationID: uuid.NewV7().String(), Lease: f.fence(), RunWaitID: waitID.String(), ResumeAttachID: uuid.NewV7().String(), Kind: "actor_input", Params: params, ActorSpeculativeInputSequence: &seq}, nil)
-	lease, err := parseRunLeaseFence(f.fence())
+	base, worker, request := dispatchtest.RegisteredCapture(t, false)
+	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000 WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, request.ComputerInstanceID)
+	store, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	wait, err := f.server.requestWorkerRunWaitCheckpoint(t.Context(), f.worker, f.fence(), lease, waitID)
+	return &computerCheckpointFixture{Fixture: base,
+		server: &Server{db: db.New(base.Pool), tx: base.Pool, cas: store, log: slog.Default()},
+		worker: workerActor{WorkerHostID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: worker.Epoch, ClaimVersion: 1, GroupClaimVersion: 1},
+	}, request
+}
+
+func (f *computerCheckpointFixture) workerCall(t *testing.T, handler http.HandlerFunc, body any, result any) {
+	t.Helper()
+	raw, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := validCheckpointReadyRequest().Manifest
-	m.RecoveryPoint.ID = pgvalue.UUIDString(wait.SuspendCheckpointID)
-	m.RecoveryPoint.RunID = f.runID.String()
-	m.RecoveryPoint.RunWaitID = waitID.String()
-	rt := &m.RecoveryPoint.Runtime
-	rt.ID = f.RuntimeIdentityID
-	rt.KernelDigest = dbtest.Digest("run-lease-kernel")
-	rt.InitramfsDigest = dbtest.Digest("run-lease-initramfs")
-	rt.RootfsDigest = dbtest.Digest("run-lease-rootfs")
-	rt.VMVCPUCount = 1
-	rt.CPUConfigDigest = f.CPUConfigDigest
-	m.RuntimeState.Computer = &workerapi.CheckpointComputer{ComputerID: f.workspaceID.String(), LogicalBytes: f.claim.runtime.ReservedGuestEphemeralDiskBytes, Root: testGenerationRoot(f.claim.runtime.ReservedGuestEphemeralDiskBytes)}
-	return f, workerapi.RegisterCheckpointRequest{Lease: f.fence(), RequestVersion: wait.CheckpointRequestVersion, RunWaitID: waitID.String(), CheckpointID: m.RecoveryPoint.ID, Manifest: m}
+	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
+	r = r.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
+	w := httptest.NewRecorder()
+	handler(w, r)
+	if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+		t.Fatalf("Worker request %T: status=%d body=%s", body, w.Code, w.Body.String())
+	}
+	if result != nil {
+		if err := json.Unmarshal(w.Body.Bytes(), result); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
-	var response workerapi.CheckpointResponse
+	var response workerapi.ComputerCheckpointResponse
 	f.workerCall(t, f.server.workerRegisterCheckpoint, req, &response)
-	if response.CheckpointID != req.CheckpointID || response.WorkspaceVersionID != "" {
+	if response.CheckpointID != req.CheckpointID || response.ComputerDiskVersionID != "" {
 		t.Fatalf("registration published a version: %+v", response)
 	}
 	// Nothing was uploaded. All four runtime descriptors are owned first.
@@ -73,7 +91,7 @@ func TestCheckpointRegistrationPinsCompleteCandidateUntilInvalidation(t *testing
 		t.Fatal("replaced immutable candidate")
 	}
 	// Use the actual failed receipt path, not a test-only unpin operation.
-	f.workerCall(t, f.server.workerMarkCheckpointFailed, workerapi.CheckpointFailedRequest{Lease: req.Lease, RequestVersion: req.RequestVersion, RunWaitID: req.RunWaitID, CheckpointID: req.CheckpointID, Error: "upload failed"}, nil)
+	f.workerCall(t, f.server.workerMarkCheckpointFailed, workerapi.CheckpointFailedRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Error: "upload failed"}, nil)
 	collectible, err := f.server.db.ListAbandonedCasBlobs(t.Context(), 100)
 	if err != nil || len(collectible) != 4 {
 		t.Fatalf("collector cannot discover failed set: %v %v", collectible, err)
@@ -100,7 +118,7 @@ func TestCheckpointRegistrationRollsBackWholeSetOnRetiredMember(t *testing.T) {
 		t.Fatalf("partial registration survived: %d %v", len(rows), err)
 	}
 	var empty bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest IS NULL FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&empty); err != nil || !empty {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest IS NULL FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&empty); err != nil || !empty {
 		t.Fatalf("partial manifest survived: %v %v", empty, err)
 	}
 }
@@ -108,8 +126,10 @@ func TestCheckpointRegistrationRollsBackWholeSetOnRetiredMember(t *testing.T) {
 func TestCheckpointRegistrationRejectsWrongSource(t *testing.T) {
 	f, req := checkpointRegistrationFixture(t)
 	for _, change := range []func(*workerapi.RegisterCheckpointRequest){
-		func(r *workerapi.RegisterCheckpointRequest) { r.RequestVersion++ },
-		func(r *workerapi.RegisterCheckpointRequest) { r.Manifest.RecoveryPoint.RunID = uuid.NewV7().String() },
+		func(r *workerapi.RegisterCheckpointRequest) { r.DesiredVersion++ },
+		func(r *workerapi.RegisterCheckpointRequest) {
+			r.Manifest.RecoveryPoint.ComputerInstanceID = uuid.NewV7().String()
+		},
 		func(r *workerapi.RegisterCheckpointRequest) {
 			copy := *r.Manifest.RuntimeState.Computer
 			copy.LogicalBytes /= 2
@@ -181,7 +201,7 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 	defer locker.Rollback(context.Background())
 	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_blobs WHERE digest=$1 FOR UPDATE`, digest)
 	var expiry time.Time
-	if err := f.Pool.QueryRow(ctx, `UPDATE run_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
+	if err := f.Pool.QueryRow(ctx, `UPDATE computer_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
 		t.Fatal(err)
 	}
 	result := make(chan error, 1)
@@ -210,7 +230,7 @@ func TestCheckpointRegistrationExpiresDuringObjectLock(t *testing.T) {
 	if err := locker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-result; !errors.Is(err, errStaleRunLeaseClaim) {
+	if err := <-result; !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired registration: %v", err)
 	}
 	rows, err := f.server.db.ListCheckpointObjects(ctx, pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
@@ -224,15 +244,10 @@ func TestCheckpointRegistrationCannotBypassPairedPublication(t *testing.T) {
 	if _, err := f.server.registerCheckpoint(t.Context(), f.worker, registered); err != nil {
 		t.Fatal(err)
 	}
-	ready := validCheckpointReadyRequest()
-	ready.Lease = registered.Lease
-	ready.RunWaitID = registered.RunWaitID
-	ready.CheckpointID = registered.CheckpointID
-	ready.RequestVersion = registered.RequestVersion
-	ready.Manifest = registered.Manifest
+	ready := workerapi.CheckpointReadyRequest(registered)
 	ready.Manifest.RuntimeState.Computer = nil
-	if _, _, err := parseCheckpointReadyRequest(ready); err == nil {
-		t.Fatal("accepted checkpoint without paired Computer disk")
+	if status := checkpointReadyStatus(t, f, ready); status != http.StatusBadRequest {
+		t.Fatalf("checkpoint without paired Computer disk: status=%d", status)
 	}
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(registered.CheckpointID)))
 	if err != nil || len(rows) != 4 {

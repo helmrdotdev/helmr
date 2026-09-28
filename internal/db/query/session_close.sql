@@ -25,35 +25,24 @@ UPDATE sessions
    AND status IN ('open', 'closing')
 RETURNING *;
 
--- name: LockActorCloseWorkspace :one
-SELECT recovery_failure, id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
-  FROM computers
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(workspace_id)
-   AND owner_session_id = sqlc.arg(session_id)
-   AND owner_run_id IS NULL
- FOR UPDATE;
+-- name: LockActorCloseComputer :one
+SELECT c.* FROM computers c
+WHERE c.environment_id=sqlc.arg(environment_id) AND c.id=sqlc.arg(computer_id)
+ AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=sqlc.arg(session_id)
+ AND s.environment_id=c.environment_id AND s.computer_id=c.id)
+FOR UPDATE OF c;
 
--- name: GetActorCloseWorkspaceActivity :one
-SELECT EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = sqlc.arg(workspace_id)
-              AND workspace_leases.status IN ('active', 'releasing')
-       ) AS has_active_lease,
-       EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = sqlc.arg(workspace_id)
-              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS has_active_process,
-       EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.workspace_id = sqlc.arg(workspace_id)
-              AND run_waits.condition_status = 'pending'
-              AND run_waits.child_run_id IS NOT NULL
-       ) AS has_active_child;
+-- name: GetActorCloseComputerActivity :one
+WITH RECURSIVE owned(id) AS (
+ SELECT r.id FROM runs r WHERE r.session_id=sqlc.arg(session_id)
+ UNION
+ SELECT r.id FROM runs r JOIN owned p ON p.id=r.parent_run_id WHERE r.parent_owns_lifecycle
+)
+SELECT EXISTS(SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id
+ WHERE l.process_reconciled_at IS NULL) AS has_active_lease,
+ EXISTS(SELECT 1 FROM runs r JOIN owned o ON o.id=r.id
+ WHERE r.session_id IS DISTINCT FROM sqlc.arg(session_id)
+ AND r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS has_active_child;
 
 -- name: CompleteIdleActorClose :one
 UPDATE sessions
@@ -65,7 +54,7 @@ UPDATE sessions
        updated_at = sqlc.arg(closed_at)
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(session_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND status = 'closing'
    AND current_run_id IS NULL
    AND active_turn_id IS NULL AND dispatch_hold_id IS NULL

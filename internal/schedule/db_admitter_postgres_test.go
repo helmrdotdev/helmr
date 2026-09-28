@@ -9,11 +9,11 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -78,17 +78,17 @@ func TestDBAdmitterCommitsOneScheduleAdmissionTuple(t *testing.T) {
 	if secondReceipt.ID == receipt.ID {
 		t.Fatalf("second scheduled Run = %s, want a new Run", secondReceipt.ID)
 	}
-	if secondReceipt.WorkspaceID == receipt.WorkspaceID {
-		t.Fatalf("second scheduled Workspace = %s, want a fresh Workspace", secondReceipt.WorkspaceID)
+	if secondReceipt.ComputerID == receipt.ComputerID {
+		t.Fatalf("second scheduled Computer = %s, want a fresh Computer", secondReceipt.ComputerID)
 	}
-	var distinctWorkspaces int
+	var distinctComputers int
 	if err := pool.QueryRow(t.Context(), `
-		SELECT count(DISTINCT workspace_id) FROM runs WHERE schedule_id = $1
-	`, value.ID).Scan(&distinctWorkspaces); err != nil {
+		SELECT count(DISTINCT computer_id) FROM runs WHERE schedule_id = $1
+	`, value.ID).Scan(&distinctComputers); err != nil {
 		t.Fatal(err)
 	}
-	if distinctWorkspaces != 2 {
-		t.Fatalf("distinct scheduled Workspaces = %d, want 2", distinctWorkspaces)
+	if distinctComputers != 2 {
+		t.Fatalf("distinct scheduled Computers = %d, want 2", distinctComputers)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestDBAdmitterRejectsTaskWithoutScheduledPayloadAuthority(t *testing.T) {
 	assertScheduleCursor(t, pool, value, value.NextFireAt.Time, time.Time{})
 }
 
-func TestWorkerRetriesSameScheduleInstantWhenWorkspaceSecretIsRevoked(t *testing.T) {
+func TestWorkerRetriesSameScheduleInstantWhenComputerSecretIsRevoked(t *testing.T) {
 	pool := openSchedulePostgres(t)
 	value, runtimeDigest := seedScheduleAdmission(t, pool)
 	dbtest.MustExec(t, t.Context(), pool, `
@@ -278,7 +278,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	environmentID := uuid.NewV7()
 	deploymentID := uuid.NewV7()
 	taskDefinitionID := uuid.NewV7()
-	workspaceDefinitionID := uuid.NewV7()
+	computerDefinitionID := uuid.NewV7()
 	scheduleID := uuid.NewV7()
 	secretID := uuid.NewV7()
 	secretVersionID := uuid.NewV7()
@@ -302,7 +302,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	`, environmentID, orgID, projectID)
 
 	programArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "deployment_program", "program")
-	imageArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "workspace_image", "image")
+	imageArtifactID := seedScheduleArtifact(t, pool, orgID, projectID, environmentID, "computer_image", "image")
 	runtimeBytes := strings.Repeat("01", 32)
 	runtimeDigest := "sha256:" + runtimeBytes
 	queueConfig := `{"formatVersion":0,"queues":[{"name":"default"}]}`
@@ -318,7 +318,7 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	`, deploymentID, orgID, projectID, environmentID,
 		"sha256:"+strings.Repeat("03", 32), runtimeDigest, programArtifactID, queueConfig)
 	taskManifest := []byte(
-		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"scheduler","secrets":[{"secret":"API_TOKEN","env":{"name":"API_TOKEN","mode":"raw"}}]}}}`,
+		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"scheduler","secrets":[{"secret":"API_TOKEN","env":{"name":"API_TOKEN","mode":"raw"}}]}}}`,
 	)
 	taskManifestHash := sha256.New()
 	_, _ = taskManifestHash.Write([]byte("helmr.deployment-definition-manifest.v0\x00"))
@@ -333,11 +333,11 @@ func seedScheduleAdmission(t *testing.T, pool *pgxpool.Pool) (db.Schedule, strin
 	dbtest.MustExec(t, t.Context(), pool, `
 		INSERT INTO deployment_definitions (
 			id, environment_id, deployment_id, kind, declared_id,
-			manifest_version, manifest, manifest_digest, artifact_id
+			manifest_version, manifest, manifest_digest, computer_spec_id
 		)
 		VALUES ($1, $2, $3, 'sandbox', 'scheduler', 0, '{}',
 		        decode(repeat('05', 32), 'hex'), $4)
-	`, workspaceDefinitionID, environmentID, deploymentID, imageArtifactID)
+	`, computerDefinitionID, environmentID, deploymentID, dbtest.InsertDefaultComputerSpec(t, t.Context(), pool, imageArtifactID))
 	dbtest.MustExec(t, t.Context(), pool, `
 		UPDATE environments SET current_deployment_id = $1 WHERE id = $2
 	`, deploymentID, environmentID)
@@ -417,6 +417,8 @@ func seedScheduleArtifact(
 	digest := dbtest.Digest(seed)
 	mediaType := "application/octet-stream"
 	switch kind {
+	case "computer_image":
+		mediaType = "application/vnd.helmr.computer.seed.v0+filepack"
 	case "deployment_program":
 		mediaType = "application/vnd.helmr.deployment-program.v0+squashfs"
 	}
@@ -472,38 +474,28 @@ func assertScheduleAdmissionCounts(
 			resolutions,
 		)
 	}
-	var workspaceCount int
+	var computerCount int
 	if err := pool.QueryRow(t.Context(), `
 		SELECT count(*) FROM computers WHERE environment_id = $1
-	`, value.EnvironmentID).Scan(&workspaceCount); err != nil {
+	`, value.EnvironmentID).Scan(&computerCount); err != nil {
 		t.Fatal(err)
 	}
-	if workspaceCount != runs {
-		t.Fatalf("Workspaces = %d, want %d", workspaceCount, runs)
+	if computerCount != runs {
+		t.Fatalf("Computers = %d, want %d", computerCount, runs)
 	}
 	if runs == 0 {
 		return
 	}
-	var owned, minRevision, maxRevision, minOwnershipGeneration, maxOwnershipGeneration int64
-	if err := pool.QueryRow(t.Context(), `
-		SELECT count(*) FILTER (WHERE owner_run_id IS NOT NULL),
-		       min(revision), max(revision),
-		       min(ownership_generation), max(ownership_generation)
-		  FROM computers
-		 WHERE environment_id = $1
-	`, value.EnvironmentID).Scan(
-		&owned, &minRevision, &maxRevision,
-		&minOwnershipGeneration, &maxOwnershipGeneration,
-	); err != nil {
+	var linked int64
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM computers c WHERE c.environment_id=$1 AND EXISTS (
+ SELECT 1 FROM runs r JOIN run_attempts a ON a.run_id=r.id AND a.number=r.current_attempt_number
+ WHERE r.computer_id=c.id AND r.environment_id=c.environment_id AND a.computer_id=c.id
+ AND a.base_computer_disk_version_id=c.head_disk_version_id
+)`, value.EnvironmentID).Scan(&linked); err != nil {
 		t.Fatal(err)
 	}
-	if owned != int64(runs) || minRevision != 2 || maxRevision != 2 ||
-		minOwnershipGeneration != 1 || maxOwnershipGeneration != 1 {
-		t.Fatalf(
-			"reserved Workspaces owned/state/ownership = %d/%d-%d/%d-%d, want %d/2-2/1-1",
-			owned, minRevision, maxRevision,
-			minOwnershipGeneration, maxOwnershipGeneration, runs,
-		)
+	if linked != int64(runs) {
+		t.Fatalf("Computers with current Run and attempt = %d, want %d", linked, runs)
 	}
 }
 
@@ -565,7 +557,7 @@ func (fixedAuthority) ResolveScheduledTask(
 		MaxActiveDurationMS: 300000,
 		RetryPolicy:         []byte(`{"enabled":false}`),
 		SandboxDeclaredID:   "scheduler",
-		SecretPlacements: []workspace.SecretPlacement{{
+		SecretPlacements: []computer.SecretPlacement{{
 			Name: "API_TOKEN", Kind: "env", Target: "API_TOKEN", Mode: "raw",
 		}},
 	}, nil

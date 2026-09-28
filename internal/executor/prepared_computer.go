@@ -24,7 +24,7 @@ func validateComputerPreparationSource(target workerapi.RuntimeReconcileTarget) 
 	if target.WorkerEpoch <= 0 || target.DesiredVersion <= 0 {
 		return errors.New("runtime preparation fence is required")
 	}
-	if err := ids.Validate(target.Source.WorkspaceID); err != nil {
+	if err := ids.Validate(target.Source.ComputerID); err != nil {
 		return fmt.Errorf("computer identity: %w", err)
 	}
 	source := target.Source.Computer

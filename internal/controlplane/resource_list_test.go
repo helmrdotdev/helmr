@@ -1,11 +1,9 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -13,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestDeploymentListCursorRoundTripAndScope(t *testing.T) {
@@ -66,65 +63,16 @@ func TestTokenListCursorBindsStatus(t *testing.T) {
 	}
 }
 
-func TestWorkspaceListItemExcludesSecretPlacements(t *testing.T) {
+func TestComputerListItemExcludesSecretPlacements(t *testing.T) {
 	now := pgvalue.Timestamptz(time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC))
-	item, err := workspaceListItem(
+	item, err := computerListItem(
 		pgvalue.UUID(uuid.NewV7()), pgvalue.Text("repository"), "repository-agent",
-		pgvalue.UUID(uuid.NewV7()), db.WorkspaceStatusActive, pgtype.UUID{}, pgtype.UUID{}, now, now, now,
+		pgvalue.UUID(uuid.NewV7()), db.ComputerStatusActive, now, now, now,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if item.Key == nil || *item.Key != "repository" || item.Status != api.WorkspaceStatusAvailable ||
-		item.Owner != nil {
-		t.Fatalf("item=%+v", item)
-	}
-}
-
-func TestWorkspaceOwnerProjectsExactlyOneOwner(t *testing.T) {
-	sessionID, runID := uuid.NewV7(), uuid.NewV7()
-	if owner, err := workspaceOwner(pgtype.UUID{}, pgtype.UUID{}); err != nil || owner != nil {
-		t.Fatalf("unowned = %+v, %v", owner, err)
-	}
-	owner, err := workspaceOwner(pgvalue.UUID(sessionID), pgtype.UUID{})
-	if err != nil || owner == nil || owner.SessionID != sessionID.String() || owner.RunID != "" {
-		t.Fatalf("Session owner = %+v, %v", owner, err)
-	}
-	raw, err := json.Marshal(owner)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != `{"session_id":"`+sessionID.String()+`"}` {
-		t.Fatalf("Session owner JSON = %s", raw)
-	}
-	owner, err = workspaceOwner(pgtype.UUID{}, pgvalue.UUID(runID))
-	if err != nil || owner == nil || owner.RunID != runID.String() || owner.SessionID != "" {
-		t.Fatalf("Run owner = %+v, %v", owner, err)
-	}
-	if _, err := workspaceOwner(pgvalue.UUID(sessionID), pgvalue.UUID(runID)); err == nil {
-		t.Fatal("ambiguous owner was projected")
-	}
-	unowned, err := json.Marshal(api.WorkspaceListItem{ID: sessionID.String()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(unowned), `"owner"`) {
-		t.Fatalf("unowned item JSON = %s", unowned)
-	}
-}
-
-func TestRunListItemProjectsOnlyCollectionFields(t *testing.T) {
-	now := pgvalue.Timestamptz(time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC))
-	item, err := projectRunListItem(db.ListRunListItemsRow{
-		ID: pgvalue.UUID(uuid.NewV7()), Status: db.RunStatusRunning,
-		EntrypointKind: "task", EntrypointDeclaredID: "resize-image",
-		WorkspaceID: pgvalue.UUID(uuid.NewV7()), CurrentAttemptNumber: 1,
-		CreatedAt: now, StartedAt: now, TerminalAt: pgtype.Timestamptz{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item.Status != api.RunStatusRunning || item.Entrypoint.ID != "resize-image" || item.TerminalAt != nil {
+	if item.Key == nil || *item.Key != "repository" || item.Status != api.ComputerStatusAvailable {
 		t.Fatalf("item=%+v", item)
 	}
 }

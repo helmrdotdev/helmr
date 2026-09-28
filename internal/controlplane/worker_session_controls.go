@@ -17,18 +17,18 @@ import (
 )
 
 // Both controls lock the complete Secret union before the ordered source-ancestor and target Sessions.
-// Secret bindings are read again after the Session and Workspace fences; a new
+// Secret bindings are read again after the Session and Computer fences; a new
 // binding invalidates this attempt rather than acquiring a Secret out of order.
-func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerActor, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockWorkspaceSecretsForAdmissionRow, error) {
+func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerActor, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
 	var graph run.OwnedFinalization
-	fail := func(err error) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockWorkspaceSecretsForAdmissionRow, error) {
+	fail := func(err error) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
 		return workerRunSourceAuthority{}, graph, nil, err
 	}
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return fail(err)
 	}
-	loc, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch})
+	loc, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
 	if err != nil {
 		return fail(staleWorkerRunSource(err))
 	}
@@ -39,80 +39,43 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerAc
 	if err != nil {
 		return fail(err)
 	}
-	workspaceIDs := []pgtype.UUID{loc.WorkspaceID, target.WorkspaceID}
-	lockedSecrets, err := work.q.LockWorkerControlSecrets(ctx, workspaceIDs)
+	computerIDs := []pgtype.UUID{loc.ComputerID, target.ComputerID}
+	lockedSecrets, err := work.q.LockWorkerControlSecrets(ctx, computerIDs)
 	if err != nil {
 		return fail(err)
 	}
-	sourceInTargetGraph, err := lockWorkerControlActors(ctx, work.q, loc, targetID)
+	var authority run.ExecutionAuthority
+	if interrupt {
+		authority, graph, err = run.LockLiveExecutionForSessionInterruption(ctx, work.tx, workerExecutionFence(worker, parsed, lease), targetID)
+	} else {
+		authority, err = run.LockLiveExecutionForSession(ctx, work.tx, workerExecutionFence(worker, parsed, lease), targetID)
+	}
+	if errors.Is(err, run.ErrExecutionTargetNotFound) {
+		return fail(&session.OperationError{Code: "session_not_found"})
+	}
+	source, err := validateWorkerRunSource(authority, err)
 	if err != nil {
+		return fail(err)
+	}
+	// The union operation has already locked all source-ancestor and target
+	// Sessions. This validation cannot add a differently ordered Session lock.
+	if err = lockWorkerControlActors(ctx, work.q, loc, targetID); err != nil {
 		return fail(err)
 	}
 	lockedTarget, err := work.q.GetActor(ctx, db.GetActorParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
 	if err != nil {
 		return fail(err)
 	}
-	if target.WorkspaceID != lockedTarget.WorkspaceID || target.CurrentRunID != lockedTarget.CurrentRunID || target.RunGeneration != lockedTarget.RunGeneration {
+	if target.ComputerID != lockedTarget.ComputerID || target.CurrentRunID != lockedTarget.CurrentRunID || target.RunGeneration != lockedTarget.RunGeneration {
 		return fail(session.ErrAuthority)
 	}
-	var authority runLeaseClaimAuthority
-	// A valid standalone Task owns its Workspace exclusively. A different graph
-	// cannot queue a child into that Workspace; child admission rejects an owner.
-	// Actor sources and their owned descendants are serialized by the sorted
-	// source-ancestor and target Sessions above.
-	lockSource := func() error {
-		var err error
-		authority.run, err = work.q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{ID: loc.RunID, OrgID: loc.OrgID, ProjectID: loc.ProjectID, EnvironmentID: loc.EnvironmentID, WorkspaceID: loc.WorkspaceID})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if err = validateLockedRunLeaseRun(authority.run, pgvalue.UUID(parsed.leaseID), loc, db.RunStatusRunning); err != nil {
-			return err
-		}
-		if err = lockRunLeaseWorkspace(ctx, work.q, &authority, loc); err != nil {
-			return err
-		}
-		return lockRunLeaseAttempt(ctx, work.q, &authority, loc)
-	}
-	physical := func() error {
-		return lockRunLeasePhysicalAuthority(ctx, work.q, worker, pgvalue.UUID(parsed.leaseID), lease.LeaseSequence, loc, &authority)
-	}
-	if interrupt && target.CurrentRunID.Valid {
-		// Sources within the target graph re-lock only after the graph acquires
-		// ancestors before descendants, matching child finalization.
-		if !sourceInTargetGraph {
-			if err = lockSource(); err != nil {
-				return fail(staleWorkerRunSource(err))
-			}
-		}
-		tx, ok := work.tx.(pgx.Tx)
-		if !ok {
-			return fail(errors.New("session control transaction does not expose PostgreSQL authority"))
-		}
-		graph, err = run.LockOwnedFinalizationWithRuntimeFence(ctx, tx, run.OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(target.CurrentRunID)}, func() error {
-			if sourceInTargetGraph {
-				if err := lockSource(); err != nil {
-					return err
-				}
-			}
-			return physical()
-		})
-	} else {
-		err = lockSource()
-		if err == nil {
-			err = physical()
-		}
-	}
-	source, err := validateWorkerRunSource(authority, loc, err)
-	if err != nil {
-		return fail(err)
-	}
+
 	if !interrupt && !target.CurrentRunID.Valid {
-		if _, err = work.q.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{EnvironmentID: target.EnvironmentID, WorkspaceID: target.WorkspaceID, SessionID: target.ID}); err != nil {
+		if _, err = work.q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, SessionID: target.ID}); err != nil {
 			return fail(err)
 		}
 	}
-	reread, err := work.q.ReadWorkerControlSecrets(ctx, workspaceIDs)
+	reread, err := work.q.ReadWorkerControlSecrets(ctx, computerIDs)
 	if err != nil {
 		return fail(err)
 	}
@@ -120,18 +83,18 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerAc
 		return fail(secret.ErrDeliveryUnavailable)
 	}
 	for i := range reread {
-		if reread[i].WorkspaceID != lockedSecrets[i].WorkspaceID || reread[i].SecretID != lockedSecrets[i].SecretID || reread[i].PlacementKind != lockedSecrets[i].PlacementKind || reread[i].PlacementTarget != lockedSecrets[i].PlacementTarget {
+		if reread[i].ComputerID != lockedSecrets[i].ComputerID || reread[i].SecretID != lockedSecrets[i].SecretID || reread[i].PlacementKind != lockedSecrets[i].PlacementKind || reread[i].PlacementTarget != lockedSecrets[i].PlacementTarget {
 			return fail(secret.ErrDeliveryUnavailable)
 		}
 	}
-	// Workspace FOR UPDATE locks block new binding insertion through the
-	// workspace_secrets foreign key. After checking the binding identities,
+	// Computer FOR UPDATE locks block new binding insertion through the
+	// computer_secrets foreign key. After checking the binding identities,
 	// ordinary delivery validation can only re-lock the original Secret union.
-	validateDelivery := func(runID pgtype.UUID, attempt int32, workspaceID pgtype.UUID) error {
-		_, err := secret.LockAttemptDelivery(ctx, work.q, runID, attempt, workspaceID)
+	validateDelivery := func(runID pgtype.UUID, attempt int32, computerID pgtype.UUID) error {
+		_, err := secret.LockAttemptDelivery(ctx, work.q, runID, attempt, computerID)
 		return err
 	}
-	if err = validateDelivery(loc.RunID, loc.AttemptNumber, loc.WorkspaceID); err != nil {
+	if err = validateDelivery(loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
 		return fail(err)
 	}
 	if interrupt && target.CurrentRunID.Valid && target.CurrentRunID != loc.RunID {
@@ -139,51 +102,49 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerAc
 		if err != nil {
 			return fail(err)
 		}
-		if err = validateDelivery(current.ID, current.CurrentAttemptNumber, target.WorkspaceID); err != nil {
+		if err = validateDelivery(current.ID, current.CurrentAttemptNumber, target.ComputerID); err != nil {
 			return fail(err)
 		}
 	}
-	var bindings []db.LockWorkspaceSecretsForAdmissionRow
+	var bindings []db.LockComputerSecretsForAdmissionRow
 	for _, row := range lockedSecrets {
-		if row.WorkspaceID == target.WorkspaceID {
-			bindings = append(bindings, db.LockWorkspaceSecretsForAdmissionRow(row))
+		if row.ComputerID == target.ComputerID {
+			bindings = append(bindings, db.LockComputerSecretsForAdmissionRow(row))
 		}
 	}
 	return source, graph, bindings, nil
 }
 
 // Owned Tasks retain their ancestor Actor's lifecycle fence even in a different
-// Workspace. Locking only the source Workspace's Session would let reciprocal
+// Computer. Locking only the source Computer's Session would let reciprocal
 // child controls each hold the other's graph root while waiting on its child.
-func lockWorkerControlActors(ctx context.Context, q db.Querier, loc db.GetLiveRunLeaseLocatorsRow, targetID pgtype.UUID) (bool, error) {
+func lockWorkerControlActors(ctx context.Context, q db.Querier, loc db.GetLiveRunLeaseLocatorsRow, targetID pgtype.UUID) error {
 	actors, err := q.LockWorkerControlActors(ctx, db.LockWorkerControlActorsParams{EnvironmentID: loc.EnvironmentID, SourceRunID: loc.RunID, TargetSessionID: targetID})
 	if err != nil {
-		return false, err
+		return err
 	}
-	sourceInTargetGraph := false
 	for _, row := range actors {
 		if !row.SourceOwnerRunID.Valid {
 			continue
 		}
-		sourceInTargetGraph = sourceInTargetGraph || row.Session.ID == targetID
 		actor := row.Session
 		if actor.CurrentRunID != row.SourceOwnerRunID {
-			return false, session.ErrAuthority
+			return session.ErrAuthority
 		}
 		if actor.DispatchHoldID.Valid {
-			return false, &session.OperationError{Code: "session_held"}
+			return &session.OperationError{Code: "session_held"}
 		}
 		if actor.ActiveTurnID.Valid {
 			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
 			if err != nil {
-				return false, err
+				return err
 			}
 			if turn.SettlementStartedAt.Valid {
-				return false, &session.OperationError{Code: "turn_unsettled"}
+				return &session.OperationError{Code: "turn_unsettled"}
 			}
 		}
 	}
-	return sourceInTargetGraph, nil
+	return nil
 }
 
 func (s *Server) workerInterruptSessionTurn(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +208,7 @@ func (s *Server) workerResumeSession(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		receipt, err = session.ResumeWithLockedSecrets(r.Context(), work.q, session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(sessionID)}, IdempotencyKey: request.IdempotencyKey}, HoldID: holdID}, target.WorkspaceID, bindings)
+		receipt, err = session.ResumeWithLockedSecrets(r.Context(), work.q, session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(sessionID)}, IdempotencyKey: request.IdempotencyKey}, HoldID: holdID}, target.ComputerID, bindings)
 		return err
 	})
 	if err == nil && receipt.Code != "" {

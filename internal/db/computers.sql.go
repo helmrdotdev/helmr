@@ -11,10 +11,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createWorkspaceFromCurrentDeployment = `-- name: CreateWorkspaceFromCurrentDeployment :one
+const createComputerFromCurrentDeployment = `-- name: CreateComputerFromCurrentDeployment :one
 WITH selected_definition AS (
     SELECT deployment_definitions.environment_id,
            deployment_definitions.id AS deployment_definition_id,
+           deployment_definitions.computer_spec_id,
+           deployment_definitions.deployment_id AS creation_deployment_id,
            deployment_definitions.declared_id AS sandbox_declared_id,
            projects.default_region_id
       FROM deployment_definitions
@@ -32,55 +34,52 @@ WITH selected_definition AS (
        AND deployment_definitions.id = $4
        AND deployment_definitions.kind = 'sandbox'
        AND deployment_definitions.declared_id = $5
-), created_workspace AS (
+), created_computer AS (
     INSERT INTO computers (
         id,
         environment_id,
         region_id,
         sandbox_declared_id,
-        deployment_definition_id,
-        head_version_id,
+        head_disk_version_id,
         key
-    )
+    , computer_spec_id, creation_deployment_id)
     SELECT $6,
            selected_definition.environment_id,
            selected_definition.default_region_id,
            selected_definition.sandbox_declared_id,
-           selected_definition.deployment_definition_id,
            $7,
-           $8
+           $8, selected_definition.computer_spec_id, selected_definition.creation_deployment_id
+
       FROM selected_definition
-    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
+    RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.computer_spec_id, computers.creation_deployment_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
 ), created_version AS (
-    INSERT INTO computer_versions (
+    INSERT INTO computer_disk_versions (
         id,
         environment_id,
         computer_id,
         status,
         root_pack_digest,
         logical_bytes,
-        ownership_generation,
         writer_generation,
         published_at
     )
     SELECT $7,
-           created_workspace.environment_id,
-           created_workspace.id,
+           created_computer.environment_id,
+           created_computer.id,
            'initializing',
            NULL,
            0,
            0,
-           0,
            NULL
-      FROM created_workspace
+      FROM created_computer
     RETURNING computer_id
 )
-SELECT created_workspace.id, created_workspace.environment_id, created_workspace.region_id, created_workspace.sandbox_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.revision, created_workspace.owner_session_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.status, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
-  FROM created_workspace
-  JOIN created_version ON created_version.computer_id = created_workspace.id
+SELECT created_computer.id, created_computer.environment_id, created_computer.region_id, created_computer.sandbox_declared_id, created_computer.computer_spec_id, created_computer.creation_deployment_id, created_computer.key, created_computer.revision, created_computer.writer_generation, created_computer.head_disk_version_id, created_computer.status, created_computer.desired_state, created_computer.dirty_state, created_computer.last_activity_at, created_computer.created_at, created_computer.updated_at, created_computer.deleted_at
+  FROM created_computer
+  JOIN created_version ON created_version.computer_id = created_computer.id
 `
 
-type CreateWorkspaceFromCurrentDeploymentParams struct {
+type CreateComputerFromCurrentDeploymentParams struct {
 	ProjectID              pgtype.UUID `json:"project_id"`
 	OrgID                  pgtype.UUID `json:"org_id"`
 	EnvironmentID          pgtype.UUID `json:"environment_id"`
@@ -91,30 +90,28 @@ type CreateWorkspaceFromCurrentDeploymentParams struct {
 	Key                    pgtype.Text `json:"key"`
 }
 
-type CreateWorkspaceFromCurrentDeploymentRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+type CreateComputerFromCurrentDeploymentRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	RegionID             string             `json:"region_id"`
+	SandboxDeclaredID    pgtype.Text        `json:"sandbox_declared_id"`
+	ComputerSpecID       pgtype.UUID        `json:"computer_spec_id"`
+	CreationDeploymentID pgtype.UUID        `json:"creation_deployment_id"`
+	Key                  pgtype.Text        `json:"key"`
+	Revision             int64              `json:"revision"`
+	WriterGeneration     int64              `json:"writer_generation"`
+	HeadDiskVersionID    pgtype.UUID        `json:"head_disk_version_id"`
+	Status               string             `json:"status"`
+	DesiredState         string             `json:"desired_state"`
+	DirtyState           string             `json:"dirty_state"`
+	LastActivityAt       pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
-func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg CreateWorkspaceFromCurrentDeploymentParams) (CreateWorkspaceFromCurrentDeploymentRow, error) {
-	row := q.db.QueryRow(ctx, createWorkspaceFromCurrentDeployment,
+func (q *Queries) CreateComputerFromCurrentDeployment(ctx context.Context, arg CreateComputerFromCurrentDeploymentParams) (CreateComputerFromCurrentDeploymentRow, error) {
+	row := q.db.QueryRow(ctx, createComputerFromCurrentDeployment,
 		arg.ProjectID,
 		arg.OrgID,
 		arg.EnvironmentID,
@@ -124,20 +121,18 @@ func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg 
 		arg.InitialVersionID,
 		arg.Key,
 	)
-	var i CreateWorkspaceFromCurrentDeploymentRow
+	var i CreateComputerFromCurrentDeploymentRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
 		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -149,9 +144,9 @@ func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg 
 	return i, err
 }
 
-const createWorkspaceSecret = `-- name: CreateWorkspaceSecret :one
-INSERT INTO workspace_secrets (
-    workspace_id,
+const createComputerSecret = `-- name: CreateComputerSecret :one
+INSERT INTO computer_secrets (
+    computer_id,
     environment_id,
     placement_kind,
     placement_target,
@@ -163,11 +158,11 @@ INSERT INTO workspace_secrets (
     $4,
     $5, $6, COALESCE($7::text[], '{}'::text[]), $8
 )
-RETURNING workspace_id, environment_id, placement_kind, placement_target, secret_id, mode, allowed_origins, placeholder, created_at
+RETURNING computer_id, environment_id, placement_kind, placement_target, secret_id, mode, allowed_origins, placeholder, created_at
 `
 
-type CreateWorkspaceSecretParams struct {
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+type CreateComputerSecretParams struct {
+	ComputerID      pgtype.UUID `json:"computer_id"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	PlacementKind   string      `json:"placement_kind"`
 	PlacementTarget string      `json:"placement_target"`
@@ -177,9 +172,9 @@ type CreateWorkspaceSecretParams struct {
 	Placeholder     string      `json:"placeholder"`
 }
 
-func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspaceSecretParams) (WorkspaceSecret, error) {
-	row := q.db.QueryRow(ctx, createWorkspaceSecret,
-		arg.WorkspaceID,
+func (q *Queries) CreateComputerSecret(ctx context.Context, arg CreateComputerSecretParams) (ComputerSecret, error) {
+	row := q.db.QueryRow(ctx, createComputerSecret,
+		arg.ComputerID,
 		arg.EnvironmentID,
 		arg.PlacementKind,
 		arg.PlacementTarget,
@@ -188,9 +183,9 @@ func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspace
 		arg.AllowedOrigins,
 		arg.Placeholder,
 	)
-	var i WorkspaceSecret
+	var i ComputerSecret
 	err := row.Scan(
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.EnvironmentID,
 		&i.PlacementKind,
 		&i.PlacementTarget,
@@ -203,61 +198,25 @@ func (q *Queries) CreateWorkspaceSecret(ctx context.Context, arg CreateWorkspace
 	return i, err
 }
 
-const finalizeDeletingWorkspaces = `-- name: FinalizeDeletingWorkspaces :many
+const finalizeDeletingComputers = `-- name: FinalizeDeletingComputers :many
 WITH eligible AS (
-    SELECT computers.id
-      FROM computers
-     WHERE computers.status = 'deleting'
-       AND computers.desired_state = 'deleted'
-       AND computers.owner_session_id IS NULL
-       AND computers.owner_run_id IS NULL
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = computers.id
-              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = computers.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_mounts
-            WHERE workspace_mounts.workspace_id = computers.id
-              AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM runtime_instances
-            WHERE runtime_instances.workspace_id = computers.id
-              AND runtime_instances.reclaimed_at IS NULL
-              AND runtime_instances.observed_state <> 'lost'
-       )
-     ORDER BY computers.updated_at, computers.id
-     LIMIT $1
-     FOR UPDATE OF computers SKIP LOCKED
-), finalized AS (
-    UPDATE computers
-       SET key = NULL,
-           sandbox_declared_id = NULL,
-           head_version_id = NULL,
-           dirty_state = 'clean',
-           status = 'deleted',
-           revision = revision + 1,
-           deleted_at = now(),
-           updated_at = now()
-      FROM eligible
-     WHERE computers.id = eligible.id
-    RETURNING computers.id
+ SELECT computers.id FROM computers WHERE status='deleting' AND desired_state='deleted'
+ AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.computer_id=computers.id AND s.status IN ('open','closing'))
+ AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.computer_id=computers.id
+                 AND r.status IN ('queued','running','waiting','retry_delayed','cancel_requested'))
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.computer_id=computers.id AND l.process_reconciled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM computer_commands c WHERE c.computer_id=computers.id
+                 AND (c.terminal_at IS NULL OR (c.computer_instance_id IS NOT NULL AND c.process_reconciled_at IS NULL)))
+ AND NOT EXISTS(SELECT 1 FROM computer_instances i WHERE i.computer_id=computers.id AND i.reclaimed_at IS NULL)
+ ORDER BY computers.updated_at,computers.id LIMIT $1 FOR UPDATE OF computers SKIP LOCKED
 )
-SELECT id FROM finalized
+UPDATE computers SET key=NULL,head_disk_version_id=NULL,
+ dirty_state='clean',status='deleted',revision=revision+1,deleted_at=clock_timestamp(),updated_at=clock_timestamp()
+FROM eligible WHERE computers.id=eligible.id RETURNING computers.id
 `
 
-func (q *Queries) FinalizeDeletingWorkspaces(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, finalizeDeletingWorkspaces, rowLimit)
+func (q *Queries) FinalizeDeletingComputers(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, finalizeDeletingComputers, rowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -276,20 +235,33 @@ func (q *Queries) FinalizeDeletingWorkspaces(ctx context.Context, rowLimit int32
 	return items, nil
 }
 
-const getWorkspace = `-- name: GetWorkspace :one
+const getComputer = `-- name: GetComputer :one
 SELECT computers.id,
        computers.environment_id,
        computers.region_id,
        computers.sandbox_declared_id,
-       computers.deployment_definition_id,
+       computers.computer_spec_id,
+       computers.creation_deployment_id,
        computers.key,
        computers.revision,
-       computers.owner_session_id,
-       computers.owner_run_id,
-       computers.ownership_generation,
        computers.writer_generation,
-       computers.head_version_id,
+       computers.head_disk_version_id,
        computers.status,
+       computers.preparation_failure,
+       CASE
+         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost','capture_failed') THEN 'unavailable'
+         WHEN residency_instance.observed_state='lost' THEN 'unavailable'
+         WHEN residency_instance.admission_state='restoring' THEN 'restoring'
+         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','closed') THEN 'parking'
+         WHEN residency_instance.observed_state='ready' AND residency_instance.admission_state='open' THEN 'running'
+         WHEN residency_instance.id IS NOT NULL THEN 'starting'
+         WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=computers.id AND cp.status='ready' AND cp.resume_committed_at IS NULL) THEN 'parked'
+         ELSE 'cold'
+       END::text AS residency,
+       COALESCE(computers.preparation_failure,computers.recovery_failure,
+         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost','capture_failed') OR residency_instance.observed_state='lost'
+         THEN '{"code":"computer_recovery_required","message":"Computer execution state is unavailable"}'::jsonb END) AS residency_error,
+
        computers.desired_state,
        computers.dirty_state,
        computers.last_activity_at,
@@ -297,65 +269,67 @@ SELECT computers.id,
        computers.updated_at,
        computers.deleted_at
   FROM computers
+  LEFT JOIN computer_instances residency_instance ON residency_instance.computer_id=computers.id AND residency_instance.reclaimed_at IS NULL
   JOIN environments ON environments.id = computers.environment_id
  WHERE environments.org_id = $1
    AND environments.project_id = $2
    AND computers.environment_id = $3
    AND computers.id = $4
-   AND computers.deleted_at IS NULL
 `
 
-type GetWorkspaceParams struct {
+type GetComputerParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-type GetWorkspaceRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
+type GetComputerRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	RegionID             string             `json:"region_id"`
+	SandboxDeclaredID    pgtype.Text        `json:"sandbox_declared_id"`
+	ComputerSpecID       pgtype.UUID        `json:"computer_spec_id"`
+	CreationDeploymentID pgtype.UUID        `json:"creation_deployment_id"`
+	Key                  pgtype.Text        `json:"key"`
+	Revision             int64              `json:"revision"`
+	WriterGeneration     int64              `json:"writer_generation"`
+	HeadDiskVersionID    pgtype.UUID        `json:"head_disk_version_id"`
+	Status               string             `json:"status"`
+	PreparationFailure   []byte             `json:"preparation_failure"`
+	Residency            string             `json:"residency"`
+	ResidencyError       []byte             `json:"residency_error"`
+	DesiredState         string             `json:"desired_state"`
+	DirtyState           string             `json:"dirty_state"`
+	LastActivityAt       pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
-func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (GetWorkspaceRow, error) {
-	row := q.db.QueryRow(ctx, getWorkspace,
+func (q *Queries) GetComputer(ctx context.Context, arg GetComputerParams) (GetComputerRow, error) {
+	row := q.db.QueryRow(ctx, getComputer,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
 	)
-	var i GetWorkspaceRow
+	var i GetComputerRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
 		&i.Status,
+		&i.PreparationFailure,
+		&i.Residency,
+		&i.ResidencyError,
 		&i.DesiredState,
 		&i.DirtyState,
 		&i.LastActivityAt,
@@ -366,50 +340,33 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Get
 	return i, err
 }
 
-const getWorkspaceDefinitionIdentity = `-- name: GetWorkspaceDefinitionIdentity :one
-SELECT deployment_definitions.declared_id,
-       deployment_definitions.deployment_id
-  FROM deployment_definitions
- WHERE deployment_definitions.environment_id = $1
-   AND deployment_definitions.id = $2
-   AND deployment_definitions.kind = 'sandbox'
- LIMIT 1
-`
-
-type GetWorkspaceDefinitionIdentityParams struct {
-	EnvironmentID          pgtype.UUID `json:"environment_id"`
-	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
-}
-
-type GetWorkspaceDefinitionIdentityRow struct {
-	DeclaredID   string      `json:"declared_id"`
-	DeploymentID pgtype.UUID `json:"deployment_id"`
-}
-
-func (q *Queries) GetWorkspaceDefinitionIdentity(ctx context.Context, arg GetWorkspaceDefinitionIdentityParams) (GetWorkspaceDefinitionIdentityRow, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceDefinitionIdentity, arg.EnvironmentID, arg.DeploymentDefinitionID)
-	var i GetWorkspaceDefinitionIdentityRow
-	err := row.Scan(&i.DeclaredID, &i.DeploymentID)
-	return i, err
-}
-
-const getWorkspaceListItemByKey = `-- name: GetWorkspaceListItemByKey :one
+const getComputerListItemByKey = `-- name: GetComputerListItemByKey :one
 SELECT computers.id,
        computers.key,
-       deployment_definitions.declared_id AS sandbox_id,
-       deployment_definitions.deployment_id,
+       computers.sandbox_declared_id::text AS sandbox_id,
+       computers.creation_deployment_id AS deployment_id,
        computers.status,
-       computers.owner_session_id,
-       computers.owner_run_id,
+       computers.preparation_failure,
+       CASE
+         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost','capture_failed') THEN 'unavailable'
+         WHEN residency_instance.observed_state='lost' THEN 'unavailable'
+         WHEN residency_instance.admission_state='restoring' THEN 'restoring'
+         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','closed') THEN 'parking'
+         WHEN residency_instance.observed_state='ready' AND residency_instance.admission_state='open' THEN 'running'
+         WHEN residency_instance.id IS NOT NULL THEN 'starting'
+         WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=computers.id AND cp.status='ready' AND cp.resume_committed_at IS NULL) THEN 'parked'
+         ELSE 'cold'
+       END::text AS residency,
+       COALESCE(computers.preparation_failure,computers.recovery_failure,
+         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost','capture_failed') OR residency_instance.observed_state='lost'
+         THEN '{"code":"computer_recovery_required","message":"Computer execution state is unavailable"}'::jsonb END) AS residency_error,
+
        computers.last_activity_at,
        computers.created_at,
        computers.updated_at
   FROM computers
+  LEFT JOIN computer_instances residency_instance ON residency_instance.computer_id=computers.id AND residency_instance.reclaimed_at IS NULL
   JOIN environments ON environments.id = computers.environment_id
-  JOIN deployment_definitions
-    ON deployment_definitions.environment_id = computers.environment_id
-   AND deployment_definitions.id = computers.deployment_definition_id
-   AND deployment_definitions.kind = 'sandbox'
  WHERE environments.org_id = $1
    AND environments.project_id = $2
    AND computers.environment_id = $3
@@ -417,42 +374,44 @@ SELECT computers.id,
    AND computers.deleted_at IS NULL
 `
 
-type GetWorkspaceListItemByKeyParams struct {
+type GetComputerListItemByKeyParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	Key           pgtype.Text `json:"key"`
 }
 
-type GetWorkspaceListItemByKeyRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Key            pgtype.Text        `json:"key"`
-	SandboxID      string             `json:"sandbox_id"`
-	DeploymentID   pgtype.UUID        `json:"deployment_id"`
-	Status         string             `json:"status"`
-	OwnerSessionID pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID     pgtype.UUID        `json:"owner_run_id"`
-	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+type GetComputerListItemByKeyRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Key                pgtype.Text        `json:"key"`
+	SandboxID          string             `json:"sandbox_id"`
+	DeploymentID       pgtype.UUID        `json:"deployment_id"`
+	Status             string             `json:"status"`
+	PreparationFailure []byte             `json:"preparation_failure"`
+	Residency          string             `json:"residency"`
+	ResidencyError     []byte             `json:"residency_error"`
+	LastActivityAt     pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspaceListItemByKeyParams) (GetWorkspaceListItemByKeyRow, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceListItemByKey,
+func (q *Queries) GetComputerListItemByKey(ctx context.Context, arg GetComputerListItemByKeyParams) (GetComputerListItemByKeyRow, error) {
+	row := q.db.QueryRow(ctx, getComputerListItemByKey,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Key,
 	)
-	var i GetWorkspaceListItemByKeyRow
+	var i GetComputerListItemByKeyRow
 	err := row.Scan(
 		&i.ID,
 		&i.Key,
 		&i.SandboxID,
 		&i.DeploymentID,
 		&i.Status,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
+		&i.PreparationFailure,
+		&i.Residency,
+		&i.ResidencyError,
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -460,23 +419,75 @@ func (q *Queries) GetWorkspaceListItemByKey(ctx context.Context, arg GetWorkspac
 	return i, err
 }
 
-const listWorkspaceListItems = `-- name: ListWorkspaceListItems :many
+const getComputerProgramAdmission = `-- name: GetComputerProgramAdmission :one
+SELECT EXISTS(SELECT 1 FROM deployment_definitions d
+              WHERE d.environment_id=$1 AND d.deployment_id=$2
+              AND d.kind='sandbox' AND d.computer_spec_id=$3) AS spec_compatible,
+ NOT EXISTS(SELECT 1 FROM sessions s JOIN deployment_definitions d ON d.id=s.deployment_definition_id
+            AND d.environment_id=s.environment_id
+            WHERE s.environment_id=$1 AND s.computer_id=$4
+            AND s.status IN ('open','closing') AND d.deployment_id<>$2)
+ AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.environment_id=$1
+                AND r.computer_id=$4 AND r.deployment_id<>$2
+                AND (r.status IN ('queued','running','waiting','retry_delayed','cancel_requested')
+                     OR EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=r.id AND l.process_reconciled_at IS NULL)))
+ AS program_compatible
+`
+
+type GetComputerProgramAdmissionParams struct {
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	DeploymentID   pgtype.UUID `json:"deployment_id"`
+	ComputerSpecID pgtype.UUID `json:"computer_spec_id"`
+	ComputerID     pgtype.UUID `json:"computer_id"`
+}
+
+type GetComputerProgramAdmissionRow struct {
+	SpecCompatible    bool        `json:"spec_compatible"`
+	ProgramCompatible pgtype.Bool `json:"program_compatible"`
+}
+
+// The Computer and its live instance are locked before this read. A deployment
+// must declare the same immutable spec; open or unreconciled program members pin
+// their deployment independently of whether their process is currently resident.
+func (q *Queries) GetComputerProgramAdmission(ctx context.Context, arg GetComputerProgramAdmissionParams) (GetComputerProgramAdmissionRow, error) {
+	row := q.db.QueryRow(ctx, getComputerProgramAdmission,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.ComputerSpecID,
+		arg.ComputerID,
+	)
+	var i GetComputerProgramAdmissionRow
+	err := row.Scan(&i.SpecCompatible, &i.ProgramCompatible)
+	return i, err
+}
+
+const listComputerListItems = `-- name: ListComputerListItems :many
 SELECT computers.id,
        computers.key,
-       deployment_definitions.declared_id AS sandbox_id,
-       deployment_definitions.deployment_id,
+       computers.sandbox_declared_id::text AS sandbox_id,
+       computers.creation_deployment_id AS deployment_id,
        computers.status,
-       computers.owner_session_id,
-       computers.owner_run_id,
+       computers.preparation_failure,
+       CASE
+         WHEN computers.status='recovery_required' OR computers.recovery_failure IS NOT NULL OR computers.preparation_failure IS NOT NULL OR computers.dirty_state IN ('dirty_state_lost','capture_failed') THEN 'unavailable'
+         WHEN residency_instance.observed_state='lost' THEN 'unavailable'
+         WHEN residency_instance.admission_state='restoring' THEN 'restoring'
+         WHEN residency_instance.desired_state='closed' OR residency_instance.admission_state IN ('draining','checkpointing','closed') THEN 'parking'
+         WHEN residency_instance.observed_state='ready' AND residency_instance.admission_state='open' THEN 'running'
+         WHEN residency_instance.id IS NOT NULL THEN 'starting'
+         WHEN EXISTS(SELECT 1 FROM computer_checkpoints cp WHERE cp.computer_id=computers.id AND cp.status='ready' AND cp.resume_committed_at IS NULL) THEN 'parked'
+         ELSE 'cold'
+       END::text AS residency,
+       COALESCE(computers.preparation_failure,computers.recovery_failure,
+         CASE WHEN computers.status='recovery_required' OR computers.dirty_state IN ('dirty_state_lost','capture_failed') OR residency_instance.observed_state='lost'
+         THEN '{"code":"computer_recovery_required","message":"Computer execution state is unavailable"}'::jsonb END) AS residency_error,
+
        computers.last_activity_at,
        computers.created_at,
        computers.updated_at
   FROM computers
+  LEFT JOIN computer_instances residency_instance ON residency_instance.computer_id=computers.id AND residency_instance.reclaimed_at IS NULL
   JOIN environments ON environments.id = computers.environment_id
-  JOIN deployment_definitions
-    ON deployment_definitions.environment_id = computers.environment_id
-   AND deployment_definitions.id = computers.deployment_definition_id
-   AND deployment_definitions.kind = 'sandbox'
  WHERE environments.org_id = $1
    AND environments.project_id = $2
    AND computers.environment_id = $3
@@ -489,7 +500,7 @@ SELECT computers.id,
  LIMIT $7
 `
 
-type ListWorkspaceListItemsParams struct {
+type ListComputerListItemsParams struct {
 	OrgID          pgtype.UUID        `json:"org_id"`
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
@@ -499,21 +510,22 @@ type ListWorkspaceListItemsParams struct {
 	RowLimit       int32              `json:"row_limit"`
 }
 
-type ListWorkspaceListItemsRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	Key            pgtype.Text        `json:"key"`
-	SandboxID      string             `json:"sandbox_id"`
-	DeploymentID   pgtype.UUID        `json:"deployment_id"`
-	Status         string             `json:"status"`
-	OwnerSessionID pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID     pgtype.UUID        `json:"owner_run_id"`
-	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+type ListComputerListItemsRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	Key                pgtype.Text        `json:"key"`
+	SandboxID          string             `json:"sandbox_id"`
+	DeploymentID       pgtype.UUID        `json:"deployment_id"`
+	Status             string             `json:"status"`
+	PreparationFailure []byte             `json:"preparation_failure"`
+	Residency          string             `json:"residency"`
+	ResidencyError     []byte             `json:"residency_error"`
+	LastActivityAt     pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
-func (q *Queries) ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceListItemsParams) ([]ListWorkspaceListItemsRow, error) {
-	rows, err := q.db.Query(ctx, listWorkspaceListItems,
+func (q *Queries) ListComputerListItems(ctx context.Context, arg ListComputerListItemsParams) ([]ListComputerListItemsRow, error) {
+	rows, err := q.db.Query(ctx, listComputerListItems,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -526,17 +538,18 @@ func (q *Queries) ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceL
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListWorkspaceListItemsRow
+	var items []ListComputerListItemsRow
 	for rows.Next() {
-		var i ListWorkspaceListItemsRow
+		var i ListComputerListItemsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.Key,
 			&i.SandboxID,
 			&i.DeploymentID,
 			&i.Status,
-			&i.OwnerSessionID,
-			&i.OwnerRunID,
+			&i.PreparationFailure,
+			&i.Residency,
+			&i.ResidencyError,
 			&i.LastActivityAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -551,60 +564,46 @@ func (q *Queries) ListWorkspaceListItems(ctx context.Context, arg ListWorkspaceL
 	return items, nil
 }
 
-const lockActorInputWorkspace = `-- name: LockActorInputWorkspace :one
-SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
-  FROM computers
- WHERE environment_id = $1
-   AND id = $2
-   AND owner_session_id = $3
-   AND owner_run_id IS NULL
- FOR UPDATE
+const lockActorInputComputer = `-- name: LockActorInputComputer :one
+SELECT c.id, c.environment_id, c.region_id, c.sandbox_declared_id, c.key, c.revision, c.writer_generation, c.head_disk_version_id, c.recovery_id, c.recovery_disk_version_id, c.recovery_reason, c.recovery_started_at, c.preparation_attempt_count, c.next_preparation_at, c.preparation_instance_id, c.recovery_completed_at, c.recovery_failure, c.computer_payload_required, c.recovery_payload_required, c.preparation_failure, c.initial_config, c.write_key_id, c.write_key_available, c.status, c.desired_state, c.dirty_state, c.last_activity_at, c.created_at, c.updated_at, c.deleted_at, c.secret_ca_certificate, c.secret_ca_private_key_nonce, c.secret_ca_private_key_ciphertext, c.secret_ca_not_after, c.computer_spec_id, c.creation_deployment_id, c.spec_retention_required FROM computers c JOIN sessions s ON s.environment_id=c.environment_id AND s.computer_id=c.id
+WHERE c.environment_id=$1 AND c.id=$2
+ AND s.id=$3 AND s.status='open'
+FOR UPDATE OF c
 `
 
-type LockActorInputWorkspaceParams struct {
+type LockActorInputComputerParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 	SessionID     pgtype.UUID `json:"session_id"`
 }
 
-type LockActorInputWorkspaceRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInputWorkspaceParams) (LockActorInputWorkspaceRow, error) {
-	row := q.db.QueryRow(ctx, lockActorInputWorkspace, arg.EnvironmentID, arg.ID, arg.SessionID)
-	var i LockActorInputWorkspaceRow
+func (q *Queries) LockActorInputComputer(ctx context.Context, arg LockActorInputComputerParams) (Computer, error) {
+	row := q.db.QueryRow(ctx, lockActorInputComputer, arg.EnvironmentID, arg.ID, arg.SessionID)
+	var i Computer
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
 		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -612,68 +611,60 @@ func (q *Queries) LockActorInputWorkspace(ctx context.Context, arg LockActorInpu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
 	)
 	return i, err
 }
 
-const lockChildWorkspacePair = `-- name: LockChildWorkspacePair :many
-SELECT id, environment_id, region_id, sandbox_declared_id, deployment_definition_id, key, revision, owner_session_id, owner_run_id, ownership_generation, writer_generation, head_version_id, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at
-  FROM computers
- WHERE environment_id = $1
-   AND id = ANY($2::uuid[])
- ORDER BY id
- FOR UPDATE
+const lockChildComputerPair = `-- name: LockChildComputerPair :many
+SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required FROM computers WHERE environment_id=$1
+ AND id=ANY($2::uuid[]) ORDER BY id FOR UPDATE
 `
 
-type LockChildWorkspacePairParams struct {
+type LockChildComputerPairParams struct {
 	EnvironmentID pgtype.UUID   `json:"environment_id"`
-	WorkspaceIds  []pgtype.UUID `json:"workspace_ids"`
+	ComputerIds   []pgtype.UUID `json:"computer_ids"`
 }
 
-type LockChildWorkspacePairRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) LockChildWorkspacePair(ctx context.Context, arg LockChildWorkspacePairParams) ([]LockChildWorkspacePairRow, error) {
-	rows, err := q.db.Query(ctx, lockChildWorkspacePair, arg.EnvironmentID, arg.WorkspaceIds)
+func (q *Queries) LockChildComputerPair(ctx context.Context, arg LockChildComputerPairParams) ([]Computer, error) {
+	rows, err := q.db.Query(ctx, lockChildComputerPair, arg.EnvironmentID, arg.ComputerIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []LockChildWorkspacePairRow
+	var items []Computer
 	for rows.Next() {
-		var i LockChildWorkspacePairRow
+		var i Computer
 		if err := rows.Scan(
 			&i.ID,
 			&i.EnvironmentID,
 			&i.RegionID,
 			&i.SandboxDeclaredID,
-			&i.DeploymentDefinitionID,
 			&i.Key,
 			&i.Revision,
-			&i.OwnerSessionID,
-			&i.OwnerRunID,
-			&i.OwnershipGeneration,
 			&i.WriterGeneration,
-			&i.HeadVersionID,
+			&i.HeadDiskVersionID,
+			&i.RecoveryID,
+			&i.RecoveryDiskVersionID,
+			&i.RecoveryReason,
+			&i.RecoveryStartedAt,
+			&i.PreparationAttemptCount,
+			&i.NextPreparationAt,
+			&i.PreparationInstanceID,
+			&i.RecoveryCompletedAt,
+			&i.RecoveryFailure,
+			&i.ComputerPayloadRequired,
+			&i.RecoveryPayloadRequired,
+			&i.PreparationFailure,
+			&i.InitialConfig,
+			&i.WriteKeyID,
+			&i.WriteKeyAvailable,
 			&i.Status,
 			&i.DesiredState,
 			&i.DirtyState,
@@ -681,6 +672,13 @@ func (q *Queries) LockChildWorkspacePair(ctx context.Context, arg LockChildWorks
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.SecretCaCertificate,
+			&i.SecretCaPrivateKeyNonce,
+			&i.SecretCaPrivateKeyCiphertext,
+			&i.SecretCaNotAfter,
+			&i.ComputerSpecID,
+			&i.CreationDeploymentID,
+			&i.SpecRetentionRequired,
 		); err != nil {
 			return nil, err
 		}
@@ -692,104 +690,43 @@ func (q *Queries) LockChildWorkspacePair(ctx context.Context, arg LockChildWorks
 	return items, nil
 }
 
-const lockWorkspaceAdmissionAuthority = `-- name: LockWorkspaceAdmissionAuthority :one
-SELECT computers.id,
-       computers.environment_id,
-       computers.region_id,
-       computers.sandbox_declared_id,
-       computers.deployment_definition_id,
-       computers.key,
-       computers.revision,
-       computers.owner_session_id,
-       computers.owner_run_id,
-       computers.ownership_generation,
-       computers.writer_generation,
-       computers.head_version_id,
-       computers.status,
-       computers.desired_state,
-       computers.dirty_state,
-       computers.last_activity_at,
-       computers.created_at,
-       computers.updated_at,
-       computers.deleted_at,
-       environments.org_id,
-       environments.project_id,
-       EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = computers.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       ) AS has_active_lease,
-       EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = computers.id
-              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS has_active_process
-  FROM computers
-  JOIN environments
-    ON environments.id = computers.environment_id
-  JOIN deployment_definitions AS definitions
-    ON definitions.environment_id = computers.environment_id
-   AND definitions.id = computers.deployment_definition_id
-   AND definitions.kind = 'sandbox'
-   AND definitions.declared_id = computers.sandbox_declared_id
-  JOIN computer_versions AS head
-    ON head.computer_id = computers.id
-   AND head.id = computers.head_version_id
-   AND head.status IN ('initializing', 'committed')
- WHERE computers.environment_id = $1
-   AND computers.id = $2
- FOR UPDATE OF computers
+const lockComputer = `-- name: LockComputer :one
+SELECT id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required FROM computers WHERE environment_id=$1
+ AND id=$2 FOR UPDATE
 `
 
-type LockWorkspaceAdmissionAuthorityParams struct {
+type LockComputerParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-type LockWorkspaceAdmissionAuthorityRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	HasActiveLease         bool               `json:"has_active_lease"`
-	HasActiveProcess       bool               `json:"has_active_process"`
-}
-
-func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockWorkspaceAdmissionAuthorityParams) (LockWorkspaceAdmissionAuthorityRow, error) {
-	row := q.db.QueryRow(ctx, lockWorkspaceAdmissionAuthority, arg.EnvironmentID, arg.ID)
-	var i LockWorkspaceAdmissionAuthorityRow
+func (q *Queries) LockComputer(ctx context.Context, arg LockComputerParams) (Computer, error) {
+	row := q.db.QueryRow(ctx, lockComputer, arg.EnvironmentID, arg.ID)
+	var i Computer
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
 		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -797,108 +734,220 @@ func (q *Queries) LockWorkspaceAdmissionAuthority(ctx context.Context, arg LockW
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.HasActiveLease,
-		&i.HasActiveProcess,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
 	)
 	return i, err
 }
 
-const lockWorkspaceForDelete = `-- name: LockWorkspaceForDelete :one
-SELECT computers.id,
-       computers.environment_id,
-       computers.region_id,
-       computers.sandbox_declared_id,
-       computers.deployment_definition_id,
-       computers.key,
-       computers.revision,
-       computers.owner_session_id,
-       computers.owner_run_id,
-       computers.ownership_generation,
-       computers.writer_generation,
-       computers.head_version_id,
-       computers.status,
-       computers.desired_state,
-       computers.dirty_state,
-       computers.last_activity_at,
-       computers.created_at,
-       computers.updated_at,
-       computers.deleted_at,
-       EXISTS (
-           SELECT 1
-             FROM workspace_leases
-            WHERE workspace_leases.workspace_id = computers.id
-              AND workspace_leases.status IN ('active', 'releasing')
-       ) AS has_active_lease,
-       EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = computers.id
-              AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS has_active_process
-  FROM computers
-  JOIN environments ON environments.id = computers.environment_id
- WHERE environments.org_id = $1
-   AND environments.project_id = $2
-   AND computers.environment_id = $3
-   AND computers.id = $4
-   AND computers.status <> 'deleted'
- FOR UPDATE OF computers
+const lockComputerAdmissionAuthority = `-- name: LockComputerAdmissionAuthority :one
+SELECT computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required,environments.org_id,environments.project_id
+FROM computers JOIN environments ON environments.id=computers.environment_id
+JOIN computer_disk_versions head ON head.computer_id=computers.id
+ AND head.id=computers.head_disk_version_id AND head.status IN ('initializing','committed')
+WHERE computers.environment_id=$1 AND computers.id=$2
+FOR UPDATE OF computers
 `
 
-type LockWorkspaceForDeleteParams struct {
+type LockComputerAdmissionAuthorityParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+type LockComputerAdmissionAuthorityRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	RegionID                     string             `json:"region_id"`
+	SandboxDeclaredID            pgtype.Text        `json:"sandbox_declared_id"`
+	Key                          pgtype.Text        `json:"key"`
+	Revision                     int64              `json:"revision"`
+	WriterGeneration             int64              `json:"writer_generation"`
+	HeadDiskVersionID            pgtype.UUID        `json:"head_disk_version_id"`
+	RecoveryID                   pgtype.UUID        `json:"recovery_id"`
+	RecoveryDiskVersionID        pgtype.UUID        `json:"recovery_disk_version_id"`
+	RecoveryReason               pgtype.Text        `json:"recovery_reason"`
+	RecoveryStartedAt            pgtype.Timestamptz `json:"recovery_started_at"`
+	PreparationAttemptCount      int32              `json:"preparation_attempt_count"`
+	NextPreparationAt            pgtype.Timestamptz `json:"next_preparation_at"`
+	PreparationInstanceID        pgtype.UUID        `json:"preparation_instance_id"`
+	RecoveryCompletedAt          pgtype.Timestamptz `json:"recovery_completed_at"`
+	RecoveryFailure              []byte             `json:"recovery_failure"`
+	ComputerPayloadRequired      pgtype.Bool        `json:"computer_payload_required"`
+	RecoveryPayloadRequired      pgtype.Bool        `json:"recovery_payload_required"`
+	PreparationFailure           []byte             `json:"preparation_failure"`
+	InitialConfig                []byte             `json:"initial_config"`
+	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
+	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
+	Status                       string             `json:"status"`
+	DesiredState                 string             `json:"desired_state"`
+	DirtyState                   string             `json:"dirty_state"`
+	LastActivityAt               pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt                    pgtype.Timestamptz `json:"deleted_at"`
+	SecretCaCertificate          []byte             `json:"secret_ca_certificate"`
+	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
+	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
+	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
+	ComputerSpecID               pgtype.UUID        `json:"computer_spec_id"`
+	CreationDeploymentID         pgtype.UUID        `json:"creation_deployment_id"`
+	SpecRetentionRequired        pgtype.Bool        `json:"spec_retention_required"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+}
+
+// Admission and logical membership changes serialize on the Computer. Physical
+// admission additionally locks its current instance and validates its program.
+func (q *Queries) LockComputerAdmissionAuthority(ctx context.Context, arg LockComputerAdmissionAuthorityParams) (LockComputerAdmissionAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockComputerAdmissionAuthority, arg.EnvironmentID, arg.ID)
+	var i LockComputerAdmissionAuthorityRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.SandboxDeclaredID,
+		&i.Key,
+		&i.Revision,
+		&i.WriterGeneration,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
+		&i.Status,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
+		&i.OrgID,
+		&i.ProjectID,
+	)
+	return i, err
+}
+
+const lockComputerForDelete = `-- name: LockComputerForDelete :one
+SELECT computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required,
+ EXISTS(SELECT 1 FROM computer_instances i WHERE i.computer_id=computers.id
+         AND i.reclaimed_at IS NULL) AS has_instance,
+ (EXISTS(SELECT 1 FROM sessions s WHERE s.computer_id=computers.id AND s.status IN ('open','closing'))
+ OR EXISTS(SELECT 1 FROM runs r WHERE r.computer_id=computers.id
+            AND r.status IN ('queued','running','waiting','retry_delayed','cancel_requested'))
+ OR EXISTS(SELECT 1 FROM run_leases l WHERE l.computer_id=computers.id AND l.process_reconciled_at IS NULL)
+ OR EXISTS(SELECT 1 FROM computer_commands c WHERE c.computer_id=computers.id
+            AND (c.terminal_at IS NULL OR (c.computer_instance_id IS NOT NULL AND c.process_reconciled_at IS NULL)))) AS has_members
+FROM computers JOIN environments e ON e.id=computers.environment_id
+WHERE e.org_id=$1 AND e.project_id=$2
+ AND computers.environment_id=$3 AND computers.id=$4
+
+FOR UPDATE OF computers
+`
+
+type LockComputerForDeleteParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-type LockWorkspaceForDeleteRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-	HasActiveLease         bool               `json:"has_active_lease"`
-	HasActiveProcess       bool               `json:"has_active_process"`
+type LockComputerForDeleteRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	RegionID                     string             `json:"region_id"`
+	SandboxDeclaredID            pgtype.Text        `json:"sandbox_declared_id"`
+	Key                          pgtype.Text        `json:"key"`
+	Revision                     int64              `json:"revision"`
+	WriterGeneration             int64              `json:"writer_generation"`
+	HeadDiskVersionID            pgtype.UUID        `json:"head_disk_version_id"`
+	RecoveryID                   pgtype.UUID        `json:"recovery_id"`
+	RecoveryDiskVersionID        pgtype.UUID        `json:"recovery_disk_version_id"`
+	RecoveryReason               pgtype.Text        `json:"recovery_reason"`
+	RecoveryStartedAt            pgtype.Timestamptz `json:"recovery_started_at"`
+	PreparationAttemptCount      int32              `json:"preparation_attempt_count"`
+	NextPreparationAt            pgtype.Timestamptz `json:"next_preparation_at"`
+	PreparationInstanceID        pgtype.UUID        `json:"preparation_instance_id"`
+	RecoveryCompletedAt          pgtype.Timestamptz `json:"recovery_completed_at"`
+	RecoveryFailure              []byte             `json:"recovery_failure"`
+	ComputerPayloadRequired      pgtype.Bool        `json:"computer_payload_required"`
+	RecoveryPayloadRequired      pgtype.Bool        `json:"recovery_payload_required"`
+	PreparationFailure           []byte             `json:"preparation_failure"`
+	InitialConfig                []byte             `json:"initial_config"`
+	WriteKeyID                   pgtype.UUID        `json:"write_key_id"`
+	WriteKeyAvailable            pgtype.Bool        `json:"write_key_available"`
+	Status                       string             `json:"status"`
+	DesiredState                 string             `json:"desired_state"`
+	DirtyState                   string             `json:"dirty_state"`
+	LastActivityAt               pgtype.Timestamptz `json:"last_activity_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt                    pgtype.Timestamptz `json:"deleted_at"`
+	SecretCaCertificate          []byte             `json:"secret_ca_certificate"`
+	SecretCaPrivateKeyNonce      []byte             `json:"secret_ca_private_key_nonce"`
+	SecretCaPrivateKeyCiphertext []byte             `json:"secret_ca_private_key_ciphertext"`
+	SecretCaNotAfter             pgtype.Timestamptz `json:"secret_ca_not_after"`
+	ComputerSpecID               pgtype.UUID        `json:"computer_spec_id"`
+	CreationDeploymentID         pgtype.UUID        `json:"creation_deployment_id"`
+	SpecRetentionRequired        pgtype.Bool        `json:"spec_retention_required"`
+	HasInstance                  bool               `json:"has_instance"`
+	HasMembers                   pgtype.Bool        `json:"has_members"`
 }
 
-func (q *Queries) LockWorkspaceForDelete(ctx context.Context, arg LockWorkspaceForDeleteParams) (LockWorkspaceForDeleteRow, error) {
-	row := q.db.QueryRow(ctx, lockWorkspaceForDelete,
+func (q *Queries) LockComputerForDelete(ctx context.Context, arg LockComputerForDeleteParams) (LockComputerForDeleteRow, error) {
+	row := q.db.QueryRow(ctx, lockComputerForDelete,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
 	)
-	var i LockWorkspaceForDeleteRow
+	var i LockComputerForDeleteRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
 		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -906,73 +955,69 @@ func (q *Queries) LockWorkspaceForDelete(ctx context.Context, arg LockWorkspaceF
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
-		&i.HasActiveLease,
-		&i.HasActiveProcess,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
+		&i.HasInstance,
+		&i.HasMembers,
 	)
 	return i, err
 }
 
-const markWorkspaceDeleting = `-- name: MarkWorkspaceDeleting :one
-UPDATE computers
-   SET status = 'deleting',
-       desired_state = 'deleted',
-       -- Explicit deletion discards lost dirty state; it does not recover a version.
-       dirty_state = CASE WHEN dirty_state = 'dirty_state_lost' THEN 'clean' ELSE dirty_state END,
-       revision = revision + 1,
-       updated_at = now()
- WHERE environment_id = $1
-   AND id = $2
-   AND revision = $3
-   AND status IN ('active', 'recovery_required')
-   AND owner_session_id IS NULL
-   AND owner_run_id IS NULL
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
+const markComputerDeleting = `-- name: MarkComputerDeleting :one
+UPDATE computers SET status='deleting',desired_state='deleted',
+ dirty_state=CASE WHEN dirty_state='dirty_state_lost' THEN 'clean' ELSE dirty_state END,
+ revision=revision+1,updated_at=clock_timestamp()
+WHERE computers.environment_id=$1 AND computers.id=$2
+ AND computers.revision=$3 AND computers.status IN ('active','recovery_required')
+ AND NOT EXISTS(SELECT 1 FROM sessions s WHERE s.computer_id=computers.id AND s.status IN ('open','closing'))
+ AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.computer_id=computers.id
+                 AND r.status IN ('queued','running','waiting','retry_delayed','cancel_requested'))
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.computer_id=computers.id AND l.process_reconciled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM computer_commands c WHERE c.computer_id=computers.id
+                 AND (c.terminal_at IS NULL OR (c.computer_instance_id IS NOT NULL AND c.process_reconciled_at IS NULL)))
+RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.key, computers.revision, computers.writer_generation, computers.head_disk_version_id, computers.recovery_id, computers.recovery_disk_version_id, computers.recovery_reason, computers.recovery_started_at, computers.preparation_attempt_count, computers.next_preparation_at, computers.preparation_instance_id, computers.recovery_completed_at, computers.recovery_failure, computers.computer_payload_required, computers.recovery_payload_required, computers.preparation_failure, computers.initial_config, computers.write_key_id, computers.write_key_available, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at, computers.secret_ca_certificate, computers.secret_ca_private_key_nonce, computers.secret_ca_private_key_ciphertext, computers.secret_ca_not_after, computers.computer_spec_id, computers.creation_deployment_id, computers.spec_retention_required
 `
 
-type MarkWorkspaceDeletingParams struct {
+type MarkComputerDeletingParams struct {
 	EnvironmentID    pgtype.UUID `json:"environment_id"`
 	ID               pgtype.UUID `json:"id"`
 	ExpectedRevision int64       `json:"expected_revision"`
 }
 
-type MarkWorkspaceDeletingRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDeletingParams) (MarkWorkspaceDeletingRow, error) {
-	row := q.db.QueryRow(ctx, markWorkspaceDeleting, arg.EnvironmentID, arg.ID, arg.ExpectedRevision)
-	var i MarkWorkspaceDeletingRow
+// Physical close and reclaim follow this desired state. Logical members must be
+// settled first; an unreclaimed idle instance does not prevent requesting delete.
+func (q *Queries) MarkComputerDeleting(ctx context.Context, arg MarkComputerDeletingParams) (Computer, error) {
+	row := q.db.QueryRow(ctx, markComputerDeleting, arg.EnvironmentID, arg.ID, arg.ExpectedRevision)
+	var i Computer
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
 		&i.RegionID,
 		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
 		&i.Key,
 		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.HeadVersionID,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
 		&i.Status,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -980,202 +1025,19 @@ func (q *Queries) MarkWorkspaceDeleting(ctx context.Context, arg MarkWorkspaceDe
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
 	)
 	return i, err
 }
 
-const reserveWorkspaceForActor = `-- name: ReserveWorkspaceForActor :one
-UPDATE computers
-   SET owner_session_id = $1,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       desired_state = 'active',
-       last_activity_at = now(),
-       updated_at = now()
- WHERE computers.environment_id = $2
-   AND computers.id = $3
-   AND computers.revision = $4
-   AND computers.head_version_id = $5
-   AND computers.status = 'active'
-   AND computers.desired_state IN ('active', 'stopped')
-   AND computers.dirty_state = 'clean'
-   AND computers.owner_session_id IS NULL
-   AND computers.owner_run_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_leases
-        WHERE workspace_leases.workspace_id = computers.id
-          AND workspace_leases.status IN ('active', 'releasing')
-   )
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_processes
-        WHERE workspace_processes.workspace_id = computers.id
-          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-   )
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
-`
-
-type ReserveWorkspaceForActorParams struct {
-	SessionID             pgtype.UUID `json:"session_id"`
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	ID                    pgtype.UUID `json:"id"`
-	ExpectedRevision      int64       `json:"expected_revision"`
-	ExpectedHeadVersionID pgtype.UUID `json:"expected_head_version_id"`
-}
-
-type ReserveWorkspaceForActorRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) ReserveWorkspaceForActor(ctx context.Context, arg ReserveWorkspaceForActorParams) (ReserveWorkspaceForActorRow, error) {
-	row := q.db.QueryRow(ctx, reserveWorkspaceForActor,
-		arg.SessionID,
-		arg.EnvironmentID,
-		arg.ID,
-		arg.ExpectedRevision,
-		arg.ExpectedHeadVersionID,
-	)
-	var i ReserveWorkspaceForActorRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const reserveWorkspaceForRun = `-- name: ReserveWorkspaceForRun :one
-UPDATE computers
-   SET owner_run_id = $1,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       desired_state = 'active',
-       last_activity_at = now(),
-       updated_at = now()
- WHERE computers.environment_id = $2
-   AND computers.id = $3
-   AND computers.revision = $4
-   AND computers.head_version_id = $5
-   AND computers.status = 'active'
-   AND computers.desired_state IN ('active', 'stopped')
-   AND computers.dirty_state = 'clean'
-   AND computers.owner_session_id IS NULL
-   AND computers.owner_run_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_leases
-        WHERE workspace_leases.workspace_id = computers.id
-          AND workspace_leases.status IN ('active', 'releasing')
-   )
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_processes
-        WHERE workspace_processes.workspace_id = computers.id
-          AND workspace_processes.status IN ('pending', 'starting', 'running', 'exit_requested')
-   )
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
-`
-
-type ReserveWorkspaceForRunParams struct {
-	RunID                 pgtype.UUID `json:"run_id"`
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	ID                    pgtype.UUID `json:"id"`
-	ExpectedRevision      int64       `json:"expected_revision"`
-	ExpectedHeadVersionID pgtype.UUID `json:"expected_head_version_id"`
-}
-
-type ReserveWorkspaceForRunRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (ReserveWorkspaceForRunRow, error) {
-	row := q.db.QueryRow(ctx, reserveWorkspaceForRun,
-		arg.RunID,
-		arg.EnvironmentID,
-		arg.ID,
-		arg.ExpectedRevision,
-		arg.ExpectedHeadVersionID,
-	)
-	var i ReserveWorkspaceForRunRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const resolveCurrentWorkspaceDefinitionForCreate = `-- name: ResolveCurrentWorkspaceDefinitionForCreate :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
+const resolveCurrentComputerDefinitionForCreate = `-- name: ResolveCurrentComputerDefinitionForCreate :one
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.created_at, deployment_definitions.computer_spec_id
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -1189,13 +1051,13 @@ SELECT deployment_definitions.id, deployment_definitions.environment_id, deploym
  LIMIT 1
 `
 
-type ResolveCurrentWorkspaceDefinitionForCreateParams struct {
+type ResolveCurrentComputerDefinitionForCreateParams struct {
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	SandboxDeclaredID string      `json:"sandbox_declared_id"`
 }
 
-func (q *Queries) ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveCurrentWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error) {
-	row := q.db.QueryRow(ctx, resolveCurrentWorkspaceDefinitionForCreate, arg.EnvironmentID, arg.SandboxDeclaredID)
+func (q *Queries) ResolveCurrentComputerDefinitionForCreate(ctx context.Context, arg ResolveCurrentComputerDefinitionForCreateParams) (DeploymentDefinition, error) {
+	row := q.db.QueryRow(ctx, resolveCurrentComputerDefinitionForCreate, arg.EnvironmentID, arg.SandboxDeclaredID)
 	var i DeploymentDefinition
 	err := row.Scan(
 		&i.ID,
@@ -1206,14 +1068,14 @@ func (q *Queries) ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.ArtifactID,
 		&i.CreatedAt,
+		&i.ComputerSpecID,
 	)
 	return i, err
 }
 
-const resolveRunPinnedWorkspaceDefinitionForCreate = `-- name: ResolveRunPinnedWorkspaceDefinitionForCreate :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
+const resolveRunPinnedComputerDefinitionForCreate = `-- name: ResolveRunPinnedComputerDefinitionForCreate :one
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.created_at, deployment_definitions.computer_spec_id
   FROM runs
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runs.environment_id
@@ -1226,14 +1088,14 @@ SELECT deployment_definitions.id, deployment_definitions.environment_id, deploym
  LIMIT 1
 `
 
-type ResolveRunPinnedWorkspaceDefinitionForCreateParams struct {
+type ResolveRunPinnedComputerDefinitionForCreateParams struct {
 	SandboxDeclaredID string      `json:"sandbox_declared_id"`
 	EnvironmentID     pgtype.UUID `json:"environment_id"`
 	RunID             pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error) {
-	row := q.db.QueryRow(ctx, resolveRunPinnedWorkspaceDefinitionForCreate, arg.SandboxDeclaredID, arg.EnvironmentID, arg.RunID)
+func (q *Queries) ResolveRunPinnedComputerDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedComputerDefinitionForCreateParams) (DeploymentDefinition, error) {
+	row := q.db.QueryRow(ctx, resolveRunPinnedComputerDefinitionForCreate, arg.SandboxDeclaredID, arg.EnvironmentID, arg.RunID)
 	var i DeploymentDefinition
 	err := row.Scan(
 		&i.ID,
@@ -1244,8 +1106,69 @@ func (q *Queries) ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Conte
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.ArtifactID,
 		&i.CreatedAt,
+		&i.ComputerSpecID,
+	)
+	return i, err
+}
+
+const touchComputerForAdmission = `-- name: TouchComputerForAdmission :one
+UPDATE computers SET desired_state='active',revision=revision+1,
+ last_activity_at=clock_timestamp(),updated_at=clock_timestamp()
+WHERE computers.environment_id=$1 AND computers.id=$2
+ AND revision=$3 AND status='active' AND deleted_at IS NULL
+ AND dirty_state NOT IN ('capture_failed','dirty_state_lost')
+ AND preparation_failure IS NULL AND recovery_failure IS NULL
+RETURNING id, environment_id, region_id, sandbox_declared_id, key, revision, writer_generation, head_disk_version_id, recovery_id, recovery_disk_version_id, recovery_reason, recovery_started_at, preparation_attempt_count, next_preparation_at, preparation_instance_id, recovery_completed_at, recovery_failure, computer_payload_required, recovery_payload_required, preparation_failure, initial_config, write_key_id, write_key_available, status, desired_state, dirty_state, last_activity_at, created_at, updated_at, deleted_at, secret_ca_certificate, secret_ca_private_key_nonce, secret_ca_private_key_ciphertext, secret_ca_not_after, computer_spec_id, creation_deployment_id, spec_retention_required
+`
+
+type TouchComputerForAdmissionParams struct {
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	ID               pgtype.UUID `json:"id"`
+	ExpectedRevision int64       `json:"expected_revision"`
+}
+
+func (q *Queries) TouchComputerForAdmission(ctx context.Context, arg TouchComputerForAdmissionParams) (Computer, error) {
+	row := q.db.QueryRow(ctx, touchComputerForAdmission, arg.EnvironmentID, arg.ID, arg.ExpectedRevision)
+	var i Computer
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.SandboxDeclaredID,
+		&i.Key,
+		&i.Revision,
+		&i.WriterGeneration,
+		&i.HeadDiskVersionID,
+		&i.RecoveryID,
+		&i.RecoveryDiskVersionID,
+		&i.RecoveryReason,
+		&i.RecoveryStartedAt,
+		&i.PreparationAttemptCount,
+		&i.NextPreparationAt,
+		&i.PreparationInstanceID,
+		&i.RecoveryCompletedAt,
+		&i.RecoveryFailure,
+		&i.ComputerPayloadRequired,
+		&i.RecoveryPayloadRequired,
+		&i.PreparationFailure,
+		&i.InitialConfig,
+		&i.WriteKeyID,
+		&i.WriteKeyAvailable,
+		&i.Status,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.SecretCaCertificate,
+		&i.SecretCaPrivateKeyNonce,
+		&i.SecretCaPrivateKeyCiphertext,
+		&i.SecretCaNotAfter,
+		&i.ComputerSpecID,
+		&i.CreationDeploymentID,
+		&i.SpecRetentionRequired,
 	)
 	return i, err
 }

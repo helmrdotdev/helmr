@@ -1,23 +1,23 @@
 import { verify, assert, assertEqual, waitRun, deadline } from "../../support/context"
 import type { timerSmoke } from "../timer/task"
 await verify("run-cancel", async ({ client, marker, objects, cleanup }) => {
-  const timerWorkspace = await client.sandboxes.createWorkspace(
+  const timerComputer = await client.sandboxes.createComputer(
     "helmr-timer-smoke",
     {
       key: `cancel-${marker}`,
-      idempotencyKey: `timer-workspace:create:${marker}`,
+      idempotencyKey: `timer-computer:create:${marker}`,
     },
     { signal: AbortSignal.timeout(10 * 60_000) },
   )
-  objects.workspace_ids.push(timerWorkspace.id)
+  objects.computer_ids.push(timerComputer.id)
   cleanup(() =>
-    timerWorkspace.delete({ idempotencyKey: `delete:${marker}` }, { signal: deadline(30_000) }),
+    timerComputer.delete({ idempotencyKey: `delete:${marker}` }, { signal: deadline(30_000) }),
   )
   const cancellable = await client.tasks.start<typeof timerSmoke>(
     "timer-smoke",
     {
       payload: { marker: `cancel-${marker}`, waitFor: "2m" },
-      workspace: timerWorkspace,
+      computer: timerComputer,
       idempotencyKey: `timer:start:${marker}`,
     },
     { signal: AbortSignal.timeout(30_000) },

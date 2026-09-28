@@ -32945,7 +32945,7 @@ function normalizeBuild(value2) {
   const builderValue = descriptors["builder"]?.value;
   if (builderValue !== void 0 && !isBuilder(builderValue)) {
     throw new Error(
-      "config build.builder must be created by builder(); image() describes a Workspace image, not the build environment"
+      "config build.builder must be created by builder(); image() describes a Computer image, not the build environment"
     );
   }
   const installCommand = descriptors["installCommand"]?.value;
@@ -33177,43 +33177,51 @@ var source = Object.freeze({
   }
 });
 
-// sdk/typescript/src/workspace.ts
-var workspaceAddressBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.workspace-address");
-var workspaces = Object.freeze({
-  ref: createWorkspaceRef
+// sdk/typescript/src/computer.ts
+var computerAddressBrand = /* @__PURE__ */ Symbol.for("helmr.sdk.v0.computer-address");
+function encodeComputerMembersQuery(query) {
+  if (query.cursor !== void 0 && (typeof query.cursor !== "string" || query.cursor.length === 0)) {
+    throw new Error("Computer member cursor must be a nonempty string");
+  }
+  if (query.limit !== void 0 && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
+    throw new Error("Computer member limit must be an integer in [1,100]");
+  }
+  return {
+    ...query.cursor === void 0 ? {} : { cursor: query.cursor },
+    ...query.limit === void 0 ? {} : { limit: query.limit }
+  };
+}
+var computers = Object.freeze({
+  ref: createComputerRef
 });
-function createWorkspaceRef(id) {
-  const workspaceID = resourceID(id, "Workspace ID");
+function createComputerRef(id) {
+  const computerID = resourceID(id, "Computer ID");
   const operations = {
-    retrieve(options) {
-      return currentRuntimeOperations().workspaceRetrieve(
-        workspaceID,
-        options?.signal
-      );
+    members(query = {}, options) {
+      return currentRuntimeOperations().computerMembers(computerID, encodeComputerMembersQuery(query), options?.signal);
     },
-    exec(request, options) {
-      return currentRuntimeOperations().workspaceExec(
-        workspaceID,
-        request,
+    retrieve(options) {
+      return currentRuntimeOperations().computerRetrieve(
+        computerID,
         options?.signal
       );
     },
     delete(request, options) {
-      return currentRuntimeOperations().workspaceDelete(
-        workspaceID,
+      return currentRuntimeOperations().computerDelete(
+        computerID,
         request,
         options?.signal
       );
     }
   };
-  return brandWorkspaceAddress({ id: workspaceID, ...operations });
+  return brandComputerAddress({ id: computerID, ...operations });
 }
-function brandWorkspaceAddress(value2) {
-  resourceID(value2.id, "Workspace ID");
-  return freezeWorkspaceAddress(value2);
+function brandComputerAddress(value2) {
+  resourceID(value2.id, "Computer ID");
+  return freezeComputerAddress(value2);
 }
-function freezeWorkspaceAddress(value2) {
-  Object.defineProperty(value2, workspaceAddressBrand, { value: true });
+function freezeComputerAddress(value2) {
+  Object.defineProperty(value2, computerAddressBrand, { value: true });
   return Object.freeze(value2);
 }
 

@@ -43,7 +43,7 @@ class ProfileTests(unittest.TestCase):
         self.assertNotIn('ExecStart=', files['worker-override.conf'])
         self.assertNotIn('Delegate=', files['worker-override.conf'])
         self.assertEqual(cfg['worker']['CAS_URI'], cfg['control_plane']['CAS_URI'])
-        self.assertEqual(cfg['dispatcher']['WORKSPACE_FENCING_KEY'], cfg['control_plane']['WORKSPACE_FENCING_KEY'])
+        self.assertEqual(cfg['dispatcher']['COMPUTER_FENCING_KEY'], cfg['control_plane']['COMPUTER_FENCING_KEY'])
         self.assertNotEqual(cfg['dispatcher']['CLICKHOUSE_USER'], cfg['control_plane']['CLICKHOUSE_USER'])
 
     def test_rejects_overrides_and_non_s3(self):

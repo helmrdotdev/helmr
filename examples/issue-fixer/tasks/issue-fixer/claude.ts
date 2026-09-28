@@ -37,7 +37,7 @@ export const claudeIssueFixer = actor({
       const stop = () => lifetime.abort()
       turn.signal.addEventListener("abort", stop, { once: true })
       if (turn.signal.aborted) stop()
-      // A fresh process resumes the same native conversation from the Workspace.
+      // A fresh process resumes the same native conversation from the Computer.
       const native = query({
         prompt: prompts,
         options: {

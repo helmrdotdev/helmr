@@ -15,8 +15,8 @@ async function openCreation(page: Page) {
     data: { name, value: "synthetic-browser-only", idempotency_key: crypto.randomUUID() },
   });
   expect(response.ok()).toBeTruthy();
-  await page.goto("/workspaces");
-  await page.getByRole("button", { name: "Create Workspace", exact: true }).click();
+  await page.goto("/computers");
+  await page.getByRole("button", { name: "Create Computer", exact: true }).click();
   return { dialog: page.getByRole("dialog"), name };
 }
 
@@ -46,15 +46,15 @@ test("existing modal creates mixed bindings through real API and preserves typin
   await dialog.getByRole("button", { name: "Add placement" }).click();
   await dialog.getByRole("button", { name: "Remove placement" }).nth(3).click();
   await expect(dialog.getByRole("textbox", { name: "File path" })).toHaveValue("/run/secrets/client.key");
-  const created = page.waitForResponse(r => r.url().includes("/sandboxes/demo-sandbox/workspaces") && r.request().method() === "POST");
+  const created = page.waitForResponse(r => r.url().includes("/sandboxes/demo-sandbox/computers") && r.request().method() === "POST");
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
   const response = await created;
   expect(response.status()).toBe(201);
-  const workspace = await response.json();
-  expect(workspace.secrets).toHaveLength(3);
-  expect(workspace.secrets.find((s: { env?: { mode: string } }) => s.env?.mode === "protected").env.allowed_origins).toEqual(["https://api.github.com"]);
+  const computer = await response.json();
+  expect(computer.secrets).toHaveLength(3);
+  expect(computer.secrets.find((s: { env?: { mode: string } }) => s.env?.mode === "protected").env.allowed_origins).toEqual(["https://api.github.com"]);
   await expect(dialog).toHaveCount(0);
-  await page.goto(`/workspaces/${workspace.id}?project_id=${project}&environment_id=${environment}`);
+  await page.goto(`/computers/${computer.id}?project_id=${project}&environment_id=${environment}`);
   await expect(page.getByText("Protected env", { exact: true })).toBeVisible();
   await expect(page.getByText("Raw env", { exact: true })).toBeVisible();
   await expect(page.getByText("Raw file", { exact: true })).toBeVisible();
@@ -72,26 +72,26 @@ test("invalid targets are rejected and uncertain responses reuse exact request i
   await dialog.getByRole("button", { name: "Add placement" }).click();
   await choose(page, 1, "Raw env");
   await dialog.getByRole("textbox", { name: "Env var name" }).nth(1).fill("TOKEN");
-  const rejected = page.waitForResponse(r => r.url().includes("/sandboxes/demo-sandbox/workspaces") && r.request().method() === "POST");
+  const rejected = page.waitForResponse(r => r.url().includes("/sandboxes/demo-sandbox/computers") && r.request().method() === "POST");
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
   const rejection = await rejected;
   expect(rejection.status()).toBe(400);
   await expect(dialog.getByRole("alert")).toHaveText((await rejection.json()).error.message);
   await dialog.getByRole("button", { name: "Remove placement" }).nth(1).click();
   const bodies: Record<string, unknown>[] = [];
-  let workspaceID = "";
-  await page.route(`**${endpoint}/sandboxes/demo-sandbox/workspaces`, async route => {
+  let computerID = "";
+  await page.route(`**${endpoint}/sandboxes/demo-sandbox/computers`, async route => {
     bodies.push(route.request().postDataJSON());
     const response = await route.fetch();
     expect(response.ok()).toBeTruthy();
     const body = await response.json();
-    if (!workspaceID) workspaceID = body.id;
-    expect(body.id).toBe(workspaceID);
+    if (!computerID) computerID = body.id;
+    expect(body.id).toBe(computerID);
     if (bodies.length === 1) await route.abort("failed");
     else await route.fulfill({ response });
   });
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toHaveText("Workspace creation could not be confirmed. Retry without changing inputs to continue with the same request.");
+  await expect(dialog.getByRole("alert")).toHaveText("Computer creation could not be confirmed. Retry without changing inputs to continue with the same request.");
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(bodies).toHaveLength(2);
@@ -104,12 +104,12 @@ test("editing effective input after an uncertain response uses a new key", async
   await choose(page, 0, "Raw env");
   await dialog.getByRole("textbox", { name: "Env var name" }).fill("FIRST_TOKEN");
   const requests: Record<string, unknown>[] = [];
-  await page.route(`**${endpoint}/sandboxes/demo-sandbox/workspaces`, async route => {
+  await page.route(`**${endpoint}/sandboxes/demo-sandbox/computers`, async route => {
     requests.push(route.request().postDataJSON());
     await route.abort("failed");
   });
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toHaveText("Workspace creation could not be confirmed. Retry without changing inputs to continue with the same request.");
+  await expect(dialog.getByRole("alert")).toHaveText("Computer creation could not be confirmed. Retry without changing inputs to continue with the same request.");
   await dialog.getByRole("textbox", { name: "Env var name" }).fill("SECOND_TOKEN");
   await dialog.getByRole("button", { name: "Create", exact: true }).click();
   await expect.poll(() => requests.length).toBe(2);

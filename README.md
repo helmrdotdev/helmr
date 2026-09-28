@@ -6,12 +6,12 @@ Infrastructure and APIs for your own agent harness.<br>
 Your agents. Your workflows. Your rules.
 
 Write your agent logic in TypeScript, bring your tools and integrations, and
-run it in isolated Linux microVMs. Keep your workspace across runs, pause for
+run it in isolated Linux microVMs. Keep your computer across runs, pause for
 human input, and inspect what happened.
 
 ## What you get
 
-- **Persistent workspaces** — files and dependencies kept across runs.
+- **Persistent computers** — files and dependencies kept across runs.
 - **Tasks and sessions** — one-shot jobs or agents you can steer over time.
 - **Human input** — pause for approval or external input, then continue.
 - **Secrets and visibility** — runtime secret injection, logs, and run history.

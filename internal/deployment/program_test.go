@@ -185,13 +185,13 @@ func testProgramIndex(t *testing.T) ProgramIndex {
 	index, err := buildProgramIndex(
 		plan,
 		testAnalysisDeclarationLocator(),
-		[]BundleWorkspaceImage{{
+		[]BundleComputerImage{{
 			DeclaredID: "repo",
-			Artifact: BundleWorkspaceImageArtifact{
+			Artifact: BundleComputerImageArtifact{
 				Profile:      computer.SeedProfile,
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,
-				MediaType:    WorkspaceImageArtifactMediaType,
+				MediaType:    ComputerImageArtifactMediaType,
 				Architecture: ArchitectureX8664,
 			},
 		}},

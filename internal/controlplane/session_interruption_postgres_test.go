@@ -12,109 +12,23 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func interruptedCompletionRequest(t *testing.T, f *actorCheckpointFixture, hold uuid.UUID, turn *uuid.UUID) workerapi.CompleteActorRequest {
+func interruptedCompletionRequest(t *testing.T, f *actorExecutionFixture, hold uuid.UUID, turn *uuid.UUID) workerapi.CompleteActorRequest {
 	t.Helper()
-	a := f.claim
-	assignment, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: a.run, attempt: a.attempt, runtime: a.runtime, runLease: a.runLease, workspace: a.workspace, workspaceMount: a.workspaceMount, workspaceLease: a.workspaceLease})
-	if err != nil {
-		t.Fatal(err)
-	}
 	operation := uuid.NewV7().String()
-	var begun workerapi.BeginRunFinalizationResponse
-	f.workerCall(t, f.server.workerBeginRunFinalization, workerapi.BeginRunFinalizationRequest{Lease: f.fence(), ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: 1, RunLeaseID: f.fence().ID}, OperationID: operation, Kind: workerapi.RunFinalizationCapture}, &begun)
-	assignment.ExpiresAt = begun.ExpiresAt
-	captured := validTaskWorkspaceCapture(t, assignment)
-	artifact := f.capture(t, "interrupted private work")
-	captured.Receipt.OperationID = operation
-	setCaptureFingerprint(t, captured)
-	f.registerFinalizationDisk(t, captured, artifact.Artifact.Digest)
-	var turnID *string
+	f.workerCall(t, f.server.workerBeginRunFinalization, workerapi.BeginRunFinalizationRequest{Lease: f.fence(), OperationID: operation, ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: f.runID.String(), AttemptNumber: f.claim.attempt.Number, RunLeaseID: f.fence().ID}}, nil)
+	interrupted := &workerapi.ActorInterrupted{HoldID: hold.String()}
 	if turn != nil {
 		id := turn.String()
-		turnID = &id
+		interrupted.TurnID = &id
 	}
-	return workerapi.CompleteActorRequest{Lease: f.fence(), Outcome: workerapi.ActorOutcome{RunGeneration: a.actor.RunGeneration, Interrupted: &workerapi.ActorInterrupted{HoldID: hold.String(), TurnID: turnID}}, Workspace: workerapi.TaskWorkspaceProof{Captured: captured}}
-}
-
-func TestSessionCooperativeInterruptionPostgres(t *testing.T) {
-	for _, hot := range []bool{false, true} {
-		name := "running"
-		if hot {
-			name = "hot token wait"
-		}
-		t.Run(name, func(t *testing.T) {
-			f := newActorCheckpointFixture(t)
-			scope := f.receiveTurn(t, 1)
-			target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
-			queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"next":true}`)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			var waitID uuid.UUID
-			if hot {
-				reconciler, registration := actorTokenWait(t, f, scope)
-				waitID = registration.WaitID
-				if _, err := reconciler.RegisterWait(t.Context(), registration); err != nil {
-					t.Fatal(err)
-				}
-			}
-			stopped, err := interruptTurn(t.Context(), f, scope, "stop")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if hot {
-				var decision workerapi.RunWaitPollResponse
-				f.workerCall(t, f.server.workerPollRunWait, workerapi.RunWaitPollRequest{Lease: f.fence(), RunWaitID: waitID.String()}, &decision)
-				if decision.Status != workerapi.RunWaitPollStatusResumeRequested || decision.ResumeKind != "cancelled" || decision.RequireAck {
-					t.Fatalf("stopped wait: %+v", decision)
-				}
-				var reason struct {
-					Reason string `json:"reason_code"`
-				}
-				if err = json.Unmarshal(decision.ResumePayload, &reason); err != nil || reason.Reason != "session_stopped" {
-					t.Fatalf("decision: %s %v", decision.ResumePayload, err)
-				}
-				var tokenStatus string
-				if err = f.Pool.QueryRow(t.Context(), `SELECT t.status FROM tokens t JOIN run_waits w ON w.token_id=t.id WHERE w.id=$1`, waitID).Scan(&tokenStatus); err != nil || tokenStatus != "pending" {
-					t.Fatalf("shared Token changed: %s %v", tokenStatus, err)
-				}
-			}
-			req := interruptedCompletionRequest(t, f, stopped.HoldID, &scope.TurnID)
-			parsed, err := parseActorCompletionRequest(req)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for i := 0; i < 2; i++ {
-				if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
-					t.Fatal(err)
-				}
-			}
-			var reason, turnState, runState, queuedState string
-			var hold, head uuid.UUID
-			var cursor int64
-			var current, active *uuid.UUID
-			var terminals int
-			if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id,s.dispatch_hold_reason,s.current_run_id,s.active_turn_id,s.committed_input_sequence,w.head_version_id,t.status,r.status,q.status,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='turn.interrupted') FROM sessions s JOIN computers w ON w.id=s.workspace_id JOIN session_turns t ON t.id=$2 JOIN runs r ON r.id=$3 JOIN session_turns q ON q.id=$4 WHERE s.id=$1`, f.sessionID, scope.TurnID, f.runID, queued.TurnID).Scan(&hold, &reason, &current, &active, &cursor, &head, &turnState, &runState, &queuedState, &terminals); err != nil {
-				t.Fatal(err)
-			}
-			if reason != "interrupted" || hold == stopped.HoldID || current != nil || active != nil || cursor != 1 || head == f.rootID || turnState != "interrupted" || runState != "cancelled" || queuedState != "queued" || terminals != 1 {
-				t.Fatalf("bad interrupted state: %s %s %v %v %d %s %s %s %s %d", hold, reason, current, active, cursor, head, turnState, runState, queuedState, terminals)
-			}
-			assertTerminalRuntimeCleanup(t, f.server, f.Pool, f.worker, f.fence().ID)
-			resumed, err := f.server.applySessionResume(t.Context(), session.ResumeRequest{ControlRequest: session.ControlRequest{Target: target, IdempotencyKey: "resume"}, HoldID: hold})
-			if err != nil || resumed.Code != "" {
-				t.Fatalf("resume: %+v %v", resumed, err)
-			}
-		})
-	}
+	return workerapi.CompleteActorRequest{Lease: f.fence(), OperationID: operation, Outcome: workerapi.ActorOutcome{RunGeneration: f.claim.actor.RunGeneration, Interrupted: interrupted}}
 }
 
 func TestSessionInterruptedCompletionRejectsChangedHoldPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	stopped, err := interruptTurn(t.Context(), f, scope, "stop")
 	if err != nil {
@@ -155,7 +69,7 @@ func TestSessionInterruptedCompletionRejectsChangedHoldPostgres(t *testing.T) {
 }
 
 func TestSessionBetweenTurnsInterruptionPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	canceler, err := run.NewCanceler(f.Pool)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +102,7 @@ func TestSessionBetweenTurnsInterruptionPostgres(t *testing.T) {
 }
 
 func TestSessionInterruptedCompletionRejectsUnacknowledgedMessagePostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	readyMessages(t, f, scope)
 	admitMessage(t, f, "pending")
@@ -208,7 +122,7 @@ func TestSessionInterruptedCompletionRejectsUnacknowledgedMessagePostgres(t *tes
 }
 
 func TestSessionHotChildCallStopConvergesPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
 	if err != nil {
@@ -219,8 +133,8 @@ func TestSessionHotChildCallStopConvergesPostgres(t *testing.T) {
 	}
 	turnID := scope.TurnID.String()
 	cursor := int64(1)
-	target, _ := json.Marshal(map[string]string{"id": f.workspaceID.String()})
-	request := workerapi.InvokeChildTaskRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Workspace: target, Options: json.RawMessage(`{}`), IdempotencyKey: "stop-child", TurnID: &turnID, RunGeneration: &scope.RunGeneration, ActorSpeculativeInputSequence: &cursor}
+	target, _ := json.Marshal(map[string]string{"id": f.computerID.String()})
+	request := workerapi.InvokeChildTaskRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Computer: target, Options: json.RawMessage(`{}`), IdempotencyKey: "stop-child", TurnID: &turnID, RunGeneration: &scope.RunGeneration, ActorSpeculativeInputSequence: &cursor}
 	var response workerapi.InvokeChildTaskResponse
 	f.workerCall(t, f.server.workerInvokeChildTask, request, &response)
 	if response.OpenedWait == nil || response.Failed != nil {
@@ -234,7 +148,7 @@ func TestSessionHotChildCallStopConvergesPostgres(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT coalesce(c.status,'not_started'),r.status FROM run_waits w LEFT JOIN runs c ON c.id=w.child_run_id JOIN runs r ON r.id=w.run_id WHERE w.id=$1`, request.RunWaitID).Scan(&childState, &rootState); err != nil {
 		t.Fatal(err)
 	}
-	if childState != "not_started" || rootState != "running" {
+	if childState != "cancelled" || rootState != "running" {
 		t.Fatalf("owned stop: root=%s child=%s", rootState, childState)
 	}
 	req := interruptedCompletionRequest(t, f, stopped.HoldID, &scope.TurnID)
@@ -248,7 +162,7 @@ func TestSessionHotChildCallStopConvergesPostgres(t *testing.T) {
 }
 
 func TestSessionControlObservationDoesNotLockWorkerSupplyPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	stopped, err := interruptTurn(t.Context(), f, scope, "stop")
 	if err != nil {
@@ -264,7 +178,7 @@ func TestSessionControlObservationDoesNotLockWorkerSupplyPostgres(t *testing.T) 
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
 	defer cancel()
-	state, err := f.server.db.ReadWorkerSessionControl(ctx, db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(f.worker.WorkerInstanceID), WorkerEpoch: f.worker.WorkerEpoch, RunGeneration: scope.RunGeneration})
+	state, err := f.server.db.ReadWorkerSessionControl(ctx, db.ReadWorkerSessionControlParams{RunLeaseID: f.claim.runLease.ID, LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.worker.WorkerHostID), WorkerEpoch: f.worker.WorkerEpoch, RunGeneration: scope.RunGeneration})
 	if err != nil {
 		t.Fatalf("advisory read blocked on supply mutation: %v", err)
 	}

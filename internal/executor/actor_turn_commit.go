@@ -46,7 +46,7 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 		return errors.New("turn settlement payload is invalid")
 	}
 	task.mu.Lock()
-	if task.finished || task.finalizingKind != "" {
+	if task.finished {
 		task.mu.Unlock()
 		return errors.New("run lease task cannot commit an actor turn")
 	}

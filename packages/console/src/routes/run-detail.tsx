@@ -275,8 +275,8 @@ export function RunDetail() {
                       </DetailItem>
                     )}
                   </Show>
-                  <DetailItem label="Workspace">
-                    <IDText value={current().workspace_id} mode="link" href={`/workspaces/${current().workspace_id}`} />
+                  <DetailItem label="Computer">
+                    <IDText value={current().computer_id} mode="link" href={`/computers/${current().computer_id}`} />
                   </DetailItem>
                   <DetailItem label="Deployment">
                     <A class="text-console-accent" href={deploymentHref(current().deployment.id)}>{current().deployment.version}</A>

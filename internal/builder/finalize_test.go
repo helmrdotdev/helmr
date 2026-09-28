@@ -84,7 +84,7 @@ func TestFinalizeBundleRejectsStructurallyInvalidProgram(t *testing.T) {
 	}
 }
 
-func TestVerifyFinalObjectRejectsStructurallyInvalidWorkspaceImage(t *testing.T) {
+func TestVerifyFinalObjectRejectsStructurallyInvalidComputerImage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "image.oci.tar")
 	if err := os.WriteFile(path, []byte("not an OCI archive"), 0o600); err != nil {
 		t.Fatal(err)
@@ -94,32 +94,32 @@ func TestVerifyFinalObjectRejectsStructurallyInvalidWorkspaceImage(t *testing.T)
 		path,
 		deployment.BundleObject{
 			Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 18,
-			MediaType: deployment.WorkspaceImageArtifactMediaType,
+			MediaType: deployment.ComputerImageArtifactMediaType,
 		},
 		deployment.ProgramOutput{},
 	)
-	if err == nil || !strings.Contains(err.Error(), "verify finalized workspace image object") {
+	if err == nil || !strings.Contains(err.Error(), "verify finalized computer image object") {
 		t.Fatalf("verifyFinalObject error = %v", err)
 	}
 }
 
-func TestReferencedBundleObjectsDeduplicatesSharedWorkspaceImage(t *testing.T) {
+func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
 	program := deployment.ProgramDescriptor{
 		Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 10,
 		MediaType: deployment.ProgramArtifactMediaType,
 	}
-	image := deployment.BundleWorkspaceImage{
+	image := deployment.BundleComputerImage{
 		DeclaredID: "first",
-		Artifact: deployment.BundleWorkspaceImageArtifact{
+		Artifact: deployment.BundleComputerImageArtifact{
 			Profile:      computer.SeedProfile,
 			Architecture: deployment.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
-			MediaType: deployment.WorkspaceImageArtifactMediaType,
+			MediaType: deployment.ComputerImageArtifactMediaType,
 		},
 	}
 	shared := image
 	shared.DeclaredID = "second"
-	objects, err := referencedBundleObjects(program, []deployment.BundleWorkspaceImage{image, shared})
+	objects, err := referencedBundleObjects(program, []deployment.BundleComputerImage{image, shared})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestReferencedBundleObjectsDeduplicatesSharedWorkspaceImage(t *testing.T) {
 	shared.Artifact.SizeBytes++
 	if _, err := referencedBundleObjects(
 		program,
-		[]deployment.BundleWorkspaceImage{image, shared},
+		[]deployment.BundleComputerImage{image, shared},
 	); err == nil || !strings.Contains(err.Error(), "conflicting reference metadata") {
 		t.Fatalf("referencedBundleObjects error = %v", err)
 	}
@@ -311,15 +311,15 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 			},
 			Index: index,
 		},
-		WorkspaceImages: []deployment.BundleWorkspaceImage{},
-		Objects:         []ObjectSource{{Digest: programDigest, Path: programPath}},
+		ComputerImages: []deployment.BundleComputerImage{},
+		Objects:        []ObjectSource{{Digest: programDigest, Path: programPath}},
 	}
 }
 
 func writeVerifiedProgramFixture(
 	t *testing.T,
 	root string,
-	images ...deployment.BundleWorkspaceImage,
+	images ...deployment.BundleComputerImage,
 ) (string, []byte, deployment.ProgramIndex) {
 	t.Helper()
 	encoder := os.Getenv("HELMR_SQUASHFS_ENCODER")

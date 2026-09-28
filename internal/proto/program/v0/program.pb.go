@@ -22,15 +22,15 @@ const (
 )
 
 type ProgramStart struct {
-	state                  protoimpl.MessageState `protogen:"open.v1"`
-	EntrypointDeclaredId   string                 `protobuf:"bytes,1,opt,name=entrypoint_declared_id,json=entrypointDeclaredId,proto3" json:"entrypoint_declared_id,omitempty"`
-	RunId                  string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
-	AttemptNumber          uint32                 `protobuf:"varint,3,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	Cause                  *RunCause              `protobuf:"bytes,4,opt,name=cause,proto3" json:"cause,omitempty"`
-	DeploymentId           string                 `protobuf:"bytes,5,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	DeploymentVersion      string                 `protobuf:"bytes,6,opt,name=deployment_version,json=deploymentVersion,proto3" json:"deployment_version,omitempty"`
-	WorkspaceId            string                 `protobuf:"bytes,7,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
-	BaseWorkspaceVersionId string                 `protobuf:"bytes,8,opt,name=base_workspace_version_id,json=baseWorkspaceVersionId,proto3" json:"base_workspace_version_id,omitempty"`
+	state                     protoimpl.MessageState `protogen:"open.v1"`
+	EntrypointDeclaredId      string                 `protobuf:"bytes,1,opt,name=entrypoint_declared_id,json=entrypointDeclaredId,proto3" json:"entrypoint_declared_id,omitempty"`
+	RunId                     string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AttemptNumber             uint32                 `protobuf:"varint,3,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	Cause                     *RunCause              `protobuf:"bytes,4,opt,name=cause,proto3" json:"cause,omitempty"`
+	DeploymentId              string                 `protobuf:"bytes,5,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	DeploymentVersion         string                 `protobuf:"bytes,6,opt,name=deployment_version,json=deploymentVersion,proto3" json:"deployment_version,omitempty"`
+	ComputerId                string                 `protobuf:"bytes,7,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
+	BaseComputerDiskVersionId string                 `protobuf:"bytes,8,opt,name=base_computer_disk_version_id,json=baseComputerDiskVersionId,proto3" json:"base_computer_disk_version_id,omitempty"`
 	// Types that are valid to be assigned to Entrypoint:
 	//
 	//	*ProgramStart_Task
@@ -112,16 +112,16 @@ func (x *ProgramStart) GetDeploymentVersion() string {
 	return ""
 }
 
-func (x *ProgramStart) GetWorkspaceId() string {
+func (x *ProgramStart) GetComputerId() string {
 	if x != nil {
-		return x.WorkspaceId
+		return x.ComputerId
 	}
 	return ""
 }
 
-func (x *ProgramStart) GetBaseWorkspaceVersionId() string {
+func (x *ProgramStart) GetBaseComputerDiskVersionId() string {
 	if x != nil {
-		return x.BaseWorkspaceVersionId
+		return x.BaseComputerDiskVersionId
 	}
 	return ""
 }
@@ -1637,10 +1637,9 @@ type RunEvent struct {
 	//	*RunEvent_SessionStatusRequested
 	//	*RunEvent_SessionCloseRequested
 	//	*RunEvent_SessionEventsRequested
-	//	*RunEvent_WorkspaceCreateRequested
-	//	*RunEvent_WorkspaceRetrieveRequested
-	//	*RunEvent_WorkspaceExecRequested
-	//	*RunEvent_WorkspaceDeleteRequested
+	//	*RunEvent_ComputerCreateRequested
+	//	*RunEvent_ComputerRetrieveRequested
+	//	*RunEvent_ComputerDeleteRequested
 	//	*RunEvent_ProgramProcessStartFailed
 	//	*RunEvent_SessionOutputWriteRequested
 	//	*RunEvent_TurnReadyRequested
@@ -1651,6 +1650,7 @@ type RunEvent struct {
 	//	*RunEvent_SessionTurnInterruptRequested
 	//	*RunEvent_SessionResumeRequested
 	//	*RunEvent_SessionCancelRequested
+	//	*RunEvent_ComputerMembersRequested
 	Event         isRunEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1873,37 +1873,28 @@ func (x *RunEvent) GetSessionEventsRequested() *SessionEventsRequested {
 	return nil
 }
 
-func (x *RunEvent) GetWorkspaceCreateRequested() *WorkspaceCreateRequested {
+func (x *RunEvent) GetComputerCreateRequested() *ComputerCreateRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_WorkspaceCreateRequested); ok {
-			return x.WorkspaceCreateRequested
+		if x, ok := x.Event.(*RunEvent_ComputerCreateRequested); ok {
+			return x.ComputerCreateRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetWorkspaceRetrieveRequested() *WorkspaceRetrieveRequested {
+func (x *RunEvent) GetComputerRetrieveRequested() *ComputerRetrieveRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_WorkspaceRetrieveRequested); ok {
-			return x.WorkspaceRetrieveRequested
+		if x, ok := x.Event.(*RunEvent_ComputerRetrieveRequested); ok {
+			return x.ComputerRetrieveRequested
 		}
 	}
 	return nil
 }
 
-func (x *RunEvent) GetWorkspaceExecRequested() *WorkspaceExecRequested {
+func (x *RunEvent) GetComputerDeleteRequested() *ComputerDeleteRequested {
 	if x != nil {
-		if x, ok := x.Event.(*RunEvent_WorkspaceExecRequested); ok {
-			return x.WorkspaceExecRequested
-		}
-	}
-	return nil
-}
-
-func (x *RunEvent) GetWorkspaceDeleteRequested() *WorkspaceDeleteRequested {
-	if x != nil {
-		if x, ok := x.Event.(*RunEvent_WorkspaceDeleteRequested); ok {
-			return x.WorkspaceDeleteRequested
+		if x, ok := x.Event.(*RunEvent_ComputerDeleteRequested); ok {
+			return x.ComputerDeleteRequested
 		}
 	}
 	return nil
@@ -1999,6 +1990,15 @@ func (x *RunEvent) GetSessionCancelRequested() *SessionCancelRequested {
 	return nil
 }
 
+func (x *RunEvent) GetComputerMembersRequested() *ComputerMembersRequested {
+	if x != nil {
+		if x, ok := x.Event.(*RunEvent_ComputerMembersRequested); ok {
+			return x.ComputerMembersRequested
+		}
+	}
+	return nil
+}
+
 type isRunEvent_Event interface {
 	isRunEvent_Event()
 }
@@ -2083,20 +2083,16 @@ type RunEvent_SessionEventsRequested struct {
 	SessionEventsRequested *SessionEventsRequested `protobuf:"bytes,24,opt,name=session_events_requested,json=sessionEventsRequested,proto3,oneof"`
 }
 
-type RunEvent_WorkspaceCreateRequested struct {
-	WorkspaceCreateRequested *WorkspaceCreateRequested `protobuf:"bytes,25,opt,name=workspace_create_requested,json=workspaceCreateRequested,proto3,oneof"`
+type RunEvent_ComputerCreateRequested struct {
+	ComputerCreateRequested *ComputerCreateRequested `protobuf:"bytes,25,opt,name=computer_create_requested,json=computerCreateRequested,proto3,oneof"`
 }
 
-type RunEvent_WorkspaceRetrieveRequested struct {
-	WorkspaceRetrieveRequested *WorkspaceRetrieveRequested `protobuf:"bytes,26,opt,name=workspace_retrieve_requested,json=workspaceRetrieveRequested,proto3,oneof"`
+type RunEvent_ComputerRetrieveRequested struct {
+	ComputerRetrieveRequested *ComputerRetrieveRequested `protobuf:"bytes,26,opt,name=computer_retrieve_requested,json=computerRetrieveRequested,proto3,oneof"`
 }
 
-type RunEvent_WorkspaceExecRequested struct {
-	WorkspaceExecRequested *WorkspaceExecRequested `protobuf:"bytes,30,opt,name=workspace_exec_requested,json=workspaceExecRequested,proto3,oneof"`
-}
-
-type RunEvent_WorkspaceDeleteRequested struct {
-	WorkspaceDeleteRequested *WorkspaceDeleteRequested `protobuf:"bytes,31,opt,name=workspace_delete_requested,json=workspaceDeleteRequested,proto3,oneof"`
+type RunEvent_ComputerDeleteRequested struct {
+	ComputerDeleteRequested *ComputerDeleteRequested `protobuf:"bytes,31,opt,name=computer_delete_requested,json=computerDeleteRequested,proto3,oneof"`
 }
 
 type RunEvent_ProgramProcessStartFailed struct {
@@ -2139,6 +2135,10 @@ type RunEvent_SessionCancelRequested struct {
 	SessionCancelRequested *SessionCancelRequested `protobuf:"bytes,41,opt,name=session_cancel_requested,json=sessionCancelRequested,proto3,oneof"`
 }
 
+type RunEvent_ComputerMembersRequested struct {
+	ComputerMembersRequested *ComputerMembersRequested `protobuf:"bytes,42,opt,name=computer_members_requested,json=computerMembersRequested,proto3,oneof"`
+}
+
 func (*RunEvent_StdoutChunk) isRunEvent_Event() {}
 
 func (*RunEvent_StderrChunk) isRunEvent_Event() {}
@@ -2179,13 +2179,11 @@ func (*RunEvent_SessionCloseRequested) isRunEvent_Event() {}
 
 func (*RunEvent_SessionEventsRequested) isRunEvent_Event() {}
 
-func (*RunEvent_WorkspaceCreateRequested) isRunEvent_Event() {}
+func (*RunEvent_ComputerCreateRequested) isRunEvent_Event() {}
 
-func (*RunEvent_WorkspaceRetrieveRequested) isRunEvent_Event() {}
+func (*RunEvent_ComputerRetrieveRequested) isRunEvent_Event() {}
 
-func (*RunEvent_WorkspaceExecRequested) isRunEvent_Event() {}
-
-func (*RunEvent_WorkspaceDeleteRequested) isRunEvent_Event() {}
+func (*RunEvent_ComputerDeleteRequested) isRunEvent_Event() {}
 
 func (*RunEvent_ProgramProcessStartFailed) isRunEvent_Event() {}
 
@@ -2206,6 +2204,8 @@ func (*RunEvent_SessionTurnInterruptRequested) isRunEvent_Event() {}
 func (*RunEvent_SessionResumeRequested) isRunEvent_Event() {}
 
 func (*RunEvent_SessionCancelRequested) isRunEvent_Event() {}
+
+func (*RunEvent_ComputerMembersRequested) isRunEvent_Event() {}
 
 type TaskOutcome struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -3655,7 +3655,7 @@ type ActorStartRequested struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
 	DeclaredId     string                 `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	WorkspaceId    string                 `protobuf:"bytes,3,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	ComputerId     string                 `protobuf:"bytes,3,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
 	Key            *string                `protobuf:"bytes,5,opt,name=key,proto3,oneof" json:"key,omitempty"`
 	IdempotencyKey *string                `protobuf:"bytes,7,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	RunOptionsJson string                 `protobuf:"bytes,8,opt,name=run_options_json,json=runOptionsJson,proto3" json:"run_options_json,omitempty"`
@@ -3707,9 +3707,9 @@ func (x *ActorStartRequested) GetDeclaredId() string {
 	return ""
 }
 
-func (x *ActorStartRequested) GetWorkspaceId() string {
+func (x *ActorStartRequested) GetComputerId() string {
 	if x != nil {
-		return x.WorkspaceId
+		return x.ComputerId
 	}
 	return ""
 }
@@ -3975,27 +3975,27 @@ func (x *SessionEventsRequested) GetLimit() uint32 {
 	return 0
 }
 
-type WorkspaceAddress struct {
+type ComputerAddress struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	ComputerId    string                 `protobuf:"bytes,1,opt,name=computer_id,json=computerId,proto3" json:"computer_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *WorkspaceAddress) Reset() {
-	*x = WorkspaceAddress{}
+func (x *ComputerAddress) Reset() {
+	*x = ComputerAddress{}
 	mi := &file_program_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WorkspaceAddress) String() string {
+func (x *ComputerAddress) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WorkspaceAddress) ProtoMessage() {}
+func (*ComputerAddress) ProtoMessage() {}
 
-func (x *WorkspaceAddress) ProtoReflect() protoreflect.Message {
+func (x *ComputerAddress) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4007,14 +4007,14 @@ func (x *WorkspaceAddress) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WorkspaceAddress.ProtoReflect.Descriptor instead.
-func (*WorkspaceAddress) Descriptor() ([]byte, []int) {
+// Deprecated: Use ComputerAddress.ProtoReflect.Descriptor instead.
+func (*ComputerAddress) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{51}
 }
 
-func (x *WorkspaceAddress) GetWorkspaceId() string {
+func (x *ComputerAddress) GetComputerId() string {
 	if x != nil {
-		return x.WorkspaceId
+		return x.ComputerId
 	}
 	return ""
 }
@@ -4123,32 +4123,32 @@ func (x *SecretFileBinding) GetPath() string {
 	return ""
 }
 
-type WorkspaceSecretPlacement struct {
+type ComputerSecretPlacement struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Secret string                 `protobuf:"bytes,1,opt,name=secret,proto3" json:"secret,omitempty"`
 	// Types that are valid to be assigned to Placement:
 	//
-	//	*WorkspaceSecretPlacement_Env
-	//	*WorkspaceSecretPlacement_File
-	Placement     isWorkspaceSecretPlacement_Placement `protobuf_oneof:"placement"`
+	//	*ComputerSecretPlacement_Env
+	//	*ComputerSecretPlacement_File
+	Placement     isComputerSecretPlacement_Placement `protobuf_oneof:"placement"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *WorkspaceSecretPlacement) Reset() {
-	*x = WorkspaceSecretPlacement{}
+func (x *ComputerSecretPlacement) Reset() {
+	*x = ComputerSecretPlacement{}
 	mi := &file_program_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WorkspaceSecretPlacement) String() string {
+func (x *ComputerSecretPlacement) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WorkspaceSecretPlacement) ProtoMessage() {}
+func (*ComputerSecretPlacement) ProtoMessage() {}
 
-func (x *WorkspaceSecretPlacement) ProtoReflect() protoreflect.Message {
+func (x *ComputerSecretPlacement) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4160,84 +4160,84 @@ func (x *WorkspaceSecretPlacement) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WorkspaceSecretPlacement.ProtoReflect.Descriptor instead.
-func (*WorkspaceSecretPlacement) Descriptor() ([]byte, []int) {
+// Deprecated: Use ComputerSecretPlacement.ProtoReflect.Descriptor instead.
+func (*ComputerSecretPlacement) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{54}
 }
 
-func (x *WorkspaceSecretPlacement) GetSecret() string {
+func (x *ComputerSecretPlacement) GetSecret() string {
 	if x != nil {
 		return x.Secret
 	}
 	return ""
 }
 
-func (x *WorkspaceSecretPlacement) GetPlacement() isWorkspaceSecretPlacement_Placement {
+func (x *ComputerSecretPlacement) GetPlacement() isComputerSecretPlacement_Placement {
 	if x != nil {
 		return x.Placement
 	}
 	return nil
 }
 
-func (x *WorkspaceSecretPlacement) GetEnv() *SecretEnvBinding {
+func (x *ComputerSecretPlacement) GetEnv() *SecretEnvBinding {
 	if x != nil {
-		if x, ok := x.Placement.(*WorkspaceSecretPlacement_Env); ok {
+		if x, ok := x.Placement.(*ComputerSecretPlacement_Env); ok {
 			return x.Env
 		}
 	}
 	return nil
 }
 
-func (x *WorkspaceSecretPlacement) GetFile() *SecretFileBinding {
+func (x *ComputerSecretPlacement) GetFile() *SecretFileBinding {
 	if x != nil {
-		if x, ok := x.Placement.(*WorkspaceSecretPlacement_File); ok {
+		if x, ok := x.Placement.(*ComputerSecretPlacement_File); ok {
 			return x.File
 		}
 	}
 	return nil
 }
 
-type isWorkspaceSecretPlacement_Placement interface {
-	isWorkspaceSecretPlacement_Placement()
+type isComputerSecretPlacement_Placement interface {
+	isComputerSecretPlacement_Placement()
 }
 
-type WorkspaceSecretPlacement_Env struct {
+type ComputerSecretPlacement_Env struct {
 	Env *SecretEnvBinding `protobuf:"bytes,2,opt,name=env,proto3,oneof"`
 }
 
-type WorkspaceSecretPlacement_File struct {
+type ComputerSecretPlacement_File struct {
 	File *SecretFileBinding `protobuf:"bytes,3,opt,name=file,proto3,oneof"`
 }
 
-func (*WorkspaceSecretPlacement_Env) isWorkspaceSecretPlacement_Placement() {}
+func (*ComputerSecretPlacement_Env) isComputerSecretPlacement_Placement() {}
 
-func (*WorkspaceSecretPlacement_File) isWorkspaceSecretPlacement_Placement() {}
+func (*ComputerSecretPlacement_File) isComputerSecretPlacement_Placement() {}
 
-type WorkspaceCreateRequested struct {
-	state          protoimpl.MessageState      `protogen:"open.v1"`
-	CorrelationId  string                      `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	DeclaredId     string                      `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
-	Key            *string                     `protobuf:"bytes,3,opt,name=key,proto3,oneof" json:"key,omitempty"`
-	Secrets        []*WorkspaceSecretPlacement `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
-	IdempotencyKey *string                     `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
+type ComputerCreateRequested struct {
+	state          protoimpl.MessageState     `protogen:"open.v1"`
+	CorrelationId  string                     `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	DeclaredId     string                     `protobuf:"bytes,2,opt,name=declared_id,json=declaredId,proto3" json:"declared_id,omitempty"`
+	Key            *string                    `protobuf:"bytes,3,opt,name=key,proto3,oneof" json:"key,omitempty"`
+	Secrets        []*ComputerSecretPlacement `protobuf:"bytes,4,rep,name=secrets,proto3" json:"secrets,omitempty"`
+	IdempotencyKey *string                    `protobuf:"bytes,5,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *WorkspaceCreateRequested) Reset() {
-	*x = WorkspaceCreateRequested{}
+func (x *ComputerCreateRequested) Reset() {
+	*x = ComputerCreateRequested{}
 	mi := &file_program_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WorkspaceCreateRequested) String() string {
+func (x *ComputerCreateRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WorkspaceCreateRequested) ProtoMessage() {}
+func (*ComputerCreateRequested) ProtoMessage() {}
 
-func (x *WorkspaceCreateRequested) ProtoReflect() protoreflect.Message {
+func (x *ComputerCreateRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4249,68 +4249,68 @@ func (x *WorkspaceCreateRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WorkspaceCreateRequested.ProtoReflect.Descriptor instead.
-func (*WorkspaceCreateRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use ComputerCreateRequested.ProtoReflect.Descriptor instead.
+func (*ComputerCreateRequested) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{55}
 }
 
-func (x *WorkspaceCreateRequested) GetCorrelationId() string {
+func (x *ComputerCreateRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *WorkspaceCreateRequested) GetDeclaredId() string {
+func (x *ComputerCreateRequested) GetDeclaredId() string {
 	if x != nil {
 		return x.DeclaredId
 	}
 	return ""
 }
 
-func (x *WorkspaceCreateRequested) GetKey() string {
+func (x *ComputerCreateRequested) GetKey() string {
 	if x != nil && x.Key != nil {
 		return *x.Key
 	}
 	return ""
 }
 
-func (x *WorkspaceCreateRequested) GetSecrets() []*WorkspaceSecretPlacement {
+func (x *ComputerCreateRequested) GetSecrets() []*ComputerSecretPlacement {
 	if x != nil {
 		return x.Secrets
 	}
 	return nil
 }
 
-func (x *WorkspaceCreateRequested) GetIdempotencyKey() string {
+func (x *ComputerCreateRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
 	}
 	return ""
 }
 
-type WorkspaceRetrieveRequested struct {
+type ComputerRetrieveRequested struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Workspace     *WorkspaceAddress      `protobuf:"bytes,2,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Computer      *ComputerAddress       `protobuf:"bytes,2,opt,name=computer,proto3" json:"computer,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *WorkspaceRetrieveRequested) Reset() {
-	*x = WorkspaceRetrieveRequested{}
+func (x *ComputerRetrieveRequested) Reset() {
+	*x = ComputerRetrieveRequested{}
 	mi := &file_program_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WorkspaceRetrieveRequested) String() string {
+func (x *ComputerRetrieveRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WorkspaceRetrieveRequested) ProtoMessage() {}
+func (*ComputerRetrieveRequested) ProtoMessage() {}
 
-func (x *WorkspaceRetrieveRequested) ProtoReflect() protoreflect.Message {
+func (x *ComputerRetrieveRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4322,53 +4322,49 @@ func (x *WorkspaceRetrieveRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WorkspaceRetrieveRequested.ProtoReflect.Descriptor instead.
-func (*WorkspaceRetrieveRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use ComputerRetrieveRequested.ProtoReflect.Descriptor instead.
+func (*ComputerRetrieveRequested) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{56}
 }
 
-func (x *WorkspaceRetrieveRequested) GetCorrelationId() string {
+func (x *ComputerRetrieveRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *WorkspaceRetrieveRequested) GetWorkspace() *WorkspaceAddress {
+func (x *ComputerRetrieveRequested) GetComputer() *ComputerAddress {
 	if x != nil {
-		return x.Workspace
+		return x.Computer
 	}
 	return nil
 }
 
-type WorkspaceExecRequested struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Workspace      *WorkspaceAddress      `protobuf:"bytes,2,opt,name=workspace,proto3" json:"workspace,omitempty"`
-	Command        []string               `protobuf:"bytes,3,rep,name=command,proto3" json:"command,omitempty"`
-	Cwd            *string                `protobuf:"bytes,4,opt,name=cwd,proto3,oneof" json:"cwd,omitempty"`
-	Env            map[string]string      `protobuf:"bytes,5,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Stdin          []byte                 `protobuf:"bytes,6,opt,name=stdin,proto3" json:"stdin,omitempty"`
-	TimeoutMs      *uint64                `protobuf:"varint,7,opt,name=timeout_ms,json=timeoutMs,proto3,oneof" json:"timeout_ms,omitempty"`
-	IdempotencyKey string                 `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+type ComputerMembersRequested struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Computer      *ComputerAddress       `protobuf:"bytes,2,opt,name=computer,proto3" json:"computer,omitempty"`
+	Cursor        string                 `protobuf:"bytes,3,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	Limit         int32                  `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
-func (x *WorkspaceExecRequested) Reset() {
-	*x = WorkspaceExecRequested{}
+func (x *ComputerMembersRequested) Reset() {
+	*x = ComputerMembersRequested{}
 	mi := &file_program_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WorkspaceExecRequested) String() string {
+func (x *ComputerMembersRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WorkspaceExecRequested) ProtoMessage() {}
+func (*ComputerMembersRequested) ProtoMessage() {}
 
-func (x *WorkspaceExecRequested) ProtoReflect() protoreflect.Message {
+func (x *ComputerMembersRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4380,90 +4376,62 @@ func (x *WorkspaceExecRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WorkspaceExecRequested.ProtoReflect.Descriptor instead.
-func (*WorkspaceExecRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use ComputerMembersRequested.ProtoReflect.Descriptor instead.
+func (*ComputerMembersRequested) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{57}
 }
 
-func (x *WorkspaceExecRequested) GetCorrelationId() string {
+func (x *ComputerMembersRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *WorkspaceExecRequested) GetWorkspace() *WorkspaceAddress {
+func (x *ComputerMembersRequested) GetComputer() *ComputerAddress {
 	if x != nil {
-		return x.Workspace
+		return x.Computer
 	}
 	return nil
 }
 
-func (x *WorkspaceExecRequested) GetCommand() []string {
+func (x *ComputerMembersRequested) GetCursor() string {
 	if x != nil {
-		return x.Command
-	}
-	return nil
-}
-
-func (x *WorkspaceExecRequested) GetCwd() string {
-	if x != nil && x.Cwd != nil {
-		return *x.Cwd
+		return x.Cursor
 	}
 	return ""
 }
 
-func (x *WorkspaceExecRequested) GetEnv() map[string]string {
+func (x *ComputerMembersRequested) GetLimit() int32 {
 	if x != nil {
-		return x.Env
-	}
-	return nil
-}
-
-func (x *WorkspaceExecRequested) GetStdin() []byte {
-	if x != nil {
-		return x.Stdin
-	}
-	return nil
-}
-
-func (x *WorkspaceExecRequested) GetTimeoutMs() uint64 {
-	if x != nil && x.TimeoutMs != nil {
-		return *x.TimeoutMs
+		return x.Limit
 	}
 	return 0
 }
 
-func (x *WorkspaceExecRequested) GetIdempotencyKey() string {
-	if x != nil {
-		return x.IdempotencyKey
-	}
-	return ""
-}
-
-type WorkspaceDeleteRequested struct {
+type ComputerDeleteRequested struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	CorrelationId  string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Workspace      *WorkspaceAddress      `protobuf:"bytes,2,opt,name=workspace,proto3" json:"workspace,omitempty"`
+	Computer       *ComputerAddress       `protobuf:"bytes,2,opt,name=computer,proto3" json:"computer,omitempty"`
 	IdempotencyKey *string                `protobuf:"bytes,3,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
 
-func (x *WorkspaceDeleteRequested) Reset() {
-	*x = WorkspaceDeleteRequested{}
+func (x *ComputerDeleteRequested) Reset() {
+	*x = ComputerDeleteRequested{}
 	mi := &file_program_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *WorkspaceDeleteRequested) String() string {
+func (x *ComputerDeleteRequested) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*WorkspaceDeleteRequested) ProtoMessage() {}
+func (*ComputerDeleteRequested) ProtoMessage() {}
 
-func (x *WorkspaceDeleteRequested) ProtoReflect() protoreflect.Message {
+func (x *ComputerDeleteRequested) ProtoReflect() protoreflect.Message {
 	mi := &file_program_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -4475,26 +4443,26 @@ func (x *WorkspaceDeleteRequested) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use WorkspaceDeleteRequested.ProtoReflect.Descriptor instead.
-func (*WorkspaceDeleteRequested) Descriptor() ([]byte, []int) {
+// Deprecated: Use ComputerDeleteRequested.ProtoReflect.Descriptor instead.
+func (*ComputerDeleteRequested) Descriptor() ([]byte, []int) {
 	return file_program_proto_rawDescGZIP(), []int{58}
 }
 
-func (x *WorkspaceDeleteRequested) GetCorrelationId() string {
+func (x *ComputerDeleteRequested) GetCorrelationId() string {
 	if x != nil {
 		return x.CorrelationId
 	}
 	return ""
 }
 
-func (x *WorkspaceDeleteRequested) GetWorkspace() *WorkspaceAddress {
+func (x *ComputerDeleteRequested) GetComputer() *ComputerAddress {
 	if x != nil {
-		return x.Workspace
+		return x.Computer
 	}
 	return nil
 }
 
-func (x *WorkspaceDeleteRequested) GetIdempotencyKey() string {
+func (x *ComputerDeleteRequested) GetIdempotencyKey() string {
 	if x != nil && x.IdempotencyKey != nil {
 		return *x.IdempotencyKey
 	}
@@ -4776,7 +4744,7 @@ type TaskChildInvokeRequested struct {
 	Method                        string                 `protobuf:"bytes,3,opt,name=method,proto3" json:"method,omitempty"`
 	PayloadPresent                bool                   `protobuf:"varint,4,opt,name=payload_present,json=payloadPresent,proto3" json:"payload_present,omitempty"`
 	PayloadJson                   *string                `protobuf:"bytes,5,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
-	WorkspaceJson                 string                 `protobuf:"bytes,6,opt,name=workspace_json,json=workspaceJson,proto3" json:"workspace_json,omitempty"`
+	ComputerJson                  string                 `protobuf:"bytes,6,opt,name=computer_json,json=computerJson,proto3" json:"computer_json,omitempty"`
 	OptionsJson                   string                 `protobuf:"bytes,7,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
 	IdempotencyKey                *string                `protobuf:"bytes,8,opt,name=idempotency_key,json=idempotencyKey,proto3,oneof" json:"idempotency_key,omitempty"`
 	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,9,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
@@ -4853,9 +4821,9 @@ func (x *TaskChildInvokeRequested) GetPayloadJson() string {
 	return ""
 }
 
-func (x *TaskChildInvokeRequested) GetWorkspaceJson() string {
+func (x *TaskChildInvokeRequested) GetComputerJson() string {
 	if x != nil {
-		return x.WorkspaceJson
+		return x.ComputerJson
 	}
 	return ""
 }
@@ -5581,16 +5549,17 @@ var File_program_proto protoreflect.FileDescriptor
 
 const file_program_proto_rawDesc = "" +
 	"\n" +
-	"\rprogram.proto\x12\x10helmr.program.v0\"\xdd\x03\n" +
+	"\rprogram.proto\x12\x10helmr.program.v0\"\xe2\x03\n" +
 	"\fProgramStart\x124\n" +
 	"\x16entrypoint_declared_id\x18\x01 \x01(\tR\x14entrypointDeclaredId\x12\x15\n" +
 	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12%\n" +
 	"\x0eattempt_number\x18\x03 \x01(\rR\rattemptNumber\x120\n" +
 	"\x05cause\x18\x04 \x01(\v2\x1a.helmr.program.v0.RunCauseR\x05cause\x12#\n" +
 	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\x12-\n" +
-	"\x12deployment_version\x18\x06 \x01(\tR\x11deploymentVersion\x12!\n" +
-	"\fworkspace_id\x18\a \x01(\tR\vworkspaceId\x129\n" +
-	"\x19base_workspace_version_id\x18\b \x01(\tR\x16baseWorkspaceVersionId\x121\n" +
+	"\x12deployment_version\x18\x06 \x01(\tR\x11deploymentVersion\x12\x1f\n" +
+	"\vcomputer_id\x18\a \x01(\tR\n" +
+	"computerId\x12@\n" +
+	"\x1dbase_computer_disk_version_id\x18\b \x01(\tR\x19baseComputerDiskVersionId\x121\n" +
 	"\x04task\x18\t \x01(\v2\x1b.helmr.program.v0.TaskStartH\x00R\x04task\x124\n" +
 	"\x05actor\x18\n" +
 	" \x01(\v2\x1c.helmr.program.v0.ActorStartH\x00R\x05actorB\f\n" +
@@ -5703,7 +5672,7 @@ const file_program_proto_rawDesc = "" +
 	"\x0eattempt_number\x18\x02 \x01(\rR\rattemptNumber\x12D\n" +
 	"\n" +
 	"entrypoint\x18\x03 \x01(\v2$.helmr.program.v0.EntrypointIdentityR\n" +
-	"entrypoint\"\x82\x1a\n" +
+	"entrypoint\"\xff\x19\n" +
 	"\bRunEvent\x12#\n" +
 	"\fstdout_chunk\x18\x01 \x01(\fH\x00R\vstdoutChunk\x12#\n" +
 	"\fstderr_chunk\x18\x02 \x01(\fH\x00R\vstderrChunk\x12R\n" +
@@ -5724,11 +5693,10 @@ const file_program_proto_rawDesc = "" +
 	"\x15actor_start_requested\x18\x15 \x01(\v2%.helmr.program.v0.ActorStartRequestedH\x00R\x13actorStartRequested\x12d\n" +
 	"\x18session_status_requested\x18\x16 \x01(\v2(.helmr.program.v0.SessionStatusRequestedH\x00R\x16sessionStatusRequested\x12a\n" +
 	"\x17session_close_requested\x18\x17 \x01(\v2'.helmr.program.v0.SessionCloseRequestedH\x00R\x15sessionCloseRequested\x12d\n" +
-	"\x18session_events_requested\x18\x18 \x01(\v2(.helmr.program.v0.SessionEventsRequestedH\x00R\x16sessionEventsRequested\x12j\n" +
-	"\x1aworkspace_create_requested\x18\x19 \x01(\v2*.helmr.program.v0.WorkspaceCreateRequestedH\x00R\x18workspaceCreateRequested\x12p\n" +
-	"\x1cworkspace_retrieve_requested\x18\x1a \x01(\v2,.helmr.program.v0.WorkspaceRetrieveRequestedH\x00R\x1aworkspaceRetrieveRequested\x12d\n" +
-	"\x18workspace_exec_requested\x18\x1e \x01(\v2(.helmr.program.v0.WorkspaceExecRequestedH\x00R\x16workspaceExecRequested\x12j\n" +
-	"\x1aworkspace_delete_requested\x18\x1f \x01(\v2*.helmr.program.v0.WorkspaceDeleteRequestedH\x00R\x18workspaceDeleteRequested\x12n\n" +
+	"\x18session_events_requested\x18\x18 \x01(\v2(.helmr.program.v0.SessionEventsRequestedH\x00R\x16sessionEventsRequested\x12g\n" +
+	"\x19computer_create_requested\x18\x19 \x01(\v2).helmr.program.v0.ComputerCreateRequestedH\x00R\x17computerCreateRequested\x12m\n" +
+	"\x1bcomputer_retrieve_requested\x18\x1a \x01(\v2+.helmr.program.v0.ComputerRetrieveRequestedH\x00R\x19computerRetrieveRequested\x12g\n" +
+	"\x19computer_delete_requested\x18\x1f \x01(\v2).helmr.program.v0.ComputerDeleteRequestedH\x00R\x17computerDeleteRequested\x12n\n" +
 	"\x1cprogram_process_start_failed\x18  \x01(\v2+.helmr.program.v0.ProgramProcessStartFailedH\x00R\x19programProcessStartFailed\x12t\n" +
 	"\x1esession_output_write_requested\x18! \x01(\v2-.helmr.program.v0.SessionOutputWriteRequestedH\x00R\x1bsessionOutputWriteRequested\x12X\n" +
 	"\x14turn_ready_requested\x18\" \x01(\v2$.helmr.program.v0.TurnReadyRequestedH\x00R\x12turnReadyRequested\x12n\n" +
@@ -5738,7 +5706,8 @@ const file_program_proto_rawDesc = "" +
 	"\x1fsession_turn_retrieve_requested\x18& \x01(\v2..helmr.program.v0.SessionTurnRetrieveRequestedH\x00R\x1csessionTurnRetrieveRequested\x12z\n" +
 	" session_turn_interrupt_requested\x18' \x01(\v2/.helmr.program.v0.SessionTurnInterruptRequestedH\x00R\x1dsessionTurnInterruptRequested\x12d\n" +
 	"\x18session_resume_requested\x18( \x01(\v2(.helmr.program.v0.SessionResumeRequestedH\x00R\x16sessionResumeRequested\x12d\n" +
-	"\x18session_cancel_requested\x18) \x01(\v2(.helmr.program.v0.SessionCancelRequestedH\x00R\x16sessionCancelRequestedB\a\n" +
+	"\x18session_cancel_requested\x18) \x01(\v2(.helmr.program.v0.SessionCancelRequestedH\x00R\x16sessionCancelRequested\x12j\n" +
+	"\x1acomputer_members_requested\x18* \x01(\v2*.helmr.program.v0.ComputerMembersRequestedH\x00R\x18computerMembersRequestedB\a\n" +
 	"\x05eventJ\x04\b\x03\x10\x04J\x04\b\t\x10\n" +
 	"J\x04\b\n" +
 	"\x10\vJ\x04\b\x1b\x10\x1cJ\x04\b\x1c\x10\x1dJ\x04\b\x1d\x10\x1e\"\xe2\x01\n" +
@@ -5867,12 +5836,13 @@ const file_program_proto_rawDesc = "" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x17\n" +
 	"\ahold_id\x18\x03 \x01(\tR\x06holdId\x12,\n" +
 	"\x0fidempotency_key\x18\x04 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
-	"\x10_idempotency_key\"\x8b\x02\n" +
+	"\x10_idempotency_key\"\x89\x02\n" +
 	"\x13ActorStartRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
-	"declaredId\x12!\n" +
-	"\fworkspace_id\x18\x03 \x01(\tR\vworkspaceId\x12\x15\n" +
+	"declaredId\x12\x1f\n" +
+	"\vcomputer_id\x18\x03 \x01(\tR\n" +
+	"computerId\x12\x15\n" +
 	"\x03key\x18\x05 \x01(\tH\x00R\x03key\x88\x01\x01\x12,\n" +
 	"\x0fidempotency_key\x18\a \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12(\n" +
 	"\x10run_options_json\x18\b \x01(\tR\x0erunOptionsJsonB\x06\n" +
@@ -5900,50 +5870,41 @@ const file_program_proto_rawDesc = "" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x19\n" +
 	"\x05after\x18\x03 \x01(\x03H\x00R\x05after\x88\x01\x01\x12\x14\n" +
 	"\x05limit\x18\x04 \x01(\rR\x05limitB\b\n" +
-	"\x06_after\"5\n" +
-	"\x10WorkspaceAddress\x12!\n" +
-	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"c\n" +
+	"\x06_after\"2\n" +
+	"\x0fComputerAddress\x12\x1f\n" +
+	"\vcomputer_id\x18\x01 \x01(\tR\n" +
+	"computerId\"c\n" +
 	"\x10SecretEnvBinding\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12'\n" +
 	"\x0fallowed_origins\x18\x03 \x03(\tR\x0eallowedOrigins\"'\n" +
 	"\x11SecretFileBinding\x12\x12\n" +
-	"\x04path\x18\x01 \x01(\tR\x04path\"\xb2\x01\n" +
-	"\x18WorkspaceSecretPlacement\x12\x16\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\"\xb1\x01\n" +
+	"\x17ComputerSecretPlacement\x12\x16\n" +
 	"\x06secret\x18\x01 \x01(\tR\x06secret\x126\n" +
 	"\x03env\x18\x02 \x01(\v2\".helmr.program.v0.SecretEnvBindingH\x00R\x03env\x129\n" +
 	"\x04file\x18\x03 \x01(\v2#.helmr.program.v0.SecretFileBindingH\x00R\x04fileB\v\n" +
-	"\tplacement\"\x89\x02\n" +
-	"\x18WorkspaceCreateRequested\x12%\n" +
+	"\tplacement\"\x87\x02\n" +
+	"\x17ComputerCreateRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
 	"declaredId\x12\x15\n" +
-	"\x03key\x18\x03 \x01(\tH\x00R\x03key\x88\x01\x01\x12D\n" +
-	"\asecrets\x18\x04 \x03(\v2*.helmr.program.v0.WorkspaceSecretPlacementR\asecrets\x12,\n" +
+	"\x03key\x18\x03 \x01(\tH\x00R\x03key\x88\x01\x01\x12C\n" +
+	"\asecrets\x18\x04 \x03(\v2).helmr.program.v0.ComputerSecretPlacementR\asecrets\x12,\n" +
 	"\x0fidempotency_key\x18\x05 \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01B\x06\n" +
 	"\x04_keyB\x12\n" +
-	"\x10_idempotency_key\"\x85\x01\n" +
-	"\x1aWorkspaceRetrieveRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12@\n" +
-	"\tworkspace\x18\x02 \x01(\v2\".helmr.program.v0.WorkspaceAddressR\tworkspace\"\xa9\x03\n" +
-	"\x16WorkspaceExecRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12@\n" +
-	"\tworkspace\x18\x02 \x01(\v2\".helmr.program.v0.WorkspaceAddressR\tworkspace\x12\x18\n" +
-	"\acommand\x18\x03 \x03(\tR\acommand\x12\x15\n" +
-	"\x03cwd\x18\x04 \x01(\tH\x00R\x03cwd\x88\x01\x01\x12C\n" +
-	"\x03env\x18\x05 \x03(\v21.helmr.program.v0.WorkspaceExecRequested.EnvEntryR\x03env\x12\x14\n" +
-	"\x05stdin\x18\x06 \x01(\fR\x05stdin\x12\"\n" +
-	"\n" +
-	"timeout_ms\x18\a \x01(\x04H\x01R\ttimeoutMs\x88\x01\x01\x12'\n" +
-	"\x0fidempotency_key\x18\b \x01(\tR\x0eidempotencyKey\x1a6\n" +
-	"\bEnvEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x06\n" +
-	"\x04_cwdB\r\n" +
-	"\v_timeout_ms\"\xc5\x01\n" +
-	"\x18WorkspaceDeleteRequested\x12%\n" +
-	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12@\n" +
-	"\tworkspace\x18\x02 \x01(\v2\".helmr.program.v0.WorkspaceAddressR\tworkspace\x12,\n" +
+	"\x10_idempotency_key\"\x81\x01\n" +
+	"\x19ComputerRetrieveRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\bcomputer\x18\x02 \x01(\v2!.helmr.program.v0.ComputerAddressR\bcomputer\"\xae\x01\n" +
+	"\x18ComputerMembersRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\bcomputer\x18\x02 \x01(\v2!.helmr.program.v0.ComputerAddressR\bcomputer\x12\x16\n" +
+	"\x06cursor\x18\x03 \x01(\tR\x06cursor\x12\x14\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\"\xc1\x01\n" +
+	"\x17ComputerDeleteRequested\x12%\n" +
+	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12=\n" +
+	"\bcomputer\x18\x02 \x01(\v2!.helmr.program.v0.ComputerAddressR\bcomputer\x12,\n" +
 	"\x0fidempotency_key\x18\x03 \x01(\tH\x00R\x0eidempotencyKey\x88\x01\x01B\x12\n" +
 	"\x10_idempotency_key\"q\n" +
 	"\x0fProgramQuiesced\x12\x15\n" +
@@ -5982,15 +5943,15 @@ const file_program_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x05 \x01(\tH\x02R\fmetadataJson\x88\x01\x01B\r\n" +
 	"\v_timeout_msB\x12\n" +
 	"\x10_idempotency_keyB\x10\n" +
-	"\x0e_metadata_json\"\x91\x05\n" +
+	"\x0e_metadata_json\"\x8f\x05\n" +
 	"\x18TaskChildInvokeRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x1f\n" +
 	"\vdeclared_id\x18\x02 \x01(\tR\n" +
 	"declaredId\x12\x16\n" +
 	"\x06method\x18\x03 \x01(\tR\x06method\x12'\n" +
 	"\x0fpayload_present\x18\x04 \x01(\bR\x0epayloadPresent\x12&\n" +
-	"\fpayload_json\x18\x05 \x01(\tH\x00R\vpayloadJson\x88\x01\x01\x12%\n" +
-	"\x0eworkspace_json\x18\x06 \x01(\tR\rworkspaceJson\x12!\n" +
+	"\fpayload_json\x18\x05 \x01(\tH\x00R\vpayloadJson\x88\x01\x01\x12#\n" +
+	"\rcomputer_json\x18\x06 \x01(\tR\fcomputerJson\x12!\n" +
 	"\foptions_json\x18\a \x01(\tR\voptionsJson\x12,\n" +
 	"\x0fidempotency_key\x18\b \x01(\tH\x01R\x0eidempotencyKey\x88\x01\x01\x12L\n" +
 	" actor_speculative_input_sequence\x18\t \x01(\x03H\x02R\x1dactorSpeculativeInputSequence\x88\x01\x01\x12\x1e\n" +
@@ -6094,7 +6055,7 @@ func file_program_proto_rawDescGZIP() []byte {
 	return file_program_proto_rawDescData
 }
 
-var file_program_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
+var file_program_proto_msgTypes = make([]protoimpl.MessageInfo, 71)
 var file_program_proto_goTypes = []any{
 	(*ProgramStart)(nil),                  // 0: helmr.program.v0.ProgramStart
 	(*TaskStart)(nil),                     // 1: helmr.program.v0.TaskStart
@@ -6147,14 +6108,14 @@ var file_program_proto_goTypes = []any{
 	(*SessionCloseRequested)(nil),         // 48: helmr.program.v0.SessionCloseRequested
 	(*SessionCancelRequested)(nil),        // 49: helmr.program.v0.SessionCancelRequested
 	(*SessionEventsRequested)(nil),        // 50: helmr.program.v0.SessionEventsRequested
-	(*WorkspaceAddress)(nil),              // 51: helmr.program.v0.WorkspaceAddress
+	(*ComputerAddress)(nil),               // 51: helmr.program.v0.ComputerAddress
 	(*SecretEnvBinding)(nil),              // 52: helmr.program.v0.SecretEnvBinding
 	(*SecretFileBinding)(nil),             // 53: helmr.program.v0.SecretFileBinding
-	(*WorkspaceSecretPlacement)(nil),      // 54: helmr.program.v0.WorkspaceSecretPlacement
-	(*WorkspaceCreateRequested)(nil),      // 55: helmr.program.v0.WorkspaceCreateRequested
-	(*WorkspaceRetrieveRequested)(nil),    // 56: helmr.program.v0.WorkspaceRetrieveRequested
-	(*WorkspaceExecRequested)(nil),        // 57: helmr.program.v0.WorkspaceExecRequested
-	(*WorkspaceDeleteRequested)(nil),      // 58: helmr.program.v0.WorkspaceDeleteRequested
+	(*ComputerSecretPlacement)(nil),       // 54: helmr.program.v0.ComputerSecretPlacement
+	(*ComputerCreateRequested)(nil),       // 55: helmr.program.v0.ComputerCreateRequested
+	(*ComputerRetrieveRequested)(nil),     // 56: helmr.program.v0.ComputerRetrieveRequested
+	(*ComputerMembersRequested)(nil),      // 57: helmr.program.v0.ComputerMembersRequested
+	(*ComputerDeleteRequested)(nil),       // 58: helmr.program.v0.ComputerDeleteRequested
 	(*ProgramQuiesced)(nil),               // 59: helmr.program.v0.ProgramQuiesced
 	(*RunWaitRequested)(nil),              // 60: helmr.program.v0.RunWaitRequested
 	(*TokenCreateRequested)(nil),          // 61: helmr.program.v0.TokenCreateRequested
@@ -6167,7 +6128,6 @@ var file_program_proto_goTypes = []any{
 	(*MetadataUpdated)(nil),               // 68: helmr.program.v0.MetadataUpdated
 	(*StructuredLogRequested)(nil),        // 69: helmr.program.v0.StructuredLogRequested
 	nil,                                   // 70: helmr.program.v0.ProgramRunRequest.ProtectedEnvEntry
-	nil,                                   // 71: helmr.program.v0.WorkspaceExecRequested.EnvEntry
 }
 var file_program_proto_depIdxs = []int32{
 	4,  // 0: helmr.program.v0.ProgramStart.cause:type_name -> helmr.program.v0.RunCause
@@ -6207,20 +6167,20 @@ var file_program_proto_depIdxs = []int32{
 	47, // 34: helmr.program.v0.RunEvent.session_status_requested:type_name -> helmr.program.v0.SessionStatusRequested
 	48, // 35: helmr.program.v0.RunEvent.session_close_requested:type_name -> helmr.program.v0.SessionCloseRequested
 	50, // 36: helmr.program.v0.RunEvent.session_events_requested:type_name -> helmr.program.v0.SessionEventsRequested
-	55, // 37: helmr.program.v0.RunEvent.workspace_create_requested:type_name -> helmr.program.v0.WorkspaceCreateRequested
-	56, // 38: helmr.program.v0.RunEvent.workspace_retrieve_requested:type_name -> helmr.program.v0.WorkspaceRetrieveRequested
-	57, // 39: helmr.program.v0.RunEvent.workspace_exec_requested:type_name -> helmr.program.v0.WorkspaceExecRequested
-	58, // 40: helmr.program.v0.RunEvent.workspace_delete_requested:type_name -> helmr.program.v0.WorkspaceDeleteRequested
-	16, // 41: helmr.program.v0.RunEvent.program_process_start_failed:type_name -> helmr.program.v0.ProgramProcessStartFailed
-	41, // 42: helmr.program.v0.RunEvent.session_output_write_requested:type_name -> helmr.program.v0.SessionOutputWriteRequested
-	37, // 43: helmr.program.v0.RunEvent.turn_ready_requested:type_name -> helmr.program.v0.TurnReadyRequested
-	38, // 44: helmr.program.v0.RunEvent.turn_message_claim_requested:type_name -> helmr.program.v0.TurnMessageClaimRequested
-	39, // 45: helmr.program.v0.RunEvent.turn_message_complete_requested:type_name -> helmr.program.v0.TurnMessageCompleteRequested
-	35, // 46: helmr.program.v0.RunEvent.turn_settlement_begin_requested:type_name -> helmr.program.v0.TurnSettlementBeginRequested
-	43, // 47: helmr.program.v0.RunEvent.session_turn_retrieve_requested:type_name -> helmr.program.v0.SessionTurnRetrieveRequested
-	44, // 48: helmr.program.v0.RunEvent.session_turn_interrupt_requested:type_name -> helmr.program.v0.SessionTurnInterruptRequested
-	45, // 49: helmr.program.v0.RunEvent.session_resume_requested:type_name -> helmr.program.v0.SessionResumeRequested
-	49, // 50: helmr.program.v0.RunEvent.session_cancel_requested:type_name -> helmr.program.v0.SessionCancelRequested
+	55, // 37: helmr.program.v0.RunEvent.computer_create_requested:type_name -> helmr.program.v0.ComputerCreateRequested
+	56, // 38: helmr.program.v0.RunEvent.computer_retrieve_requested:type_name -> helmr.program.v0.ComputerRetrieveRequested
+	58, // 39: helmr.program.v0.RunEvent.computer_delete_requested:type_name -> helmr.program.v0.ComputerDeleteRequested
+	16, // 40: helmr.program.v0.RunEvent.program_process_start_failed:type_name -> helmr.program.v0.ProgramProcessStartFailed
+	41, // 41: helmr.program.v0.RunEvent.session_output_write_requested:type_name -> helmr.program.v0.SessionOutputWriteRequested
+	37, // 42: helmr.program.v0.RunEvent.turn_ready_requested:type_name -> helmr.program.v0.TurnReadyRequested
+	38, // 43: helmr.program.v0.RunEvent.turn_message_claim_requested:type_name -> helmr.program.v0.TurnMessageClaimRequested
+	39, // 44: helmr.program.v0.RunEvent.turn_message_complete_requested:type_name -> helmr.program.v0.TurnMessageCompleteRequested
+	35, // 45: helmr.program.v0.RunEvent.turn_settlement_begin_requested:type_name -> helmr.program.v0.TurnSettlementBeginRequested
+	43, // 46: helmr.program.v0.RunEvent.session_turn_retrieve_requested:type_name -> helmr.program.v0.SessionTurnRetrieveRequested
+	44, // 47: helmr.program.v0.RunEvent.session_turn_interrupt_requested:type_name -> helmr.program.v0.SessionTurnInterruptRequested
+	45, // 48: helmr.program.v0.RunEvent.session_resume_requested:type_name -> helmr.program.v0.SessionResumeRequested
+	49, // 49: helmr.program.v0.RunEvent.session_cancel_requested:type_name -> helmr.program.v0.SessionCancelRequested
+	57, // 50: helmr.program.v0.RunEvent.computer_members_requested:type_name -> helmr.program.v0.ComputerMembersRequested
 	25, // 51: helmr.program.v0.TaskOutcome.succeeded:type_name -> helmr.program.v0.TaskSucceeded
 	26, // 52: helmr.program.v0.TaskOutcome.failed:type_name -> helmr.program.v0.TaskFailed
 	27, // 53: helmr.program.v0.TaskOutcome.payload_invalid:type_name -> helmr.program.v0.TaskPayloadInvalid
@@ -6236,22 +6196,21 @@ var file_program_proto_depIdxs = []int32{
 	32, // 63: helmr.program.v0.TurnMessageCompleteRequested.execution:type_name -> helmr.program.v0.TurnExecution
 	32, // 64: helmr.program.v0.TurnOutputWriteRequested.execution:type_name -> helmr.program.v0.TurnExecution
 	31, // 65: helmr.program.v0.SessionOutputWriteRequested.execution:type_name -> helmr.program.v0.SessionExecution
-	52, // 66: helmr.program.v0.WorkspaceSecretPlacement.env:type_name -> helmr.program.v0.SecretEnvBinding
-	53, // 67: helmr.program.v0.WorkspaceSecretPlacement.file:type_name -> helmr.program.v0.SecretFileBinding
-	54, // 68: helmr.program.v0.WorkspaceCreateRequested.secrets:type_name -> helmr.program.v0.WorkspaceSecretPlacement
-	51, // 69: helmr.program.v0.WorkspaceRetrieveRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	51, // 70: helmr.program.v0.WorkspaceExecRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	71, // 71: helmr.program.v0.WorkspaceExecRequested.env:type_name -> helmr.program.v0.WorkspaceExecRequested.EnvEntry
-	51, // 72: helmr.program.v0.WorkspaceDeleteRequested.workspace:type_name -> helmr.program.v0.WorkspaceAddress
-	31, // 73: helmr.program.v0.RunWaitRequested.execution:type_name -> helmr.program.v0.SessionExecution
-	31, // 74: helmr.program.v0.TaskChildInvokeRequested.execution:type_name -> helmr.program.v0.SessionExecution
-	31, // 75: helmr.program.v0.CheckpointPauseRequest.execution:type_name -> helmr.program.v0.SessionExecution
-	31, // 76: helmr.program.v0.ResumeAttach.execution:type_name -> helmr.program.v0.SessionExecution
-	77, // [77:77] is the sub-list for method output_type
-	77, // [77:77] is the sub-list for method input_type
-	77, // [77:77] is the sub-list for extension type_name
-	77, // [77:77] is the sub-list for extension extendee
-	0,  // [0:77] is the sub-list for field type_name
+	52, // 66: helmr.program.v0.ComputerSecretPlacement.env:type_name -> helmr.program.v0.SecretEnvBinding
+	53, // 67: helmr.program.v0.ComputerSecretPlacement.file:type_name -> helmr.program.v0.SecretFileBinding
+	54, // 68: helmr.program.v0.ComputerCreateRequested.secrets:type_name -> helmr.program.v0.ComputerSecretPlacement
+	51, // 69: helmr.program.v0.ComputerRetrieveRequested.computer:type_name -> helmr.program.v0.ComputerAddress
+	51, // 70: helmr.program.v0.ComputerMembersRequested.computer:type_name -> helmr.program.v0.ComputerAddress
+	51, // 71: helmr.program.v0.ComputerDeleteRequested.computer:type_name -> helmr.program.v0.ComputerAddress
+	31, // 72: helmr.program.v0.RunWaitRequested.execution:type_name -> helmr.program.v0.SessionExecution
+	31, // 73: helmr.program.v0.TaskChildInvokeRequested.execution:type_name -> helmr.program.v0.SessionExecution
+	31, // 74: helmr.program.v0.CheckpointPauseRequest.execution:type_name -> helmr.program.v0.SessionExecution
+	31, // 75: helmr.program.v0.ResumeAttach.execution:type_name -> helmr.program.v0.SessionExecution
+	76, // [76:76] is the sub-list for method output_type
+	76, // [76:76] is the sub-list for method input_type
+	76, // [76:76] is the sub-list for extension type_name
+	76, // [76:76] is the sub-list for extension extendee
+	0,  // [0:76] is the sub-list for field type_name
 }
 
 func init() { file_program_proto_init() }
@@ -6312,10 +6271,9 @@ func file_program_proto_init() {
 		(*RunEvent_SessionStatusRequested)(nil),
 		(*RunEvent_SessionCloseRequested)(nil),
 		(*RunEvent_SessionEventsRequested)(nil),
-		(*RunEvent_WorkspaceCreateRequested)(nil),
-		(*RunEvent_WorkspaceRetrieveRequested)(nil),
-		(*RunEvent_WorkspaceExecRequested)(nil),
-		(*RunEvent_WorkspaceDeleteRequested)(nil),
+		(*RunEvent_ComputerCreateRequested)(nil),
+		(*RunEvent_ComputerRetrieveRequested)(nil),
+		(*RunEvent_ComputerDeleteRequested)(nil),
 		(*RunEvent_ProgramProcessStartFailed)(nil),
 		(*RunEvent_SessionOutputWriteRequested)(nil),
 		(*RunEvent_TurnReadyRequested)(nil),
@@ -6326,6 +6284,7 @@ func file_program_proto_init() {
 		(*RunEvent_SessionTurnInterruptRequested)(nil),
 		(*RunEvent_SessionResumeRequested)(nil),
 		(*RunEvent_SessionCancelRequested)(nil),
+		(*RunEvent_ComputerMembersRequested)(nil),
 	}
 	file_program_proto_msgTypes[24].OneofWrappers = []any{
 		(*TaskOutcome_Succeeded)(nil),
@@ -6354,11 +6313,10 @@ func file_program_proto_init() {
 	file_program_proto_msgTypes[49].OneofWrappers = []any{}
 	file_program_proto_msgTypes[50].OneofWrappers = []any{}
 	file_program_proto_msgTypes[54].OneofWrappers = []any{
-		(*WorkspaceSecretPlacement_Env)(nil),
-		(*WorkspaceSecretPlacement_File)(nil),
+		(*ComputerSecretPlacement_Env)(nil),
+		(*ComputerSecretPlacement_File)(nil),
 	}
 	file_program_proto_msgTypes[55].OneofWrappers = []any{}
-	file_program_proto_msgTypes[57].OneofWrappers = []any{}
 	file_program_proto_msgTypes[58].OneofWrappers = []any{}
 	file_program_proto_msgTypes[60].OneofWrappers = []any{}
 	file_program_proto_msgTypes[61].OneofWrappers = []any{}
@@ -6372,7 +6330,7 @@ func file_program_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_program_proto_rawDesc), len(file_program_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   72,
+			NumMessages:   71,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

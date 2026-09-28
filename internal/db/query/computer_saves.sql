@@ -1,150 +1,126 @@
--- The publication owner holds secret, Computer and execution locks and validates
--- live Run/process deadlines before calling these state transitions. These queries
--- do not authenticate Workers or authorize publication of bytes.
--- name: BeginRuntimeComputerSave :one
-UPDATE runtime_instances r
-   SET computer_save_sequence=sqlc.arg(sequence),
-       computer_save_version_id=sqlc.arg(save_id),
-       computer_save_lease_id=sqlc.arg(lease_id),
-       computer_save_base_version_id=sqlc.arg(predecessor_id),
-       updated_at=clock_timestamp()
-  FROM computers c, workspace_leases l, computer_versions v
- WHERE r.id=sqlc.arg(runtime_instance_id)
-   AND r.worker_instance_id=sqlc.arg(worker_instance_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
-   AND r.desired_version=sqlc.arg(desired_version) AND r.desired_state='ready'
-   AND r.observed_state='ready' AND r.reclaimed_at IS NULL
-   AND c.id=r.workspace_id AND c.environment_id=r.environment_id
-   AND c.status='active'
-   AND v.id=c.head_version_id AND v.computer_id=c.id AND v.environment_id=c.environment_id
-   AND v.status='committed'
-   AND l.id=sqlc.arg(lease_id) AND l.workspace_id=c.id AND l.runtime_instance_id=r.id
-   AND l.worker_instance_id=r.worker_instance_id AND l.worker_epoch=r.worker_epoch
-   AND l.ownership_generation=c.ownership_generation AND l.writer_generation=c.writer_generation
-   AND l.status='active' AND l.expires_at>clock_timestamp()
-   AND (
-       (r.computer_save_version_id IS NULL AND r.computer_save_sequence=sqlc.arg(sequence)::bigint-1
-           AND c.head_version_id=sqlc.arg(predecessor_id)
-           AND NOT EXISTS(SELECT 1 FROM computer_versions existing WHERE existing.id=sqlc.arg(save_id)))
-       OR (r.computer_save_sequence=sqlc.arg(sequence) AND r.computer_save_version_id=sqlc.arg(save_id)
-           AND r.computer_save_lease_id=sqlc.arg(lease_id)
-           AND r.computer_save_base_version_id=sqlc.arg(predecessor_id))
-   )
-RETURNING r.computer_save_sequence, r.computer_save_version_id, r.computer_save_lease_id, r.computer_save_base_version_id;
+-- The caller authenticates the Worker and locks the Computer before its instance.
+-- Disk publication belongs to the physical writer, independently of Run lifetimes.
+-- name: BeginComputerInstanceSave :one
+UPDATE computer_instances i
+SET save_sequence=sqlc.arg(sequence),save_disk_version_id=sqlc.arg(save_id),
+    save_base_disk_version_id=sqlc.arg(predecessor_id),updated_at=clock_timestamp()
+FROM computers c,computer_disk_versions v
+WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)
+ AND i.writer_generation=sqlc.arg(writer_generation) AND i.writer_token_hash=sqlc.arg(writer_token_hash)
+ AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
+ AND i.desired_version=sqlc.arg(desired_version) AND i.desired_state='ready'
+ AND i.observed_state='ready' AND i.mount_state='mounted'
+ AND c.id=i.computer_id AND c.environment_id=i.environment_id AND c.status='active'
+ AND c.writer_generation=i.writer_generation
+ AND v.id=c.head_disk_version_id AND v.computer_id=c.id AND v.environment_id=c.environment_id
+ AND v.status='committed'
+ AND ((i.save_disk_version_id IS NULL AND i.save_sequence=sqlc.arg(sequence)::bigint-1
+       AND c.head_disk_version_id=sqlc.arg(predecessor_id)
+       AND NOT EXISTS(SELECT 1 FROM computer_disk_versions existing WHERE existing.id=sqlc.arg(save_id)))
+   OR (i.save_sequence=sqlc.arg(sequence) AND i.save_disk_version_id=sqlc.arg(save_id)
+       AND i.save_base_disk_version_id=sqlc.arg(predecessor_id)))
+RETURNING i.save_sequence,i.save_disk_version_id,i.save_base_disk_version_id;
 
--- Abandon only an unpublished operation after its owner has joined producers. Keep the sequence watermark
--- so a delayed admission cannot resurrect a cleared operation.
--- name: AbandonRuntimeComputerSave :execrows
-UPDATE runtime_instances r
-   SET computer_save_version_id=NULL, computer_save_lease_id=NULL,
-       computer_save_base_version_id=NULL, updated_at=clock_timestamp()
- WHERE r.id=sqlc.arg(runtime_instance_id)
-   AND r.worker_instance_id=sqlc.arg(worker_instance_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
-   AND r.computer_save_sequence=sqlc.arg(sequence) AND r.computer_save_version_id=sqlc.arg(save_id)
-   AND r.computer_save_lease_id=sqlc.arg(lease_id)
-   AND NOT EXISTS(SELECT 1 FROM computer_versions v
-       WHERE v.publisher_runtime_instance_id=r.id
-       AND v.publisher_save_sequence=r.computer_save_sequence);
+-- The host joins producers before abandoning an unpublished operation. The
+-- sequence watermark remains, preventing a delayed admission from resurrecting it.
+-- name: AbandonComputerInstanceSave :execrows
+UPDATE computer_instances i
+SET save_disk_version_id=NULL,save_base_disk_version_id=NULL,updated_at=clock_timestamp()
+WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)
+ AND i.writer_generation=sqlc.arg(writer_generation) AND i.writer_token_hash=sqlc.arg(writer_token_hash)
+ AND i.save_sequence=sqlc.arg(sequence) AND i.save_disk_version_id=sqlc.arg(save_id)
+ AND NOT EXISTS(SELECT 1 FROM computer_disk_versions v
+                WHERE v.publisher_computer_instance_id=i.id AND v.publisher_save_sequence=i.save_sequence);
 
--- Replay uses immutable publication facts, not the current head or pending slot.
+-- Immutable receipts remain queryable after lease expiry and physical reclaim.
 -- name: GetWorkerComputerSave :one
-SELECT v.* FROM computer_versions v JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
- WHERE v.id=sqlc.arg(save_id) AND v.publisher_save_sequence=sqlc.arg(sequence)
- AND r.worker_instance_id=sqlc.arg(worker_instance_id)
- AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch);
+SELECT v.* FROM computer_disk_versions v JOIN computer_instances i ON i.id=v.publisher_computer_instance_id
+WHERE v.id=sqlc.arg(save_id) AND v.publisher_save_sequence=sqlc.arg(sequence)
+ AND i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_group_id=sqlc.arg(worker_group_id)
+ AND i.worker_epoch=sqlc.arg(worker_epoch) AND i.writer_generation=sqlc.arg(writer_generation);
 
--- All objects are certified and retained by the exact operation before this
--- transaction. The caller holds Computer/execution/Runtime locks and rechecks
--- deadlines before commit. Pending ownership remains until source adoption.
--- name: PublishRuntimeComputerSave :one
+-- Certified objects and their exact operation pins are checked under the same
+-- Computer/instance locks. Head publication and root retention commit atomically.
+-- name: PublishComputerInstanceSave :one
 WITH created AS (
- INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,
- root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,
- publisher_runtime_instance_id,publisher_desired_version,publisher_save_sequence,
+ INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,
+ root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation,
+ publisher_computer_instance_id,publisher_desired_version,publisher_save_sequence,
  publication_request_fingerprint,published_at)
- SELECT r.computer_save_version_id,r.environment_id,r.workspace_id,r.computer_save_base_version_id,
- sqlc.arg(root_pack_digest),sqlc.arg(logical_bytes),'committed',l.id,l.ownership_generation,l.writer_generation,
- r.id,r.desired_version,r.computer_save_sequence,sqlc.arg(fingerprint),clock_timestamp()
- FROM runtime_instances r JOIN workspace_leases l ON l.id=r.computer_save_lease_id
- JOIN computers c ON c.id=r.workspace_id AND c.environment_id=r.environment_id
- WHERE r.id=sqlc.arg(runtime_instance_id) AND r.computer_save_version_id=sqlc.arg(save_id)
- AND r.computer_save_sequence=sqlc.arg(sequence)
- AND r.reclaimed_at IS NULL AND r.desired_state='ready'
- AND c.head_version_id=r.computer_save_base_version_id
- AND c.ownership_generation=l.ownership_generation AND c.writer_generation=l.writer_generation
- AND l.status='active' AND l.expires_at>clock_timestamp()
+ SELECT i.save_disk_version_id,i.environment_id,i.computer_id,i.save_base_disk_version_id,
+ sqlc.arg(root_pack_digest),sqlc.arg(logical_bytes),'committed',i.id,i.writer_generation,
+ i.id,i.desired_version,i.save_sequence,sqlc.arg(fingerprint),clock_timestamp()
+ FROM computer_instances i JOIN computers c ON c.id=i.computer_id AND c.environment_id=i.environment_id
+ WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)
+ AND i.writer_generation=sqlc.arg(writer_generation) AND i.writer_token_hash=sqlc.arg(writer_token_hash)
+ AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
+ AND i.desired_version=sqlc.arg(desired_version) AND i.desired_state='ready'
+ AND i.observed_state='ready' AND i.mount_state='mounted'
+ AND i.save_disk_version_id=sqlc.arg(save_id) AND i.save_sequence=sqlc.arg(sequence)
+ AND c.status='active' AND c.head_disk_version_id=i.save_base_disk_version_id
+ AND c.writer_generation=i.writer_generation
  RETURNING *
 ), retained AS (
- INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
+ INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
  SELECT environment_id,computer_id,id,sqlc.arg(locator) FROM created RETURNING version_id
 ), advanced AS (
- UPDATE computers c SET head_version_id=v.id,revision=revision+1,updated_at=v.published_at
+ UPDATE computers c SET head_disk_version_id=v.id,revision=revision+1,updated_at=v.published_at
  FROM created v,retained root WHERE c.id=v.computer_id AND root.version_id=v.id
- AND c.head_version_id=v.parent_version_id
+ AND c.head_disk_version_id=v.parent_version_id AND c.writer_generation=v.writer_generation
  RETURNING c.id
 )
 SELECT v.* FROM created v JOIN advanced c ON c.id=v.computer_id;
 
--- Host acknowledgement follows durable local adoption and producer quiescence.
--- Move only read-source retention; reservation/Run/Attempt/lease origins stay fixed.
--- The caller holds the live owner locks and validates the immutable receipt.
--- name: AdoptRuntimeComputerSave :execrows
-UPDATE runtime_instances r
-SET computer_source_version_id=v.id,
-    computer_save_version_id=NULL, computer_save_lease_id=NULL,
-    computer_save_base_version_id=NULL, updated_at=clock_timestamp()
-FROM computer_versions v, computer_version_roots root
-WHERE r.id=sqlc.arg(runtime_instance_id)
-  AND r.worker_instance_id=sqlc.arg(worker_instance_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
-  AND r.reclaimed_at IS NULL
-  AND r.computer_save_sequence=sqlc.arg(sequence) AND r.computer_save_version_id=sqlc.arg(save_id)
-  AND r.computer_save_lease_id=sqlc.arg(lease_id)
-  AND v.id=r.computer_save_version_id AND v.publisher_runtime_instance_id=r.id
-  AND v.publisher_save_sequence=r.computer_save_sequence AND v.status='committed'
-  AND root.environment_id=r.environment_id AND root.computer_id=r.workspace_id
-  AND root.version_id=v.id;
+-- Host acknowledgement follows durable local source adoption and producer
+-- quiescence. Historical Run origins remain unchanged.
+-- name: AdoptComputerInstanceSave :execrows
+UPDATE computer_instances i
+SET source_disk_version_id=v.id,save_disk_version_id=NULL,
+    save_base_disk_version_id=NULL,updated_at=clock_timestamp()
+FROM computer_disk_versions v,computer_disk_version_roots root
+WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_epoch=sqlc.arg(worker_epoch)
+ AND i.writer_generation=sqlc.arg(writer_generation) AND i.writer_token_hash=sqlc.arg(writer_token_hash)
+ AND i.reclaimed_at IS NULL
+ AND i.save_sequence=sqlc.arg(sequence) AND i.save_disk_version_id=sqlc.arg(save_id)
+ AND v.id=i.save_disk_version_id AND v.publisher_computer_instance_id=i.id
+ AND v.publisher_save_sequence=i.save_sequence AND v.status='committed'
+ AND root.environment_id=i.environment_id AND root.computer_id=i.computer_id AND root.version_id=v.id;
 
--- Historical acknowledgement: a committed operation cannot be abandoned.
--- name: IsRuntimeComputerSaveAdopted :one
-SELECT computer_save_sequence > sqlc.arg(sequence)::bigint
-   OR (computer_save_sequence = sqlc.arg(sequence)::bigint
-       AND computer_save_version_id IS DISTINCT FROM sqlc.arg(save_id)::uuid) AS adopted
-FROM runtime_instances WHERE id=sqlc.arg(runtime_instance_id);
+-- name: IsComputerInstanceSaveAdopted :one
+SELECT EXISTS(SELECT 1 FROM computer_disk_versions v
+              WHERE v.id=sqlc.arg(save_id) AND v.publisher_computer_instance_id=i.id
+              AND v.publisher_save_sequence=sqlc.arg(sequence))
+ AND (i.save_sequence>sqlc.arg(sequence)::bigint
+      OR (i.save_sequence=sqlc.arg(sequence)::bigint AND i.save_disk_version_id IS NULL)) AS adopted
+FROM computer_instances i
+WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_group_id=sqlc.arg(worker_group_id)
+ AND i.worker_epoch=sqlc.arg(worker_epoch) AND i.writer_generation=sqlc.arg(writer_generation);
 
--- Stable absence, not a historical receipt: this sequence cannot be admitted
--- again and no committed save at that sequence exists. Read-only history remains
--- scoped to the authenticated Worker and the original execution identity.
+-- Stable absence is distinct from a committed save's historical receipt.
 -- name: IsComputerSaveAbandoned :one
-SELECT (r.computer_save_sequence >= sqlc.arg(sequence)::bigint
-        AND (r.computer_save_sequence > sqlc.arg(sequence)::bigint OR r.computer_save_version_id IS NULL)
-        AND NOT EXISTS(SELECT 1 FROM computer_versions v WHERE v.publisher_runtime_instance_id=r.id
-          AND v.publisher_save_sequence=sqlc.arg(sequence)::bigint)) AS abandoned
-FROM runtime_instances r
-WHERE r.worker_instance_id=sqlc.arg(worker_instance_id)
-  AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
-  AND ((sqlc.narg(run_lease_id)::uuid IS NOT NULL AND EXISTS(
-       SELECT 1 FROM run_leases l WHERE l.id=sqlc.narg(run_lease_id)
-       AND l.lease_sequence=sqlc.arg(lease_sequence) AND l.runtime_instance_id=r.id
-       AND l.worker_instance_id=r.worker_instance_id AND l.worker_epoch=r.worker_epoch))
-    OR (sqlc.narg(mount_id)::uuid IS NOT NULL AND EXISTS(
-       SELECT 1 FROM workspace_processes p JOIN workspace_mounts m ON m.id=p.workspace_mount_id
-       WHERE m.id=sqlc.narg(mount_id) AND m.org_id=sqlc.narg(org_id)
-       AND m.runtime_instance_id=r.id AND m.worker_instance_id=r.worker_instance_id
-       AND m.worker_epoch=r.worker_epoch AND p.runtime_instance_id=r.id)));
+SELECT (i.save_sequence>=sqlc.arg(sequence)::bigint
+        AND (i.save_sequence>sqlc.arg(sequence)::bigint OR i.save_disk_version_id IS NULL)
+        AND NOT EXISTS(SELECT 1 FROM computer_disk_versions v WHERE v.publisher_computer_instance_id=i.id
+                       AND v.publisher_save_sequence=sqlc.arg(sequence)::bigint)) AS abandoned
+FROM computer_instances i
+WHERE i.id=sqlc.arg(computer_instance_id) AND i.environment_id=sqlc.arg(environment_id)
+ AND i.worker_host_id=sqlc.arg(worker_host_id) AND i.worker_group_id=sqlc.arg(worker_group_id)
+ AND i.worker_epoch=sqlc.arg(worker_epoch) AND i.writer_generation=sqlc.arg(writer_generation);
 
--- Worker/lease expiry alone is not exclusion evidence. Only physical reclaim
--- abandons an unpublished lost operation. Preserve the sequence. A committed
--- pending slot is not cleared: physical reclaim is not evidence of local adoption.
--- Its object pins are released separately after the same exclusion boundary.
+-- Only observed physical reclaim abandons an unpublished lost operation. Expiry
+-- is not exclusion, and reclaim is not evidence of local source adoption.
 -- name: AbandonReclaimedComputerSaves :execrows
 WITH released AS (
- SELECT r.id FROM runtime_instances r
- WHERE r.reclaimed_at IS NOT NULL AND r.computer_save_version_id IS NOT NULL
- AND NOT EXISTS(SELECT 1 FROM computer_versions v WHERE v.publisher_runtime_instance_id=r.id
-   AND v.publisher_save_sequence=r.computer_save_sequence)
- ORDER BY r.id LIMIT sqlc.arg(row_limit)
- FOR UPDATE OF r SKIP LOCKED
+ SELECT i.id FROM computer_instances i WHERE i.reclaimed_at IS NOT NULL AND i.save_disk_version_id IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM computer_disk_versions v WHERE v.publisher_computer_instance_id=i.id
+                AND v.publisher_save_sequence=i.save_sequence)
+ ORDER BY i.id LIMIT sqlc.arg(row_limit) FOR UPDATE OF i SKIP LOCKED
 )
-UPDATE runtime_instances r
-SET computer_save_version_id=NULL,computer_save_lease_id=NULL,computer_save_base_version_id=NULL,
- updated_at=clock_timestamp()
-FROM released WHERE r.id=released.id;
+UPDATE computer_instances i SET save_disk_version_id=NULL,save_base_disk_version_id=NULL,updated_at=clock_timestamp()
+FROM released WHERE i.id=released.id;

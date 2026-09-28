@@ -11,12 +11,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -32,11 +33,10 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	events := &testFreshProgramEventSink{}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	sessions := NewWorkspaceMountSessions()
-	mount := testWorkspaceMount(claim.Lease)
-	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
-	mount.Target.BaseWorkspaceVersionID = "version-before-capture"
-	unregister := sessions.RegisterWorkspaceMountSession(
+	sessions := NewComputerMountSessions()
+	mount := testComputerMount(claim.Lease)
+	mount.Target.BaseComputerDiskVersionID = "version-before-capture"
+	unregister := sessions.RegisterComputerMountSession(
 		mount,
 		fakeGuestSession{stream: host},
 		"channel-1",
@@ -47,11 +47,12 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		guestResult <- serveFreshProgramProtocol(
 			guest,
 			claim.Lease,
+			mount,
 			controlPlane,
 		)
 	}()
 	program, err := (ProgramRunner{
-		WorkspaceMounts: sessions,
+		ComputerMounts: sessions,
 	}).startNewProgram(
 		context.Background(),
 		&claim,
@@ -98,8 +99,8 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	}) {
 		t.Fatalf("Run logs = %+v", events.snapshot())
 	}
-	if claim.Execution.Fresh.ProgramStart != nil ||
-		claim.Workspace.WriteCapability != "" {
+	if claim.ProgramStart != nil ||
+		claim.Computer.WriteCapability != "" {
 		t.Fatalf("claim delivery authority was retained: %+v", claim)
 	}
 	for _, secret := range claim.Secrets {
@@ -111,20 +112,19 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 
 func TestValidateNewProgramMountSeparatesPhysicalIdentityFromLogicalFence(t *testing.T) {
 	claim := testFreshProgramClaim(t)
-	mount := testWorkspaceMount(claim.Lease)
-	mount.FencingGeneration = claim.Lease.MountFencingGeneration - 1
-	mount.Target.BaseWorkspaceVersionID = "version-before-capture"
+	mount := testComputerMount(claim.Lease)
+	mount.Target.BaseComputerDiskVersionID = "version-before-capture"
 	if err := validateNewProgramMount(claim.Lease, mount); err != nil {
 		t.Fatalf("advanced logical fence rejected exact physical mount: %v", err)
 	}
 
 	tests := []struct {
 		name   string
-		mutate func(*workerapi.WorkspaceMount)
+		mutate func(*workerapi.ComputerInstanceAssignment)
 	}{
-		{name: "mount ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.ID = "other-mount" }},
-		{name: "Workspace ID", mutate: func(mount *workerapi.WorkspaceMount) { mount.WorkspaceID = "other-workspace" }},
-		{name: "Runtime Instance", mutate: func(mount *workerapi.WorkspaceMount) { mount.RuntimeInstanceID = "other-runtime" }},
+		{name: "writer generation", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.WriterGeneration++ }},
+		{name: "Computer ID", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.ComputerID = "other-computer" }},
+		{name: "Runtime Instance", mutate: func(mount *workerapi.ComputerInstanceAssignment) { mount.ComputerInstanceID = "other-runtime" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -149,16 +149,16 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+	sessions := NewComputerMountSessions()
+	unregister := sessions.RegisterComputerMountSession(
+		testComputerMount(claim.Lease),
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
 	defer unregister()
 	proofSent := make(chan error, 1)
 	go func() {
-		if err := readFreshProgramAdmission(guest, claim.Lease); err != nil {
+		if err := readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease)); err != nil {
 			proofSent <- err
 			return
 		}
@@ -173,7 +173,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 		})
 	}()
 	_, err := (ProgramRunner{
-		WorkspaceMounts: sessions,
+		ComputerMounts: sessions,
 	}).startNewProgram(
 		context.Background(),
 		&claim,
@@ -189,8 +189,8 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	if !slices.Equal(controlPlane.snapshot(), []string{"start"}) {
 		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
 	}
-	if claim.Execution.Fresh.ProgramStart != nil ||
-		claim.Workspace.WriteCapability != "" {
+	if claim.ProgramStart != nil ||
+		claim.Computer.WriteCapability != "" {
 		t.Fatal("rejected claim delivery authority was retained")
 	}
 }
@@ -200,17 +200,17 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
+	sessions := NewComputerMountSessions()
+	unregister := sessions.RegisterComputerMountSession(
+		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
 	)
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
-		if err := readFreshProgramAdmission(guest, claim.Lease); err != nil {
+		if err := readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease)); err != nil {
 			guestResult <- err
 			return
 		}
@@ -233,7 +233,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 		request.result <- nil
 	}()
 
-	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
 		context.Background(),
 		&claim,
 		controlPlane,
@@ -248,7 +248,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	select {
 	case <-failureRequested:
 	case <-time.After(time.Second):
-		t.Fatal("typed start failure did not fail the exact Workspace Mount")
+		t.Fatal("typed start failure did not fail the exact Computer Mount")
 	}
 	if len(controlPlane.snapshot()) != 0 {
 		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
@@ -259,16 +259,16 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	claim := testFreshProgramClaim(t)
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
+	sessions := NewComputerMountSessions()
+	unregister := sessions.RegisterComputerMountSession(
+		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
 	)
 	defer unregister()
 	go func() {
-		_ = readFreshProgramAdmission(guest, claim.Lease)
+		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
 		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
 			Event: &programv0.RunEvent_ProgramProcessStartFailed{
 				ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
@@ -282,7 +282,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 		})
 	}()
 
-	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
 		context.Background(),
 		&claim,
 		&testFreshProgramControlPlane{lease: claim.Lease},
@@ -293,7 +293,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	}
 	select {
 	case <-session.failureRequests:
-		t.Fatal("noncanonical guest diagnostic redirected Workspace Mount cleanup")
+		t.Fatal("noncanonical guest diagnostic redirected Computer Mount cleanup")
 	case <-time.After(50 * time.Millisecond):
 	}
 }
@@ -302,16 +302,16 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	claim := testFreshProgramClaim(t)
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
+	sessions := NewComputerMountSessions()
+	unregister := sessions.RegisterComputerMountSession(
+		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
 	)
 	defer unregister()
 	go func() {
-		_ = readFreshProgramAdmission(guest, claim.Lease)
+		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
 		_ = frameio.WriteProtoFrame(guest, &programv0.RunEvent{
 			Event: &programv0.RunEvent_ProgramProcessStartFailed{
 				ProgramProcessStartFailed: &programv0.ProgramProcessStartFailed{
@@ -322,7 +322,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 		})
 	}()
 
-	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
 		context.Background(),
 		&claim,
 		&testFreshProgramControlPlane{lease: claim.Lease},
@@ -333,7 +333,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	}
 	select {
 	case <-session.failureRequests:
-		t.Fatal("mismatched guest proof redirected Workspace Mount cleanup")
+		t.Fatal("mismatched guest proof redirected Computer Mount cleanup")
 	case <-time.After(50 * time.Millisecond):
 	}
 }
@@ -343,16 +343,16 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond).UTC()
 	guest, host := net.Pipe()
 	defer guest.Close()
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+	sessions := NewComputerMountSessions()
+	unregister := sessions.RegisterComputerMountSession(
+		testComputerMount(claim.Lease),
 		fakeGuestSession{stream: host},
 		"channel-1",
 	)
 	defer unregister()
 	started := time.Now()
 	_, err := (ProgramRunner{
-		WorkspaceMounts: sessions,
+		ComputerMounts: sessions,
 	}).startNewProgram(
 		context.Background(),
 		&claim,
@@ -365,8 +365,8 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > time.Second {
 		t.Fatalf("blocked admission stopped after %s", elapsed)
 	}
-	if claim.Execution.Fresh.ProgramStart != nil ||
-		claim.Workspace.WriteCapability != "" {
+	if claim.ProgramStart != nil ||
+		claim.Computer.WriteCapability != "" {
 		t.Fatal("timed-out claim delivery authority was retained")
 	}
 }
@@ -617,10 +617,11 @@ func TestFreshProgramDispatchesTurnOutput(t *testing.T) {
 func serveFreshProgramProtocol(
 	conn net.Conn,
 	lease workerapi.RunLeaseAssignment,
+	mount workerapi.ComputerInstanceAssignment,
 	controlPlane *testFreshProgramControlPlane,
 ) error {
 	defer conn.Close()
-	if err := readFreshProgramAdmission(conn, lease); err != nil {
+	if err := readFreshProgramAdmission(conn, lease, mount); err != nil {
 		return err
 	}
 	if len(controlPlane.snapshot()) != 0 {
@@ -744,6 +745,7 @@ func testProgramQuiescedEvent(lease workerapi.RunLeaseAssignment) *programv0.Run
 func readFreshProgramAdmission(
 	conn net.Conn,
 	lease workerapi.RunLeaseAssignment,
+	mount workerapi.ComputerInstanceAssignment,
 ) error {
 	header, bodyLength, err := wire.ReadStreamFrameHeader(conn)
 	if err != nil {
@@ -751,34 +753,32 @@ func readFreshProgramAdmission(
 	}
 	if header.Type != wire.StreamTypeProgramRun ||
 		header.RunID != lease.RunID ||
-		header.WorkspaceID != lease.WorkspaceID ||
-		header.WorkspaceMountID != lease.WorkspaceMountID ||
+		header.ComputerID != lease.ComputerID ||
+		header.ComputerInstanceID != mount.ComputerInstanceID ||
 		bodyLength != 0 {
 		return fmt.Errorf("program header = %+v body=%d", header, bodyLength)
 	}
-	var authority workspacev0.WorkspaceRunAuthority
+	var authority computerv0.ComputerRunAuthority
 	if err := frameio.ReadProtoFrame(conn, &authority); err != nil {
 		return err
 	}
 	fence := authority.GetFence()
 	if authority.GetChannelToken() != "channel-1" ||
 		authority.GetWriteCapability() != "write-capability" ||
-		fence.GetWorkerInstanceId() != lease.WorkerInstanceID ||
+		fence.GetWorkerHostId() != lease.WorkerHostID ||
 		fence.GetWorkerEpoch() != lease.WorkerEpoch ||
-		fence.GetRuntimeInstanceId() != lease.RuntimeInstanceID ||
-		fence.GetRuntimeIdentityId() != lease.RuntimeIdentityID ||
-		fence.GetWorkspaceMountId() != lease.WorkspaceMountID ||
-		fence.GetWorkspaceId() != lease.WorkspaceID ||
+		fence.GetComputerInstanceId() != lease.ComputerInstanceID ||
+		fence.GetVmPlatformId() != lease.VMPlatformID ||
+		fence.GetComputerInstanceId() != mount.ComputerInstanceID ||
+		fence.GetComputerId() != lease.ComputerID ||
 		fence.GetRunId() != lease.RunID ||
 		fence.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		fence.GetRunLeaseId() != lease.ID ||
 		fence.GetLeaseSequence() != lease.LeaseSequence ||
-		fence.GetWorkspaceLeaseId() != lease.WorkspaceLeaseID ||
-		fence.GetOwnershipGeneration() != lease.OwnershipGeneration ||
 		fence.GetWriterGeneration() != lease.WriterGeneration ||
-		fence.GetMountFencingGeneration() != lease.MountFencingGeneration ||
+		fence.GetWriterGeneration() != mount.WriterGeneration ||
 		fence.GetExpiresAtUnixNano() != lease.ExpiresAt.UnixNano() ||
-		fence.GetBaseWorkspaceVersionId() != lease.BaseWorkspaceVersionID {
+		fence.GetBaseComputerDiskVersionId() != mount.Target.BaseComputerDiskVersionID {
 		return fmt.Errorf("program authority = %+v", &authority)
 	}
 	var request programv0.ProgramRunRequest
@@ -849,25 +849,21 @@ func testFreshProgramClaim(
 	}
 	return workerapi.RunLeaseClaimResponse{
 		Lease: workerapi.RunLeaseAssignment{
-			ID:                     "lease-1",
-			RunID:                  "run-1",
-			AttemptNumber:          2,
-			LeaseSequence:          3,
-			WorkerInstanceID:       "worker-1",
-			WorkerEpoch:            7,
-			RuntimeInstanceID:      "runtime-1",
-			RuntimeIdentityID:      "runtime-identity-1",
-			WorkspaceID:            "workspace-1",
-			WorkspaceMountID:       "mount-1",
-			WorkspaceLeaseID:       "workspace-lease-1",
-			BaseWorkspaceVersionID: "version-1",
-			OwnershipGeneration:    2,
-			WriterGeneration:       3,
-			MountFencingGeneration: 4,
-			StartDeadlineAt:        time.Now().Add(time.Minute).UTC(),
-			ExpiresAt:              time.Now().Add(5 * time.Minute).UTC(),
+			ID:                        "lease-1",
+			RunID:                     "run-1",
+			AttemptNumber:             2,
+			LeaseSequence:             3,
+			WorkerHostID:              "worker-1",
+			WorkerEpoch:               7,
+			ComputerInstanceID:        "runtime-1",
+			VMPlatformID:              "vm-platform-1",
+			ComputerID:                "computer-1",
+			BaseComputerDiskVersionID: "version-1",
+			WriterGeneration:          3,
+			StartDeadlineAt:           time.Now().Add(time.Minute).UTC(),
+			ExpiresAt:                 time.Now().Add(5 * time.Minute).UTC(),
 		},
-		Workspace: workerapi.WorkspaceAttachment{
+		Computer: workerapi.ComputerAttachment{
 			WriteCapability: "write-capability",
 		},
 		Secrets: []workerapi.SecretDelivery{
@@ -882,25 +878,21 @@ func testFreshProgramClaim(
 				Value: []byte("secret-two"),
 			},
 		},
-		Execution: workerapi.RunLeaseExecution{
-			Fresh: &workerapi.RunLeaseFresh{
-				ProgramStart: start.Bytes(),
-			},
-		},
+		ProgramStart: start.Bytes(),
 	}
 }
 
-func testWorkspaceMount(
+func testComputerMount(
 	lease workerapi.RunLeaseAssignment,
-) workerapi.WorkspaceMount {
-	return workerapi.WorkspaceMount{
-		ID:                lease.WorkspaceMountID,
-		WorkspaceID:       lease.WorkspaceID,
-		RuntimeInstanceID: lease.RuntimeInstanceID,
+) workerapi.ComputerInstanceAssignment {
+	return workerapi.ComputerInstanceAssignment{
+
+		ComputerID:         lease.ComputerID,
+		ComputerInstanceID: lease.ComputerInstanceID,
 		Target: workerapi.ComputerMountTarget{
-			BaseWorkspaceVersionID: lease.BaseWorkspaceVersionID,
+			BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID,
 		},
-		FencingGeneration: lease.MountFencingGeneration,
+		WriterGeneration: lease.WriterGeneration,
 	}
 }
 
@@ -974,9 +966,7 @@ func (c *testFreshProgramControlPlane) AcknowledgeRunStart(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, "start")
-	validArm := request.Fresh != nil &&
-		request.Restore == nil
-	if !validArm || request.Lease != c.lease.Fence() {
+	if request.Lease != c.lease.Fence() {
 		return workerapi.RunStartResponse{}, errors.New(
 			"unexpected start receipt",
 		)
@@ -1029,7 +1019,7 @@ func (c *testFreshProgramControlPlane) RenewRunLease(
 	}
 	return workerapi.RunLeaseRenewResponse{
 		Lease: c.lease.Fence(), ExpiresAt: expiresAt,
-		BaseWorkspaceVersionID: c.lease.BaseWorkspaceVersionID,
+		BaseComputerDiskVersionID: c.lease.BaseComputerDiskVersionID,
 	}, nil
 }
 
@@ -1050,17 +1040,17 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedWorkspaceMountSession(fakeGuestSession{stream: host})
-	sessions := NewWorkspaceMountSessions()
-	unregister := sessions.RegisterWorkspaceMountSession(
-		testWorkspaceMount(claim.Lease),
+	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
+	sessions := NewComputerMountSessions()
+	unregister := sessions.RegisterComputerMountSession(
+		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
 	)
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
-		if err := readFreshProgramAdmission(guest, claim.Lease); err != nil {
+		if err := readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease)); err != nil {
 			guestResult <- err
 			return
 		}
@@ -1083,7 +1073,7 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 		request.result <- nil
 	}()
 
-	_, err := (ProgramRunner{WorkspaceMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
 		context.Background(),
 		&claim,
 		controlPlane,
@@ -1098,9 +1088,64 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	select {
 	case <-failureRequested:
 	case <-time.After(time.Second):
-		t.Fatal("typed start failure did not fail the exact Workspace Mount")
+		t.Fatal("typed start failure did not fail the exact Computer Mount")
 	}
 	if len(controlPlane.snapshot()) != 0 {
 		t.Fatalf("Control Plane calls = %v", controlPlane.snapshot())
+	}
+}
+
+func TestFreshProgramWaitsForLocalMountRegistration(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		claim := testFreshProgramClaim(t)
+		control := &testFreshProgramControlPlane{lease: claim.Lease}
+		events := &testFreshProgramEventSink{}
+		guest, host := net.Pipe()
+		defer guest.Close()
+		sessions := NewComputerMountSessions()
+		mount := testComputerMount(claim.Lease)
+		guestResult := make(chan error, 1)
+		go func() {
+			time.Sleep(10 * time.Millisecond)
+			unregister := sessions.RegisterComputerMountSession(mount, fakeGuestSession{stream: host}, "channel-1")
+			defer unregister()
+			guestResult <- serveFreshProgramProtocol(guest, claim.Lease, mount, control)
+		}()
+		program, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(t.Context(), &claim, control, events)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer program.session.Close(context.Background())
+		outcome, _, err := program.awaitTaskCompletion(t.Context(), events, nil, nil, nil, nil)
+		if err != nil || outcome.GetSucceeded().GetOutputJson() != `{"ok":true}` {
+			t.Fatalf("completion=%v %v", outcome, err)
+		}
+		if err := <-guestResult; err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestFreshProgramMissingMountHonorsAdmissionDeadlineAndCancellation(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				claim := testFreshProgramClaim(t)
+				claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				if cancelled {
+					go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+				}
+				_, err := (ProgramRunner{ComputerMounts: NewComputerMountSessions()}).startNewProgram(ctx, &claim, &testFreshProgramControlPlane{lease: claim.Lease}, &testFreshProgramEventSink{})
+				want := context.DeadlineExceeded
+				if cancelled {
+					want = context.Canceled
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("error=%v want %v", err, want)
+				}
+			})
+		})
 	}
 }

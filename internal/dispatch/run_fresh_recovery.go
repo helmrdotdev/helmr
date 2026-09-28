@@ -12,10 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// RecoverRunExecutionLeases repairs physical-authority loss for every live
-// non-resume Run Lease. Checkpoint-backed resume remains in
-// RecoverExpiredRunResumes; both lanes share the dispatcher reconciler and
-// advisory lock.
+// RecoverRunExecutionLeases settles lost logical grants, including grants from a
+// committed restore. It cannot make the consumed checkpoint reusable.
 func (d *Authority) RecoverRunExecutionLeases(ctx context.Context, limit int32) (int, error) {
 	if limit <= 0 {
 		return 0, nil
@@ -50,7 +48,7 @@ func (d *Authority) recoverRunExecutionLease(
 	if err != nil {
 		return false, err
 	}
-	workspaceID, err := uuidFromPG(candidate.WorkspaceID)
+	computerID, err := uuidFromPG(candidate.ComputerID)
 	if err != nil {
 		return false, err
 	}
@@ -82,7 +80,7 @@ func (d *Authority) recoverRunExecutionLease(
 		return false, fmt.Errorf("lock Run execution lease recovery graph: %w", err)
 	}
 	recovered, err := graph.RecoverExecutionLeaseLoss(ctx, run.ExecutionLeaseRecoveryRequest{
-		RunID: runID, WorkspaceID: workspaceID, AttemptNumber: candidate.CurrentAttemptNumber,
+		RunID: runID, ComputerID: computerID, AttemptNumber: candidate.CurrentAttemptNumber,
 		RunLeaseID: runLeaseID,
 	})
 	if err != nil {

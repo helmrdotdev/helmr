@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 
 export function assertActorTurns(
-  expected: { marker: string; nonce: string; sessionId: string; runId: string; workspaceId: string },
+  expected: { marker: string; nonce: string; sessionId: string; runId: string; computerId: string },
   first: unknown, second: unknown,
 ) {
   assert.deepEqual(first, { ...expected, count: 1 }, "first Actor Turn did not resume its original memory")

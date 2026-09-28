@@ -17,10 +17,10 @@ export type ApiKeyScope =
   | "tokens:read"
   | "tokens:complete"
   | "tokens:cancel"
-  | "workspaces:create"
-  | "workspaces:read"
-  | "workspaces:delete"
-  | "workspace-exec:create"
+  | "computers:create"
+  | "computers:read"
+  | "computers:delete"
+  | "computer-exec:create"
   | "secrets:write"
   | "tasks:deploy";
 

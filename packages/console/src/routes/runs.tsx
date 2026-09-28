@@ -87,7 +87,7 @@ export function Runs() {
           when={items().length > 0}
           fallback={<StatePanel empty="No runs match this filter." hint="Start a declared Task or Actor to create a Run." />}
         >
-          <DataTable columns={["Entrypoint", "Kind", "Status", "Session", "Workspace", "Attempt", "Created", "Run"]} minWidth="min-w-250">
+          <DataTable columns={["Entrypoint", "Kind", "Status", "Session", "Computer", "Attempt", "Created", "Run"]} minWidth="min-w-250">
             <For each={items()}>
               {(run) => (
                 <tr>
@@ -108,7 +108,7 @@ export function Runs() {
                       href={runSessionConsolePath(run, projectID(), environmentID())}
                     />
                   </td>
-                  <td><IDText value={run.workspace_id} mode="link" href={`/workspaces/${run.workspace_id}`} /></td>
+                  <td><IDText value={run.computer_id} mode="link" href={`/computers/${run.computer_id}`} /></td>
                   <td>{run.current_attempt_number}</td>
                   <td><RelativeTime value={run.created_at} /></td>
                   <td><IDText value={run.id} /></td>

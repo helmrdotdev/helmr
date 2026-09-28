@@ -66,22 +66,6 @@ func (c *Client) AcknowledgeRunStart(
 	return response, nil
 }
 
-func (c *Client) AcknowledgeRunResumeRelease(
-	ctx context.Context,
-	request workerapi.RunResumeReleaseRequest,
-) (workerapi.RunResumeReleaseResponse, error) {
-	var response workerapi.RunResumeReleaseResponse
-	if err := c.postWorkerJSON(
-		ctx,
-		"/worker/v1/run/leases/resume-release",
-		request,
-		&response,
-	); err != nil {
-		return workerapi.RunResumeReleaseResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) AcknowledgeRunEntrypoint(
 	ctx context.Context,
 	request workerapi.RunEntrypointRequest,
@@ -94,82 +78,42 @@ func (c *Client) AcknowledgeRunEntrypoint(
 	)
 }
 
-func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.WorkspaceMountClaimResponse, error) {
-	var response workerapi.WorkspaceMountClaimResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/claim", workerapi.WorkspaceMountClaimRequest{Capabilities: capabilities}, &response); err != nil {
-		return workerapi.WorkspaceMountClaimResponse{}, err
+func (c *Client) ClaimComputerInstance(ctx context.Context) (workerapi.ComputerInstanceClaimResponse, error) {
+	var response workerapi.ComputerInstanceClaimResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/claim", struct{}{}, &response); err != nil {
+		return workerapi.ComputerInstanceClaimResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) RenewWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountRenewRequest) (workerapi.WorkspaceMountResponse, error) {
-	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/renew", request, &response); err != nil {
-		return workerapi.WorkspaceMountResponse{}, err
+func (c *Client) RenewComputerInstance(ctx context.Context, request workerapi.ComputerInstanceRenewRequest) (workerapi.ComputerInstanceRenewResponse, error) {
+	var response workerapi.ComputerInstanceRenewResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/renew", request, &response); err != nil {
+		return workerapi.ComputerInstanceRenewResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkWorkspaceMountMounted(ctx context.Context, request workerapi.WorkspaceMountMountedRequest) (workerapi.WorkspaceMountResponse, error) {
-	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/mounted", request, &response); err != nil {
-		return workerapi.WorkspaceMountResponse{}, err
+func (c *Client) ClaimComputerCommand(ctx context.Context, request workerapi.ComputerCommandClaimRequest) (workerapi.ComputerCommandClaimResponse, error) {
+	var response workerapi.ComputerCommandClaimResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-commands/claim", request, &response); err != nil {
+		return workerapi.ComputerCommandClaimResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) CaptureWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountCaptureRequest) (workerapi.WorkspaceMountCaptureResponse, error) {
-	var response workerapi.WorkspaceMountCaptureResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/capture", request, &response); err != nil {
-		return workerapi.WorkspaceMountCaptureResponse{}, err
-	}
-	return response, nil
+func (c *Client) CompleteComputerCommand(ctx context.Context, request workerapi.ComputerCommandCompleteRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-commands/complete", request, nil)
 }
 
-func (c *Client) StopWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountStopRequest) (workerapi.WorkspaceMountResponse, error) {
-	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/stop", request, &response); err != nil {
-		return workerapi.WorkspaceMountResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) FailWorkspaceMount(ctx context.Context, request workerapi.WorkspaceMountFailRequest) (workerapi.WorkspaceMountResponse, error) {
-	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/fail", request, &response); err != nil {
-		return workerapi.WorkspaceMountResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) ClaimWorkspaceExec(ctx context.Context, request workerapi.WorkspaceExecClaimRequest) (workerapi.WorkspaceExecClaimResponse, error) {
-	var response workerapi.WorkspaceExecClaimResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-execs/claim", request, &response); err != nil {
-		return workerapi.WorkspaceExecClaimResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CompleteWorkspaceExec(ctx context.Context, request workerapi.WorkspaceExecCompleteRequest) (workerapi.WorkspaceMountResponse, error) {
-	var response workerapi.WorkspaceMountResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspace-execs/complete", request, &response); err != nil {
-		return workerapi.WorkspaceMountResponse{}, err
-	}
-	return response, nil
+func (c *Client) AppendCommandLog(ctx context.Context, request workerapi.CommandLogAppendRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-commands/logs/append", request, nil)
 }
 
 func (c *Client) WriteTurnOutput(ctx context.Context, request workerapi.WriteTurnOutputRequest) (workerapi.WriteOutputResponse, error) {
 	var response workerapi.WriteOutputResponse
 	if err := c.postWorkerJSON(ctx, "/worker/v1/run/turns/output/write", request, &response); err != nil {
 		return workerapi.WriteOutputResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) RegisterRuntimeSubstrate(ctx context.Context, request workerapi.RuntimeSubstrateRegisterRequest) (workerapi.RuntimeSubstrateRegisterResponse, error) {
-	var response workerapi.RuntimeSubstrateRegisterResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-substrates/register", request, &response); err != nil {
-		return workerapi.RuntimeSubstrateRegisterResponse{}, err
 	}
 	return response, nil
 }
@@ -277,32 +221,32 @@ func (c *Client) GetWorkerStatus(ctx context.Context) (workerapi.StatusResponse,
 
 func (c *Client) ListRuntimeReconcileTargets(ctx context.Context) (workerapi.RuntimeReconcileResponse, error) {
 	var response workerapi.RuntimeReconcileResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/reconcile", workerapi.RuntimeReconcileRequest{}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/reconcile", workerapi.RuntimeReconcileRequest{}, &response); err != nil {
 		return workerapi.RuntimeReconcileResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkRuntimeInstanceReady(ctx context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	var response workerapi.RuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/ready", request, &response); err != nil {
-		return workerapi.RuntimeInstance{}, err
+func (c *Client) MarkComputerInstanceReady(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	var response workerapi.ComputerInstance
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/ready", request, &response); err != nil {
+		return workerapi.ComputerInstance{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkRuntimeInstanceClosed(ctx context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	var response workerapi.RuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/closed", request, &response); err != nil {
-		return workerapi.RuntimeInstance{}, err
+func (c *Client) MarkComputerInstanceClosed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	var response workerapi.ComputerInstance
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/closed", request, &response); err != nil {
+		return workerapi.ComputerInstance{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkRuntimeInstanceFailed(ctx context.Context, request workerapi.RuntimeInstanceStateRequest) (workerapi.RuntimeInstance, error) {
-	var response workerapi.RuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/failed", request, &response); err != nil {
-		return workerapi.RuntimeInstance{}, err
+func (c *Client) MarkComputerInstanceFailed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	var response workerapi.ComputerInstance
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/failed", request, &response); err != nil {
+		return workerapi.ComputerInstance{}, err
 	}
 	return response, nil
 }
@@ -340,10 +284,6 @@ func (c *Client) BeginRunFinalization(
 		return workerapi.BeginRunFinalizationResponse{}, err
 	}
 	return response, nil
-}
-
-func (c *Client) RegisterRunFinalization(ctx context.Context, request workerapi.RegisterRunFinalizationRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/finalization/register", request, nil)
 }
 
 func (c *Client) CommitActorTurn(
@@ -423,57 +363,46 @@ func (c *Client) ReadRunSessionEvents(
 	return response, nil
 }
 
-func (c *Client) CreateRunWorkspace(
+func (c *Client) CreateRunComputer(
 	ctx context.Context,
-	request workerapi.CreateWorkspaceRequest,
-) (workerapi.CreateWorkspaceResponse, error) {
-	var response workerapi.CreateWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/create", request, &response); err != nil {
-		return workerapi.CreateWorkspaceResponse{}, err
+	request workerapi.CreateComputerRequest,
+) (workerapi.CreateComputerResponse, error) {
+	var response workerapi.CreateComputerResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computers/create", request, &response); err != nil {
+		return workerapi.CreateComputerResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) RetrieveRunWorkspace(
+func (c *Client) RetrieveRunComputer(
 	ctx context.Context,
-	request workerapi.RetrieveWorkspaceRequest,
-) (workerapi.RetrieveWorkspaceResponse, error) {
-	var response workerapi.RetrieveWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/retrieve", request, &response); err != nil {
-		return workerapi.RetrieveWorkspaceResponse{}, err
+	request workerapi.RetrieveComputerRequest,
+) (workerapi.RetrieveComputerResponse, error) {
+	var response workerapi.RetrieveComputerResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computers/retrieve", request, &response); err != nil {
+		return workerapi.RetrieveComputerResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) ExecuteRunWorkspace(
+func (c *Client) ListRunComputerMembers(
 	ctx context.Context,
-	request workerapi.ExecuteWorkspaceRequest,
-) (workerapi.ExecuteWorkspaceResponse, error) {
-	var response workerapi.ExecuteWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/exec", request, &response); err != nil {
-		return workerapi.ExecuteWorkspaceResponse{}, err
+	request workerapi.ComputerMembersRequest,
+) (workerapi.ComputerMembersResponse, error) {
+	var response workerapi.ComputerMembersResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computers/members", request, &response); err != nil {
+		return workerapi.ComputerMembersResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) PollRunWorkspaceExec(
+func (c *Client) DeleteRunComputer(
 	ctx context.Context,
-	request workerapi.PollWorkspaceExecRequest,
-) (workerapi.ExecuteWorkspaceResponse, error) {
-	var response workerapi.ExecuteWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/exec/poll", request, &response); err != nil {
-		return workerapi.ExecuteWorkspaceResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) DeleteRunWorkspace(
-	ctx context.Context,
-	request workerapi.DeleteWorkspaceRequest,
-) (workerapi.DeleteWorkspaceResponse, error) {
-	var response workerapi.DeleteWorkspaceResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/workspaces/delete", request, &response); err != nil {
-		return workerapi.DeleteWorkspaceResponse{}, err
+	request workerapi.DeleteComputerRequest,
+) (workerapi.DeleteComputerResponse, error) {
+	var response workerapi.DeleteComputerResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/run/computers/delete", request, &response); err != nil {
+		return workerapi.DeleteComputerResponse{}, err
 	}
 	return response, nil
 }
@@ -563,26 +492,26 @@ func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request workerapi
 	return response, nil
 }
 
-func (c *Client) RegisterCheckpoint(ctx context.Context, request workerapi.RegisterCheckpointRequest) (workerapi.CheckpointResponse, error) {
-	var response workerapi.CheckpointResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/register", request, &response); err != nil {
-		return workerapi.CheckpointResponse{}, err
+func (c *Client) RegisterCheckpoint(ctx context.Context, request workerapi.RegisterCheckpointRequest) (workerapi.ComputerCheckpointResponse, error) {
+	var response workerapi.ComputerCheckpointResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/register", request, &response); err != nil {
+		return workerapi.ComputerCheckpointResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkCheckpointReady(ctx context.Context, request workerapi.CheckpointReadyRequest) (workerapi.CheckpointResponse, error) {
-	var response workerapi.CheckpointResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/ready", request, &response); err != nil {
-		return workerapi.CheckpointResponse{}, err
+func (c *Client) MarkCheckpointReady(ctx context.Context, request workerapi.CheckpointReadyRequest) (workerapi.ComputerCheckpointResponse, error) {
+	var response workerapi.ComputerCheckpointResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/ready", request, &response); err != nil {
+		return workerapi.ComputerCheckpointResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) MarkCheckpointFailed(ctx context.Context, request workerapi.CheckpointFailedRequest) (workerapi.CheckpointResponse, error) {
-	var response workerapi.CheckpointResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/run/checkpoints/failed", request, &response); err != nil {
-		return workerapi.CheckpointResponse{}, err
+func (c *Client) MarkCheckpointFailed(ctx context.Context, request workerapi.CheckpointFailedRequest) (workerapi.ComputerCheckpointResponse, error) {
+	var response workerapi.ComputerCheckpointResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/failed", request, &response); err != nil {
+		return workerapi.ComputerCheckpointResponse{}, err
 	}
 	return response, nil
 }
@@ -676,30 +605,47 @@ func (c *Client) ResumeRunSession(ctx context.Context, request workerapi.ResumeS
 }
 
 func (c *Client) RegisterInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/objects/register", request, &struct{}{})
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/initialization/objects/register", request, &struct{}{})
 }
 func (c *Client) CertifyInitialComputerObject(ctx context.Context, request workerapi.InitialComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/runtime-instances/initialization/objects/certify", request, &struct{}{})
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/initialization/objects/certify", request, &struct{}{})
 }
 
-func (c *Client) RegisterRunComputerObject(ctx context.Context, request workerapi.RunComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-objects/register", request, &struct{}{})
+func (c *Client) RegisterCheckpointComputerObject(ctx context.Context, request workerapi.CheckpointComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/objects/register", request, nil)
 }
-func (c *Client) CertifyRunComputerObject(ctx context.Context, request workerapi.RunComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-objects/certify", request, &struct{}{})
+func (c *Client) CertifyCheckpointComputerObject(ctx context.Context, request workerapi.CheckpointComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/objects/certify", request, nil)
 }
-func (c *Client) ReuseRunComputerObject(ctx context.Context, request workerapi.RunComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-objects/reuse", request, &struct{}{})
-}
-
-func (c *Client) RegisterExecComputerObject(ctx context.Context, request workerapi.ExecComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/computer-objects/register", request, &struct{}{})
+func (c *Client) ReuseCheckpointComputerObject(ctx context.Context, request workerapi.CheckpointComputerObjectRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/computer/checkpoints/objects/reuse", request, nil)
 }
 
-func (c *Client) CertifyExecComputerObject(ctx context.Context, request workerapi.ExecComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/computer-objects/certify", request, &struct{}{})
+func (c *Client) AcknowledgeComputerRestore(ctx context.Context, request workerapi.ComputerRestoreAckRequest) (workerapi.ComputerRestoreAckResponse, error) {
+	var response workerapi.ComputerRestoreAckResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/restores/ack", request, &response); err != nil {
+		return workerapi.ComputerRestoreAckResponse{}, err
+	}
+	return response, nil
 }
 
-func (c *Client) ReuseExecComputerObject(ctx context.Context, request workerapi.ExecComputerObjectRequest) error {
-	return c.postWorkerJSON(ctx, "/worker/v1/run/workspace-mounts/computer-objects/reuse", request, &struct{}{})
+func (c *Client) ReconcileComputerCommand(ctx context.Context, r workerapi.ComputerCommandCompleteRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-commands/reconcile", r, nil)
+}
+
+func (c *Client) GetComputerRestorePlan(ctx context.Context, request workerapi.ComputerRestorePlanRequest) (workerapi.ComputerRestorePlanResponse, error) {
+	var response workerapi.ComputerRestorePlanResponse
+	if err := c.postWorkerJSON(ctx, "/worker/v1/computer/restores/plan", request, &response); err != nil {
+		return workerapi.ComputerRestorePlanResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) GetComputerRunCleanup(ctx context.Context, r workerapi.ComputerRunCleanupRequest) (workerapi.ComputerRunCleanupResponse, error) {
+	var response workerapi.ComputerRunCleanupResponse
+	err := c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/runs/cleanup", r, &response)
+	return response, err
+}
+func (c *Client) ReconcileComputerRun(ctx context.Context, r workerapi.ComputerRunReconcileRequest) error {
+	return c.postWorkerJSON(ctx, "/worker/v1/run/computer-instances/runs/reconcile", r, nil)
 }

@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"testing"
 	"time"
@@ -138,11 +137,11 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}}
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: cp}
+	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: cp, captures: &ComputerCaptureRuns{}}
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		done <- task.runHotWait(ctx, WaitRequest{}, func(ctx context.Context, _ WaitRequest) error {
+		done <- task.runHotWait(ctx, WaitRequest{RunWaitID: "wait"}, func(ctx context.Context, _ WaitRequest) error {
 			select {
 			case <-release:
 				return nil
@@ -181,97 +180,53 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}
 }
 
-type protocolCheckpointer struct{ task *guestRunLeaseTask }
-
-func (c protocolCheckpointer) ReleaseCheckpointSource(context.Context) error { return nil }
-func (c protocolCheckpointer) CreateCheckpoint(ctx context.Context, r CheckpointRequest) (CheckpointResult, error) {
-	if err := wire.WriteCheckpointPauseRequest(c.task.programStream(), &programv0.CheckpointPauseRequest{RunWaitId: r.RunWaitID, CheckpointId: r.CheckpointID}); err != nil {
-		return CheckpointResult{}, err
-	}
-	if err := c.task.program.protocol.takePhysical(ctx, c.task.processCheckpointRunEvent); err != nil {
-		return CheckpointResult{}, err
-	}
-	h, n, err := wire.ReadStreamFrameHeader(c.task.program.protocol.reader)
-	if err != nil {
-		return CheckpointResult{}, err
-	}
-	if h.Type != wire.StreamTypeCheckpointPauseReady || h.RunWaitID != r.RunWaitID || h.CheckpointID != r.CheckpointID || n != 0 {
-		return CheckpointResult{}, errors.New("incorrect physical pause receipt")
-	}
-	return CheckpointResult{}, nil
-}
-func TestHotWaitTransfersOneReaderToPhysicalCheckpoint(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-	defer cancel()
-	host, guest := net.Pipe()
-	defer guest.Close()
-	protocol := newProgramProtocol(host)
-	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol}}
-	task.checkpointer = protocolCheckpointer{task: task}
-	done := make(chan error, 1)
-	go func() {
-		done <- task.runHotWait(ctx, WaitRequest{Checkpointer: task.checkpointer}, func(ctx context.Context, r WaitRequest) error {
-			_, err := r.Checkpointer.CreateCheckpoint(ctx, CheckpointRequest{RunWaitID: "wait", CheckpointID: "checkpoint"})
-			return err
+func TestSessionStopPrecedesStoppedWaitAndKeepsFirstDeadline(t *testing.T) {
+	for _, kind := range []string{"failed", "cancelled"} {
+		t.Run(kind, func(t *testing.T) {
+			host, guest := net.Pipe()
+			defer host.Close()
+			defer guest.Close()
+			if err := guest.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			lease := testFreshProgramClaim(t).Lease
+			lease.ExpiresAt = time.Now().Add(time.Minute)
+			execution := testTurnExecution(lease)
+			hold := "019c10d5-a6f7-7af1-8f5f-000000000118"
+			reason := "interrupt_requested"
+			reads := 0
+			cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
+				reads++
+				return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
+			}}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
+			done := make(chan error, 1)
+			go func() {
+				done <- task.beforeWaitResume(t.Context(), WaitResumeDecision{Kind: kind, Data: json.RawMessage(`{"reason_code":"session_stopped"}`)})
+			}()
+			header, n, err := wire.ReadStreamFrameHeader(guest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stop, err := wire.ReadSessionStop(header, guest, n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(stop.GetExecution(), execution.Session) || stop.GetHoldId() != hold || stop.GetTurnId() != execution.TurnId {
+				t.Fatalf("stop=%v", stop)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			task.lease.ExpiresAt = lease.ExpiresAt.Add(time.Minute)
+			deadline, err := task.deliverSessionStop(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !deadline.Equal(lease.ExpiresAt) || reads != 1 {
+				t.Fatalf("stop was extended/reissued: %v reads=%d", deadline, reads)
+			}
 		})
-	}()
-	h, n, err := wire.ReadStreamFrameHeader(guest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request, err := wire.ReadCheckpointPauseRequest(h, guest, n)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := wire.WriteCheckpointPauseReady(guest, request.GetRunWaitId(), request.GetCheckpointId()); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestSessionStopPrecedesCancelledWaitAndKeepsFirstDeadline(t *testing.T) {
-	host, guest := net.Pipe()
-	defer host.Close()
-	defer guest.Close()
-	lease := testFreshProgramClaim(t).Lease
-	lease.ExpiresAt = time.Now().Add(time.Minute)
-	execution := testTurnExecution(lease)
-	hold := "019c10d5-a6f7-7af1-8f5f-000000000118"
-	reason := "interrupt_requested"
-	reads := 0
-	cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
-		reads++
-		return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
-	}}
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
-	done := make(chan error, 1)
-	go func() {
-		done <- task.beforeWaitResume(t.Context(), WaitResumeDecision{Kind: "cancelled", Data: json.RawMessage(`{"reason_code":"session_stopped"}`)})
-	}()
-	header, n, err := wire.ReadStreamFrameHeader(guest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stop, err := wire.ReadSessionStop(header, guest, n)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !proto.Equal(stop.GetExecution(), execution.Session) || stop.GetHoldId() != hold || stop.GetTurnId() != execution.TurnId {
-		t.Fatalf("stop=%v", stop)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	task.lease.ExpiresAt = lease.ExpiresAt.Add(time.Minute)
-	deadline, err := task.deliverSessionStop(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !deadline.Equal(lease.ExpiresAt) || reads != 1 {
-		t.Fatalf("stop was extended/reissued: %v reads=%d", deadline, reads)
 	}
 }
 
@@ -285,39 +240,6 @@ func TestTurnScopeRejectsGenerationAndNullTurnBeforeCP(t *testing.T) {
 		if _, err := task.turnRequest("019c10d5-a6f7-7af1-8f5f-000000000117", scope); err == nil {
 			t.Fatalf("accepted invalid scope %v", scope)
 		}
-	}
-}
-
-func TestRestoredActorScopeRequiresExactGenerationAndTurnShape(t *testing.T) {
-	claim := testRestoredProgramClaim(t)
-	restore := claim.Execution.Restore
-	restore.EntrypointKind = "actor"
-	restore.SessionID = "019c10d5-a6f7-7af1-8f5f-000000000111"
-	restore.RunGeneration = 7
-	restore.TurnID = new("019c10d5-a6f7-7af1-8f5f-000000000112")
-	admission, err := validateResumedProgramClaim(&claim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if admission.execution.GetRunGeneration() != 7 || admission.execution.GetRunId() != claim.Lease.RunID || admission.turnID == nil || *admission.turnID != *restore.TurnID {
-		t.Fatalf("restore scope=%+v", admission)
-	}
-	restore.RunGeneration = 0
-	if _, err := validateResumedProgramClaim(&claim); err == nil {
-		t.Fatal("missing generation accepted")
-	}
-	restore.RunGeneration = 7
-	restore.TurnID = new("")
-	if _, err := validateResumedProgramClaim(&claim); err == nil {
-		t.Fatal("empty Turn accepted")
-	}
-	restore.TurnID = nil
-	if _, err := validateResumedProgramClaim(&claim); err != nil {
-		t.Fatalf("outside-Turn restore rejected: %v", err)
-	}
-	restore.EntrypointKind = "task"
-	if _, err := validateResumedProgramClaim(&claim); err == nil {
-		t.Fatal("Task accepted Actor scope")
 	}
 }
 
@@ -352,11 +274,11 @@ func TestHotWaitKeepsNextOutcomeWhileResumeAcknowledgementIsPending(t *testing.T
 	defer guest.Close()
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol}}
+	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &ComputerCaptureRuns{}}
 	resumeStarted := make(chan struct{})
 	ack := make(chan struct{})
 	done := make(chan error, 1)
-	request := WaitRequest{Resume: func(context.Context, WaitResumeDecision) error { close(resumeStarted); return nil }}
+	request := WaitRequest{RunWaitID: "wait", Resume: func(context.Context, WaitResumeDecision) error { close(resumeStarted); return nil }}
 	go func() {
 		done <- task.runHotWait(ctx, request, func(ctx context.Context, r WaitRequest) error {
 			if err := r.Resume(ctx, WaitResumeDecision{Kind: "completed"}); err != nil {

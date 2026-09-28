@@ -11,7 +11,7 @@ import {
   timers,
   tokens,
   sandbox,
-  workspaces,
+  computers,
 } from "@helmr/sdk"
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
@@ -229,7 +229,7 @@ describe("runProgram", () => {
         const run = await child.start(
           { imageId: "image-1" },
           {
-            workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
+            computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
             idempotencyKey: "resize:image-1",
             queue: "priority",
             retry: {
@@ -262,7 +262,7 @@ describe("runProgram", () => {
       assert.equal(event.value.method, "start")
       assert.equal(event.value.payloadPresent, true)
       assert.equal(event.value.payloadJson, '{"imageId":"image-1"}')
-      assert.equal(event.value.workspaceJson, '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}')
+      assert.equal(event.value.computerJson, '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}')
       assert.deepEqual(JSON.parse(event.value.optionsJson), {
         metadata: { source: "parent" },
         queue: "priority",
@@ -307,7 +307,7 @@ describe("runProgram", () => {
     }
   })
 
-  test("bridges every Workspace runtime operation through typed events", async () => {
+  test("bridges every Computer runtime operation through typed events", async () => {
     const cache = sandbox({ id: "cache" })
       .image(image("root").from("debian:bookworm-slim"))
       .resources({ cpu: 1, memory: "1GiB" })
@@ -315,24 +315,18 @@ describe("runProgram", () => {
     const definition = task({
       id: "deploy",
       async run() {
-        const created = await cache.createWorkspace({
+        const created = await cache.createComputer({
           key: "build-cache",
           secrets: [{ secret: "TOKEN", env: { name: "TOKEN", mode: "raw" } }],
           idempotencyKey: "create:cache",
         })
-        const workspace = await created.retrieve()
-        const executed = await created.exec({
-          command: ["sh", "-c", "printf ok"],
-          stdin: new Uint8Array([1, 2, 3]),
-          timeout: "1s",
-          idempotencyKey: "exec:cache",
-        })
+        const computer = await created.retrieve()
+        const members = await created.members({ limit: 1 })
+        assert.equal(members.items.length, 0)
         const deleted = await created.delete({ idempotencyKey: "delete:cache" })
         return {
-          id: workspace.id,
-          exitCode: executed.exitCode,
-          stdout: new TextDecoder().decode(executed.stdout),
-          deleted: deleted.workspaceId,
+          id: computer.id,
+          deleted: deleted.computerId,
         }
       },
     })
@@ -343,17 +337,17 @@ describe("runProgram", () => {
       yield frameMessage(programProto.ProgramStartSchema, start)
       yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
       const responses = [
-        '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
-        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","secrets":[{"secret":"TOKEN","env":{"name":"TOKEN","mode":"raw"}}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
-        '{"exit_code":0,"stdout_base64":"b2s=","stderr_base64":""}',
-        '{"workspace_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
+        '{"computer_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
+        '{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","key":"build-cache","sandbox_id":"cache","deployment_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35","status":"available","residency":"cold","secrets":[{"secret":"TOKEN","env":{"name":"TOKEN","mode":"raw"}}],"last_activity_at":"2026-07-26T00:00:00Z","created_at":"2026-07-26T00:00:00Z","updated_at":"2026-07-26T00:00:00Z"}',
+        '{"members":[]}',
+        '{"computer_id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}',
       ]
       for (let index = 0; index < responses.length; index++) {
         await requested[index]!.promise
         const event = readEvent(output[index + 1]!).event
         if (event.case === undefined) return
         observed.push(event.case)
-        if (event.case === "workspaceCreateRequested") {
+        if (event.case === "computerCreateRequested") {
           assert.equal(event.value.secrets.length, 1)
           assert.partialDeepStrictEqual(event.value.secrets[0], {
             secret: "TOKEN",
@@ -376,16 +370,16 @@ describe("runProgram", () => {
       },
     }))
     assert.deepEqual(observed, [
-      "workspaceCreateRequested",
-      "workspaceRetrieveRequested",
-      "workspaceExecRequested",
-      "workspaceDeleteRequested",
+      "computerCreateRequested",
+      "computerRetrieveRequested",
+      "computerMembersRequested",
+      "computerDeleteRequested",
     ])
     const outcome = readEvent(output.at(-1)!).event
     assert.equal(outcome.case, "taskOutcome")
     if (outcome.case === "taskOutcome" &&
       outcome.value.outcome.case === "succeeded") {
-      assert.equal(outcome.value.outcome.value.outputJson, '{"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","exitCode":0,"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","stdout":"ok"}')
+      assert.equal(outcome.value.outcome.value.outputJson, '{"deleted":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}')
     }
   })
 
@@ -411,7 +405,7 @@ describe("runProgram", () => {
         const called = child.call(
           { imageId: "image-1" },
           {
-            workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
+            computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
             idempotencyKey: "resize:image-1",
           },
         )
@@ -478,7 +472,7 @@ describe("runProgram", () => {
       async run() {
         try {
           await child.call({
-            workspace: workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
+            computer: computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"),
             idempotencyKey: "resize:image-1",
           }).unwrap()
         } catch (error) {
@@ -863,6 +857,49 @@ describe("runProgram", () => {
         assert.equal(result.value.outcome.value.outputJson, "null")
       }
     }
+  })
+
+  test("physical reattachment preserves an unresolved timer Wait", async () => {
+    let completed = false
+    const definition = task({ id: "deploy", async run() {
+      await timers.waitFor("1m")
+      completed = true
+      return { resumed: true }
+    } })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const waitWritten = Promise.withResolvers<void>()
+    const attached = Promise.withResolvers<void>()
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(programProto.ProgramStartSchema, start)
+      yield frameMessage(programProto.EntrypointReleaseSchema, releaseFor(start))
+      await waitWritten.promise
+      const event = readEvent(output[1]!).event
+      assert.equal(event.case, "runWaitRequested")
+      if (event.case !== "runWaitRequested") return
+      yield frameMessage(programProto.ResumeDecisionSchema, create(programProto.ResumeDecisionSchema, {
+        runWaitId: event.value.runWaitId, correlationId: event.value.correlationId,
+        resumeAttachId: event.value.resumeAttachId, kind: "waiting",
+        requireConsumedAck: true, checkpointId: "checkpoint", resumeRequestVersion: 4n,
+        runLeaseId: "new-lease",
+      }))
+      await attached.promise
+      assert.equal(completed, false)
+      assert.equal(output.length, 3)
+      yield frameMessage(programProto.ResumeDecisionSchema, create(programProto.ResumeDecisionSchema, {
+        runWaitId: event.value.runWaitId, correlationId: event.value.correlationId,
+        resumeAttachId: event.value.resumeAttachId, kind: "completed", dataJson: "null",
+      }))
+    }
+    await runProgram(locatorURL, programIO({ input: input(), definition, output, onWrite: () => {
+      if (output.length === 2) waitWritten.resolve()
+      if (output.length === 3) {
+        assert.equal(readEvent(output[2]!).event.case, "resumeConsumed")
+        attached.resolve()
+      }
+    } }))
+    assert.equal(completed, true)
+    assert.equal(readEvent(output[3]!).event.case, "taskOutcome")
   })
 
   test("emits one timer Wait and consumes only its matching decision", async () => {
@@ -1442,8 +1479,8 @@ function taskStart(
     }),
     deploymentId: "deployment-1",
     deploymentVersion: "v1",
-    workspaceId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
-    baseWorkspaceVersionId: "version-1",
+    computerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30",
+    baseComputerDiskVersionId: "version-1",
     entrypoint: {
       case: "task",
       value: create(programProto.TaskStartSchema, {

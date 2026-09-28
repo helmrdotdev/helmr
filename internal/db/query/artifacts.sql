@@ -8,7 +8,7 @@ INSERT INTO artifacts (
     kind,
     size_bytes,
     media_type,
-    created_by_worker_instance_id
+    created_by_worker_host_id
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
@@ -18,7 +18,7 @@ INSERT INTO artifacts (
     sqlc.arg(kind),
     sqlc.arg(size_bytes),
     sqlc.arg(media_type),
-    sqlc.narg(created_by_worker_instance_id)
+    sqlc.narg(created_by_worker_host_id)
 )
 RETURNING *;
 

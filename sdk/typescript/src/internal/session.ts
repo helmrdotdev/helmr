@@ -35,7 +35,7 @@ export function parseSession(value: unknown): Session {
     id: resourceID(v["id"], "Session.id"),
     actorId,
     deploymentId: resourceID(v["deployment_id"], "Session.deployment_id"),
-    workspaceId: resourceID(v["workspace_id"], "Session.workspace_id"),
+    computerId: resourceID(v["computer_id"], "Session.computer_id"),
     ...(v["key"] === undefined
       ? {}
       : { key: requiredString(v["key"], "Session.key") }),
@@ -112,12 +112,12 @@ export function parseTurnState(value: unknown): TurnState {
             "Turn.terminal_event_id",
           ),
         }),
-    ...(v["workspace_version_id"] === undefined
+    ...(v["computer_disk_version_id"] === undefined
       ? {}
       : {
-          workspaceVersionId: resourceID(
-            v["workspace_version_id"],
-            "Turn.workspace_version_id",
+          computerDiskVersionId: resourceID(
+            v["computer_disk_version_id"],
+            "Turn.computer_disk_version_id",
           ),
         }),
     ...(Object.hasOwn(v, "result") ? { result: jsonValue(v["result"]) } : {}),

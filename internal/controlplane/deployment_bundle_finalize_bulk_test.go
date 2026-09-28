@@ -7,25 +7,24 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestCreateFinalizedDeploymentDefinitionsBuildsOneCanonicalBatch(t *testing.T) {
-	artifactID := pgvalue.UUID(uuid.NewV7())
+	specID := pgvalue.UUID(uuid.NewV7())
 	creator := &recordingDeploymentDefinitionCreator{}
 	definitions := []finalizedDeploymentDefinition{
 		{kind: "task", declaredID: "task", manifest: []byte(`{"task":true}`), manifestDigest: []byte{1}},
 		{
 			kind: "sandbox", declaredID: "sandbox", manifest: []byte(`{"sandbox":true}`),
-			manifestDigest: []byte{2}, artifact: &cas.Descriptor{Digest: "sha256:image"},
+			manifestDigest: []byte{2},
 		},
 	}
 	if err := createFinalizedDeploymentDefinitions(
 		t.Context(), creator, pgvalue.UUID(uuid.NewV7()), pgvalue.UUID(uuid.NewV7()), definitions,
-		map[string]db.Artifact{"sha256:image": {ID: artifactID}},
+		map[string]db.ComputerSpec{"sandbox": {ID: specID}},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +33,7 @@ func TestCreateFinalizedDeploymentDefinitionsBuildsOneCanonicalBatch(t *testing.
 	}
 	params := creator.params
 	if len(params.Ids) != 2 || len(params.Kinds) != 2 || len(params.DeclaredIds) != 2 ||
-		len(params.Manifests) != 2 || len(params.ManifestDigests) != 2 || len(params.ArtifactIds) != 2 {
+		len(params.Manifests) != 2 || len(params.ManifestDigests) != 2 || len(params.ComputerSpecIds) != 2 {
 		t.Fatalf("array cardinalities do not match: %+v", params)
 	}
 	firstID, firstErr := pgvalue.UUIDValue(params.Ids[0])
@@ -42,21 +41,21 @@ func TestCreateFinalizedDeploymentDefinitionsBuildsOneCanonicalBatch(t *testing.
 	if firstErr != nil || secondErr != nil || firstID == secondID {
 		t.Fatalf("generated IDs = %v/%v errors=%v/%v", firstID, secondID, firstErr, secondErr)
 	}
-	if params.ArtifactIds[0].Valid || params.ArtifactIds[1] != artifactID {
-		t.Fatalf("artifact IDs = %+v, want null then %v", params.ArtifactIds, artifactID)
+	if params.ComputerSpecIds[0].Valid || params.ComputerSpecIds[1] != specID {
+		t.Fatalf("computer spec IDs = %+v, want null then %v", params.ComputerSpecIds, specID)
 	}
 }
 
-func TestCreateFinalizedDeploymentDefinitionsRejectsMissingArtifactMapping(t *testing.T) {
+func TestCreateFinalizedDeploymentDefinitionsRejectsMissingSpecMapping(t *testing.T) {
 	creator := &recordingDeploymentDefinitionCreator{}
 	err := createFinalizedDeploymentDefinitions(
 		t.Context(), creator, pgtype.UUID{}, pgtype.UUID{},
 		[]finalizedDeploymentDefinition{{
-			kind: "sandbox", declaredID: "sandbox", artifact: &cas.Descriptor{Digest: "sha256:missing"},
+			kind: "sandbox", declaredID: "sandbox",
 		}},
 		nil,
 	)
-	if err == nil || !strings.Contains(err.Error(), `artifact "sha256:missing" is not registered`) {
+	if err == nil || !strings.Contains(err.Error(), `computer spec for "sandbox" is not registered`) {
 		t.Fatalf("error = %v", err)
 	}
 	if creator.calls != 0 {

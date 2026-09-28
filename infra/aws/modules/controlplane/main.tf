@@ -129,7 +129,7 @@ locals {
     WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
     AUTH_KEY                   = aws_secretsmanager_secret.auth_key.arn
     ENCRYPTION_KEY             = aws_secretsmanager_secret.encryption_key.arn
-    WORKSPACE_FENCING_KEY      = aws_secretsmanager_secret.workspace_fencing_key.arn
+    COMPUTER_FENCING_KEY       = aws_secretsmanager_secret.computer_fencing_key.arn
     TOKEN_CREDENTIAL_KEY       = aws_secretsmanager_secret.token_credential_key.arn
     GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
@@ -182,9 +182,9 @@ locals {
   dispatcher_environment          = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
-    ENCRYPTION_KEY        = aws_secretsmanager_secret.encryption_key.arn
-    DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
-    WORKSPACE_FENCING_KEY = aws_secretsmanager_secret.workspace_fencing_key.arn
+    ENCRYPTION_KEY       = aws_secretsmanager_secret.encryption_key.arn
+    DATABASE_URL         = aws_secretsmanager_secret.database_url.arn
+    COMPUTER_FENCING_KEY = aws_secretsmanager_secret.computer_fencing_key.arn
     }, local.clickhouse_ingester_secrets
   )
 
@@ -1314,8 +1314,8 @@ resource "aws_secretsmanager_secret" "encryption_key" {
   tags                    = var.tags
 }
 
-resource "aws_secretsmanager_secret" "workspace_fencing_key" {
-  name                    = "${local.name}/controlplane/workspace-fencing-key"
+resource "aws_secretsmanager_secret" "computer_fencing_key" {
+  name                    = "${local.name}/controlplane/computer-fencing-key"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

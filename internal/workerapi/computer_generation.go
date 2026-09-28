@@ -8,10 +8,10 @@ import (
 // InitialComputerGenerationRequest publishes a certified generation for one
 // preparation. Computer and version identities are resolved by the Control Plane.
 type InitialComputerGenerationRequest struct {
-	RuntimeInstanceID string                  `json:"runtime_instance_id"`
-	DesiredVersion    int64                   `json:"desired_version"`
-	Root              computer.GenerationRoot `json:"root"`
-	Config            oci.RuntimeConfig       `json:"config"`
+	ComputerInstanceID string                  `json:"computer_instance_id"`
+	DesiredVersion     int64                   `json:"desired_version"`
+	Root               computer.GenerationRoot `json:"root"`
+	Config             oci.RuntimeConfig       `json:"config"`
 }
 
 type InitialComputerGenerationResponse struct {

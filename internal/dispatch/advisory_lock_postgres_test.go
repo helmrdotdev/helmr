@@ -2,10 +2,10 @@ package dispatch
 
 import (
 	"context"
+	"github.com/jackc/pgx/v5"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
 )
 
 func TestAdvisoryLockDiscardsConnectionWhenUnlockIsNotConfirmed(t *testing.T) {

@@ -37,7 +37,7 @@ func taskStartCommand() *cobra.Command {
 	var tags []string
 	var retryFile string
 	var retryJSON string
-	var workspaceID string
+	var computerID string
 	var idempotencyKey string
 	var wait bool
 	var follow bool
@@ -73,10 +73,10 @@ func taskStartCommand() *cobra.Command {
 			if jsonOutput && follow {
 				return errors.New("--json cannot be combined with --follow")
 			}
-			if workspaceID == "" {
-				return errors.New("--workspace is required")
+			if computerID == "" {
+				return errors.New("--computer is required")
 			}
-			if err := api.ValidateWorkspaceID(workspaceID); err != nil {
+			if err := api.ValidateComputerID(computerID); err != nil {
 				return err
 			}
 			timeoutSeconds, err := waitTimeoutSeconds(timeout, "--timeout")
@@ -101,8 +101,8 @@ func taskStartCommand() *cobra.Command {
 			}
 			request := api.StartTaskRequest{
 				Payload: payload, IdempotencyKey: strings.TrimSpace(idempotencyKey),
-				Workspace: api.WorkspaceIDTarget{ID: workspaceID},
-				Queue:     strings.TrimSpace(queueName), Priority: priority,
+				Computer: api.ComputerIDTarget{ID: computerID},
+				Queue:    strings.TrimSpace(queueName), Priority: priority,
 				TTL: strings.TrimSpace(ttl), Retry: retry,
 				Metadata: metadata, Tags: cleanTags(tags),
 			}
@@ -196,7 +196,7 @@ func taskStartCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&tags, "tag", nil, "Add a Run tag. Repeat for multiple tags.")
 	cmd.Flags().StringVar(&retryFile, "retry-file", "", "Read retry policy JSON from a file.")
 	cmd.Flags().StringVar(&retryJSON, "retry-json", "", "Inline retry policy JSON literal.")
-	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing Workspace ID (required).")
+	cmd.Flags().StringVar(&computerID, "computer", "", "Existing Computer ID (required).")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for this Task start.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the Run to finish.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Stream Run logs until the Run finishes.")

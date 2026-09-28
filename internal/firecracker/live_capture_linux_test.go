@@ -31,7 +31,7 @@ func (d *liveCaptureDevice) Capture(ctx context.Context) (computer.CapturedGener
 }
 
 // Exercises the actual SDK HTTP boundary, not a running VMM.
-func liveCaptureSession(t *testing.T, resumeFailure bool) (*guestSession, *liveCaptureDevice, func() []string) {
+func liveCaptureSession(t *testing.T, resumeFailure bool, delays ...time.Duration) (*guestSession, *liveCaptureDevice, func() []string) {
 	t.Helper()
 	root := t.TempDir()
 	for _, name := range []string{"computer.ext4", "scratch.ext4"} {
@@ -58,6 +58,13 @@ func liveCaptureSession(t *testing.T, resumeFailure bool) (*guestSession, *liveC
 			t.Error(err)
 			w.WriteHeader(400)
 			return
+		}
+		if len(delays) > 0 {
+			select {
+			case <-time.After(delays[0]):
+			case <-r.Context().Done():
+				return
+			}
 		}
 		mu.Lock()
 		states = append(states, body.State)
@@ -251,5 +258,48 @@ func TestLiveComputerCaptureSerializesTerminalCut(t *testing.T) {
 	}
 	if got := states(); len(got) != 3 || got[0] != "Paused" || got[1] != "Resumed" || got[2] != "Paused" {
 		t.Fatalf("states %v", got)
+	}
+}
+
+func TestLiveCaptureUsesOperationDeadlineForVMStateChanges(t *testing.T) {
+	s, _, states := liveCaptureSession(t, false, 600*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	cut, err := s.CaptureComputer(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cut.Capture.Release()
+	if got := states(); len(got) != 2 || got[0] != "Paused" || got[1] != "Resumed" {
+		t.Fatalf("states %v", got)
+	}
+}
+
+func TestLiveCaptureVMStateChangeHonorsCallerDeadline(t *testing.T) {
+	s, d, _ := liveCaptureSession(t, false, time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := s.CaptureComputer(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("capture error %v", err)
+	}
+	if d.captures != 0 {
+		t.Fatal("captured without pause acknowledgement")
+	}
+	if _, err := s.CaptureComputer(t.Context()); err == nil {
+		t.Fatal("reused ambiguous source")
+	}
+}
+
+func TestCaptureContextBoundsUnboundedCaller(t *testing.T) {
+	s := &guestSession{}
+	started := time.Now()
+	ctx, done, err := s.captureContext(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	deadline, ok := ctx.Deadline()
+	if !ok || deadline.Before(started) || deadline.After(started.Add(31*time.Second)) {
+		t.Fatalf("capture deadline %v, present %v", deadline, ok)
 	}
 }

@@ -21,11 +21,11 @@ const client = new HelmrClient({
   apiKey: process.env.HELMR_API_KEY!,
 })
 
-const workspace = await client.sandboxes.createWorkspace(
-  "issue-workspace",
+const computer = await client.sandboxes.createComputer(
+  "issue-computer",
   {
     key: "issue:123",
-    idempotencyKey: "issue:123:workspace",
+    idempotencyKey: "issue:123:computer",
   },
 )
 
@@ -33,7 +33,7 @@ const run = await client.tasks.start<typeof issueTask>(
   "issue-task",
   {
     payload: { issue: 123 },
-    workspace,
+    computer,
     idempotencyKey: "issue:123:run",
   },
 )
@@ -43,8 +43,8 @@ const logs = await client.runs.logs(run.id)
 const events = await client.runs.events(run.id)
 ```
 
-Task start requires an existing Workspace. The Task Run payload is plaintext
-audit data. Place Secret values when creating the Workspace; never put them in
+Task start requires an existing Computer. The Task Run payload is plaintext
+audit data. Place Secret values when creating the Computer; never put them in
 payload.
 
 ## Tokens

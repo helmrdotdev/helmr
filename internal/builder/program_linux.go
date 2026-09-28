@@ -52,7 +52,7 @@ type PreparedProgramInput struct {
 	Compiler          deployment.CompilerInputs
 	Runtime           deployment.RuntimeDescriptor
 	RuntimeMetadata   deployment.RuntimeMetadata
-	WorkspaceImages   []deployment.BundleWorkspaceImage
+	ComputerImages    []deployment.BundleComputerImage
 }
 
 type ProgramResult struct {
@@ -212,7 +212,7 @@ func BuildPreparedProgram(
 		verification,
 		configDigest,
 		input.Runtime.Digest,
-		input.WorkspaceImages,
+		input.ComputerImages,
 		input.Compiler,
 		input.RuntimeMetadata.NodeVersion,
 	)
@@ -236,7 +236,7 @@ func BuildPreparedProgram(
 
 // AnalyzeProgram returns the canonical sandbox build plan without producing a
 // Program object. The CLI runs it in a disposable installed BuildKit stage,
-// then builds every declared Workspace Image before a fresh finalizer stage
+// then builds every declared Computer Image before a fresh finalizer stage
 // repeats compilation and exact-matches those results.
 func AnalyzeProgram(ctx context.Context, input ProgramInput) (_ ProgramAnalysis, returnErr error) {
 	if ctx == nil {

@@ -18,9 +18,9 @@ import (
 
 	"github.com/firecracker-microvm/firecracker-go-sdk"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/vishvananda/netlink"
 )
 
@@ -56,7 +56,7 @@ func TestRoutedNetworkLifecyclePrivileged(t *testing.T) {
 	}
 	binding, err := connector.prepareNetworkBinding(context.Background(), workloadLaunch, owner, vm.WorkloadBinding{
 		WorkerEpoch: 4, OwnerID: owner.ID, Generation: 1,
-		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
+		ComputerInstanceID: owner.ID, VMPlatformID: vmplatform.Contract,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +203,7 @@ func TestNetworkAllocationLockIsStableOutsideOwnerStateRoot(t *testing.T) {
 	binding := func(owner vm.Owner) vm.WorkloadBinding {
 		return vm.WorkloadBinding{
 			WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-			RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
+			ComputerInstanceID: owner.ID, VMPlatformID: vmplatform.Contract,
 		}
 	}
 	first, err := connector.allocateNetworkOwner(owners[0], binding(owners[0]))
@@ -263,7 +263,7 @@ func TestNetworkAllocationRejectsSymlinkLock(t *testing.T) {
 	}}
 	_, err := connector.allocateNetworkOwner(owner, vm.WorkloadBinding{
 		WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-		RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract,
+		ComputerInstanceID: owner.ID, VMPlatformID: vmplatform.Contract,
 	})
 	if err == nil || !strings.Contains(err.Error(), "open network allocation lock") {
 		t.Fatalf("error = %v", err)
@@ -276,11 +276,11 @@ func TestWithNetworkBindingSurvivesSnapshotHandlerReplacement(t *testing.T) {
 		datapath: datapath.NewManager(),
 	}
 	logical := vm.WorkloadBinding{
-		WorkerEpoch:       1,
-		OwnerID:           "019c10d5-a6f7-7af1-8f5f-000000000020",
-		Generation:        1,
-		RuntimeInstanceID: "019c10d5-a6f7-7af1-8f5f-000000000020",
-		RuntimeIdentityID: "runtime-identity",
+		WorkerEpoch:        1,
+		OwnerID:            "019c10d5-a6f7-7af1-8f5f-000000000020",
+		Generation:         1,
+		ComputerInstanceID: "019c10d5-a6f7-7af1-8f5f-000000000020",
+		VMPlatformID:       "vm-platform",
 	}
 	var installed *installedNetworkBinding
 	machine, err := firecracker.NewMachine(
@@ -350,7 +350,7 @@ func TestNetworkBindingStartupPurposePrivileged(t *testing.T) {
 						t.Fatal(err)
 					}
 					logical := vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: owner.ID, Generation: 1,
-						RuntimeInstanceID: owner.ID, RuntimeIdentityID: runtimeid.Contract}
+						ComputerInstanceID: owner.ID, VMPlatformID: vmplatform.Contract}
 					runtimeCtx, cancelRuntime := context.WithCancel(context.Background())
 					defer cancelRuntime()
 					calls := 0

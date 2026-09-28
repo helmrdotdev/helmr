@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { promisify } from "node:util"
-import { HelmrClient, type WorkspaceRef, type SessionRef, type TurnRef } from "@helmr/sdk"
+import { HelmrClient, type ComputerRef, type SessionRef, type TurnRef } from "@helmr/sdk"
 import { assertActorRestore, assertActorTurns } from "./assertions"
 
 const apiUrl = process.env["HELMR_API_URL"], apiKey = process.env["HELMR_API_KEY"]
@@ -17,7 +17,7 @@ await mkdir(evidenceDir, { recursive: false, mode: 0o700 })
 const client = new HelmrClient({ url: apiUrl, apiKey })
 const marker = randomUUID()
 const evidence: Record<string, unknown> = { case: "actor", marker, startedAt: new Date().toISOString(), passed: false }
-let workspace: WorkspaceRef | undefined, session: SessionRef | undefined, tokenId: string | undefined
+let computer: ComputerRef | undefined, session: SessionRef | undefined, tokenId: string | undefined
 let failure: unknown
 let sessionClosed = false
 const request = () => ({ signal: deadline(30_000) })
@@ -41,9 +41,9 @@ async function completed(turn: TurnRef) {
 try {
   tokenId = (await client.tokens.create({ timeout: "10m", idempotencyKey: `token:${marker}` }, request())).id
   evidence["tokenId"] = tokenId
-  workspace = await client.sandboxes.createWorkspace("verification", { key: marker, idempotencyKey: `workspace:${marker}` }, request())
-  evidence["workspaceId"] = workspace.id
-  const started = await client.actors.start("verification-actor", { workspace, key: marker,
+  computer = await client.sandboxes.createComputer("verification", { key: marker, idempotencyKey: `computer:${marker}` }, request())
+  evidence["computerId"] = computer.id
+  const started = await client.actors.start("verification-actor", { computer, key: marker,
     idempotencyKey: `actor:${marker}`, run: { retry: { enabled: false } } }, request())
   session = started.session
   evidence["sessionId"] = session.id
@@ -73,7 +73,7 @@ try {
   assert.equal(firstState.sequence, 1)
   assert.equal(secondState.sequence, 2)
   assert.notEqual(first.id, second.id)
-  assertActorTurns({ marker, nonce, sessionId: session.id, runId: started.run.id, workspaceId: workspace.id },
+  assertActorTurns({ marker, nonce, sessionId: session.id, runId: started.run.id, computerId: computer.id },
     firstState.result, secondState.result)
   evidence["turns"] = [firstState, secondState]
   await session.close({ idempotencyKey: `close:${marker}` }, request())
@@ -99,7 +99,7 @@ try {
       }
       evidence["sessionConvergence"] = "waiting"
       while (current.status !== "closed") {
-        assert.notEqual(current.status, "failed", "failed Session does not prove Workspace release")
+        assert.notEqual(current.status, "failed", "failed Session does not prove Computer release")
         await delay(1000, undefined, { signal })
         current = await session!.retrieve({ signal })
       }
@@ -110,9 +110,9 @@ try {
       if ((await client.tokens.retrieve(tokenId!, request())).status === "pending")
         await client.tokens.cancel(tokenId!, { idempotencyKey: `cancel-token:${marker}` }, request())
     } : undefined],
-    ["workspaceCleanup", workspace ? async () => {
-      assert(!session || sessionClosed, "Workspace deletion withheld: Session closure not confirmed")
-      await workspace!.delete({ idempotencyKey: `delete:${marker}` }, request())
+    ["computerCleanup", computer ? async () => {
+      assert(!session || sessionClosed, "Computer deletion withheld: Session closure not confirmed")
+      await computer!.delete({ idempotencyKey: `delete:${marker}` }, request())
     } : undefined],
   ] as const) {
     if (!cleanup) { evidence[name] = "creation-unconfirmed"; continue }

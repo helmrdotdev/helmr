@@ -11,7 +11,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -46,7 +45,7 @@ func (s *Server) workerCreateTimerRunWait(
 		writeError(w, err)
 		return
 	}
-	params, dueAt, idleTimeout, checkpointDueAt, err := timerWaitDeadlines(request, idleDefault)
+	params, dueAt, idleTimeout, err := timerWaitDeadlines(request, idleDefault)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -73,97 +72,69 @@ func (s *Server) workerCreateTimerRunWait(
 
 	var registered db.RunWait
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		locators, err := work.q.GetLiveRunLeaseLocators(r.Context(), db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:      worker.WorkerEpoch,
-		})
-		if err != nil {
-			return staleRunLeaseClaim(err)
-		}
-		if _, err := secret.LockAttemptDelivery(
-			r.Context(), work.q, locators.RunID, locators.AttemptNumber,
-			locators.WorkspaceID,
-		); err != nil {
-			return fmt.Errorf("lock timer wait secret authority: %w", err)
-		}
-		owner, err := lockRunFinalizationOwner(r.Context(), work.q, locators)
+		authority, err := lockWorkerWaitExecution(r.Context(), work.tx, worker, parsed, request.Lease)
 		if err != nil {
 			return err
-		}
-		authority, err := lockRenewableRunLeaseAuthority(
-			r.Context(), work.q, worker, pgvalue.UUID(parsed.leaseID),
-			request.Lease.LeaseSequence, locators,
-		)
-		if err != nil {
-			return err
-		}
-		authority.actor = owner.actor
-		if authority.runLease.Status != db.RunLeaseStatusRunning {
-			return errStaleRunLeaseClaim
 		}
 		turnID, generation, err := parseWorkerWaitTurn(request.TurnID, request.RunGeneration)
 		if err != nil {
 			return err
 		}
-		if err := validateWorkerWaitTurn(r.Context(), work.q, authority, turnID, generation); err != nil {
+		if err := session.ValidateWaitCursor(authority, db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.Session.ID}, actorCursor); err != nil {
 			return err
 		}
-		if err := validateRunWaitActorCursor(authority, db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.actor.ID,
-			ActorSpeculativeInputSequence: actorCursor,
-		}); err != nil {
-			return err
+		if turnID.Valid {
+			if _, err := session.ValidateTurnWork(r.Context(), work.q, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Run.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session.ID), RunID: pgvalue.MustUUIDValue(authority.Run.ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: authority.Attempt.Number, RunGeneration: generation.Int64}); err != nil {
+				return err
+			}
 		}
 		registered, err = work.q.GetTimerRunWaitRegistrationReplay(
 			r.Context(),
 			db.GetTimerRunWaitRegistrationReplayParams{
-				ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID,
-				RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-				AttemptNumber:                  authority.attempt.Number,
-				ActorSpeculativeInputSequence:  actorCursor,
-				ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
+				ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run.EnvironmentID,
+				RunID: authority.Run.ID, ComputerID: authority.Computer.ID,
+				AttemptNumber:                  authority.Attempt.Number,
 				RegistrationRequestFingerprint: pgvalue.Text(fingerprint),
-				Metadata:                       metadata, Tags: tags, RunLeaseID: authority.runLease.ID,
+				Metadata:                       metadata, Tags: tags, RunLeaseID: authority.Lease.ID,
 			},
 		)
 		if err == nil {
-			return validateRunWaitActorCursor(authority, registered)
+			return session.ValidateWaitCursor(authority, registered, actorCursor)
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		if _, existingErr := work.q.GetRunWait(r.Context(), db.GetRunWaitParams{
-			RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
+			RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number,
 			ID: pgvalue.UUID(waitID),
 		}); existingErr == nil || !errors.Is(existingErr, pgx.ErrNoRows) {
 			return errStaleRunLeaseClaim
 		}
-		if authority.run.Status != db.RunStatusRunning {
+		if authority.Run.Status != db.RunStatusRunning {
 			return errStaleRunLeaseClaim
 		}
 		registered, err = work.q.RegisterTimerRunWait(r.Context(), db.RegisterTimerRunWaitParams{
-			ID: pgvalue.UUID(waitID), EnvironmentID: authority.run.EnvironmentID,
+			ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run.EnvironmentID,
 			DueAt: pgvalue.Timestamptz(dueAt), IdleTimeoutMs: idleTimeout,
 			RegistrationRequestFingerprint: pgvalue.Text(fingerprint),
-			AttemptNumber:                  authority.attempt.Number,
-			ActorSpeculativeInputSequence:  actorCursor,
-			CurrentRunLeaseID:              authority.runLease.ID,
-			CheckpointDueAt:                checkpointDueAt,
-			ResumeAttachID:                 pgvalue.UUID(resumeAttachID),
+			AttemptNumber:                  authority.Attempt.Number,
+			CurrentRunLeaseID:              authority.Lease.ID,
 			Metadata:                       metadata, Tags: tags,
-			RunID:                   authority.run.ID,
-			ExpectedRunningRevision: authority.run.Revision,
+			RunID:                   authority.Run.ID,
+			ExpectedRunningRevision: authority.Run.Revision,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		return bindWorkerWaitTurn(r.Context(), work.q, authority, registered.ID, turnID, generation)
+		if turnID.Valid {
+			_, err = work.q.BindRunWaitTurn(r.Context(), db.BindRunWaitTurnParams{SessionID: authority.Session.ID, TurnID: turnID, RunGeneration: generation, WaitID: registered.ID})
+		}
+		return err
 	})
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
+	if errors.Is(err, errStaleRunLeaseClaim) || errors.Is(err, session.ErrAuthority) || errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnScope) {
 		writeError(w, conflict(errors.New("worker timer wait receipt is stale")))
 		return
 	}
@@ -174,9 +145,9 @@ func (s *Server) workerCreateTimerRunWait(
 	}
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(),
-		ResumeAttachID:    resumeAttachID.String(),
-		RuntimeInstanceID: pgvalue.UUIDString(registrationLocators.RuntimeInstanceID),
-		RuntimeEpoch:      worker.WorkerEpoch,
+		ResumeAttachID:     resumeAttachID.String(),
+		ComputerInstanceID: pgvalue.UUIDString(registrationLocators.ComputerInstanceID),
+		RuntimeEpoch:       worker.WorkerEpoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = timerWaitDecision(registered)
@@ -191,19 +162,19 @@ func (s *Server) workerCreateTimerRunWait(
 func timerWaitDeadlines(
 	request workerapi.CreateRunWaitRequest,
 	defaultIdleTimeout time.Duration,
-) (workerTimerWaitParams, time.Time, pgtype.Int8, pgtype.Timestamptz, error) {
+) (workerTimerWaitParams, time.Time, pgtype.Int8, error) {
 	var params workerTimerWaitParams
 	if err := decodeClosedJSON(request.Params, &params); err != nil {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
+		return params, time.Time{}, pgtype.Int8{},
 			fmt.Errorf("invalid timer wait params: %w", err)
 	}
 	if (params.Duration == nil) == (params.Date == nil) {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
+		return params, time.Time{}, pgtype.Int8{},
 			errors.New("timer wait params must contain exactly one of duration or date")
 	}
 	if request.TimeoutMS == nil || *request.TimeoutMS <= 0 ||
 		*request.TimeoutMS > maxRunWaitDuration.Milliseconds() {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
+		return params, time.Time{}, pgtype.Int8{},
 			fmt.Errorf("timeout_ms must be between 1 and %d", maxRunWaitDuration.Milliseconds())
 	}
 	now := time.Now().UTC()
@@ -211,34 +182,33 @@ func timerWaitDeadlines(
 	if params.Duration != nil {
 		duration, err := parseTimerDuration(*params.Duration)
 		if err != nil {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, err
+			return params, time.Time{}, pgtype.Int8{}, err
 		}
 		if duration.Milliseconds() != *request.TimeoutMS {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
+			return params, time.Time{}, pgtype.Int8{},
 				errors.New("timer duration and timeout_ms must match")
 		}
 		dueAt = now.Add(duration)
 	} else {
 		parsed, err := time.Parse(time.RFC3339Nano, *params.Date)
 		if err != nil {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
+			return params, time.Time{}, pgtype.Int8{},
 				errors.New("timer date must be an RFC3339 timestamp")
 		}
 		dueAt = parsed.UTC()
 		normalized := dueAt.Format(time.RFC3339Nano)
 		params.Date = &normalized
 		if dueAt.After(now.Add(maxRunWaitDuration)) {
-			return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{},
+			return params, time.Time{}, pgtype.Int8{},
 				errors.New("timer date must not be more than 365d in the future")
 		}
 	}
 	idleDuration, err := runWaitIdleDuration(request.IdleTimeoutMS, defaultIdleTimeout)
 	if err != nil {
-		return params, time.Time{}, pgtype.Int8{}, pgtype.Timestamptz{}, err
+		return params, time.Time{}, pgtype.Int8{}, err
 	}
 	return params, dueAt,
-		pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true},
-		pgvalue.Timestamptz(now.Add(idleDuration)), nil
+		pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true}, nil
 }
 
 func parseTimerDuration(value string) (time.Duration, error) {

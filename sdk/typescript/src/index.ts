@@ -10,7 +10,7 @@ export { schedules } from "./schedules"
 export { queue, task } from "./task"
 export { timers } from "./timers"
 export { tokens } from "./tokens"
-export { sandbox, workspaces } from "./workspace"
+export { sandbox, computers } from "./computer"
 
 export type {
   ActorInfo,
@@ -32,9 +32,10 @@ export type {
 } from "./client-sandbox"
 
 export type {
-  WorkspaceListItem,
-  WorkspaceListQuery,
-} from "./client-workspace"
+  ClientComputerRef,
+  ComputerListItem,
+  ComputerListQuery,
+} from "./client-computer"
 
 export type {
   DeploymentListItem,
@@ -200,23 +201,28 @@ export type {
   SandboxBuilder,
   SandboxConfig,
   SandboxResourceBuilder,
-  WorkspaceCreateRequest,
-  WorkspaceDeleteRequest,
-  WorkspaceDeleteReceipt,
+  ComputerCreateRequest,
+  ComputerDeleteRequest,
+  ComputerDeleteReceipt,
   Sandbox,
-  WorkspaceExecRequest,
-  WorkspaceExecResult,
-  WorkspaceMemory,
-  WorkspaceRef,
-  WorkspaceResources,
-  WorkspaceSecretBinding,
-  Workspace,
-  WorkspaceOwner,
-  WorkspaceStatus,
-} from "./workspace"
+  ComputerCommandRequest,
+  ComputerMembersQuery,
+  ComputerMember,
+  ComputerMemory,
+  ComputerRef,
+  ComputerResources,
+  ComputerSecretBinding,
+  Computer,
+  ComputerStatus,
+  ComputerResidency,
+} from "./computer"
 
 export type {
   PayloadSchemaInput,
   PayloadSchemaOutput,
   StandardSchemaV1,
 } from "./schema/payload"
+
+export { type CancelReceipt, type CommandRef, type CommandInfo, type CommandOutcome, type CommandWaitOptions } from "./command"
+
+export type { CommandLogQuery, CommandLogStreamQuery, CommandLogRecord } from "./command-logs"

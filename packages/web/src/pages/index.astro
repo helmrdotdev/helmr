@@ -259,12 +259,12 @@ const taskFeatures = [
     icon: "bolt",
     tone: "pink",
     title: "Start it from anywhere",
-    caption: "Your product, a webhook, or CI starts a deployed Task with a typed payload against an existing Workspace.",
+    caption: "Your product, a webhook, or CI starts a deployed Task with a typed payload against an existing Computer.",
     code: `const run = await client.tasks.start<typeof reviewPr>(
   "review-pr",
   {
     payload: { prNumber: 482 },
-    workspace
+    computer
   }
 )`,
     lang: "ts",
@@ -274,13 +274,13 @@ const taskFeatures = [
     icon: "clock",
     tone: "blue",
     title: "Put it on a cron",
-    caption: "The schedule lives beside the code and ships with it. Every fire gets a fresh Workspace.",
+    caption: "The schedule lives beside the code and ships with it. Every fire gets a fresh Computer.",
     code: `export const nightly = schedules.task({
   id: "nightly-audit",
   cron: {
     pattern: "0 9 * * 1-5", timezone: "Asia/Tokyo"
   },
-  workspace: { sandbox: repoSandbox },
+  computer: { sandbox: repoSandbox },
   run: async (_, ctx) => runAudit(ctx)
 })`,
     lang: "ts",
@@ -309,16 +309,16 @@ const renderedTaskFeatures = taskFeatures.map((feature) => ({
   pixels: pixelsFromRows(pixelIcons[feature.icon]),
 }));
 
-const workspaceFeatures = [
+const computerFeatures = [
   {
     label: "image() + sandbox()",
     icon: "cloud",
     tone: "blue",
     title: "Define the environment",
-    caption: "Choose the base image, install CLIs, and set the working directory and resources behind the Workspace.",
+    caption: "Choose the base image, install CLIs, and set the working directory and resources behind the Computer.",
     code: `const base = image("repo-agent")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/computer")
   .run(["npm", "install", "-g", "@openai/codex"])
 
 export const repoSandbox = sandbox({
@@ -331,28 +331,28 @@ export const repoSandbox = sandbox({
   })`,
   },
   {
-    label: "client.sandboxes.createWorkspace()",
+    label: "client.sandboxes.createComputer()",
     icon: "resume",
     tone: "green",
-    title: "Create the Workspace",
+    title: "Create the Computer",
     caption: "Create it once, run bounded commands, and attach later Task and Actor Runs to the same files.",
-    code: `const workspace = await client.sandboxes.createWorkspace(
+    code: `const computer = await client.sandboxes.createComputer(
   "repo-agent",
   {
     key: \`github-pr:\${pr.id}\`,
-    idempotencyKey: \`workspace:\${pr.id}\`
+    idempotencyKey: \`computer:\${pr.id}\`
   }
 )
 
-const result = await workspace.exec({
+const result = await computer.exec({
   command: ["bash", "-lc", "bun test"],
-  cwd: "/workspace",
+  cwd: "/computer",
   idempotencyKey: \`verify:\${pr.id}\`
 })`,
   },
 ] as const;
 
-const renderedWorkspaceFeatures = workspaceFeatures.map((feature) => ({
+const renderedComputerFeatures = computerFeatures.map((feature) => ({
   ...feature,
   html: highlightTypeScript(feature.code),
   pixels: pixelsFromRows(pixelIcons[feature.icon]),
@@ -416,9 +416,9 @@ const fixedCode = {
   zimport: 'import { z } from "zod"',
   image: `const base = image("repo-agent")
   .from("node:24-bookworm-slim")
-  .workdir("/workspace")
+  .workdir("/computer")
   .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
-  .copy(source.file("package.json"), "/workspace/package.json")
+  .copy(source.file("package.json"), "/computer/package.json")
   .run(["bun", "install"])`,
   sandbox: `export const repoSandbox = sandbox({ id: "repo-agent" })
   .image(base)
@@ -818,16 +818,16 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       <p class="feature-caption actor-caption">{renderedActor.caption}</p>
     </section>
 
-    <section id="workspace" class="workspace-section" aria-label="Shared Workspace">
+    <section id="computer" class="computer-section" aria-label="Shared Computer">
       <div class="section-head">
         <h2 class="headline section-title">
           Persistent VM filesystems.{" "}
-          <span class="faint">The same /workspace, Run after Run.</span>
+          <span class="faint">The same /computer, Run after Run.</span>
         </h2>
       </div>
-      <div class="pair-panels workspace-panels">
-        {renderedWorkspaceFeatures.map((feature) => (
-          <div class="paired-feature workspace-feature">
+      <div class="pair-panels computer-panels">
+        {renderedComputerFeatures.map((feature) => (
+          <div class="paired-feature computer-feature">
             <div class="feature-head">
               <svg class="feature-icon" viewBox="0 0 10 10" aria-hidden="true" style={`background: ${tints[feature.tone]}`}>
                 {feature.pixels.map((pixel) => (
@@ -1601,7 +1601,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
   .build-section,
   .features,
   .actor-section,
-  .workspace-section,
+  .computer-section,
   .security-section {
     scroll-margin-top: 4.5rem;
   }
@@ -1737,7 +1737,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     max-width: 48rem;
   }
 
-  .workspace-section {
+  .computer-section {
     padding-bottom: 7rem;
   }
 
@@ -1842,7 +1842,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
     text-decoration: underline;
   }
 
-  .workspace-feature {
+  .computer-feature {
     min-width: 0;
   }
 
@@ -2004,7 +2004,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
 
     .build-section,
     .actor-section,
-    .workspace-section,
+    .computer-section,
     .security-section {
       padding-bottom: 5rem;
     }

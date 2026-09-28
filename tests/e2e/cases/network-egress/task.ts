@@ -5,7 +5,7 @@ const base = image("helmr-network-smoke")
   .from("node:24-bookworm-slim")
   .workdir("/sandbox")
 
-export const networkSmokeWorkspace = sandbox({ id: "helmr-network-smoke" })
+export const networkSmokeComputer = sandbox({ id: "helmr-network-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 

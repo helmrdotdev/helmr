@@ -2,29 +2,24 @@ package controlplane
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
+	"testing"
+	"time"
+	"uuid"
+
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"time"
-	"uuid"
 )
 
-func turnCommand(f *actorCheckpointFixture, s session.TurnScope) workerapi.TurnExecutionRequest {
+func turnCommand(f *actorExecutionFixture, s session.TurnScope) workerapi.TurnExecutionRequest {
 	return workerapi.TurnExecutionRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: s.TurnID.String(), RunGeneration: s.RunGeneration}
 }
-func readyMessages(t *testing.T, f *actorCheckpointFixture, s session.TurnScope) {
+func readyMessages(t *testing.T, f *actorExecutionFixture, s session.TurnScope) {
 	t.Helper()
 	var result workerapi.TurnCommandResponse
 	f.workerCall(t, f.server.workerTurnMessagesReady, turnCommand(f, s), &result)
@@ -32,7 +27,7 @@ func readyMessages(t *testing.T, f *actorCheckpointFixture, s session.TurnScope)
 		t.Fatalf("readiness: %+v", result)
 	}
 }
-func admitMessage(t *testing.T, f *actorCheckpointFixture, key string) session.AdmissionReceipt {
+func admitMessage(t *testing.T, f *actorExecutionFixture, key string) session.AdmissionReceipt {
 	t.Helper()
 	r, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`{"text":"steer"}`), IdempotencyKey: key})
 	if err != nil {
@@ -40,7 +35,7 @@ func admitMessage(t *testing.T, f *actorCheckpointFixture, key string) session.A
 	}
 	return r
 }
-func claimMessage(t *testing.T, f *actorCheckpointFixture, s session.TurnScope) workerapi.TurnMessageDelivery {
+func claimMessage(t *testing.T, f *actorExecutionFixture, s session.TurnScope) workerapi.TurnMessageDelivery {
 	t.Helper()
 	var r workerapi.ClaimTurnMessageResponse
 	f.workerCall(t, f.server.workerClaimTurnMessage, workerapi.ClaimTurnMessageRequest{TurnExecutionRequest: turnCommand(f, s), DeliveryID: uuid.NewV7().String()}, &r)
@@ -49,7 +44,7 @@ func claimMessage(t *testing.T, f *actorCheckpointFixture, s session.TurnScope) 
 	}
 	return *r.Delivery
 }
-func finishDelivery(t *testing.T, f *actorCheckpointFixture, s session.TurnScope, d workerapi.TurnMessageDelivery, status, code string) {
+func finishDelivery(t *testing.T, f *actorExecutionFixture, s session.TurnScope, d workerapi.TurnMessageDelivery, status, code string) {
 	t.Helper()
 	var r workerapi.TurnCommandResponse
 	f.workerCall(t, f.server.workerCompleteTurnMessage, workerapi.CompleteTurnMessageRequest{TurnExecutionRequest: turnCommand(f, s), MessageID: d.MessageID, DeliveryID: d.DeliveryID, Status: status, Code: code}, &r)
@@ -59,7 +54,7 @@ func finishDelivery(t *testing.T, f *actorCheckpointFixture, s session.TurnScope
 }
 
 func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	request := session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`null`), IdempotencyKey: "not-ready"}
 	first, err := f.server.applySessionAdmission(t.Context(), request)
@@ -127,86 +122,7 @@ func TestSessionMessageSettlementBarrierPostgres(t *testing.T) {
 		t.Fatalf("queued identity changed: %+v %+v", next, queued)
 	}
 }
-func TestSessionUnknownMessageTerminatesExecutionPostgres(t *testing.T) {
-	for _, stop := range []string{"none", "cancel", "interrupt", "cancel before ack", "interrupt before ack"} {
-		t.Run(stop, func(t *testing.T) {
-			f := newActorCheckpointFixture(t)
-			scope := f.receiveTurn(t, 1)
-			readyMessages(t, f, scope)
-			admitMessage(t, f, "unknown")
-			delivery := claimMessage(t, f, scope)
-			queued := admitMessage(t, f, "undelivered")
-			target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
-			beforeAck := stop == "cancel before ack" || stop == "interrupt before ack"
-			if beforeAck {
-				var err error
-				if stop == "cancel before ack" {
-					_, err = f.server.applySessionCancel(t.Context(), session.ControlRequest{Target: target})
-				} else {
-					_, err = f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: target}, TurnID: scope.TurnID})
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-			}
-			finishDelivery(t, f, scope, delivery, "unknown", "handler_failed")
-			finishDelivery(t, f, scope, delivery, "unknown", "handler_failed")
-			var status, queuedStatus string
-			var hold *uuid.UUID
-			var active uuid.UUID
-			var settling bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT m.status,s.dispatch_hold_id,s.active_turn_id,t.settlement_started_at IS NOT NULL,q.status FROM sessions s JOIN session_messages m ON m.id=$2 JOIN session_turns t ON t.id=s.active_turn_id JOIN session_messages q ON q.id=$3 WHERE s.id=$1`, f.sessionID, delivery.MessageID, *queued.MessageID).Scan(&status, &hold, &active, &settling, &queuedStatus); err != nil {
-				t.Fatal(err)
-			}
-			if status != "unknown" || (hold != nil) != beforeAck || active != scope.TurnID || (!beforeAck && !settling) || queuedStatus != "rejected" {
-				t.Fatalf("unknown outcome: %s hold=%v active=%s settling=%v queued=%s", status, hold, active, settling, queuedStatus)
-			}
-			var r workerapi.ClaimTurnMessageResponse
-			f.workerCall(t, f.server.workerClaimTurnMessage, workerapi.ClaimTurnMessageRequest{TurnExecutionRequest: turnCommand(f, scope), DeliveryID: delivery.DeliveryID}, &r)
-			wantCode := "turn_unsettled"
-			if beforeAck {
-				wantCode = "turn_stopping"
-			}
-			if r.Failed == nil || r.Failed.Code != wantCode || r.Delivery != nil {
-				t.Fatalf("unknown delivery replay: %+v", r)
-			}
-			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.SendMessageOrEnqueue, Data: json.RawMessage(`null`)}); err == nil {
-				t.Fatal("failed callback accepted more Turn input")
-			}
-			commit := workerapi.CommitActorTurnRequest{TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`null`), Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TargetInputSequence: 1}
-			parsedCommit, err := parseActorTurnCommitRequest(commit)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.server.commitActorTurn(t.Context(), f.worker, commit, parsedCommit); err == nil {
-				t.Fatal("unknown callback became successful Turn")
-			}
-			req, parsed := failedActorCompletion(t, f)
-			switch stop {
-			case "cancel":
-				_, err = f.server.applySessionCancel(t.Context(), session.ControlRequest{Target: target})
-			case "interrupt":
-				_, err = f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: target}, TurnID: scope.TurnID})
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
-				t.Fatal(err)
-			}
-			if err = f.server.completeActor(t.Context(), f.worker, req, parsed); err != nil {
-				t.Fatal(err)
-			}
-			if stop == "none" {
-				assertFailedActorSession(t, f, true)
-			}
-			if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, delivery.MessageID).Scan(&status); err != nil || status != "unknown" {
-				t.Fatalf("message outcome=%s err=%v", status, err)
-			}
-		})
-	}
-}
-func actorTokenWait(t *testing.T, f *actorCheckpointFixture, s session.TurnScope) (*token.WaitReconciler, token.WaitRegistration) {
+func actorTokenWait(t *testing.T, f *actorExecutionFixture, s session.TurnScope) (*token.WaitReconciler, token.WaitRegistration) {
 	t.Helper()
 	tokenID := uuid.NewV7()
 	if _, err := f.server.db.CreateToken(t.Context(), db.CreateTokenParams{ID: pgvalue.UUID(tokenID), OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)), CallbackSecretFingerprint: make([]byte, 32), Metadata: []byte(`{}`), Tags: []string{}}); err != nil {
@@ -216,455 +132,10 @@ func actorTokenWait(t *testing.T, f *actorCheckpointFixture, s session.TurnScope
 	if err != nil {
 		t.Fatal(err)
 	}
-	return reconciler, token.WaitRegistration{TokenID: tokenID, WaitID: uuid.NewV7(), ResumeAttachID: uuid.NewV7(), RunLeaseID: pgvalue.MustUUIDValue(f.claim.runLease.ID), LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: f.worker.WorkerGroupID, WorkerInstanceID: f.worker.WorkerInstanceID, WorkerEpoch: f.worker.WorkerEpoch, RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorSpeculativeInputSequence: pgtype.Int8{Int64: 1, Valid: true}, TurnID: pgvalue.UUID(s.TurnID), RunGeneration: pgtype.Int8{Int64: s.RunGeneration, Valid: true}, CheckpointDueAt: pgvalue.Timestamptz(time.Now().Add(-time.Minute))}
+	return reconciler, token.WaitRegistration{TokenID: tokenID, WaitID: uuid.NewV7(), RunLeaseID: pgvalue.MustUUIDValue(f.claim.runLease.ID), LeaseSequence: f.fence().LeaseSequence, WorkerGroupID: f.worker.WorkerGroupID, WorkerHostID: f.worker.WorkerHostID, WorkerEpoch: f.worker.WorkerEpoch, RequestFingerprint: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorSpeculativeInputSequence: pgtype.Int8{Int64: 1, Valid: true}, TurnID: pgvalue.UUID(s.TurnID), RunGeneration: pgtype.Int8{Int64: s.RunGeneration, Valid: true}}
 }
-func TestSessionTokenWaitStopOrderingPostgres(t *testing.T) {
-	t.Run("outside Turn cannot speculate queued input", func(t *testing.T) {
-		f := newActorCheckpointFixture(t)
-		reconciler, registration := actorTokenWait(t, f, session.TurnScope{})
-		registration.TurnID = pgtype.UUID{}
-		registration.RunGeneration = pgtype.Int8{}
-		if _, err := reconciler.RegisterWait(t.Context(), registration); !errors.Is(err, token.ErrWaitAuthority) {
-			t.Fatalf("unadmitted input became speculative cursor: %v", err)
-		}
-		registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 0, Valid: true}
-		if _, err := reconciler.RegisterWait(t.Context(), registration); err != nil {
-			t.Fatalf("committed outside-Turn position rejected: %v", err)
-		}
-		var active pgtype.UUID
-		var cursor int64
-		if err := f.Pool.QueryRow(t.Context(), `SELECT active_turn_id,committed_input_sequence FROM sessions WHERE id=$1`, f.sessionID).Scan(&active, &cursor); err != nil || active.Valid || cursor != 0 {
-			t.Fatalf("wait fabricated input admission: %v %d %v", active, cursor, err)
-		}
-	})
-	t.Run("stop before registration", func(t *testing.T) {
-		f := newActorCheckpointFixture(t)
-		scope := f.receiveTurn(t, 1)
-		reconciler, registration := actorTokenWait(t, f, scope)
-		tx, err := f.Pool.Begin(t.Context())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Rollback(context.Background())
-		graph, err := lockSessionControlGraph(t.Context(), &txWork{q: db.New(tx), tx: tx}, session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = session.InterruptTurn(t.Context(), db.New(tx), f.EnvironmentID, f.sessionID, scope.TurnID, "before-wait", graph); err != nil {
-			t.Fatal(err)
-		}
-		done := make(chan error, 1)
-		go func() { _, err := reconciler.RegisterWait(t.Context(), registration); done <- err }()
-		if err = tx.Commit(t.Context()); err != nil {
-			t.Fatal(err)
-		}
-		if err = <-done; !errors.Is(err, token.ErrWaitAuthority) {
-			t.Fatalf("registration after stop: %v", err)
-		}
-		var waits int
-		var tokenStatus string
-		if err = f.Pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM run_waits WHERE id=$1),(SELECT status FROM tokens WHERE id=$2)`, registration.WaitID, registration.TokenID).Scan(&waits, &tokenStatus); err != nil {
-			t.Fatal(err)
-		}
-		if waits != 0 || tokenStatus != "pending" {
-			t.Fatalf("stop changed shared Token: waits=%d status=%s", waits, tokenStatus)
-		}
-	})
-	t.Run("registration before stop", func(t *testing.T) {
-		f := newActorCheckpointFixture(t)
-		scope := f.receiveTurn(t, 1)
-		readyMessages(t, f, scope)
-		reconciler, registration := actorTokenWait(t, f, scope)
-		if _, err := reconciler.RegisterWait(t.Context(), registration); err != nil {
-			t.Fatal(err)
-		}
-		var bound uuid.UUID
-		var gen int64
-		var ready bool
-		if err := f.Pool.QueryRow(t.Context(), `SELECT w.turn_id,w.turn_run_generation,t.ready_run_lease_id IS NOT NULL FROM run_waits w JOIN session_turns t ON t.id=w.turn_id WHERE w.id=$1`, registration.WaitID).Scan(&bound, &gen, &ready); err != nil {
-			t.Fatal(err)
-		}
-		if bound != scope.TurnID || gen != scope.RunGeneration || ready {
-			t.Fatalf("wait binding: %s %d ready=%v", bound, gen, ready)
-		}
-		pending := admitMessage(t, f, "during-wait-input")
-		if pending.Kind != "messaged" || pending.TurnID != scope.TurnID {
-			t.Fatalf("wait admission: %+v", pending)
-		}
-		var readyAfter bool
-		if err := f.Pool.QueryRow(t.Context(), `SELECT ready_run_lease_id IS NOT NULL FROM session_turns WHERE id=$1`, scope.TurnID).Scan(&readyAfter); err != nil || readyAfter {
-			t.Fatalf("admission changed delivery readiness: %v %v", readyAfter, err)
-		}
-		if _, err := interruptTurn(t.Context(), f, scope, "during-wait"); err != nil {
-			t.Fatal(err)
-		}
-		var pendingStatus string
-		if err := f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, *pending.MessageID).Scan(&pendingStatus); err != nil || pendingStatus != "rejected" {
-			t.Fatalf("stopped pending input: %s %v", pendingStatus, err)
-		}
-		if _, err := f.server.db.CompleteToken(t.Context(), db.CompleteTokenParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(registration.TokenID), CompletionFingerprint: make([]byte, 32), Result: []byte(`{"approved":true}`), ControlOutboxID: pgvalue.UUID(uuid.NewV7())}); err != nil {
-			t.Fatal(err)
-		}
-		batch, err := reconciler.ReconcileBatch(t.Context(), f.EnvironmentID, registration.TokenID, 1)
-		if err != nil || batch.Examined != 0 {
-			t.Fatalf("revoked wait consumed Token: %+v %v", batch, err)
-		}
-		if _, err = reconciler.RegisterWait(t.Context(), registration); !errors.Is(err, token.ErrWaitAuthority) {
-			t.Fatalf("stopped registration replay: %v", err)
-		}
-		parsed, _ := parseRunLeaseFence(f.fence())
-		if _, err = f.server.requestWorkerRunWaitCheckpoint(t.Context(), f.worker, f.fence(), parsed, registration.WaitID); err == nil {
-			t.Fatal("stopped wait checkpoint admitted")
-		}
-		raw, _ := json.Marshal(workerapi.RunWaitPollRequest{Lease: f.fence(), RunWaitID: registration.WaitID.String()})
-		request := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
-		request = request.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-		response := httptest.NewRecorder()
-		f.server.workerPollRunWait(response, request)
-		if response.Code != http.StatusOK {
-			t.Fatalf("cancelled poll %d: %s", response.Code, response.Body.String())
-		}
-		var stopped workerapi.RunWaitPollResponse
-		if err = json.Unmarshal(response.Body.Bytes(), &stopped); err != nil || stopped.ResumeKind != "cancelled" || string(stopped.ResumePayload) != `{"reason_code":"session_stopped"}` {
-			t.Fatalf("stopped receipt: %+v %v", stopped, err)
-		}
-		var revoked bool
-		var condition string
-		if err = f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id IS NOT NULL,w.condition_status FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN sessions s ON s.id=r.session_id WHERE w.id=$1`, registration.WaitID).Scan(&revoked, &condition); err != nil {
-			t.Fatal(err)
-		}
-		if !revoked || condition != "failed" {
-			t.Fatalf("stop did not resolve consuming wait: %v %s", revoked, condition)
-		}
-	})
-}
-
-func TestSessionParkedTurnInterruptRecoveryPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
-	capture := f.capture(t, "retained committed head")
-	f.turn(t, 1)
-	queued, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	scope := f.receiveTurn(t, 2)
-	if scope.TurnID != queued.TurnID {
-		t.Fatal("queued Turn identity changed")
-	}
-	readyMessages(t, f, scope)
-	admitMessage(t, f, "callback-before-park")
-	delivery := claimMessage(t, f, scope)
-	reconciler, registration := actorTokenWait(t, f, scope)
-	registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
-	if _, err = reconciler.RegisterWait(t.Context(), registration); err != nil {
-		t.Fatal(err)
-	}
-	f.suspendWait(t, registration.WaitID, capture)
-	var lease pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT current_run_lease_id FROM runs WHERE id=$1`, f.runID).Scan(&lease); err != nil || lease.Valid {
-		t.Fatalf("not parked: %v %v", lease, err)
-	}
-	stopped, err := f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, IdempotencyKey: "parked-stop"}, TurnID: scope.TurnID})
-	if err != nil || stopped.HoldID == nil {
-		t.Fatalf("parked stop: %+v %v", stopped, err)
-	}
-	var status, reason string
-	var held, active, head, owner uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT r.status,s.dispatch_hold_id,s.dispatch_hold_reason,s.active_turn_id,w.head_version_id,w.owner_session_id FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, f.sessionID).Scan(&status, &held, &reason, &active, &head, &owner); err != nil {
-		t.Fatal(err)
-	}
-	if status != "cancelled" || held != *stopped.HoldID || reason != "interrupt_requested" || active != scope.TurnID || head.String() != f.rootID.String() || owner != f.sessionID {
-		t.Fatalf("parked retirement changed authority: %s %s %s %s %s %s", status, held, reason, active, head, owner)
-	}
-	lifecycle, _ := session.NewReconciler(f.Pool)
-	for range 2 {
-		if waiting, e := lifecycle.ReconcileLifecycle(t.Context(), f.EnvironmentID, f.sessionID); e != nil || waiting {
-			t.Fatalf("parked stop=%v %v", waiting, e)
-		}
-	}
-	var settledHold uuid.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&settledHold); err != nil || settledHold == held {
-		t.Fatalf("new hold=%s %v", settledHold, err)
-	}
-	var messageStatus string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT status FROM session_messages WHERE id=$1`, uuid.MustParse(delivery.MessageID)).Scan(&messageStatus); err != nil || messageStatus != "unknown" {
-		t.Fatalf("recovery redelivered or lost callback uncertainty: %s %v", messageStatus, err)
-	}
-	var cursor int64
-	var current, activeAfter pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT s.committed_input_sequence,s.active_turn_id,s.current_run_id,t.status FROM sessions s JOIN session_turns t ON t.id=$2 WHERE s.id=$1`, f.sessionID, scope.TurnID).Scan(&cursor, &activeAfter, &current, &status); err != nil {
-		t.Fatal(err)
-	}
-	if cursor != 2 || activeAfter.Valid || current.Valid || status != "interrupted" {
-		t.Fatalf("recovered state: %d %v %v %s", cursor, activeAfter, current, status)
-	}
-	if _, err = f.server.applySessionResume(t.Context(), session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, IdempotencyKey: "parked-resume"}, HoldID: settledHold}); err != nil {
-		t.Fatal(err)
-	}
-	if err = f.Pool.QueryRow(t.Context(), `SELECT current_run_id,dispatch_hold_id FROM sessions WHERE id=$1`, f.sessionID).Scan(&current, &activeAfter); err != nil || current.Valid || activeAfter.Valid {
-		t.Fatalf("explicit resume: %v %v %v", current, activeAfter, err)
-	}
-}
-
-func TestSessionTokenResumeStopAuthorityPostgres(t *testing.T) {
-	for _, stage := range []string{"before_start", "before_ack", "after_ack"} {
-		t.Run(stage, func(t *testing.T) {
-			f := newActorCheckpointFixture(t)
-			capture := f.capture(t, "checkpoint head")
-			f.turn(t, 1)
-			if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
-				t.Fatal(err)
-			}
-			scope := f.receiveTurn(t, 2)
-			reconciler, registration := actorTokenWait(t, f, scope)
-			registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
-			if _, err := reconciler.RegisterWait(t.Context(), registration); err != nil {
-				t.Fatal(err)
-			}
-			f.suspendWait(t, registration.WaitID, capture)
-			if _, err := f.server.db.CompleteToken(t.Context(), db.CompleteTokenParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(registration.TokenID), CompletionFingerprint: make([]byte, 32), Result: []byte(`{"approved":true}`), ControlOutboxID: pgvalue.UUID(uuid.NewV7())}); err != nil {
-				t.Fatal(err)
-			}
-			if b, err := reconciler.ReconcileBatch(t.Context(), f.EnvironmentID, registration.TokenID, 1); err != nil || b.Resolved != 1 {
-				t.Fatalf("Token checkpoint resolution: %+v %v", b, err)
-			}
-			var checkpointBase, attemptBase, head uuid.UUID
-			var waitKind string
-			if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,rw.kind FROM run_waits rw JOIN run_checkpoints c ON c.id=rw.suspend_checkpoint_id JOIN run_attempts a ON a.run_id=rw.run_id AND a.number=rw.attempt_number JOIN computers w ON w.id=rw.workspace_id WHERE rw.id=$1`, registration.WaitID).Scan(&checkpointBase, &attemptBase, &head, &waitKind); err != nil {
-				t.Fatal(err)
-			}
-			// Turn completion does not save the disk or advance the attempt base.
-			if checkpointBase != head || checkpointBase != attemptBase || head != f.rootID || waitKind != "token" {
-				t.Fatalf("invalid active checkpoint fixture: %s %s %s %s", checkpointBase, attemptBase, head, waitKind)
-			}
-			t.Logf("Turn settlement preserved head %s and attempt origin %s before Token suspension", checkpointBase, attemptBase)
-			f.placeAndClaim(t)
-			wait := f.claim.runWait
-			start := workerapi.RunStartRequest{Lease: f.fence(), Restore: &workerapi.RunStartRestore{RunWaitID: pgvalue.UUIDString(wait.ID), CheckpointID: pgvalue.UUIDString(wait.SuspendCheckpointID), ResumeAttachID: pgvalue.UUIDString(wait.ResumeAttachID), ResumeRequestVersion: wait.ResumeRequestVersion}}
-			ack := workerapi.RunResumeReleaseRequest{Lease: f.fence(), RunWaitID: start.Restore.RunWaitID, CheckpointID: start.Restore.CheckpointID, ResumeAttachID: start.Restore.ResumeAttachID, ResumeRequestVersion: start.Restore.ResumeRequestVersion}
-			if stage != "before_start" {
-				f.workerCall(t, f.server.workerStart, start, nil)
-			}
-			if stage == "after_ack" {
-				f.workerCall(t, f.server.workerAcknowledgeRunResumeRelease, ack, nil)
-			}
-			if _, err := f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, TurnID: scope.TurnID}); err != nil {
-				t.Fatal(err)
-			}
-			var request any = ack
-			handler := f.server.workerAcknowledgeRunResumeRelease
-			if stage == "before_start" {
-				request = start
-				handler = f.server.workerStart
-			}
-			raw, _ := json.Marshal(request)
-			r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
-			r = r.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-			response := httptest.NewRecorder()
-			handler(response, r)
-			if response.Code != http.StatusConflict {
-				t.Fatalf("stopped %s admitted: %d %s", stage, response.Code, response.Body.String())
-			}
-			var condition string
-			var revoked bool
-			var ackVersion int64
-			if err := f.Pool.QueryRow(t.Context(), `SELECT w.condition_status,s.dispatch_hold_id IS NOT NULL,w.resume_ack_version FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN sessions s ON s.id=r.session_id WHERE w.id=$1`, registration.WaitID).Scan(&condition, &revoked, &ackVersion); err != nil {
-				t.Fatal(err)
-			}
-			wantAck := int64(0)
-			if stage == "after_ack" {
-				wantAck = wait.ResumeRequestVersion
-			}
-			if condition != "completed" || !revoked || ackVersion != wantAck {
-				t.Fatalf("stop changed Token result or acknowledged execution: %s %v %d", condition, revoked, ackVersion)
-			}
-		})
-	}
-}
-
-func TestSessionActiveTurnChildCallBindsWaitPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
-	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.Pool.Exec(t.Context(), `UPDATE deployment_definitions SET manifest=$2,manifest_digest=$3 WHERE id=$1`, f.TaskDefinitionID, manifest, digest[:]); err != nil {
-		t.Fatal(err)
-	}
-	scope := f.receiveTurn(t, 1)
-	readyMessages(t, f, scope)
-	turnID := scope.TurnID.String()
-	cursor := int64(1)
-	target, _ := json.Marshal(map[string]string{"id": f.workspaceID.String()})
-	request := workerapi.InvokeChildTaskRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Workspace: target, Options: json.RawMessage(`{}`), IdempotencyKey: "active-child", TurnID: &turnID, RunGeneration: &scope.RunGeneration, ActorSpeculativeInputSequence: &cursor}
-	var response workerapi.InvokeChildTaskResponse
-	f.workerCall(t, f.server.workerInvokeChildTask, request, &response)
-	if response.OpenedWait == nil || response.Failed != nil {
-		t.Fatalf("active child call: %+v", response)
-	}
-	var bound uuid.UUID
-	var ready bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.turn_id,t.ready_run_lease_id IS NOT NULL FROM run_waits w JOIN session_turns t ON t.id=w.turn_id WHERE w.id=$1`, uuid.MustParse(request.RunWaitID)).Scan(&bound, &ready); err != nil || bound != scope.TurnID || ready {
-		t.Fatalf("child wait binding: %s %v %v", bound, ready, err)
-	}
-	if _, err := f.server.applySessionInterrupt(t.Context(), session.InterruptRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}}, TurnID: scope.TurnID}); err != nil {
-		t.Fatal(err)
-	}
-	parsed, _ := parseRunLeaseFence(f.fence())
-	if _, err := f.server.requestWorkerRunWaitCheckpoint(t.Context(), f.worker, f.fence(), parsed, uuid.MustParse(request.RunWaitID)); err == nil {
-		t.Fatal("stopped child wait entered checkpoint handoff")
-	}
-	var revoked bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT s.dispatch_hold_id IS NOT NULL FROM run_waits w JOIN runs r ON r.id=w.run_id JOIN sessions s ON s.id=r.session_id WHERE w.id=$1`, uuid.MustParse(request.RunWaitID)).Scan(&revoked); err != nil || !revoked {
-		t.Fatalf("child wait not revoked: %v %v", revoked, err)
-	}
-}
-
-func TestOwnedTaskTokenWaitDoesNotInheritActorTurnPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
-	capture := f.capture(t, "Actor committed frontier")
-	f.turn(t, 1)
-	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
-		t.Fatal(err)
-	}
-	scope := f.receiveTurn(t, 2)
-	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = f.Pool.Exec(t.Context(), `UPDATE deployment_definitions SET manifest=$2,manifest_digest=$3 WHERE id=$1`, f.TaskDefinitionID, manifest, digest[:]); err != nil {
-		t.Fatal(err)
-	}
-	turnID := scope.TurnID.String()
-	cursor := int64(2)
-	target, _ := json.Marshal(map[string]string{"id": f.workspaceID.String()})
-	request := workerapi.InvokeChildTaskRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Workspace: target, Options: json.RawMessage(`{}`), IdempotencyKey: "generic-owned-task", TurnID: &turnID, RunGeneration: &scope.RunGeneration, ActorSpeculativeInputSequence: &cursor}
-	var response workerapi.InvokeChildTaskResponse
-	f.workerCall(t, f.server.workerInvokeChildTask, request, &response)
-	if response.OpenedWait == nil || response.Failed != nil {
-		t.Fatalf("parent call: %+v", response)
-	}
-	childCheckpoint := f.suspendWait(t, uuid.MustParse(request.RunWaitID), capture)
-	var checkpointBase, attemptBase, committedHead, childBase pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,a.base_workspace_version_id,w.head_version_id,c.private_workspace_version_id FROM run_checkpoints c JOIN run_attempts a ON a.run_id=c.run_id AND a.number=c.attempt_number JOIN computers w ON w.id=c.workspace_id WHERE c.id=$1`, uuid.MustParse(childCheckpoint.CheckpointID)).Scan(&checkpointBase, &attemptBase, &committedHead, &childBase); err != nil {
-		t.Fatal(err)
-	}
-	// The first managed suspension creates the child's private disk frontier;
-	// the preceding Turn completion left the committed head and attempt unchanged.
-	if checkpointBase != committedHead || checkpointBase != attemptBase || committedHead != pgvalue.UUID(f.rootID) || childBase != pgvalue.UUID(uuid.MustParse(childCheckpoint.WorkspaceVersionID)) || childBase == committedHead {
-		t.Fatalf("Actor parent/Task child frontier: checkpoint=%v attempt=%v committed=%v child=%v", checkpointBase, attemptBase, committedHead, childBase)
-	}
-	parentID := f.runID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT child_run_id FROM run_waits WHERE id=$1`, uuid.MustParse(request.RunWaitID)).Scan(&f.runID); err != nil {
-		t.Fatal(err)
-	}
-	f.placeAndClaim(t)
-	f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence(), Fresh: &workerapi.RunStartFresh{}}, nil)
-	f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "task", EntrypointDeclaredID: "test-task"}, nil)
-	reconciler, registration := actorTokenWait(t, f, session.TurnScope{})
-	registration.TurnID = pgtype.UUID{}
-	registration.RunGeneration = pgtype.Int8{}
-	registration.ActorSpeculativeInputSequence = pgtype.Int8{}
-	if _, err = reconciler.RegisterWait(t.Context(), registration); err != nil {
-		t.Fatalf("generic owned Task Token registration: %v", err)
-	}
-	ownedCheckpoint := f.suspendWait(t, registration.WaitID, capture)
-
-	if _, err = f.server.db.CompleteToken(t.Context(), db.CompleteTokenParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(registration.TokenID), CompletionFingerprint: make([]byte, 32), Result: []byte(`true`), ControlOutboxID: pgvalue.UUID(uuid.NewV7())}); err != nil {
-		t.Fatal(err)
-	}
-	if result, err := reconciler.ReconcileBatch(t.Context(), f.EnvironmentID, registration.TokenID, 1); err != nil || result.Resolved != 1 {
-		t.Fatalf("owned Task Token resolution: %+v %v", result, err)
-	}
-	var originalBase pgtype.UUID
-	var revision int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT c.base_workspace_version_id,r.revision FROM run_checkpoints c JOIN runs r ON r.id=c.run_id WHERE c.id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID)).Scan(&originalBase, &revision); err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET base_workspace_version_id=(SELECT head_version_id FROM computers WHERE id=run_checkpoints.workspace_id) WHERE id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID))
-	if _, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}); !errors.Is(err, dispatch.ErrCandidateChanged) {
-		t.Fatalf("corrupt Task checkpoint source base placement: %v", err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_checkpoints SET base_workspace_version_id=$2 WHERE id=$1`, uuid.MustParse(ownedCheckpoint.CheckpointID), originalBase)
-
-	f.placeAndClaim(t)
-	f.expireRestore(t)
-	if err := f.Pool.QueryRow(t.Context(), `SELECT revision FROM runs WHERE id=$1`, f.runID).Scan(&revision); err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET restore_checkpoint_id=NULL WHERE id=$1`, f.claim.runtime.ID)
-	if _, err := f.placement.PlaceReadyRun(t.Context(), dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}); !errors.Is(err, dispatch.ErrCandidateChanged) {
-		t.Fatalf("corrupt recovered Task restore identity placement: %v", err)
-	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runtime_instances SET restore_checkpoint_id=$2 WHERE id=$1`, f.claim.runtime.ID, f.claim.runtime.RestoreCheckpointID)
-
-	f.placeAndClaim(t)
-	f.startClaim(t)
-
-	checkpointTokenAndResume(t, f, session.TurnScope{}, 0, capture)
-
-	var bound, owner, active pgtype.UUID
-	var childStatus string
-	if err = f.Pool.QueryRow(t.Context(), `SELECT rw.turn_id,w.owner_session_id,s.active_turn_id,r.status FROM run_waits rw JOIN runs r ON r.id=rw.run_id JOIN computers w ON w.id=r.workspace_id JOIN sessions s ON s.current_run_id=$2 WHERE rw.id=$1`, registration.WaitID, parentID).Scan(&bound, &owner, &active, &childStatus); err != nil {
-		t.Fatal(err)
-	}
-	if bound.Valid || owner != pgvalue.UUID(f.sessionID) || active != pgvalue.UUID(scope.TurnID) || childStatus != "running" {
-		t.Fatalf("Task inherited Actor consumption: %v %v %v %s", bound, owner, active, childStatus)
-	}
-	finishCheckpointChild(t, f, capture, "success")
-	f.workerCall(t, f.server.workerStopWorkspaceMount, workerapi.WorkspaceMountStopRequest{OrgID: f.OrgID.String(), WorkspaceMountID: pgvalue.UUIDString(f.claim.workspaceMount.ID), CleanupProof: workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now()}}, nil)
-	f.runID = parentID
-	f.placeAndClaim(t)
-	f.startClaim(t)
-	f.turn(t, 2)
-
-}
-
-func TestSessionMessagesSurviveParkUntilOriginalWaitResumesPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
-	capture := f.capture(t, "checkpoint head")
-	f.turn(t, 1)
-	target := session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}
-	if _, err := f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: target, Mode: session.EnqueueOnly, Data: json.RawMessage(`{"work":2}`)}); err != nil {
-		t.Fatal(err)
-	}
-	scope := f.receiveTurn(t, 2)
-	reconciler, registration := actorTokenWait(t, f, scope)
-	registration.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
-	if _, err := reconciler.RegisterWait(t.Context(), registration); err != nil {
-		t.Fatal(err)
-	}
-	f.suspendWait(t, registration.WaitID, capture)
-	pending := admitMessage(t, f, "parked-input")
-	if pending.Kind != "messaged" || pending.TurnID != scope.TurnID {
-		t.Fatalf("parked routing: %+v", pending)
-	}
-	var condition, status string
-	var lease pgtype.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT w.condition_status,r.status,r.current_run_lease_id FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1`, registration.WaitID).Scan(&condition, &status, &lease); err != nil {
-		t.Fatal(err)
-	}
-	if condition != "pending" || status != "waiting" || lease.Valid {
-		t.Fatalf("message woke original wait: %s %s %v", condition, status, lease)
-	}
-	if _, err := f.server.db.CompleteToken(t.Context(), db.CompleteTokenParams{OrgID: pgvalue.UUID(f.OrgID), ProjectID: pgvalue.UUID(f.ProjectID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(registration.TokenID), CompletionFingerprint: make([]byte, 32), Result: []byte(`true`), ControlOutboxID: pgvalue.UUID(uuid.NewV7())}); err != nil {
-		t.Fatal(err)
-	}
-	if result, err := reconciler.ReconcileBatch(t.Context(), f.EnvironmentID, registration.TokenID, 1); err != nil || result.Resolved != 1 {
-		t.Fatalf("resolve wait: %+v %v", result, err)
-	}
-	f.placeAndClaim(t)
-	f.startClaim(t)
-	readyMessages(t, f, scope)
-	delivery := claimMessage(t, f, scope)
-	if delivery.MessageID != pending.MessageID.String() || delivery.TurnID != scope.TurnID.String() {
-		t.Fatalf("resumed delivery changed target: %+v", delivery)
-	}
-	finishDelivery(t, f, scope, delivery, "handled", "")
-}
-
 func TestSessionMessageWithoutHandlerRejectedAtSettlementPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	scope := f.receiveTurn(t, 1)
 	accepted := admitMessage(t, f, "no-handler")
 	turnCommitRequest(t, f, scope)

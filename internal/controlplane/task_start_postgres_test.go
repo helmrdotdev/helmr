@@ -16,36 +16,36 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func createFreshTaskWorkspace(t *testing.T, fixture actorStartPostgresFixture) uuid.UUID {
+func createFreshTaskComputer(t *testing.T, fixture actorStartPostgresFixture) uuid.UUID {
 	t.Helper()
-	created, err := fixture.server.createWorkspace(t.Context(), workspaceCreateRequest{
+	created, err := fixture.server.createComputer(t.Context(), computerCreateRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		Declaration: workspaceDeclarationSelector{Kind: workspaceDeclarationPromoted},
-		DeclaredID:  "workspace.v1",
+		Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted},
+		DeclaredID:  "computer.v1",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var status string
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT v.status FROM computers c JOIN computer_versions v ON v.id = c.head_version_id
+		SELECT v.status FROM computers c JOIN computer_disk_versions v ON v.id = c.head_disk_version_id
 		WHERE c.id = $1
-	`, created.WorkspaceID).Scan(&status); err != nil {
+	`, created.ComputerID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "initializing" {
 		t.Fatalf("fresh version = %s", status)
 	}
-	return created.WorkspaceID
+	return created.ComputerID
 }
 
 func TestTaskStartPostgresFreshComputer(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 0)
-	workspaceID := createFreshTaskWorkspace(t, fixture)
+	computerID := createFreshTaskComputer(t, fixture)
 	request := taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
-		Payload: json.RawMessage(`{"imageId":"fresh"}`), WorkspaceID: workspaceID,
+		Payload: json.RawMessage(`{"imageId":"fresh"}`), ComputerID: computerID,
 		IdempotencyKey: "fresh-task",
 	}
 	started, err := fixture.server.startTask(t.Context(), request)
@@ -63,28 +63,28 @@ func TestTaskStartPostgresFreshComputer(t *testing.T) {
 	var owner uuid.UUID
 	var attempts int
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT r.status, v.status, c.owner_run_id,
-		       (SELECT count(*) FROM run_attempts a WHERE a.run_id = r.id AND a.base_workspace_version_id = v.id)
-		FROM runs r JOIN computers c ON c.id = r.workspace_id
-		JOIN computer_versions v ON v.id = r.base_workspace_version_id
+		SELECT r.status, v.status, r.computer_id,
+		       (SELECT count(*) FROM run_attempts a WHERE a.run_id = r.id AND a.base_computer_disk_version_id = v.id)
+		FROM runs r JOIN computers c ON c.id = r.computer_id
+		JOIN computer_disk_versions v ON v.id = r.base_computer_disk_version_id
 		WHERE r.id = $1
 	`, started.RunID).Scan(&status, &versionStatus, &owner, &attempts); err != nil {
 		t.Fatal(err)
 	}
-	if status != "queued" || versionStatus != "initializing" || owner != started.RunID || attempts != 1 {
+	if status != "queued" || versionStatus != "initializing" || owner != computerID || attempts != 1 {
 		t.Fatalf("status=%s version=%s owner=%s attempts=%d", status, versionStatus, owner, attempts)
 	}
 }
 
 func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 2)
-	workspaceID := fixture.workspaceIDs[0]
+	computerID := fixture.computerIDs[0]
 	ttl := int64(60_000)
 	request := taskStartRequest{
 		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 		TaskDeclaredID: "resize-image", PayloadPresent: true,
 		Payload:        json.RawMessage(`{"imageId":"image-1"}`),
-		WorkspaceID:    workspaceID,
+		ComputerID:     computerID,
 		IdempotencyKey: "image-1", QueuedTTLMS: &ttl,
 		Metadata: json.RawMessage(`{"source":"test"}`), Tags: []string{"image"},
 	}
@@ -117,25 +117,25 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var workspaceOwner pgtype.UUID
+	var storedComputerID pgtype.UUID
 	var attempts, resolutions int
 	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT w.owner_run_id,
+		SELECT r.computer_id,
 		       (SELECT count(*) FROM run_attempts WHERE run_id = r.id),
 		       (SELECT count(*) FROM secret_resolutions WHERE run_id = r.id)
 		  FROM runs r
-		  JOIN computers w ON w.id = r.workspace_id
+		  JOIN computers w ON w.id = r.computer_id
 		 WHERE r.id = $1
-	`, created.RunID).Scan(&workspaceOwner, &attempts, &resolutions); err != nil {
+	`, created.RunID).Scan(&storedComputerID, &attempts, &resolutions); err != nil {
 		t.Fatal(err)
 	}
 	if run.ID != pgvalue.UUID(created.RunID) || run.EntrypointKind != "task" ||
 		run.EntrypointDeclaredID != "resize-image" || run.CauseKind != "api" ||
-		run.Status != db.RunStatusQueued || workspaceOwner != run.ID ||
+		run.Status != db.RunStatusQueued || storedComputerID != run.ComputerID ||
 		attempts != 1 || resolutions != 1 {
 		t.Fatalf(
 			"run=%+v owner=%v attempts=%d resolutions=%d",
-			run, workspaceOwner, attempts, resolutions,
+			run, storedComputerID, attempts, resolutions,
 		)
 	}
 	snapshot, err := queries.GetRunSnapshot(t.Context(), db.GetRunSnapshotParams{
@@ -146,7 +146,7 @@ func TestTaskStartPostgresCommitsAndReplaysOneAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	if snapshot.ID != pgvalue.UUID(created.RunID) || !snapshot.DeploymentID.Valid ||
-		snapshot.WorkspaceID != pgvalue.UUID(fixture.workspaceIDs[0]) ||
+		snapshot.ComputerID != pgvalue.UUID(fixture.computerIDs[0]) ||
 		snapshot.ParentRunID.Valid {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
@@ -173,12 +173,12 @@ func TestTaskStartPostgresConcurrentClaimsDoNotDeadlockDeploymentAuthority(t *te
 	for index := range 2 {
 		go func() {
 			<-start
-			workspaceID := fixture.workspaceIDs[index]
+			computerID := fixture.computerIDs[index]
 			result, err := fixture.server.startTask(context.Background(), taskStartRequest{
 				OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 				TaskDeclaredID: "resize-image", PayloadPresent: true,
 				Payload:        json.RawMessage(fmt.Sprintf(`{"imageId":"image-%d"}`, index)),
-				WorkspaceID:    workspaceID,
+				ComputerID:     computerID,
 				IdempotencyKey: fmt.Sprintf("concurrent-%d", index),
 			})
 			outcomes <- outcome{result: result, err: err}
@@ -203,14 +203,14 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 		t.Run(fmt.Sprintf("fresh=%t", fresh), func(t *testing.T) {
 			fixture := newActorStartPostgresFixture(t, 2)
 			if fresh {
-				fixture.workspaceIDs[1] = createFreshTaskWorkspace(t, fixture)
+				fixture.computerIDs[1] = createFreshTaskComputer(t, fixture)
 			}
-			parentWorkspaceID := fixture.workspaceIDs[0]
+			parentComputerID := fixture.computerIDs[0]
 			parent, err := fixture.server.startTask(t.Context(), taskStartRequest{
 				OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
 				TaskDeclaredID: "resize-image", PayloadPresent: true,
-				Payload:     json.RawMessage(`{"imageId":"parent"}`),
-				WorkspaceID: parentWorkspaceID,
+				Payload:    json.RawMessage(`{"imageId":"parent"}`),
+				ComputerID: parentComputerID,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -218,10 +218,10 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 
 			var targetVersionID uuid.UUID
 			if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT head_version_id
+		SELECT head_disk_version_id
 		  FROM computers
 		 WHERE id = $1
-	`, fixture.workspaceIDs[1]).Scan(&targetVersionID); err != nil {
+	`, fixture.computerIDs[1]).Scan(&targetVersionID); err != nil {
 				t.Fatal(err)
 			}
 			runID := uuid.NewV7()
@@ -234,22 +234,22 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 			child, err := queries.CreateChildRunFromParentDeployment(
 				t.Context(),
 				db.CreateChildRunFromParentDeploymentParams{
-					EntrypointDeclaredID:   "resize-image",
-					WorkspaceID:            pgvalue.UUID(fixture.workspaceIDs[1]),
-					BaseWorkspaceVersionID: pgvalue.UUID(targetVersionID),
-					EnvironmentID:          pgvalue.UUID(fixture.environmentID),
-					ParentRunID:            pgvalue.UUID(parent.RunID),
-					ID:                     pgvalue.UUID(runID),
-					ParentOwnsLifecycle:    pgtype.Bool{Bool: false, Valid: true},
-					Payload:                json.RawMessage(`{"imageId":"child"}`),
-					Metadata:               json.RawMessage(`{"source":"parent"}`),
-					Tags:                   []string{"child"},
-					QueueName:              "default",
-					QueueOriginAt:          pgvalue.Timestamptz(now),
-					QueueScoreAt:           pgvalue.Timestamptz(now),
-					MaxActiveDurationMs:    300_000,
-					RetryPolicy:            json.RawMessage(`{"enabled":false}`),
-					RootSpanID:             rootSpanID,
+					EntrypointDeclaredID:      "resize-image",
+					ComputerID:                pgvalue.UUID(fixture.computerIDs[1]),
+					BaseComputerDiskVersionID: pgvalue.UUID(targetVersionID),
+					EnvironmentID:             pgvalue.UUID(fixture.environmentID),
+					ParentRunID:               pgvalue.UUID(parent.RunID),
+					ID:                        pgvalue.UUID(runID),
+					ParentOwnsLifecycle:       pgtype.Bool{Bool: false, Valid: true},
+					Payload:                   json.RawMessage(`{"imageId":"child"}`),
+					Metadata:                  json.RawMessage(`{"source":"parent"}`),
+					Tags:                      []string{"child"},
+					QueueName:                 "default",
+					QueueOriginAt:             pgvalue.Timestamptz(now),
+					QueueScoreAt:              pgvalue.Timestamptz(now),
+					MaxActiveDurationMs:       300_000,
+					RetryPolicy:               json.RawMessage(`{"enabled":false}`),
+					RootSpanID:                rootSpanID,
 				},
 			)
 			if err != nil {
@@ -261,7 +261,7 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 				!child.ParentOwnsLifecycle.Valid ||
 				child.ParentOwnsLifecycle.Bool ||
 				child.ClaimID.Valid ||
-				child.WorkspaceID != pgvalue.UUID(fixture.workspaceIDs[1]) ||
+				child.ComputerID != pgvalue.UUID(fixture.computerIDs[1]) ||
 				child.Status != db.RunStatusQueued {
 				t.Fatalf("child = %+v", child)
 			}
@@ -271,8 +271,8 @@ func TestCreateKeylessDetachedChildTaskRunFromParentDeployment(t *testing.T) {
 		  FROM run_attempts
 		 WHERE run_id = $1
 		   AND number = 1
-		   AND workspace_id = $2
-	`, runID, fixture.workspaceIDs[1]).Scan(&attempts); err != nil {
+		   AND computer_id = $2
+	`, runID, fixture.computerIDs[1]).Scan(&attempts); err != nil {
 				t.Fatal(err)
 			}
 			if attempts != 1 {

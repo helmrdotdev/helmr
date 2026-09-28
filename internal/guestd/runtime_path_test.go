@@ -14,7 +14,7 @@ func TestResolveLaunchCwdDefaultsAndNormalizes(t *testing.T) {
 	}{
 		{"", defaultRuntimeWorkdir},
 		{"app", "/app"},
-		{"/workspace/./service", "/workspace/service"},
+		{"/computer/./service", "/computer/service"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.raw, func(t *testing.T) {
@@ -30,7 +30,7 @@ func TestResolveLaunchCwdDefaultsAndNormalizes(t *testing.T) {
 }
 
 func TestResolveLaunchCwdRejectsUnsafeOrReservedPaths(t *testing.T) {
-	for _, raw := range []string{"../escape", "/workspace/../etc", "/dev/null", "/proc/self", "/sys/kernel", "/opt/helmr/bin", "/.helmr-old-root/workspace"} {
+	for _, raw := range []string{"../escape", "/computer/../etc", "/dev/null", "/proc/self", "/sys/kernel", "/opt/helmr/bin", "/.helmr-old-root/computer"} {
 		t.Run(raw, func(t *testing.T) {
 			if _, err := resolveLaunchCwd(raw, defaultRuntimeWorkdir); err == nil {
 				t.Fatal("expected error")

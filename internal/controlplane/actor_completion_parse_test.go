@@ -6,40 +6,40 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestParseActorCompletionRequestBindsGenerationAndWorkspaceProof(t *testing.T) {
-	taskRequest := validTaskCompletionRequest(t)
+func TestParseActorCompletionRequestBindsGenerationAndOperation(t *testing.T) {
+	operationID := uuid.NewV7().String()
 	request := workerapi.CompleteActorRequest{
-		Lease: taskRequest.Lease,
+		Lease: workerapi.RunLeaseFence{ID: uuid.NewV7().String(), LeaseSequence: 1},
 		Outcome: workerapi.ActorOutcome{
 			RunGeneration: 1,
 			Succeeded:     &workerapi.ActorSucceeded{},
 		},
-		Workspace: taskRequest.Workspace,
+		OperationID: operationID,
 	}
 	parsed, err := parseActorCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parsed.kind != actorCompletionSucceeded || parsed.capture == nil || parsed.fingerprint == "" {
+	if parsed.kind != actorCompletionSucceeded || parsed.operationID.String() != operationID || parsed.fingerprint == "" {
 		t.Fatalf("parsed Actor completion = %#v", parsed)
 	}
 }
 
 func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
-	taskRequest := validTaskCompletionRequest(t)
+	operationID := uuid.NewV7().String()
 	request := workerapi.CompleteActorRequest{
-		Lease: taskRequest.Lease,
+		Lease: workerapi.RunLeaseFence{ID: uuid.NewV7().String(), LeaseSequence: 1},
 		Outcome: workerapi.ActorOutcome{
 			RunGeneration: 1,
 			Failed:        &workerapi.TaskFailure{Message: " failed "},
 		},
-		Workspace: workerapi.TaskWorkspaceProof{
-			Captured: taskRequest.Workspace.Captured,
-		},
+		OperationID: operationID,
 	}
 	if _, err := parseActorCompletionRequest(request); err == nil {
 		t.Fatal("Actor completion with noncanonical failure message was accepted")
@@ -49,15 +49,15 @@ func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
 func TestDecideActorRunTerminal(t *testing.T) {
 	tests := []struct {
 		name       string
-		authority  runLeaseClaimAuthority
+		authority  run.ExecutionAuthority
 		completion parsedActorCompletion
 		want       actorRunTerminalDecision
 	}{
 		{
 			name: "successful progress remains open",
-			authority: func() runLeaseClaimAuthority {
+			authority: func() run.ExecutionAuthority {
 				a := actorTerminalAuthority("open", 2, 4)
-				a.actor.CommittedInputSequence = 3
+				a.Session.CommittedInputSequence = 3
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
@@ -65,9 +65,9 @@ func TestDecideActorRunTerminal(t *testing.T) {
 		},
 		{
 			name: "input arriving after idle admission belongs to continuation",
-			authority: func() runLeaseClaimAuthority {
+			authority: func() run.ExecutionAuthority {
 				a := actorTerminalAuthority("open", 2, 2)
-				a.actor.NextInputSequence = 4
+				a.Session.NextInputSequence = 4
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
@@ -75,10 +75,10 @@ func TestDecideActorRunTerminal(t *testing.T) {
 		},
 		{
 			name: "late close frontier does not make an idle return fail",
-			authority: func() runLeaseClaimAuthority {
+			authority: func() run.ExecutionAuthority {
 				a := actorTerminalAuthority("closing", 2, 2)
-				a.actor.NextInputSequence = 4
-				a.actor.CloseSequence = pgtype.Int8{Int64: 3, Valid: true}
+				a.Session.NextInputSequence = 4
+				a.Session.CloseSequence = pgtype.Int8{Int64: 3, Valid: true}
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
@@ -86,23 +86,23 @@ func TestDecideActorRunTerminal(t *testing.T) {
 		},
 		{
 			name: "admission backlog without progress fails before close",
-			authority: func() runLeaseClaimAuthority {
+			authority: func() run.ExecutionAuthority {
 				a := actorTerminalAuthority("closing", 2, 4)
-				a.actor.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
+				a.Session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, actorStatus: "closing", runReason: pgvalue.Text("no_progress")},
 		},
 		{
-			name: "closing at committed boundary closes",
-			authority: func() runLeaseClaimAuthority {
+			name: "closing waits for process reconciliation",
+			authority: func() run.ExecutionAuthority {
 				a := actorTerminalAuthority("closing", 2, 2)
-				a.actor.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
+				a.Session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
 				return a
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
-			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closed"},
+			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
 		},
 		{
 			name:       "runtime failure rolls cursor back",
@@ -121,23 +121,23 @@ func TestDecideActorRunTerminal(t *testing.T) {
 	}
 }
 
-func actorTerminalAuthority(state string, start, highWatermark int64) runLeaseClaimAuthority {
-	return runLeaseClaimAuthority{
-		actor: db.Session{Status: state, CommittedInputSequence: start, NextInputSequence: highWatermark + 1},
-		run: db.Run{
+func actorTerminalAuthority(state string, start, highWatermark int64) run.ExecutionAuthority {
+	return run.ExecutionAuthority{
+		Session: db.Session{Status: state, CommittedInputSequence: start, NextInputSequence: highWatermark + 1},
+		Run: db.Run{
 			SessionInputStartSequence: pgtype.Int8{Int64: start, Valid: true},
 			SessionInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
 		},
 	}
 }
 
-func TestActorNeedsContinuationHonorsManualCancellation(t *testing.T) {
+func TestActorContinuationHonorsManualCancellation(t *testing.T) {
 	actor := db.Session{Status: "open", CommittedInputSequence: 2, NextInputSequence: 5}
-	if !actorNeedsContinuation(actor) {
+	if !session.CanStartContinuation(actor) {
 		t.Fatal("backlogged open Actor should need a continuation")
 	}
 	actor.DispatchHoldID = pgvalue.UUID(uuid.NewV7())
-	if actorNeedsContinuation(actor) {
+	if session.CanStartContinuation(actor) {
 		t.Fatal("manual Run cancellation hold admitted a continuation")
 	}
 }

@@ -44,7 +44,7 @@ func (f *saveHostFixture) BeginComputerSave(_ context.Context, r workerapi.Compu
 	if f.fail == "wrong admission" {
 		runtimeID = uuid.NewV7().String()
 	}
-	return workerapi.ComputerSaveBeginResponse{RuntimeInstanceID: runtimeID, SaveID: r.SaveID, Sequence: r.Sequence, WorkspaceLeaseID: uuid.NewV7().String(), PredecessorID: uuid.NewV7().String(), DesiredVersion: 1}, err
+	return workerapi.ComputerSaveBeginResponse{ComputerInstanceID: runtimeID, SaveID: r.SaveID, Sequence: r.Sequence, WriterGeneration: r.WriterGeneration, PredecessorID: uuid.NewV7().String(), DesiredVersion: 1}, err
 }
 func (f *saveHostFixture) RegisterComputerSaveObject(context.Context, workerapi.ComputerSaveObjectRequest) error {
 	return nil
@@ -105,7 +105,7 @@ func newSaveHostFixture(t *testing.T, failure string) (*saveHostFixture, *comput
 		f.blocked = make(chan struct{})
 		f.joined = make(chan struct{})
 	}
-	r := workerapi.ComputerSaveBeginRequest{OrgID: uuid.NewV7().String(), WorkspaceMountID: uuid.NewV7().String(), SaveID: uuid.NewV7().String(), Sequence: 1}
+	r := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2, SaveID: uuid.NewV7().String(), Sequence: 1}
 	s, err := startComputerSave(t.Context(), f, f, r, f.runtime, f.computer, func(context.Context) (computerSaveCapture, error) {
 		if err := f.step("capture"); err != nil {
 			return nil, err
@@ -281,7 +281,7 @@ func TestComputerSaveHostSettlesLostCommitAcrossWait(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 			client := &waitingSaveClient{saveHostFixture: f, published: scenario == "committed", commitOnAbandon: scenario == "commit race"}
-			request := workerapi.ComputerSaveBeginRequest{OrgID: uuid.NewV7().String(), WorkspaceMountID: uuid.NewV7().String(), SaveID: uuid.NewV7().String(), Sequence: 1}
+			request := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2, SaveID: uuid.NewV7().String(), Sequence: 1}
 			operation, err := startComputerSave(t.Context(), client, f, request, f.runtime, f.computer, func(context.Context) (computerSaveCapture, error) { return saveHostCapture{f}, nil })
 			if err != nil {
 				t.Fatal(err)

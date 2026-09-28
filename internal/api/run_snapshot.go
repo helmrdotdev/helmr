@@ -10,7 +10,7 @@ type RunSnapshotResponse struct {
 	Status               RunStatus             `json:"status"`
 	Entrypoint           RunEntrypointResponse `json:"entrypoint"`
 	Deployment           DeploymentReference   `json:"deployment"`
-	WorkspaceID          string                `json:"workspace_id"`
+	ComputerID           string                `json:"computer_id"`
 	SessionID            string                `json:"session_id,omitempty"`
 	ParentRunID          string                `json:"parent_run_id,omitempty"`
 	CurrentAttemptNumber int32                 `json:"current_attempt_number"`
@@ -28,7 +28,7 @@ type RunListItem struct {
 	ID                   string                `json:"id"`
 	Status               RunStatus             `json:"status"`
 	Entrypoint           RunEntrypointResponse `json:"entrypoint"`
-	WorkspaceID          string                `json:"workspace_id"`
+	ComputerID           string                `json:"computer_id"`
 	SessionID            string                `json:"session_id,omitempty"`
 	CurrentAttemptNumber int32                 `json:"current_attempt_number"`
 	CreatedAt            time.Time             `json:"created_at"`

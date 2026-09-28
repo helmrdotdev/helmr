@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	testSessionID   = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
-	testWorkspaceID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
+	testSessionID  = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+	testComputerID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"
 )
 
 func TestActorStartPreservesIdentityAndRunTemplate(t *testing.T) {
@@ -41,7 +41,7 @@ func TestActorStartPreservesIdentityAndRunTemplate(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"actor", "start", "operator.v1",
-		"--workspace", testWorkspaceID,
+		"--computer", testComputerID,
 		"--key", "thread:東京",
 		"--idempotency-key", "actor:start:1",
 		"--queue", "agents",
@@ -59,7 +59,7 @@ func TestActorStartPreservesIdentityAndRunTemplate(t *testing.T) {
 		t.Fatalf("output = %q", out.String())
 	}
 	if request.Key == nil || *request.Key != "thread:東京" ||
-		request.Workspace.ID != testWorkspaceID ||
+		request.Computer.ID != testComputerID ||
 		request.IdempotencyKey != "actor:start:1" {
 		t.Fatalf("request = %+v", request)
 	}

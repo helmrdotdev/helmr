@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { HelmrClient, type WorkspaceRef } from "@helmr/sdk"
+import { HelmrClient, type ComputerRef } from "@helmr/sdk"
 import type { verificationTask } from "./task"
 
 // One executable case. Add/remove ordinary case files instead of a case registry.
@@ -15,28 +15,28 @@ await mkdir(evidenceDir, { recursive: false, mode: 0o700 })
 const client = new HelmrClient({ url: apiUrl, apiKey })
 const marker = randomUUID()
 const evidence: Record<string, unknown> = { case: "task", marker, startedAt: new Date().toISOString(), passed: false, fixtureCleanup: "pending" }
-let workspace: WorkspaceRef | undefined
+let computer: ComputerRef | undefined
 let failure: unknown
 try {
-  workspace = await client.sandboxes.createWorkspace("verification", {
+  computer = await client.sandboxes.createComputer("verification", {
     key: marker, idempotencyKey: `verification:create:${marker}`,
   }, { signal: deadline(30_000) })
-  evidence["workspaceId"] = workspace.id
+  evidence["computerId"] = computer.id
   const run = await client.tasks.start<typeof verificationTask>("verification-task", {
-    workspace, payload: { marker }, idempotencyKey: `verification:task:${marker}`,
+    computer, payload: { marker }, idempotencyKey: `verification:task:${marker}`,
   }, { signal: deadline(30_000) })
   evidence["runId"] = run.id
   const output = await client.runs.wait(run, { signal: deadline(180_000) }).unwrap()
-  assert.deepEqual(output, { marker, runId: run.id, workspaceId: workspace.id })
+  assert.deepEqual(output, { marker, runId: run.id, computerId: computer.id })
   evidence["output"] = output
   evidence["passed"] = true
 } catch (error) {
   failure = error
   evidence["failure"] = error instanceof Error ? error.message : String(error)
 } finally {
-  if (workspace) {
+  if (computer) {
     try {
-      await workspace.delete({ idempotencyKey: `verification:delete:${marker}` }, { signal: deadline(30_000) })
+      await computer.delete({ idempotencyKey: `verification:delete:${marker}` }, { signal: deadline(30_000) })
       evidence["fixtureCleanup"] = "delete-request-accepted"
     } catch (error) {
       evidence["fixtureCleanup"] = "failed"

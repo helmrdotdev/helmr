@@ -3,12 +3,12 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"github.com/jackc/pgx/v5"
 	"os"
 	"slices"
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -86,6 +86,14 @@ func createDispatchLaneMeasurementTable(t *testing.T, ctx context.Context, conne
 	if _, err := connection.Exec(ctx, `
 CREATE TEMP TABLE runs (
     id UUID PRIMARY KEY,
+    computer_id UUID,
+    active_elapsed_ms BIGINT NOT NULL DEFAULT 0,
+    max_active_duration_ms BIGINT NOT NULL DEFAULT 300000,
+    current_attempt_number INTEGER NOT NULL DEFAULT 1,
+    entrypoint_kind TEXT NOT NULL DEFAULT 'task',
+    session_id UUID,
+    parent_owns_lifecycle BOOLEAN NOT NULL DEFAULT false,
+    parent_run_id UUID,
     org_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     queue_name TEXT NOT NULL,
@@ -96,7 +104,7 @@ CREATE TEMP TABLE runs (
     current_run_lease_id UUID,
     first_lease_at TIMESTAMPTZ,
     queued_expires_at TIMESTAMPTZ,
-    next_runtime_preparation_at TIMESTAMPTZ
+    next_instance_preparation_at TIMESTAMPTZ
 );
 CREATE INDEX runs_dispatch_fair_idx
     ON runs (
@@ -109,7 +117,17 @@ CREATE INDEX runs_dispatch_fair_idx
         id
     )
     INCLUDE (revision, first_lease_at, queued_expires_at)
-    WHERE status = 'queued' AND current_run_lease_id IS NULL`); err != nil {
+    WHERE status = 'queued' AND current_run_lease_id IS NULL;
+CREATE TEMP TABLE computers (
+ id UUID PRIMARY KEY, environment_id UUID NOT NULL,
+ status TEXT NOT NULL DEFAULT 'active', desired_state TEXT NOT NULL DEFAULT 'active',
+ deleted_at TIMESTAMPTZ, recovery_failure JSONB, preparation_failure JSONB,
+ dirty_state TEXT NOT NULL DEFAULT 'clean'
+);
+CREATE TEMP TABLE run_attempts (
+ run_id UUID NOT NULL, number INTEGER NOT NULL, terminal_at TIMESTAMPTZ,
+ PRIMARY KEY(run_id,number)
+)`); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -127,7 +145,7 @@ func seedDispatchLaneMeasurement(
 	if rows < 1 || organizations < 1 || scopes < organizations || scopes > rows {
 		t.Fatalf("invalid lane measurement shape rows=%d organizations=%d scopes=%d", rows, organizations, scopes)
 	}
-	if _, err := connection.Exec(ctx, `TRUNCATE runs`); err != nil {
+	if _, err := connection.Exec(ctx, `TRUNCATE runs, computers, run_attempts`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connection.Exec(ctx, `
@@ -147,10 +165,11 @@ WITH generated AS (
       FROM generated
 )
 INSERT INTO runs (
-    id, org_id, environment_id, queue_name, concurrency_key, queue_score_at,
+    id, computer_id, org_id, environment_id, queue_name, concurrency_key, queue_score_at,
     status, revision, current_run_lease_id, first_lease_at, queued_expires_at
 )
 SELECT md5('run:' || row_number::text)::uuid,
+       md5('run:' || row_number::text)::uuid,
        md5('organization:' || organization_number::text)::uuid,
        md5('environment:' || organization_number::text || ':' || ((scope_number / $3::bigint) % 4)::text)::uuid,
        'measure-' || lpad(scope_number::text, 6, '0'),
@@ -162,6 +181,9 @@ SELECT md5('run:' || row_number::text)::uuid,
        NULL,
        NULL
   FROM assigned`, rows, scopes, organizations, skewed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := connection.Exec(ctx, `INSERT INTO computers(id,environment_id) SELECT computer_id,environment_id FROM runs; INSERT INTO run_attempts(run_id,number) SELECT id,current_attempt_number FROM runs; ANALYZE computers; ANALYZE run_attempts`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := connection.Exec(ctx, `VACUUM (ANALYZE) runs`); err != nil {

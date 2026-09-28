@@ -11,556 +11,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const advanceRunWorkspaceMountFence = `-- name: AdvanceRunWorkspaceMountFence :one
-UPDATE workspace_mounts
-   SET fencing_generation = $1,
-       updated_at = transaction_timestamp()
- WHERE id = $2
-   AND org_id = $3
-   AND project_id = $4
-   AND environment_id = $5
-   AND region_id = $6
-   AND worker_group_id = $7
-   AND worker_instance_id = $8
-   AND worker_epoch = $9
-   AND runtime_instance_id = $10
-   AND workspace_id = $11
-   AND materialized_version_id = $12
-   AND fencing_generation = $13
-   AND status = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, guest_channel_token_hash, guest_channel_token_expires_at, status, request, dirty_generation, fencing_generation, finalization_action, finalization_reason_code, finalization_error, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
-`
-
-type AdvanceRunWorkspaceMountFenceParams struct {
-	FencingGeneration         int64       `json:"fencing_generation"`
-	ID                        pgtype.UUID `json:"id"`
-	OrgID                     pgtype.UUID `json:"org_id"`
-	ProjectID                 pgtype.UUID `json:"project_id"`
-	EnvironmentID             pgtype.UUID `json:"environment_id"`
-	RegionID                  string      `json:"region_id"`
-	WorkerGroupID             pgtype.UUID `json:"worker_group_id"`
-	WorkerInstanceID          pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch               int64       `json:"worker_epoch"`
-	RuntimeInstanceID         pgtype.UUID `json:"runtime_instance_id"`
-	WorkspaceID               pgtype.UUID `json:"workspace_id"`
-	BaseWorkspaceVersionID    pgtype.UUID `json:"base_workspace_version_id"`
-	ExpectedFencingGeneration int64       `json:"expected_fencing_generation"`
-}
-
-func (q *Queries) AdvanceRunWorkspaceMountFence(ctx context.Context, arg AdvanceRunWorkspaceMountFenceParams) (WorkspaceMount, error) {
-	row := q.db.QueryRow(ctx, advanceRunWorkspaceMountFence,
-		arg.FencingGeneration,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RegionID,
-		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.RuntimeInstanceID,
-		arg.WorkspaceID,
-		arg.BaseWorkspaceVersionID,
-		arg.ExpectedFencingGeneration,
-	)
-	var i WorkspaceMount
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.WorkspaceID,
-		&i.MaterializedVersionID,
-		&i.RuntimeInstanceID,
-		&i.GuestChannelTokenHash,
-		&i.GuestChannelTokenExpiresAt,
-		&i.Status,
-		&i.Request,
-		&i.DirtyGeneration,
-		&i.FencingGeneration,
-		&i.FinalizationAction,
-		&i.FinalizationReasonCode,
-		&i.FinalizationError,
-		&i.MountedAt,
-		&i.UnmountedAt,
-		&i.StoppedAt,
-		&i.LostAt,
-		&i.FailedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const advanceRunWorkspaceWriter = `-- name: AdvanceRunWorkspaceWriter :one
-UPDATE computers
-   SET writer_generation = $1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE computers.environment_id = $2
-   AND EXISTS (
-       SELECT 1 FROM environments
-        WHERE environments.id = computers.environment_id
-          AND environments.org_id = $3
-          AND environments.project_id = $4
-   )
-   AND computers.id = $5
-   AND computers.ownership_generation = $6
-   AND computers.writer_generation = $7
-   AND computers.status = 'active'
-   AND computers.desired_state = 'active'
-RETURNING computers.id, computers.environment_id, computers.region_id, computers.sandbox_declared_id, computers.deployment_definition_id, computers.key, computers.revision, computers.owner_session_id, computers.owner_run_id, computers.ownership_generation, computers.writer_generation, computers.head_version_id, computers.status, computers.desired_state, computers.dirty_state, computers.last_activity_at, computers.created_at, computers.updated_at, computers.deleted_at
-`
-
-type AdvanceRunWorkspaceWriterParams struct {
-	WriterGeneration         int64       `json:"writer_generation"`
-	EnvironmentID            pgtype.UUID `json:"environment_id"`
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ProjectID                pgtype.UUID `json:"project_id"`
-	WorkspaceID              pgtype.UUID `json:"workspace_id"`
-	OwnershipGeneration      int64       `json:"ownership_generation"`
-	ExpectedWriterGeneration int64       `json:"expected_writer_generation"`
-}
-
-type AdvanceRunWorkspaceWriterRow struct {
-	ID                     pgtype.UUID        `json:"id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	SandboxDeclaredID      pgtype.Text        `json:"sandbox_declared_id"`
-	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
-	Key                    pgtype.Text        `json:"key"`
-	Revision               int64              `json:"revision"`
-	OwnerSessionID         pgtype.UUID        `json:"owner_session_id"`
-	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	HeadVersionID          pgtype.UUID        `json:"head_version_id"`
-	Status                 string             `json:"status"`
-	DesiredState           string             `json:"desired_state"`
-	DirtyState             string             `json:"dirty_state"`
-	LastActivityAt         pgtype.Timestamptz `json:"last_activity_at"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
-	DeletedAt              pgtype.Timestamptz `json:"deleted_at"`
-}
-
-func (q *Queries) AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunWorkspaceWriterParams) (AdvanceRunWorkspaceWriterRow, error) {
-	row := q.db.QueryRow(ctx, advanceRunWorkspaceWriter,
-		arg.WriterGeneration,
-		arg.EnvironmentID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.WorkspaceID,
-		arg.OwnershipGeneration,
-		arg.ExpectedWriterGeneration,
-	)
-	var i AdvanceRunWorkspaceWriterRow
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.SandboxDeclaredID,
-		&i.DeploymentDefinitionID,
-		&i.Key,
-		&i.Revision,
-		&i.OwnerSessionID,
-		&i.OwnerRunID,
-		&i.OwnershipGeneration,
-		&i.WriterGeneration,
-		&i.HeadVersionID,
-		&i.Status,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
-const consumeRunRuntimeReservation = `-- name: ConsumeRunRuntimeReservation :execrows
-UPDATE runtime_instances
-   SET reserved_run_id = NULL,
-       reserved_attempt_number = NULL,
-       reserved_workspace_version_id = NULL,
-       reservation_expires_at = NULL,
-       updated_at = transaction_timestamp()
- WHERE id = $1
-   AND workspace_id = $2
-   AND reserved_run_id = $3
-   AND reserved_attempt_number = $4
-   AND reserved_workspace_version_id = $5
-   AND restore_checkpoint_id IS NOT DISTINCT FROM $6
-   AND reservation_expires_at > clock_timestamp()
-`
-
-type ConsumeRunRuntimeReservationParams struct {
-	ID                     pgtype.UUID `json:"id"`
-	WorkspaceID            pgtype.UUID `json:"workspace_id"`
-	RunID                  pgtype.UUID `json:"run_id"`
-	AttemptNumber          pgtype.Int4 `json:"attempt_number"`
-	BaseWorkspaceVersionID pgtype.UUID `json:"base_workspace_version_id"`
-	RestoreCheckpointID    pgtype.UUID `json:"restore_checkpoint_id"`
-}
-
-// Caller holds the Runtime row lock; recheck time at consumption because other
-// grant operations may have waited since the initial locked authority check.
-func (q *Queries) ConsumeRunRuntimeReservation(ctx context.Context, arg ConsumeRunRuntimeReservationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, consumeRunRuntimeReservation,
-		arg.ID,
-		arg.WorkspaceID,
-		arg.RunID,
-		arg.AttemptNumber,
-		arg.BaseWorkspaceVersionID,
-		arg.RestoreCheckpointID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const createRunRuntimeReservation = `-- name: CreateRunRuntimeReservation :one
-WITH selected_shape AS MATERIALIZED (
-    SELECT worker_pool_cpu_shapes.vcpu_count,
-           worker_pool_cpu_shapes.cpu_config_digest
-      FROM worker_instances
-      JOIN worker_groups
-        ON worker_groups.id = worker_instances.worker_group_id
-       AND worker_groups.status = 'active'
-      JOIN worker_pools
-	    ON worker_pools.id = worker_instances.worker_pool_id
-	   AND worker_pools.worker_group_id = worker_instances.worker_group_id
-	   AND worker_pools.status = 'active'
-      JOIN worker_pool_cpu_shapes
-        ON worker_pool_cpu_shapes.worker_pool_id = worker_pools.id
-       AND worker_pool_cpu_shapes.vcpu_count = (($1::bigint - 1) / 1000 + 1)::integer
-     WHERE worker_instances.id = $2
-       AND worker_instances.worker_group_id = $3
-	   AND worker_instances.current_epoch = $4
-	   AND worker_instances.status = 'active'
-       AND (
-           $5::uuid IS NOT NULL
-           OR worker_groups.primary_pool_id = worker_pools.id
-       )
-       AND (
-           $6::text IS NULL
-           OR worker_pool_cpu_shapes.cpu_config_digest = $6
-       )
-), created_runtime AS (
-    INSERT INTO runtime_instances (
-        id,
-        org_id,
-        worker_group_id,
-        project_id,
-        environment_id,
-        region_id,
-        worker_instance_id,
-        runtime_identity_id,
-        deployment_definition_id,
-        worker_epoch,
-        vm_vcpu_count,
-        cpu_config_digest,
-        reserved_cpu_millis,
-        reserved_memory_bytes,
-        reserved_guest_ephemeral_disk_bytes,
-        reserved_execution_slots,
-        workspace_id,
-        program_deployment_id,
-        restore_checkpoint_id,
-        reserved_run_id,
-        reserved_attempt_number,
-        reserved_workspace_version_id,
-        computer_source_version_id,
-        preparation_expires_at,
-        desired_reason
-    ) SELECT
-        $7,
-        $8,
-        $3,
-        $9,
-        $10,
-        $11,
-        $2,
-        $12,
-        $13,
-        $4,
-        selected_shape.vcpu_count,
-        selected_shape.cpu_config_digest,
-        $1,
-        $14,
-        $15,
-        $16,
-        $17,
-        $18,
-        $5,
-        $19,
-        $20,
-        $21,
-        CASE WHEN source.status = 'initializing' THEN NULL
-             ELSE source.id END,
-        transaction_timestamp() + $22::bigint * interval '1 second',
-        'run_reservation'
-      FROM selected_shape
-      JOIN computer_versions AS source
-        ON source.id = $21
-       AND source.environment_id = $10
-       AND source.computer_id = $17
-       AND source.status IN ('initializing', 'committed', 'private')
-       AND (source.status = 'initializing' OR EXISTS (
-           SELECT 1 FROM computer_version_roots AS root
-            WHERE root.environment_id = source.environment_id
-              AND root.computer_id = source.computer_id
-              AND root.version_id = source.id
-              AND root.logical_bytes = $15
-       ))
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, vm_vcpu_count, cpu_config_digest, reserved_cpu_millis, reserved_memory_bytes, reserved_guest_ephemeral_disk_bytes, reserved_execution_slots, workspace_id, program_deployment_id, restore_checkpoint_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, computer_source_version_id, computer_save_sequence, computer_save_version_id, computer_save_lease_id, computer_save_base_version_id, computer_payload_required, retained_computer_source_version_id, computer_write_key_id, retained_computer_write_key_id, computer_key_available, preparation_expires_at, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, ready_at, terminal_at, reclaimed_at, reclaim_evidence, terminal_reason_code, terminal_error, updated_at
-)
-SELECT created_runtime.id, created_runtime.org_id, created_runtime.worker_group_id, created_runtime.project_id, created_runtime.environment_id, created_runtime.region_id, created_runtime.worker_instance_id, created_runtime.runtime_identity_id, created_runtime.deployment_definition_id, created_runtime.runtime_substrate_id, created_runtime.worker_epoch, created_runtime.vm_vcpu_count, created_runtime.cpu_config_digest, created_runtime.reserved_cpu_millis, created_runtime.reserved_memory_bytes, created_runtime.reserved_guest_ephemeral_disk_bytes, created_runtime.reserved_execution_slots, created_runtime.workspace_id, created_runtime.program_deployment_id, created_runtime.restore_checkpoint_id, created_runtime.reserved_run_id, created_runtime.reserved_attempt_number, created_runtime.reserved_process_id, created_runtime.reserved_workspace_version_id, created_runtime.computer_source_version_id, created_runtime.computer_save_sequence, created_runtime.computer_save_version_id, created_runtime.computer_save_lease_id, created_runtime.computer_save_base_version_id, created_runtime.computer_payload_required, created_runtime.retained_computer_source_version_id, created_runtime.computer_write_key_id, created_runtime.retained_computer_write_key_id, created_runtime.computer_key_available, created_runtime.preparation_expires_at, created_runtime.reservation_expires_at, created_runtime.desired_state, created_runtime.desired_version, created_runtime.desired_at, created_runtime.desired_reason, created_runtime.observed_state, created_runtime.observed_version, created_runtime.observed_desired_version, created_runtime.observed_at, created_runtime.allocated_at, created_runtime.ready_at, created_runtime.terminal_at, created_runtime.reclaimed_at, created_runtime.reclaim_evidence, created_runtime.terminal_reason_code, created_runtime.terminal_error, created_runtime.updated_at
-  FROM created_runtime
-`
-
-type CreateRunRuntimeReservationParams struct {
-	ReservedCPUMillis               int64       `json:"reserved_cpu_millis"`
-	WorkerInstanceID                pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID                   pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch                     pgtype.Int8 `json:"worker_epoch"`
-	RestoreCheckpointID             pgtype.UUID `json:"restore_checkpoint_id"`
-	RequiredCPUConfigDigest         pgtype.Text `json:"required_cpu_config_digest"`
-	ID                              pgtype.UUID `json:"id"`
-	OrgID                           pgtype.UUID `json:"org_id"`
-	ProjectID                       pgtype.UUID `json:"project_id"`
-	EnvironmentID                   pgtype.UUID `json:"environment_id"`
-	RegionID                        string      `json:"region_id"`
-	RuntimeIdentityID               string      `json:"runtime_identity_id"`
-	DeploymentDefinitionID          pgtype.UUID `json:"deployment_definition_id"`
-	ReservedMemoryBytes             int64       `json:"reserved_memory_bytes"`
-	ReservedGuestEphemeralDiskBytes int64       `json:"reserved_guest_ephemeral_disk_bytes"`
-	ReservedExecutionSlots          int32       `json:"reserved_execution_slots"`
-	WorkspaceID                     pgtype.UUID `json:"workspace_id"`
-	ProgramDeploymentID             pgtype.UUID `json:"program_deployment_id"`
-	RunID                           pgtype.UUID `json:"run_id"`
-	AttemptNumber                   pgtype.Int4 `json:"attempt_number"`
-	BaseWorkspaceVersionID          pgtype.UUID `json:"base_workspace_version_id"`
-	PreparationSeconds              int64       `json:"preparation_seconds"`
-}
-
-type CreateRunRuntimeReservationRow struct {
-	ID                              pgtype.UUID        `json:"id"`
-	OrgID                           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                   pgtype.UUID        `json:"worker_group_id"`
-	ProjectID                       pgtype.UUID        `json:"project_id"`
-	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
-	RegionID                        string             `json:"region_id"`
-	WorkerInstanceID                pgtype.UUID        `json:"worker_instance_id"`
-	RuntimeIdentityID               string             `json:"runtime_identity_id"`
-	DeploymentDefinitionID          pgtype.UUID        `json:"deployment_definition_id"`
-	RuntimeSubstrateID              pgtype.UUID        `json:"runtime_substrate_id"`
-	WorkerEpoch                     int64              `json:"worker_epoch"`
-	VMVCPUCount                     int32              `json:"vm_vcpu_count"`
-	CPUConfigDigest                 string             `json:"cpu_config_digest"`
-	ReservedCPUMillis               int64              `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes             int64              `json:"reserved_memory_bytes"`
-	ReservedGuestEphemeralDiskBytes int64              `json:"reserved_guest_ephemeral_disk_bytes"`
-	ReservedExecutionSlots          int32              `json:"reserved_execution_slots"`
-	WorkspaceID                     pgtype.UUID        `json:"workspace_id"`
-	ProgramDeploymentID             pgtype.UUID        `json:"program_deployment_id"`
-	RestoreCheckpointID             pgtype.UUID        `json:"restore_checkpoint_id"`
-	ReservedRunID                   pgtype.UUID        `json:"reserved_run_id"`
-	ReservedAttemptNumber           pgtype.Int4        `json:"reserved_attempt_number"`
-	ReservedProcessID               pgtype.UUID        `json:"reserved_process_id"`
-	ReservedWorkspaceVersionID      pgtype.UUID        `json:"reserved_workspace_version_id"`
-	ComputerSourceVersionID         pgtype.UUID        `json:"computer_source_version_id"`
-	ComputerSaveSequence            int64              `json:"computer_save_sequence"`
-	ComputerSaveVersionID           pgtype.UUID        `json:"computer_save_version_id"`
-	ComputerSaveLeaseID             pgtype.UUID        `json:"computer_save_lease_id"`
-	ComputerSaveBaseVersionID       pgtype.UUID        `json:"computer_save_base_version_id"`
-	ComputerPayloadRequired         pgtype.Bool        `json:"computer_payload_required"`
-	RetainedComputerSourceVersionID pgtype.UUID        `json:"retained_computer_source_version_id"`
-	ComputerWriteKeyID              pgtype.UUID        `json:"computer_write_key_id"`
-	RetainedComputerWriteKeyID      pgtype.UUID        `json:"retained_computer_write_key_id"`
-	ComputerKeyAvailable            pgtype.Bool        `json:"computer_key_available"`
-	PreparationExpiresAt            pgtype.Timestamptz `json:"preparation_expires_at"`
-	ReservationExpiresAt            pgtype.Timestamptz `json:"reservation_expires_at"`
-	DesiredState                    string             `json:"desired_state"`
-	DesiredVersion                  int64              `json:"desired_version"`
-	DesiredAt                       pgtype.Timestamptz `json:"desired_at"`
-	DesiredReason                   string             `json:"desired_reason"`
-	ObservedState                   string             `json:"observed_state"`
-	ObservedVersion                 int64              `json:"observed_version"`
-	ObservedDesiredVersion          int64              `json:"observed_desired_version"`
-	ObservedAt                      pgtype.Timestamptz `json:"observed_at"`
-	AllocatedAt                     pgtype.Timestamptz `json:"allocated_at"`
-	ReadyAt                         pgtype.Timestamptz `json:"ready_at"`
-	TerminalAt                      pgtype.Timestamptz `json:"terminal_at"`
-	ReclaimedAt                     pgtype.Timestamptz `json:"reclaimed_at"`
-	ReclaimEvidence                 []byte             `json:"reclaim_evidence"`
-	TerminalReasonCode              pgtype.Text        `json:"terminal_reason_code"`
-	TerminalError                   []byte             `json:"terminal_error"`
-	UpdatedAt                       pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) CreateRunRuntimeReservation(ctx context.Context, arg CreateRunRuntimeReservationParams) (CreateRunRuntimeReservationRow, error) {
-	row := q.db.QueryRow(ctx, createRunRuntimeReservation,
-		arg.ReservedCPUMillis,
-		arg.WorkerInstanceID,
-		arg.WorkerGroupID,
-		arg.WorkerEpoch,
-		arg.RestoreCheckpointID,
-		arg.RequiredCPUConfigDigest,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RegionID,
-		arg.RuntimeIdentityID,
-		arg.DeploymentDefinitionID,
-		arg.ReservedMemoryBytes,
-		arg.ReservedGuestEphemeralDiskBytes,
-		arg.ReservedExecutionSlots,
-		arg.WorkspaceID,
-		arg.ProgramDeploymentID,
-		arg.RunID,
-		arg.AttemptNumber,
-		arg.BaseWorkspaceVersionID,
-		arg.PreparationSeconds,
-	)
-	var i CreateRunRuntimeReservationRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.RuntimeIdentityID,
-		&i.DeploymentDefinitionID,
-		&i.RuntimeSubstrateID,
-		&i.WorkerEpoch,
-		&i.VMVCPUCount,
-		&i.CPUConfigDigest,
-		&i.ReservedCPUMillis,
-		&i.ReservedMemoryBytes,
-		&i.ReservedGuestEphemeralDiskBytes,
-		&i.ReservedExecutionSlots,
-		&i.WorkspaceID,
-		&i.ProgramDeploymentID,
-		&i.RestoreCheckpointID,
-		&i.ReservedRunID,
-		&i.ReservedAttemptNumber,
-		&i.ReservedProcessID,
-		&i.ReservedWorkspaceVersionID,
-		&i.ComputerSourceVersionID,
-		&i.ComputerSaveSequence,
-		&i.ComputerSaveVersionID,
-		&i.ComputerSaveLeaseID,
-		&i.ComputerSaveBaseVersionID,
-		&i.ComputerPayloadRequired,
-		&i.RetainedComputerSourceVersionID,
-		&i.ComputerWriteKeyID,
-		&i.RetainedComputerWriteKeyID,
-		&i.ComputerKeyAvailable,
-		&i.PreparationExpiresAt,
-		&i.ReservationExpiresAt,
-		&i.DesiredState,
-		&i.DesiredVersion,
-		&i.DesiredAt,
-		&i.DesiredReason,
-		&i.ObservedState,
-		&i.ObservedVersion,
-		&i.ObservedDesiredVersion,
-		&i.ObservedAt,
-		&i.AllocatedAt,
-		&i.ReadyAt,
-		&i.TerminalAt,
-		&i.ReclaimedAt,
-		&i.ReclaimEvidence,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const insertAssignedRunLease = `-- name: InsertAssignedRunLease :one
-INSERT INTO run_leases (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    run_id,
-    workspace_id,
-    region_id,
-    lease_sequence,
-    attempt_number,
-    worker_group_id,
-    worker_instance_id,
-    worker_epoch,
-    runtime_instance_id,
-    runtime_identity_id,
-    requested_cpu_millis,
-    requested_memory_bytes,
-    requested_guest_ephemeral_disk_bytes,
-    requested_execution_slots,
-    trace_id,
-    span_id,
-    parent_span_id,
-    traceparent,
-    start_deadline_at,
-    expires_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    $14,
-    $15,
-    $16,
-    $17,
-    $18,
-    $19,
-    $20,
-    $21,
-    $22,
-    $23,
-    $24
+WITH admitted AS (
+ UPDATE computer_instances i SET membership_revision=membership_revision+1,updated_at=clock_timestamp()
+ FROM runs r
+ WHERE i.id=$13 AND i.environment_id=$14
+ AND i.computer_id=$15 AND i.writer_generation=$16
+ AND i.worker_host_id=$17 AND i.worker_epoch=$18
+ AND i.worker_group_id=$19
+ AND i.desired_state='ready' AND i.observed_state='ready' AND i.mount_state='mounted'
+ AND i.observed_desired_version=i.desired_version
+ AND i.reclaimed_at IS NULL AND i.writer_expires_at>clock_timestamp()
+ AND r.id=$20 AND r.environment_id=i.environment_id AND r.computer_id=i.computer_id
+ AND r.current_attempt_number=$21 AND r.current_run_lease_id IS NULL
+ AND r.deployment_id=i.program_deployment_id
+ AND NOT EXISTS(SELECT 1 FROM run_leases l WHERE l.run_id=r.id AND l.process_reconciled_at IS NULL)
+ AND ((i.admission_state='open' AND r.status='queued'
+       AND NOT EXISTS(SELECT 1 FROM run_waits w WHERE w.run_id=r.id AND w.attempt_number=r.current_attempt_number
+         AND w.suspension_status IN ('hot','checkpointing','parked','resume_pending','resuming'))) OR
+      (i.admission_state='restoring' AND r.status IN ('queued','waiting') AND EXISTS(
+        SELECT 1 FROM computer_checkpoints c JOIN computer_checkpoint_runs m ON m.checkpoint_id=c.id
+        JOIN run_waits w ON w.id=m.run_wait_id AND w.suspend_checkpoint_id=c.id
+        WHERE c.id=i.source_checkpoint_id AND c.resume_computer_instance_id=i.id
+        AND c.resume_committed_at IS NOT NULL AND m.run_id=r.id AND m.attempt_number=r.current_attempt_number
+        AND w.suspension_status IN ('parked','resume_pending'))))
+ RETURNING i.id, i.org_id, i.worker_group_id, i.project_id, i.environment_id, i.region_id, i.worker_host_id, i.vm_platform_id, i.worker_epoch, i.vm_vcpu_count, i.cpu_config_digest, i.reserved_cpu_millis, i.reserved_memory_bytes, i.reserved_guest_ephemeral_disk_bytes, i.reserved_execution_slots, i.computer_id, i.program_deployment_id, i.source_checkpoint_id, i.source_disk_version_id, i.save_sequence, i.save_disk_version_id, i.save_base_disk_version_id, i.computer_payload_required, i.retained_source_disk_version_id, i.write_key_id, i.retained_write_key_id, i.computer_key_available, i.preparation_expires_at, i.desired_state, i.desired_version, i.desired_at, i.desired_reason, i.observed_state, i.observed_version, i.observed_desired_version, i.observed_at, i.allocated_at, i.ready_at, i.terminal_at, i.reclaimed_at, i.reclaim_evidence, i.terminal_reason_code, i.terminal_error, i.updated_at, i.computer_spec_id, i.writer_generation, i.writer_token_hash, i.writer_expires_at, i.admission_state, i.membership_revision, i.mount_state, i.mounted_at, i.unmounted_at, i.guest_channel_token_hash, i.guest_channel_token_expires_at, i.finalization_action, i.finalization_reason_code, i.finalization_error, i.capture_checkpoint_id, i.spec_retention_required,r.id AS admitted_run_id,r.current_attempt_number AS admitted_attempt_number,r.deployment_id
 )
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, runtime_identity_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, finalization_root, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+INSERT INTO run_leases(id,org_id,project_id,environment_id,run_id,computer_id,region_id,
+ lease_sequence,attempt_number,worker_group_id,worker_host_id,worker_epoch,computer_instance_id,
+ writer_generation,deployment_id,requested_cpu_millis,requested_memory_bytes,
+ requested_guest_ephemeral_disk_bytes,requested_execution_slots,trace_id,span_id,parent_span_id,
+ traceparent,start_deadline_at,expires_at)
+SELECT $1,org_id,project_id,environment_id,admitted_run_id,computer_id,region_id,
+ $2,admitted_attempt_number,worker_group_id,worker_host_id,worker_epoch,id,
+ writer_generation,deployment_id,$3,$4,
+ $5,$6,$7,
+ $8,$9,$10,$11,$12
+FROM admitted RETURNING id, org_id, project_id, environment_id, run_id, computer_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_host_id, worker_epoch, computer_instance_id, requested_cpu_millis, requested_memory_bytes, requested_guest_ephemeral_disk_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, status, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at, writer_generation, process_reconciled_at, deployment_id
 `
 
 type InsertAssignedRunLeaseParams struct {
 	ID                               pgtype.UUID        `json:"id"`
-	OrgID                            pgtype.UUID        `json:"org_id"`
-	ProjectID                        pgtype.UUID        `json:"project_id"`
-	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
-	RunID                            pgtype.UUID        `json:"run_id"`
-	WorkspaceID                      pgtype.UUID        `json:"workspace_id"`
-	RegionID                         string             `json:"region_id"`
 	LeaseSequence                    int64              `json:"lease_sequence"`
-	AttemptNumber                    int32              `json:"attempt_number"`
-	WorkerGroupID                    pgtype.UUID        `json:"worker_group_id"`
-	WorkerInstanceID                 pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                      int64              `json:"worker_epoch"`
-	RuntimeInstanceID                pgtype.UUID        `json:"runtime_instance_id"`
-	RuntimeIdentityID                string             `json:"runtime_identity_id"`
 	RequestedCPUMillis               int64              `json:"requested_cpu_millis"`
 	RequestedMemoryBytes             int64              `json:"requested_memory_bytes"`
 	RequestedGuestEphemeralDiskBytes int64              `json:"requested_guest_ephemeral_disk_bytes"`
@@ -571,24 +63,23 @@ type InsertAssignedRunLeaseParams struct {
 	Traceparent                      pgtype.Text        `json:"traceparent"`
 	StartDeadlineAt                  pgtype.Timestamptz `json:"start_deadline_at"`
 	ExpiresAt                        pgtype.Timestamptz `json:"expires_at"`
+	ComputerInstanceID               pgtype.UUID        `json:"computer_instance_id"`
+	EnvironmentID                    pgtype.UUID        `json:"environment_id"`
+	ComputerID                       pgtype.UUID        `json:"computer_id"`
+	WriterGeneration                 int64              `json:"writer_generation"`
+	WorkerHostID                     pgtype.UUID        `json:"worker_host_id"`
+	WorkerEpoch                      int64              `json:"worker_epoch"`
+	WorkerGroupID                    pgtype.UUID        `json:"worker_group_id"`
+	RunID                            pgtype.UUID        `json:"run_id"`
+	AttemptNumber                    int32              `json:"attempt_number"`
 }
 
+// Admission holds the Computer, instance and Run locks. Physical capacity and
+// writer ownership belong to the instance; this grants only a logical scope.
 func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssignedRunLeaseParams) (RunLease, error) {
 	row := q.db.QueryRow(ctx, insertAssignedRunLease,
 		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RunID,
-		arg.WorkspaceID,
-		arg.RegionID,
 		arg.LeaseSequence,
-		arg.AttemptNumber,
-		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.RuntimeInstanceID,
-		arg.RuntimeIdentityID,
 		arg.RequestedCPUMillis,
 		arg.RequestedMemoryBytes,
 		arg.RequestedGuestEphemeralDiskBytes,
@@ -599,6 +90,15 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		arg.Traceparent,
 		arg.StartDeadlineAt,
 		arg.ExpiresAt,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.ComputerID,
+		arg.WriterGeneration,
+		arg.WorkerHostID,
+		arg.WorkerEpoch,
+		arg.WorkerGroupID,
+		arg.RunID,
+		arg.AttemptNumber,
 	)
 	var i RunLease
 	err := row.Scan(
@@ -607,15 +107,14 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.WorkspaceID,
+		&i.ComputerID,
 		&i.RegionID,
 		&i.LeaseSequence,
 		&i.AttemptNumber,
 		&i.WorkerGroupID,
-		&i.WorkerInstanceID,
+		&i.WorkerHostID,
 		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.RuntimeIdentityID,
+		&i.ComputerInstanceID,
 		&i.RequestedCPUMillis,
 		&i.RequestedMemoryBytes,
 		&i.RequestedGuestEphemeralDiskBytes,
@@ -634,7 +133,6 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.FinalizationOperationID,
 		&i.FinalizationStartedAt,
 		&i.FinalizationRequestFingerprint,
-		&i.FinalizationRoot,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -642,193 +140,49 @@ func (q *Queries) InsertAssignedRunLease(ctx context.Context, arg InsertAssigned
 		&i.TerminalRequestFingerprint,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const insertRunWorkspaceLease = `-- name: InsertRunWorkspaceLease :one
-INSERT INTO workspace_leases (
-    id,
-    org_id,
-    worker_group_id,
-    project_id,
-    environment_id,
-    region_id,
-    worker_instance_id,
-    worker_epoch,
-    runtime_instance_id,
-    workspace_id,
-    workspace_mount_id,
-    owner_run_lease_id,
-    base_workspace_version_id,
-    ownership_generation,
-    writer_generation,
-    mount_fencing_generation,
-    fencing_token_hash,
-    expires_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    $13,
-    $14,
-    $15,
-    $16,
-    $17,
-    $18
-)
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, status, owner_run_lease_id, owner_process_id, base_workspace_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, updated_at, terminal_at, terminal_reason_code, terminal_error
-`
-
-type InsertRunWorkspaceLeaseParams struct {
-	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	WorkerGroupID          pgtype.UUID        `json:"worker_group_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	RegionID               string             `json:"region_id"`
-	WorkerInstanceID       pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch            int64              `json:"worker_epoch"`
-	RuntimeInstanceID      pgtype.UUID        `json:"runtime_instance_id"`
-	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
-	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
-	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
-	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
-	OwnershipGeneration    int64              `json:"ownership_generation"`
-	WriterGeneration       int64              `json:"writer_generation"`
-	MountFencingGeneration int64              `json:"mount_fencing_generation"`
-	FencingTokenHash       string             `json:"fencing_token_hash"`
-	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
-}
-
-func (q *Queries) InsertRunWorkspaceLease(ctx context.Context, arg InsertRunWorkspaceLeaseParams) (WorkspaceLease, error) {
-	row := q.db.QueryRow(ctx, insertRunWorkspaceLease,
-		arg.ID,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RegionID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
-		arg.RuntimeInstanceID,
-		arg.WorkspaceID,
-		arg.WorkspaceMountID,
-		arg.OwnerRunLeaseID,
-		arg.BaseWorkspaceVersionID,
-		arg.OwnershipGeneration,
-		arg.WriterGeneration,
-		arg.MountFencingGeneration,
-		arg.FencingTokenHash,
-		arg.ExpiresAt,
-	)
-	var i WorkspaceLease
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.WorkerInstanceID,
-		&i.WorkerEpoch,
-		&i.RuntimeInstanceID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.Status,
-		&i.OwnerRunLeaseID,
-		&i.OwnerProcessID,
-		&i.BaseWorkspaceVersionID,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
-		&i.MountFencingGeneration,
-		&i.FencingTokenHash,
-		&i.AcquiredAt,
-		&i.RenewedAt,
-		&i.ExpiresAt,
-		&i.ReleasedAt,
-		&i.UpdatedAt,
-		&i.TerminalAt,
-		&i.TerminalReasonCode,
-		&i.TerminalError,
+		&i.ProcessReconciledAt,
+		&i.DeploymentID,
 	)
 	return i, err
 }
 
 const setRunCurrentLease = `-- name: SetRunCurrentLease :one
-UPDATE runs
-   SET current_run_lease_id = $1,
-       first_lease_at = coalesce(first_lease_at, transaction_timestamp()),
-       runtime_preparation_count = 0,
-       next_runtime_preparation_at = NULL,
-       revision = revision + 1,
-       updated_at = transaction_timestamp()
- WHERE runs.id = $2
-   AND org_id = $3
-   AND revision = $4
-   AND status = 'queued'
-   AND current_attempt_number = $5
-   AND current_run_lease_id IS NULL
-   AND (next_runtime_preparation_at IS NULL
-        OR next_runtime_preparation_at <= transaction_timestamp())
-   AND (first_lease_at IS NOT NULL OR queued_expires_at IS NULL OR queued_expires_at > clock_timestamp())
-   AND ($6::uuid IS NULL OR EXISTS (
-       SELECT 1 FROM run_checkpoints
-        WHERE run_checkpoints.id = $6
-          AND run_checkpoints.run_id = runs.id
-          AND run_checkpoints.attempt_number = runs.current_attempt_number
-          AND run_checkpoints.workspace_id = runs.workspace_id
-          AND run_checkpoints.status = 'ready'
-          AND (run_checkpoints.expires_at IS NULL
-               OR run_checkpoints.expires_at > clock_timestamp())
-   ))
-   AND ($7::uuid IS NULL OR EXISTS (
-       SELECT 1 FROM run_waits AS parent_wait
-       JOIN run_checkpoints AS parent_checkpoint
-         ON parent_checkpoint.id = parent_wait.suspend_checkpoint_id
-        AND parent_checkpoint.run_id = parent_wait.run_id
-        AND parent_checkpoint.attempt_number = parent_wait.attempt_number
-        AND parent_checkpoint.workspace_id = parent_wait.workspace_id
-        AND parent_checkpoint.status = 'ready'
-        WHERE parent_wait.id = $7
-          AND parent_wait.child_run_id = runs.id
-          AND parent_wait.workspace_id = runs.workspace_id
-          AND (parent_checkpoint.expires_at IS NULL
-               OR parent_checkpoint.expires_at > clock_timestamp())
-   ))
-RETURNING runs.id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.session_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.session_input_start_sequence, runs.session_input_high_watermark, runs.payload, runs.output, runs.failure, runs.status, runs.revision, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.runtime_preparation_count, runs.next_runtime_preparation_at, runs.terminal_at, runs.computer_payload_required
+UPDATE runs r SET status=CASE WHEN i.admission_state='restoring' THEN 'waiting' ELSE r.status END,
+ current_run_lease_id=l.id,first_lease_at=COALESCE(r.first_lease_at,clock_timestamp()),
+ instance_preparation_count=0,next_instance_preparation_at=NULL,revision=r.revision+1,updated_at=clock_timestamp()
+FROM run_leases l,computer_instances i
+WHERE r.id=$1 AND r.environment_id=$2
+ AND r.revision=$3 AND r.current_attempt_number=$4
+ AND r.current_run_lease_id IS NULL AND r.status IN ('queued','waiting')
+ AND (r.first_lease_at IS NOT NULL OR r.queued_expires_at IS NULL OR r.queued_expires_at>clock_timestamp())
+ AND l.id=$5 AND l.run_id=r.id AND l.attempt_number=r.current_attempt_number
+ AND l.status='assigned' AND l.start_deadline_at>clock_timestamp() AND l.expires_at>clock_timestamp()
+ AND i.id=l.computer_instance_id AND i.writer_generation=l.writer_generation
+ AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
+ AND (i.admission_state='open' OR (i.admission_state='restoring' AND EXISTS(
+      SELECT 1 FROM computer_checkpoints c WHERE c.id=i.source_checkpoint_id
+      AND c.resume_computer_instance_id=i.id AND c.resume_committed_at IS NOT NULL)))
+RETURNING r.id, r.org_id, r.project_id, r.environment_id, r.deployment_id, r.deployment_definition_id, r.entrypoint_kind, r.entrypoint_declared_id, r.session_id, r.cause_kind, r.schedule_id, r.schedule_generation, r.scheduled_at, r.previous_scheduled_at, r.schedule_timezone, r.parent_run_id, r.parent_owns_lifecycle, r.computer_id, r.base_computer_disk_version_id, r.session_input_start_sequence, r.session_input_high_watermark, r.payload, r.output, r.failure, r.status, r.revision, r.current_attempt_number, r.current_run_lease_id, r.metadata, r.tags, r.queue_name, r.concurrency_key, r.queue_concurrency_limit, r.priority, r.queue_origin_at, r.queue_score_at, r.queued_expires_at, r.max_active_duration_ms, r.retry_policy, r.active_elapsed_ms, r.active_started_at, r.trace_id, r.root_span_id, r.claim_id, r.created_at, r.updated_at, r.first_lease_at, r.started_at, r.retry_at, r.instance_preparation_count, r.next_instance_preparation_at, r.terminal_at, r.computer_payload_required
 `
 
 type SetRunCurrentLeaseParams struct {
-	RunLeaseID               pgtype.UUID `json:"run_lease_id"`
-	ID                       pgtype.UUID `json:"id"`
-	OrgID                    pgtype.UUID `json:"org_id"`
-	ExpectedRevision         int64       `json:"expected_revision"`
-	AttemptNumber            int32       `json:"attempt_number"`
-	RestoreCheckpointID      pgtype.UUID `json:"restore_checkpoint_id"`
-	SameWorkspaceChildWaitID pgtype.UUID `json:"same_workspace_child_wait_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	ExpectedRevision int64       `json:"expected_revision"`
+	AttemptNumber    int32       `json:"attempt_number"`
+	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 }
 
-// The grant owner already holds Run and any restore checkpoint locks. Recheck
-// deadlines after potentially blocking grant writes, before publishing the lease.
+// Recheck decision-time deadlines after grant writes. The surrounding transaction
+// rolls back the grant and membership change if this compare-and-set fails.
 func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLeaseParams) (Run, error) {
 	row := q.db.QueryRow(ctx, setRunCurrentLease,
-		arg.RunLeaseID,
-		arg.ID,
-		arg.OrgID,
+		arg.RunID,
+		arg.EnvironmentID,
 		arg.ExpectedRevision,
 		arg.AttemptNumber,
-		arg.RestoreCheckpointID,
-		arg.SameWorkspaceChildWaitID,
+		arg.RunLeaseID,
 	)
 	var i Run
 	err := row.Scan(
@@ -849,8 +203,8 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		&i.ScheduleTimezone,
 		&i.ParentRunID,
 		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
+		&i.ComputerID,
+		&i.BaseComputerDiskVersionID,
 		&i.SessionInputStartSequence,
 		&i.SessionInputHighWatermark,
 		&i.Payload,
@@ -881,8 +235,8 @@ func (q *Queries) SetRunCurrentLease(ctx context.Context, arg SetRunCurrentLease
 		&i.FirstLeaseAt,
 		&i.StartedAt,
 		&i.RetryAt,
-		&i.RuntimePreparationCount,
-		&i.NextRuntimePreparationAt,
+		&i.InstancePreparationCount,
+		&i.NextInstancePreparationAt,
 		&i.TerminalAt,
 		&i.ComputerPayloadRequired,
 	)

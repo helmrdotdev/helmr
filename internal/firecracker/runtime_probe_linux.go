@@ -10,12 +10,12 @@ import (
 	"os/exec"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"golang.org/x/sys/unix"
 )
 
 func runtimeArtifactCapabilities(artifacts runtimeArtifacts) (RuntimeCapabilities, error) {
-	architecture, err := runtimeid.ArchitectureFromGo(artifacts.Arch)
+	architecture, err := vmplatform.ArchitectureFromGo(artifacts.Arch)
 	if err != nil {
 		return RuntimeCapabilities{}, err
 	}

@@ -2,7 +2,7 @@ import { verify, assertEqual, deadline } from "../../support/context"
 await verify("token-cancel", async ({ client, marker, objects, cleanup }) => {
   const token = await client.tokens.create({
     timeout: "10m",
-    tags: ["smoke", "workspace-basic-exec"],
+    tags: ["smoke", "computer-basic-exec"],
     metadata: { marker: marker },
     idempotencyKey: `token:create:${marker}`,
   })

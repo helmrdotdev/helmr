@@ -592,7 +592,7 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 				Declarations:       []deployment.ProgramIndexDeclaration{declaration}, Queues: queues,
 				RuntimeContract: deployment.RuntimeContract, RuntimeDigest: runtimeDigest},
 		},
-		WorkspaceImages: []deployment.BundleWorkspaceImage{},
+		ComputerImages: []deployment.BundleComputerImage{},
 		Objects: []deployment.BundleObject{{Digest: programDigest, SizeBytes: int64(len(program)),
 			MediaType: deployment.ProgramArtifactMediaType}},
 	}

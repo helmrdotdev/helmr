@@ -30,10 +30,12 @@ func TestDecideExecutionLeaseLossUsesExactPhysicalReason(t *testing.T) {
 			row.WorkerCurrentEpoch.Int64 = 2
 			row.WorkerEpochStartedAt = timestamp(now)
 		}, reason: "worker_lost"},
-		{name: "runtime lost", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.RuntimeLostAt = timestamp(now) }, reason: "worker_lost"},
-		{name: "runtime failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.RuntimeFailedAt = timestamp(now) }, reason: "runtime_failed"},
-		{name: "mount lost", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.MountLostAt = timestamp(now) }, reason: "worker_lost"},
-		{name: "mount failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.MountFailedAt = timestamp(now) }, reason: "runtime_failed"},
+		{name: "instance lost", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.InstanceLostAt = timestamp(now) }, reason: "worker_lost"},
+		{name: "instance closed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) {
+			row.InstanceObservedState = "closed"
+			row.ReclaimedAt = timestamp(now)
+		}, reason: "computer_instance_closed"},
+		{name: "instance failed", mutate: func(row *db.GetRunExecutionLeaseLossAuthorityRow) { row.InstanceFailedAt = timestamp(now) }, reason: "runtime_failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			row := base

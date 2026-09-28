@@ -85,7 +85,7 @@ test("Codex wire cancellation invalidates a request while projection is blocked"
 })
 
 
-test("a new Claude Actor Run resumes the Session conversation from Workspace state", async () => {
+test("a new Claude Actor Run resumes the Session conversation from Computer state", async () => {
   fixtureDirectory = await mkdtemp(join(tmpdir(), "helmr-native-resume-"))
   const { claudeIssueFixer } = await import("../tasks/issue-fixer/claude")
   const before = resumes.length

@@ -25,7 +25,7 @@ const (
 	MaxRetryDelayMilliseconds   = int64(24 * 60 * 60 * 1000)
 )
 
-type WorkspaceIDTarget struct {
+type ComputerIDTarget struct {
 	ID string `json:"id"`
 }
 
@@ -55,14 +55,14 @@ type StartActorRunOptions struct {
 type StartActorRequest struct {
 	Key            *string               `json:"key,omitempty"`
 	IdempotencyKey string                `json:"idempotency_key,omitempty"`
-	Workspace      WorkspaceIDTarget     `json:"workspace"`
+	Computer       ComputerIDTarget      `json:"computer"`
 	Run            *StartActorRunOptions `json:"run,omitempty"`
 }
 
 type ActorStartOptions struct {
-	Key       *string
-	Workspace WorkspaceIDTarget
-	Run       *StartActorRunOptions
+	Key      *string
+	Computer ComputerIDTarget
+	Run      *StartActorRunOptions
 }
 
 type StartActorResponse struct {
@@ -84,9 +84,9 @@ func ValidateSessionID(id string) error {
 	return nil
 }
 
-func ValidateWorkspaceID(id string) error {
+func ValidateComputerID(id string) error {
 	if err := ids.Validate(id); err != nil {
-		return fmt.Errorf("invalid workspace ID: %w", err)
+		return fmt.Errorf("invalid computer ID: %w", err)
 	}
 	return nil
 }
@@ -110,14 +110,14 @@ func ValidateActorKey(key string) error {
 }
 
 func ValidateStartActorRequest(request StartActorRequest) error {
-	if err := ValidateWorkspaceIDTarget(request.Workspace); err != nil {
+	if err := ValidateComputerIDTarget(request.Computer); err != nil {
 		return err
 	}
 	return validateActorStartOptions(request.Key, request.Run)
 }
 
 func ValidateActorStartOptions(request ActorStartOptions) error {
-	if err := ValidateWorkspaceIDTarget(request.Workspace); err != nil {
+	if err := ValidateComputerIDTarget(request.Computer); err != nil {
 		return err
 	}
 	return validateActorStartOptions(request.Key, request.Run)
@@ -166,11 +166,11 @@ func validateActorStartOptions(
 	return nil
 }
 
-func ValidateWorkspaceIDTarget(workspace WorkspaceIDTarget) error {
-	if workspace.ID == "" {
-		return errors.New("workspace.id is required")
+func ValidateComputerIDTarget(computer ComputerIDTarget) error {
+	if computer.ID == "" {
+		return errors.New("computer.id is required")
 	}
-	return ValidateWorkspaceID(workspace.ID)
+	return ValidateComputerID(computer.ID)
 }
 
 func ParseDurationMilliseconds(raw string, label string, minValue int64, maxValue int64) (int64, error) {

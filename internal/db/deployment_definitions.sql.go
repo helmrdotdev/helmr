@@ -18,7 +18,7 @@ WITH input_definitions AS (
            input_declared_ids.declared_id,
            input_manifests.manifest,
            input_manifest_digests.manifest_digest,
-           input_artifact_ids.artifact_id
+           input_computer_spec_ids.computer_spec_id
       FROM unnest($4::uuid[])
            WITH ORDINALITY AS input_ids(id, position)
       JOIN unnest($5::text[])
@@ -34,8 +34,8 @@ WITH input_definitions AS (
            WITH ORDINALITY AS input_manifest_digests(manifest_digest, position)
         ON input_manifest_digests.position = input_ids.position
       JOIN unnest($9::uuid[])
-           WITH ORDINALITY AS input_artifact_ids(artifact_id, position)
-        ON input_artifact_ids.position = input_ids.position
+           WITH ORDINALITY AS input_computer_spec_ids(computer_spec_id, position)
+        ON input_computer_spec_ids.position = input_ids.position
      WHERE cardinality($4::uuid[]) BETWEEN 0 AND 10000
        AND cardinality($5::text[]) = cardinality($4::uuid[])
        AND cardinality($6::text[]) = cardinality($4::uuid[])
@@ -52,7 +52,7 @@ INSERT INTO deployment_definitions (
     manifest_version,
     manifest,
     manifest_digest,
-    artifact_id
+    computer_spec_id
 )
 SELECT input_definitions.id,
        $1,
@@ -62,7 +62,7 @@ SELECT input_definitions.id,
        $3,
        input_definitions.manifest,
        input_definitions.manifest_digest,
-       input_definitions.artifact_id
+       input_definitions.computer_spec_id
   FROM input_definitions
 `
 
@@ -75,7 +75,7 @@ type CreateDeploymentDefinitionsParams struct {
 	DeclaredIds     []string      `json:"declared_ids"`
 	Manifests       [][]byte      `json:"manifests"`
 	ManifestDigests [][]byte      `json:"manifest_digests"`
-	ArtifactIds     []pgtype.UUID `json:"artifact_ids"`
+	ComputerSpecIds []pgtype.UUID `json:"computer_spec_ids"`
 }
 
 func (q *Queries) CreateDeploymentDefinitions(ctx context.Context, arg CreateDeploymentDefinitionsParams) (int64, error) {
@@ -88,7 +88,7 @@ func (q *Queries) CreateDeploymentDefinitions(ctx context.Context, arg CreateDep
 		arg.DeclaredIds,
 		arg.Manifests,
 		arg.ManifestDigests,
-		arg.ArtifactIds,
+		arg.ComputerSpecIds,
 	)
 	if err != nil {
 		return 0, err
@@ -126,7 +126,7 @@ func (q *Queries) GetDefinitionSnapshot(ctx context.Context, arg GetDefinitionSn
 }
 
 const getDeploymentDefinition = `-- name: GetDeploymentDefinition :one
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.created_at, deployment_definitions.computer_spec_id
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -162,8 +162,8 @@ func (q *Queries) GetDeploymentDefinition(ctx context.Context, arg GetDeployment
 		&i.ManifestVersion,
 		&i.Manifest,
 		&i.ManifestDigest,
-		&i.ArtifactID,
 		&i.CreatedAt,
+		&i.ComputerSpecID,
 	)
 	return i, err
 }
@@ -273,7 +273,7 @@ func (q *Queries) ListDefinitionSnapshots(ctx context.Context, arg ListDefinitio
 }
 
 const listDeploymentDefinitionsForDeployment = `-- name: ListDeploymentDefinitionsForDeployment :many
-SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.artifact_id, deployment_definitions.created_at
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.created_at, deployment_definitions.computer_spec_id
   FROM deployment_definitions
   JOIN deployments
     ON deployments.environment_id = deployment_definitions.environment_id
@@ -308,8 +308,8 @@ func (q *Queries) ListDeploymentDefinitionsForDeployment(ctx context.Context, ar
 			&i.ManifestVersion,
 			&i.Manifest,
 			&i.ManifestDigest,
-			&i.ArtifactID,
 			&i.CreatedAt,
+			&i.ComputerSpecID,
 		); err != nil {
 			return nil, err
 		}

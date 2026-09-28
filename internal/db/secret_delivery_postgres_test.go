@@ -11,13 +11,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
+func TestAttemptSecretDeliveryLocksCompleteComputerPlacementSet(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)
 	work := fixture.addWork(t, ctx, "assigned", time.Now())
 
-	var workspaceID uuid.UUID
-	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&workspaceID); err != nil {
+	var computerID uuid.UUID
+	if err := fixture.pool.QueryRow(ctx, `SELECT computer_id FROM runs WHERE id = $1`, work.runID).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
 	secretID := uuid.NewV7()
@@ -49,25 +49,25 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 		`, versionID, secretID, version+1)
 	}
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_secrets (mode,
-			workspace_id, environment_id, placement_kind, placement_target, secret_id
+		INSERT INTO computer_secrets (mode,
+			computer_id, environment_id, placement_kind, placement_target, secret_id
 		)
 		VALUES
 			('raw', $1, $2, 'env', 'TOKEN', $3),
 			('raw', $1, $2, 'file', '/run/secrets/token', $3)
-	`, workspaceID, fixture.environmentID, secretID)
+	`, computerID, fixture.environmentID, secretID)
 	dbtest.MustExec(t, ctx, tx, `
 		INSERT INTO secret_resolutions (
-			id, workspace_id, run_id, attempt_number, placement_kind, placement_target,
+			id, computer_id, run_id, attempt_number, placement_kind, placement_target,
 			secret_id, secret_version_id, revocation_generation
 		)
 		VALUES ($1, $2, $3, 1, 'env', 'TOKEN', $4, $5, 4)
-	`, resolutionID, workspaceID, work.runID, secretID, oldVersionID)
+	`, resolutionID, computerID, work.runID, secretID, oldVersionID)
 
 	rows, err := New(tx).LockAttemptSecretDelivery(ctx, LockAttemptSecretDeliveryParams{
 		RunID:         pgvalue.UUID(work.runID),
 		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-		WorkspaceID:   pgvalue.UUID(workspaceID),
+		ComputerID:    pgvalue.UUID(computerID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,29 +75,29 @@ func TestAttemptSecretDeliveryLocksCompleteWorkspacePlacementSet(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
-	if rows[0].WorkspaceSecret.PlacementKind != "env" ||
+	if rows[0].ComputerSecret.PlacementKind != "env" ||
 		rows[0].ResolutionID != pgvalue.UUID(resolutionID) ||
 		rows[0].ResolutionSecretVersionID != pgvalue.UUID(oldVersionID) ||
 		rows[0].Secret.CurrentVersionID != pgvalue.UUID(currentVersionID) {
 		t.Fatalf("resolved row = %+v", rows[0])
 	}
-	if rows[1].WorkspaceSecret.PlacementKind != "file" ||
+	if rows[1].ComputerSecret.PlacementKind != "file" ||
 		rows[1].ResolutionID.Valid ||
 		rows[1].ResolutionSecretVersionID.Valid {
 		t.Fatalf("missing-resolution row = %+v", rows[1])
 	}
 
 	dbtest.MustExec(t, ctx, tx, `
-		INSERT INTO workspace_secrets (mode,
-			workspace_id, environment_id, placement_kind, placement_target, secret_id
+		INSERT INTO computer_secrets (mode,
+			computer_id, environment_id, placement_kind, placement_target, secret_id
 		)
 		SELECT 'raw', $1, $2, 'env', 'TOKEN_' || ordinal::text, $3
 		  FROM generate_series(1, 63) AS ordinal
-	`, workspaceID, fixture.environmentID, secretID)
+	`, computerID, fixture.environmentID, secretID)
 	rows, err = New(tx).LockAttemptSecretDelivery(ctx, LockAttemptSecretDeliveryParams{
 		RunID:         pgvalue.UUID(work.runID),
 		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-		WorkspaceID:   pgvalue.UUID(workspaceID),
+		ComputerID:    pgvalue.UUID(computerID),
 	})
 	if err != nil {
 		t.Fatal(err)

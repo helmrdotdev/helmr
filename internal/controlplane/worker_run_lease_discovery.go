@@ -25,12 +25,12 @@ func (s *Server) workerDiscoverRunLeases(w http.ResponseWriter, r *http.Request)
 		r.Context(),
 		s.db,
 		worker.WorkerGroupID,
-		pgvalue.UUID(worker.WorkerInstanceID),
+		pgvalue.UUID(worker.WorkerHostID),
 		worker.WorkerEpoch,
 	)
 	if err != nil {
 		s.log.Error("discover worker run leases failed",
-			"worker_instance_id", worker.WorkerInstanceID.String(),
+			"worker_host_id", worker.WorkerHostID.String(),
 			"worker_epoch", worker.WorkerEpoch,
 			"error", err,
 		)

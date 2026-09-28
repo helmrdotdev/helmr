@@ -30,7 +30,7 @@ type PreparedProgramInput struct {
 	Compiler          deployment.CompilerInputs
 	Runtime           deployment.RuntimeDescriptor
 	RuntimeMetadata   deployment.RuntimeMetadata
-	WorkspaceImages   []deployment.BundleWorkspaceImage
+	ComputerImages    []deployment.BundleComputerImage
 }
 
 type ProgramAnalysis struct {

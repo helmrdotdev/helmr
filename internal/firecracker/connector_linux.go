@@ -36,9 +36,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/firecracker/datapath"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
 )
@@ -165,7 +165,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 		c.cfg.InitTimeout+c.cfg.HealthTimeout+stopTimeout,
 	)
 	defer cancelProbe()
-	identity, err := c.hostRuntime.runtimeIdentity()
+	identity, err := c.hostRuntime.vmPlatform()
 	if err != nil {
 		return fmt.Errorf("resolve startup probe runtime identity: %w", err)
 	}
@@ -174,11 +174,11 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 		ID:        ownerID,
 		OwnerKind: vm.OwnerRuntime,
 		Binding: vm.WorkloadBinding{
-			WorkerEpoch:       1,
-			OwnerID:           ownerID,
-			Generation:        1,
-			RuntimeInstanceID: ownerID,
-			RuntimeIdentityID: identity.ID,
+			WorkerEpoch:        1,
+			OwnerID:            ownerID,
+			Generation:         1,
+			ComputerInstanceID: ownerID,
+			VMPlatformID:       identity.ID,
 		},
 	})
 	if err != nil {
@@ -515,9 +515,6 @@ func stopExactRuntimePID(ctx context.Context, pid int) error {
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
 	if request.Topology.Computer != nil {
-		if request.Topology.Substrate != nil {
-			return errors.New("computer cannot be combined with a substrate")
-		}
 		if err := validateComputerDisk(request.Topology.Computer); err != nil {
 			return err
 		}
@@ -541,10 +538,10 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	}
 	rootfsDigest := c.artifacts.Rootfs.Digest
 	if rootfsDigest != strings.TrimSpace(request.RootfsDigest) {
-		return fmt.Errorf("workspaceMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
+		return fmt.Errorf("computerMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
 	}
-	if strings.TrimSpace(request.WorkspaceMountPath) != "/workspace" {
-		return fmt.Errorf("the Firecracker materialize workspace mount path %q is not supported", request.WorkspaceMountPath)
+	if strings.TrimSpace(request.ComputerMountPath) != "/computer" {
+		return fmt.Errorf("the Firecracker materialize computer mount path %q is not supported", request.ComputerMountPath)
 	}
 	requestedVCPUs, err := VCPUCountForMilliCPU(request.Resources.MilliCPU)
 	if err != nil {
@@ -565,10 +562,10 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if err != nil {
 		return fmt.Errorf("resolve materialize host runtime: %w", err)
 	}
-	if request.Binding.RuntimeIdentityID != targetRuntime.ID {
+	if request.Binding.VMPlatformID != targetRuntime.ID {
 		return fmt.Errorf(
 			"materialize runtime identity %s does not match target host runtime %s",
-			request.Binding.RuntimeIdentityID,
+			request.Binding.VMPlatformID,
 			targetRuntime.ID,
 		)
 	}
@@ -596,9 +593,6 @@ func runtimeKernelArgs(
 		net.IP(guestNetwork.Mask), GuestInterfaceNameV0, strings.TrimSpace(resolverIPv4))
 	if topology.Computer != nil {
 		args += " helmr.computer=1"
-	}
-	if topology.Substrate != nil {
-		args += " " + runtimeSubstrateKernelFlag
 	}
 	if isProgramDriveSet(readOnlyDrives) {
 		args += " " + runtimeProgramKernelFlag
@@ -652,20 +646,20 @@ func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.Restore
 }
 
 func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
-	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}); err != nil {
+	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ComputerInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
-	targetRuntime, err := c.hostRuntime.runtimeIdentity()
+	targetRuntime, err := c.hostRuntime.vmPlatform()
 	if err != nil {
 		return nil, fmt.Errorf("resolve target host runtime identity: %w", err)
 	}
 	if _, err := c.hostRuntime.firecrackerExecutable(); err != nil {
 		return nil, fmt.Errorf("resolve target Firecracker executable: %w", err)
 	}
-	if request.Binding.RuntimeIdentityID != targetRuntime.ID {
+	if request.Binding.VMPlatformID != targetRuntime.ID {
 		return nil, fmt.Errorf(
 			"restore workload runtime identity %s does not match target host runtime %s",
-			request.Binding.RuntimeIdentityID,
+			request.Binding.VMPlatformID,
 			targetRuntime.ID,
 		)
 	}
@@ -693,9 +687,6 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
 			return nil, err
 		}
-	}
-	if request.Topology.Substrate != nil {
-		return nil, errors.New("computer restore cannot contain a substrate")
 	}
 	if err := validateComputerDisk(request.Topology.Computer); err != nil {
 		return nil, err
@@ -725,7 +716,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	if restoreCfg.MemoryMiB != request.Resources.MemoryMiB || restoreCfg.ScratchDiskMiB != request.Resources.DiskMiB {
 		return nil, errors.New("checkpoint memory or scratch size does not match runtime reservation")
 	}
-	owner := vm.Owner{Kind: request.OwnerKind, ID: request.RuntimeInstanceID}
+	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ComputerInstanceID}
 	retained := c.lockComputerOwner(owner)
 	if retained == nil {
 		return nil, errors.New("runtime ownership is not configured")
@@ -771,7 +762,7 @@ func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	child.cfg = restoreCfg
 	child.kernelArgs = kernelArgs
 	transferred = true // prepareSession consumes the held restore guard.
-	session, err := child.start(ctx, workloadLaunch, request.RuntimeInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
+	session, err := child.start(ctx, workloadLaunch, request.ComputerInstanceID, request.OwnerKind, request.Binding, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Topology, request.ReadOnlyDrives, recordPhase, retained)
 	if err != nil {
 		return nil, err
 	}
@@ -787,7 +778,7 @@ func (c *Connector) validateRestoreIdentity(
 	readOnlyDrives []vm.ReadOnlyDrive,
 ) (snapshotManifest, Config, error) {
 	var manifest snapshotManifest
-	targetRuntime, err := c.hostRuntime.runtimeIdentity()
+	targetRuntime, err := c.hostRuntime.vmPlatform()
 	if err != nil {
 		return manifest, Config{}, fmt.Errorf("resolve target host runtime identity: %w", err)
 	}
@@ -822,8 +813,8 @@ func (c *Connector) validateRestoreIdentity(
 	if identity.RootfsDigest != rootfsDigest {
 		return manifest, Config{}, fmt.Errorf("checkpoint rootfs digest %s does not match worker rootfs digest %s", identity.RootfsDigest, rootfsDigest)
 	}
-	if identity.RuntimeConfigDigest != sha256sum.DigestBytes(manifestBytes) {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, sha256sum.DigestBytes(manifestBytes))
+	if identity.VMConfigDigest != sha256sum.DigestBytes(manifestBytes) {
+		return manifest, Config{}, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.VMConfigDigest, sha256sum.DigestBytes(manifestBytes))
 	}
 	runtimeID := targetRuntime.ID
 	if identity.RuntimeID != runtimeID {
@@ -873,7 +864,6 @@ func (c *Connector) validateRestoreIdentity(
 		initramfsDigest,
 		rootfsDigest,
 		identity.CPUConfigDigest,
-		topology.Substrate,
 		kernelArgs,
 		readOnlyDrives,
 	); err != nil {
@@ -973,7 +963,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	if err := validateCPUTemplateLaunch(c.cfg.CPUTemplateSelector); err != nil {
 		return nil, err
 	}
-	runtimeIdentity, cpuConfigDigest, firecrackerPath, err := c.boundSessionRuntime(c.cfg.VCPUCount)
+	vmPlatform, cpuConfigDigest, firecrackerPath, err := c.boundSessionRuntime(c.cfg.VCPUCount)
 	if err != nil {
 		return nil, err
 	}
@@ -987,11 +977,11 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	if err := binding.Validate(owner); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
-	if binding.RuntimeIdentityID != runtimeIdentity.ID {
+	if binding.VMPlatformID != vmPlatform.ID {
 		return nil, fmt.Errorf(
 			"workload runtime identity %s does not match bound host runtime %s",
-			binding.RuntimeIdentityID,
-			runtimeIdentity.ID,
+			binding.VMPlatformID,
+			vmPlatform.ID,
 		)
 	}
 	retained := preparedOwner
@@ -1042,30 +1032,6 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		return nil, err
 	}
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
-	substrateDiskPath := ""
-	if topology.Substrate != nil {
-		if err := validateRuntimeSubstrateSource(topology.Substrate); err != nil {
-			return nil, err
-		}
-		phaseStarted = time.Now()
-		var err error
-		substrateDiskPath, err = topology.Substrate.Source.MaterializeInto(
-			ctx,
-			instanceDir,
-			substrateDiskName,
-			c.cfg.JailerUID,
-			c.cfg.JailerGID,
-		)
-		if err != nil {
-			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
-			return nil, err
-		}
-		projected := cloneRuntimeSubstrate(topology.Substrate)
-		projected.Path = substrateDiskPath
-		projected.Source = nil
-		topology.Substrate = projected
-		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
-	}
 	restoring := snapshotMemoryPath != "" || snapshotStatePath != ""
 	computerDiskPath := ""
 	if topology.Computer != nil {
@@ -1131,7 +1097,6 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		Drives: runtimeDrivesWithComputer(
 			c.cfg.RootfsPath,
 			scratchDiskPath,
-			substrateDiskPath,
 			computerDiskPath,
 			readOnlyDrives,
 			readOnlyDrivePaths,
@@ -1150,7 +1115,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	opts := []firecracker.Opt{}
 	if restoring {
 		opts = append(opts, withSnapshotRestore(snapshotMemoryPath, snapshotStatePath))
-		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, computerDiskPath, snapshotMemoryPath, snapshotStatePath))
+		opts = append(opts, withJailedRestoreFiles(c.cfg.RootfsPath, scratchDiskPath, computerDiskPath, snapshotMemoryPath, snapshotStatePath))
 		if len(readOnlyDrives) != 0 {
 			opts = append(opts, withRestoreSealedDrives(sealedDriveChrootStrategy{
 				kernelImagePath: c.cfg.KernelPath,
@@ -1243,7 +1208,7 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 		computerExport:  exportFailure,
 		cfg:             launchCfg,
 		kernelArgs:      c.kernelArgsValue(),
-		runtimeIdentity: runtimeIdentity,
+		vmPlatform:      vmPlatform,
 		cpuConfigDigest: cpuConfigDigest,
 		vsockHostPath:   vsockHostPath,
 		instanceDir:     instanceDir,
@@ -1260,20 +1225,20 @@ func (c *Connector) prepareSession(ctx context.Context, mode launchMode, instanc
 	return session, nil
 }
 
-func (c *Connector) boundSessionRuntime(vcpuCount int64) (runtimeid.Profile, string, string, error) {
-	runtimeIdentity, err := c.hostRuntime.runtimeIdentity()
+func (c *Connector) boundSessionRuntime(vcpuCount int64) (vmplatform.Profile, string, string, error) {
+	vmPlatform, err := c.hostRuntime.vmPlatform()
 	if err != nil {
-		return runtimeid.Profile{}, "", "", fmt.Errorf("resolve host runtime identity: %w", err)
+		return vmplatform.Profile{}, "", "", fmt.Errorf("resolve host runtime identity: %w", err)
 	}
 	cpuConfigDigest, err := c.hostRuntime.cpuConfigDigest(vcpuCount)
 	if err != nil {
-		return runtimeid.Profile{}, "", "", fmt.Errorf("resolve guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
+		return vmplatform.Profile{}, "", "", fmt.Errorf("resolve guest CPU configuration for %d vCPUs: %w", vcpuCount, err)
 	}
 	firecrackerPath, err := c.hostRuntime.firecrackerExecutable()
 	if err != nil {
-		return runtimeid.Profile{}, "", "", fmt.Errorf("resolve pinned Firecracker executable: %w", err)
+		return vmplatform.Profile{}, "", "", fmt.Errorf("resolve pinned Firecracker executable: %w", err)
 	}
-	return runtimeIdentity, cpuConfigDigest, firecrackerPath, nil
+	return vmPlatform, cpuConfigDigest, firecrackerPath, nil
 }
 
 func startMachineContext(ctx context.Context, machine *firecracker.Machine, machineCtx context.Context, machineCancel context.CancelFunc) error {
@@ -1389,10 +1354,10 @@ func ext4FreeBytes(path string) (uint64, error) {
 	return freeBlocks * blockSize, nil
 }
 
-func runtimeDrivesWithReadOnlyPaths(
+func runtimeDrivesWithComputer(
 	rootfsPath string,
 	scratchDiskPath string,
-	substrateDiskPath string,
+	computerDiskPath string,
 	readOnlyDrives []vm.ReadOnlyDrive,
 	readOnlyDrivePaths map[string]string,
 ) []models.Drive {
@@ -1407,12 +1372,12 @@ func runtimeDrivesWithReadOnlyPaths(
 		IsRootDevice: firecracker.Bool(false),
 		IsReadOnly:   firecracker.Bool(false),
 	}}
-	if strings.TrimSpace(substrateDiskPath) != "" {
+	if strings.TrimSpace(computerDiskPath) != "" {
 		drives = append(drives, models.Drive{
-			DriveID:      firecracker.String(substrateDriveID),
-			PathOnHost:   firecracker.String(substrateDiskPath),
+			DriveID:      firecracker.String(computerDriveID),
+			PathOnHost:   firecracker.String(computerDiskPath),
 			IsRootDevice: firecracker.Bool(false),
-			IsReadOnly:   firecracker.Bool(true),
+			IsReadOnly:   firecracker.Bool(false),
 		})
 	}
 	byID := make(map[string]vm.ReadOnlyDrive, len(readOnlyDrives))
@@ -1964,7 +1929,7 @@ type guestSession struct {
 	computerExport  *computerExportWatch
 	cfg             Config
 	kernelArgs      string
-	runtimeIdentity runtimeid.Profile
+	vmPlatform      vmplatform.Profile
 	cpuConfigDigest string
 	vsockHostPath   string
 	instanceDir     string
@@ -2198,19 +2163,19 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 			_ = os.Remove(statePath)
 		}
 	}()
-	runtimeIdentity := s.runtimeIdentity
-	expectedRuntimeID, err := runtimeIdentity.ExpectedID()
+	vmPlatform := s.vmPlatform
+	expectedRuntimeID, err := vmPlatform.ExpectedID()
 	if err != nil {
 		return vm.SnapshotArtifact{}, err
 	}
-	if runtimeIdentity.ID != expectedRuntimeID {
+	if vmPlatform.ID != expectedRuntimeID {
 		return vm.SnapshotArtifact{}, errors.New("bound host runtime identity is not canonical")
 	}
-	workerArchitecture := runtimeIdentity.Arch
-	runtimeID := runtimeIdentity.ID
-	kernelDigest := runtimeIdentity.KernelDigest
-	initramfsDigest := runtimeIdentity.InitramfsDigest
-	rootfsDigest := runtimeIdentity.RootfsDigest
+	workerArchitecture := vmPlatform.Arch
+	runtimeID := vmPlatform.ID
+	kernelDigest := vmPlatform.KernelDigest
+	initramfsDigest := vmPlatform.InitramfsDigest
+	rootfsDigest := vmPlatform.RootfsDigest
 	started = time.Now()
 	configDigest, manifest, err := snapshotRuntimeConfig(
 		s.cfg,
@@ -2230,7 +2195,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	if int64(len(manifest)) > limits.ConfigBytes {
 		return vm.SnapshotArtifact{}, errors.New("snapshot runtime config exceeds staging limit")
 	}
-	recordPhase("runtime_config_digest", started)
+	recordPhase("vm_config_digest", started)
 	var scratchFile vm.SnapshotFile
 	var memoryFile vm.SnapshotFile
 	var scratchPhase vm.RuntimePhase
@@ -2265,23 +2230,22 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	cleanupRawSnapshot = false
 	transferredCapture = true
 	return vm.SnapshotArtifact{
-		Computer:            capturedComputer,
-		RuntimeBackend:      "firecracker",
-		RuntimeArch:         workerArchitecture,
-		VMRuntimeContract:   runtimeIdentity.Contract,
-		RuntimeID:           runtimeID,
-		KernelDigest:        kernelDigest,
-		InitramfsDigest:     initramfsDigest,
-		RootfsDigest:        rootfsDigest,
-		RuntimeConfigDigest: configDigest,
-		VMVCPUCount:         int32(s.cfg.VCPUCount),
-		CPUConfigDigest:     s.cpuConfigDigest,
-		Substrate:           cloneRuntimeSubstrate(s.topology.Substrate),
-		VMState:             vm.SnapshotFile{Path: statePath, MediaType: cas.CheckpointVMStateMediaType},
-		ScratchDisk:         scratchFile,
-		Memory:              []vm.SnapshotFile{memoryFile},
-		Manifest:            manifest,
-		Phases:              phases,
+		Computer:          capturedComputer,
+		RuntimeBackend:    "firecracker",
+		RuntimeArch:       workerArchitecture,
+		VMRuntimeContract: vmPlatform.Contract,
+		RuntimeID:         runtimeID,
+		KernelDigest:      kernelDigest,
+		InitramfsDigest:   initramfsDigest,
+		RootfsDigest:      rootfsDigest,
+		VMConfigDigest:    configDigest,
+		VMVCPUCount:       int32(s.cfg.VCPUCount),
+		CPUConfigDigest:   s.cpuConfigDigest,
+		VMState:           vm.SnapshotFile{Path: statePath, MediaType: cas.CheckpointVMStateMediaType},
+		ScratchDisk:       scratchFile,
+		Memory:            []vm.SnapshotFile{memoryFile},
+		Manifest:          manifest,
+		Phases:            phases,
 	}, nil
 }
 
@@ -2464,23 +2428,22 @@ type snapshotRecoveryPointManifest struct {
 }
 
 type snapshotRuntimeManifest struct {
-	Backend          string                    `json:"backend"`
-	DescriptorDigest string                    `json:"runtime_descriptor_digest"`
-	ID               string                    `json:"id"`
-	Arch             string                    `json:"arch"`
-	Contract         string                    `json:"contract"`
-	VCPUCount        int64                     `json:"vcpu_count"`
-	CPUConfigDigest  string                    `json:"cpu_config_digest"`
-	MemoryMiB        int64                     `json:"memory_mib"`
-	ScratchDiskMiB   int64                     `json:"scratch_disk_mib"`
-	KernelArgs       string                    `json:"kernel_args"`
-	KernelDigest     string                    `json:"kernel_digest"`
-	InitramfsDigest  string                    `json:"initramfs_digest"`
-	RootfsDigest     string                    `json:"rootfs_digest"`
-	Substrate        *snapshotRuntimeSubstrate `json:"substrate,omitempty"`
-	Program          *snapshotProgramManifest  `json:"program,omitempty"`
-	GuestPort        uint32                    `json:"guest_port"`
-	HealthPort       uint32                    `json:"health_port"`
+	Backend          string                   `json:"backend"`
+	DescriptorDigest string                   `json:"runtime_descriptor_digest"`
+	ID               string                   `json:"id"`
+	Arch             string                   `json:"arch"`
+	Contract         string                   `json:"contract"`
+	VCPUCount        int64                    `json:"vcpu_count"`
+	CPUConfigDigest  string                   `json:"cpu_config_digest"`
+	MemoryMiB        int64                    `json:"memory_mib"`
+	ScratchDiskMiB   int64                    `json:"scratch_disk_mib"`
+	KernelArgs       string                   `json:"kernel_args"`
+	KernelDigest     string                   `json:"kernel_digest"`
+	InitramfsDigest  string                   `json:"initramfs_digest"`
+	RootfsDigest     string                   `json:"rootfs_digest"`
+	Program          *snapshotProgramManifest `json:"program,omitempty"`
+	GuestPort        uint32                   `json:"guest_port"`
+	HealthPort       uint32                   `json:"health_port"`
 }
 
 type snapshotProgramManifest struct {
@@ -2534,13 +2497,6 @@ func validateSnapshotProgram(manifest *snapshotProgramManifest, drives []vm.Read
 	return nil
 }
 
-type snapshotRuntimeSubstrate struct {
-	Digest    string `json:"digest"`
-	Format    string `json:"format"`
-	Contract  string `json:"contract"`
-	SizeBytes int64  `json:"size_bytes"`
-}
-
 type snapshotRuntimeStateManifest struct {
 	Network snapshotNetworkManifest `json:"network"`
 }
@@ -2555,86 +2511,17 @@ type snapshotNetworkManifest struct {
 	MTU                int      `json:"mtu"`
 }
 
-func snapshotSubstrateManifest(substrate *vm.RuntimeSubstrate) (*snapshotRuntimeSubstrate, error) {
-	if substrate == nil {
-		return nil, nil
-	}
-	if err := validateRuntimeSubstrateTopology(substrate); err != nil {
-		return nil, err
-	}
-	return &snapshotRuntimeSubstrate{
-		Digest:    strings.TrimSpace(substrate.Digest),
-		Format:    strings.TrimSpace(substrate.Format),
-		Contract:  strings.TrimSpace(substrate.Contract),
-		SizeBytes: substrate.SizeBytes,
-	}, nil
-}
-
-func cloneRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *vm.RuntimeSubstrate {
-	if substrate == nil {
-		return nil
-	}
-	clone := *substrate
-	return &clone
-}
-
-func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
-	if substrate == nil {
-		return nil
-	}
-	if strings.TrimSpace(substrate.Path) == "" {
-		return errors.New("runtime substrate path is required")
-	}
-	return validateRuntimeSubstrateIdentity(substrate)
-}
-
-func validateRuntimeSubstrateIdentity(substrate *vm.RuntimeSubstrate) error {
-	if substrate == nil {
-		return nil
-	}
-	if strings.TrimSpace(substrate.Digest) == "" {
-		return errors.New("runtime substrate digest is required")
-	}
-	if strings.TrimSpace(substrate.Format) != "ext4" {
-		return fmt.Errorf("runtime substrate format %q is not supported", substrate.Format)
-	}
-	if strings.TrimSpace(substrate.Contract) == "" {
-		return errors.New("runtime substrate contract is required")
-	}
-	if substrate.SizeBytes <= 0 {
-		return errors.New("runtime substrate size must be positive")
-	}
-	return nil
-}
-
-func validateRuntimeSubstrateSource(substrate *vm.RuntimeSubstrate) error {
-	if substrate == nil {
-		return nil
-	}
-	if strings.TrimSpace(substrate.Path) != "" {
-		return errors.New("runtime substrate cache path must not cross the connector boundary")
-	}
-	if substrate.Source == nil {
-		return errors.New("runtime substrate materialization source is required")
-	}
-	return validateRuntimeSubstrateIdentity(substrate)
-}
-
 func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cpuConfigDigest string, kernelDigest string, initramfsDigest string, rootfsDigest string, kernelArgs string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
 	if !sha256sum.ValidDigest(runtimeID) {
 		return "", nil, errors.New("canonical bound host runtime ID is required for checkpoint restore")
 	}
-	workerArchitecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
+	workerArchitecture, err := vmplatform.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return "", nil, err
 	}
 	network := snapshotNetworkConfig(cfg)
 	if err := validateSnapshotNetwork(network); err != nil {
 		return "", nil, fmt.Errorf("build checkpoint network manifest: %w", err)
-	}
-	substrate, err := snapshotSubstrateManifest(topology.Substrate)
-	if err != nil {
-		return "", nil, err
 	}
 	var drives []vm.ReadOnlyDrive
 	if len(readOnlyDrives) > 1 {
@@ -2665,7 +2552,7 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cp
 				DescriptorDigest: descriptorDigest,
 				ID:               runtimeID,
 				Arch:             workerArchitecture,
-				Contract:         runtimeid.Contract,
+				Contract:         vmplatform.Contract,
 				VCPUCount:        cfg.VCPUCount,
 				CPUConfigDigest:  cpuConfigDigest,
 				MemoryMiB:        cfg.MemoryMiB,
@@ -2674,7 +2561,6 @@ func snapshotRuntimeConfig(cfg Config, checkpointID string, runtimeID string, cp
 				KernelDigest:     kernelDigest,
 				InitramfsDigest:  initramfsDigest,
 				RootfsDigest:     rootfsDigest,
-				Substrate:        substrate,
 				Program:          program,
 				GuestPort:        cfg.GuestPort,
 				HealthPort:       cfg.HealthPort,
@@ -2772,7 +2658,6 @@ func validateRuntimeManifest(
 	initramfsDigest string,
 	rootfsDigest string,
 	expectedCPUConfigDigest string,
-	expectedSubstrate *vm.RuntimeSubstrate,
 	expectedKernelArgs string,
 	expectedProgram []vm.ReadOnlyDrive,
 ) error {
@@ -2787,15 +2672,15 @@ func validateRuntimeManifest(
 	if runtimeManifest.DescriptorDigest != descriptorDigest {
 		return fmt.Errorf("checkpoint manifest VM runtime descriptor digest %s does not match worker descriptor digest %s", runtimeManifest.DescriptorDigest, descriptorDigest)
 	}
-	workerArchitecture, err := runtimeid.ArchitectureFromGo(runtime.GOARCH)
+	workerArchitecture, err := vmplatform.ArchitectureFromGo(runtime.GOARCH)
 	if err != nil {
 		return err
 	}
 	if runtimeManifest.Arch != workerArchitecture {
 		return fmt.Errorf("checkpoint manifest runtime arch %q does not match worker arch %q", runtimeManifest.Arch, workerArchitecture)
 	}
-	if runtimeManifest.Contract != runtimeid.Contract {
-		return fmt.Errorf("checkpoint manifest runtime contract %q does not match worker contract %q", runtimeManifest.Contract, runtimeid.Contract)
+	if runtimeManifest.Contract != vmplatform.Contract {
+		return fmt.Errorf("checkpoint manifest runtime contract %q does not match worker contract %q", runtimeManifest.Contract, vmplatform.Contract)
 	}
 	if runtimeManifest.ID == "" {
 		return errors.New("checkpoint manifest runtime id is required")
@@ -2814,9 +2699,6 @@ func validateRuntimeManifest(
 	}
 	if runtimeManifest.CPUConfigDigest != expectedCPUConfigDigest {
 		return fmt.Errorf("checkpoint manifest guest CPU configuration digest %s does not match expected digest %s", runtimeManifest.CPUConfigDigest, expectedCPUConfigDigest)
-	}
-	if err := validateRuntimeSubstrateManifest(runtimeManifest.Substrate, expectedSubstrate); err != nil {
-		return err
 	}
 	if err := validateSnapshotProgram(runtimeManifest.Program, expectedProgram); err != nil {
 		return err
@@ -2838,33 +2720,6 @@ func validateRuntimeManifest(
 	}
 	if err := validateRestoredNetworkConfig(snapshotNetworkConfig(cfg), network); err != nil {
 		return fmt.Errorf("checkpoint manifest network does not match VM runtime contract: %w", err)
-	}
-	return nil
-}
-
-func validateRuntimeSubstrateManifest(manifest *snapshotRuntimeSubstrate, expected *vm.RuntimeSubstrate) error {
-	switch {
-	case manifest == nil && expected == nil:
-		return nil
-	case manifest == nil:
-		return errors.New("checkpoint manifest has no runtime substrate but restore request provided one")
-	case expected == nil:
-		return errors.New("checkpoint manifest requires runtime substrate but restore request did not provide one")
-	}
-	if err := validateRuntimeSubstrateIdentity(expected); err != nil {
-		return err
-	}
-	if manifest.Digest != strings.TrimSpace(expected.Digest) {
-		return fmt.Errorf("checkpoint manifest substrate digest %s does not match restore substrate digest %s", manifest.Digest, expected.Digest)
-	}
-	if manifest.Format != strings.TrimSpace(expected.Format) {
-		return fmt.Errorf("checkpoint manifest substrate format %s does not match restore substrate format %s", manifest.Format, expected.Format)
-	}
-	if manifest.Contract != strings.TrimSpace(expected.Contract) {
-		return fmt.Errorf("checkpoint manifest substrate contract %s does not match restore substrate contract %s", manifest.Contract, expected.Contract)
-	}
-	if manifest.SizeBytes != expected.SizeBytes {
-		return fmt.Errorf("checkpoint manifest substrate size %d does not match restore substrate size %d", manifest.SizeBytes, expected.SizeBytes)
 	}
 	return nil
 }
@@ -2975,7 +2830,7 @@ func (strategy sealedDriveChrootStrategy) linkFiles(
 	}
 }
 
-func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrateDiskPath string, computerDiskPath string, memoryPath string, statePath string) firecracker.Opt {
+func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, computerDiskPath string, memoryPath string, statePath string) firecracker.Opt {
 	return func(machine *firecracker.Machine) {
 		machine.Handlers.Validation = machine.Handlers.Validation.Append(firecracker.JailerConfigValidationHandler)
 		machine.Handlers.FcInit = machine.Handlers.FcInit.AppendAfter(firecracker.CreateLogFilesHandlerName, firecracker.Handler{
@@ -2999,17 +2854,6 @@ func withJailedRestoreFiles(rootfsPath string, scratchDiskPath string, substrate
 				for i := range machine.Cfg.Drives {
 					if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == scratchDiskPath {
 						machine.Cfg.Drives[i].PathOnHost = firecracker.String(scratchDiskName)
-					}
-				}
-				if strings.TrimSpace(substrateDiskPath) != "" {
-					substrateName := filepath.Base(substrateDiskPath)
-					if err := linkIntoJailForVMM(substrateDiskPath, root, substrateName, *machine.Cfg.JailerCfg.UID, *machine.Cfg.JailerCfg.GID); err != nil {
-						return fmt.Errorf("link substrate disk into jail: %w", err)
-					}
-					for i := range machine.Cfg.Drives {
-						if firecracker.StringValue(machine.Cfg.Drives[i].PathOnHost) == substrateDiskPath {
-							machine.Cfg.Drives[i].PathOnHost = firecracker.String(substrateName)
-						}
 					}
 				}
 				if computerDiskPath != "" {

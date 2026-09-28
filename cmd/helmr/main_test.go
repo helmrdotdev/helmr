@@ -81,7 +81,7 @@ func TestCommandSurface(t *testing.T) {
 	root := newRootCommand()
 	for _, path := range [][]string{
 		{"build"},
-		{"workspace"},
+		{"computer"},
 		{"task"},
 		{"actor"},
 		{"run"},

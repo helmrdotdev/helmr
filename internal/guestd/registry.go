@@ -9,27 +9,32 @@ import (
 	"sync"
 	"time"
 
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"google.golang.org/protobuf/proto"
 )
 
 var resumeAttachTimeout = 30 * time.Second
 
 type waitingRunRegistry struct {
-	mu    sync.Mutex
-	slots map[string]*waitingRunSlot
+	mu      sync.Mutex
+	slots   map[string]*waitingRunSlot
+	changed chan struct{}
 }
 
 type waitingRunSlot struct {
+	replayMu                 sync.Mutex
 	execution                *programv0.SessionExecution
 	turnID                   *string
 	runID                    string
 	attemptNumber            uint32
+	runLeaseID               string
+	frozen                   bool
 	checkpointID             string
 	resumeAttachID           string
 	checkpointRequestVersion int64
 	correlationID            string
+	retired                  chan struct{}
 	attached                 chan waitingRunAttachment
 	accepted                 *programv0.ResumeAttach
 	appliedDecision          *programv0.ResumeDecision
@@ -61,18 +66,22 @@ func (r *waitingRunRegistry) registerProgram(request *programv0.CheckpointPauseR
 		turnID:                   frozen.TurnId,
 		runID:                    request.GetRunId(),
 		attemptNumber:            request.GetAttemptNumber(),
+		runLeaseID:               request.GetRunLeaseId(),
 		checkpointID:             request.GetCheckpointId(),
 		resumeAttachID:           request.GetResumeAttachId(),
 		checkpointRequestVersion: request.GetCheckpointRequestVersion(),
 		correlationID:            request.GetCorrelationId(),
 		attached:                 make(chan waitingRunAttachment, 1),
+		retired:                  make(chan struct{}),
 	}
+	r.retireAppliedWait(request)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.slots[request.GetRunWaitId()]; exists {
 		return waitingRunRegistration{}, fmt.Errorf("run wait %s already has a registration", request.GetRunWaitId())
 	}
 	r.slots[request.GetRunWaitId()] = slot
+	r.notifyChangedLocked()
 	return waitingRunRegistration{registry: r, runWaitID: request.GetRunWaitId(), slot: slot}, nil
 }
 
@@ -86,54 +95,11 @@ func newWaitingRunRegistry() *waitingRunRegistry {
 	return &waitingRunRegistry{slots: map[string]*waitingRunSlot{}}
 }
 
-func (r *waitingRunRegistry) hasFrozenProgramCheckpoint(checkpointID string) bool {
-	checkpointID = strings.TrimSpace(checkpointID)
-	if checkpointID == "" {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, slot := range r.slots {
-		if slot != nil && slot.resumeAttachID != "" && slot.checkpointID == checkpointID &&
-			slot.accepted == nil && slot.appliedDecision == nil && slot.appliedAck == nil {
-			return true
-		}
-	}
-	return false
-}
-
-func (r *waitingRunRegistry) frozenProgramForCheckpoint(
-	checkpointID string,
-) (string, uint32, bool) {
-	checkpointID = strings.TrimSpace(checkpointID)
-	if checkpointID == "" {
-		return "", 0, false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, slot := range r.slots {
-		if slot != nil && slot.resumeAttachID != "" &&
-			slot.checkpointID == checkpointID &&
-			slot.accepted == nil &&
-			slot.appliedDecision == nil &&
-			slot.appliedAck == nil {
-			return slot.runID, slot.attemptNumber, true
-		}
-	}
-	return "", 0, false
-}
-
-func (r *waitingRunRegistry) verifyFrozenProgram(request *workspacev0.VerifyProgramRestoreRequest) bool {
-	if request == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	slot := r.slots[request.GetRunWaitId()]
-	return slot != nil && slot.resumeAttachID != "" && slot.runID == request.GetRunId() &&
-		slot.attemptNumber == request.GetAttemptNumber() && slot.checkpointID == request.GetCheckpointId() &&
-		slot.correlationID == request.GetCorrelationId() && slot.accepted == nil &&
-		slot.appliedDecision == nil && slot.appliedAck == nil
+func (r waitingRunRegistration) markFrozen() {
+	r.registry.mu.Lock()
+	defer r.registry.mu.Unlock()
+	r.slot.frozen = true
+	r.registry.notifyChangedLocked()
 }
 
 func (r *waitingRunRegistry) attachResume(attach *programv0.ResumeAttach, stream io.ReadWriter) error {
@@ -247,15 +213,82 @@ func (r waitingRunRegistration) waitStream(ctx context.Context, stopped <-chan s
 		return attached.stream, attached.attach, nil
 	case <-ctx.Done():
 		return nil, nil, ctx.Err()
+	case <-r.slot.retired:
+		return nil, nil, errors.New("program resume receipt retired")
 	case <-stopped:
 		return nil, nil, errors.New("program stream stopped")
 	}
 }
 
 func (r waitingRunRegistration) unregister() {
+	r.slot.replayMu.Lock()
+	defer r.slot.replayMu.Unlock()
 	r.registry.mu.Lock()
 	if r.registry.slots[r.runWaitID] == r.slot {
-		delete(r.registry.slots, r.runWaitID)
+		r.registry.retireSlotLocked(r.runWaitID, r.slot)
 	}
 	r.registry.mu.Unlock()
+}
+
+// Attachment correlation belongs to the retained Guest wait, not VM scheduling.
+func (r *waitingRunRegistry) resumeAttachment(fence *computerv0.ComputerAuthorityFence, request *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	slot := r.slots[request.GetRunWaitId()]
+	if slot == nil || fence == nil || slot.checkpointRequestVersion <= 0 || slot.runID != fence.GetRunId() || slot.attemptNumber != fence.GetAttemptNumber() || slot.checkpointID != request.GetCheckpointId() {
+		return nil, errors.New("resume request differs from retained wait")
+	}
+	attach := &programv0.ResumeAttach{RunId: slot.runID, AttemptNumber: slot.attemptNumber, RunLeaseId: fence.GetRunLeaseId(), RunWaitId: request.GetRunWaitId(), CheckpointId: slot.checkpointID, ResumeAttachId: slot.resumeAttachID, CorrelationId: slot.correlationID, ResumeRequestVersion: slot.checkpointRequestVersion, Execution: slot.execution, TurnId: slot.turnID}
+	return proto.Clone(attach).(*programv0.ResumeAttach), nil
+}
+
+func (r *waitingRunRegistry) retireSlotLocked(id string, slot *waitingRunSlot) {
+	if r.slots[id] != slot {
+		return
+	}
+	delete(r.slots, id)
+	if slot.retired != nil {
+		close(slot.retired)
+	}
+	select {
+	case attached := <-slot.attached:
+		if c, ok := attached.stream.(io.Closer); ok {
+			_ = c.Close()
+		}
+	default:
+	}
+	r.notifyChangedLocked()
+}
+
+func (r *waitingRunRegistry) retireAppliedWait(request *programv0.CheckpointPauseRequest) {
+	r.mu.Lock()
+	old := r.slots[request.GetRunWaitId()]
+	r.mu.Unlock()
+	if old == nil {
+		return
+	}
+	old.replayMu.Lock()
+	defer old.replayMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if old.appliedAck != nil && old.checkpointID != request.GetCheckpointId() && old.runID == request.GetRunId() && old.attemptNumber == request.GetAttemptNumber() && old.appliedAck.GetRunLeaseId() == request.GetRunLeaseId() {
+		r.retireSlotLocked(request.GetRunWaitId(), old)
+	}
+}
+func (r *waitingRunRegistry) retireAppliedCaptures(checkpointID string) {
+	r.mu.Lock()
+	candidates := make(map[string]*waitingRunSlot)
+	for id, slot := range r.slots {
+		if slot.appliedAck != nil && slot.checkpointID != checkpointID {
+			candidates[id] = slot
+		}
+	}
+	r.mu.Unlock()
+	for id, slot := range candidates {
+		slot.replayMu.Lock()
+		r.mu.Lock()
+		r.retireSlotLocked(id, slot)
+		r.mu.Unlock()
+		slot.replayMu.Unlock()
+	}
 }

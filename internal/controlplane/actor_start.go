@@ -32,10 +32,10 @@ const (
 var (
 	errActorStartInvalid            = errors.New("actor start request is invalid")
 	errActorStartNotDeployed        = errors.New("actor declaration is not deployed")
-	errActorStartWorkspaceNotFound  = errors.New("actor start workspace was not found")
+	errActorStartComputerNotFound   = errors.New("actor start computer was not found")
 	errActorStartAuthority          = errors.New("actor start authority is unavailable")
-	errActorStartWorkspaceConflict  = errors.New("actor start workspace cannot accept execution")
-	errActorStartSecretUnavailable  = errors.New("actor start workspace secret is unavailable")
+	errActorStartComputerConflict   = errors.New("actor start computer cannot accept execution")
+	errActorStartSecretUnavailable  = errors.New("actor start computer secret is unavailable")
 	errActorStartIdempotencyReceipt = errors.New("actor start idempotency receipt is invalid")
 )
 
@@ -52,7 +52,7 @@ type actorStartRequest struct {
 	ProjectID             uuid.UUID
 	EnvironmentID         uuid.UUID
 	ActorDeclaredID       string
-	WorkspaceID           uuid.UUID
+	ComputerID            uuid.UUID
 	Key                   *string
 	IdempotencyKey        string
 	ManagedQueueName      string
@@ -62,8 +62,7 @@ type actorStartRequest struct {
 	ManagedRetryPolicy    json.RawMessage
 	ManagedRunMetadata    json.RawMessage
 	ManagedRunTags        []string
-	Authorize             func(context.Context, db.Querier) error
-	DisallowedWorkspaceID uuid.UUID
+	Authorize             func(context.Context, pgx.Tx) error
 }
 
 type actorStartResult struct {
@@ -83,8 +82,8 @@ type normalizedActorStart struct {
 }
 
 // startActor is the durable Actor creation primitive. Claim replay, promoted
-// declaration and Workspace authority, Actor/input/boot-Run creation,
-// Workspace ownership, Secret resolution, and the queued Run commit as one
+// declaration and Computer authority, Actor/input/boot-Run creation,
+// Computer ownership, Secret resolution, and the queued Run commit as one
 // primary-database transaction.
 func (s *Server) startActor(ctx context.Context, request actorStartRequest) (actorStartResult, error) {
 	normalized, err := normalizeActorStart(request)
@@ -106,11 +105,6 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 
 	var result actorStartResult
 	err = s.inTx(ctx, func(work *txWork) error {
-		if normalized.Authorize != nil {
-			if err := normalized.Authorize(ctx, work.q); err != nil {
-				return err
-			}
-		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
 			claims, err := idempotency.TransactionForQueries(work.q)
@@ -122,6 +116,12 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				return err
 			}
 			if acquired.Claim.Status == "completed" {
+				if normalized.Authorize != nil {
+					if err := normalized.Authorize(ctx, work.tx); err != nil {
+						return err
+					}
+				}
+
 				replayed, err := actorStartResultFromReceipt(acquired.Claim.Receipt)
 				if err != nil {
 					return err
@@ -151,11 +151,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if err != nil {
 			return fmt.Errorf("lock actor start deployment authority: %w", err)
 		}
-		workspaceID := pgvalue.UUID(normalized.WorkspaceID)
-		if normalized.DisallowedWorkspaceID != uuid.Nil() &&
-			workspaceID == pgvalue.UUID(normalized.DisallowedWorkspaceID) {
-			return errActorStartWorkspaceConflict
-		}
+		computerID := pgvalue.UUID(normalized.ComputerID)
 
 		if normalized.Key != nil {
 			if err := work.q.LockActorStartKey(ctx, db.LockActorStartKeyParams{
@@ -178,33 +174,48 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			}
 		}
 
-		authority, err := work.q.LockWorkspaceAdmissionAuthority(
+		if normalized.Authorize != nil {
+			if err := normalized.Authorize(ctx, work.tx); err != nil {
+				return err
+			}
+		}
+		bindings, err := work.q.LockComputerSecretsForAdmission(ctx, computerID)
+		if err != nil {
+			return fmt.Errorf("lock actor start computer secrets: %w", err)
+		}
+		authority, err := work.q.LockComputerAdmissionAuthority(
 			ctx,
-			db.LockWorkspaceAdmissionAuthorityParams{
+			db.LockComputerAdmissionAuthorityParams{
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-				ID:            workspaceID,
+				ID:            computerID,
 			},
 		)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errActorStartWorkspaceConflict
+			return errActorStartComputerConflict
 		}
 		if err != nil {
-			return fmt.Errorf("lock actor start workspace authority: %w", err)
+			return fmt.Errorf("lock actor start computer authority: %w", err)
 		}
 		if authority.OrgID != pgvalue.UUID(normalized.OrgID) ||
 			authority.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			authority.Status != db.WorkspaceStatusActive ||
-			(authority.DesiredState != db.WorkspaceDesiredStateActive &&
-				authority.DesiredState != db.WorkspaceDesiredStateStopped) ||
-			authority.DirtyState != db.WorkspaceDirtyStateClean ||
-			!authority.HeadVersionID.Valid ||
-			authority.OwnerSessionID.Valid || authority.OwnerRunID.Valid ||
-			authority.HasActiveLease || authority.HasActiveProcess {
-			return errActorStartWorkspaceConflict
+			authority.Status != db.ComputerStatusActive ||
+			(authority.DesiredState != db.ComputerDesiredStateActive &&
+				authority.DesiredState != db.ComputerDesiredStateStopped) ||
+			authority.DirtyState == db.ComputerDirtyStateCaptureFailed ||
+			authority.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
+			!authority.HeadDiskVersionID.Valid {
+			return errActorStartComputerConflict
 		}
-		bindings, err := work.q.LockWorkspaceSecretsForAdmission(ctx, workspaceID)
+		if len(authority.PreparationFailure) > 0 {
+			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
+		}
+		canAdmit, err := computerCanAdmitProgram(ctx, work.q, authority.EnvironmentID, authority.ID,
+			authority.ComputerSpecID, deploymentAuthority.DeploymentID)
 		if err != nil {
-			return fmt.Errorf("lock actor start workspace secrets: %w", err)
+			return err
+		}
+		if !canAdmit {
+			return errActorStartComputerConflict
 		}
 		for _, binding := range bindings {
 			if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
@@ -250,7 +261,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			RunMaxActiveDurationMs: runAuthority.MaxActiveDurationMS,
 			RunRetryPolicy:         managedRetryPolicy,
 			RunMetadata:            normalized.ManagedRunMetadata, RunTags: normalized.ManagedRunTags,
-			WorkspaceID: authority.ID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+			ComputerID: authority.ID, EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
 			DeploymentDefinitionID: deploymentAuthority.ActorDefinitionID, ActorDeclaredID: normalized.ActorDeclaredID,
 		})
 		if err != nil {
@@ -267,33 +278,32 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 
 		run, err := work.q.CreateActorStartRun(ctx, db.CreateActorStartRunParams{
 			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID), SessionID: pgvalue.UUID(actorID),
-			WorkspaceID: authority.ID, ClaimID: claimID,
-			ID:                     pgvalue.UUID(runID),
-			BaseWorkspaceVersionID: authority.HeadVersionID,
-			InputHighWatermark:     pgtype.Int8{Int64: 0, Valid: true},
-			RootSpanID:             rootSpanID,
+			ComputerID: authority.ID, ClaimID: claimID,
+			ID:                        pgvalue.UUID(runID),
+			BaseComputerDiskVersionID: authority.HeadDiskVersionID,
+			InputHighWatermark:        pgtype.Int8{Int64: 0, Valid: true},
+			RootSpanID:                rootSpanID,
 		})
 		if err != nil {
 			return fmt.Errorf("create actor boot run: %w", err)
 		}
 		if _, err := work.q.SetActorCurrentRun(ctx, db.SetActorCurrentRunParams{
 			RunID: run.ID, EnvironmentID: run.EnvironmentID,
-			ID: pgvalue.UUID(actorID), WorkspaceID: authority.ID,
+			ID: pgvalue.UUID(actorID), ComputerID: authority.ID,
 		}); err != nil {
 			return fmt.Errorf("install actor boot run: %w", err)
 		}
-		if _, err := work.q.ReserveWorkspaceForActor(ctx, db.ReserveWorkspaceForActorParams{
-			SessionID: pgvalue.UUID(actorID), EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
-			ID: authority.ID, ExpectedRevision: authority.Revision,
-			ExpectedHeadVersionID: authority.HeadVersionID,
+		if _, err := work.q.TouchComputerForAdmission(ctx, db.TouchComputerForAdmissionParams{
+			EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
+			ID:            authority.ID, ExpectedRevision: authority.Revision,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return errActorStartWorkspaceConflict
+				return errActorStartComputerConflict
 			}
-			return fmt.Errorf("reserve workspace for actor: %w", err)
+			return fmt.Errorf("record actor computer admission: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, authority.ID, run.ID, 1, workspaceSecretResolutions(bindings),
+			ctx, work.q, authority.ID, run.ID, 1, computerSecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record actor boot run secret resolutions: %w", err)
 		}
@@ -334,16 +344,16 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		key := *request.Key
 		request.Key = &key
 	}
-	if request.WorkspaceID == uuid.Nil() {
+	if request.ComputerID == uuid.Nil() {
 		return normalizedActorStart{}, errActorStartInvalid
 	}
-	workspaceRaw, err := json.Marshal(api.WorkspaceIDTarget{ID: request.WorkspaceID.String()})
+	computerRaw, err := json.Marshal(api.ComputerIDTarget{ID: request.ComputerID.String()})
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: encode workspace address", errActorStartInvalid)
+		return normalizedActorStart{}, fmt.Errorf("%w: encode computer address", errActorStartInvalid)
 	}
-	workspace, err := canonicalJSON(workspaceRaw)
+	computer, err := canonicalJSON(computerRaw)
 	if err != nil {
-		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize workspace address", errActorStartInvalid)
+		return normalizedActorStart{}, fmt.Errorf("%w: canonicalize computer address", errActorStartInvalid)
 	}
 	request.ManagedRunMetadata, err = normalizeMetadata(request.ManagedRunMetadata, maxRunMetadataBytes, "managed run")
 	if err != nil {
@@ -386,7 +396,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 	}
 	fingerprint := idempotency.ActorStartFingerprint{
 		Key:              request.Key,
-		WorkspaceAddress: workspace,
+		ComputerAddress:  computer,
 		ManagedQueueName: request.ManagedQueueName, ManagedConcurrencyKey: request.ManagedConcurrencyKey,
 		ManagedPriority: request.ManagedPriority, ManagedQueuedTTLMS: request.ManagedQueuedTTLMS,
 		ManagedRetryPolicy: request.ManagedRetryPolicy,

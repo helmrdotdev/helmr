@@ -8,12 +8,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -33,7 +33,7 @@ type TaskRun struct {
 	MaxActiveDurationMS   int64
 	RetryPolicy           []byte
 	SandboxDeclaredID     string
-	SecretPlacements      []workspace.SecretPlacement
+	SecretPlacements      []computer.SecretPlacement
 }
 
 type DBAdmitter struct {
@@ -51,7 +51,7 @@ func NewDBAdmitter(database TxBeginner, authority Authority, generateProxyTrust 
 		return nil, errors.New("schedule admission authority is required")
 	}
 	if generateProxyTrust == nil {
-		return nil, errors.New("schedule Workspace CA generator is required")
+		return nil, errors.New("schedule Computer CA generator is required")
 	}
 	return &DBAdmitter{
 		generateProxyTrust: generateProxyTrust,
@@ -149,16 +149,16 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		return &AdmissionError{Code: ErrorSecretSelectionMismatch, Message: "schedule Secret selection does not match its definition"}
 	}
 	runID := uuid.NewV7()
-	workspaceID := uuid.NewV7()
+	computerID := uuid.NewV7()
 	initialVersionID := uuid.NewV7()
-	createdWorkspace, err := queries.CreateWorkspaceForScheduleFire(
+	createdComputer, err := queries.CreateComputerForScheduleFire(
 		ctx,
-		db.CreateWorkspaceForScheduleFireParams{
+		db.CreateComputerForScheduleFireParams{
 			SandboxDeclaredID:  taskRun.SandboxDeclaredID,
 			EnvironmentID:      lockedSchedule.EnvironmentID,
 			ScheduleID:         lockedSchedule.ID,
 			ExpectedGeneration: lockedSchedule.Generation,
-			ID:                 pgvalue.UUID(workspaceID),
+			ID:                 pgvalue.UUID(computerID),
 			InitialVersionID:   pgvalue.UUID(initialVersionID),
 		},
 	)
@@ -172,12 +172,12 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		if selected.Mode != "protected" {
 			continue
 		}
-		trust, err := a.generateProxyTrust(pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID), workspaceID, createdWorkspace.CreatedAt.Time)
+		trust, err := a.generateProxyTrust(pgvalue.MustUUIDValue(lockedSchedule.EnvironmentID), computerID, createdComputer.CreatedAt.Time)
 		if err != nil {
 			return err
 		}
-		count, err := queries.InitializeWorkspaceSecretCA(ctx, db.InitializeWorkspaceSecretCAParams{
-			EnvironmentID: pgvalue.UUID(trust.EnvironmentID), WorkspaceID: pgvalue.UUID(trust.WorkspaceID),
+		count, err := queries.InitializeComputerSecretCA(ctx, db.InitializeComputerSecretCAParams{
+			EnvironmentID: pgvalue.UUID(trust.EnvironmentID), ComputerID: pgvalue.UUID(trust.ComputerID),
 			Certificate: trust.Certificate, PrivateKeyNonce: trust.PrivateKeyNonce,
 			PrivateKeyCiphertext: trust.PrivateKeyCiphertext, NotAfter: pgvalue.Timestamptz(trust.NotAfter),
 		})
@@ -185,17 +185,17 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 			return err
 		}
 		if count != 1 {
-			return errors.New("scheduled Workspace CA creation failed")
+			return errors.New("scheduled Computer CA creation failed")
 		}
 		break
 	}
 	for _, selected := range selectedSecrets {
-		placeholder, err := workspace.SecretPlaceholder(selected.Mode)
+		placeholder, err := computer.SecretPlaceholder(selected.Mode)
 		if err != nil {
 			return err
 		}
-		if _, err := queries.CreateWorkspaceSecret(ctx, db.CreateWorkspaceSecretParams{
-			WorkspaceID:     createdWorkspace.ID,
+		if _, err := queries.CreateComputerSecret(ctx, db.CreateComputerSecretParams{
+			ComputerID:      createdComputer.ID,
 			EnvironmentID:   lockedSchedule.EnvironmentID,
 			PlacementKind:   selected.PlacementKind,
 			PlacementTarget: selected.PlacementTarget,
@@ -211,36 +211,36 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 	}
 	if _, err := run.CreateTask(ctx, queries, run.TaskRequest{
 		Run: db.CreateAdmittedRootTaskRunParams{
-			ID:                     pgvalue.UUID(runID),
-			OrgID:                  locked.OrgID,
-			ProjectID:              locked.ProjectID,
-			EnvironmentID:          lockedSchedule.EnvironmentID,
-			DeploymentID:           lockedSchedule.DeploymentID,
-			DeploymentDefinitionID: task.ID,
-			EntrypointDeclaredID:   lockedSchedule.TaskDeclaredID,
-			CauseKind:              "schedule",
-			ScheduleID:             lockedSchedule.ID,
-			ScheduleGeneration:     pgtype.Int8{Int64: lockedSchedule.Generation, Valid: true},
-			ScheduledAt:            lockedSchedule.NextFireAt,
-			PreviousScheduledAt:    lockedSchedule.LastFireAt,
-			ScheduleTimezone:       pgtype.Text{String: lockedSchedule.Timezone, Valid: true},
-			WorkspaceID:            createdWorkspace.ID,
-			BaseWorkspaceVersionID: createdWorkspace.HeadVersionID,
-			Payload:                admission.Payload,
-			Metadata:               []byte(`{}`),
-			Tags:                   []string{},
-			QueueName:              taskRun.QueueName,
-			QueueConcurrencyLimit:  optionalInt8(taskRun.QueueConcurrencyLimit),
-			Priority:               0,
-			QueuedTtlMs:            optionalInt8(taskRun.QueuedTTLMS),
-			MaxActiveDurationMs:    taskRun.MaxActiveDurationMS,
-			RetryPolicy:            taskRun.RetryPolicy,
-			RootSpanID:             rootSpanID,
+			ID:                        pgvalue.UUID(runID),
+			OrgID:                     locked.OrgID,
+			ProjectID:                 locked.ProjectID,
+			EnvironmentID:             lockedSchedule.EnvironmentID,
+			DeploymentID:              lockedSchedule.DeploymentID,
+			DeploymentDefinitionID:    task.ID,
+			EntrypointDeclaredID:      lockedSchedule.TaskDeclaredID,
+			CauseKind:                 "schedule",
+			ScheduleID:                lockedSchedule.ID,
+			ScheduleGeneration:        pgtype.Int8{Int64: lockedSchedule.Generation, Valid: true},
+			ScheduledAt:               lockedSchedule.NextFireAt,
+			PreviousScheduledAt:       lockedSchedule.LastFireAt,
+			ScheduleTimezone:          pgtype.Text{String: lockedSchedule.Timezone, Valid: true},
+			ComputerID:                createdComputer.ID,
+			BaseComputerDiskVersionID: createdComputer.HeadDiskVersionID,
+			Payload:                   admission.Payload,
+			Metadata:                  []byte(`{}`),
+			Tags:                      []string{},
+			QueueName:                 taskRun.QueueName,
+			QueueConcurrencyLimit:     optionalInt8(taskRun.QueueConcurrencyLimit),
+			Priority:                  0,
+			QueuedTtlMs:               optionalInt8(taskRun.QueuedTTLMS),
+			MaxActiveDurationMs:       taskRun.MaxActiveDurationMS,
+			RetryPolicy:               taskRun.RetryPolicy,
+			RootSpanID:                rootSpanID,
 		},
-		WorkspaceRevision: createdWorkspace.Revision,
+		ComputerRevision: createdComputer.Revision,
 	}); err != nil {
 		if errors.Is(err, run.ErrSecretUnavailable) {
-			return fmt.Errorf("schedule workspace secret is unavailable: %w", err)
+			return fmt.Errorf("schedule computer secret is unavailable: %w", err)
 		}
 		return err
 	}
@@ -264,7 +264,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 }
 
 func sameSecretPlacements(
-	expected []workspace.SecretPlacement,
+	expected []computer.SecretPlacement,
 	selected []db.ScheduleSecret,
 ) bool {
 	if len(expected) != len(selected) {

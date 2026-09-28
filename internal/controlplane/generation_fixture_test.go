@@ -30,13 +30,13 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, ru
 	var owner dispatch.ComputerPreparation
 	var desired int64
 	var pinned pgtype.UUID
-	if err := pool.QueryRow(ctx, `SELECT org_id,project_id,environment_id,workspace_id,reserved_guest_ephemeral_disk_bytes,desired_version,computer_write_key_id FROM runtime_instances WHERE id=$1`, runtimeID).Scan(&owner.OrgID, &owner.ProjectID, &owner.EnvironmentID, &owner.ComputerID, &owner.LogicalBytes, &desired, &pinned); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT org_id,project_id,environment_id,computer_id,reserved_guest_ephemeral_disk_bytes,desired_version,write_key_id FROM computer_instances WHERE id=$1`, runtimeID).Scan(&owner.OrgID, &owner.ProjectID, &owner.EnvironmentID, &owner.ComputerID, &owner.LogicalBytes, &desired, &pinned); err != nil {
 		t.Fatal(err)
 	}
 	if !pinned.Valid {
 		pinned = pgvalue.NewUUIDv7()
 		dbtest.MustExec(t, ctx, pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) VALUES($1,$2,$3,'fixture',decode('01','hex'))`, pinned, owner.EnvironmentID, owner.ComputerID)
-		dbtest.MustExec(t, ctx, pool, `UPDATE runtime_instances SET computer_write_key_id=$2 WHERE id=$1`, runtimeID, pinned)
+		dbtest.MustExec(t, ctx, pool, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, runtimeID, pinned)
 	}
 	key := make([]byte, 32)
 	key[0] = 42

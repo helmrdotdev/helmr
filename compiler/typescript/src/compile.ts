@@ -10,7 +10,7 @@ import {
   type InternalDefinition,
   type InternalTaskDefinition,
   type InternalSandboxDefinition,
-  type EncodedWorkspaceSecret,
+  type EncodedComputerSecret,
   type ProgramDeclaration,
   type RuntimeArchitecture,
 } from "@helmr/sdk/internal"
@@ -51,9 +51,9 @@ export type BuildPlanDefinition =
         schedule?: Readonly<{
           cron: string
           timezone: string
-          workspace: Readonly<{
+          computer: Readonly<{
             sandboxId: string
-            secrets: readonly EncodedWorkspaceSecret[]
+            secrets: readonly EncodedComputerSecret[]
           }>
         }>
       }>
@@ -259,7 +259,7 @@ function compileProgramExports(
   })
 }
 
-export function normalizeWorkspaceResources(
+export function normalizeComputerResources(
   resources: Readonly<{ cpu: number; memory: string }>,
 ): Readonly<{
   milliCpu: number
@@ -363,7 +363,7 @@ function compileDefinition(
         declaredId: definition.id,
         manifest: {
           imageBuild: compileImageBuild(definition.image, options),
-          resources: normalizeWorkspaceResources(definition.resources),
+          resources: normalizeComputerResources(definition.resources),
         },
       }
   }
@@ -377,7 +377,7 @@ function compileSchedule(
 > {
   const schedule = definition.schedule
   if (schedule === undefined) throw new Error("Task schedule is undefined")
-  const sandbox = inspectSandboxDefinition(schedule.workspace.sandbox)
+  const sandbox = inspectSandboxDefinition(schedule.computer.sandbox)
   if (sandbox === undefined) {
     throw new Error(
       `task ${JSON.stringify(definition.id)} schedule has an invalid Sandbox definition`,
@@ -389,7 +389,7 @@ function compileSchedule(
       `task ${JSON.stringify(definition.id)} schedule references unexported Sandbox ${JSON.stringify(sandbox.id)}`,
     )
   }
-  if (exported !== schedule.workspace.sandbox) {
+  if (exported !== schedule.computer.sandbox) {
     throw new Error(
       `task ${JSON.stringify(definition.id)} schedule references a different Sandbox object than the exported definition ${JSON.stringify(sandbox.id)}`,
     )
@@ -397,9 +397,9 @@ function compileSchedule(
   return {
     cron: schedule.cron,
     timezone: schedule.timezone,
-    workspace: {
+    computer: {
       sandboxId: sandbox.id,
-      secrets: schedule.workspace.secrets,
+      secrets: schedule.computer.secrets,
     },
   }
 }
@@ -714,11 +714,11 @@ function programDeclaration(definition: InternalDefinition): ProgramDeclaration 
 
 function normalizeCpu(cpu: number): number {
   if (!Number.isFinite(cpu) || cpu <= 0) {
-    throw new Error("workspace cpu must be a finite positive number")
+    throw new Error("computer cpu must be a finite positive number")
   }
   const text = cpu.toString()
   const match = /^(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/i.exec(text)
-  if (match === null) throw new Error("workspace cpu cannot be normalized")
+  if (match === null) throw new Error("computer cpu cannot be normalized")
   const integer = match[1] as string
   const fraction = match[2] ?? ""
   const exponent = Number(match[3] ?? "0")
@@ -730,23 +730,23 @@ function normalizeCpu(cpu: number): number {
   } else {
     const divisor = 10n ** BigInt(-scale)
     if (significand % divisor !== 0n) {
-      throw new Error("workspace cpu must resolve to whole milliCPU")
+      throw new Error("computer cpu must resolve to whole milliCPU")
     }
     milliCpu = significand / divisor
   }
-  return safePositiveNumber(milliCpu, "workspace milliCPU")
+  return safePositiveNumber(milliCpu, "computer milliCPU")
 }
 
 function normalizeIecMiB(value: string, label: string): number {
   const match = /^([1-9]\d*)(MiB|GiB)$/.exec(value)
   if (match === null) {
     throw new Error(
-      `workspace ${label} must be a positive canonical integer suffixed by MiB or GiB`,
+      `computer ${label} must be a positive canonical integer suffixed by MiB or GiB`,
     )
   }
   const result =
     BigInt(match[1] as string) * (match[2] === "GiB" ? 1024n : 1n)
-  return safePositiveNumber(result, `workspace ${label} MiB`)
+  return safePositiveNumber(result, `computer ${label} MiB`)
 }
 
 function normalizeDuration(

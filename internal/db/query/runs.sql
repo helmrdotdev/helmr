@@ -35,7 +35,7 @@ WITH selected_target AS MATERIALIZED (
            definitions.declared_id AS entrypoint_declared_id,
            environments.org_id,
            environments.project_id,
-           computers.id AS workspace_id
+           computers.id AS computer_id
       FROM environments
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = environments.id
@@ -47,11 +47,11 @@ WITH selected_target AS MATERIALIZED (
        AND deployments.id = definitions.deployment_id
       JOIN computers
         ON computers.environment_id = environments.id
-       AND computers.id = sqlc.arg(workspace_id)
-      JOIN computer_versions
-        ON computer_versions.computer_id = computers.id
-       AND computer_versions.id = sqlc.arg(base_workspace_version_id)
-       AND computer_versions.status IN ('initializing', 'committed')
+       AND computers.id = sqlc.arg(computer_id)
+      JOIN computer_disk_versions
+        ON computer_disk_versions.computer_id = computers.id
+       AND computer_disk_versions.id = sqlc.arg(base_computer_disk_version_id)
+       AND computer_disk_versions.status IN ('initializing', 'committed')
      WHERE environments.id = sqlc.arg(environment_id)
        AND environments.org_id = sqlc.arg(org_id)
        AND environments.project_id = sqlc.arg(project_id)
@@ -65,7 +65,7 @@ WITH selected_target AS MATERIALIZED (
                   AND idempotency_claims.id = sqlc.narg(claim_id)
                   AND idempotency_claims.operation = 'task.start'
                   AND idempotency_claims.status = 'pending'
-                  AND idempotency_claims.retired_at IS NULL
+
            )
        )
      FOR NO KEY UPDATE OF environments
@@ -80,8 +80,8 @@ WITH selected_target AS MATERIALIZED (
         entrypoint_kind,
         entrypoint_declared_id,
         cause_kind,
-        workspace_id,
-        base_workspace_version_id,
+        computer_id,
+        base_computer_disk_version_id,
         payload,
         metadata,
         tags,
@@ -107,8 +107,8 @@ WITH selected_target AS MATERIALIZED (
            'task',
            selected_target.entrypoint_declared_id,
            sqlc.arg(cause_kind),
-           selected_target.workspace_id,
-           sqlc.arg(base_workspace_version_id),
+           selected_target.computer_id,
+           sqlc.arg(base_computer_disk_version_id),
            sqlc.narg(payload),
            coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
            coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
@@ -131,14 +131,14 @@ WITH selected_target AS MATERIALIZED (
         run_id,
         number,
         entrypoint_kind,
-        workspace_id,
-        base_workspace_version_id
+        computer_id,
+        base_computer_disk_version_id
     )
     SELECT created_run.id,
            1,
            created_run.entrypoint_kind,
-           created_run.workspace_id,
-           created_run.base_workspace_version_id
+           created_run.computer_id,
+           created_run.base_computer_disk_version_id
       FROM created_run
     RETURNING run_id
 )
@@ -163,8 +163,8 @@ WITH created_run AS (
         scheduled_at,
         previous_scheduled_at,
         schedule_timezone,
-        workspace_id,
-        base_workspace_version_id,
+        computer_id,
+        base_computer_disk_version_id,
         payload,
         metadata,
         tags,
@@ -196,8 +196,8 @@ WITH created_run AS (
         sqlc.narg(scheduled_at),
         sqlc.narg(previous_scheduled_at),
         sqlc.narg(schedule_timezone),
-        sqlc.arg(workspace_id),
-        sqlc.arg(base_workspace_version_id),
+        sqlc.arg(computer_id),
+        sqlc.arg(base_computer_disk_version_id),
         sqlc.narg(payload),
         coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
         coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
@@ -223,14 +223,14 @@ WITH created_run AS (
         run_id,
         number,
         entrypoint_kind,
-        workspace_id,
-        base_workspace_version_id
+        computer_id,
+        base_computer_disk_version_id
     )
     SELECT created_run.id,
            1,
            created_run.entrypoint_kind,
-           created_run.workspace_id,
-           created_run.base_workspace_version_id
+           created_run.computer_id,
+           created_run.base_computer_disk_version_id
       FROM created_run
     RETURNING run_id
 )
@@ -253,7 +253,7 @@ WITH selected_actor AS MATERIALIZED (
        AND deployment_definitions.declared_id = sessions.actor_declared_id
      WHERE sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(session_id)
-       AND sessions.workspace_id = sqlc.arg(workspace_id)
+       AND sessions.computer_id = sqlc.arg(computer_id)
        AND sessions.status = 'open'
        AND sessions.current_run_id IS NULL
        AND (
@@ -265,7 +265,7 @@ WITH selected_actor AS MATERIALIZED (
                   AND idempotency_claims.id = sqlc.narg(claim_id)
                   AND idempotency_claims.operation = 'actor.start'
                   AND idempotency_claims.status = 'pending'
-                  AND idempotency_claims.retired_at IS NULL
+
            )
        )
      FOR UPDATE OF sessions
@@ -281,8 +281,8 @@ WITH selected_actor AS MATERIALIZED (
         entrypoint_declared_id,
         session_id,
         cause_kind,
-        workspace_id,
-        base_workspace_version_id,
+        computer_id,
+        base_computer_disk_version_id,
         session_input_start_sequence,
         session_input_high_watermark,
         metadata,
@@ -310,8 +310,8 @@ WITH selected_actor AS MATERIALIZED (
            selected_actor.actor_declared_id,
            selected_actor.id,
            'actor_start',
-           selected_actor.workspace_id,
-           sqlc.arg(base_workspace_version_id),
+           selected_actor.computer_id,
+           sqlc.arg(base_computer_disk_version_id),
            0,
            sqlc.arg(input_high_watermark),
            selected_actor.run_metadata,
@@ -338,16 +338,16 @@ WITH selected_actor AS MATERIALIZED (
         run_id,
         number,
         entrypoint_kind,
-        workspace_id,
+        computer_id,
         session_input_start_sequence,
-        base_workspace_version_id
+        base_computer_disk_version_id
     )
     SELECT created_run.id,
            1,
            created_run.entrypoint_kind,
-           created_run.workspace_id,
+           created_run.computer_id,
            0,
-           created_run.base_workspace_version_id
+           created_run.base_computer_disk_version_id
       FROM created_run
     RETURNING run_id
 )
@@ -364,7 +364,7 @@ WITH selected_target AS MATERIALIZED (
            parent.org_id,
            parent.project_id,
            parent.id AS parent_run_id,
-           computers.id AS workspace_id
+           computers.id AS computer_id
       FROM runs AS parent
       JOIN deployment_definitions AS definitions
         ON definitions.environment_id = parent.environment_id
@@ -373,17 +373,17 @@ WITH selected_target AS MATERIALIZED (
        AND definitions.declared_id = sqlc.arg(entrypoint_declared_id)
       JOIN computers
         ON computers.environment_id = parent.environment_id
-       AND computers.id = sqlc.arg(workspace_id)
-      JOIN computer_versions
-        ON computer_versions.computer_id = computers.id
-       AND computer_versions.id = sqlc.arg(base_workspace_version_id)
-       AND computer_versions.status IN ('initializing', 'committed')
+       AND computers.id = sqlc.arg(computer_id)
+      JOIN computer_disk_versions
+        ON computer_disk_versions.computer_id = computers.id
+       AND computer_disk_versions.id = sqlc.arg(base_computer_disk_version_id)
+       AND computer_disk_versions.status IN ('initializing', 'committed')
       LEFT JOIN idempotency_claims
         ON idempotency_claims.environment_id = parent.environment_id
        AND idempotency_claims.id = sqlc.narg(claim_id)
        AND idempotency_claims.operation = 'task.child.invoke'
        AND idempotency_claims.status = 'pending'
-       AND idempotency_claims.retired_at IS NULL
+
      WHERE parent.environment_id = sqlc.arg(environment_id)
        AND parent.id = sqlc.arg(parent_run_id)
        AND parent.status IN ('queued', 'running', 'waiting', 'retry_delayed')
@@ -405,8 +405,8 @@ WITH selected_target AS MATERIALIZED (
         cause_kind,
         parent_run_id,
         parent_owns_lifecycle,
-        workspace_id,
-        base_workspace_version_id,
+        computer_id,
+        base_computer_disk_version_id,
         payload,
         metadata,
         tags,
@@ -434,8 +434,8 @@ WITH selected_target AS MATERIALIZED (
            'child',
            selected_target.parent_run_id,
            sqlc.arg(parent_owns_lifecycle),
-           selected_target.workspace_id,
-           sqlc.arg(base_workspace_version_id),
+           selected_target.computer_id,
+           sqlc.arg(base_computer_disk_version_id),
            sqlc.narg(payload),
            coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
            coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
@@ -458,150 +458,14 @@ WITH selected_target AS MATERIALIZED (
         run_id,
         number,
         entrypoint_kind,
-        workspace_id,
-        base_workspace_version_id
+        computer_id,
+        base_computer_disk_version_id
     )
     SELECT created_run.id,
            1,
            created_run.entrypoint_kind,
-           created_run.workspace_id,
-           created_run.base_workspace_version_id
-      FROM created_run
-    RETURNING run_id
-)
-SELECT created_run.*
-  FROM created_run
-  JOIN created_attempt ON created_attempt.run_id = created_run.id;
-
--- name: CreateSameWorkspaceChildRunFromParentDeployment :one
-WITH selected_target AS MATERIALIZED (
-    SELECT definitions.environment_id,
-           definitions.deployment_id,
-           definitions.id AS deployment_definition_id,
-           definitions.declared_id AS entrypoint_declared_id,
-           parent.org_id,
-           parent.project_id,
-           parent.id AS parent_run_id,
-           parent.workspace_id,
-           checkpoint.private_workspace_version_id AS base_workspace_version_id
-      FROM runs AS parent
-      JOIN run_waits AS wait
-        ON wait.environment_id = parent.environment_id
-       AND wait.run_id = parent.id
-       AND wait.workspace_id = parent.workspace_id
-       AND wait.id = sqlc.arg(run_wait_id)
-       AND wait.kind = 'child'
-       AND wait.child_run_id IS NULL
-       AND wait.child_target_declared_id = sqlc.arg(entrypoint_declared_id)
-       AND wait.child_claim_id = sqlc.arg(claim_id)
-       AND wait.condition_status = 'pending'
-       AND wait.suspension_status = 'checkpointing'
-       AND wait.current_run_lease_id = sqlc.arg(parent_run_lease_id)
-       AND wait.suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id)
-      JOIN run_checkpoints AS checkpoint
-        ON checkpoint.run_id = parent.id
-       AND checkpoint.attempt_number = wait.attempt_number
-       AND checkpoint.workspace_id = parent.workspace_id
-       AND checkpoint.run_wait_id = wait.id
-       AND checkpoint.id = wait.suspend_checkpoint_id
-       AND checkpoint.status = 'ready'
-       AND checkpoint.private_workspace_version_id =
-           sqlc.arg(base_workspace_version_id)
-      JOIN computer_versions AS base
-        ON base.computer_id = parent.workspace_id
-       AND base.id = checkpoint.private_workspace_version_id
-       AND base.status = 'private'
-      JOIN deployment_definitions AS definitions
-        ON definitions.environment_id = parent.environment_id
-       AND definitions.deployment_id = parent.deployment_id
-       AND definitions.kind = 'task'
-       AND definitions.declared_id = wait.child_target_declared_id
-      JOIN idempotency_claims AS claim
-        ON claim.environment_id = parent.environment_id
-       AND claim.id = wait.child_claim_id
-       AND claim.operation = 'task.child.invoke'
-       AND claim.status = 'pending'
-       AND claim.retired_at IS NULL
-     WHERE parent.environment_id = sqlc.arg(environment_id)
-       AND parent.id = sqlc.arg(parent_run_id)
-       AND parent.status = 'waiting'
-       AND parent.current_attempt_number = sqlc.arg(parent_attempt_number)
-       AND parent.current_run_lease_id = sqlc.arg(parent_run_lease_id)
-     FOR UPDATE OF parent, wait
-), created_run AS (
-    INSERT INTO runs (
-        id,
-        org_id,
-        project_id,
-        environment_id,
-        deployment_id,
-        deployment_definition_id,
-        entrypoint_kind,
-        entrypoint_declared_id,
-        cause_kind,
-        parent_run_id,
-        parent_owns_lifecycle,
-        workspace_id,
-        base_workspace_version_id,
-        payload,
-        metadata,
-        tags,
-        queue_name,
-        concurrency_key,
-        queue_concurrency_limit,
-        priority,
-        queue_origin_at,
-        queue_score_at,
-        queued_expires_at,
-        max_active_duration_ms,
-        retry_policy,
-        trace_id,
-        root_span_id,
-        claim_id
-    )
-    SELECT sqlc.arg(id),
-           selected_target.org_id,
-           selected_target.project_id,
-           selected_target.environment_id,
-           selected_target.deployment_id,
-           selected_target.deployment_definition_id,
-           'task',
-           selected_target.entrypoint_declared_id,
-           'child',
-           selected_target.parent_run_id,
-           TRUE,
-           selected_target.workspace_id,
-           selected_target.base_workspace_version_id,
-           sqlc.narg(payload),
-           coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
-           coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
-           sqlc.arg(queue_name),
-           sqlc.narg(concurrency_key),
-           sqlc.narg(queue_concurrency_limit),
-           sqlc.arg(priority),
-           sqlc.arg(queue_origin_at),
-           sqlc.arg(queue_score_at),
-           sqlc.narg(queued_expires_at),
-           sqlc.arg(max_active_duration_ms),
-           sqlc.arg(retry_policy),
-           sqlc.narg(trace_id),
-           sqlc.arg(root_span_id),
-           sqlc.arg(claim_id)
-      FROM selected_target
-    RETURNING runs.*
-), created_attempt AS (
-    INSERT INTO run_attempts (
-        run_id,
-        number,
-        entrypoint_kind,
-        workspace_id,
-        base_workspace_version_id
-    )
-    SELECT created_run.id,
-           1,
-           created_run.entrypoint_kind,
-           created_run.workspace_id,
-           created_run.base_workspace_version_id
+           created_run.computer_id,
+           created_run.base_computer_disk_version_id
       FROM created_run
     RETURNING run_id
 )
@@ -632,7 +496,7 @@ SELECT runs.id,
        runs.status,
        runs.entrypoint_kind,
        runs.entrypoint_declared_id,
-       runs.workspace_id,
+       runs.computer_id,
        runs.session_id,
        runs.current_attempt_number,
        runs.created_at,
@@ -693,28 +557,6 @@ SELECT first_lease_at,
  WHERE id = sqlc.arg(id)
  FOR UPDATE;
 
--- name: RequestQueuedRunRuntimeCleanup :exec
-WITH close_runtimes AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = CASE
-               WHEN desired_state = 'closed' THEN desired_version
-               ELSE desired_version + 1
-           END,
-           desired_at = transaction_timestamp(),
-           desired_reason = 'queued_ttl_expired',
-           updated_at = transaction_timestamp()
-     WHERE reserved_run_id = sqlc.arg(run_id)
-       AND observed_state IN ('allocated', 'ready')
-    RETURNING id
-)
-UPDATE workspace_mounts
-   SET status = 'unmounting',
-       stopped_at = coalesce(stopped_at, transaction_timestamp()),
-       updated_at = transaction_timestamp()
- WHERE runtime_instance_id IN (SELECT id FROM close_runtimes)
-   AND status IN ('mounting', 'mounted');
-
 -- name: ExpireQueuedRunAttempt :execrows
 UPDATE run_attempts
    SET terminal_outcome = 'cancelled',
@@ -741,23 +583,6 @@ UPDATE runs
    AND queued_expires_at IS NOT NULL
    AND queued_expires_at <= transaction_timestamp();
 
--- name: ReleaseQueuedRunWorkspace :execrows
-UPDATE computers
-   SET owner_run_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE computers.id = sqlc.arg(workspace_id)
-   AND computers.owner_run_id = sqlc.arg(run_id)
-   AND computers.owner_session_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_leases
-        WHERE workspace_leases.workspace_id = computers.id
-          AND workspace_leases.status IN ('active', 'releasing')
-   );
-
 -- name: CreateQueuedRunExpiryEvent :exec
 INSERT INTO telemetry_outbox (
     org_id, stream_kind, source_kind, source_id, project_id, environment_id,
@@ -782,7 +607,7 @@ UPDATE runs
    AND org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
    AND status = 'waiting'

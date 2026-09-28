@@ -46,10 +46,10 @@ The Control Plane base URL is shown as `$CONTROL_PLANE_URL` below.
 | `GET /capacity/v1/worker-groups/{group_id}/pools/resolve?name=...` | Resolve a pool in a Worker group. |
 | `PUT /capacity/v1/worker-groups/{group_id}/primary-pools` | Select the primary pool with a group claim-version fence. |
 | `POST /capacity/v1/worker-groups/{group_id}/plan` | Compute provider-neutral additional Worker recommendations. |
-| `GET /capacity/v1/worker-instances` | List Worker instances for inventory and lifecycle reconciliation. |
-| `GET /capacity/v1/worker-instances/{instance_id}` | Read one Worker instance. |
-| `POST /capacity/v1/worker-instances/{instance_id}/drain` | Start claim- and epoch-fenced drain. |
-| `POST /capacity/v1/worker-instances/{instance_id}/lost` | Confirm that the provider host is absent. |
+| `GET /capacity/v1/worker-hosts` | List Worker instances for inventory and lifecycle reconciliation. |
+| `GET /capacity/v1/worker-hosts/{instance_id}` | Read one Worker instance. |
+| `POST /capacity/v1/worker-hosts/{instance_id}/drain` | Start claim- and epoch-fenced drain. |
+| `POST /capacity/v1/worker-hosts/{instance_id}/lost` | Confirm that the provider host is absent. |
 
 Worker group, pool, and instance IDs are canonical UUIDv7 values. `region_id`,
 names, and provider `resource_id` values are opaque canonical strings.
@@ -140,7 +140,7 @@ and retry from current state when the claim fence is stale.
 
 ### Reconcile Worker inventory
 
-`GET /worker-instances` accepts these optional query parameters:
+`GET /worker-hosts` accepts these optional query parameters:
 
 | Parameter | Meaning |
 | --- | --- |
@@ -150,7 +150,7 @@ and retry from current state when the claim fence is stale.
 | `has_unreclaimed_runtime=true` | Return instances still owning unreclaimed runtime state. |
 | `limit` | Result limit; default 200, maximum 500. |
 
-The response contains `worker_instances`. Each item includes `id`,
+The response contains `worker_hosts`. Each item includes `id`,
 `resource_id`, `worker_group_id`, `worker_pool_id`, `status`, `claim_version`,
 `created_at`, and `updated_at`. `current_epoch`, `draining_at`,
 `termination_ready_at`, and `lost_at` appear when applicable.
@@ -171,7 +171,7 @@ printf 'Authorization: Bearer %s\n' "$CAPACITY_TOKEN" |
   --header 'Accept: application/json' \
   --header 'Content-Type: application/json' \
   --data "{\"expected_epoch\":$CURRENT_EPOCH,\"expected_claim_version\":$CLAIM_VERSION,\"require_zero_queued_demand\":true}" \
-  "$CONTROL_PLANE_URL/capacity/v1/worker-instances/$INSTANCE_ID/drain"
+  "$CONTROL_PLANE_URL/capacity/v1/worker-hosts/$INSTANCE_ID/drain"
 ```
 
 The epoch and claim version fence the exact Worker ownership observed by the

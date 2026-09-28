@@ -11,13 +11,13 @@ import (
 )
 
 // ReconcileClose applies the repairable portion of an already-authoritative
-// close direction. Callers must lock the complete Workspace Secret set before
+// close direction. Callers must lock the complete Computer Secret set before
 // the Actor and pass both locked facts here.
 func ReconcileClose(
 	ctx context.Context,
 	store db.Querier,
 	actor db.Session,
-	bindings []db.LockWorkspaceSecretsForAdmissionRow,
+	bindings []db.LockComputerSecretsForAdmissionRow,
 ) (db.Session, bool, error) {
 	if actor.CancelRequestedAt.Valid && actor.Status == "closing" {
 		var waiting bool
@@ -37,9 +37,9 @@ func ReconcileClose(
 	if actor.CurrentRunID.Valid {
 		return reconcileCurrentRunClose(ctx, store, actor)
 	}
-	workspace, err := store.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{
+	computer, err := store.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
 		EnvironmentID: actor.EnvironmentID,
-		WorkspaceID:   actor.WorkspaceID,
+		ComputerID:    actor.ComputerID,
 		SessionID:     actor.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -48,19 +48,19 @@ func ReconcileClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	activity, err := store.GetActorCloseWorkspaceActivity(ctx, workspace.ID)
+	activity, err := store.GetActorCloseComputerActivity(ctx, actor.ID)
 	if err != nil {
 		return db.Session{}, false, err
 	}
 	if actor.CommittedInputSequence < actor.CloseSequence.Int64 {
-		if !workspaceCanAdmit(workspace, activity) || !bindingsCanAdmit(actor, bindings) {
+		if !bindingsCanAdmit(actor, bindings) {
 			return actor, true, nil
 		}
 		if _, err := CreateContinuation(
 			ctx,
 			store,
 			actor,
-			db.LockActorInputWorkspaceRow{ID: workspace.ID},
+			db.Computer{ID: computer.ID},
 			bindings,
 		); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -74,19 +74,15 @@ func ReconcileClose(
 		})
 		return updated, false, err
 	}
-	if !workspaceCanAdmit(workspace, activity) && !(actor.CancelRequestedAt.Valid && len(workspace.RecoveryFailure) > 0 && !activity.HasActiveLease && !activity.HasActiveProcess && !activity.HasActiveChild) {
+	if activity.HasActiveLease || activity.HasActiveChild {
 		return actor, true, nil
 	}
-	if actor.DispatchHoldID.Valid || len(workspace.RecoveryFailure) > 0 {
-		// Closing a drained, settled hold does not resume customer code. Keep
-		// its physical exclusion check even if another writer appeared since repair.
-		excluded, err := store.SessionWriterExcluded(ctx, actor.WorkspaceID)
-		if err != nil {
-			return db.Session{}, false, err
-		}
-		if !excluded.Valid || !excluded.Bool {
-			return actor, true, nil
-		}
+	reconciled, err := store.SessionExecutionScopesReconciled(ctx, actor.ID)
+	if err != nil {
+		return db.Session{}, false, err
+	}
+	if !reconciled {
+		return actor, true, nil
 	}
 	now, err := store.GetRunLeaseRenewalTime(ctx)
 	if err != nil || !now.Valid {
@@ -94,19 +90,6 @@ func ReconcileClose(
 			err = ErrAuthority
 		}
 		return db.Session{}, false, fmt.Errorf("load actor close time: %w", err)
-	}
-	if _, err := store.ReleaseActorWorkspaceOwner(ctx, db.ReleaseActorWorkspaceOwnerParams{
-		CompletedAt:         now,
-		ID:                  workspace.ID,
-		EnvironmentID:       workspace.EnvironmentID,
-		SessionID:           actor.ID,
-		OwnershipGeneration: workspace.OwnershipGeneration,
-		WriterGeneration:    workspace.WriterGeneration,
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return actor, true, nil
-		}
-		return db.Session{}, false, fmt.Errorf("release actor close workspace owner: %w", err)
 	}
 	if actor.DispatchHoldID.Valid {
 		actor, err = store.ClearSessionDispatchHold(ctx, db.ClearSessionDispatchHoldParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID, DispatchHoldID: actor.DispatchHoldID})
@@ -118,7 +101,7 @@ func ReconcileClose(
 		ClosedAt:      now,
 		EnvironmentID: actor.EnvironmentID,
 		SessionID:     actor.ID,
-		WorkspaceID:   actor.WorkspaceID,
+		ComputerID:    actor.ComputerID,
 	})
 	if err != nil {
 		return db.Session{}, false, fmt.Errorf("complete idle actor close: %w", err)
@@ -143,9 +126,9 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	workspace, err := store.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{
+	computer, err := store.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
 		EnvironmentID: actor.EnvironmentID,
-		WorkspaceID:   actor.WorkspaceID,
+		ComputerID:    actor.ComputerID,
 		SessionID:     actor.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -155,9 +138,9 @@ func reconcileCurrentRunClose(
 		return db.Session{}, false, err
 	}
 	attempt, err := store.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-		RunID:       run.ID,
-		Number:      run.CurrentAttemptNumber,
-		WorkspaceID: workspace.ID,
+		RunID:      run.ID,
+		Number:     run.CurrentAttemptNumber,
+		ComputerID: computer.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return actor, true, nil
@@ -187,25 +170,12 @@ func reconcileCurrentRunClose(
 	return actor, false, nil
 }
 
-func workspaceCanAdmit(
-	workspace db.LockActorCloseWorkspaceRow,
-	activity db.GetActorCloseWorkspaceActivityRow,
-) bool {
-	return workspace.Status == db.WorkspaceStatusActive &&
-		workspace.DesiredState == db.WorkspaceDesiredStateActive &&
-		workspace.DirtyState == db.WorkspaceDirtyStateClean &&
-		workspace.HeadVersionID.Valid &&
-		!activity.HasActiveLease &&
-		!activity.HasActiveProcess &&
-		!activity.HasActiveChild
-}
-
 func bindingsCanAdmit(
 	actor db.Session,
-	bindings []db.LockWorkspaceSecretsForAdmissionRow,
+	bindings []db.LockComputerSecretsForAdmissionRow,
 ) bool {
 	for _, binding := range bindings {
-		if binding.WorkspaceID != actor.WorkspaceID ||
+		if binding.ComputerID != actor.ComputerID ||
 			binding.EnvironmentID != actor.EnvironmentID ||
 			binding.SecretStatus != "active" ||
 			!binding.CurrentVersionID.Valid {
@@ -223,7 +193,7 @@ func closeEventData(actor db.Session) []byte {
 }
 
 // Cancellation never runs code to consume the cancelled suffix. Keep the
-// durable reconciler alive while the existing stop/capture path is pending.
+// durable reconciler alive while the existing process-stop path is pending.
 func reconcileCancellation(ctx context.Context, q db.Querier, actor db.Session) (db.Session, bool, error) {
 	if actor.ActiveTurnID.Valid {
 		return actor, true, nil
@@ -233,27 +203,26 @@ func reconcileCancellation(ctx context.Context, q db.Querier, actor db.Session) 
 		if err != nil {
 			return actor, false, err
 		}
-		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{RunID: current.ID, Number: current.CurrentAttemptNumber, WorkspaceID: actor.WorkspaceID})
+		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{RunID: current.ID, Number: current.CurrentAttemptNumber, ComputerID: actor.ComputerID})
 		if err != nil {
 			return actor, false, err
 		}
-		// Only a never-entered execution can settle without a captured completion
-		// or explicit recovery. Terminal Run state alone does not prove either.
+		// A never-entered execution settles only after its process scopes are reconciled.
 		if !attempt.TerminalAt.Valid || attempt.EntrypointEnteredAt.Valid || actor.DispatchHoldReason.String != "interrupt_requested" {
 			return actor, true, nil
 		}
-		workspace, err := q.LockActorCloseWorkspace(ctx, db.LockActorCloseWorkspaceParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, WorkspaceID: actor.WorkspaceID})
+		computer, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ComputerID: actor.ComputerID})
 		if err != nil {
 			return actor, false, err
 		}
-		excluded, err := q.SessionWriterExcluded(ctx, actor.WorkspaceID)
+		excluded, err := q.SessionExecutionScopesReconciled(ctx, actor.ID)
 		if err != nil {
 			return actor, false, err
 		}
-		if !excluded.Valid || !excluded.Bool || workspace.DirtyState != db.WorkspaceDirtyStateClean || !workspace.HeadVersionID.Valid {
+		if !excluded {
 			return actor, true, nil
 		}
-		if err = CompleteInterruption(ctx, q, actor, workspace.HeadVersionID, ""); err != nil {
+		if err = CompleteInterruption(ctx, q, actor, computer.HeadDiskVersionID, ""); err != nil {
 			return actor, false, err
 		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})

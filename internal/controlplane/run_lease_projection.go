@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -13,133 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
-
-type runLeaseExecutionProjection struct {
-	mode                runLeaseClaimMode
-	run                 db.Run
-	attempt             db.RunAttempt
-	actor               *db.Session
-	definition          db.DeploymentDefinition
-	deploymentVersion   string
-	runtime             db.RuntimeInstance
-	workspaceMount      db.WorkspaceMount
-	runWait             db.RunWait
-	checkpoint          db.RunCheckpoint
-	checkpointArtifacts checkpointArtifactAuthority
-}
-
-func projectRunLeaseExecution(
-	authority runLeaseExecutionProjection,
-) (workerapi.RunLeaseExecution, error) {
-	switch authority.mode {
-	case runLeaseClaimFresh:
-		if authority.runWait.ID.Valid ||
-			authority.checkpoint.ID.Valid ||
-			!authority.checkpointArtifacts.empty() {
-			return workerapi.RunLeaseExecution{}, errors.New("fresh run lease contains resume authority")
-		}
-		start, err := encodeProgramStart(
-			authority.run,
-			authority.attempt,
-			authority.actor,
-			authority.definition,
-			authority.deploymentVersion,
-		)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		return workerapi.RunLeaseExecution{
-			Fresh: &workerapi.RunLeaseFresh{ProgramStart: start},
-		}, nil
-	case runLeaseClaimRestore:
-		if !authority.runWait.ID.Valid ||
-			!authority.checkpoint.ID.Valid ||
-			!authority.attempt.EntrypointEnteredAt.Valid ||
-			authority.runWait.ResumeRequestVersion <= 0 {
-			return workerapi.RunLeaseExecution{}, errors.New("restore run lease authority is incomplete")
-		}
-		waitID, err := requiredClaimUUIDString("run wait ID", authority.runWait.ID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		attachID, err := requiredClaimUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		decision, err := projectRunWaitDecision(authority.runWait)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		checkpointID, err := requiredClaimUUIDString("run checkpoint ID", authority.checkpoint.ID)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		correlationID, err := checkpointCorrelationID(
-			authority.checkpoint,
-			authority.runWait,
-		)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		checkpoint, err := projectRunLeaseCheckpoint(authority.checkpoint, authority.checkpointArtifacts)
-		if err != nil {
-			return workerapi.RunLeaseExecution{}, err
-		}
-		restore := workerapi.RunLeaseRestore{
-			RunWaitID:            waitID,
-			CheckpointID:         checkpointID,
-			ResumeAttachID:       attachID,
-			ResumeRequestVersion: authority.runWait.ResumeRequestVersion,
-			CorrelationID:        correlationID,
-			EntrypointKind:       authority.run.EntrypointKind,
-			EntrypointDeclaredID: authority.run.EntrypointDeclaredID,
-			Manifest:             checkpoint.Manifest,
-			Artifacts:            checkpoint.Artifacts,
-			Decision:             decision,
-		}
-		if authority.run.EntrypointKind == "actor" {
-			actor := authority.actor
-			if actor == nil || actor.ID != authority.run.SessionID || actor.CurrentRunID != authority.run.ID || actor.RunGeneration <= 0 || actor.DispatchHoldID.Valid {
-				return workerapi.RunLeaseExecution{}, errors.New("restored Actor Session authority is inconsistent")
-			}
-			restore.SessionID = pgvalue.UUIDString(actor.ID)
-			restore.RunGeneration = actor.RunGeneration
-			// Input waits freeze outside a Turn. Admission binds the next Turn
-			// before restore, but that Turn belongs to the decision payload.
-			if authority.runWait.Kind != db.WaitKindActorInput && actor.ActiveTurnID.Valid {
-				id := pgvalue.UUIDString(actor.ActiveTurnID)
-				restore.TurnID = &id
-			}
-		}
-		return workerapi.RunLeaseExecution{
-			Restore: &restore,
-		}, nil
-	default:
-		return workerapi.RunLeaseExecution{}, fmt.Errorf(
-			"run lease claim mode %q is unsupported",
-			authority.mode,
-		)
-	}
-}
-
-func checkpointCorrelationID(
-	checkpoint db.RunCheckpoint,
-	wait db.RunWait,
-) (string, error) {
-	var manifest workerapi.CheckpointManifest
-	if err := json.Unmarshal(checkpoint.Manifest, &manifest); err != nil {
-		return "", fmt.Errorf("decode run checkpoint correlation authority: %w", err)
-	}
-	correlationID := strings.TrimSpace(manifest.RecoveryPoint.CorrelationID)
-	if correlationID == "" ||
-		manifest.RecoveryPoint.ID != pgvalue.UUIDString(checkpoint.ID) ||
-		manifest.RecoveryPoint.RunID != pgvalue.UUIDString(checkpoint.RunID) ||
-		manifest.RecoveryPoint.AttemptNumber != checkpoint.AttemptNumber ||
-		manifest.RecoveryPoint.RunWaitID != pgvalue.UUIDString(wait.ID) {
-		return "", errors.New("run checkpoint correlation authority is inconsistent")
-	}
-	return correlationID, nil
-}
 
 func projectSecretDeliveries(materials []secret.DeliveryMaterial) ([]workerapi.SecretDelivery, error) {
 	ordered := append([]secret.DeliveryMaterial(nil), materials...)
@@ -174,13 +46,11 @@ func projectSecretDeliveries(materials []secret.DeliveryMaterial) ([]workerapi.S
 }
 
 type runLeaseProjectionAuthority struct {
-	run            db.Run
-	attempt        db.RunAttempt
-	runtime        db.RuntimeInstance
-	runLease       db.RunLease
-	workspace      db.LockRunLeaseClaimWorkspaceRow
-	workspaceMount db.WorkspaceMount
-	workspaceLease db.WorkspaceLease
+	run      db.Run
+	attempt  db.RunAttempt
+	runtime  db.ComputerInstance
+	runLease db.RunLease
+	computer db.LockRunLeaseClaimComputerRow
 }
 
 func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi.RunLeaseAssignment, error) {
@@ -193,51 +63,43 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	workerID, err := requiredClaimUUIDString("worker instance ID", lease.WorkerInstanceID)
+	workerID, err := requiredClaimUUIDString("worker instance ID", lease.WorkerHostID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	runtimeID, err := requiredClaimUUIDString("runtime instance ID", lease.RuntimeInstanceID)
+	runtimeID, err := requiredClaimUUIDString("runtime instance ID", lease.ComputerInstanceID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	workspaceID, err := requiredClaimUUIDString("workspace ID", authority.workspace.ID)
+	computerID, err := requiredClaimUUIDString("computer ID", authority.computer.ID)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
-	mountID, err := requiredClaimUUIDString("workspace mount ID", authority.workspaceMount.ID)
-	if err != nil {
-		return workerapi.RunLeaseAssignment{}, err
-	}
-	workspaceLeaseID, err := requiredClaimUUIDString("workspace lease ID", authority.workspaceLease.ID)
-	if err != nil {
-		return workerapi.RunLeaseAssignment{}, err
-	}
-	baseWorkspaceVersionID, err := requiredClaimUUIDString(
-		"base workspace version ID",
-		authority.workspaceLease.BaseWorkspaceVersionID,
+	baseComputerDiskVersionID, err := requiredClaimUUIDString(
+		"base computer version ID",
+		authority.attempt.BaseComputerDiskVersionID,
 	)
 	if err != nil {
 		return workerapi.RunLeaseAssignment{}, err
 	}
 	if lease.RunID != authority.run.ID ||
 		lease.AttemptNumber != authority.attempt.Number ||
-		lease.WorkspaceID != authority.workspace.ID ||
-		lease.RuntimeInstanceID != authority.runtime.ID ||
-		authority.workspaceMount.RuntimeInstanceID != lease.RuntimeInstanceID ||
-		authority.workspaceLease.OwnerRunLeaseID != lease.ID ||
-		authority.workspaceLease.RuntimeInstanceID != lease.RuntimeInstanceID ||
-		authority.workspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
-		authority.workspaceLease.WorkspaceID != lease.WorkspaceID ||
-		authority.workspaceLease.BaseWorkspaceVersionID != authority.workspaceMount.MaterializedVersionID {
+		authority.attempt.RunID != authority.run.ID ||
+		authority.attempt.ComputerID != authority.computer.ID ||
+		lease.ComputerID != authority.computer.ID ||
+		lease.ComputerInstanceID != authority.runtime.ID ||
+		authority.runtime.ComputerID != lease.ComputerID ||
+		authority.runtime.WorkerGroupID != lease.WorkerGroupID ||
+		authority.runtime.WorkerHostID != lease.WorkerHostID ||
+		authority.runtime.WorkerEpoch != lease.WorkerEpoch ||
+		authority.runtime.EnvironmentID != authority.run.EnvironmentID ||
+		authority.runtime.WriterGeneration != authority.computer.WriterGeneration {
 		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment authority is inconsistent")
 	}
 	if lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
 		lease.WorkerEpoch <= 0 ||
-		authority.workspaceLease.OwnershipGeneration <= 0 ||
-		authority.workspaceLease.WriterGeneration <= 0 ||
-		authority.workspaceLease.MountFencingGeneration <= 0 ||
+		authority.runtime.WriterGeneration <= 0 ||
 		lease.RequestedCPUMillis <= 0 ||
 		lease.RequestedMemoryBytes <= 0 ||
 		lease.RequestedGuestEphemeralDiskBytes <= 0 ||
@@ -253,7 +115,7 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		return workerapi.RunLeaseAssignment{}, errors.New("worker group ID is required")
 	}
 	for name, value := range map[string]string{
-		"runtime identity ID": lease.RuntimeIdentityID,
+		"VM platform ID": authority.runtime.VMPlatformID,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return workerapi.RunLeaseAssignment{}, fmt.Errorf("%s is required", name)
@@ -265,17 +127,13 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 		AttemptNumber:                    lease.AttemptNumber,
 		LeaseSequence:                    lease.LeaseSequence,
 		WorkerGroupID:                    pgvalue.UUIDString(lease.WorkerGroupID),
-		WorkerInstanceID:                 workerID,
+		WorkerHostID:                     workerID,
 		WorkerEpoch:                      lease.WorkerEpoch,
-		RuntimeInstanceID:                runtimeID,
-		RuntimeIdentityID:                lease.RuntimeIdentityID,
-		WorkspaceID:                      workspaceID,
-		WorkspaceMountID:                 mountID,
-		WorkspaceLeaseID:                 workspaceLeaseID,
-		BaseWorkspaceVersionID:           baseWorkspaceVersionID,
-		OwnershipGeneration:              authority.workspaceLease.OwnershipGeneration,
-		WriterGeneration:                 authority.workspaceLease.WriterGeneration,
-		MountFencingGeneration:           authority.workspaceLease.MountFencingGeneration,
+		ComputerInstanceID:               runtimeID,
+		VMPlatformID:                     authority.runtime.VMPlatformID,
+		ComputerID:                       computerID,
+		BaseComputerDiskVersionID:        baseComputerDiskVersionID,
+		WriterGeneration:                 authority.runtime.WriterGeneration,
 		RequestedCPUMillis:               lease.RequestedCPUMillis,
 		RequestedMemoryBytes:             lease.RequestedMemoryBytes,
 		RequestedGuestEphemeralDiskBytes: lease.RequestedGuestEphemeralDiskBytes,
@@ -292,183 +150,23 @@ func projectRunLeaseAssignment(authority runLeaseProjectionAuthority) (workerapi
 	}, nil
 }
 
-func projectWorkspaceAttachment(
+func projectComputerAttachment(
 	authority runLeaseProjectionAuthority,
 	writeCapability string,
-	resetAuthority db.GetComputerVersionAuthorityRow,
-) (workerapi.WorkspaceAttachment, error) {
-	lease := authority.workspaceLease
-	if lease.OwnerRunLeaseID != authority.runLease.ID ||
-		lease.WorkspaceID != authority.workspace.ID ||
-		lease.RuntimeInstanceID != authority.runtime.ID ||
-		lease.WorkspaceMountID != authority.workspaceMount.ID ||
-		lease.BaseWorkspaceVersionID != authority.workspaceMount.MaterializedVersionID ||
-		lease.OwnershipGeneration != authority.workspace.OwnershipGeneration ||
-		lease.WriterGeneration != authority.workspace.WriterGeneration ||
-		lease.MountFencingGeneration != authority.workspaceMount.FencingGeneration ||
-		lease.OwnershipGeneration <= 0 ||
-		lease.WriterGeneration <= 0 ||
-		lease.MountFencingGeneration <= 0 ||
-		strings.TrimSpace(writeCapability) == "" {
-		return workerapi.WorkspaceAttachment{}, errors.New("workspace attachment authority is inconsistent")
+	resetAuthority db.GetComputerDiskVersionAuthorityRow,
+) (workerapi.ComputerAttachment, error) {
+	if _, err := projectRunLeaseAssignment(authority); err != nil {
+		return workerapi.ComputerAttachment{}, err
 	}
-	resetTarget, err := projectComputerMountTarget(lease, resetAuthority)
+	if strings.TrimSpace(writeCapability) == "" {
+		return workerapi.ComputerAttachment{}, errors.New("computer write capability is required")
+	}
+	if resetAuthority.VersionID != authority.attempt.BaseComputerDiskVersionID {
+		return workerapi.ComputerAttachment{}, errors.New("computer reset version does not match Attempt base")
+	}
+	id, err := requiredClaimUUIDString("computer reset version ID", resetAuthority.VersionID)
 	if err != nil {
-		return workerapi.WorkspaceAttachment{}, err
+		return workerapi.ComputerAttachment{}, err
 	}
-	return workerapi.WorkspaceAttachment{WriteCapability: writeCapability, Target: resetTarget}, nil
-}
-
-func projectComputerMountTarget(lease db.WorkspaceLease, authority db.GetComputerVersionAuthorityRow) (workerapi.ComputerMountTarget, error) {
-	if authority.VersionID != lease.BaseWorkspaceVersionID {
-		return workerapi.ComputerMountTarget{}, errors.New("computer mount version does not match lease base")
-	}
-	id, err := requiredClaimUUIDString("computer mount version ID", authority.VersionID)
-	if err != nil {
-		return workerapi.ComputerMountTarget{}, err
-	}
-	return workerapi.ComputerMountTarget{BaseWorkspaceVersionID: id}, nil
-}
-
-func projectRunWaitDecision(wait db.RunWait) (workerapi.RunLeaseDecision, error) {
-	if !wait.ConditionTerminalAt.Valid {
-		return workerapi.RunLeaseDecision{}, errors.New("terminal wait decision has no terminal timestamp")
-	}
-	switch wait.ConditionStatus {
-	case db.WaitStatusCompleted:
-		if wait.ConditionReasonCode.Valid || wait.ConditionError != nil {
-			return workerapi.RunLeaseDecision{}, errors.New("completed wait contains failure authority")
-		}
-		completed := &workerapi.RunLeaseCompleted{}
-		if wait.ConditionResult == nil {
-			completed.NoResult = &struct{}{}
-		} else {
-			if !json.Valid(wait.ConditionResult) {
-				return workerapi.RunLeaseDecision{}, errors.New("completed wait result is not valid JSON")
-			}
-			completed.ResultJSON = append(json.RawMessage(nil), wait.ConditionResult...)
-		}
-		return workerapi.RunLeaseDecision{Completed: completed}, nil
-	case db.WaitStatusFailed:
-		failed, err := projectRunLeaseFailure(wait)
-		if err != nil {
-			return workerapi.RunLeaseDecision{}, err
-		}
-		return workerapi.RunLeaseDecision{Failed: &workerapi.RunLeaseFailed{
-			ReasonCode: failed.reason,
-			Error:      failed.detail,
-		}}, nil
-	case db.WaitStatusCancelled:
-		failed, err := projectRunLeaseFailure(wait)
-		if err != nil {
-			return workerapi.RunLeaseDecision{}, err
-		}
-		return workerapi.RunLeaseDecision{Cancelled: &workerapi.RunLeaseCancelled{
-			ReasonCode: failed.reason,
-			Error:      failed.detail,
-		}}, nil
-	default:
-		return workerapi.RunLeaseDecision{}, fmt.Errorf(
-			"wait condition state %q is not terminal",
-			wait.ConditionStatus,
-		)
-	}
-}
-
-type runLeaseFailure struct {
-	reason string
-	detail json.RawMessage
-}
-
-func projectRunLeaseFailure(wait db.RunWait) (runLeaseFailure, error) {
-	if !wait.ConditionReasonCode.Valid || strings.TrimSpace(wait.ConditionReasonCode.String) == "" {
-		return runLeaseFailure{}, errors.New("terminal wait reason is required")
-	}
-	var detail json.RawMessage
-	if wait.ConditionError != nil {
-		if !json.Valid(wait.ConditionError) {
-			return runLeaseFailure{}, errors.New("terminal wait error is not valid JSON")
-		}
-		detail = append(json.RawMessage(nil), wait.ConditionError...)
-	}
-	if wait.ConditionResult != nil {
-		return runLeaseFailure{}, errors.New("failed or cancelled wait contains a result")
-	}
-	return runLeaseFailure{reason: wait.ConditionReasonCode.String, detail: detail}, nil
-}
-
-type runLeaseCheckpointProjection struct {
-	Manifest  json.RawMessage
-	Artifacts []workerapi.RunLeaseCheckpointArtifact
-}
-
-type checkpointArtifactDescriptor struct {
-	digest    string
-	sizeBytes int64
-	mediaType string
-}
-
-type checkpointArtifactAuthority struct {
-	runtimeConfig checkpointArtifactDescriptor
-	vmState       checkpointArtifactDescriptor
-	memory        checkpointArtifactDescriptor
-	scratchDisk   checkpointArtifactDescriptor
-}
-
-func (authority checkpointArtifactAuthority) empty() bool {
-	return authority == (checkpointArtifactAuthority{})
-}
-
-func checkpointArtifactAuthorityFromReady(row db.GetReadyRunCheckpointRow) checkpointArtifactAuthority {
-	return checkpointArtifactAuthority{
-		runtimeConfig: checkpointArtifactDescriptor{
-			digest: row.RuntimeConfigDigest, sizeBytes: row.RuntimeConfigSizeBytes, mediaType: row.RuntimeConfigMediaType,
-		},
-		vmState: checkpointArtifactDescriptor{
-			digest: row.VMStateDigest, sizeBytes: row.VMStateSizeBytes, mediaType: row.VMStateMediaType,
-		},
-		memory: checkpointArtifactDescriptor{
-			digest: row.MemoryDigest, sizeBytes: row.MemorySizeBytes, mediaType: row.MemoryMediaType,
-		},
-		scratchDisk: checkpointArtifactDescriptor{
-			digest: row.ScratchDiskDigest, sizeBytes: row.ScratchDiskSizeBytes, mediaType: row.ScratchDiskMediaType,
-		},
-	}
-}
-
-func projectRunLeaseCheckpoint(
-	checkpoint db.RunCheckpoint,
-	authority checkpointArtifactAuthority,
-) (runLeaseCheckpointProjection, error) {
-	if checkpoint.Status != db.RunCheckpointStatusReady || !json.Valid(checkpoint.Manifest) {
-		return runLeaseCheckpointProjection{}, errors.New("run checkpoint authority is invalid")
-	}
-	descriptors := [4]struct {
-		role       string
-		descriptor checkpointArtifactDescriptor
-	}{
-		{role: "runtime_config", descriptor: authority.runtimeConfig},
-		{role: "vm_state", descriptor: authority.vmState},
-		{role: "memory", descriptor: authority.memory},
-		{role: "scratch_disk", descriptor: authority.scratchDisk},
-	}
-	artifacts := make([]workerapi.RunLeaseCheckpointArtifact, 0, len(descriptors))
-	for _, item := range descriptors {
-		object, err := projectCASObject(
-			item.descriptor.digest,
-			item.descriptor.sizeBytes,
-			item.descriptor.mediaType,
-			"run checkpoint artifact",
-		)
-		if err != nil {
-			return runLeaseCheckpointProjection{}, err
-		}
-		artifacts = append(artifacts, workerapi.RunLeaseCheckpointArtifact{
-			Role: item.role, Ordinal: 0, Object: object,
-		})
-	}
-	return runLeaseCheckpointProjection{
-		Manifest:  append(json.RawMessage(nil), checkpoint.Manifest...),
-		Artifacts: artifacts,
-	}, nil
+	return workerapi.ComputerAttachment{WriteCapability: writeCapability, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: id}}, nil
 }

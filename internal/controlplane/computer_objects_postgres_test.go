@@ -26,7 +26,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	defer clear(material.Key)
 	env := pgvalue.UUID(f.EnvironmentID)
 	var computerID pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT workspace_id FROM runtime_instances WHERE id=$1`, f.runtime).Scan(&computerID); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
 	key1 := pgvalue.UUID(uuid.MustParse(material.ID))
@@ -171,7 +171,7 @@ func TestComputerObjectOwnershipAndCertification(t *testing.T) {
 	// A sibling Computer in the same environment still cannot borrow these keys.
 	siblingRun := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
 	var sibling pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT workspace_id FROM runs WHERE id=$1`, siblingRun.RunID).Scan(&sibling); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM runs WHERE id=$1`, siblingRun.RunID).Scan(&sibling); err != nil {
 		t.Fatal(err)
 	}
 	foreign := dbtest.Digest("foreign-root")
@@ -204,7 +204,7 @@ func TestComputerObjectCertificationRollback(t *testing.T) {
 	}
 	defer clear(material.Key)
 	var computerID pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT workspace_id FROM runtime_instances WHERE id=$1`, f.runtime).Scan(&computerID); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
 	digest := dbtest.Digest("rollback-root")

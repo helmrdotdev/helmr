@@ -36,8 +36,8 @@ SELECT EXISTS (
  JOIN sessions s ON s.id=t.session_id AND s.active_turn_id=t.id AND s.current_run_id=t.run_id AND s.run_generation=t.run_generation
  JOIN runs r ON r.id=t.run_id AND r.current_attempt_number=t.attempt_number
  JOIN run_leases l ON l.id=t.ready_run_lease_id AND l.id=r.current_run_lease_id AND l.run_id=r.id AND l.attempt_number=t.attempt_number
- JOIN worker_instances w ON w.id=l.worker_instance_id AND w.current_epoch=l.worker_epoch
- JOIN runtime_instances ri ON ri.id=l.runtime_instance_id
+ JOIN worker_hosts w ON w.id=l.worker_host_id AND w.current_epoch=l.worker_epoch
+ JOIN computer_instances ri ON ri.id=l.computer_instance_id
  WHERE t.environment_id=$1 AND t.session_id=$2 AND t.id=$3
    AND s.status IN ('open','closing') AND s.cancel_requested_at IS NULL AND s.dispatch_hold_id IS NULL
    AND t.status='running' AND t.interrupt_requested_at IS NULL AND t.settlement_started_at IS NULL
@@ -104,12 +104,14 @@ UPDATE sessions SET dispatch_hold_id=NULL,dispatch_hold_reason=NULL,dispatch_hol
 WHERE environment_id=$1 AND id=$2 AND dispatch_hold_id=$3 AND active_turn_id IS NULL
  AND current_run_id IS NULL AND dispatch_hold_reason = 'interrupted' RETURNING *;
 
--- name: SessionWriterExcluded :one
-SELECT NOT EXISTS(SELECT 1 FROM workspace_leases WHERE workspace_leases.workspace_id=sqlc.arg(workspace_id) AND status IN ('active','releasing'))
- AND NOT EXISTS(SELECT 1 FROM workspace_processes WHERE workspace_processes.workspace_id=sqlc.arg(workspace_id) AND status IN ('pending','starting','running','exit_requested'))
- AND NOT EXISTS(SELECT 1 FROM runtime_instances WHERE runtime_instances.workspace_id=sqlc.arg(workspace_id) AND reclaimed_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM run_waits w JOIN runs c ON c.id=w.child_run_id WHERE w.workspace_id=sqlc.arg(workspace_id)
-  AND c.parent_owns_lifecycle AND c.status NOT IN ('succeeded','failed','cancelled','expired','system_failed')) AS excluded;
+-- name: SessionExecutionScopesReconciled :one
+WITH RECURSIVE owned(id) AS (
+ SELECT r.id FROM runs r WHERE r.session_id=sqlc.arg(session_id)
+ UNION
+ SELECT r.id FROM runs r JOIN owned p ON p.id=r.parent_run_id WHERE r.parent_owns_lifecycle
+)
+SELECT (NOT EXISTS (SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id
+ WHERE l.process_reconciled_at IS NULL))::boolean AS reconciled;
 
 -- name: SettleHeldSessionTurn :one
 UPDATE session_turns SET status=sqlc.arg(status),ready_run_lease_id=NULL,
@@ -155,11 +157,11 @@ FROM run_waits w JOIN runs r ON r.id=w.run_id WHERE w.id=$1;
 -- name: LockWorkerSessionOperationActors :many
 SELECT s.* FROM sessions s
 WHERE s.environment_id=sqlc.arg(environment_id)
- AND (s.id=sqlc.arg(target_session_id) OR s.id=(SELECT w.owner_session_id FROM computers w WHERE w.id=sqlc.arg(source_workspace_id)))
+ AND (s.id=sqlc.arg(target_session_id) OR s.id=(SELECT r.session_id FROM runs r WHERE r.id=sqlc.arg(source_run_id) AND r.environment_id=sqlc.arg(environment_id)))
 ORDER BY s.id FOR UPDATE OF s;
 
 -- name: SessionRecoveryHeadCommitted :one
-SELECT EXISTS(SELECT 1 FROM computer_versions
+SELECT EXISTS(SELECT 1 FROM computer_disk_versions
  WHERE environment_id=$1 AND computer_id=$2 AND id=$3 AND status='committed') AS committed;
 
 -- name: RunWaitSessionStopped :one
@@ -173,44 +175,35 @@ SELECT EXISTS (
  AND (w.turn_id IS NULL OR (s.active_turn_id=w.turn_id AND w.turn_session_id=s.id AND w.turn_run_generation=s.run_generation))
 ) AS stopped;
 
--- name: SessionOwnedExecutionsExcluded :one
+-- name: OwnedRunScopesReconciled :one
 WITH RECURSIVE owned(id) AS (
- SELECT c.id FROM runs c WHERE c.parent_run_id=$1 AND c.parent_owns_lifecycle
+ SELECT r.id FROM runs r WHERE r.parent_run_id=sqlc.arg(run_id) AND r.parent_owns_lifecycle
  UNION
- SELECT c.id FROM owned p JOIN runs c ON c.parent_run_id=p.id WHERE c.parent_owns_lifecycle
-), runtimes(id) AS (
- -- A terminal worker finalization receipt already proves this program quiesced.
- -- Its Workspace runtime may remain warm; only unproved execution needs reclaim.
- SELECT l.runtime_instance_id FROM run_leases l JOIN owned o ON o.id=l.run_id
- WHERE NOT (l.status IN ('completed','failed') AND l.terminal_request_fingerprint IS NOT NULL
-   AND l.finalization_operation_id IS NOT NULL AND l.terminal_at IS NOT NULL)
- UNION
- SELECT rt.id FROM runtime_instances rt JOIN owned o ON o.id=rt.reserved_run_id
+ SELECT r.id FROM runs r JOIN owned p ON p.id=r.parent_run_id WHERE r.parent_owns_lifecycle
 )
 SELECT (NOT EXISTS(SELECT 1 FROM runs r JOIN owned o ON o.id=r.id
- WHERE r.current_run_lease_id IS NOT NULL OR r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed'))
- AND NOT EXISTS(SELECT 1 FROM runtime_instances rt JOIN runtimes ON runtimes.id=rt.id
- WHERE rt.reclaimed_at IS NULL)
- AND NOT EXISTS(SELECT 1 FROM workspace_leases wl JOIN run_leases l ON l.id=wl.owner_run_lease_id JOIN owned o ON o.id=l.run_id
- WHERE wl.status IN ('active','releasing')))::boolean AS excluded;
+ WHERE r.status NOT IN ('succeeded','failed','cancelled','expired','system_failed'))
+ AND NOT EXISTS(SELECT 1 FROM run_leases l JOIN owned o ON o.id=l.run_id WHERE l.process_reconciled_at IS NULL))::boolean AS reconciled;
 
 -- name: ReadWorkerSessionControl :one
 SELECT s.dispatch_hold_id, s.dispatch_hold_reason, s.active_turn_id
 FROM run_leases l
 JOIN runs r ON r.id=l.run_id AND r.current_run_lease_id=l.id
- AND r.current_attempt_number=l.attempt_number AND r.workspace_id=l.workspace_id
+ AND r.current_attempt_number=l.attempt_number AND r.computer_id=l.computer_id
 JOIN sessions s ON s.id=r.session_id AND s.current_run_id=r.id
 JOIN run_attempts a ON a.run_id=r.id AND a.number=l.attempt_number
-JOIN worker_instances wi ON wi.id=l.worker_instance_id AND wi.worker_group_id=l.worker_group_id AND wi.current_epoch=l.worker_epoch
+JOIN worker_hosts wi ON wi.id=l.worker_host_id AND wi.worker_group_id=l.worker_group_id AND wi.current_epoch=l.worker_epoch
 JOIN worker_groups wg ON wg.id=l.worker_group_id
-JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id AND wl.workspace_id=l.workspace_id
-JOIN runtime_instances rt ON rt.id=l.runtime_instance_id AND rt.runtime_identity_id=l.runtime_identity_id
+JOIN computer_instances rt ON rt.id=l.computer_instance_id
 WHERE l.id=sqlc.arg(run_lease_id) AND l.lease_sequence=sqlc.arg(lease_sequence)
- AND l.worker_group_id=sqlc.arg(worker_group_id) AND l.worker_instance_id=sqlc.arg(worker_instance_id) AND l.worker_epoch=sqlc.arg(worker_epoch)
+ AND l.worker_group_id=sqlc.arg(worker_group_id) AND l.worker_host_id=sqlc.arg(worker_host_id) AND l.worker_epoch=sqlc.arg(worker_epoch)
  AND l.status IN ('running','checkpointing') AND l.expires_at>statement_timestamp()
  AND l.finalization_operation_id IS NULL AND r.status IN ('running','waiting')
  AND a.entrypoint_entered_at IS NOT NULL AND a.terminal_at IS NULL
  AND s.run_generation=sqlc.arg(run_generation) AND s.status IN ('open','closing')
  AND wi.status IN ('active','draining') AND wg.status IN ('active','draining')
- AND wl.status='active' AND wl.expires_at>statement_timestamp()
+ AND rt.computer_id=l.computer_id AND rt.writer_generation=l.writer_generation
+ AND rt.worker_host_id=l.worker_host_id AND rt.worker_epoch=l.worker_epoch
+ AND rt.writer_expires_at>clock_timestamp() AND rt.mount_state='mounted'
+ AND wi.lost_at IS NULL AND wi.termination_ready_at IS NULL
  AND rt.observed_state='ready' AND rt.reclaimed_at IS NULL;

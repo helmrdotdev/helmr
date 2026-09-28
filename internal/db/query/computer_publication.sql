@@ -1,21 +1,21 @@
 -- The owner validates the exact certified root page and holds the preparation
 -- locks. Publication records success once; pending uploads remain Runtime pins.
--- name: PublishInitialComputerVersion :one
+-- name: PublishInitialComputerDiskVersion :one
 WITH published AS (
-    UPDATE computer_versions v
+    UPDATE computer_disk_versions v
        SET status='committed', published_at=clock_timestamp(),
            root_pack_digest=sqlc.arg(root_pack_digest), logical_bytes=sqlc.arg(logical_bytes),
-           publisher_runtime_instance_id=sqlc.arg(runtime_instance_id),
+           publisher_computer_instance_id=sqlc.arg(computer_instance_id),
            publisher_desired_version=sqlc.arg(desired_version),
            publication_request_fingerprint=sqlc.arg(fingerprint)
       FROM computers c
      WHERE v.environment_id=sqlc.arg(environment_id) AND v.computer_id=sqlc.arg(computer_id)
        AND v.id=sqlc.arg(version_id) AND v.status='initializing' AND v.parent_version_id IS NULL
        AND c.environment_id=v.environment_id AND c.id=v.computer_id
-       AND c.head_version_id=v.id AND c.initial_config IS NULL
+       AND c.head_disk_version_id=v.id AND c.initial_config IS NULL
     RETURNING v.*
 ), retained AS (
-    INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
+    INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
     SELECT environment_id,computer_id,id,sqlc.arg(locator) FROM published
     RETURNING version_id
 ), configured AS (
@@ -28,10 +28,10 @@ SELECT p.* FROM published p JOIN configured c ON c.id=p.computer_id;
 
 -- Authentication supplies the original Worker identity. Historical success is
 -- independent of current head/config, desired state and retained payload lifetime.
--- name: GetWorkerInitialComputerVersion :one
-SELECT v.* FROM computer_versions v
- JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
- WHERE v.publisher_save_sequence IS NULL AND v.publisher_runtime_instance_id=sqlc.arg(runtime_instance_id)
+-- name: GetWorkerInitialComputerDiskVersion :one
+SELECT v.* FROM computer_disk_versions v
+ JOIN computer_instances r ON r.id=v.publisher_computer_instance_id
+ WHERE v.publisher_save_sequence IS NULL AND v.publisher_computer_instance_id=sqlc.arg(computer_instance_id)
    AND v.publisher_desired_version=sqlc.arg(desired_version)
-   AND r.worker_instance_id=sqlc.arg(worker_instance_id)
+   AND r.worker_host_id=sqlc.arg(worker_host_id)
    AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch);

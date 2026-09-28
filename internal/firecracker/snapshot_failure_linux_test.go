@@ -85,7 +85,7 @@ func TestSnapshotFailureNeverResumesGuest(t *testing.T) {
 			t.Cleanup(func() { _ = closeRuntimeDiskFiles(files) })
 			session := &guestSession{diskFiles: files, machine: machine, jailRoot: root, scratchDisk: filepath.Join(root, "scratch.ext4")}
 			if stage == "invalid manifest" || stage == "missing backing file" {
-				session.runtimeIdentity = testRuntimeIdentity(t, testDigest([]byte("kernel")), testDigest([]byte("initramfs")), testDigest([]byte("rootfs")))
+				session.vmPlatform = testVMPlatform(t, testDigest([]byte("kernel")), testDigest([]byte("initramfs")), testDigest([]byte("rootfs")))
 			}
 			if stage == "missing backing file" {
 				session.cfg = testRestoreConfig(t)

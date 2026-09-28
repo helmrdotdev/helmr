@@ -52,7 +52,7 @@ func TestResolveRejectsSourcesOutsideTheCaptureAndHelmrOwnedDestinations(t *test
 		"symlink itself":        {Step{Kind: "copy", Source: "build/alias.sh", Destination: "/opt/x"}, "crosses a symbolic link"},
 		"helmr tools":           {Step{Kind: "copy", Source: "build/setup.sh", Destination: "/opt/helmr/bin/bundle-builder"}, "/opt/helmr, which Helmr owns"},
 		"nix":                   {Step{Kind: "copy", Source: "build/setup.sh", Destination: "/nix"}, "/nix, which Helmr owns"},
-		"workspace":             {Step{Kind: "copy", Source: "build/setup.sh", Destination: "/workspace/project/x"}, "/workspace, which Helmr owns"},
+		"computer":              {Step{Kind: "copy", Source: "build/setup.sh", Destination: "/computer/project/x"}, "/computer, which Helmr owns"},
 		"relative target":       {Step{Kind: "copy", Source: "build/setup.sh", Destination: "opt/setup.sh"}, "clean absolute POSIX path"},
 		"trailing slash":        {Step{Kind: "copy", Source: "build/setup.sh", Destination: "/opt/x/"}, "clean absolute POSIX path"},
 		"empty argv":            {Step{Kind: "run", Argv: []string{}}, "argv count"},

@@ -16,7 +16,7 @@ func (request *RunStartRequest) UnmarshalJSON(data []byte) error {
 	*request = RunStartRequest{}
 	for name := range fields {
 		switch name {
-		case "lease", "fresh", "restore":
+		case "lease":
 		default:
 			return fmt.Errorf("unknown field %q", name)
 		}
@@ -29,30 +29,6 @@ func (request *RunStartRequest) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("lease: %w", err)
 	}
 
-	arms := 0
-	if raw, present := fields["fresh"]; present {
-		arms++
-		if isStartJSONNull(raw) {
-			return errors.New("fresh must not be null")
-		}
-		request.Fresh = &RunStartFresh{}
-		if err := decodeStrictJSON(raw, request.Fresh); err != nil {
-			return fmt.Errorf("fresh: %w", err)
-		}
-	}
-	if raw, present := fields["restore"]; present {
-		arms++
-		if isStartJSONNull(raw) {
-			return errors.New("restore must not be null")
-		}
-		request.Restore = &RunStartRestore{}
-		if err := decodeStrictJSON(raw, request.Restore); err != nil {
-			return fmt.Errorf("restore: %w", err)
-		}
-	}
-	if arms != 1 {
-		return errors.New("exactly one of fresh or restore is required")
-	}
 	return nil
 }
 

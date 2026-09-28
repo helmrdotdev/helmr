@@ -11,8 +11,8 @@ message ProgramStart {
   RunCause cause = 4;
   string deployment_id = 5;
   string deployment_version = 6;
-  string workspace_id = 7;
-  string base_workspace_version_id = 8;
+  string computer_id = 7;
+  string base_computer_disk_version_id = 8;
 
   oneof entrypoint {
     TaskStart task = 9;
@@ -170,10 +170,9 @@ message RunEvent {
     SessionStatusRequested session_status_requested = 22;
     SessionCloseRequested session_close_requested = 23;
     SessionEventsRequested session_events_requested = 24;
-    WorkspaceCreateRequested workspace_create_requested = 25;
-    WorkspaceRetrieveRequested workspace_retrieve_requested = 26;
-    WorkspaceExecRequested workspace_exec_requested = 30;
-    WorkspaceDeleteRequested workspace_delete_requested = 31;
+    ComputerCreateRequested computer_create_requested = 25;
+    ComputerRetrieveRequested computer_retrieve_requested = 26;
+    ComputerDeleteRequested computer_delete_requested = 31;
     ProgramProcessStartFailed program_process_start_failed = 32;
     SessionOutputWriteRequested session_output_write_requested = 33;
     TurnReadyRequested turn_ready_requested = 34;
@@ -184,6 +183,7 @@ message RunEvent {
     SessionTurnInterruptRequested session_turn_interrupt_requested = 39;
     SessionResumeRequested session_resume_requested = 40;
     SessionCancelRequested session_cancel_requested = 41;
+    ComputerMembersRequested computer_members_requested = 42;
   }
 }
 
@@ -331,7 +331,7 @@ message SessionResumeRequested {
 message ActorStartRequested {
   string correlation_id = 1;
   string declared_id = 2;
-  string workspace_id = 3;
+  string computer_id = 3;
   optional string key = 5;
   optional string idempotency_key = 7;
   string run_options_json = 8;
@@ -361,8 +361,8 @@ message SessionEventsRequested {
   uint32 limit = 4;
 }
 
-message WorkspaceAddress {
-  string workspace_id = 1;
+message ComputerAddress {
+  string computer_id = 1;
 }
 
 message SecretEnvBinding {
@@ -371,7 +371,7 @@ message SecretEnvBinding {
   repeated string allowed_origins = 3;
 }
 message SecretFileBinding { string path = 1; }
-message WorkspaceSecretPlacement {
+message ComputerSecretPlacement {
   string secret = 1;
   oneof placement {
     SecretEnvBinding env = 2;
@@ -379,33 +379,30 @@ message WorkspaceSecretPlacement {
   }
 }
 
-message WorkspaceCreateRequested {
+message ComputerCreateRequested {
   string correlation_id = 1;
   string declared_id = 2;
   optional string key = 3;
-  repeated WorkspaceSecretPlacement secrets = 4;
+  repeated ComputerSecretPlacement secrets = 4;
   optional string idempotency_key = 5;
 }
 
-message WorkspaceRetrieveRequested {
+message ComputerRetrieveRequested {
   string correlation_id = 1;
-  WorkspaceAddress workspace = 2;
+  ComputerAddress computer = 2;
 }
 
-message WorkspaceExecRequested {
+message ComputerMembersRequested {
   string correlation_id = 1;
-  WorkspaceAddress workspace = 2;
-  repeated string command = 3;
-  optional string cwd = 4;
-  map<string, string> env = 5;
-  bytes stdin = 6;
-  optional uint64 timeout_ms = 7;
-  string idempotency_key = 8;
+  ComputerAddress computer = 2;
+  string cursor = 3;
+  int32 limit = 4;
 }
 
-message WorkspaceDeleteRequested {
+
+message ComputerDeleteRequested {
   string correlation_id = 1;
-  WorkspaceAddress workspace = 2;
+  ComputerAddress computer = 2;
   optional string idempotency_key = 3;
 }
 
@@ -444,7 +441,7 @@ message TaskChildInvokeRequested {
   string method = 3;
   bool payload_present = 4;
   optional string payload_json = 5;
-  string workspace_json = 6;
+  string computer_json = 6;
   string options_json = 7;
   optional string idempotency_key = 8;
   optional int64 actor_speculative_input_sequence = 9;

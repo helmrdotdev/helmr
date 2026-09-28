@@ -29,7 +29,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		writeError(w, badRequest(errors.New("invalid Secret transport request")))
 		return
 	}
-	runtimeID, err := ids.Parse(request.RuntimeInstanceID)
+	runtimeID, err := ids.Parse(request.ComputerInstanceID)
 	if err != nil || s.secretProxy == nil || s.db == nil {
 		writeError(w, conflict(secret.ErrDeliveryUnavailable))
 		return
@@ -59,7 +59,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		if err = secret.ValidateProtectedSelectors(request.Placeholders); err == nil {
 			var captured []db.CaptureProtectedSecretEnvelopesRow
 			captured, err = s.db.CaptureProtectedSecretEnvelopes(r.Context(), db.CaptureProtectedSecretEnvelopesParams{
-				RuntimeInstanceID: pgvalue.UUID(runtimeID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
 				WorkerEpoch: worker.WorkerEpoch, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 				ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 				Origin: request.Origin, Placeholders: request.Placeholders,
@@ -71,7 +71,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	} else {
 		var captured db.CaptureSecretProxyPreparationRow
 		captured, err = s.db.CaptureSecretProxyPreparation(r.Context(), db.CaptureSecretProxyPreparationParams{
-			RuntimeInstanceID: pgvalue.UUID(runtimeID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
 			WorkerEpoch: worker.WorkerEpoch, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 			ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 		})
@@ -90,7 +90,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 			if err == nil {
 				preparation.Origins = captured.Origins
 				preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ProxyLeaf(secret.ProxyTrust{
-					EnvironmentID: pgvalue.MustUUIDValue(captured.EnvironmentID), WorkspaceID: pgvalue.MustUUIDValue(captured.WorkspaceID),
+					EnvironmentID: pgvalue.MustUUIDValue(captured.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(captured.ComputerID),
 					Certificate: captured.Certificate, NotAfter: captured.NotAfter.Time,
 					PrivateKeyNonce: captured.PrivateKeyNonce, PrivateKeyCiphertext: captured.PrivateKeyCiphertext,
 				}, hosts)

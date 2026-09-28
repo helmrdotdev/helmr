@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launches the platform Node through guestd's managed Program path inside real
-# Workspace root filesystems, using the admitted Program from a built bundle
+# Computer root filesystems, using the admitted Program from a built bundle
 # and the Runtime artifact. A privileged container supplies Linux namespaces;
 # this exercises guestd's launch code, not Firecracker or checkpoint/resume.
 set -euo pipefail
@@ -31,7 +31,7 @@ cp "$runtime_release/runtime.squashfs" "$tmp/context/runtime.squashfs"
 cp "$bundle/objects/sha256/$program_digest" "$tmp/context/program.squashfs"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/context/guestd.test" ./internal/guestd
 
-# Each Workspace root is an ordinary image. Only some install the library the
+# Each Computer root is an ordinary image. Only some install the library the
 # fixture's source-built addon links; none contains build tools.
 cat >"$tmp/context/Dockerfile" <<'DOCKERFILE'
 FROM debian:bookworm-slim AS bookworm-lib
@@ -51,14 +51,14 @@ COPY runtime.squashfs program.squashfs /artifacts/
 RUN mkdir -p /var/lib/helmr/program \
  && unsquashfs -d /var/lib/helmr/program/runtime /artifacts/runtime.squashfs >/dev/null \
  && unsquashfs -d /var/lib/helmr/program/artifact /artifacts/program.squashfs >/dev/null
-COPY --from=bookworm-lib / /workspaces/bookworm-lib/
-COPY --from=bookworm-lib-nocache / /workspaces/bookworm-lib-nocache/
-COPY --from=ubuntu2004-lib / /workspaces/ubuntu2004-lib/
-COPY --from=ubuntu2510-lib / /workspaces/ubuntu2510-lib/
-COPY --from=bookworm-nolib / /workspaces/bookworm-nolib/
-COPY --from=alpine / /workspaces/alpine/
+COPY --from=bookworm-lib / /computers/bookworm-lib/
+COPY --from=bookworm-lib-nocache / /computers/bookworm-lib-nocache/
+COPY --from=ubuntu2004-lib / /computers/ubuntu2004-lib/
+COPY --from=ubuntu2510-lib / /computers/ubuntu2510-lib/
+COPY --from=bookworm-nolib / /computers/bookworm-nolib/
+COPY --from=alpine / /computers/alpine/
 COPY guestd.test /guestd.test
-ENV HELMR_GUESTD_NATIVE_WORKSPACES=/workspaces
+ENV HELMR_GUESTD_NATIVE_COMPUTERS=/computers
 # guestd reads the resolver the guest init provides at /run/resolv.conf.
 ENTRYPOINT ["/bin/sh", "-ceu", "cp /etc/resolv.conf /run/resolv.conf && exec /guestd.test -test.run '^TestManagedNodeNativeLibraries$' -test.v -test.count=1"]
 DOCKERFILE

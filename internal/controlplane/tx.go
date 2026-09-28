@@ -5,20 +5,16 @@ import (
 	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 )
 
-type transaction interface {
-	Commit(context.Context) error
-	Rollback(context.Context) error
-}
-
-type queryTransactionBeginner interface {
-	BeginQuerier(context.Context) (db.Querier, transaction, error)
+type TxBeginner interface {
+	Begin(context.Context) (pgx.Tx, error)
 }
 
 type txWork struct {
 	q  db.Querier
-	tx transaction
+	tx pgx.Tx
 }
 
 type txLifecycleError struct {
@@ -41,24 +37,9 @@ func txError(stage string, err error) error {
 	return txLifecycleError{stage: stage, err: err}
 }
 
-// inTx owns the control-plane transaction lifecycle for request-level units of
-// work. The queryTransactionBeginner branch is a temporary, package-sealed seam
-// for Querier-level unit fakes; production uses ServerConfig.TX and sqlc
-// queries over the pgx tx.
-func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) (err error) {
-	return inTxWith(ctx, s.db, s.tx, fn)
-}
-
-func inTxWith(ctx context.Context, store db.Querier, txb TxBeginner, fn func(*txWork) error) (err error) {
+func inTxWith(ctx context.Context, txb TxBeginner, fn func(*txWork) error) error {
 	if fn == nil {
 		return errors.New("transaction function is required")
-	}
-	if beginner, ok := store.(queryTransactionBeginner); ok {
-		q, tx, err := beginner.BeginQuerier(ctx)
-		if err != nil {
-			return txError("begin transaction", err)
-		}
-		return runTransaction(ctx, q, tx, fn)
 	}
 	if txb == nil {
 		return errors.New("transactional control plane database is required")
@@ -67,17 +48,14 @@ func inTxWith(ctx context.Context, store db.Querier, txb TxBeginner, fn func(*tx
 	if err != nil {
 		return txError("begin transaction", err)
 	}
-	return runTransaction(ctx, db.New(tx), tx, fn)
+	return runTransaction(ctx, tx, fn)
 }
 
-func runTransaction(ctx context.Context, q db.Querier, tx transaction, fn func(*txWork) error) (err error) {
-	if q == nil {
-		return errors.New("transaction query store is required")
-	}
+func runTransaction(ctx context.Context, tx pgx.Tx, fn func(*txWork) error) (err error) {
 	if tx == nil {
 		return errors.New("transaction is required")
 	}
-	work := &txWork{q: q, tx: tx}
+	work := &txWork{q: db.New(tx), tx: tx}
 	committed := false
 	defer func() {
 		if recovered := recover(); recovered != nil {

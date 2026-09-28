@@ -53,8 +53,8 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	start := api.ActorStartOptions{
-		Key:       request.Key,
-		Workspace: request.Workspace, Run: request.Run,
+		Key:      request.Key,
+		Computer: request.Computer, Run: request.Run,
 	}
 	if err := api.ValidateActorDeclaredID(request.ActorDeclaredID); err != nil {
 		writeError(w, badRequest(err))
@@ -78,8 +78,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	orgID, orgErr := pgvalue.UUIDValue(source.OrgID)
 	projectID, projectErr := pgvalue.UUIDValue(source.ProjectID)
 	environmentID, environmentErr := pgvalue.UUIDValue(source.EnvironmentID)
-	sourceWorkspaceID, workspaceErr := pgvalue.UUIDValue(source.WorkspaceID)
-	if orgErr != nil || projectErr != nil || environmentErr != nil || workspaceErr != nil {
+	if orgErr != nil || projectErr != nil || environmentErr != nil {
 		writeError(w, errors.New("actor start source locators are invalid"))
 		return
 	}
@@ -93,9 +92,8 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		))
 		return
 	}
-	normalized.DisallowedWorkspaceID = sourceWorkspaceID
-	normalized.Authorize = func(ctx context.Context, q db.Querier) error {
-		_, err := authorizeWorkerSessionOperation(ctx, q, worker, request.Lease, pgtype.UUID{})
+	normalized.Authorize = func(ctx context.Context, tx pgx.Tx) error {
+		_, err := authorizeWorkerSessionOperation(ctx, tx, worker, request.Lease, pgtype.UUID{}, pgvalue.UUID(normalized.ComputerID))
 		return err
 	}
 	result, err := s.startActor(r.Context(), normalized)
@@ -140,7 +138,7 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 	worker := workerFromContext(r.Context())
 	var status api.Session
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerRunSource(r.Context(), work.q, worker, request.Lease)
+		source, err := authorizeWorkerRunSource(r.Context(), work.tx, worker, request.Lease)
 		if err != nil {
 			return err
 		}
@@ -186,7 +184,7 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 	}
 	var receipt session.ControlReceipt
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.q, workerFromContext(r.Context()), request.Lease, targetID)
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID, pgtype.UUID{})
 		if err != nil {
 			return err
 		}
@@ -250,7 +248,7 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 		after = *request.After
 	}
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerSessionOperation(r.Context(), work.q, workerFromContext(r.Context()), request.Lease, targetID)
+		source, err := authorizeWorkerSessionOperation(r.Context(), work.tx, workerFromContext(r.Context()), request.Lease, targetID, pgtype.UUID{})
 		if err != nil {
 			return err
 		}
@@ -276,7 +274,7 @@ func (s *Server) workerRunSource(
 	var source workerRunSourceAuthority
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		source, err = authorizeWorkerRunSource(ctx, work.q, worker, lease)
+		source, err = authorizeWorkerRunSource(ctx, work.tx, worker, lease)
 		return err
 	})
 	return source, err
@@ -300,6 +298,10 @@ func workerActorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool
 	if errors.As(err, &operation) {
 		return runtimeOperationFailure(operation.Code, operation.Code, false), true
 	}
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		return workerapi.RuntimeOperationFailure{Code: expired.ErrorCode(), Message: expired.Error()}, true
+	}
 	var claimConflict idempotency.ConflictError
 	var keyConflict ActorKeyConflictError
 	switch {
@@ -309,10 +311,10 @@ func workerActorStartFailure(err error) (workerapi.RuntimeOperationFailure, bool
 		return runtimeOperationFailure("actor_key_conflict", keyConflict.Error(), false), true
 	case errors.Is(err, errActorStartNotDeployed):
 		return runtimeOperationFailure("actor_not_deployed", err.Error(), false), true
-	case errors.Is(err, errActorStartWorkspaceNotFound):
-		return runtimeOperationFailure("workspace_not_found", err.Error(), false), true
-	case errors.Is(err, errActorStartWorkspaceConflict):
-		return runtimeOperationFailure("workspace_unavailable", err.Error(), true), true
+	case errors.Is(err, errActorStartComputerNotFound):
+		return runtimeOperationFailure("computer_not_found", err.Error(), false), true
+	case errors.Is(err, errActorStartComputerConflict):
+		return runtimeOperationFailure("computer_unavailable", err.Error(), true), true
 	case errors.Is(err, errActorStartSecretUnavailable):
 		return runtimeOperationFailure("secret_unavailable", err.Error(), false), true
 	case errors.Is(err, errActorStartInvalid):

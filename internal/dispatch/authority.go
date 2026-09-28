@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -23,19 +23,19 @@ const runtimeArchitecture = "x86_64"
 
 type Authority struct {
 	pool       *pgxpool.Pool
-	fencingKey workspace.FencingKey
+	fencingKey computer.FencingKey
 }
 
 func NewRunAuthority(
 	pool *pgxpool.Pool,
-	fencingKey workspace.FencingKey,
+	fencingKey computer.FencingKey,
 ) (*Authority, error) {
 	authority, err := newAuthority(pool)
 	if err != nil {
 		return nil, err
 	}
 	if !fencingKey.Valid() {
-		return nil, errors.New("run authority workspace fencing key is required")
+		return nil, errors.New("run authority computer fencing key is required")
 	}
 	authority.fencingKey = fencingKey
 	return authority, nil
@@ -61,12 +61,13 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 }
 
 type workerFence struct {
-	GroupID          pgtype.UUID
-	RegionID         string
-	WorkerInstanceID pgtype.UUID
-	WorkerEpoch      int64
-	RunArchitecture  string
-	RequirePrimary   bool
+	GroupID         pgtype.UUID
+	RegionID        string
+	WorkerHostID    pgtype.UUID
+	WorkerEpoch     int64
+	RunArchitecture string
+	RequirePrimary  bool
+	AllowDraining   bool
 }
 
 // lockWorkerFence takes a shared worker-group lock before the worker lock,
@@ -88,43 +89,43 @@ SELECT id
 	err = tx.QueryRow(ctx, `
 SELECT worker_pools.id
   FROM worker_pools
-  JOIN worker_instances
-    ON worker_instances.worker_pool_id = worker_pools.id
-   AND worker_instances.worker_group_id = worker_pools.worker_group_id
+  JOIN worker_hosts
+    ON worker_hosts.worker_pool_id = worker_pools.id
+   AND worker_hosts.worker_group_id = worker_pools.worker_group_id
 	JOIN worker_groups
 	  ON worker_groups.id = worker_pools.worker_group_id
- WHERE worker_instances.id = $1
-   AND worker_instances.worker_group_id = $2
+ WHERE worker_hosts.id = $1
+   AND worker_hosts.worker_group_id = $2
    AND worker_pools.status = 'active'
 	AND (NOT $3::boolean OR worker_groups.primary_pool_id = worker_pools.id)
-	FOR SHARE OF worker_pools`, fence.WorkerInstanceID, fence.GroupID, fence.RequirePrimary).Scan(&poolID)
+	FOR SHARE OF worker_pools`, fence.WorkerHostID, fence.GroupID, fence.RequirePrimary).Scan(&poolID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker pool: %w", err)
 	}
 
 	var workerID pgtype.UUID
 	err = tx.QueryRow(ctx, `
-SELECT worker_instances.id
-  FROM worker_instances
+SELECT worker_hosts.id
+  FROM worker_hosts
   JOIN worker_groups
-    ON worker_groups.id = worker_instances.worker_group_id
+    ON worker_groups.id = worker_hosts.worker_group_id
   JOIN worker_pools
-    ON worker_pools.id = worker_instances.worker_pool_id
-   AND worker_pools.worker_group_id = worker_instances.worker_group_id
-  LEFT JOIN runtime_identities
-    ON runtime_identities.id = worker_instances.runtime_identity_id
- WHERE worker_instances.id = $1
-   AND worker_instances.worker_group_id = $2
-   AND worker_instances.current_epoch = $3
-   AND worker_instances.status = 'active'
+    ON worker_pools.id = worker_hosts.worker_pool_id
+   AND worker_pools.worker_group_id = worker_hosts.worker_group_id
+  LEFT JOIN vm_platforms
+    ON vm_platforms.id = worker_hosts.vm_platform_id
+ WHERE worker_hosts.id = $1
+   AND worker_hosts.worker_group_id = $2
+   AND worker_hosts.current_epoch = $3
+   AND (worker_hosts.status = 'active' OR ($7::boolean AND worker_hosts.status='draining'))
    AND worker_pools.status = 'active'
-	AND worker_instances.observed_at >= transaction_timestamp() - $5 * interval '1 second'
-	AND worker_instances.run_paused_reason IS NULL
-	AND runtime_identities.runtime_arch = $4
-	   AND runtime_identities.vm_runtime_contract = $6
-	FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
+	AND worker_hosts.observed_at >= clock_timestamp() - $5 * interval '1 second'
+	AND worker_hosts.run_paused_reason IS NULL
+	AND vm_platforms.arch = $4
+	   AND vm_platforms.contract = $6
+	FOR UPDATE OF worker_hosts`, fence.WorkerHostID, fence.GroupID,
 		fence.WorkerEpoch, fence.RunArchitecture,
-		workerapi.WorkerObservationFreshnessSeconds, runtimeid.Contract,
+		workerapi.WorkerObservationFreshnessSeconds, vmplatform.Contract, fence.AllowDraining,
 	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
@@ -135,19 +136,19 @@ SELECT worker_instances.id
 // checkLockedWorkerRuntimeAdmission keeps Runtime-slot admission separate from
 // the Run-domain fence. Callers must already hold the worker row lock. A
 // Runtime pause prevents creating or reclaiming VM state, but does not prevent
-// a Run from reusing an already-ready Workspace Runtime.
+// a Run from reusing an already-ready Computer Runtime.
 func checkLockedWorkerRuntimeAdmission(
 	ctx context.Context,
 	tx pgx.Tx,
-	workerInstanceID pgtype.UUID,
+	workerHostID pgtype.UUID,
 	workerEpoch int64,
 ) error {
 	var workerID pgtype.UUID
 	return tx.QueryRow(ctx, `
 SELECT id
-  FROM worker_instances
+  FROM worker_hosts
  WHERE id = $1
    AND current_epoch = $2
-   AND runtime_paused_reason IS NULL
- FOR UPDATE`, workerInstanceID, workerEpoch).Scan(&workerID)
+   AND vm_paused_reason IS NULL
+ FOR UPDATE`, workerHostID, workerEpoch).Scan(&workerID)
 }

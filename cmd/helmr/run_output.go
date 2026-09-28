@@ -23,7 +23,7 @@ func writeRunDetails(w io.Writer, run api.RunSnapshotResponse) {
 	fmt.Fprintf(w, "ID:          %s\n", run.ID)
 	fmt.Fprintf(w, "Entrypoint:  %s %s\n", run.Entrypoint.Kind, run.Entrypoint.ID)
 	fmt.Fprintf(w, "Deployment:  %s (%s)\n", run.Deployment.ID, run.Deployment.Version)
-	fmt.Fprintf(w, "Workspace:   %s\n", run.WorkspaceID)
+	fmt.Fprintf(w, "Computer:   %s\n", run.ComputerID)
 	fmt.Fprintf(w, "Status:      %s\n", run.Status)
 	fmt.Fprintf(w, "Attempt:     %d\n", run.CurrentAttemptNumber)
 	fmt.Fprintf(w, "Cause:       %s\n", run.Cause.Type)

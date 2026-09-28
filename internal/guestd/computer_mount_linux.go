@@ -15,7 +15,7 @@ import (
 // The supervisor owns a private mount namespace and must exclude all user scopes
 // while assembling or removing this view. Sources are supervisor-owned mounts;
 // runtimeFiles contains only guest-visible files, never supervisor journals.
-// This primitive is not yet wired into the production Workspace launcher.
+// This primitive is not yet wired into the production Computer launcher.
 func mountComputerRoot(customerRoot, target, program, runtime, runtimeFiles string) (func() error, error) {
 	var mounted []string
 	cleanup := func() error {

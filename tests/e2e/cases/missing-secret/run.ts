@@ -2,7 +2,7 @@ import { verify, assert, errorCode, deadline } from "../../support/context"
 await verify("missing-secret", async ({ client, marker, cleanup, objects }) => {
   await assert.rejects(
     async () => {
-      const ref = await client.sandboxes.createWorkspace(
+      const ref = await client.sandboxes.createComputer(
         "helmr-secret-smoke",
         {
           key: marker,
@@ -13,7 +13,7 @@ await verify("missing-secret", async ({ client, marker, cleanup, objects }) => {
         },
         { signal: deadline(30_000) },
       )
-      objects.workspace_ids.push(ref.id)
+      objects.computer_ids.push(ref.id)
       cleanup(() =>
         ref.delete({ idempotencyKey: `delete:${marker}` }, { signal: deadline(30_000) }),
       )

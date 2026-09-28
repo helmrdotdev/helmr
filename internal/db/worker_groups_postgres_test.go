@@ -12,14 +12,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestRunWorkerCapacitySelectionFindsViableWorkerPastPlannerLimit(t *testing.T) {
+func TestComputerInstanceCapacitySelectionFindsViableWorkerPastPlannerLimit(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	seedCapacityQueryWorkers(t, ctx, pool, 1002, 1001)
@@ -34,21 +34,21 @@ func TestRunWorkerCapacitySelectionFindsViableWorkerPastPlannerLimit(t *testing.
 	if len(bins) != 1001 {
 		t.Fatalf("planner Worker prefix has %d rows, want 1001", len(bins))
 	}
-	if bins[len(bins)-1].WorkerInstanceID != capacityQueryWorkerID(1001) {
-		t.Fatalf("planner Worker prefix ends at %s", pgvalue.UUIDString(bins[len(bins)-1].WorkerInstanceID))
+	if bins[len(bins)-1].WorkerHostID != capacityQueryWorkerID(1001) {
+		t.Fatalf("planner Worker prefix ends at %s", pgvalue.UUIDString(bins[len(bins)-1].WorkerHostID))
 	}
 
-	selected, err := q.SelectRunWorkerCapacity(ctx, runCapacitySelectionParams())
+	selected, err := q.SelectComputerInstanceCapacity(ctx, runCapacitySelectionParams())
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := capacityQueryWorkerID(1002)
-	if selected.WorkerInstanceID != want {
-		t.Fatalf("selected Worker = %s, want %s", pgvalue.UUIDString(selected.WorkerInstanceID), pgvalue.UUIDString(want))
+	if selected.WorkerHostID != want {
+		t.Fatalf("selected Worker = %s, want %s", pgvalue.UUIDString(selected.WorkerHostID), pgvalue.UUIDString(want))
 	}
 }
 
-func TestRunWorkerCapacityPressureCandidatesPageByWorkerID(t *testing.T) {
+func TestComputerInstanceCapacityPressureCandidatesPageByWorkerID(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	seedCapacityQueryWorkers(t, ctx, pool, 129, 0)
@@ -56,28 +56,28 @@ func TestRunWorkerCapacityPressureCandidatesPageByWorkerID(t *testing.T) {
 	params := runCapacityPressureParams()
 	params.RowLimit = 128
 
-	first, err := q.ListRunWorkerCapacityPressureCandidates(ctx, params)
+	first, err := q.ListComputerInstanceCapacityPressureCandidates(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(first) != 128 {
 		t.Fatalf("first pressure page has %d rows, want 128", len(first))
 	}
-	if first[0].WorkerInstanceID != capacityQueryWorkerID(1) || first[127].WorkerInstanceID != capacityQueryWorkerID(128) {
-		t.Fatalf("first pressure page bounds = %s..%s", pgvalue.UUIDString(first[0].WorkerInstanceID),
-			pgvalue.UUIDString(first[len(first)-1].WorkerInstanceID))
+	if first[0].WorkerHostID != capacityQueryWorkerID(1) || first[127].WorkerHostID != capacityQueryWorkerID(128) {
+		t.Fatalf("first pressure page bounds = %s..%s", pgvalue.UUIDString(first[0].WorkerHostID),
+			pgvalue.UUIDString(first[len(first)-1].WorkerHostID))
 	}
-	params.AfterWorkerInstanceID = first[len(first)-1].WorkerInstanceID
-	second, err := q.ListRunWorkerCapacityPressureCandidates(ctx, params)
+	params.AfterWorkerHostID = first[len(first)-1].WorkerHostID
+	second, err := q.ListComputerInstanceCapacityPressureCandidates(ctx, params)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second) != 1 || second[0].WorkerInstanceID != capacityQueryWorkerID(129) {
+	if len(second) != 1 || second[0].WorkerHostID != capacityQueryWorkerID(129) {
 		t.Fatalf("second pressure page = %+v, want Worker 129", second)
 	}
 }
 
-func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
+func TestComputerInstanceCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		cpuDigest string
@@ -90,27 +90,27 @@ func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 			pool := newPostgresDB(t, ctx)
 			seedCapacityQueryWorkers(t, ctx, pool, 1, 0)
 			plannerCompatible := capacity.CanRestore(capacity.RestoreRequirements{
-				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
+				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, VMPlatformID: dbtest.DefaultRuntimeID,
 				VCPUCount: 1, CPUConfigDigest: test.cpuDigest,
 				Resources: capacity.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
 			}, capacity.Pool{
-				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, RuntimeIdentityID: dbtest.DefaultRuntimeID,
+				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, VMPlatformID: dbtest.DefaultRuntimeID,
 				PerVM:     capacity.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
-				CPUShapes: []runtimeid.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},
+				CPUShapes: []vmplatform.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},
 			})
 			immediateParams := runCapacitySelectionParams()
-			immediateParams.RequiredRuntimeIdentityID = dbtest.DefaultRuntimeID
+			immediateParams.RequiredVMPlatformID = dbtest.DefaultRuntimeID
 			immediateParams.RequiredWorkerGroupID = dbtest.DefaultWorkerGroupID
 			immediateParams.RequiredVMVCPUCount = 1
 			immediateParams.RequiredCPUConfigDigest = test.cpuDigest
-			_, immediateErr := db.New(pool).SelectRunWorkerCapacity(ctx, immediateParams)
+			_, immediateErr := db.New(pool).SelectComputerInstanceCapacity(ctx, immediateParams)
 
 			pressureParams := runCapacityPressureParams()
-			pressureParams.RequiredRuntimeIdentityID = immediateParams.RequiredRuntimeIdentityID
+			pressureParams.RequiredVMPlatformID = immediateParams.RequiredVMPlatformID
 			pressureParams.RequiredWorkerGroupID = immediateParams.RequiredWorkerGroupID
 			pressureParams.RequiredVMVCPUCount = immediateParams.RequiredVMVCPUCount
 			pressureParams.RequiredCPUConfigDigest = immediateParams.RequiredCPUConfigDigest
-			pressure, err := db.New(pool).ListRunWorkerCapacityPressureCandidates(ctx, pressureParams)
+			pressure, err := db.New(pool).ListComputerInstanceCapacityPressureCandidates(ctx, pressureParams)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -124,20 +124,20 @@ func TestRunWorkerCapacityRestoreCompatibilityMatchesPlanner(t *testing.T) {
 	}
 }
 
-func runCapacitySelectionParams() db.SelectRunWorkerCapacityParams {
-	return db.SelectRunWorkerCapacityParams{
+func runCapacitySelectionParams() db.SelectComputerInstanceCapacityParams {
+	return db.SelectComputerInstanceCapacityParams{
 		RegionID: dbtest.DefaultRegionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
-		RunArchitecture: "x86_64", VMRuntimeContract: runtimeid.Contract,
+		RunArchitecture: "x86_64", Contract: vmplatform.Contract,
 		RequiredCPUMillis: 1000, RequiredMemoryBytes: 1 << 30,
 		RequiredGuestEphemeralDiskBytes: 32 << 30,
 	}
 }
 
-func runCapacityPressureParams() db.ListRunWorkerCapacityPressureCandidatesParams {
+func runCapacityPressureParams() db.ListComputerInstanceCapacityPressureCandidatesParams {
 	base := runCapacitySelectionParams()
-	return db.ListRunWorkerCapacityPressureCandidatesParams{
+	return db.ListComputerInstanceCapacityPressureCandidatesParams{
 		RegionID: base.RegionID, ObservationFreshnessSeconds: base.ObservationFreshnessSeconds,
-		RunArchitecture: base.RunArchitecture, VMRuntimeContract: base.VMRuntimeContract,
+		RunArchitecture: base.RunArchitecture, Contract: base.Contract,
 		RequiredCPUMillis: base.RequiredCPUMillis, RequiredMemoryBytes: base.RequiredMemoryBytes,
 		RequiredGuestEphemeralDiskBytes: base.RequiredGuestEphemeralDiskBytes, RowLimit: 128,
 	}
@@ -146,28 +146,26 @@ func runCapacityPressureParams() db.ListRunWorkerCapacityPressureCandidatesParam
 func seedCapacityQueryWorkers(t *testing.T, ctx context.Context, pool *pgxpool.Pool, count, paused int) {
 	t.Helper()
 	dbtest.MustExec(t, ctx, pool, `
-INSERT INTO worker_instances (
+INSERT INTO worker_hosts (
     id, resource_id, worker_group_id, worker_pool_id, status,
-    current_epoch, current_service_id, runtime_identity_id,
-    substrate_format, substrate_contract,
+    current_epoch, current_service_id, vm_platform_id,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_guest_ephemeral_disk_bytes,
-    max_vm_slots, max_runtime_starts, cpu_environment, cpu_environment_digest,
+    max_vm_slots, max_vm_starts, cpu_environment, cpu_environment_digest,
     run_paused_reason, observed_at, epoch_started_at, activated_at
 )
 SELECT ('00000000-0000-7000-8000-' || lpad(value::text, 12, '0'))::uuid,
        'capacity-worker-' || value,
        $1, $2, 'active', 1,
        ('10000000-0000-7000-8000-' || lpad(value::text, 12, '0'))::uuid,
-       $3, $4, $5,
+       $3,
        8000, 17179869184, 274877906944,
        4000, 8589934592, 34359738368,
-       8, 8, '{}'::jsonb, $6,
-       CASE WHEN value <= $7 THEN 'test-incompatible' ELSE NULL END,
+       8, 8, '{}'::jsonb, $4,
+       CASE WHEN value <= $5 THEN 'test-incompatible' ELSE NULL END,
        now(), now(), now()
-  FROM generate_series(1, $8::integer) AS value`,
+  FROM generate_series(1, $6::integer) AS value`,
 		dbtest.DefaultWorkerGroupID, dbtest.DefaultWorkerPoolID, dbtest.DefaultRuntimeID,
-		capacity.SubstrateFormatExt4, capacity.SubstrateContractExt4,
 		dbtest.DefaultCPUConfigID, paused, count,
 	)
 }
@@ -185,10 +183,10 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	secretHash := []byte("epoch-liveness-secret")
 	enrollTestWorker(t, ctx, q, workerID, "epoch-liveness-worker", secretHash)
 
-	authenticate := func(service uuid.UUID) db.AuthenticateWorkerInstanceCredentialRow {
+	authenticate := func(service uuid.UUID) db.AuthenticateWorkerHostCredentialRow {
 		t.Helper()
-		row, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
-			WorkerInstanceID: pgvalue.UUID(workerID), SecretHash: secretHash,
+		row, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
+			WorkerHostID: pgvalue.UUID(workerID), SecretHash: secretHash,
 			ServiceID: pgvalue.UUID(service),
 		})
 		if err != nil {
@@ -199,12 +197,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 
 	firstEpoch := authenticate(serviceID)
 	activationParams := testWorkerActivationParams(workerID, firstEpoch.CurrentEpoch)
-	activated, err := q.ActivateWorkerInstance(ctx, activationParams)
+	activated, err := q.ActivateWorkerHost(ctx, activationParams)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid || activated.RuntimePausedReason.Valid {
-		t.Fatalf("initial activation liveness = observed:%+v run:%+v runtime:%+v", activated.ObservedAt, activated.RunPausedReason, activated.RuntimePausedReason)
+	if activated.ObservedAt.Valid || activated.RunPausedReason.Valid || activated.VMPausedReason.Valid {
+		t.Fatalf("initial activation liveness = observed:%+v run:%+v runtime:%+v", activated.ObservedAt, activated.RunPausedReason, activated.VMPausedReason)
 	}
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
@@ -215,7 +213,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, bin := range bins {
-		if bin.WorkerInstanceID == pgvalue.UUID(workerID) {
+		if bin.WorkerHostID == pgvalue.UUID(workerID) {
 			t.Fatalf("unobserved active worker appeared in capacity bins: %+v", bin)
 		}
 	}
@@ -225,7 +223,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	}
 	if authorized, err := q.AuthorizeWorkerActivationCredential(ctx, authorization); err != nil {
 		t.Fatal(err)
-	} else if authorized.WorkerStatus != db.WorkerInstanceStatusActive {
+	} else if authorized.WorkerStatus != db.WorkerHostStatusActive {
 		t.Fatalf("activation replay authorization state = %q, want active", authorized.WorkerStatus)
 	}
 	staleAuthorization := authorization
@@ -235,27 +233,27 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	}
 	changed := activationParams
 	changed.MaxVMSlots++
-	if _, err := q.ActivateWorkerInstance(ctx, changed); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.ActivateWorkerHost(ctx, changed); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("changed activation replay error = %v, want pgx.ErrNoRows", err)
 	}
 
 	sentinel := time.Now().UTC().Add(-30 * time.Second).Truncate(time.Microsecond)
 	if _, err := pool.Exec(ctx, `
-		UPDATE worker_instances
+		UPDATE worker_hosts
 		   SET observed_at = $2,
 		       run_paused_reason = NULL,
-		       runtime_paused_reason = 'startup_recovery_leak'
+		       vm_paused_reason = 'startup_recovery_leak'
 		 WHERE id = $1
 	`, workerID, sentinel); err != nil {
 		t.Fatal(err)
 	}
-	replayed, err := q.ActivateWorkerInstance(ctx, activationParams)
+	replayed, err := q.ActivateWorkerHost(ctx, activationParams)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !replayed.ObservedAt.Valid || !replayed.ObservedAt.Time.Equal(sentinel) || replayed.RunPausedReason.Valid ||
-		!replayed.RuntimePausedReason.Valid || replayed.RuntimePausedReason.String != "startup_recovery_leak" {
-		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v runtime:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.RuntimePausedReason)
+		!replayed.VMPausedReason.Valid || replayed.VMPausedReason.String != "startup_recovery_leak" {
+		t.Fatalf("activation replay changed liveness = observed:%+v run:%+v runtime:%+v", replayed.ObservedAt, replayed.RunPausedReason, replayed.VMPausedReason)
 	}
 
 	sameEpoch := authenticate(serviceID)
@@ -264,7 +262,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	}
 	var preservedObservedAt pgtype.Timestamptz
 	var preservedRuntimePause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, runtime_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedRuntimePause); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT observed_at, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&preservedObservedAt, &preservedRuntimePause); err != nil {
 		t.Fatal(err)
 	}
 	if !preservedObservedAt.Valid || !preservedObservedAt.Time.Equal(sentinel) || preservedRuntimePause.String != "startup_recovery_leak" {
@@ -272,12 +270,12 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	}
 
 	nextEpoch := authenticate(uuid.NewV7())
-	if !nextEpoch.CurrentEpoch.Valid || nextEpoch.CurrentEpoch.Int64 != firstEpoch.CurrentEpoch.Int64+1 || nextEpoch.Status != db.WorkerInstanceStatusRegistering {
+	if !nextEpoch.CurrentEpoch.Valid || nextEpoch.CurrentEpoch.Int64 != firstEpoch.CurrentEpoch.Int64+1 || nextEpoch.Status != db.WorkerHostStatusRegistering {
 		t.Fatalf("new service epoch = %+v", nextEpoch)
 	}
 	var observedAt pgtype.Timestamptz
 	var runPause, runtimePause pgtype.Text
-	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, runtime_paused_reason FROM worker_instances WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &runtimePause); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT observed_at, run_paused_reason, vm_paused_reason FROM worker_hosts WHERE id = $1`, workerID).Scan(&observedAt, &runPause, &runtimePause); err != nil {
 		t.Fatal(err)
 	}
 	if observedAt.Valid || runPause.Valid || runtimePause.Valid {
@@ -292,19 +290,19 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	workerID := uuid.NewV7()
 	secretHash := []byte("draining-restart-secret")
 	enrollTestWorker(t, ctx, q, workerID, "draining-restart-worker", secretHash)
-	authenticate := func(serviceID uuid.UUID) db.AuthenticateWorkerInstanceCredentialRow {
+	authenticate := func(serviceID uuid.UUID) db.AuthenticateWorkerHostCredentialRow {
 		t.Helper()
-		row, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
-			WorkerInstanceID: pgvalue.UUID(workerID),
-			SecretHash:       secretHash,
-			ServiceID:        pgvalue.UUID(serviceID),
+		row, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
+			WorkerHostID: pgvalue.UUID(workerID),
+			SecretHash:   secretHash,
+			ServiceID:    pgvalue.UUID(serviceID),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return row
 	}
-	authorizeActivation := func(row db.AuthenticateWorkerInstanceCredentialRow) db.AuthorizeWorkerActivationCredentialRow {
+	authorizeActivation := func(row db.AuthenticateWorkerHostCredentialRow) db.AuthorizeWorkerActivationCredentialRow {
 		t.Helper()
 		authorized, err := q.AuthorizeWorkerActivationCredential(ctx, db.AuthorizeWorkerActivationCredentialParams{
 			CredentialID:      row.ID,
@@ -321,11 +319,11 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	firstServiceID := uuid.NewV7()
 	firstEpoch := authenticate(firstServiceID)
 	firstActivation := testWorkerActivationParams(workerID, firstEpoch.CurrentEpoch)
-	active, err := q.ActivateWorkerInstance(ctx, firstActivation)
+	active, err := q.ActivateWorkerHost(ctx, firstActivation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	draining, err := q.DrainWorkerInstance(ctx, db.DrainWorkerInstanceParams{
+	draining, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
 		ID:                   pgvalue.UUID(workerID),
 		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
 		ExpectedEpoch:        firstEpoch.CurrentEpoch,
@@ -334,42 +332,42 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draining.Status != db.WorkerInstanceStatusDraining || !draining.DrainingAt.Valid {
+	if draining.Status != db.WorkerHostStatusDraining || !draining.DrainingAt.Valid {
 		t.Fatalf("draining worker = %+v", draining)
 	}
 
 	sameEpoch := authenticate(firstServiceID)
-	if authorized := authorizeActivation(sameEpoch); authorized.WorkerStatus != db.WorkerInstanceStatusDraining {
+	if authorized := authorizeActivation(sameEpoch); authorized.WorkerStatus != db.WorkerHostStatusDraining {
 		t.Fatalf("draining activation replay authorization = %+v", authorized)
 	}
-	replayedDraining, err := q.ActivateWorkerInstance(ctx, firstActivation)
+	replayedDraining, err := q.ActivateWorkerHost(ctx, firstActivation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayedDraining.Status != db.WorkerInstanceStatusDraining || replayedDraining.DrainingAt != draining.DrainingAt {
+	if replayedDraining.Status != db.WorkerHostStatusDraining || replayedDraining.DrainingAt != draining.DrainingAt {
 		t.Fatalf("draining activation replay = %+v, want draining at %+v", replayedDraining, draining.DrainingAt)
 	}
 	mismatched := firstActivation
 	mismatched.MaxVMSlots++
-	if _, err := q.ActivateWorkerInstance(ctx, mismatched); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := q.ActivateWorkerHost(ctx, mismatched); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("mismatched draining activation error = %v, want pgx.ErrNoRows", err)
 	}
-	if _, err := q.LockWorkerInstanceForActivation(ctx, db.LockWorkerInstanceForActivationParams{
-		WorkerInstanceID: pgvalue.UUID(workerID),
-		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
-		WorkerPoolID:     pgvalue.NewUUIDv7(),
-		WorkerEpoch:      firstEpoch.CurrentEpoch,
+	if _, err := q.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{
+		WorkerHostID:  pgvalue.UUID(workerID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		WorkerPoolID:  pgvalue.NewUUIDv7(),
+		WorkerEpoch:   firstEpoch.CurrentEpoch,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("mismatched draining pool fence error = %v, want pgx.ErrNoRows", err)
 	}
 
 	nextEpoch := authenticate(uuid.NewV7())
-	if nextEpoch.Status != db.WorkerInstanceStatusDraining ||
+	if nextEpoch.Status != db.WorkerHostStatusDraining ||
 		nextEpoch.CurrentEpoch.Int64 != firstEpoch.CurrentEpoch.Int64+1 {
 		t.Fatalf("restarted draining epoch = %+v", nextEpoch)
 	}
 	cleared := authorizeActivation(nextEpoch)
-	if cleared.WorkerStatus != db.WorkerInstanceStatusDraining {
+	if cleared.WorkerStatus != db.WorkerHostStatusDraining {
 		t.Fatalf("restarted draining authorization = %+v", cleared)
 	}
 	staleAuthorization := db.AuthorizeWorkerActivationCredentialParams{
@@ -383,32 +381,31 @@ func TestDrainingWorkerActivationSurvivesRestartAndLostResponse(t *testing.T) {
 	}
 
 	restartedActivation := testWorkerActivationParams(workerID, nextEpoch.CurrentEpoch)
-	restarted, err := q.ActivateWorkerInstance(ctx, restartedActivation)
+	restarted, err := q.ActivateWorkerHost(ctx, restartedActivation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if restarted.Status != db.WorkerInstanceStatusDraining || restarted.DrainingAt != draining.DrainingAt {
+	if restarted.Status != db.WorkerHostStatusDraining || restarted.DrainingAt != draining.DrainingAt {
 		t.Fatalf("restarted draining activation = %+v", restarted)
 	}
-	lostResponseReplay, err := q.ActivateWorkerInstance(ctx, restartedActivation)
+	lostResponseReplay, err := q.ActivateWorkerHost(ctx, restartedActivation)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lostResponseReplay.Status != db.WorkerInstanceStatusDraining ||
+	if lostResponseReplay.Status != db.WorkerHostStatusDraining ||
 		lostResponseReplay.CurrentEpoch != nextEpoch.CurrentEpoch ||
 		lostResponseReplay.DrainingAt != restarted.DrainingAt {
 		t.Fatalf("lost activation response replay = %+v, want %+v", lostResponseReplay, restarted)
 	}
 }
 
-func testWorkerActivationParams(workerID uuid.UUID, epoch pgtype.Int8) db.ActivateWorkerInstanceParams {
-	return db.ActivateWorkerInstanceParams{
-		WorkerInstanceID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID, WorkerEpoch: epoch,
+func testWorkerActivationParams(workerID uuid.UUID, epoch pgtype.Int8) db.ActivateWorkerHostParams {
+	return db.ActivateWorkerHostParams{
+		WorkerHostID: pgvalue.UUID(workerID), WorkerGroupID: dbtest.DefaultWorkerGroupID, WorkerEpoch: epoch,
 		EpochCPUMillis: 2000, EpochMemoryBytes: 2 << 30, EpochGuestEphemeralDiskBytes: 64 << 30,
-		MaxVMSlots: 1, RuntimeIdentityID: pgtype.Text{String: dbtest.DefaultRuntimeID, Valid: true},
-		SubstrateFormat: "ext4", SubstrateContract: "helmr.substrate.ext4.v1",
+		MaxVMSlots: 1, VMPlatformID: pgtype.Text{String: dbtest.DefaultRuntimeID, Valid: true},
 		PerVMCPUMillis: 1000, PerVMMemoryBytes: 1 << 30, PerVMGuestEphemeralDiskBytes: 32 << 30,
-		MaxRuntimeStarts:     1,
+		MaxVMStarts:          1,
 		CPUEnvironment:       []byte(`{}`),
 		CPUEnvironmentDigest: pgtype.Text{String: dbtest.DefaultCPUConfigID, Valid: true},
 	}
@@ -503,13 +500,13 @@ func TestWorkerGroupStatusTransitionsAreFencedAndReplaySafe(t *testing.T) {
 	}
 }
 
-func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
+func TestDeploymentWorkerHostLossIsFencedAndReplaySafe(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
 	workerID := insertActiveWorkerWithObservation(t, ctx, pool, time.Now())
 	resourceID := "active-" + workerID.String()
-	initial, err := q.GetWorkerInstanceStatusByResource(ctx, db.GetWorkerInstanceStatusByResourceParams{
+	initial, err := q.GetWorkerHostStatusByResource(ctx, db.GetWorkerHostStatusByResourceParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 	})
 	if err != nil {
@@ -517,24 +514,24 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	}
 	credentialID := uuid.NewV7()
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_instance_credentials (
-			id, worker_group_id, worker_instance_id, key_prefix, claim_version,
+		INSERT INTO worker_host_credentials (
+			id, worker_group_id, worker_host_id, key_prefix, claim_version,
 			secret_hash
 		) VALUES ($1, $2, $3, $4, $5, $6)
 	`, credentialID, dbtest.DefaultWorkerGroupID, workerID, uuid.New().String(), initial.ClaimVersion, []byte("loss-secret")); err != nil {
 		t.Fatal(err)
 	}
-	lost, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
+	lost, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lost.ID != pgvalue.UUID(workerID) || lost.Status != db.WorkerInstanceStatusLost || lost.ClaimVersion != initial.ClaimVersion+1 || !lost.TransitionApplied {
+	if lost.ID != pgvalue.UUID(workerID) || lost.Status != db.WorkerHostStatusLost || lost.ClaimVersion != initial.ClaimVersion+1 || !lost.TransitionApplied {
 		t.Fatalf("lost = %+v", lost)
 	}
-	replayed, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
+	replayed, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
@@ -544,14 +541,14 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	if replayed.ClaimVersion != lost.ClaimVersion || replayed.TransitionApplied {
 		t.Fatalf("replayed loss = %+v", replayed)
 	}
-	if _, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
+	if _, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: lost.ClaimVersion,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("stale/new loss error = %v", err)
 	}
 	var revoked bool
-	if err := pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM worker_instance_credentials WHERE id = $1`, credentialID).Scan(&revoked); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM worker_host_credentials WHERE id = $1`, credentialID).Scan(&revoked); err != nil {
 		t.Fatal(err)
 	}
 	if !revoked {
@@ -559,7 +556,7 @@ func TestDeploymentWorkerInstanceLossIsFencedAndReplaySafe(t *testing.T) {
 	}
 }
 
-func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *testing.T) {
+func TestDeploymentWorkerHostLossTerminallyFencesRegisteringIdentity(t *testing.T) {
 	ctx := context.Background()
 	pool := newPostgresDB(t, ctx)
 	q := db.New(pool)
@@ -567,46 +564,46 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	resourceID := "registering-lost-" + workerID.String()
 	secretHash := []byte("registering-lost-secret")
 	credential := enrollTestWorker(t, ctx, q, workerID, resourceID, secretHash)
-	initial, err := q.GetWorkerInstanceStatusByResource(ctx, db.GetWorkerInstanceStatusByResourceParams{
+	initial, err := q.GetWorkerHostStatusByResource(ctx, db.GetWorkerHostStatusByResourceParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if initial.Status != db.WorkerInstanceStatusRegistering || initial.CurrentEpoch.Valid {
+	if initial.Status != db.WorkerHostStatusRegistering || initial.CurrentEpoch.Valid {
 		t.Fatalf("initial lifecycle = %+v, want pre-epoch registering", initial)
 	}
-	lost, err := q.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
+	lost, err := q.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
 		WorkerGroupID: dbtest.DefaultWorkerGroupID, ResourceID: resourceID,
 		ExpectedClaimVersion: initial.ClaimVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lost.Status != db.WorkerInstanceStatusLost || lost.CurrentEpoch.Valid || lost.ClaimVersion != initial.ClaimVersion+1 {
+	if lost.Status != db.WorkerHostStatusLost || lost.CurrentEpoch.Valid || lost.ClaimVersion != initial.ClaimVersion+1 {
 		t.Fatalf("lost lifecycle = %+v, want terminal pre-epoch fence", lost)
 	}
-	if _, err := q.AuthenticateWorkerInstanceCredential(ctx, db.AuthenticateWorkerInstanceCredentialParams{
-		WorkerInstanceID: credential.WorkerInstanceID, SecretHash: secretHash,
+	if _, err := q.AuthenticateWorkerHostCredential(ctx, db.AuthenticateWorkerHostCredentialParams{
+		WorkerHostID: credential.WorkerHostID, SecretHash: secretHash,
 		ServiceID: pgvalue.NewUUIDv7(),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("lost registering credential authentication error = %v, want pgx.ErrNoRows", err)
 	}
 	replacementID := uuid.NewV7()
-	replacement, err := q.EnrollWorkerInstance(ctx, enrollmentParams(
+	replacement, err := q.EnrollWorkerHost(ctx, enrollmentParams(
 		replacementID, resourceID, []byte("replacement-secret"),
 	))
 	if err != nil {
 		t.Fatalf("enroll replacement identity: %v", err)
 	}
-	if replacement.WorkerInstanceID.Bytes != replacementID || replacement.WorkerInstanceID.Bytes == credential.WorkerInstanceID.Bytes {
-		t.Fatalf("replacement Worker instance ID = %v, want new ID %s", replacement.WorkerInstanceID, replacementID)
+	if replacement.WorkerHostID.Bytes != replacementID || replacement.WorkerHostID.Bytes == credential.WorkerHostID.Bytes {
+		t.Fatalf("replacement Worker instance ID = %v, want new ID %s", replacement.WorkerHostID, replacementID)
 	}
 	var lostCount, registeringCount int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE status = 'lost'),
 		       count(*) FILTER (WHERE status = 'registering')
-		  FROM worker_instances
+		  FROM worker_hosts
 		 WHERE worker_group_id = $1 AND resource_id = $2
 	`, dbtest.DefaultWorkerGroupID, resourceID).Scan(&lostCount, &registeringCount); err != nil {
 		t.Fatal(err)
@@ -616,20 +613,20 @@ func TestDeploymentWorkerInstanceLossTerminallyFencesRegisteringIdentity(t *test
 	}
 }
 
-func enrollTestWorker(t *testing.T, ctx context.Context, q *db.Queries, workerID uuid.UUID, resourceID string, secretHash []byte) db.EnrollWorkerInstanceRow {
+func enrollTestWorker(t *testing.T, ctx context.Context, q *db.Queries, workerID uuid.UUID, resourceID string, secretHash []byte) db.EnrollWorkerHostRow {
 	t.Helper()
-	row, err := q.EnrollWorkerInstance(ctx, enrollmentParams(workerID, resourceID, secretHash))
+	row, err := q.EnrollWorkerHost(ctx, enrollmentParams(workerID, resourceID, secretHash))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return row
 }
 
-func enrollmentParams(workerID uuid.UUID, resourceID string, secretHash []byte) db.EnrollWorkerInstanceParams {
-	return db.EnrollWorkerInstanceParams{
+func enrollmentParams(workerID uuid.UUID, resourceID string, secretHash []byte) db.EnrollWorkerHostParams {
+	return db.EnrollWorkerHostParams{
 		TokenHash:    make([]byte, 32),
 		WorkerPoolID: pgvalue.UUID(uuid.MustParse(dbtest.DefaultWorkerPoolID)), PoolName: "default",
-		WorkerInstanceID: pgvalue.UUID(workerID), ResourceID: resourceID,
+		WorkerHostID: pgvalue.UUID(workerID), ResourceID: resourceID,
 		CurrentServiceID: pgvalue.NewUUIDv7(), CredentialID: pgvalue.NewUUIDv7(),
 		KeyPrefix: uuid.New().String(), SecretHash: secretHash,
 	}

@@ -225,35 +225,35 @@ func buildDeploymentBundleAt(
 	if err != nil {
 		return fmt.Errorf("verify analyzed build plan: %w", err)
 	}
-	workspaceBuilds, err := builder.WorkspaceBuilds(plan)
+	computerBuilds, err := builder.ComputerBuilds(plan)
 	if err != nil {
 		return err
 	}
-	workspaceContext := filepath.Join(stage, "workspace-images")
-	if err := os.Mkdir(workspaceContext, 0o755); err != nil {
+	computerContext := filepath.Join(stage, "computer-images")
+	if err := os.Mkdir(computerContext, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(workspaceContext, "build-plan.json"), planRaw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(computerContext, "build-plan.json"), planRaw, 0o644); err != nil {
 		return err
 	}
-	workspaceInputs, err := buildWorkspaceImages(
+	computerInputs, err := buildComputerImages(
 		ctx,
 		command,
 		stage,
-		workspaceContext,
+		computerContext,
 		emptyContext,
 		projectContexts,
-		workspaceBuilds,
+		computerBuilds,
 		runner,
 	)
 	if err != nil {
 		return err
 	}
-	workspaceRaw, err := json.Marshal(workspaceInputs)
+	computerRaw, err := json.Marshal(computerInputs)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(workspaceContext, "images.json"), workspaceRaw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(computerContext, "images.json"), computerRaw, 0o644); err != nil {
 		return err
 	}
 	finalDockerfile, err := builder.Dockerfile()
@@ -273,7 +273,7 @@ func buildDeploymentBundleAt(
 			builder.BuilderContextName:     builderContext,
 			builder.EnvironmentContextName: environmentContext,
 			builder.ConfigContextName:      configContext,
-			"helmr_images":                 workspaceContext,
+			"helmr_images":                 computerContext,
 			"helmr_installed":              installedContext,
 		},
 	}); err != nil {
@@ -306,38 +306,38 @@ func writeGraph(stage, name string, dockerfile []byte) (string, error) {
 	return path, nil
 }
 
-func buildWorkspaceImages(
+func buildComputerImages(
 	ctx context.Context,
 	command *cobra.Command,
 	stage string,
-	workspaceContext string,
+	computerContext string,
 	emptyContext string,
 	projectContexts map[string]string,
-	workspaceBuilds []builder.WorkspaceBuild,
+	computerBuilds []builder.ComputerBuild,
 	runner dockerBuildRunner,
 ) ([]map[string]string, error) {
-	workspaceInputs := make([]map[string]string, len(workspaceBuilds))
-	workspaceOutputs := make(map[struct {
+	computerInputs := make([]map[string]string, len(computerBuilds))
+	computerOutputs := make(map[struct {
 		dockerfile string
 		target     string
-	}]string, len(workspaceBuilds))
-	for index, workspace := range workspaceBuilds {
-		dockerfile, target, err := builder.WorkspaceImageDockerfile(workspace.Build)
+	}]string, len(computerBuilds))
+	for index, computer := range computerBuilds {
+		dockerfile, target, err := builder.ComputerImageDockerfile(computer.Build)
 		if err != nil {
-			return nil, fmt.Errorf("workspace image %q: %w", workspace.DeclaredID, err)
+			return nil, fmt.Errorf("computer image %q: %w", computer.DeclaredID, err)
 		}
 		key := struct {
 			dockerfile string
 			target     string
 		}{string(dockerfile), target}
-		filename, built := workspaceOutputs[key]
+		filename, built := computerOutputs[key]
 		if !built {
-			dockerfilePath := filepath.Join(stage, fmt.Sprintf("Dockerfile.workspace-%d", index))
+			dockerfilePath := filepath.Join(stage, fmt.Sprintf("Dockerfile.computer-%d", index))
 			if err := os.WriteFile(dockerfilePath, dockerfile, 0o600); err != nil {
 				return nil, err
 			}
-			filename = fmt.Sprintf("workspace-%03d.oci.tar", index)
-			output := filepath.Join(workspaceContext, filename)
+			filename = fmt.Sprintf("computer-%03d.oci.tar", index)
+			output := filepath.Join(computerContext, filename)
 			if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
 				Runner:     runner,
 				Dockerfile: dockerfilePath, ContextDirectory: emptyContext,
@@ -345,16 +345,16 @@ func buildWorkspaceImages(
 				OutputAttributes: map[string]string{"rewrite-timestamp": "true"},
 				BuildContexts:    projectContexts,
 			}); err != nil {
-				return nil, fmt.Errorf("build workspace image %q: %w", workspace.DeclaredID, err)
+				return nil, fmt.Errorf("build computer image %q: %w", computer.DeclaredID, err)
 			}
-			workspaceOutputs[key] = filename
+			computerOutputs[key] = filename
 		}
-		workspaceInputs[index] = map[string]string{
-			"declaredId": workspace.DeclaredID,
-			"path":       "/workspace/images/" + filename,
+		computerInputs[index] = map[string]string{
+			"declaredId": computer.DeclaredID,
+			"path":       "/computer/images/" + filename,
 		}
 	}
-	return workspaceInputs, nil
+	return computerInputs, nil
 }
 
 func executeDockerBuildx(

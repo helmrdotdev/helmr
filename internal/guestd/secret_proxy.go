@@ -31,24 +31,24 @@ func reservedSecretEnv(name string) bool {
 }
 
 // This file contains public trust only. Private signer and leaf keys never cross
-// the worker/guest protocol. The image root is ephemeral, outside /workspace.
+// the worker/guest protocol. The image root is ephemeral, outside /computer.
 func stageProtectedEnv(imageRoot string, selectors map[string]string, ca []byte, env *[]string) error {
 	if len(selectors) == 0 {
 		if len(ca) != 0 {
-			return errors.New("unexpected Workspace Secret trust")
+			return errors.New("unexpected Computer Secret trust")
 		}
 		return nil
 	}
 	if len(selectors) > 64 || len(ca) > 16384 {
-		return errors.New("invalid Workspace Secret transport")
+		return errors.New("invalid Computer Secret transport")
 	}
 	block, rest := pem.Decode(ca)
 	if block == nil || block.Type != "CERTIFICATE" || len(bytes.TrimSpace(rest)) != 0 {
-		return errors.New("invalid Workspace Secret public trust")
+		return errors.New("invalid Computer Secret public trust")
 	}
 	certificate, err := x509.ParseCertificate(block.Bytes)
 	if err != nil || !certificate.IsCA || time.Now().Before(certificate.NotBefore) || !time.Now().Before(certificate.NotAfter) {
-		return errors.New("expired or invalid Workspace Secret public trust")
+		return errors.New("expired or invalid Computer Secret public trust")
 	}
 	for name, selector := range selectors {
 		if !validEnvironmentName(name) || reservedSecretEnv(name) || !protectedSelectorPattern.MatchString(selector) {
@@ -69,13 +69,13 @@ func stageProtectedEnv(imageRoot string, selectors map[string]string, ca []byte,
 	// Use the guest base's public system roots as well, preserving ordinary HTTPS.
 	roots, err := os.ReadFile("/etc/ssl/certs/ca-certificates.crt")
 	if err != nil {
-		return errors.New("workspace Secret transport requires guest system CA bundle")
+		return errors.New("computer Secret transport requires guest system CA bundle")
 	}
 	bundle := append(append(roots, '\n'), ca...)
-	if err := writeFileNoFollow(filepath.Join(directory, "ca.pem"), ca, 0444); err != nil {
+	if err := publishSecretTrustFile(filepath.Join(directory, "ca.pem"), ca); err != nil {
 		return err
 	}
-	if err := writeFileNoFollow(filepath.Join(directory, "bundle.pem"), bundle, 0444); err != nil {
+	if err := publishSecretTrustFile(filepath.Join(directory, "bundle.pem"), bundle); err != nil {
 		return err
 	}
 	for name, selector := range selectors {
@@ -90,4 +90,23 @@ func stageProtectedEnv(imageRoot string, selectors map[string]string, ca []byte,
 		*env = setEnvValue(*env, name, value)
 	}
 	return nil
+}
+
+func publishSecretTrustFile(target string, body []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(target), ".trust-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err = f.Write(body); err != nil {
+		return err
+	}
+	if err = f.Chmod(0444); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), target)
 }

@@ -15,7 +15,7 @@ type EpochExchangeInput struct {
 // identity and policy authority out of the supervisor request body.
 type WorkerTokenAuthority struct {
 	WorkerGroupID     uuid.UUID
-	WorkerInstanceID  uuid.UUID
+	WorkerHostID      uuid.UUID
 	CredentialID      uuid.UUID
 	WorkerEpoch       int64
 	ClaimVersion      int64
@@ -39,8 +39,8 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 	if authority.WorkerGroupID == uuid.Nil() {
 		return WorkerClaims{}, errors.New("worker_group_id is required")
 	}
-	if authority.WorkerInstanceID == uuid.Nil() {
-		return WorkerClaims{}, errors.New("worker_instance_id is required")
+	if authority.WorkerHostID == uuid.Nil() {
+		return WorkerClaims{}, errors.New("worker_host_id is required")
 	}
 	if authority.CredentialID == uuid.Nil() {
 		return WorkerClaims{}, errors.New("credential_id is required")
@@ -50,7 +50,7 @@ func (authority WorkerTokenAuthority) Claims(input EpochExchangeInput, issuedAt,
 	}
 
 	return WorkerClaims{
-		WorkerGroupID: authority.WorkerGroupID.String(), WorkerInstanceID: authority.WorkerInstanceID.String(),
+		WorkerGroupID: authority.WorkerGroupID.String(), WorkerHostID: authority.WorkerHostID.String(),
 		CredentialID: authority.CredentialID.String(), WorkerEpoch: authority.WorkerEpoch,
 		ClaimVersion: authority.ClaimVersion, GroupClaimVersion: authority.GroupClaimVersion,
 		IssuedAt: issuedAt, ExpiresAt: expiresAt,

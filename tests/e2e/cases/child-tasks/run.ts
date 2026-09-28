@@ -1,20 +1,20 @@
 import type { childTaskSmoke } from "./task"
 import { cleanupChildren } from "./cleanup"
 import { verify, assert, assertEqual, deadline, waitRun } from "../../support/context"
-await verify("child-tasks", async ({ client, marker, objects, workspace, cleanup }) => {
-  const target = await workspace("helmr-child-task-target-smoke", "target")
+await verify("child-tasks", async ({ client, marker, objects, computer, cleanup }) => {
+  const target = await computer("helmr-child-task-target-smoke", "target")
   for (const mode of [
     "call-success",
     "same-sandbox-call",
     "call-failure",
     "start-detached",
   ] as const) {
-    const caller = await workspace("helmr-child-task-caller-smoke", mode)
+    const caller = await computer("helmr-child-task-caller-smoke", mode)
     const run = await client.tasks.start<typeof childTaskSmoke>(
       "child-task-smoke",
       {
-        workspace: caller,
-        payload: { mode, marker, childWorkspaceId: target.id },
+        computer: caller,
+        payload: { mode, marker, childComputerId: target.id },
         idempotencyKey: `child:${mode}:${marker}`,
       },
       { signal: deadline(30_000) },
@@ -28,9 +28,9 @@ await verify("child-tasks", async ({ client, marker, objects, workspace, cleanup
     assert(typeof output.childRunId === "string", "Missing child Run")
     objects.run_ids.push(output.childRunId)
     if (mode === "same-sandbox-call")
-      assertEqual(output.sameWorkspaceMarkerObserved, true, "Parent lost child writes")
+      assertEqual(output.sameComputerMarkerObserved, true, "Parent lost child writes")
     if (mode === "call-failure") assert(output.childFailure !== null, "Child failure was lost")
     if (mode === "start-detached") await waitRun(client, output.childRunId, ["succeeded"])
   }
-  return { sameWorkspace: true, differentWorkspace: true, childFailure: true, detached: true }
+  return { sameComputer: true, differentComputer: true, childFailure: true, detached: true }
 })

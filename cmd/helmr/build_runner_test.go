@@ -90,7 +90,7 @@ func TestDockerSelectionFrozenForEveryBuildStage(t *testing.T) {
 			}
 			t.Setenv("DOCKER_CONTEXT", "changed-after-preparation")
 			t.Setenv("DOCKER_HOST", "unix:///changed.sock")
-			for _, stage := range []string{"installed-tree", "analysis", "workspace", "bundle"} {
+			for _, stage := range []string{"installed-tree", "analysis", "computer", "bundle"} {
 				if err := executeDockerBuildx(t.Context(), &cobra.Command{}, dockerBuildxRequest{Runner: r, Target: stage, OutputType: "oci", OutputAttributes: map[string]string{"rewrite-timestamp": "true"}}); err != nil {
 					t.Fatal(err)
 				}
@@ -99,7 +99,7 @@ func TestDockerSelectionFrozenForEveryBuildStage(t *testing.T) {
 			if strings.Contains(calls, "changed-after") || strings.Contains(calls, "changed.sock") {
 				t.Fatal(calls)
 			}
-			for _, stage := range []string{"installed-tree", "analysis", "workspace", "bundle"} {
+			for _, stage := range []string{"installed-tree", "analysis", "computer", "bundle"} {
 				var matched bool
 				for _, line := range strings.Split(calls, "\n") {
 					if strings.Contains(line, "--target "+stage+" ") {

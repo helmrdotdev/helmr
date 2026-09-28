@@ -3,190 +3,158 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"slices"
+	"strings"
 	"testing"
 	"time"
+	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func discardTestLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
+func discardTestLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
-	server, store, worker, requestBody := newWorkerRunLeaseClaimHTTPFixture(t)
+	server, f, work, worker, body, _ := newWorkerRunLeaseClaimHTTPFixture(t)
 	handler := http.HandlerFunc(server.workerClaimRunLease)
-
-	first := runWorkerLeaseClaimRequest(handler, worker, requestBody)
+	first := runWorkerLeaseClaimRequest(handler, worker, body)
 	if first.Code != http.StatusOK {
-		t.Fatalf("first claim status = %d body=%s", first.Code, first.Body)
+		t.Fatalf("first claim=%d %s", first.Code, first.Body)
 	}
-	if store.authority.runLease.Status != db.RunLeaseStatusStarting {
-		t.Fatalf("lease state = %q, want starting", store.authority.runLease.Status)
+	var receipt string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT to_jsonb(l)::text FROM run_leases l WHERE id=$1`, work.LeaseID).Scan(&receipt); err != nil {
+		t.Fatal(err)
 	}
-	if got := countCall(store.calls, "mark_starting"); got != 1 {
-		t.Fatalf("mark starting calls = %d, want 1: %v", got, store.calls)
-	}
-	if commit := slices.Index(store.calls, "commit"); commit < 0 ||
-		slices.Index(store.calls, "program") < commit {
-		t.Fatalf("Program projection did not occur after commit: %v", store.calls)
-	}
-
-	store.authority.worker.Status = db.WorkerInstanceStatusDraining
-	replay := runWorkerLeaseClaimRequest(handler, worker, requestBody)
+	replay := runWorkerLeaseClaimRequest(handler, worker, body)
 	if replay.Code != http.StatusOK {
-		t.Fatalf("replay status = %d body=%s", replay.Code, replay.Body)
+		t.Fatalf("replay=%d %s", replay.Code, replay.Body)
 	}
-	if !bytes.Equal(first.Body.Bytes(), replay.Body.Bytes()) {
-		t.Fatalf("replay response changed:\nfirst=%s\nreplay=%s", first.Body, replay.Body)
+	var before, after workerapi.RunLeaseClaimResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &before); err != nil {
+		t.Fatal(err)
 	}
-	if got := countCall(store.calls, "mark_starting"); got != 1 {
-		t.Fatalf("replay transitioned Lease again: %v", store.calls)
+	if err := json.Unmarshal(replay.Body.Bytes(), &after); err != nil {
+		t.Fatal(err)
+	}
+	if before.Lease.ID != after.Lease.ID || before.Lease.LeaseSequence != after.Lease.LeaseSequence || before.Computer.WriteCapability != after.Computer.WriteCapability || !bytes.Equal(before.ProgramStart, after.ProgramStart) {
+		t.Fatal("replay changed execution authority")
+	}
+	var unchanged bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='starting' AND to_jsonb(l)::text=$2 FROM run_leases l WHERE id=$1`, work.LeaseID, receipt).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("replay changed lease: %v %v", unchanged, err)
 	}
 }
 
 func TestWorkerRunLeaseClaimRemainsReplayableAfterProjectionFailure(t *testing.T) {
-	server, store, worker, requestBody := newWorkerRunLeaseClaimHTTPFixture(t)
+	server, f, work, worker, body, store := newWorkerRunLeaseClaimHTTPFixture(t)
 	handler := http.HandlerFunc(server.workerClaimRunLease)
-	store.projectionErr = errors.New("projection unavailable")
-
-	failed := runWorkerLeaseClaimRequest(handler, worker, requestBody)
+	store.fail = true
+	failed := runWorkerLeaseClaimRequest(handler, worker, body)
 	if failed.Code != http.StatusInternalServerError {
-		t.Fatalf("failed projection status = %d body=%s", failed.Code, failed.Body)
+		t.Fatalf("projection failure=%d %s", failed.Code, failed.Body)
 	}
-	if store.authority.runLease.Status != db.RunLeaseStatusStarting {
-		t.Fatalf("lease state after projection failure = %q, want starting", store.authority.runLease.Status)
+	var claimed time.Time
+	if err := f.Pool.QueryRow(t.Context(), `SELECT claimed_at FROM run_leases WHERE id=$1 AND status='starting'`, work.LeaseID).Scan(&claimed); err != nil {
+		t.Fatal(err)
 	}
-	if got := countCall(store.calls, "mark_starting"); got != 1 {
-		t.Fatalf("mark starting calls = %d, want 1: %v", got, store.calls)
-	}
-
-	store.projectionErr = nil
-	replay := runWorkerLeaseClaimRequest(handler, worker, requestBody)
+	store.fail = false
+	replay := runWorkerLeaseClaimRequest(handler, worker, body)
 	if replay.Code != http.StatusOK {
-		t.Fatalf("replay status = %d body=%s", replay.Code, replay.Body)
+		t.Fatalf("retry=%d %s", replay.Code, replay.Body)
 	}
-	if got := countCall(store.calls, "mark_starting"); got != 1 {
-		t.Fatalf("replay transitioned Lease again: %v", store.calls)
+	var unchanged bool
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='starting' AND claimed_at=$2 FROM run_leases WHERE id=$1`, work.LeaseID, claimed).Scan(&unchanged); err != nil || !unchanged {
+		t.Fatalf("projection retry changed claim: %v %v", unchanged, err)
 	}
 }
 
-func newWorkerRunLeaseClaimHTTPFixture(
-	t *testing.T,
-) (*Server, *runLeaseClaimStore, workerActor, []byte) {
+func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workerActor, []byte, *claimHTTPPlatformStore) {
 	t.Helper()
-	worker, locators, authority := validRunLeaseClaimFixture()
-	logicalRun, logicalAttempt, definition := validTaskProgramStart(
-		t,
-		deployment.SchemaKindNone,
-	)
-	authority.run.EnvironmentID = locators.EnvironmentID
-	authority.run.EntrypointDeclaredID = logicalRun.EntrypointDeclaredID
-	authority.run.CauseKind = logicalRun.CauseKind
-	authority.run.MaxActiveDurationMs = 300_000
-	authority.run.ActiveElapsedMs = 12
-	authority.attempt.EntrypointKind = logicalAttempt.EntrypointKind
-	authority.workspaceMount.RuntimeInstanceID = authority.runtime.ID
-	authority.workspaceLease.WorkspaceID = authority.workspace.ID
-	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
-	authority.workspaceLease.RuntimeInstanceID = authority.runtime.ID
-	authority.runLease.StartDeadlineAt = pgtype.Timestamptz{
-		Time:  time.Unix(1_700_000_000, 0).UTC(),
-		Valid: true,
-	}
-	authority.runLease.ExpiresAt = pgtype.Timestamptz{
-		Time:  time.Unix(1_700_000_300, 0).UTC(),
-		Valid: true,
-	}
-	definition.ID = authority.run.DeploymentDefinitionID
-	definition.EnvironmentID = authority.run.EnvironmentID
-	definition.DeploymentID = authority.run.DeploymentID
-	definition.DeclaredID = authority.run.EntrypointDeclaredID
-
-	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
+	f := runtest.New(t)
+	work := f.AddRunLease(t, "assigned", time.Now())
+	raw := []byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
+	_, digest, err := deployment.CanonicalManifestAndDigest(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	capability, err := deriveWorkspaceCapabilityInput(key, authority.workspaceLease)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=$2,manifest_digest=$3 WHERE id=$1`, f.TaskDefinitionID, raw, digest[:])
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET payload=NULL WHERE id=$1`, work.RunID)
+	key, err := computer.NewFencingKey(make([]byte, computer.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority.workspaceLease.FencingTokenHash = capability.Hash
-
-	runtime := claimResponseRuntimeDescriptor()
-	store := &runLeaseClaimStore{
-		authority: authority,
-		locators:  locators,
-		program: db.GetDeploymentProgramAuthorityRow{
-			DeploymentID:             authority.run.DeploymentID,
-			EnvironmentID:            authority.run.EnvironmentID,
-			DeploymentVersion:        "v42",
-			RuntimeArtifactDigest:    runtime.Digest,
-			ProgramArtifactDigest:    validDigest('a'),
-			ProgramArtifactSizeBytes: 100,
-			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
-			ProgramIndexDigest:       validDigestBytes(t, 'b'),
-		},
-		definition: definition,
-		resetTarget: validComputerMountTargetAuthority(runLeaseProjectionAuthority{
-			workspaceLease: authority.workspaceLease,
-		}),
+	var instanceID, computerID uuid.UUID
+	var generation int64
+	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id,computer_id,writer_generation FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&instanceID, &computerID, &generation); err != nil {
+		t.Fatal(err)
 	}
-	server := &Server{
-		log:                 discardTestLogger(),
-		db:                  store,
-		platformStore:       claimResponsePlatformStore{},
-		secretDelivery:      &recordingSecretDeliveryOpener{},
-		workspaceFencingKey: key,
+	capability, err := key.Derive(computer.FenceInput{InstanceID: instanceID, ComputerID: computerID, WriterGeneration: generation})
+	if err != nil {
+		t.Fatal(err)
 	}
-	requestBody := []byte(
-		`{"lease_id":"` +
-			pgvalue.UUIDString(authority.runLease.ID) +
-			`","lease_sequence":1}`,
-	)
-	return server, store, worker, requestBody
+	hash, err := hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_token_hash=$2 WHERE id=$1`, instanceID, hash)
+	store := &claimHTTPPlatformStore{checkCommit: func(ctx context.Context) error {
+		var committed bool
+		if err := f.Pool.QueryRow(ctx, `SELECT status='starting' AND claimed_at IS NOT NULL FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&committed); err != nil {
+			return err
+		}
+		if !committed {
+			return errors.New("projection read uncommitted claim")
+		}
+		return nil
+	}}
+	server := &Server{tx: f.Pool, db: db.New(f.Pool), log: discardTestLogger(), platformStore: store, secretDelivery: claimHTTPSecrets{}, computerFencingKey: key}
+	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	body := []byte(`{"lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `","lease_sequence":1}`)
+	return server, f, work, worker, body, store
 }
 
-func runWorkerLeaseClaimRequest(
-	handler http.Handler,
-	worker workerActor,
-	body []byte,
-) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/worker/v1/run/leases/claim",
-		bytes.NewReader(body),
-	)
-	request = request.WithContext(context.WithValue(
-		request.Context(),
-		workerContextKey{},
-		worker,
-	))
+type claimHTTPPlatformStore struct {
+	fail        bool
+	checkCommit func(context.Context) error
+}
+
+func (s *claimHTTPPlatformStore) Stat(ctx context.Context, digest string) (cas.Object, error) {
+	if err := s.checkCommit(ctx); err != nil {
+		return cas.Object{}, err
+	}
+	if s.fail {
+		return cas.Object{}, errors.New("projection unavailable")
+	}
+	return cas.Object{Digest: digest, SizeBytes: 4096, MediaType: deployment.RuntimeArtifactMediaType}, nil
+}
+func (*claimHTTPPlatformStore) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("unexpected artifact read")
+}
+
+type claimHTTPSecrets struct{}
+
+func (claimHTTPSecrets) OpenDeliveries(uuid.UUID, []secret.DeliveryEnvelope) ([]secret.DeliveryMaterial, error) {
+	return nil, nil
+}
+
+func runWorkerLeaseClaimRequest(handler http.Handler, worker workerActor, body []byte) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/claim", bytes.NewReader(body))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	return response
-}
-
-func countCall(calls []string, target string) int {
-	count := 0
-	for _, call := range calls {
-		if call == target {
-			count++
-		}
-	}
-	return count
-}
-
-func (s *runLeaseClaimStore) ListWorkspaceSecrets(context.Context, pgtype.UUID) ([]db.ListWorkspaceSecretsRow, error) {
-	return nil, nil
 }

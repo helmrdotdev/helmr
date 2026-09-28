@@ -34,9 +34,9 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 	}
 	index.Declarations[taskIndex].Task.Schedule = &ScheduleManifest{
 		Cron: "0 * * * *", Timezone: "UTC",
-		Workspace: ScheduleWorkspaceManifest{
+		Computer: ScheduleComputerManifest{
 			SandboxDeclaredID: "repo",
-			Secrets:           []api.WorkspaceSecret{{Name: "TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}}},
+			Secrets:           []api.ComputerSecret{{Name: "TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}}},
 		},
 	}
 	plan, err = DeploymentPlanFromProgramIndex(index)
@@ -57,11 +57,11 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 	*plan.Definitions[taskIndex].Task.Run.TTLMs = 1
 	*plan.Definitions[taskIndex].Task.Run.Retry.MaxAttempts = 9
 	plan.Definitions[taskIndex].Task.Run.Retry.Backoff.MinMs = 999
-	plan.Definitions[taskIndex].Task.Schedule.Workspace.Secrets[0].Name = "CHANGED"
+	plan.Definitions[taskIndex].Task.Schedule.Computer.Secrets[0].Name = "CHANGED"
 	if *index.Declarations[taskIndex].Task.Run.TTLMs != ttl ||
 		*index.Declarations[taskIndex].Task.Run.Retry.MaxAttempts != maxAttempts ||
 		index.Declarations[taskIndex].Task.Run.Retry.Backoff.MinMs != 100 ||
-		index.Declarations[taskIndex].Task.Schedule.Workspace.Secrets[0].Name != "TOKEN" {
+		index.Declarations[taskIndex].Task.Schedule.Computer.Secrets[0].Name != "TOKEN" {
 		t.Fatal("deployment plan aliases nested Program index state")
 	}
 }

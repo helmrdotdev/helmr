@@ -37,11 +37,12 @@ const (
 )
 
 type ProgramRunner struct {
+	ComputerCaptures    *ComputerCaptureRuns
 	CheckpointObjects   cas.ImmutableStore
 	Capacity            *capacity.Ledger
 	CAS                 cas.Store
 	CheckpointEncryptor *checkpoint.Encryptor
-	WorkspaceMounts     WorkspaceMountSessionRegistry
+	ComputerMounts      ComputerMountSessionRegistry
 	Log                 *slog.Logger
 	TempDir             string
 }

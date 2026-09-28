@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/secretname"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -46,7 +47,7 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request.Name = strings.TrimSpace(request.Name)
-	if err := secret.ValidateName(request.Name); err != nil {
+	if err := secretname.Validate(request.Name); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -355,6 +356,11 @@ func (s *Server) writeSecretMutationError(
 	operation string,
 	err error,
 ) {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
+		return
+	}
 	var conflictErr idempotency.ConflictError
 	var pgErr *pgconn.PgError
 	switch {
@@ -395,7 +401,7 @@ func parseSecretListQuery(
 		if values.Has("cursor") || values.Has("limit") {
 			return 0, nil, "", errors.New("cursor and limit are not allowed with name")
 		}
-		if err := secret.ValidateName(name); err != nil {
+		if err := secretname.Validate(name); err != nil {
 			return 0, nil, "", err
 		}
 		return 0, nil, name, nil
@@ -422,7 +428,7 @@ func parseSecretListQuery(
 	if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID {
 		return 0, nil, "", errors.New("secret cursor belongs to another scope")
 	}
-	if err := secret.ValidateName(cursor.Name); err != nil {
+	if err := secretname.Validate(cursor.Name); err != nil {
 		return 0, nil, "", errors.New("secret cursor is invalid")
 	}
 	if _, err := parseSecretID(cursor.ID); err != nil {

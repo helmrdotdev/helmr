@@ -11,34 +11,34 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getWorkerInitialComputerVersion = `-- name: GetWorkerInitialComputerVersion :one
-SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired FROM computer_versions v
- JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
- WHERE v.publisher_save_sequence IS NULL AND v.publisher_runtime_instance_id=$1
+const getWorkerInitialComputerDiskVersion = `-- name: GetWorkerInitialComputerDiskVersion :one
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id FROM computer_disk_versions v
+ JOIN computer_instances r ON r.id=v.publisher_computer_instance_id
+ WHERE v.publisher_save_sequence IS NULL AND v.publisher_computer_instance_id=$1
    AND v.publisher_desired_version=$2
-   AND r.worker_instance_id=$3
+   AND r.worker_host_id=$3
    AND r.worker_group_id=$4 AND r.worker_epoch=$5
 `
 
-type GetWorkerInitialComputerVersionParams struct {
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	DesiredVersion    pgtype.Int8 `json:"desired_version"`
-	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID     pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch       int64       `json:"worker_epoch"`
+type GetWorkerInitialComputerDiskVersionParams struct {
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	DesiredVersion     pgtype.Int8 `json:"desired_version"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
 }
 
 // Authentication supplies the original Worker identity. Historical success is
 // independent of current head/config, desired state and retained payload lifetime.
-func (q *Queries) GetWorkerInitialComputerVersion(ctx context.Context, arg GetWorkerInitialComputerVersionParams) (ComputerVersion, error) {
-	row := q.db.QueryRow(ctx, getWorkerInitialComputerVersion,
-		arg.RuntimeInstanceID,
+func (q *Queries) GetWorkerInitialComputerDiskVersion(ctx context.Context, arg GetWorkerInitialComputerDiskVersionParams) (ComputerDiskVersion, error) {
+	row := q.db.QueryRow(ctx, getWorkerInitialComputerDiskVersion,
+		arg.ComputerInstanceID,
 		arg.DesiredVersion,
-		arg.WorkerInstanceID,
+		arg.WorkerHostID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
 	)
-	var i ComputerVersion
+	var i ComputerDiskVersion
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -47,38 +47,37 @@ func (q *Queries) GetWorkerInitialComputerVersion(ctx context.Context, arg GetWo
 		&i.RootPackDigest,
 		&i.LogicalBytes,
 		&i.Status,
-		&i.SourceWorkspaceLeaseID,
-		&i.PublisherRuntimeInstanceID,
+		&i.PublisherComputerInstanceID,
 		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
 		&i.PayloadNotRetired,
+		&i.SourceComputerInstanceID,
 	)
 	return i, err
 }
 
-const publishInitialComputerVersion = `-- name: PublishInitialComputerVersion :one
+const publishInitialComputerDiskVersion = `-- name: PublishInitialComputerDiskVersion :one
 WITH published AS (
-    UPDATE computer_versions v
+    UPDATE computer_disk_versions v
        SET status='committed', published_at=clock_timestamp(),
            root_pack_digest=$1, logical_bytes=$2,
-           publisher_runtime_instance_id=$3,
+           publisher_computer_instance_id=$3,
            publisher_desired_version=$4,
            publication_request_fingerprint=$5
       FROM computers c
      WHERE v.environment_id=$6 AND v.computer_id=$7
        AND v.id=$8 AND v.status='initializing' AND v.parent_version_id IS NULL
        AND c.environment_id=v.environment_id AND c.id=v.computer_id
-       AND c.head_version_id=v.id AND c.initial_config IS NULL
-    RETURNING v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired
+       AND c.head_disk_version_id=v.id AND c.initial_config IS NULL
+    RETURNING v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id
 ), retained AS (
-    INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
+    INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
     SELECT environment_id,computer_id,id,$9 FROM published
     RETURNING version_id
 ), configured AS (
@@ -87,23 +86,23 @@ WITH published AS (
      WHERE c.environment_id=p.environment_id AND c.id=p.computer_id AND r.version_id=p.id
     RETURNING c.id
 )
-SELECT p.id, p.environment_id, p.computer_id, p.parent_version_id, p.root_pack_digest, p.logical_bytes, p.status, p.source_workspace_lease_id, p.publisher_runtime_instance_id, p.publisher_save_sequence, p.publisher_desired_version, p.publication_request_fingerprint, p.ownership_generation, p.writer_generation, p.created_at, p.published_at, p.discarded_at, p.payload_retired_at, p.payload_not_retired FROM published p JOIN configured c ON c.id=p.computer_id
+SELECT p.id, p.environment_id, p.computer_id, p.parent_version_id, p.root_pack_digest, p.logical_bytes, p.status, p.publisher_computer_instance_id, p.publisher_save_sequence, p.publisher_desired_version, p.publication_request_fingerprint, p.writer_generation, p.created_at, p.published_at, p.discarded_at, p.payload_retired_at, p.payload_not_retired, p.source_computer_instance_id FROM published p JOIN configured c ON c.id=p.computer_id
 `
 
-type PublishInitialComputerVersionParams struct {
-	RootPackDigest    pgtype.Text `json:"root_pack_digest"`
-	LogicalBytes      int64       `json:"logical_bytes"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	DesiredVersion    pgtype.Int8 `json:"desired_version"`
-	Fingerprint       []byte      `json:"fingerprint"`
-	EnvironmentID     pgtype.UUID `json:"environment_id"`
-	ComputerID        pgtype.UUID `json:"computer_id"`
-	VersionID         pgtype.UUID `json:"version_id"`
-	Locator           []byte      `json:"locator"`
-	InitialConfig     []byte      `json:"initial_config"`
+type PublishInitialComputerDiskVersionParams struct {
+	RootPackDigest     pgtype.Text `json:"root_pack_digest"`
+	LogicalBytes       int64       `json:"logical_bytes"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	DesiredVersion     pgtype.Int8 `json:"desired_version"`
+	Fingerprint        []byte      `json:"fingerprint"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	ComputerID         pgtype.UUID `json:"computer_id"`
+	VersionID          pgtype.UUID `json:"version_id"`
+	Locator            []byte      `json:"locator"`
+	InitialConfig      []byte      `json:"initial_config"`
 }
 
-type PublishInitialComputerVersionRow struct {
+type PublishInitialComputerDiskVersionRow struct {
 	ID                            pgtype.UUID        `json:"id"`
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
 	ComputerID                    pgtype.UUID        `json:"computer_id"`
@@ -111,27 +110,26 @@ type PublishInitialComputerVersionRow struct {
 	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
 	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
-	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
-	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
+	PublisherComputerInstanceID   pgtype.UUID        `json:"publisher_computer_instance_id"`
 	PublisherSaveSequence         pgtype.Int8        `json:"publisher_save_sequence"`
 	PublisherDesiredVersion       pgtype.Int8        `json:"publisher_desired_version"`
 	PublicationRequestFingerprint []byte             `json:"publication_request_fingerprint"`
-	OwnershipGeneration           int64              `json:"ownership_generation"`
 	WriterGeneration              int64              `json:"writer_generation"`
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
 	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
+	SourceComputerInstanceID      pgtype.UUID        `json:"source_computer_instance_id"`
 }
 
 // The owner validates the exact certified root page and holds the preparation
 // locks. Publication records success once; pending uploads remain Runtime pins.
-func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg PublishInitialComputerVersionParams) (PublishInitialComputerVersionRow, error) {
-	row := q.db.QueryRow(ctx, publishInitialComputerVersion,
+func (q *Queries) PublishInitialComputerDiskVersion(ctx context.Context, arg PublishInitialComputerDiskVersionParams) (PublishInitialComputerDiskVersionRow, error) {
+	row := q.db.QueryRow(ctx, publishInitialComputerDiskVersion,
 		arg.RootPackDigest,
 		arg.LogicalBytes,
-		arg.RuntimeInstanceID,
+		arg.ComputerInstanceID,
 		arg.DesiredVersion,
 		arg.Fingerprint,
 		arg.EnvironmentID,
@@ -140,7 +138,7 @@ func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg Publish
 		arg.Locator,
 		arg.InitialConfig,
 	)
-	var i PublishInitialComputerVersionRow
+	var i PublishInitialComputerDiskVersionRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -149,18 +147,17 @@ func (q *Queries) PublishInitialComputerVersion(ctx context.Context, arg Publish
 		&i.RootPackDigest,
 		&i.LogicalBytes,
 		&i.Status,
-		&i.SourceWorkspaceLeaseID,
-		&i.PublisherRuntimeInstanceID,
+		&i.PublisherComputerInstanceID,
 		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
 		&i.PayloadNotRetired,
+		&i.SourceComputerInstanceID,
 	)
 	return i, err
 }

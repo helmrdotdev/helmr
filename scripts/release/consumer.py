@@ -168,7 +168,7 @@ const client = new HelmrClient({url:"https://example.invalid",apiKey:"fixture",f
  if(String(url)!=="https://example.invalid/v1/tasks/preview-hello/start" || init?.method!=="POST") throw Error("SDK wire contract");
  called=true; return Response.json({run_id:"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"});
 }});
-await client.tasks.start("preview-hello", {payload:null,workspace:client.workspaces.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")});
+await client.tasks.start("preview-hello", {payload:null,computer:client.computers.ref("019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32")});
 if(!called) throw Error("SDK request missing");
 ''')
         run(project / 'node_modules/.bin/tsc', '--strict', '--skipLibCheck', 'false', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', 'consumer.ts', cwd=project)
@@ -181,7 +181,7 @@ if(!called) throw Error("SDK request missing");
         bundle = read(work / 'bundle/bundle.json')
         require(bundle['contract'] == 'helmr.deployment-bundle.v0', 'wrong bundle contract')
         require({(d['kind'], d['declaredId']) for d in bundle['plan']['definitions']} == {('task', 'preview-hello'), ('sandbox', 'preview-machine')}, 'compiled fixture definitions differ')
-        require(len(bundle['workspaceImages']) == 1 and bundle['workspaceImages'][0]['declaredId'] == 'preview-machine', 'workspace OCI stage missing')
+        require(len(bundle['computerImages']) == 1 and bundle['computerImages'][0]['declaredId'] == 'preview-machine', 'computer OCI stage missing')
         runtime = read(directory / 'bundle-builder.json')['runtime']
         require(bundle['runtime']['artifact']['digest'] == runtime['digest'], 'bundle did not use canonical Runtime')
         if public:

@@ -29,6 +29,7 @@ const (
 type ingestStore interface {
 	ClaimEventIngestBatch(context.Context, db.ClaimEventIngestBatchParams) ([]db.ClaimEventIngestBatchRow, error)
 	ClaimRunLogIngestBatch(context.Context, db.ClaimRunLogIngestBatchParams) ([]db.ClaimRunLogIngestBatchRow, error)
+	ClaimCommandLogIngestBatch(context.Context, db.ClaimCommandLogIngestBatchParams) ([]db.ClaimCommandLogIngestBatchRow, error)
 	MarkTelemetryOutboxWritten(context.Context, db.MarkTelemetryOutboxWrittenParams) (int64, error)
 	MarkTelemetryOutboxBatchFailed(context.Context, db.MarkTelemetryOutboxBatchFailedParams) (int64, error)
 	PruneTelemetryOutboxWritten(context.Context, db.PruneTelemetryOutboxWrittenParams) (int64, error)
@@ -107,6 +108,11 @@ func (i *Ingestor) runIngest(ctx context.Context) error {
 		if err != nil {
 			hadError = true
 			i.log.Warn("ingest run log telemetry failed", "error", err)
+		}
+		_, err = i.ingestCommandLogs(ctx)
+		if err != nil {
+			hadError = true
+			i.log.Warn("ingest exec log telemetry failed", "error", err)
 		}
 		if hadError {
 			if err := sleep(ctx, i.retryAfter); err != nil {
@@ -505,5 +511,113 @@ func sleep(ctx context.Context, duration time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func (i *Ingestor) ingestCommandLogs(ctx context.Context) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultIngestOperationTimeout)
+	defer cancel()
+	rows, err := i.db.ClaimCommandLogIngestBatch(ctx, db.ClaimCommandLogIngestBatchParams{
+		RowLimit:      i.batchSize,
+		MaxBatchBytes: i.batchBytes,
+		LeaseDuration: pgvalue.Interval(i.leaseDuration),
+	})
+	if err != nil || len(rows) == 0 {
+		return len(rows), err
+	}
+	claims := make([]telemetryOutboxClaim, 0, len(rows))
+	candidates := make([]commandLogIngestCandidate, 0, len(rows))
+	var firstErr error
+	for _, row := range rows {
+		candidates = append(candidates, commandLogIngestCandidate{
+			outboxID:   row.OutboxID,
+			retryCount: row.RetryCount,
+			createdAt:  pgvalue.Time(row.CreatedAt),
+			record:     commandLogRecord(row),
+		})
+	}
+	if len(candidates) > 0 {
+		successes, err := i.writeCommandLogCandidates(ctx, candidates)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		claims = append(claims, commandLogCandidateClaims(successes)...)
+	}
+	if len(claims) == 0 {
+		return len(rows), firstErr
+	}
+	if err := i.markWritten(ctx, claims); err != nil {
+		return len(rows), err
+	}
+	return len(rows), firstErr
+}
+
+func (i *Ingestor) writeCommandLogCandidates(ctx context.Context, candidates []commandLogIngestCandidate) ([]commandLogIngestCandidate, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	records := make([]CommandLogRecord, 0, len(candidates))
+	for _, candidate := range candidates {
+		records = append(records, candidate.record)
+	}
+	result, sendErr := i.writer.WriteCommandLogs(ctx, records)
+	if sendErr != nil {
+		return nil, errors.Join(sendErr, i.markFailed(ctx, commandLogCandidateClaims(candidates), sendErr))
+	}
+	rejected := rejectedIndexes(result)
+	successes := make([]commandLogIngestCandidate, 0, len(candidates)-len(rejected))
+	failedClaims := make([]telemetryOutboxClaim, 0, len(rejected))
+	var rejectionErr error
+	for idx, candidate := range candidates {
+		cause, failed := rejected[idx]
+		if !failed {
+			successes = append(successes, candidate)
+			continue
+		}
+		failedClaims = append(failedClaims, telemetryOutboxClaim{
+			outboxID: candidate.outboxID, retryCount: candidate.retryCount,
+		})
+		rejectionErr = errors.Join(rejectionErr, cause)
+		i.log.Warn("ingest exec log row rejected", "outbox_id", candidate.outboxID,
+			"retry_count", candidate.retryCount,
+			"pending_age", time.Since(candidate.createdAt).Truncate(time.Millisecond), "error", cause)
+	}
+	return successes, errors.Join(rejectionErr, i.markFailed(ctx, failedClaims, rejectionErr))
+}
+
+func commandLogCandidateClaims(candidates []commandLogIngestCandidate) []telemetryOutboxClaim {
+	claims := make([]telemetryOutboxClaim, len(candidates))
+	for idx := range candidates {
+		claims[idx] = telemetryOutboxClaim{
+			outboxID: candidates[idx].outboxID, retryCount: candidates[idx].retryCount,
+		}
+	}
+	return claims
+}
+
+type commandLogIngestCandidate struct {
+	outboxID   int64
+	retryCount int32
+	createdAt  time.Time
+	record     CommandLogRecord
+}
+
+func commandLogRecord(row db.ClaimCommandLogIngestBatchRow) CommandLogRecord {
+	return CommandLogRecord{
+		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
+		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
+		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
+		CommandID:      pgvalue.MustUUIDValue(row.CommandID),
+		StreamName:     string(row.Stream),
+		Seq:            uint64(row.Seq),
+		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
+		Content:        row.Content,
+		SizeBytes:      uint32(pgvalue.Int8Value(row.SizeBytes)),
+		IdempotencyKey: row.IdempotencyKey,
+		RetentionClass: "standard",
+		RedactionClass: "standard",
+		Source:         "worker",
+		ObservedAt:     observedAt(row.ObservedAt, row.CreatedAt),
+		AcceptedAt:     pgvalue.Time(row.CreatedAt),
 	}
 }

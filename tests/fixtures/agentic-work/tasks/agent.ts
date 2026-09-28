@@ -5,7 +5,7 @@ import { imageWork } from "../work/image.ts"
 import { processWork } from "../work/process.ts"
 import { pythonWork } from "../work/python.ts"
 
-// The Workspace image owns everything Program code spawns: the Chromium build
+// The Computer image owns everything Program code spawns: the Chromium build
 // matching the installed playwright package with its OS libraries, Git, and a
 // Python environment with NumPy. None of it comes from the build environment.
 const tools = [
@@ -20,7 +20,7 @@ const agenticImage = image("agentic-work")
   .from("mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27")
   .run(["sh", "-ceu", tools])
 
-export const agenticWorkspace = sandbox({ id: "agentic-work" })
+export const agenticComputer = sandbox({ id: "agentic-work" })
   .image(agenticImage)
   .resources({ cpu: 2, memory: "2GiB" })
 

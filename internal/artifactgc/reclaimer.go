@@ -59,7 +59,7 @@ func (r *Reclaimer) Reconcile(ctx context.Context) error {
 	if _, err := r.queries.ReleaseReclaimedComputerObjects(ctx, 1000); err != nil {
 		return err
 	}
-	if err := r.collectComputerVersions(ctx); err != nil {
+	if err := r.collectComputerDiskVersions(ctx); err != nil {
 		return err
 	}
 	if err := r.collectComputerObjects(ctx); err != nil {

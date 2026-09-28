@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"time"
 	"uuid"
@@ -21,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretname"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,8 +29,6 @@ const (
 	maxWriteAttempts = 3
 	envelopeDomain   = "helmr.secret-envelope.v0"
 )
-
-var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 type Store struct {
 	db         db.Querier
@@ -94,19 +92,8 @@ func KeyFromBase64(raw string) ([]byte, error) {
 	return decoded, nil
 }
 
-func ValidName(name string) bool {
-	return namePattern.MatchString(name)
-}
-
-func ValidateName(name string) error {
-	if !ValidName(name) {
-		return fmt.Errorf("secret name %q must match %s", name, namePattern.String())
-	}
-	return nil
-}
-
 func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
-	if err := ValidateName(name); err != nil {
+	if err := secretname.Validate(name); err != nil {
 		return db.Secret{}, err
 	}
 	secretID := uuid.NewV7()
@@ -192,7 +179,7 @@ func (s *Store) Create(
 	if s.tx == nil {
 		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
 	}
-	if err := ValidateName(name); err != nil {
+	if err := secretname.Validate(name); err != nil {
 		return db.GetSecretSnapshotRow{}, err
 	}
 	idempotencyKey = strings.TrimSpace(idempotencyKey)

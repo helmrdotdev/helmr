@@ -13,6 +13,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -21,10 +22,10 @@ import (
 
 // The host owns encrypted bytes. These tests exercise the Control Plane's
 // descriptor, membership, lifecycle and transaction boundary using real storage.
-func checkpointPublicationFixture(t *testing.T) (*actorCheckpointFixture, workerapi.RegisterCheckpointRequest, func(int)) {
+func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest, func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, pgvalue.UUIDString(f.claim.runtime.ID), computerPublicationKey("checkpoint", pgvalue.UUID(uuid.MustParse(req.CheckpointID)), pgvalue.UUID(uuid.MustParse(req.CheckpointID))))
+	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, req.ComputerInstanceID, computerPublicationKey("checkpoint", pgvalue.UUID(uuid.MustParse(req.CheckpointID)), pgvalue.UUID(uuid.MustParse(req.CheckpointID))))
 	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
 	for i, a := range artifacts {
@@ -45,7 +46,7 @@ func readyFromRegistration(req workerapi.RegisterCheckpointRequest) workerapi.Ch
 	return workerapi.CheckpointReadyRequest(req)
 }
 
-func checkpointReadyStatus(t *testing.T, f *actorCheckpointFixture, req workerapi.CheckpointReadyRequest) int {
+func checkpointReadyStatus(t *testing.T, f *computerCheckpointFixture, req workerapi.CheckpointReadyRequest) int {
 	t.Helper()
 	raw, err := json.Marshal(req)
 	if err != nil {
@@ -67,14 +68,14 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	ready := readyFromRegistration(req)
 	// Upload timings were unavailable during registration; they are not identity.
 	ready.Manifest.Phases = []workerapi.CheckpointPhase{{Name: "upload", DurationMs: 5}}
-	var receipt workerapi.CheckpointResponse
+	var receipt workerapi.ComputerCheckpointResponse
 	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &receipt)
-	if receipt.WorkspaceVersionID == "" {
+	if receipt.ComputerDiskVersionID == "" {
 		t.Fatal("no private Computer version")
 	}
 	var status, digest, media string
 	var logical int64
-	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.root_pack_digest,v.logical_bytes,a.media_type FROM computer_versions v JOIN computer_version_roots r ON r.version_id=v.id JOIN computer_objects a ON a.digest=r.root_pack_digest AND a.computer_id=r.computer_id AND a.environment_id=r.environment_id WHERE v.id=$1`, receipt.WorkspaceVersionID).Scan(&status, &digest, &logical, &media)
+	err := f.Pool.QueryRow(t.Context(), `SELECT v.status,v.root_pack_digest,v.logical_bytes,a.media_type FROM computer_disk_versions v JOIN computer_disk_version_roots r ON r.version_id=v.id JOIN computer_objects a ON a.digest=r.root_pack_digest AND a.computer_id=r.computer_id AND a.environment_id=r.environment_id WHERE v.id=$1`, receipt.ComputerDiskVersionID).Scan(&status, &digest, &logical, &media)
 	if err != nil || status != "private" || digest != req.Manifest.RuntimeState.Computer.Root.Pack.Digest || logical != req.Manifest.RuntimeState.Computer.LogicalBytes || media != "application/octet-stream" {
 		t.Fatalf("version %s %s %d %s: %v", status, digest, logical, media, err)
 	}
@@ -85,11 +86,11 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		t.Fatal(err)
 	}
 	var unchanged bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest=$2::jsonb FROM run_checkpoints WHERE id=$1`, req.CheckpointID, registeredJSON).Scan(&unchanged); err != nil || !unchanged {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest=$2::jsonb FROM computer_checkpoints WHERE id=$1`, req.CheckpointID, registeredJSON).Scan(&unchanged); err != nil || !unchanged {
 		t.Fatalf("registered manifest changed: %v", err)
 	}
 	var storedManifest, phases []byte
-	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest,phase_timings FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&storedManifest, &phases); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT manifest,phase_timings FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&storedManifest, &phases); err != nil {
 		t.Fatal(err)
 	}
 	var stored workerapi.CheckpointManifest
@@ -116,22 +117,34 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		}
 	}
 	var memberships int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects c JOIN run_checkpoint_objects o ON o.digest=c.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&memberships); err != nil || memberships != 4 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM cas_objects c JOIN computer_checkpoint_objects o ON o.digest=c.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&memberships); err != nil || memberships != 4 {
 		t.Fatalf("memberships=%d %v", memberships, err)
 	}
-	var replay workerapi.CheckpointResponse
+	var replay workerapi.ComputerCheckpointResponse
 	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &replay)
 	if replay != receipt {
 		t.Fatal("lost reply created a different publication")
 	}
 	ready.Manifest.Phases = []workerapi.CheckpointPhase{{Name: "upload", DurationMs: 6}}
-	if status := checkpointReadyStatus(t, f, ready); status < 400 {
-		t.Fatalf("changed ready replay accepted: %d", status)
+	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &replay)
+	if replay != receipt {
+		t.Fatal("changed timing created a different publication")
+	}
+	var retainedTimings []byte
+	if err := f.Pool.QueryRow(t.Context(), `SELECT phase_timings FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&retainedTimings); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(retainedTimings, phases) {
+		t.Fatalf("replay replaced original timings: %s -> %s", phases, retainedTimings)
+	}
+	ready.Manifest.RuntimeState.Config = json.RawMessage(`{"changed":true}`)
+	if status := checkpointReadyStatus(t, f, ready); status != http.StatusBadRequest {
+		t.Fatalf("changed durable replay status=%d", status)
 	}
 }
 
 func TestCheckpointPublicationRejectsIncompleteOrChangedCandidate(t *testing.T) {
-	for _, scenario := range []string{"missing_registration", "missing_object", "changed_manifest", "missing_membership"} {
+	for _, scenario := range []string{"missing_registration", "missing_object", "changed_manifest"} {
 		t.Run(scenario, func(t *testing.T) {
 			f, req, upload := checkpointPublicationFixture(t)
 			if scenario != "missing_registration" {
@@ -146,21 +159,16 @@ func TestCheckpointPublicationRejectsIncompleteOrChangedCandidate(t *testing.T) 
 			if scenario == "changed_manifest" {
 				ready.Manifest.RuntimeState.Config = json.RawMessage(`{"changed":true}`)
 			}
-			if scenario == "missing_membership" {
-				if _, err := f.Pool.Exec(t.Context(), `DELETE FROM run_checkpoint_objects WHERE checkpoint_id=$1 AND role='memory'`, req.CheckpointID); err != nil {
-					t.Fatal(err)
-				}
-			}
 			if status := checkpointReadyStatus(t, f, ready); status < 400 {
 				t.Fatalf("accepted %s: %d", scenario, status)
 			}
 			var status string
 			var published bool
-			if err := f.Pool.QueryRow(t.Context(), `SELECT status,private_workspace_version_id IS NOT NULL FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&status, &published); err != nil || status != "creating" || published {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT status,private_computer_disk_version_id IS NOT NULL FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&status, &published); err != nil || status != "creating" || published {
 				t.Fatalf("partial publication %s %v %v", status, published, err)
 			}
 			var n int
-			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM artifacts a JOIN run_checkpoint_objects o ON o.digest=a.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&n); err != nil || n != 0 {
+			if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM artifacts a JOIN computer_checkpoint_objects o ON o.digest=a.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&n); err != nil || n != 0 {
 				t.Fatalf("partial artifacts=%d %v", n, err)
 			}
 		})
@@ -174,7 +182,7 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 		upload(i)
 	}
 	// Fail after inserting the Computer version and some runtime memberships.
-	_, err := f.Pool.Exec(t.Context(), `CREATE FUNCTION reject_checkpoint_memory() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='run_checkpoint_memory' THEN RAISE EXCEPTION 'injected storage failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_checkpoint_memory BEFORE INSERT ON artifacts FOR EACH ROW EXECUTE FUNCTION reject_checkpoint_memory()`)
+	_, err := f.Pool.Exec(t.Context(), `CREATE FUNCTION reject_checkpoint_memory() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.kind='computer_checkpoint_memory' THEN RAISE EXCEPTION 'injected storage failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_checkpoint_memory BEFORE INSERT ON artifacts FOR EACH ROW EXECUTE FUNCTION reject_checkpoint_memory()`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,11 +190,11 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 		t.Fatalf("status=%d", status)
 	}
 	var count int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM artifacts WHERE digest IN (SELECT digest FROM run_checkpoint_objects WHERE checkpoint_id=$1)`, req.CheckpointID).Scan(&count); err != nil || count != 0 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM artifacts WHERE digest IN (SELECT digest FROM computer_checkpoint_objects WHERE checkpoint_id=$1)`, req.CheckpointID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("partial memberships=%d %v", count, err)
 	}
 	var ready bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='ready' OR private_workspace_version_id IS NOT NULL FROM run_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&ready); err != nil || ready {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status='ready' OR private_computer_disk_version_id IS NOT NULL FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&ready); err != nil || ready {
 		t.Fatalf("partial ready=%v %v", ready, err)
 	}
 	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
@@ -222,7 +230,7 @@ func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
 		}
 	}
 	var n int
-	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_versions WHERE source_workspace_lease_id=$1`, f.claim.workspaceLease.ID).Scan(&n); err != nil || n != 1 {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_disk_versions WHERE source_computer_instance_id=$1 AND status='private'`, req.ComputerInstanceID).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("versions=%d %v", n, err)
 	}
 }
@@ -242,15 +250,12 @@ func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 	defer locker.Rollback(context.Background())
 	dbtest.MustExec(t, ctx, locker, `SELECT digest FROM cas_blobs WHERE digest=$1 FOR UPDATE`, req.Manifest.RuntimeState.MemoryArtifacts[0].Digest)
 	var expiry time.Time
-	if err := f.Pool.QueryRow(ctx, `UPDATE run_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
+	if err := f.Pool.QueryRow(ctx, `UPDATE computer_checkpoints SET expires_at=clock_timestamp()+interval '3 seconds' WHERE id=$1 RETURNING expires_at`, req.CheckpointID).Scan(&expiry); err != nil {
 		t.Fatal(err)
 	}
-	parsed, ready, err := parseCheckpointReadyRequest(readyFromRegistration(req))
-	if err != nil {
-		t.Fatal(err)
-	}
+	ready := readyFromRegistration(req)
 	result := make(chan error, 1)
-	go func() { _, err := f.server.commitCheckpointReady(ctx, f.worker, ready, parsed); result <- err }()
+	go func() { _, err := f.server.commitCheckpointReady(ctx, f.worker, ready); result <- err }()
 	for {
 		var blocked bool
 		if err := f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, locker.Conn().PgConn().PID()).Scan(&blocked); err != nil {
@@ -275,11 +280,11 @@ func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 	if err := locker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-result; !errors.Is(err, errStaleRunLeaseClaim) {
+	if err := <-result; !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired publication=%v", err)
 	}
 	var n int
-	if err := f.Pool.QueryRow(ctx, `SELECT count(*) FROM artifacts a JOIN run_checkpoint_objects o ON o.digest=a.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&n); err != nil || n != 0 {
+	if err := f.Pool.QueryRow(ctx, `SELECT count(*) FROM artifacts a JOIN computer_checkpoint_objects o ON o.digest=a.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("expired publication leaked %d memberships: %v", n, err)
 	}
 }

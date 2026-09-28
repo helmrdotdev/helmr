@@ -5,17 +5,17 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 func TestWorkerRuntimeProfileUsesMeasuredHostEvidence(t *testing.T) {
 	digest := func(character string) string { return "sha256:" + strings.Repeat(character, 64) }
 	artifacts := firecracker.RuntimeCapabilities{
-		Arch: "x86_64", Contract: runtimeid.Contract,
+		Arch: "x86_64", Contract: vmplatform.Contract,
 		KernelDigest: digest("1"), InitramfsDigest: digest("2"), RootfsDigest: digest("3"),
 	}
 	evidence := firecracker.HostRuntimeEvidence{
-		RuntimeArch: "x86_64", VMRuntimeContract: runtimeid.Contract,
+		RuntimeArch: "x86_64", VMRuntimeContract: vmplatform.Contract,
 		FirecrackerDigest: digest("4"), FirecrackerVersion: "1.16.1", SnapshotFormatVersion: "6.0.0",
 		VMRuntimeDescriptorDigest: digest("5"), HostKernelRelease: "6.8.0-1024-aws",
 		CPUTemplateSelector: firecracker.CPUTemplateSelector{Kind: firecracker.CPUTemplateNone},
@@ -30,12 +30,12 @@ func TestWorkerRuntimeProfileUsesMeasuredHostEvidence(t *testing.T) {
 		KernelDigest: artifacts.KernelDigest, InitramfsDigest: artifacts.InitramfsDigest,
 		RootfsDigest: artifacts.RootfsDigest,
 	}
-	identity := runtimeid.Profile{
+	identity := vmplatform.Profile{
 		Arch: evidence.RuntimeArch, Contract: evidence.VMRuntimeContract,
 		VMRuntimeDescriptorDigest: evidence.VMRuntimeDescriptorDigest,
 		FirecrackerDigest:         evidence.FirecrackerDigest, FirecrackerVersion: evidence.FirecrackerVersion,
 		SnapshotFormatVersion: evidence.SnapshotFormatVersion, HostKernelRelease: evidence.HostKernelRelease,
-		CPUTemplate:  runtimeid.CPUTemplateSelector{Kind: runtimeid.CPUTemplateNone},
+		CPUTemplate:  vmplatform.CPUTemplateSelector{Kind: vmplatform.CPUTemplateNone},
 		KernelDigest: evidence.KernelDigest, InitramfsDigest: evidence.InitramfsDigest, RootfsDigest: evidence.RootfsDigest,
 	}
 	var err error
@@ -61,7 +61,7 @@ func TestWorkerRuntimeProfileUsesMeasuredHostEvidence(t *testing.T) {
 func TestWorkerRuntimeProfileRejectsArtifactDrift(t *testing.T) {
 	digest := func(character string) string { return "sha256:" + strings.Repeat(character, 64) }
 	_, _, _, err := workerRuntimeProfile("x86_64", firecracker.RuntimeCapabilities{
-		Arch: "x86_64", Contract: runtimeid.Contract,
+		Arch: "x86_64", Contract: vmplatform.Contract,
 		KernelDigest: digest("1"), InitramfsDigest: digest("2"), RootfsDigest: digest("3"),
 	}, firecracker.HostRuntimeEvidence{
 		KernelDigest: digest("9"), InitramfsDigest: digest("2"), RootfsDigest: digest("3"),

@@ -44,14 +44,14 @@ use a different Run ID.
 ```sh
 helmr deploy . --project demo --env development
 
-WORKSPACE_ID="$(helmr workspace create hello \
+COMPUTER_ID="$(helmr computer create hello \
   --project demo --env development \
   --key tutorial:assistant \
-  --idempotency-key tutorial:assistant:workspace)"
+  --idempotency-key tutorial:assistant:computer)"
 
 helmr actor start assistant \
   --project demo --env development \
-  --workspace "$WORKSPACE_ID" \
+  --computer "$COMPUTER_ID" \
   --key user:ada \
   --idempotency-key tutorial:assistant:start \
   --json

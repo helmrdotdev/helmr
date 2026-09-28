@@ -30,7 +30,7 @@ func TestArtifactDownloadRejectsOversizedBodyBeforeExhaustion(t *testing.T) {
 			body := &artifactDownloadBody{Reader: strings.NewReader("body" + strings.Repeat("x", 1<<20))}
 			store := &artifactDownloadStore{Store: base, body: body}
 			root := t.TempDir()
-			materializer := WorkspaceMaterializer{CAS: store}
+			materializer := ComputerMaterializer{CAS: store}
 			if cached {
 				materializer.ArtifactCacheDir = filepath.Join(root, "cache")
 			}

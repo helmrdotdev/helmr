@@ -31,7 +31,7 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var seed deployment.BundleWorkspaceImageArtifact
+	var seed deployment.BundleComputerImageArtifact
 	if err := json.Unmarshal(raw, &seed); err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +78,8 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// launch runs one command in the Workspace; managed selects the Program
-	// mounts and sanitized environment, otherwise it is an ordinary Workspace
+	// launch runs one command in the Computer; managed selects the Program
+	// mounts and sanitized environment, otherwise it is an ordinary Computer
 	// command as `exec` would start it.
 	launch := func(t *testing.T, managed bool, path string, args ...string) (string, string) {
 		t.Helper()
@@ -119,7 +119,7 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 		}
 	}
 
-	t.Run("workspace tools run directly", func(t *testing.T) {
+	t.Run("computer tools run directly", func(t *testing.T) {
 		if out, _ := launch(t, false, "/opt/agentic-python/bin/python", "-c",
 			"import numpy; print(numpy.__version__, int(numpy.arange(5).sum()))"); strings.TrimSpace(out) != "2.5.3 10" {
 			t.Fatalf("python = %q", out)

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -32,12 +32,12 @@ func TestNewAuthorityRetainsConcretePool(t *testing.T) {
 
 func TestNewRunAuthorityRequiresFencingAuthority(t *testing.T) {
 	pool := &pgxpool.Pool{}
-	key := bytes.Repeat([]byte{1}, workspace.FencingKeySize)
-	fencingKey, err := workspace.NewFencingKey(key)
+	key := bytes.Repeat([]byte{1}, computer.FencingKeySize)
+	fencingKey, err := computer.NewFencingKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if authority, err := NewRunAuthority(pool, workspace.FencingKey{}); authority != nil || err == nil {
+	if authority, err := NewRunAuthority(pool, computer.FencingKey{}); authority != nil || err == nil {
 		t.Fatalf("NewRunAuthority() without keys = (%#v, %v), want error", authority, err)
 	}
 	authority, err := NewRunAuthority(pool, fencingKey)

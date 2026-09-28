@@ -56,7 +56,7 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
 		"task", "start", "deploy",
-		"--workspace", testWorkspaceID,
+		"--computer", testComputerID,
 		"--payload", "env=prod",
 		"--idempotency-key", "start-1",
 		"--metadata-json", `{"source":"cli"}`,
@@ -72,7 +72,7 @@ func TestTaskStartCreatesTaskRun(t *testing.T) {
 			t.Fatalf("output = %q, missing %q", out.String(), want)
 		}
 	}
-	if request.Workspace.ID != testWorkspaceID ||
+	if request.Computer.ID != testComputerID ||
 		request.IdempotencyKey != "start-1" {
 		t.Fatalf("request = %+v", request)
 	}
@@ -115,7 +115,7 @@ func TestTaskStartOmitsPayloadWhenNotSpecified(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestTaskCommandReadsPayloadFile(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--payload-file", payloadPath})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID, "--payload-file", payloadPath})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestTaskCommandReadsPayloadFile(t *testing.T) {
 	}
 }
 
-func TestTaskStartRequiresExistingWorkspace(t *testing.T) {
+func TestTaskStartRequiresExistingComputer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("server must not be called: %s %s", r.Method, r.URL.Path)
 	}))
@@ -169,16 +169,16 @@ func TestTaskStartRequiresExistingWorkspace(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{"task", "start", "deploy"})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--workspace is required") {
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--computer is required") {
 		t.Fatalf("err = %v", err)
 	}
 
 	cmd = newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", " " + testWorkspaceID})
-	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid workspace ID") {
-		t.Fatalf("whitespace workspace ID error = %v", err)
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", " " + testComputerID})
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid computer ID") {
+		t.Fatalf("whitespace computer ID error = %v", err)
 	}
 }
 
@@ -207,7 +207,7 @@ func TestTaskStartWaitWaitsForRun(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--wait", "--timeout", "1500ms"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID, "--wait", "--timeout", "1500ms"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestTaskStartWaitPollsRunSnapshot(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--wait", "--timeout", "1500ms"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID, "--wait", "--timeout", "1500ms"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +272,7 @@ func TestTaskStartRejectsJSONFollow(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--json", "--follow"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID, "--json", "--follow"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--json cannot be combined with --follow") {
 		t.Fatalf("err = %v", err)
@@ -311,7 +311,7 @@ func TestTaskStartFollowTimeoutReturnsError(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "--follow", "--timeout", "1s"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID, "--follow", "--timeout", "1s"})
 	err := cmd.Execute()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
@@ -332,8 +332,8 @@ func TestTaskCommandRejectsPayloadFileCombinations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
-		{"task", "start", "deploy", "--workspace", testWorkspaceID, "--payload-file", payloadPath, "--payload", "env=prod"},
+		{"task", "start", "deploy", "--computer", testComputerID, "--payload-file", payloadPath, "--payload-json", `{"env":"prod"}`},
+		{"task", "start", "deploy", "--computer", testComputerID, "--payload-file", payloadPath, "--payload", "env=prod"},
 	} {
 		cmd := newRootCommand()
 		cmd.SetOut(&bytes.Buffer{})
@@ -361,7 +361,7 @@ func TestTaskCommandRejectsProjectFlagThatLooksLikePayload(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "deploy", "--workspace", testWorkspaceID, "-p", "env=prod"})
+	cmd.SetArgs([]string{"task", "start", "deploy", "--computer", testComputerID, "-p", "env=prod"})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "--project must be a project slug or ID") {
 		t.Fatalf("err = %v", err)
@@ -383,7 +383,7 @@ func TestTaskCommandRejectsInvalidTaskIDBeforeRequest(t *testing.T) {
 	cmd := newRootCommand()
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{"task", "start", "bad task", "--workspace", testWorkspaceID})
+	cmd.SetArgs([]string{"task", "start", "bad task", "--computer", testComputerID})
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "task_id") {
 		t.Fatalf("err = %v", err)

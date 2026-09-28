@@ -11,11 +11,11 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -23,7 +23,7 @@ import (
 type scheduleReconciliation struct {
 	definition db.DeploymentDefinition
 	manifest   deployment.ScheduleManifest
-	placements []workspace.SecretPlacement
+	placements []computer.SecretPlacement
 	nextFireAt time.Time
 	record     db.ReconcileSchedulesRow
 }
@@ -188,22 +188,22 @@ func reconcileSchedules(
 	}
 	sort.Strings(secretNames)
 	if len(secretNames) > 0 {
-		secretRecords, err := store.LockActiveSecretsByNameForWorkspaceCreate(
+		secretRecords, err := store.LockActiveSecretsByNameForComputerCreate(
 			ctx,
-			db.LockActiveSecretsByNameForWorkspaceCreateParams{
+			db.LockActiveSecretsByNameForComputerCreateParams{
 				EnvironmentID: target.EnvironmentID,
 				Names:         secretNames,
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("lock scheduled Workspace Secrets: %w", err)
+			return fmt.Errorf("lock scheduled Computer Secrets: %w", err)
 		}
 		for _, record := range secretRecords {
 			secretIDs[record.Name] = record.ID
 		}
 		for _, name := range secretNames {
 			if !secretIDs[name].Valid {
-				return badRequest(fmt.Errorf("scheduled Workspace Secret %q is unavailable", name))
+				return badRequest(fmt.Errorf("scheduled Computer Secret %q is unavailable", name))
 			}
 		}
 	}
@@ -321,16 +321,16 @@ func prepareScheduleReconciliation(
 	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
 		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q timezone: %w", definition.DeclaredID, err))
 	}
-	if _, ok := sandboxes[manifest.Workspace.SandboxDeclaredID]; !ok {
+	if _, ok := sandboxes[manifest.Computer.SandboxDeclaredID]; !ok {
 		return scheduleReconciliation{}, badRequest(fmt.Errorf(
 			"schedule %q sandbox %q is absent from the deployment",
 			definition.DeclaredID,
-			manifest.Workspace.SandboxDeclaredID,
+			manifest.Computer.SandboxDeclaredID,
 		))
 	}
-	placements, err := normalizeWorkspaceSecretPlacements(manifest.Workspace.Secrets)
+	placements, err := normalizeComputerSecretPlacements(manifest.Computer.Secrets)
 	if err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q workspace secrets: %w", definition.DeclaredID, err))
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q computer secrets: %w", definition.DeclaredID, err))
 	}
 	next, err := schedule.NextCronTime(manifest.Cron, manifest.Timezone, effectiveFrom)
 	if err != nil {

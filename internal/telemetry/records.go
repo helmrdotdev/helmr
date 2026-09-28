@@ -53,3 +53,21 @@ type RunLogRecord struct {
 	ObservedAt     time.Time `json:"observed_at"`
 	AcceptedAt     time.Time `json:"accepted_at"`
 }
+
+type CommandLogRecord struct {
+	OrgID          uuid.UUID `json:"org_id"`
+	ProjectID      uuid.UUID `json:"project_id"`
+	EnvironmentID  uuid.UUID `json:"environment_id"`
+	CommandID      uuid.UUID `json:"command_id"`
+	StreamName     string    `json:"stream_name"`
+	Seq            uint64    `json:"seq"`
+	ObservedSeq    uint64    `json:"observed_seq"`
+	Content        []byte    `json:"content"`
+	SizeBytes      uint32    `json:"size_bytes"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	RetentionClass string    `json:"retention_class"`
+	RedactionClass string    `json:"redaction_class"`
+	Source         string    `json:"source"`
+	ObservedAt     time.Time `json:"observed_at"`
+	AcceptedAt     time.Time `json:"accepted_at"`
+}

@@ -12,19 +12,19 @@ import (
 )
 
 var (
-	ErrWorkspaceReservationConflict = errors.New("workspace reservation changed")
-	ErrSecretUnavailable            = errors.New("workspace secret is unavailable")
+	ErrComputerAdmissionConflict = errors.New("Computer admission changed")
+	ErrSecretUnavailable         = errors.New("computer secret is unavailable")
 )
 
 type TaskRequest struct {
-	Run               db.CreateAdmittedRootTaskRunParams
-	WorkspaceRevision int64
+	Run              db.CreateAdmittedRootTaskRunParams
+	ComputerRevision int64
 }
 
 type Store interface {
-	LockWorkspaceSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockWorkspaceSecretsForAdmissionRow, error)
+	LockComputerSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockComputerSecretsForAdmissionRow, error)
 	CreateAdmittedRootTaskRun(context.Context, db.CreateAdmittedRootTaskRunParams) (db.CreateAdmittedRootTaskRunRow, error)
-	ReserveWorkspaceForRun(context.Context, db.ReserveWorkspaceForRunParams) (db.ReserveWorkspaceForRunRow, error)
+	TouchComputerForAdmission(context.Context, db.TouchComputerForAdmissionParams) (db.Computer, error)
 	secret.AttemptResolutionStore
 }
 
@@ -32,9 +32,9 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 	if store == nil {
 		return db.CreateAdmittedRootTaskRunRow{}, errors.New("run admission store is required")
 	}
-	bindings, err := store.LockWorkspaceSecretsForAdmission(ctx, request.Run.WorkspaceID)
+	bindings, err := store.LockComputerSecretsForAdmission(ctx, request.Run.ComputerID)
 	if err != nil {
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("lock workspace secrets: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("lock computer secrets: %w", err)
 	}
 	for _, binding := range bindings {
 		if binding.SecretStatus != "active" || !binding.CurrentVersionID.Valid {
@@ -46,17 +46,15 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 	if err != nil {
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("create admitted task run: %w", err)
 	}
-	if _, err := store.ReserveWorkspaceForRun(ctx, db.ReserveWorkspaceForRunParams{
-		RunID:                 run.ID,
-		EnvironmentID:         request.Run.EnvironmentID,
-		ID:                    request.Run.WorkspaceID,
-		ExpectedRevision:      request.WorkspaceRevision,
-		ExpectedHeadVersionID: request.Run.BaseWorkspaceVersionID,
+	if _, err := store.TouchComputerForAdmission(ctx, db.TouchComputerForAdmissionParams{
+		EnvironmentID:    request.Run.EnvironmentID,
+		ID:               request.Run.ComputerID,
+		ExpectedRevision: request.ComputerRevision,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return db.CreateAdmittedRootTaskRunRow{}, ErrWorkspaceReservationConflict
+			return db.CreateAdmittedRootTaskRunRow{}, ErrComputerAdmissionConflict
 		}
-		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("reserve workspace for run: %w", err)
+		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record Computer admission: %w", err)
 	}
 
 	resolutions := make([]secret.Resolution, len(bindings))
@@ -67,7 +65,7 @@ func CreateTask(ctx context.Context, store Store, request TaskRequest) (db.Creat
 			RevocationGeneration: binding.RevocationGeneration,
 		}
 	}
-	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.WorkspaceID, run.ID, 1, resolutions); err != nil {
+	if err := secret.CreateAttemptResolutions(ctx, store, request.Run.ComputerID, run.ID, 1, resolutions); err != nil {
 		return db.CreateAdmittedRootTaskRunRow{}, fmt.Errorf("record run secret resolutions: %w", err)
 	}
 	return run, nil

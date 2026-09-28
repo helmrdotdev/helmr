@@ -67,7 +67,7 @@ func runtimeOperationCode(err *httpclient.Error, fallback string) string {
 
 func runtimeOperationRetryable(code string) bool {
 	switch code {
-	case "workspace_busy", "workspace_unavailable":
+	case "computer_busy", "computer_unavailable":
 		return true
 	default:
 		return false

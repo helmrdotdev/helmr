@@ -3,37 +3,33 @@ package controlplane
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type runLeaseClaimProjection struct {
 	program     db.GetDeploymentProgramAuthorityRow
 	definition  db.DeploymentDefinition
-	resetTarget db.GetComputerVersionAuthorityRow
+	resetTarget db.GetComputerDiskVersionAuthorityRow
 }
 
 type runLeaseClaimResponseAuthority struct {
-	mode                runLeaseClaimMode
-	actor               db.Session
-	run                 db.Run
-	attempt             db.RunAttempt
-	runtime             db.RuntimeInstance
-	runLease            db.RunLease
-	workspace           db.LockRunLeaseClaimWorkspaceRow
-	workspaceMount      db.WorkspaceMount
-	workspaceLease      db.WorkspaceLease
-	runWait             db.RunWait
-	checkpoint          db.RunCheckpoint
-	checkpointArtifacts checkpointArtifactAuthority
+	actor    db.Session
+	run      db.Run
+	attempt  db.RunAttempt
+	runtime  db.ComputerInstance
+	runLease db.RunLease
+	computer db.LockRunLeaseClaimComputerRow
 }
 
 type SecretDeliveryOpener interface {
@@ -65,16 +61,16 @@ func loadRunLeaseClaimProjection(
 		program:    program,
 		definition: definition,
 	}
-	projection.resetTarget, err = store.GetComputerVersionAuthority(
+	projection.resetTarget, err = store.GetComputerDiskVersionAuthority(
 		ctx,
-		db.GetComputerVersionAuthorityParams{
+		db.GetComputerDiskVersionAuthorityParams{
 			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-			VersionID: authority.workspaceLease.BaseWorkspaceVersionID,
+			EnvironmentID: authority.run.EnvironmentID, ComputerID: authority.computer.ID,
+			VersionID: authority.attempt.BaseComputerDiskVersionID,
 		},
 	)
 	if err != nil {
-		return runLeaseClaimProjection{}, fmt.Errorf("load run lease workspace reset target authority: %w", err)
+		return runLeaseClaimProjection{}, fmt.Errorf("load run lease computer reset target authority: %w", err)
 	}
 	return projection, nil
 }
@@ -86,16 +82,14 @@ func projectRunLeaseClaimResponse(
 	projection runLeaseClaimProjection,
 	platformStore cas.Reader,
 	secretDelivery SecretDeliveryOpener,
-	fencingKey workspace.FencingKey,
+	fencingKey computer.FencingKey,
 ) (workerapi.RunLeaseClaimResponse, error) {
 	physical := runLeaseProjectionAuthority{
-		run:            authority.run,
-		attempt:        authority.attempt,
-		runtime:        authority.runtime,
-		runLease:       authority.runLease,
-		workspace:      authority.workspace,
-		workspaceMount: authority.workspaceMount,
-		workspaceLease: authority.workspaceLease,
+		run:      authority.run,
+		attempt:  authority.attempt,
+		runtime:  authority.runtime,
+		runLease: authority.runLease,
+		computer: authority.computer,
 	}
 	lease, err := projectRunLeaseAssignment(physical)
 	if err != nil {
@@ -113,84 +107,80 @@ func projectRunLeaseClaimResponse(
 	if authority.actor.ID.Valid {
 		actor = &authority.actor
 	}
-	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
-		mode:                authority.mode,
-		run:                 authority.run,
-		attempt:             authority.attempt,
-		actor:               actor,
-		definition:          projection.definition,
-		deploymentVersion:   projection.program.DeploymentVersion,
-		runtime:             authority.runtime,
-		workspaceMount:      authority.workspaceMount,
-		runWait:             authority.runWait,
-		checkpoint:          authority.checkpoint,
-		checkpointArtifacts: authority.checkpointArtifacts,
-	})
+	start, err := encodeProgramStart(authority.run, authority.attempt, actor, projection.definition, projection.program.DeploymentVersion)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	capability, err := deriveWorkspaceCapability(fencingKey, authority.workspaceLease)
+	capability, err := deriveComputerCapability(fencingKey, authority.runtime)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	attachment, err := projectWorkspaceAttachment(physical, capability.Token, projection.resetTarget)
+	attachment, err := projectComputerAttachment(physical, capability.Token, projection.resetTarget)
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err
 	}
-	secrets := make([]workerapi.SecretDelivery, 0)
-	if authority.mode == runLeaseClaimFresh {
-		if secretDelivery == nil {
-			return workerapi.RunLeaseClaimResponse{}, errors.New("secret delivery opener is not configured")
-		}
-		environmentID, err := pgvalue.UUIDValue(authority.run.EnvironmentID)
-		if err != nil {
-			return workerapi.RunLeaseClaimResponse{}, errors.New("run lease environment ID is invalid")
-		}
-		materials, err := secretDelivery.OpenDeliveries(environmentID, envelopes)
-		if err != nil {
-			return workerapi.RunLeaseClaimResponse{}, fmt.Errorf("open run lease secret delivery: %w", err)
-		}
-		secrets, err = projectSecretDeliveries(materials)
-		if err != nil {
-			return workerapi.RunLeaseClaimResponse{}, err
-		}
+	if secretDelivery == nil {
+		return workerapi.RunLeaseClaimResponse{}, errors.New("secret delivery opener is not configured")
+	}
+	environmentID, err := pgvalue.UUIDValue(authority.run.EnvironmentID)
+	if err != nil {
+		return workerapi.RunLeaseClaimResponse{}, errors.New("run lease environment ID is invalid")
+	}
+	materials, err := secretDelivery.OpenDeliveries(environmentID, envelopes)
+	if err != nil {
+		return workerapi.RunLeaseClaimResponse{}, fmt.Errorf("open run lease secret delivery: %w", err)
+	}
+	secrets, err := projectSecretDeliveries(materials)
+	if err != nil {
+		return workerapi.RunLeaseClaimResponse{}, err
 	}
 	return workerapi.RunLeaseClaimResponse{
-		Lease:     lease,
-		Program:   program,
-		Workspace: attachment,
-		Secrets:   secrets,
-		Execution: execution,
+		Lease:        lease,
+		Program:      program,
+		Computer:     attachment,
+		Secrets:      secrets,
+		ProgramStart: start,
 	}, nil
 }
 
-func deriveWorkspaceCapability(
-	key workspace.FencingKey,
-	lease db.WorkspaceLease,
-) (workspace.FencingCapability, error) {
-	leaseID, err := pgvalue.UUIDValue(lease.ID)
+func deriveComputerCapability(
+	key computer.FencingKey,
+	instance db.ComputerInstance,
+) (computer.FencingCapability, error) {
+	instanceID, err := pgvalue.UUIDValue(instance.ID)
 	if err != nil {
-		return workspace.FencingCapability{}, errors.New("workspace lease ID is invalid")
+		return computer.FencingCapability{}, errors.New("computer instance ID is invalid")
 	}
-	workspaceID, err := pgvalue.UUIDValue(lease.WorkspaceID)
+	computerID, err := pgvalue.UUIDValue(instance.ComputerID)
 	if err != nil {
-		return workspace.FencingCapability{}, errors.New("workspace ID is invalid")
+		return computer.FencingCapability{}, errors.New("computer ID is invalid")
 	}
-	capability, err := key.Derive(workspace.FenceInput{
-		LeaseID:                leaseID,
-		WorkspaceID:            workspaceID,
-		OwnershipGeneration:    lease.OwnershipGeneration,
-		WriterGeneration:       lease.WriterGeneration,
-		MountFencingGeneration: lease.MountFencingGeneration,
+	capability, err := key.Derive(computer.FenceInput{
+		InstanceID:       instanceID,
+		ComputerID:       computerID,
+		WriterGeneration: instance.WriterGeneration,
 	})
 	if err != nil {
-		return workspace.FencingCapability{}, err
+		return computer.FencingCapability{}, err
 	}
-	if subtle.ConstantTimeCompare(
-		[]byte(capability.Hash),
-		[]byte(lease.FencingTokenHash),
-	) != 1 {
-		return workspace.FencingCapability{}, errors.New("workspace write capability does not match its lease")
+	hash, err := hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
+	if err != nil {
+		return computer.FencingCapability{}, err
+	}
+	if subtle.ConstantTimeCompare(hash, instance.WriterTokenHash) != 1 {
+		return computer.FencingCapability{}, errors.New("computer write capability does not match its Instance")
 	}
 	return capability, nil
+}
+
+func projectRestoredRunLeaseClaim(a runLeaseClaimAuthority, key computer.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
+	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: a.run, attempt: a.attempt, runtime: a.runtime, runLease: a.runLease, computer: a.computer})
+	if err != nil {
+		return workerapi.RunLeaseClaimResponse{}, err
+	}
+	capability, err := deriveComputerCapability(key, a.runtime)
+	if err != nil {
+		return workerapi.RunLeaseClaimResponse{}, err
+	}
+	return workerapi.RunLeaseClaimResponse{Lease: lease, Computer: workerapi.ComputerAttachment{WriteCapability: capability.Token, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: lease.BaseComputerDiskVersionID}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: pgvalue.UUIDString(a.runtime.SourceCheckpointID), RunWaitID: pgvalue.UUIDString(a.resumeWait.ID), EntrypointKind: a.run.EntrypointKind}}, nil
 }

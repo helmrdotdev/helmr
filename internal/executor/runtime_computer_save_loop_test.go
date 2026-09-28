@@ -36,43 +36,29 @@ func nextSaveRequest(t *testing.T, c *loopSaveClient) workerapi.ComputerSaveBegi
 		return workerapi.ComputerSaveBeginRequest{}
 	}
 }
-func TestRuntimeComputerSaveLoopUsesActiveChildAuthority(t *testing.T) {
+func TestRuntimeComputerSaveLoopPreservesIdleInstance(t *testing.T) {
 	s := &runtimeComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	c := &loopSaveClient{saveHostFixture: f, begun: make(chan workerapi.ComputerSaveBeginRequest, 16)}
-	_, err := s.attach(f.runtime, f.computer, func() *workerapi.ComputerSaveBeginRequest { return nil })
-	if err != nil {
+	writer := workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}
+	if err := s.bind(writer, f.computer); err != nil {
 		t.Fatal(err)
 	}
-	child := workerapi.RunLeaseFence{ID: uuid.NewV7().String(), LeaseSequence: 2}
-	detach, err := s.attach(f.runtime, f.computer, func() *workerapi.ComputerSaveBeginRequest { return &workerapi.ComputerSaveBeginRequest{Lease: &child} })
+	if err := s.bind(writer, f.computer); err == nil {
+		t.Fatal("rebound physical writer")
+	}
+	result, err := s.run(t.Context(), time.Millisecond, c, f, func(context.Context) (computerSaveCapture, error) { return saveHostCapture{f}, nil }, func(err error) { t.Errorf("save failure: %v", err) })
 	if err != nil {
 		t.Fatal(err)
-	}
-	capture := func(context.Context) (computerSaveCapture, error) { return saveHostCapture{f}, nil }
-	failures := make(chan error, 1)
-	result, err := s.run(t.Context(), time.Millisecond, c, f, capture, func(err error) { failures <- err })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.run(t.Context(), time.Millisecond, c, f, capture, func(error) {}); err == nil {
-		t.Fatal("duplicate loop started")
 	}
 	first := nextSaveRequest(t, c)
-	if first.Lease == nil || *first.Lease != child {
-		t.Fatal("used waiting parent's authority")
+	if first.ComputerInstanceID != writer.ComputerInstanceID || first.EnvironmentID != writer.EnvironmentID || first.WriterGeneration != writer.WriterGeneration {
+		t.Fatal("save changed physical writer")
 	}
-	detach()
-	detach()
 	if err := s.Quiesce(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	<-result
-	select {
-	case err := <-failures:
-		t.Fatalf("normal close reported failure: %v", err)
-	default:
-	}
 	if request, _, _ := s.authority(); request != nil {
 		t.Fatal("stopped owner yielded authority")
 	}
@@ -83,9 +69,7 @@ func TestRuntimeComputerSaveLoopReusesRejectedSequence(t *testing.T) {
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	c := &loopSaveClient{saveHostFixture: f, begun: make(chan workerapi.ComputerSaveBeginRequest, 16)}
 	c.reject.Store(true)
-	_, err := s.attach(f.runtime, f.computer, func() *workerapi.ComputerSaveBeginRequest {
-		return &workerapi.ComputerSaveBeginRequest{OrgID: uuid.NewV7().String(), WorkspaceMountID: uuid.NewV7().String()}
-	})
+	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +90,7 @@ func TestRuntimeComputerSaveLoopReusesRejectedSequence(t *testing.T) {
 func TestRuntimeComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
 	s := &runtimeComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
-	_, err := s.attach(f.runtime, f.computer, func() *workerapi.ComputerSaveBeginRequest { return &workerapi.ComputerSaveBeginRequest{} })
+	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +119,7 @@ func TestRuntimeComputerSaveLoopSignalsUnrecoverableCapture(t *testing.T) {
 func TestRuntimeComputerSaveLoopObservesFailureWithoutAnotherTick(t *testing.T) {
 	s := &runtimeComputerSaves{}
 	f := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
-	_, err := s.attach(f.runtime, f.computer, func() *workerapi.ComputerSaveBeginRequest { return &workerapi.ComputerSaveBeginRequest{} })
+	err := s.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: f.runtime, WriterGeneration: 2}, f.computer)
 	if err != nil {
 		t.Fatal(err)
 	}

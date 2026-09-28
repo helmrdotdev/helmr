@@ -193,7 +193,7 @@ func TestSourceCaptureThroughInstalledProgram(t *testing.T) {
 		assemblyWork := t.TempDir()
 		result, err := BuildPreparedProgram(t.Context(), PreparedProgramInput{PreparedDirectory: prepared, ProgramDirectory: directory, WorkDirectory: assemblyWork,
 			ProgramObjectPath: filepath.Join(assemblyWork, "program.squashfs"), SquashFSEncoder: input.SquashFSEncoder, Compiler: compiler, Runtime: runtimeDescriptor, RuntimeMetadata: metadata,
-			WorkspaceImages: []deployment.BundleWorkspaceImage{}})
+			ComputerImages: []deployment.BundleComputerImage{}})
 		if err != nil {
 			t.Fatal(err)
 		}

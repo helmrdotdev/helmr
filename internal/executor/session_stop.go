@@ -78,7 +78,7 @@ func (task *guestRunLeaseTask) pollSessionStop(ctx context.Context) error {
 	}
 }
 func (task *guestRunLeaseTask) beforeWaitResume(ctx context.Context, decision WaitResumeDecision) error {
-	if task.program.execution == nil || decision.Kind != "cancelled" {
+	if task.program.execution == nil || (decision.Kind != "cancelled" && decision.Kind != "failed") {
 		return nil
 	}
 	var cancellation struct {

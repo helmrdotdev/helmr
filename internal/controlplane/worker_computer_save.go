@@ -1,10 +1,10 @@
 package controlplane
 
 import (
-	"errors"
+	"net/http"
+
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"net/http"
 )
 
 func (s *Server) workerBeginComputerSave(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +19,7 @@ func (s *Server) workerBeginComputerSave(w http.ResponseWriter, r *http.Request)
 	}
 	response, err := s.beginComputerSave(r.Context(), workerFromContext(r.Context()), request)
 	if err != nil {
-		s.writeRunComputerObjectError(w, err)
+		s.writeComputerPublicationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -37,7 +37,7 @@ func (s *Server) workerAbandonComputerSave(w http.ResponseWriter, r *http.Reques
 	}
 	err := s.abandonComputerSave(r.Context(), workerFromContext(r.Context()), request)
 	if err != nil {
-		s.writeRunComputerObjectError(w, err)
+		s.writeComputerPublicationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -59,7 +59,7 @@ func (s *Server) workerPublishComputerSave(w http.ResponseWriter, r *http.Reques
 	}
 	result, err := s.publishComputerSave(r.Context(), workerFromContext(r.Context()), request.Save, request.Root)
 	if err != nil {
-		s.writeRunComputerObjectError(w, err)
+		s.writeComputerPublicationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerSavePublicationResponse{ComputerID: pgvalue.UUIDString(result.ComputerID), VersionID: pgvalue.UUIDString(result.VersionID)})
@@ -81,7 +81,7 @@ func (s *Server) workerAdoptComputerSave(w http.ResponseWriter, r *http.Request)
 	}
 	err := s.adoptComputerSave(r.Context(), workerFromContext(r.Context()), request.Save, request.Root)
 	if err != nil {
-		s.writeRunComputerObjectError(w, err)
+		s.writeComputerPublicationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
@@ -111,29 +111,8 @@ func (s *Server) workerComputerSaveObject(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.recordComputerSaveObject(r.Context(), workerFromContext(r.Context()), request.Save, request.Inspection, operation); err != nil {
-		s.writeRunComputerObjectError(w, err)
+		s.writeComputerPublicationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
-}
-
-func validateComputerSaveRequest(request workerapi.ComputerSaveBeginRequest) error {
-	if _, err := parseCanonicalUUID("save_id", request.SaveID); err != nil {
-		return err
-	}
-	if request.Sequence <= 0 {
-		return errors.New("positive save sequence required")
-	}
-	if request.Lease != nil {
-		if request.OrgID != "" || request.WorkspaceMountID != "" {
-			return errors.New("one execution authority required")
-		}
-		_, err := parseRunLeaseFence(*request.Lease)
-		return err
-	}
-	if _, err := parseCanonicalUUID("org_id", request.OrgID); err != nil {
-		return err
-	}
-	_, err := parseCanonicalUUID("workspace_mount_id", request.WorkspaceMountID)
-	return err
 }

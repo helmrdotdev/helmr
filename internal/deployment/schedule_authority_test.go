@@ -4,7 +4,7 @@ import "testing"
 
 func TestScheduleAuthorityValidatesAcceptedScheduledTask(t *testing.T) {
 	authority := &ScheduleAuthority{}
-	manifest := []byte(`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":900000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","workspace":{"sandboxId":"scheduler","secrets":[]}}}`)
+	manifest := []byte(`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":900000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"scheduler","secrets":[]}}}`)
 	_, digest, err := CanonicalManifestAndDigest(manifest)
 	if err != nil {
 		t.Fatal(err)

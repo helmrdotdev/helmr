@@ -5,8 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/db"
 )
 
 const (
@@ -17,9 +15,8 @@ const (
 )
 
 type RunLeaseRecoverer interface {
-	RecoverExpiredRuntimeReservations(context.Context, int32) (int, error)
+	ReconcileComputerInstances(context.Context, int32) (int, error)
 	RecoverRunExecutionLeases(context.Context, int32) (int, error)
-	RecoverExpiredRunResumes(context.Context, int32) ([]db.RecoverExpiredRunResumesRow, error)
 }
 
 type RunLeaseRecoveryLock interface {
@@ -92,21 +89,13 @@ func (r *RunLeaseReconciler) reconcile(ctx context.Context) error {
 		}
 	}()
 	// Bound each independent recovery lane so backlog cannot starve another.
-	executionLimit := (r.limit + 2) / 3
-	resumeLimit := (r.limit + 1) / 3
-	runtimeLimit := r.limit / 3
-	errorsByLane := make(chan error, 3)
+	executionLimit := (r.limit + 1) / 2
+	instanceLimit := r.limit / 2
+	errorsByLane := make(chan error, 2)
+	go func() { _, err := r.recoverer.RecoverRunExecutionLeases(ctx, executionLimit); errorsByLane <- err }()
 	go func() {
-		_, err := r.recoverer.RecoverRunExecutionLeases(ctx, executionLimit)
+		_, err := r.recoverer.ReconcileComputerInstances(ctx, instanceLimit)
 		errorsByLane <- err
 	}()
-	go func() {
-		_, err := r.recoverer.RecoverExpiredRunResumes(ctx, resumeLimit)
-		errorsByLane <- err
-	}()
-	go func() {
-		_, err := r.recoverer.RecoverExpiredRuntimeReservations(ctx, runtimeLimit)
-		errorsByLane <- err
-	}()
-	return errors.Join(<-errorsByLane, <-errorsByLane, <-errorsByLane)
+	return errors.Join(<-errorsByLane, <-errorsByLane)
 }

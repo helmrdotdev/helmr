@@ -9,98 +9,100 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestWorkerFenceCoordinatesAtWorkerGranularity(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
+	f, _, authority := commandPlacementFixture(t)
 	workerID := uuid.New()
 	serviceID := uuid.New()
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-INSERT INTO worker_instances (
+	dbtest.MustExec(t, t.Context(), f.Pool, `
+INSERT INTO worker_hosts (
     id, resource_id, worker_group_id, worker_pool_id, status,
     current_epoch, current_service_id,
-    runtime_identity_id, substrate_format, substrate_contract,
+    vm_platform_id,
     epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes,
     per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-    max_runtime_starts, cpu_environment, cpu_environment_digest,
+    max_vm_starts, cpu_environment, cpu_environment_digest,
     observed_at, epoch_started_at, activated_at
 )
 SELECT $2, $3, worker_group_id, worker_pool_id, status,
        current_epoch, $4,
-       runtime_identity_id, substrate_format, substrate_contract,
+       vm_platform_id,
        epoch_cpu_millis, epoch_memory_bytes, epoch_guest_ephemeral_disk_bytes,
        per_vm_cpu_millis, per_vm_memory_bytes,
        per_vm_guest_ephemeral_disk_bytes, max_vm_slots,
-       max_runtime_starts, cpu_environment, cpu_environment_digest,
+       max_vm_starts, cpu_environment, cpu_environment_digest,
        observed_at, epoch_started_at, activated_at
-  FROM worker_instances
- WHERE id = $1`, fixture.workerID, workerID, workerID.String(), serviceID)
+  FROM worker_hosts
+ WHERE id = $1`, f.WorkerID, workerID, workerID.String(), serviceID)
 
-	first, err := fixture.authority.begin(fixture.ctx)
+	first, err := authority.begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), first)
 	var isolation string
-	if err := first.QueryRow(fixture.ctx, `SHOW transaction_isolation`).Scan(&isolation); err != nil {
+	if err := first.QueryRow(t.Context(), `SHOW transaction_isolation`).Scan(&isolation); err != nil {
 		t.Fatal(err)
 	}
 	if isolation != "read committed" {
 		t.Fatalf("placement transaction isolation = %q, want read committed", isolation)
 	}
-	if err := lockWorkerFence(fixture.ctx, first, workerFence{
-		GroupID: fixture.groupID, RegionID: "us-east-1",
-		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+	if err := lockWorkerFence(t.Context(), first, workerFence{
+		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
+		WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	second, err := fixture.authority.begin(fixture.ctx)
+	second, err := authority.begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), second)
-	secondCtx, cancelSecond := context.WithTimeout(fixture.ctx, time.Second)
+	secondCtx, cancelSecond := context.WithTimeout(t.Context(), time.Second)
 	defer cancelSecond()
 	if err := lockWorkerFence(secondCtx, second, workerFence{
-		GroupID: fixture.groupID, RegionID: "us-east-1",
-		WorkerInstanceID: pgvalue.UUID(workerID), WorkerEpoch: 1,
+		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
+		WorkerHostID: pgvalue.UUID(workerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatalf("independent Worker fence blocked: %v", err)
 	}
 
-	transitionCtx, cancelTransition := context.WithTimeout(fixture.ctx, 5*time.Second)
+	transitionCtx, cancelTransition := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancelTransition()
 	transitioned := make(chan error, 1)
 	go func() {
-		_, err := fixture.pool.Exec(transitionCtx, `
+		_, err := f.Pool.Exec(transitionCtx, `
 /* worker fence group transition */
-UPDATE worker_groups SET status = 'paused' WHERE id = $1`, fixture.groupID)
+UPDATE worker_groups SET status = 'paused' WHERE id = $1`, pgvalue.UUID(runtest.WorkerGroupID))
 		transitioned <- err
 	}()
-	waitForBlockedQuery(t, fixture, "worker fence group transition", 1)
+	waitForBlockedQuery(t, f.Pool, "worker fence group transition", 1)
 
-	if err := second.Commit(fixture.ctx); err != nil {
+	if err := second.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Commit(fixture.ctx); err != nil {
+	if err := first.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-transitioned; err != nil {
 		t.Fatal(err)
 	}
 
-	recheck, err := fixture.authority.begin(fixture.ctx)
+	recheck, err := authority.begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), recheck)
-	err = lockWorkerFence(fixture.ctx, recheck, workerFence{
-		GroupID: fixture.groupID, RegionID: "us-east-1",
-		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+	err = lockWorkerFence(t.Context(), recheck, workerFence{
+		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
+		WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
 	})
 	if err == nil {
@@ -109,26 +111,26 @@ UPDATE worker_groups SET status = 'paused' WHERE id = $1`, fixture.groupID)
 }
 
 func TestRuntimeAdmissionFenceRejectsRuntimePausedWorker(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET runtime_paused_reason = 'runtime_health'
- WHERE id = $1`, fixture.workerID)
+	f, _, authority := commandPlacementFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `
+UPDATE worker_hosts
+   SET vm_paused_reason = 'runtime_health'
+ WHERE id = $1`, f.WorkerID)
 
-	tx, err := fixture.authority.begin(fixture.ctx)
+	tx, err := authority.begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), tx)
-	if err := lockWorkerFence(fixture.ctx, tx, workerFence{
-		GroupID: fixture.groupID, RegionID: "us-east-1",
-		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+	if err := lockWorkerFence(t.Context(), tx, workerFence{
+		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
+		WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
 	}); err != nil {
 		t.Fatalf("Run-domain fence rejected Runtime-only pause: %v", err)
 	}
 	err = checkLockedWorkerRuntimeAdmission(
-		fixture.ctx, tx, pgvalue.UUID(fixture.workerID), 1,
+		t.Context(), tx, pgvalue.UUID(f.WorkerID), 1,
 	)
 	if err == nil {
 		t.Fatal("runtime-paused Worker remained eligible for Runtime admission")
@@ -136,26 +138,23 @@ UPDATE worker_instances
 }
 
 func TestConcurrentRunPlacementRechecksLockedWorkerCapacity(t *testing.T) {
-	fixture := newRunPlacementFixture(t)
-	seedDispatchMeasurement(t, fixture, 2, 2, 0, false)
-	dbtest.MustExec(t, fixture.ctx, fixture.pool, `
-UPDATE worker_instances
-   SET max_vm_slots = 1,
-       max_runtime_starts = 1
- WHERE id = $1`, fixture.workerID)
-
-	candidates := listRunPlacementCandidates(t, fixture, 2)
-	if len(candidates) != 2 {
-		t.Fatalf("placement candidates = %d, want 2", len(candidates))
+	f, first, authority := commandPlacementFixture(t)
+	second := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
+	candidates := []ReadyRunCandidate{queuedSharedRun(t, f, first), queuedSharedRun(t, f, second)}
+	for _, candidate := range candidates {
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET concurrency_key=id::text WHERE id=$1`, candidate.RunID)
 	}
+	// Supply consists of two persistent Computers with no remaining physical instances.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=2,observed_state='closed',observed_desired_version=2,terminal_at=now(),terminal_reason_code='test_exclusion',reclaimed_at=now(),reclaim_evidence='{"method":"host_reconciled"}',admission_state='closed',mount_state='unmounted',unmounted_at=now()`)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET max_vm_slots=1,max_vm_starts=1,epoch_guest_ephemeral_disk_bytes=68719476736,per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, f.WorkerID)
 
-	blocker, err := fixture.pool.Begin(fixture.ctx)
+	blocker, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), blocker)
-	if _, err := blocker.Exec(fixture.ctx, `
-SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, fixture.groupID); err != nil {
+	if _, err := blocker.Exec(t.Context(), `
+SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, pgvalue.UUID(runtest.WorkerGroupID)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -163,15 +162,33 @@ SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, fixture.groupID); err !=
 	for _, row := range candidates {
 		candidate := ReadyRunCandidate{
 			OrgID: row.OrgID, RunID: row.RunID,
-			ExpectedRunRevision: row.Revision,
+			ExpectedRunRevision: row.ExpectedRunRevision,
 		}
 		go func() {
-			_, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate)
+			_, err := authority.PlaceReadyRun(t.Context(), candidate)
 			results <- err
 		}()
 	}
-	waitForBlockedQuery(t, fixture, "FOR SHARE", len(candidates))
-	if err := blocker.Commit(fixture.ctx); err != nil {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var waiting int
+		if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, blocker.Conn().PgConn().PID()).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting == len(candidates) {
+			break
+		}
+		select {
+		case err := <-results:
+			t.Fatalf("placement returned before Worker fence: %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("blocked placements=%d", waiting)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := blocker.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -193,12 +210,12 @@ SELECT id FROM worker_groups WHERE id = $1 FOR UPDATE`, fixture.groupID); err !=
 	}
 
 	var reservations int
-	if err := fixture.pool.QueryRow(fixture.ctx, `
+	if err := f.Pool.QueryRow(t.Context(), `
 SELECT count(*)
-  FROM runtime_instances
- WHERE worker_instance_id = $1
+  FROM computer_instances
+ WHERE worker_host_id = $1
    AND worker_epoch = 1
-   AND reclaimed_at IS NULL`, fixture.workerID).Scan(&reservations); err != nil {
+   AND reclaimed_at IS NULL`, f.WorkerID).Scan(&reservations); err != nil {
 		t.Fatal(err)
 	}
 	if reservations != 1 {
@@ -206,15 +223,15 @@ SELECT count(*)
 	}
 }
 
-func waitForBlockedQuery(t *testing.T, fixture runPlacementFixture, marker string, count int) {
+func waitForBlockedQuery(t *testing.T, pool *pgxpool.Pool, marker string, count int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(fixture.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		var waiting int
-		err := fixture.pool.QueryRow(ctx, `
+		err := pool.QueryRow(ctx, `
 SELECT count(*)
   FROM pg_stat_activity
  WHERE datname = current_database()

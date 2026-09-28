@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,28 +23,26 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			fixture := newRunLeaseClaimFixture(t, ctx)
-			work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-			actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
-			startTaskCompletionWork(t, ctx, fixture, work)
+			fixture := newActorInputFixture(t)
+			work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+			actorID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+			startActorInputWork(t, fixture, work)
 
 			var runVersion int64
-			if err := fixture.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
+			if err := fixture.Pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.RunID).Scan(&runVersion); err != nil {
 				t.Fatal(err)
 			}
 			waitID := uuid.NewV7()
 			turnID := uuid.NewV7()
 			register := func() RunWait {
 				wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
-					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+					ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.EnvironmentID),
 					IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
 					AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 					RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-wait")), AttemptNumber: 1,
-					ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true},
-					CurrentRunLeaseID:             pgvalue.UUID(work.leaseID),
-					CheckpointDueAt:               pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
-					ResumeAttachID:                pgvalue.UUID(uuid.NewV7()), Metadata: []byte(`{}`), Tags: []string{},
-					RunID: pgvalue.UUID(work.runID), ExpectedRunningRevision: runVersion,
+					CurrentRunLeaseID: pgvalue.UUID(work.LeaseID),
+					Metadata:          []byte(`{}`), Tags: []string{},
+					RunID: pgvalue.UUID(work.RunID), ExpectedRunningRevision: runVersion,
 				})
 				if err != nil {
 					t.Fatal(err)
@@ -52,7 +51,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 			}
 			appendRecord := func() SessionTurn {
 				record, err := fixture.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-					EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
+					EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 					ID: pgvalue.UUID(turnID), Data: []byte(`{"message":"ready"}`)})
 				if err != nil {
 					t.Fatal(err)
@@ -73,8 +72,8 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				record = appendRecord()
 			}
 			pending, err := fixture.queries.GetPendingActorInputRunWait(ctx, GetPendingActorInputRunWaitParams{
-				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-				RunID: pgvalue.UUID(work.runID), AttemptNumber: 1,
+				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
+				RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1,
 				AfterInputSequence: pgtype.Int8{Int64: 2, Valid: true},
 			})
 			if err != nil || pending.ID != wait.ID {
@@ -89,7 +88,7 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 				t.Fatal(err)
 			}
 			var status RunStatus
-			if err := fixture.pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, work.runID).Scan(&status); err != nil {
+			if err := fixture.Pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, work.RunID).Scan(&status); err != nil {
 				t.Fatal(err)
 			}
 			if completed.ConditionStatus != WaitStatusCompleted || completed.SuspensionStatus != RunWaitStatusReleased ||
@@ -103,9 +102,9 @@ func TestActorInputWaitAppendAndRegistrationOrdersConverge(t *testing.T) {
 
 func TestSessionTurnEnqueueConcurrentSequences(t *testing.T) {
 	ctx := t.Context()
-	f := newRunLeaseClaimFixture(t, ctx)
-	work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	sessionID := f.convertToActor(t, ctx, work, `{"enabled":false}`)
+	f := newActorInputFixture(t)
+	work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	sessionID := f.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 	type result struct {
 		turn SessionTurn
 		err  error
@@ -117,8 +116,8 @@ func TestSessionTurnEnqueueConcurrentSequences(t *testing.T) {
 		go func() {
 			start.Wait()
 			turn, err := f.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-				EnvironmentID: pgvalue.UUID(f.environmentID), SessionID: pgvalue.UUID(sessionID),
-				ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`null`), SourceRunID: pgvalue.UUID(work.runID),
+				EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(sessionID),
+				ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`null`), SourceRunID: pgvalue.UUID(work.RunID),
 			})
 			results <- result{turn, err}
 		}()
@@ -130,7 +129,7 @@ func TestSessionTurnEnqueueConcurrentSequences(t *testing.T) {
 		if r.err != nil {
 			t.Fatal(r.err)
 		}
-		if r.turn.SourceRunID != pgvalue.UUID(work.runID) || r.turn.Status != "queued" {
+		if r.turn.SourceRunID != pgvalue.UUID(work.RunID) || r.turn.Status != "queued" {
 			t.Fatalf("turn=%+v", r.turn)
 		}
 		sequences[r.turn.Sequence] = true
@@ -142,25 +141,25 @@ func TestSessionTurnEnqueueConcurrentSequences(t *testing.T) {
 
 func TestSessionTurnEnqueueRollbackLeavesNoResidue(t *testing.T) {
 	ctx := t.Context()
-	f := newRunLeaseClaimFixture(t, ctx)
-	work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	sessionID := f.convertToActor(t, ctx, work, `{"enabled":false}`)
+	f := newActorInputFixture(t)
+	work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	sessionID := f.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 	turnID, outboxID := uuid.NewV7(), uuid.NewV7()
-	tx, err := f.pool.Begin(ctx)
+	tx, err := f.Pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
 	q := New(tx)
 	turn, err := q.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-		EnvironmentID: pgvalue.UUID(f.environmentID), SessionID: pgvalue.UUID(sessionID),
-		ID: pgvalue.UUID(turnID), Data: []byte(`{"rollback":true}`), SourceRunID: pgvalue.UUID(work.runID),
+		EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(sessionID),
+		ID: pgvalue.UUID(turnID), Data: []byte(`{"rollback":true}`), SourceRunID: pgvalue.UUID(work.RunID),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := q.CreateActorInputReconcileOutbox(ctx, CreateActorInputReconcileOutboxParams{
-		ID: pgvalue.UUID(outboxID), EnvironmentID: pgvalue.UUID(f.environmentID), SessionID: pgvalue.UUID(sessionID), TurnID: turn.ID,
+		ID: pgvalue.UUID(outboxID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(sessionID), TurnID: turn.ID,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +168,7 @@ func TestSessionTurnEnqueueRollbackLeavesNoResidue(t *testing.T) {
 	}
 	var next int64
 	var turns, outbox int
-	if err := f.pool.QueryRow(ctx, `SELECT next_input_sequence,
+	if err := f.Pool.QueryRow(ctx, `SELECT next_input_sequence,
   (SELECT count(*) FROM session_turns WHERE id=$2),
   (SELECT count(*) FROM control_outbox WHERE id=$3)
   FROM sessions WHERE id=$1`, sessionID, turnID, outboxID).Scan(&next, &turns, &outbox); err != nil {
@@ -182,14 +181,14 @@ func TestSessionTurnEnqueueRollbackLeavesNoResidue(t *testing.T) {
 
 func TestSessionTurnSequenceSafeIntegerBoundary(t *testing.T) {
 	ctx := t.Context()
-	f := newRunLeaseClaimFixture(t, ctx)
-	work := f.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	sessionID := f.convertToActor(t, ctx, work, `{"enabled":false}`)
+	f := newActorInputFixture(t)
+	work := f.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	sessionID := f.ConvertToActor(t, ctx, work, `{"enabled":false}`)
 	const maxSafeSequence int64 = 9_007_199_254_740_991
-	dbtest.MustExec(t, ctx, f.pool, `UPDATE sessions SET next_input_sequence=$2 WHERE id=$1`, sessionID, maxSafeSequence)
+	dbtest.MustExec(t, ctx, f.Pool, `UPDATE sessions SET next_input_sequence=$2 WHERE id=$1`, sessionID, maxSafeSequence)
 	enqueue := func() (SessionTurn, error) {
 		return f.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-			EnvironmentID: pgvalue.UUID(f.environmentID), SessionID: pgvalue.UUID(sessionID), ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{}`),
+			EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(sessionID), ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{}`),
 		})
 	}
 	turn, err := enqueue()
@@ -201,7 +200,7 @@ func TestSessionTurnSequenceSafeIntegerBoundary(t *testing.T) {
 	}
 	var next int64
 	var count int
-	if err := f.pool.QueryRow(ctx, `SELECT next_input_sequence,(SELECT count(*) FROM session_turns WHERE session_id=$1 AND sequence=$2) FROM sessions WHERE id=$1`, sessionID, maxSafeSequence).Scan(&next, &count); err != nil {
+	if err := f.Pool.QueryRow(ctx, `SELECT next_input_sequence,(SELECT count(*) FROM session_turns WHERE session_id=$1 AND sequence=$2) FROM sessions WHERE id=$1`, sessionID, maxSafeSequence).Scan(&next, &count); err != nil {
 		t.Fatal(err)
 	}
 	if next != maxSafeSequence+1 || count != 1 {
@@ -211,24 +210,23 @@ func TestSessionTurnSequenceSafeIntegerBoundary(t *testing.T) {
 
 func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
-	startTaskCompletionWork(t, ctx, fixture, work)
+	fixture := newActorInputFixture(t)
+	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	actorID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+	startActorInputWork(t, fixture, work)
 	var runVersion int64
-	if err := fixture.pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.runID).Scan(&runVersion); err != nil {
+	if err := fixture.Pool.QueryRow(ctx, `SELECT revision FROM runs WHERE id = $1`, work.RunID).Scan(&runVersion); err != nil {
 		t.Fatal(err)
 	}
 	wait, err := fixture.queries.RegisterActorInputRunWait(ctx, RegisterActorInputRunWaitParams{
-		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(fixture.environmentID),
+		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(fixture.EnvironmentID),
 		TimeoutAt:     pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
 		IdleTimeoutMs: pgtype.Int8{Int64: 30_000, Valid: true}, SessionID: pgvalue.UUID(actorID),
 		AfterInputSequence:             pgtype.Int8{Int64: 2, Valid: true},
 		RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("actor-input-timeout")), AttemptNumber: 1,
-		ActorSpeculativeInputSequence: pgtype.Int8{Int64: 2, Valid: true}, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
-		CheckpointDueAt: pgvalue.Timestamptz(time.Now().Add(30 * time.Second)),
-		ResumeAttachID:  pgvalue.UUID(uuid.NewV7()), Metadata: []byte(`{}`), Tags: []string{},
-		RunID: pgvalue.UUID(work.runID), ExpectedRunningRevision: runVersion,
+		CurrentRunLeaseID: pgvalue.UUID(work.LeaseID),
+		Metadata:          []byte(`{}`), Tags: []string{},
+		RunID: pgvalue.UUID(work.RunID), ExpectedRunningRevision: runVersion,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +244,7 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	var status RunStatus
-	if err := fixture.pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, work.runID).Scan(&status); err != nil {
+	if err := fixture.Pool.QueryRow(ctx, `SELECT status FROM runs WHERE id = $1`, work.RunID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if failed.ConditionStatus != WaitStatusFailed || failed.SuspensionStatus != RunWaitStatusReleased ||
@@ -257,42 +255,37 @@ func TestActorInputWaitTimeoutReleasesHotRun(t *testing.T) {
 
 func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	actorID := fixture.convertToActor(t, ctx, work, `{"enabled":false}`)
-	var workspaceID uuid.UUID
-	if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM sessions WHERE id = $1`, actorID).Scan(&workspaceID); err != nil {
+	fixture := newActorInputFixture(t)
+	work := fixture.AddRunLease(t, "starting", time.Now().Add(-time.Minute))
+	actorID := fixture.ConvertToActor(t, ctx, work, `{"enabled":false}`)
+	var computerID uuid.UUID
+	if err := fixture.Pool.QueryRow(ctx, `SELECT computer_id FROM sessions WHERE id = $1`, actorID).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE workspace_leases
-		   SET status = 'released', released_at = now(), terminal_at = now()
-		 WHERE owner_run_lease_id = $1
-	`, work.leaseID)
-	dbtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.Pool, `
 		UPDATE run_leases
-		   SET status = 'cancelled', terminal_at = now(), terminal_reason_code = 'test_idle'
+		   SET status = 'cancelled', terminal_at = now(), terminal_reason_code = 'test_idle', process_reconciled_at=now()
 		 WHERE id = $1
-	`, work.leaseID)
-	dbtest.MustExec(t, ctx, fixture.pool, `
+	`, work.LeaseID)
+	dbtest.MustExec(t, ctx, fixture.Pool, `
 		UPDATE runs
 		   SET status = 'failed', current_run_lease_id = NULL,
 		       terminal_at = now(),
 		       failure = '{"code":"test_idle","message":"Test run failed","details":{}}'::jsonb
 		 WHERE id = $1
-	`, work.runID)
-	dbtest.MustExec(t, ctx, fixture.pool, `
+	`, work.RunID)
+	dbtest.MustExec(t, ctx, fixture.Pool, `
 		UPDATE sessions
 		   SET current_run_id = NULL, committed_input_sequence = 2
 		 WHERE id = $1
 	`, actorID)
 	input, err := fixture.queries.EnqueueSessionTurn(ctx, EnqueueSessionTurnParams{
-		EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
+		EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
 		ID: pgvalue.UUID(uuid.NewV7()), Data: []byte(`{"wake":true}`)})
 	if err != nil || input.Sequence != 3 {
 		t.Fatalf("wake input = %+v, %v", input, err)
 	}
-	dbtest.MustExec(t, ctx, fixture.pool, `
+	dbtest.MustExec(t, ctx, fixture.Pool, `
 		UPDATE sessions
 		   SET status = 'closing', close_sequence = 3
 		 WHERE id = $1
@@ -312,8 +305,8 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 				RunID:         pgvalue.UUID(uuid.NewV7()),
 				QueueOriginAt: pgvalue.Timestamptz(time.Now().UTC()),
 				TraceID:       pgvalue.Text("11111111111111111111111111111111"), RootSpanID: "2222222222222222",
-				EnvironmentID: pgvalue.UUID(fixture.environmentID), SessionID: pgvalue.UUID(actorID),
-				WorkspaceID: pgvalue.UUID(workspaceID), ExpectedRunGeneration: 1,
+				EnvironmentID: pgvalue.UUID(fixture.EnvironmentID), SessionID: pgvalue.UUID(actorID),
+				ComputerID: pgvalue.UUID(computerID), ExpectedRunGeneration: 1,
 			})
 			results <- result{run: run, err: err}
 		}()
@@ -339,7 +332,7 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	}
 	var actorCurrentRun uuid.UUID
 	var runCount, attemptCount int
-	if err := fixture.pool.QueryRow(ctx, `
+	if err := fixture.Pool.QueryRow(ctx, `
 		SELECT sessions.current_run_id,
 		       (SELECT count(*) FROM runs WHERE session_id = sessions.id AND cause_kind = 'continuation'),
 		       (SELECT count(*) FROM run_attempts WHERE run_id = sessions.current_run_id)
@@ -350,4 +343,21 @@ func TestActorInputClosingContinuationCASCreatesOneRun(t *testing.T) {
 	if actorCurrentRun != pgvalue.MustUUIDValue(created.ID) || runCount != 1 || attemptCount != 1 {
 		t.Fatalf("durable continuation = current %s runs %d attempts %d", actorCurrentRun, runCount, attemptCount)
 	}
+}
+
+// Actor input waits are logical Run state and do not own physical capture metadata.
+type actorInputFixture struct {
+	runtest.Fixture
+	queries *Queries
+}
+
+func newActorInputFixture(t *testing.T) actorInputFixture {
+	f := runtest.New(t)
+	return actorInputFixture{Fixture: f, queries: New(f.Pool)}
+}
+func startActorInputWork(t *testing.T, f actorInputFixture, work runtest.RunLease) {
+	t.Helper()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='running',started_at=claimed_at WHERE id=$1`, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',revision=revision+1,started_at=now(),active_started_at=now() WHERE id=$1`, work.RunID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_attempts SET entrypoint_entered_at=now() WHERE run_id=$1 AND number=1`, work.RunID)
 }

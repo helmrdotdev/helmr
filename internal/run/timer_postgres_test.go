@@ -49,8 +49,6 @@ func TestTimerWaitReconcilerCompletesDueHotWait(t *testing.T) {
 		RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("timer-reconcile")),
 		AttemptNumber:                  1,
 		CurrentRunLeaseID:              pgvalue.UUID(work.leaseID),
-		CheckpointDueAt:                pgvalue.Timestamptz(time.Now().UTC().Add(time.Second)),
-		ResumeAttachID:                 pgvalue.UUID(uuid.NewV7()),
 		Metadata:                       []byte(`{}`),
 		Tags:                           []string{},
 		RunID:                          pgvalue.UUID(work.runID),

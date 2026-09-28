@@ -8,46 +8,24 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func secondWorkerControlActor(t *testing.T, first *actorCheckpointFixture) *actorCheckpointFixture {
+func secondWorkerControlActor(t *testing.T, first *actorExecutionFixture) *actorExecutionFixture {
 	t.Helper()
-	f := *first
-	f.workspaceID, f.rootID = uuid.NewV7(), uuid.NewV7()
-	tx, err := f.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.workspaceID)
-	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.workspaceID, f.rootID)
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	started, err := f.server.startActor(t.Context(), actorStartRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ActorDeclaredID: "frontier", WorkspaceID: f.workspaceID})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.sessionID, f.runID = started.SessionID, started.BootRunID
-	if _, err = f.server.applySessionAdmission(t.Context(), session.AdmissionRequest{Target: session.Target{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID}, Mode: session.EnqueueOnly, Data: json.RawMessage(`1`)}); err != nil {
-		t.Fatal(err)
-	}
-	f.placeAndStart(t)
-	return &f
+	return actorExecutionOnFixture(t, first.Fixture, json.RawMessage(`1`), true)
 }
 
-func addWorkerControlSecret(t *testing.T, f *actorCheckpointFixture) {
+func addWorkerControlSecret(t *testing.T, f *actorExecutionFixture) {
 	t.Helper()
 	id, version := uuid.NewV7(), uuid.NewV7()
 	tx, err := f.Pool.Begin(t.Context())
@@ -58,15 +36,15 @@ func addWorkerControlSecret(t *testing.T, f *actorCheckpointFixture) {
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO secrets(id,environment_id,name,current_version_id) VALUES($1,$2,$3,$4)`, id, f.EnvironmentID, "secret-"+id.String(), version)
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO secret_versions(id,secret_id,version,nonce,ciphertext) VALUES($1,$2,1,decode(repeat('01',12),'hex'),decode(repeat('02',16),'hex'))`, version, id)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO workspace_secrets(workspace_id,environment_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.workspaceID, f.EnvironmentID, id)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO secret_resolutions(id,workspace_id,run_id,attempt_number,placement_kind,placement_target,secret_id,secret_version_id,revocation_generation) VALUES($1,$2,$3,1,'env','TOKEN',$4,$5,0)`, uuid.NewV7(), f.workspaceID, f.runID, id, version)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computer_secrets(computer_id,environment_id,secret_id,placement_kind,placement_target,mode) VALUES($1,$2,$3,'env','TOKEN','raw')`, f.computerID, f.EnvironmentID, id)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO secret_resolutions(id,computer_id,run_id,attempt_number,placement_kind,placement_target,secret_id,secret_version_id,revocation_generation) VALUES($1,$2,$3,1,'env','TOKEN',$4,$5,0)`, uuid.NewV7(), f.computerID, f.runID, id, version)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestWorkerSessionControlReciprocalInterruptPostgres(t *testing.T) {
-	a := newActorCheckpointFixture(t)
+	a := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	b := secondWorkerControlActor(t, a)
 	at, bt := a.receiveTurn(t, 1), b.receiveTurn(t, 1)
 	addWorkerControlSecret(t, a)
@@ -76,7 +54,7 @@ func TestWorkerSessionControlReciprocalInterruptPostgres(t *testing.T) {
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for _, pair := range []struct {
-		source, target *actorCheckpointFixture
+		source, target *actorExecutionFixture
 		turn           uuid.UUID
 	}{{a, b, bt.TurnID}, {b, a, at.TurnID}} {
 		go func() {
@@ -117,7 +95,7 @@ func TestWorkerSessionControlReciprocalInterruptPostgres(t *testing.T) {
 func TestWorkerSessionControlSourceFencePostgres(t *testing.T) {
 	for _, state := range []string{"stale", "settling", "held"} {
 		t.Run(state, func(t *testing.T) {
-			f := newActorCheckpointFixture(t)
+			f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 			scope := f.receiveTurn(t, 1)
 			fence := f.fence()
 			switch state {
@@ -144,7 +122,7 @@ func TestWorkerSessionControlSourceFencePostgres(t *testing.T) {
 }
 
 func TestWorkerSessionControlSelfInterruptRejectsResumePostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	turn := f.receiveTurn(t, 1)
 	var interrupted workerapi.InterruptSessionTurnResponse
 	f.workerCall(t, f.server.workerInterruptSessionTurn, workerapi.InterruptSessionTurnRequest{TurnReferenceRequest: workerapi.TurnReferenceRequest{SessionReferenceRequest: workerapi.SessionReferenceRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), SessionID: f.sessionID.String()}, TurnID: turn.TurnID.String()}}, &interrupted)
@@ -162,125 +140,6 @@ func TestWorkerSessionControlSelfInterruptRejectsResumePostgres(t *testing.T) {
 	}
 }
 
-func TestWorkerSessionControlLocksChildBeforeWorkerGroupPostgres(t *testing.T) {
-	a := newActorCheckpointFixture(t)
-	b := secondWorkerControlActor(t, a)
-	bturn := b.receiveTurn(t, 1)
-	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dbtest.MustExec(t, t.Context(), a.Pool, `UPDATE deployment_definitions SET manifest=$2,manifest_digest=$3 WHERE id=$1`, a.TaskDefinitionID, manifest, digest[:])
-	ws, version := uuid.NewV7(), uuid.NewV7()
-	setup, err := a.Pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer setup.Rollback(context.Background())
-	dbtest.MustExec(t, t.Context(), setup, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), setup, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, ws, a.EnvironmentID, a.WorkspaceDefinitionID, version)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), setup, version, a.EnvironmentID, ws)
-	dbtest.InsertComputerGeneration(t, t.Context(), setup, a.EnvironmentID, ws, version)
-	if err = setup.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	target, _ := json.Marshal(map[string]string{"id": ws.String()})
-	turnID := bturn.TurnID.String()
-	cursor := int64(1)
-	request := workerapi.InvokeChildTaskRequest{Lease: b.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Workspace: target, Options: json.RawMessage(`{}`), IdempotencyKey: "lock-order-child", TurnID: &turnID, RunGeneration: &bturn.RunGeneration, ActorSpeculativeInputSequence: &cursor}
-	var invoked workerapi.InvokeChildTaskResponse
-	b.workerCall(t, b.server.workerInvokeChildTask, request, &invoked)
-	if invoked.Failed != nil || invoked.OpenedWait == nil {
-		t.Fatalf("invoke=%+v", invoked)
-	}
-	var child uuid.UUID
-	if err = a.Pool.QueryRow(t.Context(), `SELECT child_run_id FROM run_waits WHERE id=$1`, uuid.MustParse(request.RunWaitID)).Scan(&child); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	claim, err := a.Pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer claim.Rollback(context.Background())
-	// This is the queued child's claim prefix, before acquiring its Worker Group.
-	if _, err = db.New(claim).LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{ID: pgvalue.UUID(child), OrgID: pgvalue.UUID(a.OrgID), ProjectID: pgvalue.UUID(a.ProjectID), EnvironmentID: pgvalue.UUID(a.EnvironmentID), WorkspaceID: pgvalue.UUID(ws)}); err != nil {
-		t.Fatal(err)
-	}
-	control, err := a.Pool.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer control.Rollback(context.Background())
-	var pid int32
-	if err = control.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		_, _, _, err := lockWorkerSessionControl(ctx, &txWork{q: db.New(control), tx: control}, a.worker, a.fence(), pgvalue.UUID(b.sessionID), true)
-		done <- err
-	}()
-	waitForPostgresBlock(t, a.Pool, pid)
-	// If control acquired physical authority before the graph, this deadlocks.
-	if _, err = db.New(claim).LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: pgvalue.UUID(a.worker.WorkerGroupID), RegionID: "us-east-1"}); err != nil {
-		t.Fatal(err)
-	}
-	if err = claim.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err = <-done; err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestWorkerSessionControlResumeSettledTargetPostgres(t *testing.T) {
-	for _, revoked := range []bool{false, true} {
-		t.Run(map[bool]string{false: "ready", true: "revoked"}[revoked], func(t *testing.T) {
-			a := newActorCheckpointFixture(t)
-			b := secondWorkerControlActor(t, a)
-			addWorkerControlSecret(t, b)
-			capture := b.capture(t, "settled target")
-			b.turn(t, 1)
-			b.suspend(t, capture)
-			canceler, err := run.NewCanceler(b.Pool)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = canceler.Cancel(t.Context(), run.CancellationRequest{OrgID: b.OrgID, ProjectID: b.ProjectID, EnvironmentID: b.EnvironmentID, RunID: b.runID})
-			if err != nil {
-				t.Fatal(err)
-			}
-			lifecycle, _ := session.NewReconciler(b.Pool)
-			if deferred, err := lifecycle.ReconcileLifecycle(t.Context(), b.EnvironmentID, b.sessionID); err != nil || deferred {
-				t.Fatalf("stop reconciliation=%v %v", deferred, err)
-			}
-			var hold uuid.UUID
-			if err := b.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id FROM sessions WHERE id=$1`, b.sessionID).Scan(&hold); err != nil {
-				t.Fatal(err)
-			}
-			if revoked {
-				dbtest.MustExec(t, t.Context(), b.Pool, `UPDATE secrets SET status='revoked',current_version_id=NULL,revoked_at=now(),revocation_generation=revocation_generation+1 WHERE id IN(SELECT secret_id FROM workspace_secrets WHERE workspace_id=$1)`, b.workspaceID)
-			}
-			var response workerapi.ResumeSessionResponse
-			a.workerCall(t, a.server.workerResumeSession, workerapi.ResumeSessionRequest{SessionReferenceRequest: workerapi.SessionReferenceRequest{Lease: a.fence(), CorrelationID: uuid.NewV7().String(), SessionID: b.sessionID.String()}, HoldID: hold.String()}, &response)
-			if revoked {
-				if response.Failed == nil || response.Failed.Code != "not_settled" {
-					t.Fatalf("revoked=%+v", response)
-				}
-			} else if response.Completed == nil || response.Completed.SessionID != b.sessionID.String() {
-				t.Fatalf("resume=%+v", response)
-			}
-		})
-	}
-}
-
-type workerControlSecretRaceQueries struct {
-	db.Querier
-	afterUnion func() error
-}
-
 func (q workerControlSecretRaceQueries) LockWorkerControlSecrets(ctx context.Context, ids []pgtype.UUID) ([]db.LockWorkerControlSecretsRow, error) {
 	rows, err := q.Querier.LockWorkerControlSecrets(ctx, ids)
 	if err == nil {
@@ -290,7 +149,7 @@ func (q workerControlSecretRaceQueries) LockWorkerControlSecrets(ctx context.Con
 }
 
 func TestWorkerSessionControlNewBindingDoesNotAcquireLateSecretPostgres(t *testing.T) {
-	f := newActorCheckpointFixture(t)
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	tx, err := f.Pool.Begin(ctx)
@@ -305,7 +164,7 @@ func TestWorkerSessionControlNewBindingDoesNotAcquireLateSecretPostgres(t *testi
 	defer blocker.Rollback(context.Background())
 	q := workerControlSecretRaceQueries{Querier: db.New(tx), afterUnion: func() error {
 		addWorkerControlSecret(t, f)
-		_, err := blocker.Exec(ctx, `SELECT id FROM secrets WHERE id IN(SELECT secret_id FROM workspace_secrets WHERE workspace_id=$1) FOR UPDATE`, f.workspaceID)
+		_, err := blocker.Exec(ctx, `SELECT id FROM secrets WHERE id IN(SELECT secret_id FROM computer_secrets WHERE computer_id=$1) FOR UPDATE`, f.computerID)
 		return err
 	}}
 	_, _, _, err = lockWorkerSessionControl(ctx, &txWork{q: q, tx: tx}, f.worker, f.fence(), pgvalue.UUID(f.sessionID), true)
@@ -314,9 +173,9 @@ func TestWorkerSessionControlNewBindingDoesNotAcquireLateSecretPostgres(t *testi
 	}
 }
 
-// Invoke and start a real child in its own Workspace; the parent's Actor
+// Invoke and start a real child in its own Computer; the parent's Actor
 // remains hot in a child wait for owned calls and stays running for starts.
-func workerControlChild(t *testing.T, parent *actorCheckpointFixture, detached bool) *actorCheckpointFixture {
+func workerControlChild(t *testing.T, parent *actorExecutionFixture, detached bool) *actorExecutionFixture {
 	t.Helper()
 	scope := parent.receiveTurn(t, 1)
 	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
@@ -327,45 +186,73 @@ func workerControlChild(t *testing.T, parent *actorCheckpointFixture, detached b
 	dbtest.MustExec(t, t.Context(), parent.Pool, `UPDATE deployments SET queue_config='{"formatVersion":0,"queues":[{"concurrencyLimit":8,"name":"default"},{"name":"priority"}]}' WHERE id=$1`, parent.DeploymentID)
 	dbtest.MustExec(t, t.Context(), parent.Pool, `UPDATE runs SET queue_concurrency_limit=8 WHERE environment_id=$1`, parent.EnvironmentID)
 	f := *parent
-	f.workspaceID, f.rootID = uuid.NewV7(), uuid.NewV7()
+	f.computerID, f.rootID = uuid.NewV7(), uuid.NewV7()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
 	dbtest.MustExec(t, t.Context(), tx, `SET CONSTRAINTS ALL DEFERRED`)
-	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,deployment_definition_id,head_version_id) VALUES($1,$2,'us-east-1','test-workspace',$3,$4)`, f.workspaceID, f.EnvironmentID, f.WorkspaceDefinitionID, f.rootID)
-	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.workspaceID)
-	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.workspaceID, f.rootID)
+	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO computers(id,environment_id,region_id,sandbox_declared_id,head_disk_version_id, computer_spec_id, creation_deployment_id) VALUES($1,$2,'us-east-1','test-computer',$4, (SELECT computer_spec_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3), (SELECT deployment_id FROM deployment_definitions WHERE environment_id=$2 AND id=$3))`, f.computerID, f.EnvironmentID, f.ComputerDefinitionID, f.rootID)
+	dbtest.InsertCommittedComputerRoot(t, t.Context(), tx, f.rootID, f.EnvironmentID, f.computerID)
+	dbtest.InsertComputerGeneration(t, t.Context(), tx, f.EnvironmentID, f.computerID, f.rootID)
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	target, _ := json.Marshal(map[string]string{"id": f.workspaceID.String()})
+	target, _ := json.Marshal(map[string]string{"id": f.computerID.String()})
 	turnID := scope.TurnID.String()
 	cursor := int64(1)
-	request := workerapi.InvokeChildTaskRequest{Lease: parent.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Workspace: target, Options: json.RawMessage(`{}`), IdempotencyKey: uuid.NewV7().String(), TurnID: &turnID, RunGeneration: &scope.RunGeneration, ActorSpeculativeInputSequence: &cursor}
+	request := workerapi.InvokeChildTaskRequest{Lease: parent.fence(), CorrelationID: uuid.NewV7().String(), RunWaitID: uuid.NewV7().String(), ResumeAttachID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "call", Computer: target, Options: json.RawMessage(`{}`), IdempotencyKey: uuid.NewV7().String(), TurnID: &turnID, RunGeneration: &scope.RunGeneration, ActorSpeculativeInputSequence: &cursor}
 	if detached {
 		request.Method = "start"
 		request.RunWaitID = ""
 		request.ResumeAttachID = ""
-		request.ActorSpeculativeInputSequence = nil
 	}
 	var invoked workerapi.InvokeChildTaskResponse
 	parent.workerCall(t, parent.server.workerInvokeChildTask, request, &invoked)
 	if invoked.Failed != nil {
 		t.Fatalf("child invoke=%+v", invoked)
 	}
-	if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM runs WHERE workspace_id=$1`, f.workspaceID).Scan(&f.runID); err != nil {
+	if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM runs WHERE computer_id=$1`, f.computerID).Scan(&f.runID); err != nil {
 		t.Fatal(err)
 	}
-	f.placeAndClaim(t)
-	f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence(), Fresh: &workerapi.RunStartFresh{}}, nil)
+	key, err := computer.NewFencingKey(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := dispatch.NewRunAuthority(f.Pool, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var revision int64
+	if err = f.Pool.QueryRow(t.Context(), `SELECT revision FROM runs WHERE id=$1`, f.runID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	candidate := dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}
+	placed, err := authority.PlaceReadyRun(t.Context(), candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !placed.LeaseCreated {
+		// Supply a mounted Instance for this database-only control test.
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',observed_version=observed_version+1,observed_desired_version=desired_version,ready_at=clock_timestamp(),mount_state='mounted',mounted_at=clock_timestamp() WHERE id=$1`, placed.ComputerInstanceID)
+		placed, err = authority.PlaceReadyRun(t.Context(), candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !placed.LeaseCreated {
+		t.Fatal("child execution was not assigned")
+	}
+	f.leaseID = pgvalue.MustUUIDValue(placed.Lease.ID)
+	f.claimLease(t)
+	f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence()}, nil)
 	f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "task", EntrypointDeclaredID: "test-task"}, nil)
 	return &f
 }
 
 func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
-	a := newActorCheckpointFixture(t)
+	a := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	b := secondWorkerControlActor(t, a)
 	at, bt := a.receiveTurn(t, 1), b.receiveTurn(t, 1)
 	ac, bc := workerControlChild(t, a, false), workerControlChild(t, b, false)
@@ -382,7 +269,7 @@ func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 	results := make(chan error, 2)
 	var pids []int32
 	for _, pair := range []struct {
-		source, target *actorCheckpointFixture
+		source, target *actorExecutionFixture
 		turn           uuid.UUID
 	}{{ac, b, bt.TurnID}, {bc, a, at.TurnID}} {
 		tx, err := a.Pool.Begin(ctx)
@@ -413,8 +300,7 @@ func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 			results <- err
 		}()
 	}
-	// Old ordering lets both callers acquire their own child before blocking on
-	// the opposite root. Correct ordering blocks the second caller on Session.
+	// Both requests reach the held authority before either may commit.
 	for _, pid := range pids {
 		waitForPostgresBlock(t, a.Pool, pid)
 	}
@@ -428,8 +314,7 @@ func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 			accepted++
 			continue
 		}
-		var op *session.OperationError
-		if errors.As(err, &op) && op.Code == "session_held" {
+		if errors.Is(err, errStaleWorkerRunSource) {
 			rejected++
 		} else {
 			t.Fatalf("reciprocal owned child: %v", err)
@@ -443,7 +328,7 @@ func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 func TestWorkerSessionControlChildAncestorFencePostgres(t *testing.T) {
 	for _, state := range []string{"held", "settling", "detached"} {
 		t.Run(state, func(t *testing.T) {
-			a := newActorCheckpointFixture(t)
+			a := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 			b := secondWorkerControlActor(t, a)
 			scope := a.receiveTurn(t, 1)
 			child := workerControlChild(t, a, state == "detached")
@@ -470,7 +355,7 @@ func TestWorkerSessionControlChildAncestorFencePostgres(t *testing.T) {
 }
 
 func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T) {
-	parent := newActorCheckpointFixture(t)
+	parent := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
 	child := workerControlChild(t, parent, false)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -479,7 +364,7 @@ func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T
 		t.Fatal(err)
 	}
 	defer finalizer.Rollback(context.Background())
-	// A different-Workspace child's finalization locks its parent Run before
+	// A different-Computer child's finalization locks its parent Run before
 	// its own Run and does not first acquire the ancestor Actor's Session.
 	if _, err = finalizer.Exec(ctx, `SELECT id FROM runs WHERE id=$1 FOR UPDATE`, parent.runID); err != nil {
 		t.Fatal(err)
@@ -508,4 +393,9 @@ func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T
 	if err = <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+type workerControlSecretRaceQueries struct {
+	db.Querier
+	afterUnion func() error
 }

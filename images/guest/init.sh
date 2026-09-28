@@ -77,21 +77,6 @@ mount_scratch() {
 	chmod 1777 /var/lib/helmr/tmp
 }
 
-mount_substrate() {
-	if [ "$(kernel_arg helmr.substrate || true)" != 1 ]; then
-		return 0
-	fi
-	if [ ! -b /dev/vdc ]; then
-		echo "missing required Helmr runtime substrate /dev/vdc" >&2
-		exit 1
-	fi
-	mkdir -p /var/lib/helmr/substrate
-	if ! is_mounted /var/lib/helmr/substrate; then
-		mount -t ext4 -o ro /dev/vdc /var/lib/helmr/substrate
-	fi
-	export HELMR_GUESTD_SUBSTRATE_ROOT=/var/lib/helmr/substrate
-}
-
 mount_computer() {
 	if [ "$(kernel_arg helmr.computer || true)" != 1 ]; then
 		return 0
@@ -109,7 +94,7 @@ mount_program() {
 	if [ "$(kernel_arg helmr.program || true)" != 1 ]; then
 		return 0
 	fi
-	if [ "$(kernel_arg helmr.substrate || true)" = 1 ] || [ "$(kernel_arg helmr.computer || true)" = 1 ]; then
+	if [ "$(kernel_arg helmr.computer || true)" = 1 ]; then
 		runtime_device=/dev/vdd
 		program_device=/dev/vde
 	else
@@ -251,7 +236,7 @@ require_network_ready() {
 	fi
 }
 
-configure_runtime_identity() {
+configure_vm_platform() {
 	hostname helmr-sandbox || true
 }
 
@@ -260,11 +245,10 @@ configure_program_cgroups
 enable_user_namespaces
 mount_scratch
 load_vsock
-mount_substrate
 mount_computer
 mount_program
 configure_network
-configure_runtime_identity
+configure_vm_platform
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
 exec /usr/bin/guestd \

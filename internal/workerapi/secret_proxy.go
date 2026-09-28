@@ -1,9 +1,9 @@
 package workerapi
 
 type SecretProxyRequest struct {
-	RuntimeInstanceID string   `json:"runtime_instance_id"`
-	Origin            string   `json:"origin,omitempty"`
-	Placeholders      []string `json:"placeholders,omitempty"`
+	ComputerInstanceID string   `json:"computer_instance_id"`
+	Origin             string   `json:"origin,omitempty"`
+	Placeholders       []string `json:"placeholders,omitempty"`
 }
 
 // SecretProxyPreparation is host-only. Its private leaf key must never enter guest frames.

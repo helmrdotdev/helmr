@@ -1,12 +1,12 @@
 import { verify, assert, deadline, waitRun } from "../../support/context"
 import type { tokenTask } from "./task"
 
-await verify("token-wait", async ({ client, marker, objects, workspace, cleanup }) => {
-  const target = await workspace("verification-token")
+await verify("token-wait", async ({ client, marker, objects, computer, cleanup }) => {
+  const target = await computer("verification-token")
   const run = await client.tasks.start<typeof tokenTask>(
     "verification-token",
     {
-      workspace: target,
+      computer: target,
       payload: { marker },
       idempotencyKey: `run:${marker}`,
     },

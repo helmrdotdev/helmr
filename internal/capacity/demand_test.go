@@ -16,18 +16,18 @@ func TestHasQueuedDemandUsesWorkerGroupRegion(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		runs      []db.ListQueuedRunEligibleScopesRow
-		execs     []db.ListPendingWorkspaceExecCapacityCandidatesRow
+		commands  []db.ListPendingComputerCommandCapacityCandidatesRow
 		want      bool
 		wantExecs int
 	}{
 		{name: "queued run", runs: []db.ListQueuedRunEligibleScopesRow{{}}, want: true},
-		{name: "pending Workspace Exec", execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{{}}, want: true, wantExecs: 1},
+		{name: "pending Computer Exec", commands: []db.ListPendingComputerCommandCapacityCandidatesRow{{}}, want: true, wantExecs: 1},
 		{name: "idle", wantExecs: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &fakeQueuedDemandStore{
 				group: db.WorkerGroup{ID: pgvalue.UUID(queuedDemandTestGroupID), RegionID: "us-east-1"},
-				runs:  test.runs, execs: test.execs,
+				runs:  test.runs, commands: test.commands,
 			}
 			got, err := HasQueuedDemand(t.Context(), store, queuedDemandTestGroupID)
 			if err != nil {
@@ -40,10 +40,10 @@ func TestHasQueuedDemandUsesWorkerGroupRegion(t *testing.T) {
 				t.Fatalf("group = %v, run params = %+v", store.groupID, store.runParams)
 			}
 			if store.execCalls != test.wantExecs {
-				t.Fatalf("Workspace Exec calls = %d, want %d", store.execCalls, test.wantExecs)
+				t.Fatalf("Computer Exec calls = %d, want %d", store.execCalls, test.wantExecs)
 			}
 			if test.wantExecs == 1 && (store.execParams.RegionID != "us-east-1" || store.execParams.RowLimit != 1) {
-				t.Fatalf("Workspace Exec params = %+v", store.execParams)
+				t.Fatalf("Computer Exec params = %+v", store.execParams)
 			}
 		})
 	}
@@ -52,10 +52,10 @@ func TestHasQueuedDemandUsesWorkerGroupRegion(t *testing.T) {
 type fakeQueuedDemandStore struct {
 	group      db.WorkerGroup
 	runs       []db.ListQueuedRunEligibleScopesRow
-	execs      []db.ListPendingWorkspaceExecCapacityCandidatesRow
+	commands   []db.ListPendingComputerCommandCapacityCandidatesRow
 	groupID    pgtype.UUID
 	runParams  db.ListQueuedRunEligibleScopesParams
-	execParams db.ListPendingWorkspaceExecCapacityCandidatesParams
+	execParams db.ListPendingComputerCommandCapacityCandidatesParams
 	execCalls  int
 }
 
@@ -69,8 +69,8 @@ func (s *fakeQueuedDemandStore) ListQueuedRunEligibleScopes(_ context.Context, p
 	return s.runs, nil
 }
 
-func (s *fakeQueuedDemandStore) ListPendingWorkspaceExecCapacityCandidates(_ context.Context, params db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
+func (s *fakeQueuedDemandStore) ListPendingComputerCommandCapacityCandidates(_ context.Context, params db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error) {
 	s.execCalls++
 	s.execParams = params
-	return s.execs, nil
+	return s.commands, nil
 }

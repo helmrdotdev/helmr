@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -91,33 +92,30 @@ func (s *Server) commitActorTurn(
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(commit.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
 			WorkerEpoch: worker.WorkerEpoch})
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
 		if _, err := secret.LockAttemptDelivery(
 			ctx, work.q, locators.RunID, locators.AttemptNumber,
-			locators.WorkspaceID,
+			locators.ComputerID,
 		); err != nil {
 			return fmt.Errorf("lock actor turn secret authority: %w", err)
 		}
-		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
-		if err != nil || !owner.actor.ID.Valid {
+		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
+		if errors.Is(err, run.ErrExecutionWorkerClaims) {
+			return errStaleWorkerClaims
+		}
+		if err != nil || !authority.Session.ID.Valid {
 			return staleActorTurnCommit(err)
 		}
-		authority, err := lockLiveRunLeaseAuthority(
-			ctx, work.q, worker, pgvalue.UUID(commit.lease.leaseID), request.Lease.LeaseSequence, locators,
-		)
-		if err != nil {
-			return staleActorTurnCommit(err)
-		}
-		authority.actor = owner.actor
+
 		if err := validateActorTurnAuthority(ctx, work.q, authority); err != nil {
 			return err
 		}
 
-		if authority.actor.CommittedInputSequence == commit.targetInputSequence {
+		if authority.Session.CommittedInputSequence == commit.targetInputSequence {
 			var replayed bool
 			response, replayed, err = replayActorTurnCommit(ctx, work.q, request, commit, authority)
 			if err != nil {
@@ -128,7 +126,7 @@ func (s *Server) commitActorTurn(
 			}
 			return errStaleActorTurnCommit
 		}
-		scope := session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.run.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.actor.ID), TurnID: commit.turnID, RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: commit.generation}
+		scope := session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Run.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session.ID), TurnID: commit.turnID, RunID: pgvalue.MustUUIDValue(authority.Run.ID), AttemptNumber: authority.Attempt.Number, RunGeneration: commit.generation}
 		input, err := session.ValidateTurn(ctx, work.q, scope)
 		if err != nil {
 			return staleActorTurnCommit(err)
@@ -136,8 +134,8 @@ func (s *Server) commitActorTurn(
 		if input.Sequence != commit.targetInputSequence {
 			return errStaleActorTurnCommit
 		}
-		if authority.actor.CommittedInputSequence+1 != commit.targetInputSequence ||
-			commit.targetInputSequence >= authority.actor.NextInputSequence {
+		if authority.Session.CommittedInputSequence+1 != commit.targetInputSequence ||
+			commit.targetInputSequence >= authority.Session.NextInputSequence {
 			return errStaleActorTurnCommit
 		}
 		committedAt, err := work.q.GetTaskCompletionTime(ctx)
@@ -147,8 +145,8 @@ func (s *Server) commitActorTurn(
 			}
 			return err
 		}
-		if !committedAt.Time.Before(authority.runLease.ExpiresAt.Time) ||
-			!committedAt.Time.Before(authority.workspaceLease.ExpiresAt.Time) {
+		if !committedAt.Time.Before(authority.Lease.ExpiresAt.Time) ||
+			!committedAt.Time.Before(authority.Instance.WriterExpiresAt.Time) {
 			return errStaleActorTurnCommit
 		}
 		event, err := session.SettleTurn(ctx, work.q, scope, commit.disposition, commit.result, commit.fingerprint)
@@ -157,34 +155,37 @@ func (s *Server) commitActorTurn(
 		}
 		response = projectActorTurnResponse(request, commit)
 		response.EventID = pgvalue.UUIDString(event.ID)
+		_, err = run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
+		if err != nil {
+			return staleActorTurnCommit(err)
+		}
 		return nil
 	})
 	return response, err
 }
 
-func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority runLeaseClaimAuthority) error {
-	actor := authority.actor
-	if authority.run.EntrypointKind != "actor" || !authority.run.SessionID.Valid ||
-		authority.run.SessionID != actor.ID || authority.run.ParentRunID.Valid ||
-		authority.run.ParentOwnsLifecycle.Valid || authority.runLease.Status != db.RunLeaseStatusRunning ||
-		!authority.run.ActiveStartedAt.Valid || !authority.attempt.EntrypointEnteredAt.Valid ||
-		authority.attempt.TerminalAt.Valid || !authority.attempt.SessionInputStartSequence.Valid ||
-		!authority.run.SessionInputStartSequence.Valid || !authority.run.SessionInputHighWatermark.Valid ||
-		!actor.CurrentRunID.Valid || actor.CurrentRunID != authority.run.ID ||
+func validateActorTurnAuthority(ctx context.Context, store db.Querier, authority run.ExecutionAuthority) error {
+	actor := authority.Session
+	if authority.Run.Status != db.RunStatusRunning || authority.Run.EntrypointKind != "actor" || !authority.Run.SessionID.Valid ||
+		authority.Run.SessionID != actor.ID || authority.Run.ParentRunID.Valid ||
+		authority.Run.ParentOwnsLifecycle.Valid || authority.Lease.Status != db.RunLeaseStatusRunning ||
+		!authority.Run.ActiveStartedAt.Valid || !authority.Attempt.EntrypointEnteredAt.Valid ||
+		authority.Attempt.TerminalAt.Valid || !authority.Attempt.SessionInputStartSequence.Valid ||
+		!authority.Run.SessionInputStartSequence.Valid || !authority.Run.SessionInputHighWatermark.Valid ||
+		!actor.CurrentRunID.Valid || actor.CurrentRunID != authority.Run.ID ||
 		(actor.Status != "open" && actor.Status != "closing") ||
-		authority.workspace.OwnerSessionID != actor.ID || authority.workspace.OwnerRunID.Valid ||
-		!authority.workspace.HeadVersionID.Valid ||
-		authority.runLease.FinalizationOperationID.Valid ||
-		authority.runLease.FinalizationStartedAt.Valid || authority.runLease.FinalizationRequestFingerprint.Valid {
+		!authority.Computer.HeadDiskVersionID.Valid ||
+		authority.Lease.FinalizationOperationID.Valid ||
+		authority.Lease.FinalizationStartedAt.Valid || authority.Lease.FinalizationRequestFingerprint.Valid {
 		return errStaleActorTurnCommit
 	}
 	clear, err := store.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{
-		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
+		RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number, ComputerID: authority.Computer.ID,
 	})
 	if err != nil {
 		return err
 	}
-	if !clear.Valid || !clear.Bool {
+	if !clear {
 		return errStaleActorTurnCommit
 	}
 	return nil
@@ -195,13 +196,13 @@ func replayActorTurnCommit(
 	store db.Querier,
 	request workerapi.CommitActorTurnRequest,
 	commit parsedActorTurnCommit,
-	authority runLeaseClaimAuthority,
+	authority run.ExecutionAuthority,
 ) (workerapi.CommitActorTurnResponse, bool, error) {
-	input, err := store.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: authority.run.EnvironmentID, SessionID: authority.actor.ID, ID: pgvalue.UUID(commit.turnID)})
+	input, err := store.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: authority.Run.EnvironmentID, SessionID: authority.Session.ID, ID: pgvalue.UUID(commit.turnID)})
 	if err != nil {
 		return workerapi.CommitActorTurnResponse{}, false, staleActorTurnCommit(err)
 	}
-	if input.Status != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.RunID != authority.run.ID || input.AttemptNumber.Int32 != authority.attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
+	if input.Status != commit.disposition || input.TerminalRequestFingerprint.String != commit.fingerprint || input.RunID != authority.Run.ID || input.AttemptNumber.Int32 != authority.Attempt.Number || input.RunGeneration.Int64 != commit.generation || !input.TerminalEventID.Valid {
 		return workerapi.CommitActorTurnResponse{}, false, nil
 	}
 	response := projectActorTurnResponse(request, commit)

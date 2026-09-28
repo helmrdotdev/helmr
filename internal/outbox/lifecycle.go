@@ -19,6 +19,7 @@ const (
 )
 
 var supportedTopics = []string{
+	"computer.restore.activate",
 	"session.input.reconcile",
 	"session.lifecycle.reconcile",
 	"token.reconcile",

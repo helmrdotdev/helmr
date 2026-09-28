@@ -8,9 +8,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -40,13 +40,8 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("lease.id must be a canonical UUIDv7 and lease.lease_sequence must be positive")))
 		return
 	}
-	arm, err := parseRunStartArm(request)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	receipt, err := s.startRun(
-		r.Context(), workerFromContext(r.Context()), pgvalue.UUID(leaseID), request.Lease, arm,
+		r.Context(), workerFromContext(r.Context()), pgvalue.UUID(leaseID), request.Lease,
 	)
 	if err != nil {
 		if writeStaleWorkerClaims(w, err) {
@@ -60,7 +55,7 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 					"run_lease_id", request.Lease.ID,
 					"lease_sequence", request.Lease.LeaseSequence,
 					"worker_group_id", workerFromContext(r.Context()).WorkerGroupID,
-					"worker_instance_id", workerFromContext(r.Context()).WorkerInstanceID,
+					"worker_host_id", workerFromContext(r.Context()).WorkerHostID,
 					"worker_epoch", workerFromContext(r.Context()).WorkerEpoch,
 				)
 			}
@@ -74,351 +69,21 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workerapi.RunStartResponse{Lease: receipt})
 }
 
-func (s *Server) startRun(
-	ctx context.Context,
-	worker workerActor,
-	leaseID pgtype.UUID,
-	expected workerapi.RunLeaseFence,
-	requested runStartArm,
-) (workerapi.RunLeaseFence, error) {
-	err := s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetRunLeaseStartLocators(ctx, db.GetRunLeaseStartLocatorsParams{
-			ID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		})
-		if err != nil {
-			return staleAuthority(staleAuthorityRunStart, runStartFailureLocators, staleRunLeaseClaim(err))
-		}
-		mode := deriveRunStartMode(locators)
-		if mode != requested.mode {
-			return staleAuthority(staleAuthorityRunStart, runStartFailureMode, errStaleRunLeaseClaim)
-		}
-		authority, err := lockRunStartAuthority(ctx, work.q, worker, leaseID, expected.LeaseSequence, locators, mode)
-		if err != nil {
-			return err
-		}
-		if err := validateRunStartArm(requested, runStartValidationAuthority{
-			run: authority.run, parentRun: authority.parentRun, runLease: authority.runLease,
-			runtime: authority.runtime, workspace: db.GetWorkspaceRow(authority.workspace),
-			workspaceMount: authority.workspaceMount, runWait: authority.runWait,
-		}); err != nil {
-			return staleAuthority(staleAuthorityRunStart, runStartFailureArm, err)
-		}
-		switch authority.runLease.Status {
-		case db.RunLeaseStatusStarting:
-			if err := validateRunStartLifecycle(mode, authority.run, authority.attempt); err != nil {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseStatus, errStaleRunLeaseClaim)
-			}
-			authority.runLease, err = work.q.MarkRunLeaseRunning(ctx, db.MarkRunLeaseRunningParams{
-				ID: authority.runLease.ID, RunID: authority.run.ID, WorkspaceID: authority.workspace.ID,
-				AttemptNumber: authority.attempt.Number, LeaseSequence: authority.runLease.LeaseSequence,
-				WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-				WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: authority.runtime.ID, RuntimeIdentityID: authority.runtime.RuntimeIdentityID,
-			})
-			if err != nil {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureMarkLeaseRunning, staleRunLeaseClaim(err))
-			}
-			authority.run, err = work.q.MarkRunRunning(ctx, db.MarkRunRunningParams{
-				ID: authority.run.ID, OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-				EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
-				ExpectedRevision: authority.run.Revision, AttemptNumber: authority.attempt.Number,
-				RunLeaseID: authority.runLease.ID,
-			})
-			if err != nil {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureMarkRunRunning, staleRunLeaseClaim(err))
-			}
-			updatedWorkspace, updateErr := work.q.TouchRunWorkspaceActivity(ctx, db.TouchRunWorkspaceActivityParams{
-				ID: authority.workspace.ID, OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
-				EnvironmentID:       authority.workspace.EnvironmentID,
-				OwnershipGeneration: authority.workspaceLease.OwnershipGeneration,
-				WriterGeneration:    authority.workspaceLease.WriterGeneration,
-			})
-			authority.workspace, err = db.LockRunLeaseClaimWorkspaceRow(updatedWorkspace), updateErr
-			if err != nil {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureTouchWorkspace, staleRunLeaseClaim(err))
-			}
-		case db.RunLeaseStatusRunning:
-			if authority.run.Status != db.RunStatusRunning {
-				return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseStatus, errStaleRunLeaseClaim)
-			}
-		default:
-			return staleAuthority(staleAuthorityRunStart, runStartFailureLeaseStatus, errStaleRunLeaseClaim)
-		}
-		return nil
-	})
+func (s *Server) startRun(ctx context.Context, worker workerActor, leaseID pgtype.UUID, expected workerapi.RunLeaseFence) (workerapi.RunLeaseFence, error) {
+	tx, err := s.tx.Begin(ctx)
 	if err != nil {
 		return workerapi.RunLeaseFence{}, err
 	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	_, err = run.StartExecution(ctx, tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+	if errors.Is(err, run.ErrExecutionWorkerClaims) {
+		return workerapi.RunLeaseFence{}, errStaleWorkerClaims
+	}
+	if err != nil {
+		return workerapi.RunLeaseFence{}, staleAuthority(staleAuthorityRunStart, "execution", staleRunLeaseClaim(err))
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return workerapi.RunLeaseFence{}, err
+	}
 	return expected, nil
-}
-
-func validateRunStartLifecycle(mode runLeaseClaimMode, run db.Run, attempt db.RunAttempt) error {
-	if run.Status != db.RunStatusQueued {
-		return errStaleRunLeaseClaim
-	}
-	switch mode {
-	case runLeaseClaimFresh:
-		if attempt.EntrypointEnteredAt.Valid {
-			return errStaleRunLeaseClaim
-		}
-	case runLeaseClaimRestore:
-		if !attempt.EntrypointEnteredAt.Valid {
-			return errStaleRunLeaseClaim
-		}
-	default:
-		return errStaleRunLeaseClaim
-	}
-	return nil
-}
-
-func lockRunStartAuthority(
-	ctx context.Context, q db.Querier, worker workerActor, leaseID pgtype.UUID, leaseSequence int64,
-	locators db.GetRunLeaseStartLocatorsRow, mode runLeaseClaimMode,
-) (runLeaseClaimAuthority, error) {
-	authority := runLeaseClaimAuthority{mode: mode}
-	var err error
-	if locators.SessionID.Valid {
-		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
-			ID: locators.SessionID, WorkspaceID: locators.WorkspaceID,
-		})
-		if err != nil {
-			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, staleRunLeaseClaim(err))
-		}
-		if authority.actor.DispatchHoldID.Valid || authority.actor.CurrentRunID != locators.RunID ||
-			(authority.actor.Status != "open" && authority.actor.Status != "closing") {
-			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, errStaleRunLeaseClaim)
-		}
-	}
-	if locators.EnclosingWaitID.Valid {
-		authority.parentRun, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
-			ID: locators.ParentRunID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-			EnvironmentID: locators.EnvironmentID, WorkspaceID: locators.WorkspaceID,
-		})
-		if err != nil {
-			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureParentWait, staleRunLeaseClaim(err))
-		}
-	}
-	authority.run, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
-		ID: locators.RunID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, WorkspaceID: locators.WorkspaceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, staleRunLeaseClaim(err))
-	}
-	if authority.run.CurrentAttemptNumber != locators.AttemptNumber || authority.run.CurrentRunLeaseID != leaseID {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, errStaleRunLeaseClaim)
-	}
-	if mode == runLeaseClaimFresh && locators.SessionID.Valid &&
-		(authority.run.EntrypointKind != "actor" || authority.run.SessionID != locators.SessionID) {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRun, errStaleRunLeaseClaim)
-	}
-	authority.workspace, err = q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
-		ID: locators.WorkspaceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspace, staleRunLeaseClaim(err))
-	}
-	if authority.workspace.Status != db.WorkspaceStatusActive ||
-		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspace, errStaleRunLeaseClaim)
-	}
-	authority.attempt, err = q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-		RunID: locators.RunID, Number: locators.AttemptNumber, WorkspaceID: locators.WorkspaceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureAttempt, staleRunLeaseClaim(err))
-	}
-	if authority.attempt.TerminalAt.Valid ||
-		authority.attempt.EntrypointKind != authority.run.EntrypointKind ||
-		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureAttempt, errStaleRunLeaseClaim)
-	}
-	authority.workerGroup, err = q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID: pgvalue.UUID(worker.WorkerGroupID), RegionID: locators.RegionID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, staleRunLeaseClaim(err))
-	}
-	if authority.workerGroup.ClaimVersion != worker.GroupClaimVersion {
-		return runLeaseClaimAuthority{}, errStaleWorkerClaims
-	}
-	authority.worker, err = q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorker, staleRunLeaseClaim(err))
-	}
-	if err := validateClaimWorker(worker, authority.worker); err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorker, err)
-	}
-	authority.runtime, err = q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
-		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, WorkspaceID: locators.WorkspaceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRuntime, staleRunLeaseClaim(err))
-	}
-	authority.runLease, err = q.LockRunStartLease(ctx, db.LockRunStartLeaseParams{
-		ID: leaseID, RunID: locators.RunID, WorkspaceID: locators.WorkspaceID,
-		AttemptNumber: locators.AttemptNumber, LeaseSequence: leaseSequence,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRunLease, staleRunLeaseClaim(err))
-	}
-	if authority.workerGroup.Status != db.WorkerGroupStatusActive &&
-		authority.workerGroup.Status != db.WorkerGroupStatusDraining {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkerGroup, errStaleRunLeaseClaim)
-	}
-	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailurePhysicalAuthority, err)
-	}
-	if locators.EnclosingWaitID.Valid && authority.runLease.Status == db.RunLeaseStatusStarting &&
-		(authority.parentRun.Status != db.RunStatusWaiting ||
-			authority.parentRun.CurrentRunLeaseID.Valid ||
-			authority.run.ParentRunID != authority.parentRun.ID ||
-			!authority.run.ParentOwnsLifecycle.Valid || !authority.run.ParentOwnsLifecycle.Bool ||
-			authority.run.WorkspaceID != authority.parentRun.WorkspaceID ||
-			authority.run.DeploymentID != authority.parentRun.DeploymentID) {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureParentWait, errStaleRunLeaseClaim)
-	}
-	authority.workspaceMount, err = q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
-		ID: locators.WorkspaceMountID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: locators.RuntimeInstanceID, WorkspaceID: locators.WorkspaceID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspaceMount, staleRunLeaseClaim(err))
-	}
-	authority.workspaceLease, err = q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
-		ID: locators.WorkspaceLeaseID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
-		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: locators.RuntimeInstanceID,
-		WorkspaceID: locators.WorkspaceID, WorkspaceMountID: locators.WorkspaceMountID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspaceLease, staleRunLeaseClaim(err))
-	}
-	if err := validateRunLeaseWorkspaceAuthority(authority); err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWorkspaceAuthority, err)
-	}
-	if locators.EnclosingWaitID.Valid {
-		enclosingWait, err := q.LockRunStartWait(ctx, db.LockRunStartWaitParams{
-			ID: locators.EnclosingWaitID, EnvironmentID: locators.EnvironmentID,
-			RunID: locators.ParentRunID, WorkspaceID: locators.WorkspaceID,
-		})
-		if err != nil {
-			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureEnclosingWait, staleRunLeaseClaim(err))
-		}
-		authority.enclosingWait = enclosingWait
-		if authority.runLease.Status == db.RunLeaseStatusStarting {
-			if err := validateActiveEnclosingWait(
-				ctx, q,
-				enclosingWait, authority.run, authority.workspace.WriterGeneration, authority,
-			); err != nil {
-				return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureEnclosingWait, err)
-			}
-		}
-	}
-	if locators.RunWaitID.Valid {
-		authority.runWait, err = q.LockRunStartWait(ctx, db.LockRunStartWaitParams{
-			ID: locators.RunWaitID, EnvironmentID: locators.EnvironmentID,
-			RunID: locators.RunID, WorkspaceID: locators.WorkspaceID,
-		})
-		if err != nil {
-			return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureWait, staleRunLeaseClaim(err))
-		}
-	}
-	if authority.runLease.Status == db.RunLeaseStatusStarting && mode == runLeaseClaimRestore {
-		authority, err = lockRunStartCheckpointAuthority(ctx, q, mode, authority)
-		if err != nil {
-			return runLeaseClaimAuthority{}, err
-		}
-	}
-	return authority, nil
-}
-
-func lockRunStartCheckpointAuthority(
-	ctx context.Context,
-	q db.Querier,
-	mode runLeaseClaimMode,
-	authority runLeaseClaimAuthority,
-) (runLeaseClaimAuthority, error) {
-	if mode != runLeaseClaimRestore {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureCheckpointValidation, errStaleRunLeaseClaim)
-	}
-	var err error
-	authority.checkpoint, err = q.LockReadyRunCheckpoint(ctx, db.LockReadyRunCheckpointParams{
-		ID: authority.runWait.SuspendCheckpointID, RunID: authority.run.ID,
-		AttemptNumber: authority.attempt.Number, RunWaitID: authority.runWait.ID,
-		WorkspaceID: authority.workspace.ID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureCheckpoint, staleRunLeaseClaim(err))
-	}
-	if err := validateCheckpointRestore(authority); err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureCheckpointValidation, err)
-	}
-	source, err := q.GetRunCheckpointSource(ctx, db.GetRunCheckpointSourceParams{
-		SourceWorkspaceLeaseID: authority.checkpoint.SourceWorkspaceLeaseID,
-		SourceRunLeaseID:       authority.checkpoint.SourceRunLeaseID,
-		RunID:                  authority.run.ID,
-		AttemptNumber:          authority.attempt.Number,
-		WorkspaceID:            authority.workspace.ID,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureCheckpointSource, staleRunLeaseClaim(err))
-	}
-	authority.sourceRunLease = source.RunLease
-	authority.sourceWorkspaceLease = source.WorkspaceLease
-	authority.sourceRuntime = source.RuntimeInstance
-	if err := validateCheckpointSource(authority); err != nil {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureSourceValidation, err)
-	}
-	if authority.runtime.RestoreCheckpointID != authority.checkpoint.ID {
-		return runLeaseClaimAuthority{}, staleAuthority(staleAuthorityRunStart, runStartFailureRestoreBinding, errStaleRunLeaseClaim)
-	}
-	return authority, nil
-}
-
-func validateRunStartArm(requested runStartArm, authority runStartValidationAuthority) error {
-	if requested.mode == runLeaseClaimFresh {
-		if authority.run.SessionID.Valid {
-			if authority.run.EntrypointKind != "actor" {
-				return errStaleRunLeaseClaim
-			}
-		} else if authority.run.EntrypointKind != "task" {
-			return errStaleRunLeaseClaim
-		}
-		return nil
-	}
-	if requested.mode != runLeaseClaimRestore {
-		return errStaleRunLeaseClaim
-	}
-	wait := authority.runWait
-	if wait.ID != requested.runWaitID || wait.ResumeAttachID != requested.resumeAttachID {
-		return errStaleRunLeaseClaim
-	}
-	if wait.CheckpointRequestVersion <= 0 ||
-		wait.CheckpointRequestVersion != wait.CheckpointAckVersion {
-		return errStaleRunLeaseClaim
-	}
-	if wait.SuspendCheckpointID != requested.checkpointID {
-		return errStaleRunLeaseClaim
-	}
-	if wait.ConditionStatus == db.WaitStatusPending ||
-		wait.CurrentRunLeaseID != authority.runLease.ID ||
-		(wait.SuspensionStatus != db.RunWaitStatusResuming &&
-			!(authority.runLease.Status == db.RunLeaseStatusRunning && wait.SuspensionStatus == db.RunWaitStatusReleased)) ||
-		wait.ResumeRequestVersion != requested.resumeRequestVersion ||
-		(wait.SuspensionStatus == db.RunWaitStatusResuming && wait.ResumeAckVersion >= wait.ResumeRequestVersion) ||
-		(wait.SuspensionStatus == db.RunWaitStatusReleased && wait.ResumeAckVersion != wait.ResumeRequestVersion) ||
-		authority.runtime.RestoreCheckpointID != requested.checkpointID {
-		return errStaleRunLeaseClaim
-	}
-	return nil
 }

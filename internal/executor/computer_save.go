@@ -64,13 +64,8 @@ type computerSave struct {
 // belongs to the Runtime stop path. The caller owns the lifetime of client,
 // objects and capture dependencies until Quiesce has joined this operation.
 func startComputerSave(ctx context.Context, client ComputerSaveClient, objects generationObjectPublisher, request workerapi.ComputerSaveBeginRequest, runtimeID, computerID string, capture func(context.Context) (computerSaveCapture, error)) (*computerSave, error) {
-	if client == nil || objects == nil || capture == nil || ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 {
+	if client == nil || objects == nil || capture == nil || ids.Validate(runtimeID) != nil || ids.Validate(computerID) != nil || ids.Validate(request.SaveID) != nil || request.Sequence <= 0 || ids.Validate(request.EnvironmentID) != nil || request.ComputerInstanceID != runtimeID || request.WriterGeneration <= 0 {
 		return nil, errors.New("computer save dependencies and identities required")
-	}
-	// The request must remain stable even when the caller renews its lease value.
-	if request.Lease != nil {
-		lease := *request.Lease
-		request.Lease = &lease
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &computerSave{client: client, objects: objects, request: request, runtimeID: runtimeID, computerID: computerID, cancel: cancel, done: make(chan struct{}), settle: make(chan struct{}, 1)}
@@ -88,7 +83,7 @@ func (s *computerSave) begin(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if response.RuntimeInstanceID != s.runtimeID || response.SaveID != s.request.SaveID || response.Sequence != s.request.Sequence || ids.Validate(response.WorkspaceLeaseID) != nil || ids.Validate(response.PredecessorID) != nil || response.DesiredVersion <= 0 {
+	if response.ComputerInstanceID != s.runtimeID || response.SaveID != s.request.SaveID || response.Sequence != s.request.Sequence || response.WriterGeneration != s.request.WriterGeneration || ids.Validate(response.PredecessorID) != nil || response.DesiredVersion <= 0 {
 		return errors.New("computer save admission differs from operation")
 	}
 	s.admitted = true

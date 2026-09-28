@@ -114,16 +114,16 @@ SELECT run_leases.environment_id,
  WHERE run_leases.id = $1
    AND run_leases.lease_sequence = $2
    AND run_leases.worker_group_id = $3
-   AND run_leases.worker_instance_id = $4
+   AND run_leases.worker_host_id = $4
    AND run_leases.worker_epoch = $5
 `
 
 type GetRunMetadataClaimScopeParams struct {
-	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
-	LeaseSequence    int64       `json:"lease_sequence"`
-	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+	LeaseSequence int64       `json:"lease_sequence"`
+	WorkerGroupID pgtype.UUID `json:"worker_group_id"`
+	WorkerHostID  pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch   int64       `json:"worker_epoch"`
 }
 
 type GetRunMetadataClaimScopeRow struct {
@@ -137,7 +137,7 @@ func (q *Queries) GetRunMetadataClaimScope(ctx context.Context, arg GetRunMetada
 		arg.RunLeaseID,
 		arg.LeaseSequence,
 		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
+		arg.WorkerHostID,
 		arg.WorkerEpoch,
 	)
 	var i GetRunMetadataClaimScopeRow

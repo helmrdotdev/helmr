@@ -17,7 +17,7 @@ The evaluation profile has workers and NAT disabled by default. For a bounded en
 ```hcl
 enable_nat_gateway                  = true
 create_worker                       = true
-worker_instance_type                = "c8i.xlarge"
+worker_host_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
 worker_min_size                     = 1
 worker_max_size                     = 1

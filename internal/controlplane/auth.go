@@ -20,20 +20,6 @@ import (
 type actorContextKey struct{}
 type workerContextKey struct{}
 
-// Claims can change after HTTP authentication while a request waits for authority locks.
-var errStaleWorkerClaims = errors.New("worker authentication claims are stale")
-
-type workerActor struct {
-	WorkerInstanceID  uuid.UUID
-	WorkerGroupID     uuid.UUID
-	WorkerEpoch       int64
-	ClaimVersion      int64
-	GroupClaimVersion int64
-	ResourceID        string
-	Status            db.WorkerInstanceStatus
-	EpochStartedAt    time.Time
-}
-
 func (s *Server) requireAPIKey(next http.Handler) http.Handler {
 	return s.requireAPIKeyWithErrorWriter(next, writeActorAuthError)
 }
@@ -340,7 +326,7 @@ func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) h
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		workerInstanceID, err := uuid.Parse(payload.WorkerInstanceID)
+		workerHostID, err := uuid.Parse(payload.WorkerHostID)
 		if err != nil {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
@@ -350,53 +336,53 @@ func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) h
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		params := db.AuthorizeWorkerInstanceCredentialParams{
+		params := db.AuthorizeWorkerHostCredentialParams{
 			CredentialID:      pgvalue.UUID(credentialID),
 			ClaimVersion:      payload.ClaimVersion,
 			GroupClaimVersion: payload.GroupClaimVersion,
 			WorkerEpoch:       pgtype.Int8{Int64: payload.WorkerEpoch, Valid: true},
 		}
-		var row db.AuthorizeWorkerInstanceCredentialRow
+		var row db.AuthorizeWorkerHostCredentialRow
 		var authorizationErr error
 		switch state {
 		case workerAuthActivation:
 			activationRow, activationErr := s.db.AuthorizeWorkerActivationCredential(r.Context(), db.AuthorizeWorkerActivationCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(activationRow), activationErr
+			row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(activationRow), activationErr
 		case workerAuthRecovering:
-			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerInstanceCredential(r.Context(), db.AuthorizeRecoveringWorkerInstanceCredentialParams(params))
-			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(recoveryRow), recoveryErr
+			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerHostCredential(r.Context(), db.AuthorizeRecoveringWorkerHostCredentialParams(params))
+			row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(recoveryRow), recoveryErr
 		case workerAuthDrainCompletion:
-			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			row, authorizationErr = s.db.AuthorizeWorkerHostCredential(r.Context(), params)
 			if isNoRows(authorizationErr) {
 				replayRow, replayErr := s.db.AuthorizeWorkerDrainReplay(r.Context(), db.AuthorizeWorkerDrainReplayParams{
 					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
 					WorkerEpoch: params.WorkerEpoch,
 				})
-				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
+				row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(replayRow), replayErr
 			}
 		case workerAuthFence:
-			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			row, authorizationErr = s.db.AuthorizeWorkerHostCredential(r.Context(), params)
 			if isNoRows(authorizationErr) {
 				replayRow, replayErr := s.db.AuthorizeWorkerFenceReplay(r.Context(), db.AuthorizeWorkerFenceReplayParams{
 					CredentialID: params.CredentialID, ClaimVersion: params.ClaimVersion,
 					WorkerEpoch: params.WorkerEpoch,
 				})
-				row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(replayRow), replayErr
+				row, authorizationErr = db.AuthorizeWorkerHostCredentialRow(replayRow), replayErr
 			}
 		default:
-			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+			row, authorizationErr = s.db.AuthorizeWorkerHostCredential(r.Context(), params)
 		}
 		if isNoRows(authorizationErr) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
 		if authorizationErr != nil {
-			s.log.Error("worker instance credential authorization failed", "worker_instance_id", payload.WorkerInstanceID, "error", authorizationErr)
+			s.log.Error("worker instance credential authorization failed", "worker_host_id", payload.WorkerHostID, "error", authorizationErr)
 			writeError(w, unavailable(errors.New("worker authentication is unavailable")))
 			return
 		}
 		worker := workerActor{
-			WorkerInstanceID:  workerInstanceID,
+			WorkerHostID:      workerHostID,
 			WorkerGroupID:     pgvalue.MustUUIDValue(row.WorkerGroupID),
 			ClaimVersion:      row.ClaimVersion,
 			GroupClaimVersion: payload.GroupClaimVersion,
@@ -405,7 +391,7 @@ func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) h
 			Status:            row.WorkerStatus,
 			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
-		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != workerGroupID || payload.ClaimVersion != worker.ClaimVersion {
+		if pgvalue.MustUUIDValue(row.WorkerHostID) != workerHostID || worker.WorkerGroupID != workerGroupID || payload.ClaimVersion != worker.ClaimVersion {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}

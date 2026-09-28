@@ -193,7 +193,7 @@ build_fixture() {
   write_package_json "$selector"
   "$tmp/helmr" build "$project" --output "$tmp/$label" 2>"$tmp/$label.log" ||
     { tail -n 80 "$tmp/$label.log" >&2; return 1; }
-  jq -e '.contract == "helmr.deployment-bundle.v0" and .workspaceImages == []' \
+  jq -e '.contract == "helmr.deployment-bundle.v0" and .computerImages == []' \
     "$tmp/$label/bundle.json" >/dev/null
 }
 
@@ -263,11 +263,11 @@ cat >"$mutation_project/tasks/hello.ts" <<'TS'
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { task } from "@helmr/sdk"
-if (existsSync("/workspace/program")) {
+if (existsSync("/computer/program")) {
   throw new Error("tenant code can observe the private Program assembly tree")
 }
 try {
-  mkdirSync("/workspace/program")
+  mkdirSync("/computer/program")
   throw new Error("tenant code created the private Program assembly tree")
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error ? error.code : ""
@@ -276,7 +276,7 @@ try {
   }
 }
 try {
-  writeFileSync("/workspace/project/mutation.txt", "must-not-be-written")
+  writeFileSync("/computer/project/mutation.txt", "must-not-be-written")
   throw new Error("installed tree was writable")
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error ? error.code : ""
@@ -287,7 +287,7 @@ try {
 const child = spawn(process.execPath, ["-e", `
   const { writeFileSync } = require("node:fs")
   setInterval(() => {
-    try { writeFileSync("/workspace/program/detached-mutation.txt", "must-not-be-written") } catch {}
+    try { writeFileSync("/computer/program/detached-mutation.txt", "must-not-be-written") } catch {}
   }, 5)
 `], { detached: true, stdio: "ignore" })
 child.unref()
@@ -305,13 +305,13 @@ if grep -F 'detached-mutation.txt' <<<"$mutation_program_listing"; then
   exit 1
 fi
 
-workspace_project="$tmp/workspace-project"
-mkdir -p "$workspace_project/tasks"
-cp "$project/helmr.config.ts" "$workspace_project/helmr.config.ts"
-cat >"$workspace_project/package.json" <<'JSON'
-{"name":"bundle-workspace-e2e","private":true}
+computer_project="$tmp/computer-project"
+mkdir -p "$computer_project/tasks"
+cp "$project/helmr.config.ts" "$computer_project/helmr.config.ts"
+cat >"$computer_project/package.json" <<'JSON'
+{"name":"bundle-computer-e2e","private":true}
 JSON
-cat >"$workspace_project/prepare.sh" <<'SH'
+cat >"$computer_project/prepare.sh" <<'SH'
 #!/bin/sh
 set -eu
 mkdir -p node_modules/@helmr/sdk
@@ -345,7 +345,7 @@ export const schedules = Object.freeze({
         schedule: Object.freeze({
           cron: config.cron.pattern,
           timezone: config.cron.timezone,
-          workspace: Object.freeze({ sandbox: config.workspace.sandbox, secrets: Object.freeze([]) }),
+          computer: Object.freeze({ sandbox: config.computer.sandbox, secrets: Object.freeze([]) }),
         }),
       }),
     })
@@ -353,24 +353,24 @@ export const schedules = Object.freeze({
 })
 JS
 SH
-chmod 0755 "$workspace_project/prepare.sh"
-cat >"$workspace_project/tasks/hello.ts" <<'TS'
+chmod 0755 "$computer_project/prepare.sh"
+cat >"$computer_project/tasks/hello.ts" <<'TS'
 import { sandbox, schedules } from "@helmr/sdk"
 export const machine = sandbox({ id: "machine" })
 export const hello = schedules.task({
   id: "hello",
   cron: { pattern: "0 9 * * *", timezone: "UTC" },
-  workspace: { sandbox: machine },
+  computer: { sandbox: machine },
   run: () => "hello",
 })
 TS
-prepare_host_sdk "$workspace_project"
-write_config "$workspace_project" "{ installCommand: \"BASE_IMAGE=$builder_image ./prepare.sh\" }"
-"$tmp/helmr" build "$workspace_project" \
-  --output "$tmp/workspace"
+prepare_host_sdk "$computer_project"
+write_config "$computer_project" "{ installCommand: \"BASE_IMAGE=$builder_image ./prepare.sh\" }"
+"$tmp/helmr" build "$computer_project" \
+  --output "$tmp/computer"
 jq -e \
-  '.contract == "helmr.deployment-bundle.v0" and (.workspaceImages | length) == 1 and .workspaceImages[0].declaredId == "machine"' \
-  "$tmp/workspace/bundle.json" >/dev/null
+  '.contract == "helmr.deployment-bundle.v0" and (.computerImages | length) == 1 and .computerImages[0].declaredId == "machine"' \
+  "$tmp/computer/bundle.json" >/dev/null
 
 # Native environment: build.builder copies and runs a setup script that installs
 # an OS tool, node-gyp compiles an addon against a distribution library, a
@@ -458,7 +458,7 @@ if grep -E '^#[0-9]+ [0-9.]+ shadowed-tool' "$tmp/shadow.log"; then
 fi
 [ "$(jq -c '[.platform, .runtime]' "$tmp/shadow/bundle.json")" = "$(jq -c '[.platform, .runtime]' "$tmp/native-recipe-input/bundle.json")" ]
 
-# The build environment is its own role: a Workspace image is rejected while
+# The build environment is its own role: a Computer image is rejected while
 # the config is evaluated, before any Linux work starts.
 role_project="$tmp/role-project"
 cp -a "$native_project" "$role_project"
@@ -467,7 +467,7 @@ import { defineConfig, image } from "@helmr/sdk"
 export default defineConfig({ dirs: ["tasks"], build: { builder: image("not-a-builder").from("ubuntu:24.04") as never } })
 TS
 if "$tmp/helmr" build "$role_project" --output "$tmp/role" 2>"$tmp/role.log"; then
-  echo "a Workspace image was accepted as the build environment" >&2
+  echo "a Computer image was accepted as the build environment" >&2
   exit 1
 fi
 grep -F 'must be created by builder()' "$tmp/role.log" >/dev/null
@@ -489,14 +489,14 @@ grep -F 'spawnSync jq ENOENT' "$tmp/bare.log" >/dev/null
 
 HELMR_NATIVE_BUNDLE="$tmp/native-recipe-input" bash "$repo_root/tests/build/guestd-native-library.test.sh"
 
-# Agent tool work: the real SDK declares the tasks and a Workspace image with a
+# Agent tool work: the real SDK declares the tasks and a Computer image with a
 # browser, Git and Python; the Program carries Playwright and Sharp.
 agentic_project="$tmp/agentic-project"
 cp -a "$repo_root/tests/fixtures/agentic-work" "$agentic_project"
 prepare_host_sdk "$agentic_project"
 "$tmp/helmr" build "$agentic_project" --output "$tmp/agentic" 2>"$tmp/agentic.log" ||
   { tail -n 120 "$tmp/agentic.log" >&2; exit 1; }
-jq -e '[.workspaceImages[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null
+jq -e '[.computerImages[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null
 HELMR_AGENTIC_BUNDLE="$tmp/agentic" bash "$repo_root/tests/build/agentic-work.test.sh"
 
-printf 'ok - canonical bundle builder package-manager, workspace-image, native-environment and agentic-work e2e\n'
+printf 'ok - canonical bundle builder package-manager, computer-image, native-environment and agentic-work e2e\n'

@@ -15,6 +15,6 @@ export const verificationTask = task({
     await writeFile("verification-marker.txt", marker)
     const observed = await readFile("verification-marker.txt", "utf8")
     if (observed !== marker) throw new Error("guest filesystem round trip failed")
-    return { marker: observed, runId: ctx.run.id, workspaceId: ctx.workspace.id }
+    return { marker: observed, runId: ctx.run.id, computerId: ctx.computer.id }
   },
 })

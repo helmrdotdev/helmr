@@ -16,7 +16,7 @@ func newSDKMachine(
 	opts ...firecrackersdk.Opt,
 ) (*firecrackersdk.Machine, error) {
 	var machine *firecrackersdk.Machine
-	err := withSDKInitTimeout(initTimeout, func() error {
+	err := withSDKClientTimeouts(initTimeout, func() error {
 		var err error
 		machine, err = firecrackersdk.NewMachine(ctx, cfg, opts...)
 		return err

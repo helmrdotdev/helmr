@@ -34,49 +34,49 @@ func TestDecodeStartActorRequestIsClosedAndPresenceAware(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/",
-		strings.NewReader(`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
+		strings.NewReader(`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
 	)
 	decoded, err := decodeStartActorRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Workspace.ID == "" {
-		t.Fatal("workspace ID was lost")
+	if decoded.Computer.ID == "" {
+		t.Fatal("computer ID was lost")
 	}
 
 	for _, body := range []string{
-		`{"workspace":{"key":"workspace:1"}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","unknown":true}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"unknown":true}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"unknown":true}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}} {}`,
+		`{"computer":{"key":"computer:1"}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32","unknown":true}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"unknown":true}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"unknown":true}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}} {}`,
 		`null`,
-		`{"workspace":null}`,
-		`{"workspace":{"key":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"key":null}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":null}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"queue":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"concurrency_key":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"priority":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"ttl":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"metadata":null}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"tags":[null]}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"enabled":null}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":null}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":null}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"min_delay":null}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"max_delay":null}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"factor":null}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"jitter":null}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"queue":""}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"ttl":""}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"min_delay":""}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"max_delay":""}}}}`,
-		`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"jitter":""}}}}`,
+		`{"computer":null}`,
+		`{"computer":{"key":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"key":null}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":null}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"queue":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"concurrency_key":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"priority":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"ttl":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"metadata":null}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"tags":[null]}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"enabled":null}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":null}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":null}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"min_delay":null}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"max_delay":null}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"factor":null}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"backoff":{"jitter":null}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"queue":""}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"ttl":""}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"min_delay":""}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"max_delay":""}}}}`,
+		`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"run":{"retry":{"max_attempts":3,"backoff":{"jitter":""}}}}`,
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		if _, err := decodeStartActorRequest(request); err == nil {
@@ -92,6 +92,7 @@ func TestWriteActorStartErrorUsesStableCodes(t *testing.T) {
 		status int
 		code   string
 	}{
+		{err: conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"}), status: http.StatusConflict, code: "computer_preparation_exhausted"},
 		{
 			err:    idempotency.ConflictError{},
 			status: http.StatusConflict,
@@ -103,8 +104,8 @@ func TestWriteActorStartErrorUsesStableCodes(t *testing.T) {
 			code:   "actor_key_conflict",
 		},
 		{err: errActorStartNotDeployed, status: http.StatusNotFound, code: "actor_not_deployed"},
-		{err: errActorStartWorkspaceNotFound, status: http.StatusNotFound, code: "workspace_not_found"},
-		{err: errActorStartWorkspaceConflict, status: http.StatusConflict, code: "workspace_unavailable"},
+		{err: errActorStartComputerNotFound, status: http.StatusNotFound, code: "computer_not_found"},
+		{err: errActorStartComputerConflict, status: http.StatusConflict, code: "computer_unavailable"},
 		{err: errActorStartSecretUnavailable, status: http.StatusConflict, code: "secret_unavailable"},
 		{
 			err:    errors.Join(errActorStartInvalid, errors.New("bad duration")),
@@ -126,13 +127,13 @@ func TestActorStartPresenceErrorsUseContractSpecificCodes(t *testing.T) {
 		body string
 		code string
 	}{
-		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":" \t "}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":1}`, code: "invalid_idempotency_key"},
-		{body: `{"workspace":null}`, code: "invalid_workspace_reference"},
-		{body: `{"workspace":{"key":null}}`, code: "invalid_workspace_reference"},
-		{body: `{"workspace":{"key":1}}`, code: "invalid_workspace_reference"},
+		{body: `{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":null}`, code: "invalid_idempotency_key"},
+		{body: `{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":""}`, code: "invalid_idempotency_key"},
+		{body: `{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":" \t "}`, code: "invalid_idempotency_key"},
+		{body: `{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"},"idempotency_key":1}`, code: "invalid_idempotency_key"},
+		{body: `{"computer":null}`, code: "invalid_computer_reference"},
+		{body: `{"computer":{"key":null}}`, code: "invalid_computer_reference"},
+		{body: `{"computer":{"key":1}}`, code: "invalid_computer_reference"},
 	} {
 		request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(test.body))
 		recorder := httptest.NewRecorder()
@@ -175,7 +176,7 @@ func TestAuthorizeActorStartRejectsBeforeScopeLookup(t *testing.T) {
 	request := httptest.NewRequest(
 		http.MethodPost,
 		"/projects/missing/environments/missing/actors/operator.v1/start",
-		strings.NewReader(`{"workspace":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
+		strings.NewReader(`{"computer":{"id":"019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32"}}`),
 	)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("projectID", "missing")

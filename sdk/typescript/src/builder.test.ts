@@ -40,11 +40,11 @@ describe("builder", () => {
     expect(() => (builder as (...args: unknown[]) => unknown)("debian:bookworm")).toThrow("takes no arguments")
   })
 
-  test("is a different role from a Workspace image", () => {
+  test("is a different role from a Computer image", () => {
     expect(isBuilder(builder())).toBe(true)
-    expect(isBuilder(image("workspace"))).toBe(false)
+    expect(isBuilder(image("computer"))).toBe(false)
     expect(() => sandbox({ id: "wrong-role" }).image(builder() as never)).toThrow()
-    expect(() => defineConfig({ build: { builder: image("workspace").from("debian") as never } }))
+    expect(() => defineConfig({ build: { builder: image("computer").from("debian") as never } }))
       .toThrow("must be created by builder()")
   })
 })

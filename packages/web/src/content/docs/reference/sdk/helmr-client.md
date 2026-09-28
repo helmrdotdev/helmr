@@ -20,8 +20,8 @@ All transport methods accept optional `{ signal }` as the final argument.
 | `tasks` | `retrieve`, `list`, `start` |
 | `actors` | `retrieve`, `list`, `start` |
 | `sessions` | `retrieve`, `list`, `ref` |
-| `sandboxes` | `retrieve`, `list`, `createWorkspace` |
-| `workspaces` | `retrieve`, `list`, `ref` |
+| `sandboxes` | `retrieve`, `list`, `createComputer` |
+| `computers` | `retrieve`, `list`, `ref` |
 | `runs` | `retrieve`, `list`, `cancel`, `wait`, `logs`, `events` |
 | `deployments` | `list`, `current`, `retrieve` |
 | `schedules` | `retrieve`, `list` |

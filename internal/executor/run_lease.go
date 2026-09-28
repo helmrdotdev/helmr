@@ -59,20 +59,11 @@ func (e Executor) ExecuteRunLease(
 		}
 		return err
 	}
-	current, err = e.renewRunLease(ctx, task, current)
-	if err != nil {
-		return fmt.Errorf("renew run lease before finalization: %w", err)
-	}
-
-	if err := task.QuiesceComputerSaves(ctx); err != nil {
-		return fmt.Errorf("settle Computer saves before run finalization: %w", err)
-	}
 
 	operationID := uuid.NewV7()
-	kind := workerapi.RunFinalizationCapture
 	beginRequest := workerapi.BeginRunFinalizationRequest{
 		Lease: current.Fence(), ProgramQuiesced: result.ProgramQuiesced,
-		OperationID: operationID.String(), Kind: kind,
+		OperationID: operationID.String(),
 	}
 	var begun workerapi.BeginRunFinalizationResponse
 	if err := retryRunLeaseRequest(ctx, func(requestCtx context.Context) error {
@@ -83,9 +74,7 @@ func (e Executor) ExecuteRunLease(
 		return fmt.Errorf("begin run finalization: %w", err)
 	}
 	if begun.Lease != current.Fence() ||
-		begun.OperationID != beginRequest.OperationID ||
-		begun.Kind != kind ||
-		begun.BaseWorkspaceVersionID != current.BaseWorkspaceVersionID {
+		begun.OperationID != beginRequest.OperationID {
 		return errors.New("run finalization response changed its identity")
 	}
 	frozen := current
@@ -96,25 +85,12 @@ func (e Executor) ExecuteRunLease(
 	if !begun.ExpiresAt.After(current.ExpiresAt) {
 		return errors.New("run finalization response did not advance the expiry")
 	}
-	stageDeadline, replayTail, err := runLeaseFinalizationDeadlines(
+	_, replayTail, err := runLeaseFinalizationDeadlines(
 		time.Now(),
 		begun.ExpiresAt,
 	)
 	if err != nil {
 		return err
-	}
-	stageCtx, cancelStage := context.WithDeadline(context.Background(), stageDeadline)
-	defer cancelStage()
-	if err := retryRunLeaseRequest(stageCtx, func(requestCtx context.Context) error {
-		return task.BeginWorkspaceFinalization(
-			requestCtx,
-			current,
-			frozen,
-			begun.OperationID,
-			begun.Kind,
-		)
-	}); err != nil {
-		return fmt.Errorf("begin workspace finalization: %w", err)
 	}
 
 	completeCtx, cancelComplete := context.WithDeadline(
@@ -122,17 +98,11 @@ func (e Executor) ExecuteRunLease(
 		begun.ExpiresAt,
 	)
 	defer cancelComplete()
-	completion := workerapi.CompleteTaskRequest{Lease: begun.Lease, Outcome: result.Outcome}
-	actorCompletion := workerapi.CompleteActorRequest{Lease: begun.Lease}
+	completion := workerapi.CompleteTaskRequest{Lease: begun.Lease, OperationID: begun.OperationID, Outcome: result.Outcome}
+	actorCompletion := workerapi.CompleteActorRequest{Lease: begun.Lease, OperationID: begun.OperationID}
 	if result.ActorOutcome != nil {
 		actorCompletion.Outcome = *result.ActorOutcome
 	}
-	capture, err := task.CaptureWorkspace(stageCtx)
-	if err != nil {
-		return fmt.Errorf("capture task Computer: %w", err)
-	}
-	completion.Workspace.Captured = &capture
-	actorCompletion.Workspace.Captured = &capture
 
 	if err := retryRunLeaseCompletion(completeCtx, replayTail, func(requestCtx context.Context) error {
 		if result.ActorOutcome != nil {
@@ -252,8 +222,25 @@ func (e Executor) awaitRunLeaseTask(
 		case <-renewTimer.C:
 			renewed, err := e.renewRunLease(ctx, task, current)
 			if err != nil {
-				cancelWait()
-				<-waited
+				// Guest may have released its claim after sending quiescence,
+				// while the completion reader is still draining that proof.
+				// Accept only a complete result within the last known lease;
+				// Control Plane still validates authority at finalization.
+				deadline := time.NewTimer(max(time.Until(current.ExpiresAt), 0))
+				defer deadline.Stop()
+				select {
+				case result := <-waited:
+					if result.err == nil && time.Now().Before(current.ExpiresAt) && ctx.Err() == nil {
+						return result.result, current, nil
+					}
+					err = errors.Join(err, result.err)
+				case <-deadline.C:
+					cancelWait()
+					<-waited
+				case <-ctx.Done():
+					cancelWait()
+					<-waited
+				}
 				return RunLeaseTaskResult{}, current, fmt.Errorf("renew run lease: %w", err)
 			}
 			current = renewed
@@ -276,9 +263,9 @@ func (e Executor) renewRunLease(
 		return current, err
 	}
 	currentAtRenewal := current
-	currentAtRenewal.BaseWorkspaceVersionID = renewal.Previous.BaseWorkspaceVersionID
+	currentAtRenewal.BaseComputerDiskVersionID = renewal.Previous.BaseComputerDiskVersionID
 	if err := validateRunLeaseExpiryAdvance(currentAtRenewal, renewal.Previous); err != nil {
-		return current, fmt.Errorf("run lease task changed authority outside an actor workspace frontier: %w", err)
+		return current, fmt.Errorf("run lease task changed authority outside an actor computer frontier: %w", err)
 	}
 	if err := validateRunLeaseExpiryAdvance(renewal.Previous, renewal.Lease); err != nil {
 		return current, err

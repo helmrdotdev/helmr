@@ -18,6 +18,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -26,7 +27,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -49,7 +49,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		TX:                    panicTxBeginner{},
 		Auth:                  controlplane.NewDBAuthenticator(store),
 		SecretDelivery:        controlplanetestSecretDeliveryOpener{},
-		WorkspaceFencingKey:   controlplanetestWorkspaceFencingKey(),
+		ComputerFencingKey:    controlplanetestComputerFencingKey(),
 		TokenCredentialKey:    controlplanetestTokenCredentialKey(),
 		AuthKey:               make([]byte, auth.RootKeySize),
 		WorkerTokenSigningKey: make([]byte, auth.WorkerTokenSigningKeySize),
@@ -238,8 +238,8 @@ func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
 	return nil, nil
 }
 
-func controlplanetestWorkspaceFencingKey() workspace.FencingKey {
-	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
+func controlplanetestComputerFencingKey() computer.FencingKey {
+	key, err := computer.NewFencingKey(make([]byte, computer.FencingKeySize))
 	if err != nil {
 		panic(err)
 	}
@@ -293,7 +293,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("COMPUTER_WRAPPING_KEY_ID", "test-computer-root")
 	t.Setenv("COMPUTER_WRAPPING_KEY", "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=")
-	t.Setenv("WORKSPACE_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
+	t.Setenv("COMPUTER_FENCING_KEY", "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=")
 	t.Setenv("PUBLIC_URL", "http://"+addr)
 	t.Setenv("EMAIL_PROVIDER", "none")
 	t.Setenv("GITHUB_OAUTH_CLIENT_ID", "client-id")
@@ -354,6 +354,10 @@ func (r controlplanetestTelemetryReader) ListEvents(context.Context, telemetry.E
 
 func (r controlplanetestTelemetryReader) ListRunLogChunks(context.Context, telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
 	return telemetry.RunLogChunkPage{}, nil
+}
+
+func (r controlplanetestTelemetryReader) ListCommandLogChunks(context.Context, telemetry.CommandLogChunkQuery) (telemetry.CommandLogChunkPage, error) {
+	return telemetry.CommandLogChunkPage{}, nil
 }
 
 type panicTxBeginner struct{}

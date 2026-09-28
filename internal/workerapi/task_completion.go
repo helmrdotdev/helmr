@@ -70,27 +70,13 @@ func (value *TaskOutcome) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-func (value *TaskWorkspaceProof) UnmarshalJSON(raw []byte) error {
-	*value = TaskWorkspaceProof{}
-	type proof TaskWorkspaceProof
-	var decoded proof
-	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
-		return err
-	}
-	if decoded.Captured == nil {
-		return errors.New("task workspace capture is required")
-	}
-	*value = TaskWorkspaceProof(decoded)
-	return nil
-}
-
 func (value *ComputerMountTarget) UnmarshalJSON(raw []byte) error {
 	type target ComputerMountTarget
 	var decoded target
 	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
 		return fmt.Errorf("decode computer mount target: %w", err)
 	}
-	if decoded.BaseWorkspaceVersionID == "" {
+	if decoded.BaseComputerDiskVersionID == "" {
 		return errors.New("computer mount version is required")
 	}
 	*value = ComputerMountTarget(decoded)

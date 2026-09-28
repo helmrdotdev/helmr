@@ -1,11 +1,8 @@
--- name: LockLiveIdempotencyClaim :one
-SELECT idempotency_claims.*,
-       coalesce(idempotency_claims.expires_at <= transaction_timestamp(), false)::boolean AS expired
-  FROM idempotency_claims
- WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)
-   AND idempotency_claims.operation = sqlc.arg(operation)
-   AND idempotency_claims.slot_hash = sqlc.arg(slot_hash)
-   AND idempotency_claims.retired_at IS NULL
+-- name: LockIdempotencyClaim :one
+SELECT * FROM idempotency_claims
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND operation = sqlc.arg(operation)
+   AND slot_hash = sqlc.arg(slot_hash)
  FOR UPDATE;
 
 -- name: CreateIdempotencyClaim :one
@@ -16,7 +13,7 @@ INSERT INTO idempotency_claims (
     slot_hash,
     request_fingerprint,
     accepted_at,
-    expires_at
+    receipt_expires_at
 )
 VALUES (
     sqlc.arg(id),
@@ -31,9 +28,33 @@ VALUES (
     END
 )
 ON CONFLICT (environment_id, operation, slot_hash)
-    WHERE retired_at IS NULL
 DO NOTHING
 RETURNING *;
+
+-- name: PruneExpiredIdempotencyReceipts :execrows
+WITH candidates AS MATERIALIZED (
+    SELECT claims.id
+      FROM idempotency_claims AS claims
+     WHERE claims.status <> 'pending'
+       AND claims.receipt_pruned_at IS NULL
+       AND claims.receipt_expires_at <= statement_timestamp()
+       AND NOT EXISTS (
+           SELECT 1
+             FROM computer_commands AS exec
+             WHERE exec.environment_id = claims.environment_id
+              AND exec.claim_id = claims.id
+              AND (exec.terminal_at IS NULL
+                   OR (exec.computer_instance_id IS NOT NULL AND exec.process_reconciled_at IS NULL))
+       )
+     ORDER BY claims.receipt_expires_at, claims.id
+     LIMIT sqlc.arg(row_limit)
+     FOR UPDATE OF claims SKIP LOCKED
+)
+UPDATE idempotency_claims AS claims
+   SET receipt = NULL,
+       receipt_pruned_at = statement_timestamp()
+  FROM candidates
+ WHERE claims.id = candidates.id;
 
 -- name: GetIdempotencyClaim :one
 SELECT *
@@ -50,7 +71,6 @@ UPDATE idempotency_claims
    AND id = sqlc.arg(id)
    AND request_fingerprint = sqlc.arg(request_fingerprint)
    AND status = 'pending'
-   AND retired_at IS NULL
 RETURNING *;
 
 -- name: FailIdempotencyClaim :one
@@ -62,14 +82,4 @@ UPDATE idempotency_claims
    AND id = sqlc.arg(id)
    AND request_fingerprint = sqlc.arg(request_fingerprint)
    AND status = 'pending'
-   AND retired_at IS NULL
-RETURNING *;
-
--- name: RetireExpiredIdempotencyClaim :one
-UPDATE idempotency_claims
-   SET retired_at = now()
- WHERE environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id)
-   AND retired_at IS NULL
-   AND expires_at <= now()
 RETURNING *;

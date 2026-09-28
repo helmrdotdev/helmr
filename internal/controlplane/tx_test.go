@@ -12,9 +12,9 @@ import (
 
 func TestInTxCommits(t *testing.T) {
 	tx := &testTransaction{}
-	server := &Server{tx: testTxBeginner{tx: tx}}
+	txb := testTxBeginner{tx: tx}
 	var called bool
-	if err := server.inTx(context.Background(), func(work *txWork) error {
+	if err := inTxWith(context.Background(), txb, func(work *txWork) error {
 		if work.q == nil {
 			t.Fatal("tx work query store is nil")
 		}
@@ -33,8 +33,8 @@ func TestInTxCommits(t *testing.T) {
 
 func TestInTxReturnsBeginError(t *testing.T) {
 	want := errors.New("begin failed")
-	server := &Server{tx: testTxBeginner{beginErr: want}}
-	err := server.inTx(context.Background(), func(*txWork) error {
+	txb := testTxBeginner{beginErr: want}
+	err := inTxWith(context.Background(), txb, func(*txWork) error {
 		t.Fatal("transaction body should not run")
 		return nil
 	})
@@ -48,9 +48,9 @@ func TestInTxReturnsBeginError(t *testing.T) {
 
 func TestInTxRollsBackOnError(t *testing.T) {
 	tx := &testTransaction{}
-	server := &Server{tx: testTxBeginner{tx: tx}}
+	txb := testTxBeginner{tx: tx}
 	want := errors.New("work failed")
-	err := server.inTx(context.Background(), func(*txWork) error {
+	err := inTxWith(context.Background(), txb, func(*txWork) error {
 		return want
 	})
 	if !errors.Is(err, want) {
@@ -65,8 +65,8 @@ func TestInTxJoinsRollbackError(t *testing.T) {
 	workErr := errors.New("work failed")
 	rollbackErr := errors.New("rollback failed")
 	tx := &testTransaction{rollbackErr: rollbackErr}
-	server := &Server{tx: testTxBeginner{tx: tx}}
-	err := server.inTx(context.Background(), func(*txWork) error {
+	txb := testTxBeginner{tx: tx}
+	err := inTxWith(context.Background(), txb, func(*txWork) error {
 		return workErr
 	})
 	if !errors.Is(err, workErr) || !errors.Is(err, rollbackErr) {
@@ -80,8 +80,8 @@ func TestInTxJoinsRollbackError(t *testing.T) {
 func TestInTxRollsBackOnCommitError(t *testing.T) {
 	want := errors.New("commit failed")
 	tx := &testTransaction{commitErr: want}
-	server := &Server{tx: testTxBeginner{tx: tx}}
-	err := server.inTx(context.Background(), func(*txWork) error {
+	txb := testTxBeginner{tx: tx}
+	err := inTxWith(context.Background(), txb, func(*txWork) error {
 		return nil
 	})
 	if !errors.Is(err, want) {
@@ -97,7 +97,7 @@ func TestInTxRollsBackOnCommitError(t *testing.T) {
 
 func TestInTxRollsBackAndRepanics(t *testing.T) {
 	tx := &testTransaction{}
-	server := &Server{tx: testTxBeginner{tx: tx}}
+	txb := testTxBeginner{tx: tx}
 	defer func() {
 		recovered := recover()
 		if recovered != "boom" {
@@ -107,7 +107,7 @@ func TestInTxRollsBackAndRepanics(t *testing.T) {
 			t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
 		}
 	}()
-	_ = server.inTx(context.Background(), func(*txWork) error {
+	_ = inTxWith(context.Background(), txb, func(*txWork) error {
 		panic("boom")
 	})
 }

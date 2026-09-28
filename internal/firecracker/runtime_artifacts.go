@@ -12,8 +12,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 const runtimeArtifactsSchema = "helmr.runtime-artifacts.v0"
@@ -134,7 +134,7 @@ func validateRuntimeArtifactsDeclaration(cfg Config, artifacts runtimeArtifacts)
 	if strings.TrimSpace(artifacts.Arch) == "" {
 		return errors.New("runtime artifacts arch is required")
 	}
-	if artifacts.VMRuntimeContract != runtimeid.Contract {
+	if artifacts.VMRuntimeContract != vmplatform.Contract {
 		return fmt.Errorf("runtime artifacts contract %q is not supported", artifacts.VMRuntimeContract)
 	}
 	for _, artifact := range []struct {

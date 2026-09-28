@@ -26,7 +26,7 @@ func TestActorCancellationUsesExactSessionAuthority(t *testing.T) {
 			case "queued without worker":
 				dbtest.MustExec(t, ctx, f.pool, `UPDATE runs SET current_run_lease_id=NULL WHERE id=$1`, work.runID)
 				dbtest.MustExec(t, ctx, f.pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='fixture_prestart' WHERE id=$1`, work.leaseID)
-				dbtest.MustExec(t, ctx, f.pool, `UPDATE workspace_leases SET status='released',released_at=now(),terminal_at=now() WHERE owner_run_lease_id=$1`, work.leaseID)
+				dbtest.MustExec(t, ctx, f.pool, `UPDATE run_leases SET process_reconciled_at=now() WHERE id=$1`, work.leaseID)
 			case "stale successor":
 				successor := uuid.NewV7()
 				tx, err := f.pool.Begin(ctx)
@@ -37,9 +37,9 @@ func TestActorCancellationUsesExactSessionAuthority(t *testing.T) {
 				dbtest.MustExec(t, ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
 				dbtest.MustExec(t, ctx, tx, `UPDATE runs SET status='cancelled',terminal_at=now(),current_run_lease_id=NULL,failure='{"code":"run_cancelled","message":"Previous execution stopped","details":{}}' WHERE id=$1`, work.runID)
 				dbtest.MustExec(t, ctx, tx, `UPDATE run_attempts SET terminal_outcome='cancelled',terminal_reason_code='fixture_previous',terminal_at=now() WHERE run_id=$1`, work.runID)
-				dbtest.MustExec(t, ctx, tx, `INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,workspace_id,base_workspace_version_id,session_id,session_input_start_sequence,session_input_high_watermark,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,trace_id,root_span_id)
-SELECT $2,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,workspace_id,base_workspace_version_id,session_id,session_input_start_sequence,session_input_high_watermark,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,trace_id,root_span_id FROM runs WHERE id=$1`, work.runID, successor)
-				dbtest.MustExec(t, ctx, tx, `INSERT INTO run_attempts(run_id,number,entrypoint_kind,workspace_id,base_workspace_version_id,session_input_start_sequence) SELECT $2,1,entrypoint_kind,workspace_id,base_workspace_version_id,session_input_start_sequence FROM runs WHERE id=$1`, work.runID, successor)
+				dbtest.MustExec(t, ctx, tx, `INSERT INTO runs(id,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,computer_id,base_computer_disk_version_id,session_id,session_input_start_sequence,session_input_high_watermark,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,trace_id,root_span_id)
+SELECT $2,org_id,project_id,environment_id,deployment_id,deployment_definition_id,entrypoint_kind,entrypoint_declared_id,cause_kind,computer_id,base_computer_disk_version_id,session_id,session_input_start_sequence,session_input_high_watermark,payload,queue_name,queue_origin_at,queue_score_at,max_active_duration_ms,retry_policy,trace_id,root_span_id FROM runs WHERE id=$1`, work.runID, successor)
+				dbtest.MustExec(t, ctx, tx, `INSERT INTO run_attempts(run_id,number,entrypoint_kind,computer_id,base_computer_disk_version_id,session_input_start_sequence) SELECT $2,1,entrypoint_kind,computer_id,base_computer_disk_version_id,session_input_start_sequence FROM runs WHERE id=$1`, work.runID, successor)
 				dbtest.MustExec(t, ctx, tx, `UPDATE sessions SET current_run_id=$2,run_generation=run_generation+1 WHERE id=$1`, actor, successor)
 				if err := tx.Commit(ctx); err != nil {
 					t.Fatal(err)
@@ -167,18 +167,18 @@ func TestForcedActorFailurePreservesRecoveryAuthority(t *testing.T) {
 				t.Fatal(err)
 			}
 			var sessionStatus, reason, runStatus, leaseStatus, physicalStatus, desired string
-			var current, heldRun, heldTurn, owner pgtype.UUID
+			var current, heldRun, heldTurn pgtype.UUID
 			var cursor, events int64
-			if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_reason,r.status,l.status,wl.status,ri.desired_state,s.current_run_id,s.dispatch_hold_run_id,s.active_turn_id,w.owner_session_id,s.committed_input_sequence,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.held')
-FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN run_leases l ON l.id=$2 JOIN workspace_leases wl ON wl.owner_run_lease_id=l.id JOIN runtime_instances ri ON ri.id=l.runtime_instance_id JOIN computers w ON w.id=s.workspace_id WHERE s.id=$1`, actor, work.leaseID).Scan(&sessionStatus, &reason, &runStatus, &leaseStatus, &physicalStatus, &desired, &current, &heldRun, &heldTurn, &owner, &cursor, &events); err != nil {
+			if err := f.pool.QueryRow(ctx, `SELECT s.status,s.dispatch_hold_reason,r.status,l.status,ri.observed_state,ri.desired_state,s.current_run_id,s.dispatch_hold_run_id,s.active_turn_id,s.committed_input_sequence,(SELECT count(*) FROM session_events WHERE session_id=s.id AND kind='session.held')
+FROM sessions s JOIN runs r ON r.id=s.current_run_id JOIN run_leases l ON l.id=$2 JOIN computer_instances ri ON ri.id=l.computer_instance_id JOIN computers w ON w.id=s.computer_id WHERE s.id=$1`, actor, work.leaseID).Scan(&sessionStatus, &reason, &runStatus, &leaseStatus, &physicalStatus, &desired, &current, &heldRun, &heldTurn, &cursor, &events); err != nil {
 				t.Fatal(err)
 			}
 			wantLease := "rejected"
 			if active {
 				wantLease = "failed"
 			}
-			if sessionStatus != "open" || reason != "recovery_required" || runStatus != "failed" || leaseStatus != wantLease || physicalStatus != "fenced" || desired != "closed" || current != pgvalue.UUID(work.runID) || heldRun != current || heldTurn != turn || owner != pgvalue.UUID(actor) || cursor != 1 || events != 1 {
-				t.Fatalf("forced failure lost Session authority: %s %s %s %s %s %s current=%v hold=%v turn=%v owner=%v cursor=%d events=%d", sessionStatus, reason, runStatus, leaseStatus, physicalStatus, desired, current, heldRun, heldTurn, owner, cursor, events)
+			if sessionStatus != "open" || reason != "recovery_required" || runStatus != "failed" || leaseStatus != wantLease || physicalStatus != "ready" || desired != "ready" || current != pgvalue.UUID(work.runID) || heldRun != current || heldTurn != turn || cursor != 1 || events != 1 {
+				t.Fatalf("forced failure lost Session authority: %s %s %s %s %s %s current=%v hold=%v turn=%v cursor=%d events=%d", sessionStatus, reason, runStatus, leaseStatus, physicalStatus, desired, current, heldRun, heldTurn, cursor, events)
 			}
 		})
 	}

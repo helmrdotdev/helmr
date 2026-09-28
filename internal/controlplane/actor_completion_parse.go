@@ -24,7 +24,7 @@ type parsedActorCompletion struct {
 	holdID        uuid.UUID
 	turnID        *uuid.UUID
 	errorObject   json.RawMessage
-	capture       *parsedTaskComputerCapture
+	operationID   uuid.UUID
 	fingerprint   string
 }
 
@@ -75,15 +75,11 @@ func parseActorCompletionRequest(request workerapi.CompleteActorRequest) (parsed
 		return parsedActorCompletion{}, errors.New("outcome must contain exactly one variant")
 	}
 
-	if request.Workspace.Captured == nil {
-		return parsedActorCompletion{}, errors.New("workspace capture is required for every terminal outcome")
-	}
-	capture, normalizedCapture, err := parseTaskWorkspaceCapture(*request.Workspace.Captured)
+	parsed.operationID, err = parseCanonicalUUID("operation_id", request.OperationID)
 	if err != nil {
 		return parsedActorCompletion{}, err
 	}
-	parsed.capture = &capture
-	normalized.Workspace.Captured = &normalizedCapture
+	normalized.OperationID = parsed.operationID.String()
 
 	parsed.fingerprint, err = terminalRequestFingerprint("actor.complete.v0", normalized)
 	if err != nil {

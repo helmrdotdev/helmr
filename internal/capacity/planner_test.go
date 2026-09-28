@@ -1,9 +1,11 @@
 package capacity
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"reflect"
 	"strings"
 	"testing"
@@ -13,15 +15,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
-	plannerTestRuntimeIdentityID = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	plannerTestCPUConfigDigest   = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-	plannerTestSubstrateFormat   = SubstrateFormatExt4
-	plannerTestSubstrateContract = SubstrateContractExt4
+	plannerTestVMPlatformID    = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	plannerTestCPUConfigDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 var (
@@ -62,15 +62,15 @@ func TestPlanFreshRunUsesExactPrimaryPool(t *testing.T) {
 
 }
 
-func TestPlanWorkspaceExecScalesExactPrimaryPoolFromZero(t *testing.T) {
+func TestPlanComputerCommandScalesExactPrimaryPoolFromZero(t *testing.T) {
 	secondaryID := plannerTestUUID(41)
 	primaryID := plannerTestUUID(42)
 	secondary := plannerTestPool(secondaryID, "secondary")
 	primary := plannerTestPool(primaryID, "primary")
 	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		pools: []db.ListCapacityWorkerPoolsRow{secondary, primary},
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(43)},
+		group:    plannerTestGroup(primaryID),
+		pools:    []db.ListCapacityWorkerPoolsRow{secondary, primary},
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{plannerComputerCommand(43)},
 	}
 
 	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -93,18 +93,18 @@ func TestPlanWorkspaceExecScalesExactPrimaryPoolFromZero(t *testing.T) {
 	}
 }
 
-func TestPlanWorkspaceExecAccountedSupplyBlocksExactRequestedPools(t *testing.T) {
+func TestPlanComputerCommandAccountedSupplyBlocksExactRequestedPools(t *testing.T) {
 	primaryID := plannerTestUUID(58)
 	secondaryID := plannerTestUUID(59)
 	outsideID := plannerTestUUID(60)
 	primary := plannerTestPool(primaryID, "primary")
 	secondary := plannerTestPool(secondaryID, "secondary")
-	accounted := plannerWorkspaceExec(61)
+	accounted := plannerComputerCommand(61)
 	accounted.AccountedPoolIds = []pgtype.UUID{secondaryID, primaryID, outsideID, primaryID}
 	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		pools: []db.ListCapacityWorkerPoolsRow{primary, secondary},
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{accounted},
+		group:    plannerTestGroup(primaryID),
+		pools:    []db.ListCapacityWorkerPoolsRow{primary, secondary},
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{accounted},
 	}
 
 	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -124,15 +124,15 @@ func TestPlanWorkspaceExecAccountedSupplyBlocksExactRequestedPools(t *testing.T)
 	}
 }
 
-func TestPlanWorkspaceExecAccountedSupplyDoesNotHideOrdinaryCandidate(t *testing.T) {
+func TestPlanComputerCommandAccountedSupplyDoesNotHideOrdinaryCandidate(t *testing.T) {
 	primaryID := plannerTestUUID(62)
 	primary := plannerTestPool(primaryID, "primary")
-	accounted := plannerWorkspaceExec(63)
+	accounted := plannerComputerCommand(63)
 	accounted.AccountedPoolIds = []pgtype.UUID{primaryID}
 	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		pools: []db.ListCapacityWorkerPoolsRow{primary},
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{accounted, plannerWorkspaceExec(64)},
+		group:    plannerTestGroup(primaryID),
+		pools:    []db.ListCapacityWorkerPoolsRow{primary},
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{accounted, plannerComputerCommand(64)},
 	}
 
 	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -147,14 +147,14 @@ func TestPlanWorkspaceExecAccountedSupplyDoesNotHideOrdinaryCandidate(t *testing
 	}
 }
 
-func TestPlanWorkspaceExecUsesExistingCompatibleBin(t *testing.T) {
+func TestPlanComputerCommandUsesExistingCompatibleBin(t *testing.T) {
 	primaryID := plannerTestUUID(44)
 	primary := plannerTestPool(primaryID, "primary")
 	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		pools: []db.ListCapacityWorkerPoolsRow{primary},
-		bins:  []db.ListWorkerCapacityBinsRow{plannerBin(primary, primaryID)},
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(45)},
+		group:    plannerTestGroup(primaryID),
+		pools:    []db.ListCapacityWorkerPoolsRow{primary},
+		bins:     []db.ListWorkerCapacityBinsRow{plannerBin(primary, primaryID)},
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{plannerComputerCommand(45)},
 	}
 
 	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -169,7 +169,7 @@ func TestPlanWorkspaceExecUsesExistingCompatibleBin(t *testing.T) {
 	}
 }
 
-func TestPlanWorkspaceExecCannotUseSecondaryOnlyRequest(t *testing.T) {
+func TestPlanComputerCommandCannotUseSecondaryOnlyRequest(t *testing.T) {
 	primaryID := plannerTestUUID(53)
 	secondaryID := plannerTestUUID(54)
 	store := plannerStore{
@@ -178,7 +178,7 @@ func TestPlanWorkspaceExecCannotUseSecondaryOnlyRequest(t *testing.T) {
 			plannerTestPool(primaryID, "primary"),
 			plannerTestPool(secondaryID, "secondary"),
 		},
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(55)},
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{plannerComputerCommand(55)},
 	}
 
 	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -199,7 +199,7 @@ func TestPlanWorkspaceExecCannotUseSecondaryOnlyRequest(t *testing.T) {
 	}
 }
 
-func TestPlanWorkspaceExecSharesFreshRunBinConstraints(t *testing.T) {
+func TestPlanComputerCommandSharesFreshRunBinConstraints(t *testing.T) {
 	primaryID := plannerTestUUID(56)
 	primary := plannerTestPool(primaryID, "primary")
 	base := plannerBin(primary, primaryID)
@@ -211,13 +211,10 @@ func TestPlanWorkspaceExecSharesFreshRunBinConstraints(t *testing.T) {
 			row.RunPausedReason = pgtype.Text{String: "operator", Valid: true}
 		}},
 		{name: "runtime paused", mutate: func(row *db.ListWorkerCapacityBinsRow) {
-			row.RuntimePausedReason = pgtype.Text{String: "operator", Valid: true}
-		}},
-		{name: "run consumer", mutate: func(row *db.ListWorkerCapacityBinsRow) {
-			row.AvailableRunConsumers = 0
+			row.VMPausedReason = pgtype.Text{String: "operator", Valid: true}
 		}},
 		{name: "runtime start", mutate: func(row *db.ListWorkerCapacityBinsRow) {
-			row.AvailableRuntimeStarts = 0
+			row.AvailableInstanceStarts = 0
 		}},
 		{name: "VM slot", mutate: func(row *db.ListWorkerCapacityBinsRow) {
 			row.AvailableVMSlots = 0
@@ -237,10 +234,10 @@ func TestPlanWorkspaceExecSharesFreshRunBinConstraints(t *testing.T) {
 			constrained := base
 			test.mutate(&constrained)
 			store := plannerStore{
-				group: plannerTestGroup(primaryID),
-				pools: []db.ListCapacityWorkerPoolsRow{primary},
-				bins:  []db.ListWorkerCapacityBinsRow{constrained},
-				execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(57)},
+				group:    plannerTestGroup(primaryID),
+				pools:    []db.ListCapacityWorkerPoolsRow{primary},
+				bins:     []db.ListWorkerCapacityBinsRow{constrained},
+				commands: []db.ListPendingComputerCommandCapacityCandidatesRow{plannerComputerCommand(57)},
 			}
 
 			plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -251,20 +248,20 @@ func TestPlanWorkspaceExecSharesFreshRunBinConstraints(t *testing.T) {
 			}
 			poolPlan := requirePoolPlan(t, plan, primaryID)
 			if poolPlan.RecommendedAdditionalWorkers != 1 || poolPlan.CompatibleQueuedItems != 1 {
-				t.Fatalf("pool plan = %+v, want Workspace Exec rejected by constrained bin and packed on a fresh Worker", poolPlan)
+				t.Fatalf("pool plan = %+v, want Computer Command rejected by constrained bin and packed on a fresh Worker", poolPlan)
 			}
 		})
 	}
 }
 
-func TestPlanRunsAndWorkspaceExecsShareWorkerExecutionCounters(t *testing.T) {
+func TestPlanRunsAndComputerCommandsShareWorkerExecutionCounters(t *testing.T) {
 	primaryID := plannerTestUUID(50)
 	primary := plannerTestPool(primaryID, "primary")
 	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		pools: []db.ListCapacityWorkerPoolsRow{primary},
-		runs:  []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerFreshRun(51)},
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(52)},
+		group:    plannerTestGroup(primaryID),
+		pools:    []db.ListCapacityWorkerPoolsRow{primary},
+		runs:     []db.ListQueuedRunPlanningCandidatesForScopesRow{plannerFreshRun(51)},
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{plannerComputerCommand(52)},
 	}
 
 	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{
@@ -275,20 +272,21 @@ func TestPlanRunsAndWorkspaceExecsShareWorkerExecutionCounters(t *testing.T) {
 	}
 	poolPlan := requirePoolPlan(t, plan, primaryID)
 	if poolPlan.RecommendedAdditionalWorkers != 2 || poolPlan.CompatibleQueuedItems != 2 {
-		t.Fatalf("pool plan = %+v, want separate Workers for one-slot Run and Workspace Exec", poolPlan)
+		t.Fatalf("pool plan = %+v, want separate Workers for one-slot Run and Computer Command", poolPlan)
 	}
 }
 
-func TestDiscoverItemsScansWorkspaceExecIndependentlyFromRuns(t *testing.T) {
+func TestDiscoverItemsScansComputerCommandIndependentlyFromRuns(t *testing.T) {
 	primaryID := plannerTestUUID(46)
 	runs := make([]db.ListQueuedRunPlanningCandidatesForScopesRow, maximumPlanningCandidates+1)
 	for index := range runs {
 		runs[index] = plannerFreshRun(byte(index))
+		runs[index].ComputerID = pgvalue.UUID(uuid.NewV7())
 	}
 	store := plannerStore{
-		group: plannerTestGroup(primaryID),
-		runs:  runs,
-		execs: []db.ListPendingWorkspaceExecCapacityCandidatesRow{plannerWorkspaceExec(47)},
+		group:    plannerTestGroup(primaryID),
+		runs:     runs,
+		commands: []db.ListPendingComputerCommandCapacityCandidatesRow{plannerComputerCommand(47)},
 	}
 
 	items, accounted, complete, err := discoverItems(context.Background(), store, store.group, plannerTestNow.Format(time.RFC3339Nano))
@@ -302,10 +300,10 @@ func TestDiscoverItemsScansWorkspaceExecIndependentlyFromRuns(t *testing.T) {
 		t.Fatalf("accounted pools = %+v, want none", accounted)
 	}
 	if len(items) != int(maximumPlanningCandidates)+1 {
-		t.Fatalf("items = %d, want %d Runs plus independent Workspace Exec", len(items), maximumPlanningCandidates+1)
+		t.Fatalf("items = %d, want %d Runs plus independent Computer Command", len(items), maximumPlanningCandidates+1)
 	}
-	if got := items[len(items)-1].key; got != fmt.Sprintf("workspace-exec:%x", plannerTestUUID(47).Bytes) {
-		t.Fatalf("last item key = %q, want Workspace Exec", got)
+	if got := items[len(items)-1].key; got != fmt.Sprintf("computer:%x", plannerTestUUID(47).Bytes) {
+		t.Fatalf("last item key = %q, want Computer Command", got)
 	}
 }
 
@@ -380,6 +378,7 @@ func TestDiscoverItemsExactCandidateBudgetCanRemainCompleteOnShortScopePage(t *t
 	runs := make([]db.ListQueuedRunPlanningCandidatesForScopesRow, maximumPlanningCandidates)
 	for index := range runs {
 		runs[index] = plannerFreshRun(byte(index))
+		runs[index].ComputerID = pgvalue.UUID(uuid.NewV7())
 	}
 	store := plannerStore{
 		group: plannerTestGroup(plannerTestUUID(1)),
@@ -436,8 +435,7 @@ func TestPlanWorkerBoundarySuppressesScaleRecommendationOnOverflow(t *testing.T)
 			full.AvailableMemoryBytes = 0
 			full.AvailableGuestEphemeralDiskBytes = 0
 			full.AvailableVMSlots = 0
-			full.AvailableRunConsumers = 0
-			full.AvailableRuntimeStarts = 0
+			full.AvailableInstanceStarts = 0
 			store := plannerStore{
 				group: plannerTestGroup(primaryID), pools: []db.ListCapacityWorkerPoolsRow{primary},
 				bins: make([]db.ListWorkerCapacityBinsRow, test.workerCount),
@@ -462,13 +460,14 @@ func TestPlanWorkerBoundarySuppressesScaleRecommendationOnOverflow(t *testing.T)
 	}
 }
 
-func TestDiscoverItemsMarksTruncatedWorkspaceExecScanIncomplete(t *testing.T) {
+func TestDiscoverItemsMarksTruncatedComputerCommandScanIncomplete(t *testing.T) {
 	primaryID := plannerTestUUID(48)
-	execs := make([]db.ListPendingWorkspaceExecCapacityCandidatesRow, maximumPlanningCandidates+1)
-	for index := range execs {
-		execs[index] = plannerWorkspaceExec(byte(index))
+	commands := make([]db.ListPendingComputerCommandCapacityCandidatesRow, maximumPlanningCandidates+1)
+	for index := range commands {
+		commands[index] = plannerComputerCommand(byte(index))
+		commands[index].ComputerID = pgvalue.UUID(uuid.NewV7())
 	}
-	store := plannerStore{group: plannerTestGroup(primaryID), execs: execs}
+	store := plannerStore{group: plannerTestGroup(primaryID), commands: commands}
 
 	items, accounted, complete, err := discoverItems(context.Background(), store, store.group, plannerTestNow.Format(time.RFC3339Nano))
 	if err != nil {
@@ -482,20 +481,20 @@ func TestDiscoverItemsMarksTruncatedWorkspaceExecScanIncomplete(t *testing.T) {
 	}
 }
 
-func TestWorkspaceExecItemRejectsMalformedSandboxDemand(t *testing.T) {
-	item := workspaceExecItem(db.ListPendingWorkspaceExecCapacityCandidatesRow{
-		ProcessID: plannerTestUUID(49), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
-		WorkspaceManifest: []byte(`{"resources":{"milliCpu":0,"memoryMiB":1024}}`),
+func TestComputerCommandItemRejectsMalformedSandboxDemand(t *testing.T) {
+	item := computerCommandItem(db.ListPendingComputerCommandCapacityCandidatesRow{
+		ComputerID:     plannerTestUUID(49),
+		ComputerConfig: []byte(`{"resources":{"milliCpu":0,"memoryMiB":1024}}`),
 	})
 	if item.reason != reasonInvalidWorkload {
 		t.Fatalf("reason = %q, want %q", item.reason, reasonInvalidWorkload)
 	}
-	item = workspaceExecItem(db.ListPendingWorkspaceExecCapacityCandidatesRow{
-		ProcessID: plannerTestUUID(49), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion + 1,
-		WorkspaceManifest: plannerWorkspaceManifest(),
+	item = computerCommandItem(db.ListPendingComputerCommandCapacityCandidatesRow{
+		ComputerID:     plannerTestUUID(49),
+		ComputerConfig: bytes.Replace(plannerComputerConfig(), []byte(deployment.RuntimeContract), []byte("unknown-contract"), 1),
 	})
 	if item.reason != reasonInvalidWorkload {
-		t.Fatalf("wrong-version reason = %q, want %q", item.reason, reasonInvalidWorkload)
+		t.Fatalf("unsupported-contract reason = %q, want %q", item.reason, reasonInvalidWorkload)
 	}
 }
 
@@ -559,8 +558,7 @@ func TestPlanRestoreScalesBoundSecondaryWhenCompatiblePrimaryIsUnboundAndFull(t 
 	fullPrimary.AvailableMemoryBytes = 0
 	fullPrimary.AvailableGuestEphemeralDiskBytes = 0
 	fullPrimary.AvailableVMSlots = 0
-	fullPrimary.AvailableRunConsumers = 0
-	fullPrimary.AvailableRuntimeStarts = 0
+	fullPrimary.AvailableInstanceStarts = 0
 	requirements := plannerRestoreRequirements()
 	store := plannerStore{
 		group: plannerTestGroup(primaryID),
@@ -776,9 +774,7 @@ func plannerTestGroup(primaryRunPoolID pgtype.UUID) db.WorkerGroup {
 func plannerTestPool(id pgtype.UUID, name string) db.ListCapacityWorkerPoolsRow {
 	return db.ListCapacityWorkerPoolsRow{
 		ID: id, WorkerGroupID: pgvalue.UUID(plannerTestGroupID), Name: name,
-		RuntimeIdentityID:               pgtype.Text{String: plannerTestRuntimeIdentityID, Valid: true},
-		SubstrateFormat:                 pgtype.Text{String: plannerTestSubstrateFormat, Valid: true},
-		SubstrateContract:               pgtype.Text{String: plannerTestSubstrateContract, Valid: true},
+		VMPlatformID:                    pgtype.Text{String: plannerTestVMPlatformID, Valid: true},
 		CapacityCPUMillis:               pgtype.Int8{Int64: 1000, Valid: true},
 		CapacityMemoryBytes:             pgtype.Int8{Int64: 2 << 30, Valid: true},
 		CapacityGuestEphemeralDiskBytes: pgtype.Int8{Int64: 64 << 30, Valid: true},
@@ -792,14 +788,14 @@ func plannerTestPool(id pgtype.UUID, name string) db.ListCapacityWorkerPoolsRow 
 }
 
 func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
-	shapes := make([]runtimeid.CPUShape, len(row.CPUShapeVCPUCounts))
+	shapes := make([]vmplatform.CPUShape, len(row.CPUShapeVCPUCounts))
 	for index := range row.CPUShapeVCPUCounts {
-		shapes[index] = runtimeid.CPUShape{
+		shapes[index] = vmplatform.CPUShape{
 			VCPUCount: row.CPUShapeVCPUCounts[index], CPUConfigDigest: row.CPUShapeConfigDigests[index],
 		}
 	}
 	return Pool{
-		WorkerGroupID: pgvalue.MustUUIDValue(row.WorkerGroupID), RuntimeIdentityID: row.RuntimeIdentityID.String,
+		WorkerGroupID: pgvalue.MustUUIDValue(row.WorkerGroupID), VMPlatformID: row.VMPlatformID.String,
 		PerVM: ResourceVector{
 			CPUMillis: row.PerVMCPUMillis.Int64, MemoryBytes: row.PerVMMemoryBytes.Int64,
 			GuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
@@ -811,38 +807,40 @@ func plannerPool(row db.ListCapacityWorkerPoolsRow) Pool {
 func plannerBin(row db.ListCapacityWorkerPoolsRow, primaryRunPoolID pgtype.UUID) db.ListWorkerCapacityBinsRow {
 	return db.ListWorkerCapacityBinsRow{
 		WorkerGroupID: pgvalue.UUID(plannerTestGroupID), PrimaryPoolID: primaryRunPoolID, WorkerPoolID: row.ID,
-		WorkerInstanceID:  plannerTestUUID(row.ID.Bytes[15] + 100),
-		RuntimeIdentityID: row.RuntimeIdentityID, RuntimeArch: "x86_64", VMRuntimeContract: runtimeid.Contract,
+		WorkerHostID: plannerTestUUID(row.ID.Bytes[15] + 100),
+		VMPlatformID: row.VMPlatformID, Arch: "x86_64", Contract: vmplatform.Contract,
 		PerVMCPUMillis: row.PerVMCPUMillis.Int64, PerVMMemoryBytes: row.PerVMMemoryBytes.Int64,
 		PerVMGuestEphemeralDiskBytes: row.PerVMGuestEphemeralDiskBytes.Int64,
 		AvailableCPUMillis:           row.CapacityCPUMillis.Int64, AvailableMemoryBytes: row.CapacityMemoryBytes.Int64,
 		AvailableGuestEphemeralDiskBytes: row.CapacityGuestEphemeralDiskBytes.Int64,
-		AvailableVMSlots:                 int64(row.MaxVMSlots.Int32), AvailableRunConsumers: int64(row.MaxVMSlots.Int32),
-		AvailableRuntimeStarts: int64(row.MaxVMSlots.Int32),
-		CPUShapeVCPUCounts:     append([]int32(nil), row.CPUShapeVCPUCounts...),
-		CPUShapeConfigDigests:  append([]string(nil), row.CPUShapeConfigDigests...),
+		AvailableVMSlots:                 int64(row.MaxVMSlots.Int32),
+		AvailableInstanceStarts:          int64(row.MaxVMSlots.Int32),
+		CPUShapeVCPUCounts:               append([]int32(nil), row.CPUShapeVCPUCounts...),
+		CPUShapeConfigDigests:            append([]string(nil), row.CPUShapeConfigDigests...),
 	}
 }
 
 func plannerFreshRun(seed byte) db.ListQueuedRunPlanningCandidatesForScopesRow {
 	return db.ListQueuedRunPlanningCandidatesForScopesRow{
-		RunID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
-		WorkspaceManifest: plannerWorkspaceManifest(),
+		RunID:          plannerTestUUID(seed),
+		ComputerID:     plannerTestUUID(seed),
+		ComputerConfig: plannerComputerConfig(),
 	}
 }
 
-func plannerWorkspaceExec(seed byte) db.ListPendingWorkspaceExecCapacityCandidatesRow {
-	return db.ListPendingWorkspaceExecCapacityCandidatesRow{
-		ProcessID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
-		WorkspaceManifest: plannerWorkspaceManifest(),
+func plannerComputerCommand(seed byte) db.ListPendingComputerCommandCapacityCandidatesRow {
+	return db.ListPendingComputerCommandCapacityCandidatesRow{
+		ComputerID:     plannerTestUUID(seed),
+		ComputerConfig: plannerComputerConfig(),
 	}
 }
 
 func plannerRestoreRun(seed byte, requirements RestoreRequirements) db.ListQueuedRunPlanningCandidatesForScopesRow {
 	return db.ListQueuedRunPlanningCandidatesForScopesRow{
-		RunID: plannerTestUUID(seed), WorkspaceManifestVersion: deployment.DeploymentPlanFormatVersion,
-		WorkspaceManifest:     plannerWorkspaceManifest(),
-		RequiredWorkerGroupID: pgvalue.UUID(requirements.WorkerGroupID), RequiredRuntimeIdentityID: requirements.RuntimeIdentityID,
+		RunID:                 plannerTestUUID(seed),
+		ComputerID:            plannerTestUUID(seed),
+		ComputerConfig:        plannerComputerConfig(),
+		RequiredWorkerGroupID: pgvalue.UUID(requirements.WorkerGroupID), RequiredVMPlatformID: requirements.VMPlatformID,
 		RequiredVMVCPUCount: requirements.VCPUCount, RequiredCPUConfigDigest: requirements.CPUConfigDigest,
 		RequiredCPUMillis: requirements.Resources.CPUMillis, RequiredMemoryBytes: requirements.Resources.MemoryBytes,
 		RequiredGuestEphemeralDiskBytes: requirements.Resources.GuestEphemeralDiskBytes,
@@ -851,7 +849,7 @@ func plannerRestoreRun(seed byte, requirements RestoreRequirements) db.ListQueue
 
 func plannerRestoreRequirements() RestoreRequirements {
 	return RestoreRequirements{
-		WorkerGroupID: plannerTestGroupID, RuntimeIdentityID: plannerTestRuntimeIdentityID,
+		WorkerGroupID: plannerTestGroupID, VMPlatformID: plannerTestVMPlatformID,
 		VCPUCount: 1, CPUConfigDigest: plannerTestCPUConfigDigest,
 		Resources: plannerRunResources(),
 	}
@@ -863,8 +861,8 @@ func plannerRunResources() ResourceVector {
 	}
 }
 
-func plannerWorkspaceManifest() []byte {
-	result, err := json.Marshal(deployment.SandboxManifest{Resources: deployment.ResourcesManifest{
+func plannerComputerConfig() []byte {
+	result, err := json.Marshal(deployment.ComputerConfig{Architecture: deployment.ArchitectureX8664, RuntimeContract: deployment.RuntimeContract, Profile: computer.SeedProfile, Resources: deployment.ResourcesManifest{
 		MilliCPU: 1000, MemoryMiB: 1024,
 	}})
 	if err != nil {
@@ -910,13 +908,13 @@ func plannerDigest(character byte) string {
 }
 
 type plannerStore struct {
-	group  db.WorkerGroup
-	pools  []db.ListCapacityWorkerPoolsRow
-	bins   []db.ListWorkerCapacityBinsRow
-	scopes []db.ListQueuedRunEligibleScopesRow
-	usage  []db.ListQueuedRunPlanningUsageRow
-	runs   []db.ListQueuedRunPlanningCandidatesForScopesRow
-	execs  []db.ListPendingWorkspaceExecCapacityCandidatesRow
+	group    db.WorkerGroup
+	pools    []db.ListCapacityWorkerPoolsRow
+	bins     []db.ListWorkerCapacityBinsRow
+	scopes   []db.ListQueuedRunEligibleScopesRow
+	usage    []db.ListQueuedRunPlanningUsageRow
+	runs     []db.ListQueuedRunPlanningCandidatesForScopesRow
+	commands []db.ListPendingComputerCommandCapacityCandidatesRow
 }
 
 type countingPlannerStore struct {
@@ -1018,9 +1016,43 @@ func (s plannerStore) ListQueuedRunPlanningCandidatesForScopes(context.Context, 
 	return result, nil
 }
 
-func (s plannerStore) ListPendingWorkspaceExecCapacityCandidates(_ context.Context, arg db.ListPendingWorkspaceExecCapacityCandidatesParams) ([]db.ListPendingWorkspaceExecCapacityCandidatesRow, error) {
-	limit := min(len(s.execs), int(arg.RowLimit))
-	result := make([]db.ListPendingWorkspaceExecCapacityCandidatesRow, limit)
-	copy(result, s.execs[:limit])
+func (s plannerStore) ListPendingComputerCommandCapacityCandidates(_ context.Context, arg db.ListPendingComputerCommandCapacityCandidatesParams) ([]db.ListPendingComputerCommandCapacityCandidatesRow, error) {
+	limit := min(len(s.commands), int(arg.RowLimit))
+	result := make([]db.ListPendingComputerCommandCapacityCandidatesRow, limit)
+	copy(result, s.commands[:limit])
 	return result, nil
+}
+
+func TestPlanCountsSharedComputerOnceAcrossRunsAndCommands(t *testing.T) {
+	primaryID := plannerTestUUID(90)
+	first, second := plannerFreshRun(91), plannerFreshRun(92)
+	second.ComputerID = first.ComputerID
+	command := plannerComputerCommand(93)
+	command.ComputerID = first.ComputerID
+	store := plannerStore{group: plannerTestGroup(primaryID), pools: []db.ListCapacityWorkerPoolsRow{plannerTestPool(primaryID, "primary")},
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{first, second}, commands: []db.ListPendingComputerCommandCapacityCandidatesRow{command}}
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(primaryID, 1)}}, plannerTestNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := requirePoolPlan(t, plan, primaryID)
+	if pool.CompatibleQueuedItems != 1 || pool.RecommendedAdditionalWorkers != 1 {
+		t.Fatalf("shared Computer demand: %+v", pool)
+	}
+}
+
+func TestPlanExistingRunInstanceDoesNotDemandAnotherVM(t *testing.T) {
+	primaryID := plannerTestUUID(94)
+	member := plannerFreshRun(95)
+	member.AccountedPoolIds = []pgtype.UUID{primaryID}
+	store := plannerStore{group: plannerTestGroup(primaryID), pools: []db.ListCapacityWorkerPoolsRow{plannerTestPool(primaryID, "primary")},
+		runs: []db.ListQueuedRunPlanningCandidatesForScopesRow{member}}
+	plan, err := Plan(context.Background(), store, plannerTestGroupID, PlanRequest{Pools: []PoolRequest{plannerPoolRequest(primaryID, 1)}}, plannerTestNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := requirePoolPlan(t, plan, primaryID)
+	if pool.CompatibleQueuedItems != 0 || pool.RecommendedAdditionalWorkers != 0 || !pool.ScaleInBlocked {
+		t.Fatalf("existing Instance demand: %+v", pool)
+	}
 }

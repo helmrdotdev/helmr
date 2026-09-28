@@ -32,11 +32,11 @@ current_run_lease AS (
            run_leases.attempt_number AS attempt_number
       FROM run_leases
       JOIN runs ON runs.id = run_leases.run_id
-               AND runs.workspace_id = run_leases.workspace_id
+               AND runs.computer_id = run_leases.computer_id
      WHERE run_leases.id = $5
        AND run_leases.lease_sequence = $6
        AND run_leases.worker_group_id = $7
-       AND run_leases.worker_instance_id = $8
+       AND run_leases.worker_host_id = $8
        AND run_leases.worker_epoch = $9
        AND runs.current_run_lease_id = run_leases.id
        AND runs.current_attempt_number = run_leases.attempt_number
@@ -200,7 +200,7 @@ type AppendRunLogChunkParams struct {
 	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
 	LeaseSequence         int64       `json:"lease_sequence"`
 	WorkerGroupID         pgtype.UUID `json:"worker_group_id"`
-	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerHostID          pgtype.UUID `json:"worker_host_id"`
 	WorkerEpoch           int64       `json:"worker_epoch"`
 	Stream                string      `json:"stream"`
 	ObservedSeq           int64       `json:"observed_seq"`
@@ -230,7 +230,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		arg.RunLeaseID,
 		arg.LeaseSequence,
 		arg.WorkerGroupID,
-		arg.WorkerInstanceID,
+		arg.WorkerHostID,
 		arg.WorkerEpoch,
 		arg.Stream,
 		arg.ObservedSeq,

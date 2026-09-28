@@ -277,11 +277,11 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 	if len(declarations) == 0 {
 		if len(succeeded.Files) != 1 {
 			return errors.New(
-				"workspace-only verification result must contain only the build plan",
+				"computer-only verification result must contain only the build plan",
 			)
 		}
 		if succeeded.Declarations == nil || len(succeeded.Declarations) != 0 {
-			return errors.New("workspace-only verification result requires empty declarations")
+			return errors.New("computer-only verification result requires empty declarations")
 		}
 		return nil
 	}

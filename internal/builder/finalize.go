@@ -26,10 +26,10 @@ type ObjectSource struct {
 // installation, package-manager selection, source layout, and builder
 // provenance are producer-local concerns and are deliberately absent.
 type BundleInput struct {
-	Runtime         deployment.RuntimeDescriptor
-	Program         deployment.ProgramOutput
-	WorkspaceImages []deployment.BundleWorkspaceImage
-	Objects         []ObjectSource
+	Runtime        deployment.RuntimeDescriptor
+	Program        deployment.ProgramOutput
+	ComputerImages []deployment.BundleComputerImage
+	Objects        []ObjectSource
 }
 
 // FinalizeBundle writes one exact, self-contained deployment bundle directory.
@@ -60,12 +60,12 @@ func FinalizeBundle(
 	if err != nil {
 		return deployment.DeploymentBundleDirectory{}, err
 	}
-	workspaceImages := make([]deployment.BundleWorkspaceImage, len(input.WorkspaceImages))
-	copy(workspaceImages, input.WorkspaceImages)
-	sort.Slice(workspaceImages, func(left, right int) bool {
-		return workspaceImages[left].DeclaredID < workspaceImages[right].DeclaredID
+	computerImages := make([]deployment.BundleComputerImage, len(input.ComputerImages))
+	copy(computerImages, input.ComputerImages)
+	sort.Slice(computerImages, func(left, right int) bool {
+		return computerImages[left].DeclaredID < computerImages[right].DeclaredID
 	})
-	objects, err := referencedBundleObjects(input.Program.Artifact, workspaceImages)
+	objects, err := referencedBundleObjects(input.Program.Artifact, computerImages)
 	if err != nil {
 		return deployment.DeploymentBundleDirectory{}, err
 	}
@@ -83,9 +83,9 @@ func FinalizeBundle(
 				MediaType: input.Runtime.MediaType,
 			},
 		},
-		Program:         input.Program,
-		WorkspaceImages: workspaceImages,
-		Objects:         objects,
+		Program:        input.Program,
+		ComputerImages: computerImages,
+		Objects:        objects,
 	}
 	bundleJSON, err := deployment.CanonicalDeploymentBundle(bundle)
 	if err != nil {
@@ -166,12 +166,12 @@ func FinalizeBundle(
 
 func referencedBundleObjects(
 	program deployment.ProgramDescriptor,
-	workspaceImages []deployment.BundleWorkspaceImage,
+	computerImages []deployment.BundleComputerImage,
 ) ([]deployment.BundleObject, error) {
-	objectsByDigest := make(map[string]deployment.BundleObject, 1+len(workspaceImages))
+	objectsByDigest := make(map[string]deployment.BundleObject, 1+len(computerImages))
 	programObject := deployment.BundleObject(program)
 	objectsByDigest[programObject.Digest] = programObject
-	for _, image := range workspaceImages {
+	for _, image := range computerImages {
 		object := deployment.BundleObject{
 			Digest: image.Artifact.Digest, SizeBytes: image.Artifact.SizeBytes,
 			MediaType: image.Artifact.MediaType,
@@ -234,10 +234,10 @@ func verifyFinalObject(
 		if err := deployment.VerifyProgramOutputFile(ctx, file, program); err != nil {
 			return fmt.Errorf("verify finalized Program object: %w", err)
 		}
-	case deployment.WorkspaceImageArtifactMediaType:
+	case deployment.ComputerImageArtifactMediaType:
 		artifact := computer.SeedArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: computer.SeedCapacity}
 		if err := computer.VerifySeed(ctx, file, artifact, computer.SeedCapacity); err != nil {
-			return fmt.Errorf("verify finalized workspace image object: %w", err)
+			return fmt.Errorf("verify finalized computer image object: %w", err)
 		}
 
 	default:

@@ -8,13 +8,12 @@ locals {
     userdata = filesha256("${path.module}/../modules/worker/templates/user-data.sh.tftpl")
   }))
 
-  worker_substrate_cache_mib      = coalesce(var.worker_substrate_cache_max_mib, 0)
   worker_artifact_cache_mib       = coalesce(var.worker_artifact_cache_max_mib, 0)
-  worker_shared_disk_mib          = coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - local.worker_substrate_cache_mib - local.worker_artifact_cache_mib
+  worker_shared_disk_mib          = coalesce(var.worker_disk_mib, 0) - var.worker_disk_reserve_mib - local.worker_artifact_cache_mib
   worker_guest_ephemeral_disk_mib = local.worker_shared_disk_mib
   worker_generation_inputs = {
     ami_id                = local.worker_ami_id
-    instance_type         = var.worker_instance_type
+    instance_type         = var.worker_host_type
     nested_virtualization = var.worker_enable_nested_virtualization
     supply = {
       computer = {
@@ -40,10 +39,9 @@ locals {
         throughput = var.worker_root_volume_throughput
       }
       disk = {
-        total_mib           = var.worker_disk_mib
-        reserve_mib         = var.worker_disk_reserve_mib
-        substrate_cache_mib = var.worker_substrate_cache_max_mib
-        artifact_cache_mib  = var.worker_artifact_cache_max_mib
+        total_mib          = var.worker_disk_mib
+        reserve_mib        = var.worker_disk_reserve_mib
+        artifact_cache_mib = var.worker_artifact_cache_max_mib
       }
       lifecycle = {
         health_check_grace_period_seconds               = 900
@@ -109,7 +107,6 @@ locals {
       worker_capacity_vcpus        = spec.generation_inputs.capacity.cpu_millis / 1000
       worker_capacity_memory_mib   = spec.generation_inputs.capacity.memory_mib
       worker_execution_slots       = spec.generation_inputs.capacity.vm_slots
-      substrate_cache_max_mib      = spec.generation_inputs.supply.disk.substrate_cache_mib
       artifact_cache_max_mib       = spec.generation_inputs.supply.disk.artifact_cache_mib
       lifecycle                    = spec.generation_inputs.supply.lifecycle
       sealed_provider_definition   = spec.sealed_provider_definition
@@ -258,7 +255,6 @@ module "worker_group" {
   worker_capacity_vcpus                           = local.worker_generations[each.key].worker_capacity_vcpus
   worker_capacity_memory_mib                      = local.worker_generations[each.key].worker_capacity_memory_mib
   worker_execution_slots                          = local.worker_generations[each.key].worker_execution_slots
-  substrate_cache_max_mib                         = local.worker_generations[each.key].substrate_cache_max_mib
   artifact_cache_max_mib                          = local.worker_generations[each.key].artifact_cache_max_mib
   worker_controlplane_url                         = local.worker_controlplane_url
   cas_uri                                         = module.controlplane.cas_uri
@@ -308,7 +304,7 @@ resource "terraform_data" "worker_preconditions" {
         coalesce(var.worker_capacity_vcpus, 0) > 0 &&
         coalesce(var.worker_capacity_memory_mib, 0) > 0 &&
         coalesce(var.worker_execution_slots, 0) > 0 &&
-        local.worker_substrate_cache_mib > 0 && local.worker_artifact_cache_mib > 0 &&
+        local.worker_artifact_cache_mib > 0 &&
         local.worker_guest_ephemeral_disk_mib >= var.worker_vm_scratch_disk_mib
       )
       error_message = "worker groups require configured CPU, memory, cache, disk, and execution-slot capacity."

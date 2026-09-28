@@ -105,19 +105,19 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 		return err
 	}
 	var claims bool
-	if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
 		return err
 	}
 	if !claims {
 		return errors.New("object writer claims changed")
 	}
 	q := db.New(tx)
-	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})
+	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})
 	if err != nil {
 		return err
 	}
 	var pinned bool
-	if err = tx.QueryRow(ctx, `SELECT computer_write_key_id=$2 FROM runtime_instances WHERE id=$1`, fence.RuntimeID, key.ID).Scan(&pinned); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT write_key_id=$2 FROM computer_instances WHERE id=$1`, fence.RuntimeID, key.ID).Scan(&pinned); err != nil {
 		return err
 	}
 	if !pinned {
@@ -179,16 +179,16 @@ func recordComputerObjectLocked(ctx context.Context, tx pgx.Tx, owner dispatch.C
 		return computerObjectConflict("referenced computer object is not certified")
 	}
 	if uploaded == nil {
-		if _, err = tx.Exec(ctx, `INSERT INTO runtime_computer_object_pins(runtime_instance_id,digest,environment_id,computer_id,runtime_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)
- ON CONFLICT(runtime_instance_id,publication_key,digest) DO UPDATE SET runtime_desired_version=EXCLUDED.runtime_desired_version
- WHERE runtime_computer_object_pins.environment_id=EXCLUDED.environment_id
- AND runtime_computer_object_pins.computer_id=EXCLUDED.computer_id
- AND runtime_computer_object_pins.runtime_desired_version<=EXCLUDED.runtime_desired_version`, runtimeID, object.digest, owner.EnvironmentID, owner.ComputerID, desiredVersion, publicationKey); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO computer_object_pins(computer_instance_id,digest,environment_id,computer_id,instance_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)
+ ON CONFLICT(computer_instance_id,publication_key,digest) DO UPDATE SET instance_desired_version=EXCLUDED.instance_desired_version
+ WHERE computer_object_pins.environment_id=EXCLUDED.environment_id
+ AND computer_object_pins.computer_id=EXCLUDED.computer_id
+ AND computer_object_pins.instance_desired_version<=EXCLUDED.instance_desired_version`, runtimeID, object.digest, owner.EnvironmentID, owner.ComputerID, desiredVersion, publicationKey); err != nil {
 			return err
 		}
 	}
 	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM runtime_computer_object_pins WHERE runtime_instance_id=$1 AND digest=$2 AND runtime_desired_version=$3 AND publication_key=$4)`, runtimeID, object.digest, desiredVersion, publicationKey).Scan(&retained); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND digest=$2 AND instance_desired_version=$3 AND publication_key=$4)`, runtimeID, object.digest, desiredVersion, publicationKey).Scan(&retained); err != nil {
 		return err
 	}
 	if !retained {

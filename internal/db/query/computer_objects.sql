@@ -45,10 +45,10 @@ SELECT k.* FROM computer_object_keys r
 
 -- name: HasRegisteredInitialComputerObject :one
 SELECT EXISTS (
- SELECT 1 FROM runtime_instances r
- JOIN runtime_computer_object_pins p ON p.runtime_instance_id=r.id AND p.publication_key=sqlc.arg(publication_key) AND p.runtime_desired_version=r.desired_version
+ SELECT 1 FROM computer_instances r
+ JOIN computer_object_pins p ON p.computer_instance_id=r.id AND p.publication_key=sqlc.arg(publication_key) AND p.instance_desired_version=r.desired_version
  JOIN computer_objects o ON o.environment_id=p.environment_id AND o.computer_id=p.computer_id AND o.digest=p.digest
- WHERE r.id=sqlc.arg(runtime_id) AND r.worker_instance_id=sqlc.arg(worker_id)
+ WHERE r.id=sqlc.arg(runtime_id) AND r.worker_host_id=sqlc.arg(worker_id)
    AND r.worker_group_id=sqlc.arg(worker_group_id) AND r.worker_epoch=sqlc.arg(worker_epoch)
    AND r.desired_version=sqlc.arg(desired_version) AND r.reclaimed_at IS NULL
    AND o.digest=sqlc.arg(digest) AND o.inspection=sqlc.arg(inspection)::jsonb
@@ -58,14 +58,14 @@ SELECT EXISTS (
 -- Bound cleanup independently of remote storage; graph/object FKs remain intact.
 -- name: ReleaseReclaimedComputerObjects :execrows
 WITH released AS (
- SELECT p.runtime_instance_id,p.publication_key,p.digest FROM runtime_computer_object_pins p
- JOIN runtime_instances r ON r.id=p.runtime_instance_id
+ SELECT p.computer_instance_id,p.publication_key,p.digest FROM computer_object_pins p
+ JOIN computer_instances r ON r.id=p.computer_instance_id
  WHERE r.reclaimed_at IS NOT NULL
- ORDER BY p.runtime_instance_id,p.publication_key,p.digest LIMIT sqlc.arg(row_limit)
+ ORDER BY p.computer_instance_id,p.publication_key,p.digest LIMIT sqlc.arg(row_limit)
  FOR UPDATE OF p SKIP LOCKED
 )
-DELETE FROM runtime_computer_object_pins p USING released r
- WHERE p.runtime_instance_id=r.runtime_instance_id AND p.publication_key=r.publication_key AND p.digest=r.digest;
+DELETE FROM computer_object_pins p USING released r
+ WHERE p.computer_instance_id=r.computer_instance_id AND p.publication_key=r.publication_key AND p.digest=r.digest;
 
 -- Roots, active publications and parent objects are the availability owners.
 -- Version history is not deleted. The final DELETE's FKs arbitrate concurrent
@@ -73,8 +73,8 @@ DELETE FROM runtime_computer_object_pins p USING released r
 -- name: ListUnreferencedComputerObjects :many
 SELECT o.environment_id,o.computer_id,o.digest,o.org_id
  FROM computer_objects o
- WHERE NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+ WHERE NOT EXISTS (SELECT 1 FROM computer_disk_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
  ORDER BY o.rank DESC,o.environment_id,o.computer_id,o.digest
  LIMIT sqlc.arg(row_limit);
@@ -82,8 +82,8 @@ SELECT o.environment_id,o.computer_id,o.digest,o.org_id
 -- name: DeleteUnreferencedComputerObject :execrows
 DELETE FROM computer_objects o
  WHERE o.environment_id=sqlc.arg(environment_id) AND o.computer_id=sqlc.arg(computer_id) AND o.digest=sqlc.arg(digest)
- AND NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_disk_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest);
 
 -- Run only after deleting the selected Computer object in the same transaction.
@@ -102,7 +102,7 @@ UPDATE cas_blobs l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timest
  WHERE l.digest=sqlc.arg(digest) AND l.retired_at IS NULL
  AND NOT EXISTS (SELECT 1 FROM cas_objects c WHERE c.digest=l.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_objects o WHERE o.digest=l.digest)
- AND NOT EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=l.digest AND c.checkpoint_status='creating');
+ AND NOT EXISTS (SELECT 1 FROM computer_checkpoint_objects c WHERE c.digest=l.digest AND c.checkpoint_status='creating');
 
 -- Collectors deleting different logical owners of the same physical digest must
 -- serialize membership cleanup. Acquire in a separate statement after object

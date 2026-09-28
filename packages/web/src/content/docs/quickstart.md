@@ -1,6 +1,6 @@
 ---
 title: Quickstart
-description: Create, deploy, and run a Helmr Task in a durable Workspace.
+description: Create, deploy, and run a Helmr Task in a durable Computer.
 sidebarLabel: Quickstart
 ---
 
@@ -52,19 +52,19 @@ helmr deploy . --project PROJECT --env ENVIRONMENT
 The CLI builds a content-addressed bundle in the official local builder,
 uploads it, and promotes the verified Deployment by default.
 
-## Create a Workspace
+## Create a Computer
 
-Create a durable Workspace from the deployed `hello` Sandbox:
+Create a durable Computer from the deployed `hello` Sandbox:
 
 ```sh
-WORKSPACE_ID="$(helmr workspace create hello \
+COMPUTER_ID="$(helmr computer create hello \
   --project PROJECT \
   --env ENVIRONMENT \
   --key quickstart \
-  --idempotency-key quickstart:workspace)"
+  --idempotency-key quickstart:computer)"
 ```
 
-The key gives the Workspace a stable lookup value. The idempotency key makes a
+The key gives the Computer a stable lookup value. The idempotency key makes a
 retried create request safe.
 
 ## Start the Task
@@ -73,7 +73,7 @@ retried create request safe.
 helmr task start hello \
   --project PROJECT \
   --env ENVIRONMENT \
-  --workspace "$WORKSPACE_ID" \
+  --computer "$COMPUTER_ID" \
   --idempotency-key quickstart:run \
   --wait
 ```
@@ -91,7 +91,7 @@ helmr run events RUN_ID --project PROJECT --env ENVIRONMENT
 ```
 
 Continue with [Run your first Task](/docs/guides/tutorials/first-task) for a
-typed payload and Workspace file example, or [Durable agent](/docs/guides/tutorials/durable-agent)
+typed payload and Computer file example, or [Durable agent](/docs/guides/tutorials/durable-agent)
 to add ongoing input and output with an Actor.
 
 ## Local development note

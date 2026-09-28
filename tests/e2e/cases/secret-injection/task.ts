@@ -2,7 +2,7 @@ import { image, task, sandbox } from "@helmr/sdk"
 import { createHash } from "node:crypto"
 import { z } from "zod"
 const base = image("verification-secret").from("node:24-bookworm-slim")
-export const secretWorkspace = sandbox({ id: "helmr-secret-smoke" })
+export const secretComputer = sandbox({ id: "helmr-secret-smoke" })
   .image(base)
   .resources({ cpu: 1, memory: "1GiB" })
 export const secretTask = task({

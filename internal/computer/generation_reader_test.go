@@ -288,3 +288,52 @@ func TestGenerationRangeReads(t *testing.T) {
 		t.Fatal("missing later branch returned partial data or a hole")
 	}
 }
+
+func TestGenerationRangeBatchesConsecutiveFrames(t *testing.T) {
+	for _, fragmented := range []bool{false, true} {
+		t.Run(map[bool]string{false: "contiguous", true: "holes and segments"}[fragmented], func(t *testing.T) {
+			f := newGenerationFixture(t)
+			const capacity = 64 * blockformat.BlockSize
+			records := make([][]byte, 66)
+			for i := range records {
+				records[i] = bytes.Repeat([]byte{byte(i + 1)}, blockformat.BlockSize)
+			}
+			segment, raw := f.seal(blockformat.SegmentKind, records)
+			if _, err := f.source.Put(t.Context(), "application/octet-stream", bytes.NewReader(raw)); err != nil {
+				t.Fatal(err)
+			}
+			segments := []blockformat.Ref{segment}
+			entries := make([]blockformat.Entry, 64)
+			for i := range entries {
+				entries[i] = blockformat.Entry{Slot: i, Record: uint32(i + 1)}
+			}
+			expectedCalls := 3 // Leaf plus one header and one frame range.
+			if fragmented {
+				segments = append(segments, f.segment())
+				entries = []blockformat.Entry{{Slot: 0, Record: 2}, {Slot: 1, Record: 3}, {Slot: 3, Record: 4}, {Slot: 4, Record: 8}, {Slot: 5, Segment: 1}, {Slot: 6, Record: 5}, {Slot: 7, Record: 6}}
+				expectedCalls = 11
+			}
+			want := make([]byte, capacity)
+			for _, entry := range entries {
+				data := records[entry.Record]
+				if entry.Segment == 1 {
+					data = bytes.Repeat([]byte{9}, blockformat.BlockSize)
+				}
+				copy(want[entry.Slot*blockformat.BlockSize:], data)
+			}
+			leaf := f.page(blockformat.NodeKind, 1, blockformat.Node{Capacity: capacity, Fanout: 64, Segments: segments, Entries: entries})
+			tree, err := OpenGeneration(t.Context(), f.source, "scope", f.keys, f.root(blockformat.Root{Capacity: capacity, Fanout: 64, Index: &leaf}), capacity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := f.source.calls
+			got, err := tree.ReadRange(t.Context(), 7, capacity-14)
+			if err != nil || !bytes.Equal(got, want[7:capacity-7]) {
+				t.Fatalf("unaligned batch: %v", err)
+			}
+			if calls := f.source.calls - before; calls != expectedCalls {
+				t.Fatalf("range used %d requests, want %d", calls, expectedCalls)
+			}
+		})
+	}
+}

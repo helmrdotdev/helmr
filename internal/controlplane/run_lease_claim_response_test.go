@@ -2,21 +2,19 @@ package controlplane
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/workspace"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *testing.T) {
@@ -39,15 +37,15 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 		t.Fatal(err)
 	}
 	if opener.calls != 1 ||
-		response.Execution.Fresh == nil ||
-		response.Workspace.WriteCapability == "" ||
+		len(response.ProgramStart) == 0 ||
+		response.Computer.WriteCapability == "" ||
 		len(response.Secrets) != 1 ||
 		response.Secrets[0].Env == nil ||
 		response.Secrets[0].Env.Name != "TOKEN" {
 		t.Fatalf("response = %#v, Secret opens = %d", response, opener.calls)
 	}
 
-	authority.workspaceLease.FencingTokenHash = "sha256:" + strings.Repeat("0", 64)
+	authority.runtime.WriterTokenHash = make([]byte, 32)
 	opener.calls = 0
 	if _, err := projectRunLeaseClaimResponse(
 		context.Background(),
@@ -58,14 +56,14 @@ func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *tes
 		opener,
 		keys,
 	); err == nil {
-		t.Fatal("mismatched Workspace capability was accepted")
+		t.Fatal("mismatched Computer capability was accepted")
 	}
 	if opener.calls != 0 {
-		t.Fatalf("Secrets opened before Workspace capability verification: %d", opener.calls)
+		t.Fatalf("Secrets opened before Computer capability verification: %d", opener.calls)
 	}
 }
 
-func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) {
+func TestRunLeaseClaimResponseKeepsComputerAuthorityInAssignment(t *testing.T) {
 	authority, projection, keys := validRunLeaseClaimResponse(t)
 	response, err := projectRunLeaseClaimResponse(
 		context.Background(),
@@ -84,34 +82,30 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInAssignment(t *testing.T) 
 		t.Fatal(err)
 	}
 	var decoded struct {
-		Lease     map[string]json.RawMessage `json:"lease"`
-		Workspace map[string]json.RawMessage `json:"workspace"`
+		Lease    map[string]json.RawMessage `json:"lease"`
+		Computer map[string]json.RawMessage `json:"computer"`
 	}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{
-		"workspace_id",
-		"workspace_mount_id",
-		"workspace_lease_id",
-		"base_workspace_version_id",
-		"ownership_generation",
+		"computer_id",
+		"base_computer_disk_version_id",
 		"writer_generation",
-		"mount_fencing_generation",
 	} {
 		if _, ok := decoded.Lease[field]; !ok {
 			t.Fatalf("lease does not contain %q: %s", field, raw)
 		}
 	}
-	if len(decoded.Workspace) != 2 || decoded.Workspace["write_capability"] == nil ||
-		decoded.Workspace["target"] == nil {
-		t.Fatalf("workspace attachment = %s", raw)
+	if len(decoded.Computer) != 2 || decoded.Computer["write_capability"] == nil ||
+		decoded.Computer["target"] == nil {
+		t.Fatalf("computer attachment = %s", raw)
 	}
 }
 
-func TestRunLeaseClaimProjectionLoadsOnlyLockedWorkspaceLeaseBase(t *testing.T) {
+func TestRunLeaseClaimProjectionLoadsOnlyLockedAttemptBase(t *testing.T) {
 	authority, projection, _ := validRunLeaseClaimResponse(t)
-	store := &runLeaseClaimStore{
+	store := &runLeaseProjectionStore{
 		program: projection.program, definition: projection.definition,
 		resetTarget: projection.resetTarget,
 	}
@@ -122,82 +116,43 @@ func TestRunLeaseClaimProjectionLoadsOnlyLockedWorkspaceLeaseBase(t *testing.T) 
 	if store.resetTargetParams.OrgID != authority.run.OrgID ||
 		store.resetTargetParams.ProjectID != authority.run.ProjectID ||
 		store.resetTargetParams.EnvironmentID != authority.run.EnvironmentID ||
-		store.resetTargetParams.WorkspaceID != authority.workspace.ID ||
-		store.resetTargetParams.VersionID != authority.workspaceLease.BaseWorkspaceVersionID {
+		store.resetTargetParams.ComputerID != authority.computer.ID ||
+		store.resetTargetParams.VersionID != authority.attempt.BaseComputerDiskVersionID {
 		t.Fatalf("reset target lookup = %+v", store.resetTargetParams)
-	}
-}
-
-func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
-	authority, projection, keys := validRunLeaseClaimResponse(t)
-	authority.mode = runLeaseClaimRestore
-	authority.attempt.EntrypointEnteredAt.Valid = true
-	authority.runWait = db.RunWait{
-		ID: pgvalue.UUID(uuid.New()), ConditionStatus: db.WaitStatusCompleted,
-		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
-	}
-	authority.checkpoint = db.RunCheckpoint{
-		ID: pgvalue.UUID(uuid.New()), RunID: authority.run.ID,
-		AttemptNumber:           authority.attempt.Number,
-		Status:                  db.RunCheckpointStatusReady,
-		RuntimeConfigArtifactID: pgvalue.UUID(uuid.New()), VMStateArtifactID: pgvalue.UUID(uuid.New()),
-		MemoryArtifactID: pgvalue.UUID(uuid.New()), ScratchDiskArtifactID: pgvalue.UUID(uuid.New()),
-	}
-	authority.checkpoint.Manifest = testCheckpointManifest(
-		t,
-		authority.checkpoint.ID,
-		authority.run.ID,
-		authority.attempt.Number,
-		authority.runWait.ID,
-	)
-	authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
-	authority.checkpointArtifacts = validCheckpointArtifactAuthority()
-	response, err := projectRunLeaseClaimResponse(
-		context.Background(),
-		authority,
-		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
-		projection,
-		claimResponsePlatformStore{},
-		nil,
-		keys,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.Secrets == nil || len(response.Secrets) != 0 || response.Execution.Restore == nil {
-		t.Fatalf("response = %#v", response)
 	}
 }
 
 func validRunLeaseClaimResponse(
 	t *testing.T,
-) (runLeaseClaimResponseAuthority, runLeaseClaimProjection, workspace.FencingKey) {
+) (runLeaseClaimResponseAuthority, runLeaseClaimProjection, computer.FencingKey) {
 	t.Helper()
 	physical := validRunLeaseProjectionAuthority()
 	run, attempt, definition := validTaskProgramStart(t, deployment.SchemaKindNone)
 	run.ID = physical.run.ID
-	run.WorkspaceID = physical.workspace.ID
-	run.BaseWorkspaceVersionID = physical.workspaceMount.MaterializedVersionID
+	run.ComputerID = physical.computer.ID
+	run.BaseComputerDiskVersionID = physical.run.BaseComputerDiskVersionID
 	run.MaxActiveDurationMs = physical.run.MaxActiveDurationMs
 	run.ActiveElapsedMs = physical.run.ActiveElapsedMs
 	attempt.RunID = run.ID
-	attempt.WorkspaceID = run.WorkspaceID
-	attempt.BaseWorkspaceVersionID = run.BaseWorkspaceVersionID
+	attempt.ComputerID = run.ComputerID
+	attempt.BaseComputerDiskVersionID = run.BaseComputerDiskVersionID
 	physical.runLease.RunID = run.ID
-	physical.runLease.WorkspaceID = run.WorkspaceID
+	physical.runLease.ComputerID = run.ComputerID
 	physical.runLease.AttemptNumber = attempt.Number
-	physical.workspaceLease.WorkspaceID = run.WorkspaceID
+	physical.runtime.EnvironmentID = run.EnvironmentID
 
-	key, err := workspace.NewFencingKey(make([]byte, workspace.FencingKeySize))
+	key, err := computer.NewFencingKey(make([]byte, computer.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
-	capability, err := deriveWorkspaceCapabilityInput(key, physical.workspaceLease)
+	capability, err := deriveComputerCapabilityInput(key, physical.runtime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	physical.workspaceLease.FencingTokenHash = capability.Hash
+	physical.runtime.WriterTokenHash, err = hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	runtime := claimResponseRuntimeDescriptor()
 	projection := runLeaseClaimProjection{
@@ -215,27 +170,22 @@ func validRunLeaseClaimResponse(
 		resetTarget: validComputerMountTargetAuthority(physical),
 	}
 	return runLeaseClaimResponseAuthority{
-		mode:           runLeaseClaimFresh,
-		run:            run,
-		attempt:        attempt,
-		runtime:        physical.runtime,
-		runLease:       physical.runLease,
-		workspace:      physical.workspace,
-		workspaceMount: physical.workspaceMount,
-		workspaceLease: physical.workspaceLease,
+		run:      run,
+		attempt:  attempt,
+		runtime:  physical.runtime,
+		runLease: physical.runLease,
+		computer: physical.computer,
 	}, projection, key
 }
 
-func deriveWorkspaceCapabilityInput(
-	key workspace.FencingKey,
-	lease db.WorkspaceLease,
-) (workspace.FencingCapability, error) {
-	return key.Derive(workspace.FenceInput{
-		LeaseID:                uuid.UUID(lease.ID.Bytes),
-		WorkspaceID:            uuid.UUID(lease.WorkspaceID.Bytes),
-		OwnershipGeneration:    lease.OwnershipGeneration,
-		WriterGeneration:       lease.WriterGeneration,
-		MountFencingGeneration: lease.MountFencingGeneration,
+func deriveComputerCapabilityInput(
+	key computer.FencingKey,
+	instance db.ComputerInstance,
+) (computer.FencingCapability, error) {
+	return key.Derive(computer.FenceInput{
+		InstanceID:       uuid.UUID(instance.ID.Bytes),
+		ComputerID:       uuid.UUID(instance.ComputerID.Bytes),
+		WriterGeneration: instance.WriterGeneration,
 	})
 }
 
@@ -286,3 +236,23 @@ func (opener *recordingSecretDeliveryOpener) OpenDeliveries(
 }
 
 var _ SecretDeliveryOpener = (*recordingSecretDeliveryOpener)(nil)
+
+// These reads project the authority already admitted by ClaimExecution.
+type runLeaseProjectionStore struct {
+	db.Querier
+	program           db.GetDeploymentProgramAuthorityRow
+	definition        db.DeploymentDefinition
+	resetTarget       db.GetComputerDiskVersionAuthorityRow
+	resetTargetParams db.GetComputerDiskVersionAuthorityParams
+}
+
+func (s *runLeaseProjectionStore) GetDeploymentProgramAuthority(context.Context, db.GetDeploymentProgramAuthorityParams) (db.GetDeploymentProgramAuthorityRow, error) {
+	return s.program, nil
+}
+func (s *runLeaseProjectionStore) GetDeploymentDefinition(context.Context, db.GetDeploymentDefinitionParams) (db.DeploymentDefinition, error) {
+	return s.definition, nil
+}
+func (s *runLeaseProjectionStore) GetComputerDiskVersionAuthority(_ context.Context, p db.GetComputerDiskVersionAuthorityParams) (db.GetComputerDiskVersionAuthorityRow, error) {
+	s.resetTargetParams = p
+	return s.resetTarget, nil
+}

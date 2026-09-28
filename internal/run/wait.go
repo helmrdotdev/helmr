@@ -39,6 +39,11 @@ func Complete(
 			CurrentRunLeaseID:   wait.CurrentRunLeaseID,
 			AttemptNumber:       wait.AttemptNumber,
 		})
+	case db.RunWaitStatusResuming:
+		completed, err = store.ResolveResumingRunWait(ctx, db.ResolveResumingRunWaitParams{
+			WaitID: wait.ID, RunID: wait.RunID, ExpectedRunRevision: wait.ExpectedRunRevision,
+			ConditionStatus: "completed", ConditionResult: result, CompletedTurnID: completedTurnID,
+		})
 	case db.RunWaitStatusCheckpointing:
 		completed, err = store.CompleteCheckpointingRunWait(ctx, db.CompleteCheckpointingRunWaitParams{
 			ConditionResult: result, CompletedTurnID: completedTurnID,
@@ -94,6 +99,11 @@ func Fail(
 			ExpectedRunRevision: wait.ExpectedRunRevision,
 			CurrentRunLeaseID:   wait.CurrentRunLeaseID,
 			AttemptNumber:       wait.AttemptNumber,
+		})
+	case db.RunWaitStatusResuming:
+		failed, err = store.ResolveResumingRunWait(ctx, db.ResolveResumingRunWaitParams{
+			WaitID: wait.ID, RunID: wait.RunID, ExpectedRunRevision: wait.ExpectedRunRevision,
+			ConditionStatus: "failed", ConditionError: errorJSON, ReasonCode: reasonCode,
 		})
 	case db.RunWaitStatusCheckpointing:
 		failed, err = store.FailCheckpointingRunWait(ctx, db.FailCheckpointingRunWaitParams{

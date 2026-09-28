@@ -10,9 +10,9 @@ scoped credentials and isolated runtime resources.
 
 ## Runtime isolation
 
-Task and Actor code, plus bounded Workspace exec, run in Firecracker-backed
+Task and Actor code, plus bounded Computer exec, run in Firecracker-backed
 Linux guests on workers. The Sandbox selects the image, CPU, and memory. Helmr
-attaches the approved Workspace and materializes its fixed Secret placements.
+attaches the approved Computer and materializes its fixed Secret placements.
 Application code should rely on normal guest behavior, not host paths, worker
 credentials, guest-control protocols, or networking implementation details.
 
@@ -26,7 +26,7 @@ never runs package installation or project build commands.
 
 Environment API keys are stored by hash, may expire or be revoked, and carry
 explicit actions within one Project Environment. Permissions for Task starts,
-Actor starts, Session input/read/close, Runs, Workspaces, Tokens, Secrets, and
+Actor starts, Session input/read/close, Runs, Computers, Tokens, Secrets, and
 Deployments are distinct.
 
 Token creation returns a callback URL and public access token for completing
@@ -37,12 +37,12 @@ to a continuing Actor channel and should remain in trusted integrations.
 ## Data handling
 
 Run payload, metadata, tags, logs, events, Actor input and output, Token
-completion results, and committed Workspace files are durable data surfaces.
+completion results, and committed Computer files are durable data surfaces.
 Do not place API keys, tokens, passwords, private keys, or unnecessary personal
 data in them.
 
 Secrets are encrypted, versioned, environment-scoped values. Public responses
-do not return plaintext. Bind them during Workspace creation and read them only
+do not return plaintext. Bind them during Computer creation and read them only
 from the declared runtime placement. Avoid printing values or passing them to
 child processes in visible command lines.
 
@@ -52,7 +52,7 @@ credentials and should not contain sensitive data.
 
 ## Durable state
 
-Workspaces outlive Runs unless deleted. Session output and input histories are
+Computers outlive Runs unless deleted. Session output and input histories are
 durable. Cancellation requests may take time to converge. Plan retention and
 cleanup around the resources that actually hold application state rather than
 assuming a terminal Run removes them.

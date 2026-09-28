@@ -87,8 +87,7 @@ type ReadOnlyDriveSource interface {
 }
 
 type RuntimeTopology struct {
-	Computer  *RuntimeComputer
-	Substrate *RuntimeSubstrate
+	Computer *RuntimeComputer
 }
 
 // RuntimeComputer transfers an exclusively owned working disk to the VM owner.
@@ -120,25 +119,6 @@ type ComputerDevice interface {
 	Close(context.Context) error
 }
 
-type RuntimeSubstrateSource interface {
-	MaterializeInto(
-		context.Context,
-		string,
-		string,
-		int,
-		int,
-	) (string, error)
-}
-
-type RuntimeSubstrate struct {
-	Path      string
-	Source    RuntimeSubstrateSource
-	Digest    string
-	Format    string
-	Contract  string
-	SizeBytes int64
-}
-
 type SnapshotRequest struct {
 	ID string
 }
@@ -151,23 +131,22 @@ type ComputerSnapshot struct {
 }
 
 type SnapshotArtifact struct {
-	Computer            *ComputerSnapshot
-	RuntimeBackend      string
-	RuntimeArch         string
-	VMRuntimeContract   string
-	RuntimeID           string
-	KernelDigest        string
-	InitramfsDigest     string
-	RootfsDigest        string
-	RuntimeConfigDigest string
-	VMVCPUCount         int32
-	CPUConfigDigest     string
-	Substrate           *RuntimeSubstrate
-	VMState             SnapshotFile
-	ScratchDisk         SnapshotFile
-	Memory              []SnapshotFile
-	Manifest            []byte
-	Phases              []RuntimePhase
+	Computer          *ComputerSnapshot
+	RuntimeBackend    string
+	RuntimeArch       string
+	VMRuntimeContract string
+	RuntimeID         string
+	KernelDigest      string
+	InitramfsDigest   string
+	RootfsDigest      string
+	VMConfigDigest    string
+	VMVCPUCount       int32
+	CPUConfigDigest   string
+	VMState           SnapshotFile
+	ScratchDisk       SnapshotFile
+	Memory            []SnapshotFile
+	Manifest          []byte
+	Phases            []RuntimePhase
 }
 
 type SnapshotFile struct {
@@ -179,7 +158,7 @@ type SnapshotFile struct {
 type RestoreRequest struct {
 	Resources            compute.ResourceVector
 	ID                   string
-	RuntimeInstanceID    string
+	ComputerInstanceID   string
 	OwnerKind            OwnerKind
 	Binding              WorkloadBinding
 	VMState              string
@@ -196,18 +175,18 @@ type RestoreRequest struct {
 }
 
 type MaterializeRequest struct {
-	ID                     string
-	OwnerKind              OwnerKind
-	Binding                WorkloadBinding
-	RootfsDigest           string
-	WorkspaceMountPath     string
-	BaseWorkspaceVersionID string
-	Resources              compute.ResourceVector
-	VMVCPUCount            int32
-	CPUConfigDigest        string
-	Topology               RuntimeTopology
-	ReadOnlyDrives         []ReadOnlyDrive
-	RecordPhase            func(RuntimePhase)
+	ID                        string
+	OwnerKind                 OwnerKind
+	Binding                   WorkloadBinding
+	RootfsDigest              string
+	ComputerMountPath         string
+	BaseComputerDiskVersionID string
+	Resources                 compute.ResourceVector
+	VMVCPUCount               int32
+	CPUConfigDigest           string
+	Topology                  RuntimeTopology
+	ReadOnlyDrives            []ReadOnlyDrive
+	RecordPhase               func(RuntimePhase)
 }
 
 // WorkloadBinding is the closed logical authority that a connector binds to
@@ -215,11 +194,11 @@ type MaterializeRequest struct {
 // network access. Runtime workloads use their immutable Runtime Instance ID
 // with generation 1.
 type WorkloadBinding struct {
-	WorkerEpoch       int64
-	OwnerID           string
-	Generation        int64
-	RuntimeInstanceID string
-	RuntimeIdentityID string
+	WorkerEpoch        int64
+	OwnerID            string
+	Generation         int64
+	ComputerInstanceID string
+	VMPlatformID       string
 }
 
 func (binding WorkloadBinding) Validate(owner Owner) error {
@@ -232,13 +211,13 @@ func (binding WorkloadBinding) Validate(owner Owner) error {
 	if binding.Generation <= 0 {
 		return errors.New("workload binding generation must be positive")
 	}
-	if strings.TrimSpace(binding.RuntimeIdentityID) == "" {
+	if strings.TrimSpace(binding.VMPlatformID) == "" {
 		return errors.New("workload binding runtime identity is required")
 	}
 	if owner.Kind != OwnerRuntime {
 		return errors.New("workload binding owner kind is invalid")
 	}
-	if binding.RuntimeInstanceID != owner.ID || binding.Generation != 1 {
+	if binding.ComputerInstanceID != owner.ID || binding.Generation != 1 {
 		return errors.New("runtime workload binding is incomplete")
 	}
 	return nil
@@ -317,16 +296,16 @@ func (e *GuestError) Unwrap() error {
 }
 
 type CheckpointIdentity struct {
-	RuntimeBackend      string
-	RuntimeArch         string
-	VMRuntimeContract   string
-	RuntimeID           string
-	KernelDigest        string
-	InitramfsDigest     string
-	RootfsDigest        string
-	RuntimeConfigDigest string
-	VMVCPUCount         int32
-	CPUConfigDigest     string
+	RuntimeBackend    string
+	RuntimeArch       string
+	VMRuntimeContract string
+	RuntimeID         string
+	KernelDigest      string
+	InitramfsDigest   string
+	RootfsDigest      string
+	VMConfigDigest    string
+	VMVCPUCount       int32
+	CPUConfigDigest   string
 }
 
 type RuntimePhase struct {

@@ -26,7 +26,7 @@ export const assistant = actor({
 })
 ```
 
-Start with a Workspace and optional stable key, idempotency key and Run options.
+Start with a Computer and optional stable key, idempotency key and Run options.
 Then enqueue the first Turn separately. `session.receive()` consumes FIFO work;
 `turn.onMessage` handles interactions within that work. Interface routing, provider
 SDKs, native questions and approvals remain editable application code.

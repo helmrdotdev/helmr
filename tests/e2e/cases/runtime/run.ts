@@ -1,10 +1,10 @@
 import { verify, assert, deadline } from "../../support/context"
-await verify("runtime", async ({ client, marker, objects, workspace }) => {
-  const target = await workspace("helmr-runtime-smoke")
+await verify("runtime", async ({ client, marker, objects, computer }) => {
+  const target = await computer("helmr-runtime-smoke")
   const run = await client.tasks.start(
     "runtime-smoke",
     {
-      workspace: target,
+      computer: target,
       payload: { scenario: "runtime", marker, expectedEnvironment: "unknown" },
       idempotencyKey: `runtime:${marker}`,
     },

@@ -33,17 +33,15 @@ type WaitRegistration struct {
 	RunGeneration                 pgtype.Int8
 	TokenID                       uuid.UUID
 	WaitID                        uuid.UUID
-	ResumeAttachID                uuid.UUID
 	RunLeaseID                    uuid.UUID
 	LeaseSequence                 int64
 	WorkerGroupID                 uuid.UUID
-	WorkerInstanceID              uuid.UUID
+	WorkerHostID                  uuid.UUID
 	WorkerEpoch                   int64
 	RequestFingerprint            string
 	ActorSpeculativeInputSequence pgtype.Int8
 	TimeoutAt                     pgtype.Timestamptz
 	IdleTimeoutMS                 pgtype.Int8
-	CheckpointDueAt               pgtype.Timestamptz
 	Metadata                      json.RawMessage
 	Tags                          []string
 }
@@ -77,8 +75,8 @@ func (r *WaitReconciler) RegisterWait(
 	request WaitRegistration,
 ) (WaitRegistrationResult, error) {
 	if request.TokenID == uuid.Nil() || request.WaitID == uuid.Nil() ||
-		request.ResumeAttachID == uuid.Nil() || request.RunLeaseID == uuid.Nil() ||
-		request.WorkerInstanceID == uuid.Nil() {
+		request.RunLeaseID == uuid.Nil() ||
+		request.WorkerHostID == uuid.Nil() {
 		return WaitRegistrationResult{}, errors.New("token wait registration IDs are required")
 	}
 	if request.LeaseSequence <= 0 || request.WorkerEpoch <= 0 || request.WorkerGroupID == uuid.Nil() ||
@@ -108,7 +106,7 @@ func (r *WaitReconciler) RegisterWait(
 	q := db.New(tx)
 	// An exact existing registration is immutable and may outlive its run
 	// lease. This read-only replay does not linearize creation; the mutable
-	// path repeats it after locking the run lineage.
+	// path repeats it after locking the Run.
 	if !request.TurnID.Valid {
 		if replay, found, err := replayTokenWaitRegistration(ctx, q, request, metadata, tags); err != nil {
 			return WaitRegistrationResult{}, err
@@ -121,7 +119,7 @@ func (r *WaitReconciler) RegisterWait(
 	}
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(request.RunLeaseID), LeaseSequence: request.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(request.WorkerGroupID), WorkerInstanceID: pgvalue.UUID(request.WorkerInstanceID),
+		WorkerGroupID: pgvalue.UUID(request.WorkerGroupID), WorkerHostID: pgvalue.UUID(request.WorkerHostID),
 		WorkerEpoch: request.WorkerEpoch,
 	})
 	if err != nil {
@@ -140,11 +138,49 @@ func (r *WaitReconciler) RegisterWait(
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("load token wait registration locator", err)
 	}
+	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
+		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
+	})
+	if err != nil ||
+		(workerGroup.Status != db.WorkerGroupStatusActive && workerGroup.Status != db.WorkerGroupStatusDraining) {
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
+	}
+	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
+		ID: pgtype.UUID{Bytes: request.WorkerHostID, Valid: true}, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
+	})
+	if err != nil ||
+		(worker.Status != db.WorkerHostStatusActive && worker.Status != db.WorkerHostStatusDraining) ||
+		!worker.CurrentEpoch.Valid ||
+		worker.CurrentEpoch.Int64 != request.WorkerEpoch ||
+		!worker.VMPlatformID.Valid {
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current worker epoch", err)
+	}
+	computer, err := q.LockTokenWaitComputer(ctx, db.LockTokenWaitComputerParams{
+		ComputerID: locator.ComputerID, EnvironmentID: locators.EnvironmentID,
+	})
+	if err != nil || computer.Status != db.ComputerStatusActive || computer.DesiredState != db.ComputerDesiredStateActive {
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active Computer", err)
+	}
+	runtime, err := q.LockRunLeaseClaimInstance(ctx, db.LockRunLeaseClaimInstanceParams{
+		ID: locators.ComputerInstanceID, OrgID: locator.OrgID,
+		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
+		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
+		WorkerHostID: pgtype.UUID{Bytes: request.WorkerHostID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
+		ComputerID: locator.ComputerID,
+	})
+	if err != nil || runtime.VMPlatformID != worker.VMPlatformID.String ||
+		runtime.DesiredState != db.RuntimeDesiredStateReady || runtime.ObservedState != db.RuntimeObservedStateReady ||
+		runtime.ObservedDesiredVersion != runtime.DesiredVersion || runtime.TerminalAt.Valid ||
+		runtime.ReclaimedAt.Valid || runtime.MountState != "mounted" || runtime.WriterGeneration != computer.WriterGeneration ||
+		runtime.WriterGeneration != locators.WriterGeneration || (runtime.AdmissionState != "open" && runtime.AdmissionState != "draining") {
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock ready runtime", err)
+	}
+
 	var lockedActorCurrentRunID pgtype.UUID
 	var lockedActor db.Session
 	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
-	if locator.OwnerSessionID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerSessionID)
+	if locator.SessionID.Valid {
+		actor, err := q.LockTokenWaitActor(ctx, locator.SessionID)
 		if err != nil {
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("lock owning actor", err)
 		}
@@ -157,7 +193,7 @@ func (r *WaitReconciler) RegisterWait(
 		lockedActorNextInputSequence = actor.NextInputSequence
 	}
 
-	lineage, run, err := lockTokenWaitLineage(ctx, q, environmentID, runID)
+	run, err := lockTokenWaitRun(ctx, q, environmentID, runID)
 	if err != nil {
 		return WaitRegistrationResult{}, err
 	}
@@ -169,33 +205,22 @@ func (r *WaitReconciler) RegisterWait(
 		}
 		return replay, nil
 	}
-	if pgvalue.UUID(run.workspaceID) != locator.WorkspaceID || run.status != db.RunStatusRunning ||
+	if pgvalue.UUID(run.computerID) != locator.ComputerID || run.status != db.RunStatusRunning ||
 		run.currentAttempt != attemptNumber ||
 		!run.currentRunLeaseID.Valid || uuid.UUID(run.currentRunLeaseID.Bytes) != request.RunLeaseID ||
 		!run.activeStartedAt.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("run registration fence does not match", nil)
 	}
-	workspace, err := validateAndLockTokenWaitWorkspace(
-		ctx,
-		q,
-		environmentID,
-		locator,
-		lineage,
-		lockedActorCurrentRunID,
-	)
-	if err != nil {
-		return WaitRegistrationResult{}, err
-	}
 	attempt, err := q.LockTokenWaitAttempt(ctx, db.LockTokenWaitAttemptParams{
 		RunID:         locators.RunID,
 		AttemptNumber: attemptNumber,
-		WorkspaceID:   locator.WorkspaceID,
+		ComputerID:    locator.ComputerID,
 	})
 	if err != nil || attempt.TerminalAt.Valid {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current run attempt", err)
 	}
 	if err := validateTokenWaitActorCursor(
-		request.ActorSpeculativeInputSequence, locator.OwnerSessionID, lockedActorCurrentRunID,
+		request.ActorSpeculativeInputSequence, locator.SessionID, lockedActorCurrentRunID,
 		lockedActorCommittedInputSequence, lockedActorNextInputSequence,
 		run, attempt.EntrypointKind, attempt.SessionInputStartSequence,
 	); err != nil {
@@ -210,98 +235,36 @@ func (r *WaitReconciler) RegisterWait(
 			return WaitRegistrationResult{}, tokenWaitAuthorityError("Token wait cursor does not identify its admitted Turn", nil)
 		}
 	}
-	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
-		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
-	})
-	if err != nil ||
-		(workerGroup.Status != db.WorkerGroupStatusActive && workerGroup.Status != db.WorkerGroupStatusDraining) {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
-	}
-	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-	})
-	if err != nil ||
-		(worker.Status != db.WorkerInstanceStatusActive && worker.Status != db.WorkerInstanceStatusDraining) ||
-		!worker.CurrentEpoch.Valid ||
-		worker.CurrentEpoch.Int64 != request.WorkerEpoch ||
-		!worker.RuntimeIdentityID.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current worker epoch", err)
-	}
-	runtime, err := q.LockRunLeaseClaimRuntime(ctx, db.LockRunLeaseClaimRuntimeParams{
-		ID: locators.RuntimeInstanceID, OrgID: locator.OrgID,
-		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
-		WorkspaceID: locator.WorkspaceID,
-	})
-	if err != nil || runtime.RuntimeIdentityID != worker.RuntimeIdentityID.String ||
-		runtime.DesiredState != db.RuntimeDesiredStateReady || runtime.ObservedState != db.RuntimeObservedStateReady ||
-		runtime.ObservedDesiredVersion != runtime.DesiredVersion || runtime.TerminalAt.Valid {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock ready runtime", err)
-	}
 	leaseStatus, err := q.LockTokenWaitRunLease(ctx, db.LockTokenWaitRunLeaseParams{
-		ID:                pgvalue.UUID(request.RunLeaseID),
-		RunID:             locators.RunID,
-		AttemptNumber:     attemptNumber,
-		WorkspaceID:       locator.WorkspaceID,
-		LeaseSequence:     request.LeaseSequence,
-		WorkerGroupID:     pgvalue.UUID(request.WorkerGroupID),
-		WorkerInstanceID:  pgvalue.UUID(request.WorkerInstanceID),
-		WorkerEpoch:       request.WorkerEpoch,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-		RuntimeIdentityID: runtime.RuntimeIdentityID,
-		RegionID:          locators.RegionID,
+		ID:                 pgvalue.UUID(request.RunLeaseID),
+		RunID:              locators.RunID,
+		AttemptNumber:      attemptNumber,
+		ComputerID:         locator.ComputerID,
+		LeaseSequence:      request.LeaseSequence,
+		WorkerGroupID:      pgvalue.UUID(request.WorkerGroupID),
+		WorkerHostID:       pgvalue.UUID(request.WorkerHostID),
+		WorkerEpoch:        request.WorkerEpoch,
+		ComputerInstanceID: locators.ComputerInstanceID,
+		VMPlatformID:       runtime.VMPlatformID,
+		RegionID:           locators.RegionID,
 	})
 	if err != nil || db.RunLeaseStatus(leaseStatus) != db.RunLeaseStatusRunning {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired run lease", err)
 	}
-	mount, err := q.LockRunLeaseClaimMount(ctx, db.LockRunLeaseClaimMountParams{
-		ID: locators.WorkspaceMountID, OrgID: locator.OrgID,
-		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-		WorkspaceID:       locator.WorkspaceID,
-	})
-	if err != nil || mount.Status != db.WorkspaceMountStatusMounted {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock mounted workspace", err)
-	}
-	workspaceLease, err := q.LockRunLeaseClaimWorkspaceLease(ctx, db.LockRunLeaseClaimWorkspaceLeaseParams{
-		ID: locators.WorkspaceLeaseID, OrgID: locator.OrgID,
-		ProjectID: locator.ProjectID, EnvironmentID: locators.EnvironmentID,
-		RegionID: locators.RegionID, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),
-		WorkerInstanceID: pgtype.UUID{Bytes: request.WorkerInstanceID, Valid: true}, WorkerEpoch: request.WorkerEpoch,
-		RuntimeInstanceID: locators.RuntimeInstanceID,
-		WorkspaceID:       locator.WorkspaceID,
-		WorkspaceMountID:  locators.WorkspaceMountID,
-	})
-	if err != nil || !workspaceLease.OwnerRunLeaseID.Valid ||
-		uuid.UUID(workspaceLease.OwnerRunLeaseID.Bytes) != request.RunLeaseID ||
-		workspaceLease.OwnershipGeneration != workspace.OwnershipGeneration ||
-		workspaceLease.WriterGeneration != workspace.WriterGeneration ||
-		workspaceLease.MountFencingGeneration != mount.FencingGeneration {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock current unexpired workspace lease", err)
-	}
-	if err := lockOuterTokenWait(ctx, q, runID); err != nil {
-		return WaitRegistrationResult{}, err
-	}
 
 	registered, err := q.RegisterTokenWait(ctx, db.RegisterTokenWaitParams{
-		WaitID:                        pgvalue.UUID(request.WaitID),
-		EnvironmentID:                 locators.EnvironmentID,
-		TimeoutAt:                     request.TimeoutAt,
-		IdleTimeoutMs:                 request.IdleTimeoutMS,
-		TokenID:                       pgvalue.UUID(request.TokenID),
-		ExpectedRunningRevision:       run.revision,
-		RequestFingerprint:            request.RequestFingerprint,
-		AttemptNumber:                 attemptNumber,
-		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
-		CurrentRunLeaseID:             pgvalue.UUID(request.RunLeaseID),
-		CheckpointDueAt:               request.CheckpointDueAt,
-		ResumeAttachID:                pgvalue.UUID(request.ResumeAttachID),
-		Metadata:                      metadata,
-		Tags:                          tags,
-		RunID:                         locators.RunID,
+		WaitID:                  pgvalue.UUID(request.WaitID),
+		EnvironmentID:           locators.EnvironmentID,
+		TimeoutAt:               request.TimeoutAt,
+		IdleTimeoutMs:           request.IdleTimeoutMS,
+		TokenID:                 pgvalue.UUID(request.TokenID),
+		ExpectedRunningRevision: run.revision,
+		RequestFingerprint:      request.RequestFingerprint,
+		AttemptNumber:           attemptNumber,
+		CurrentRunLeaseID:       pgvalue.UUID(request.RunLeaseID),
+		Metadata:                metadata,
+		Tags:                    tags,
+		RunID:                   locators.RunID,
 	})
 	if err != nil {
 		return WaitRegistrationResult{}, tokenWaitAuthorityError("insert token wait", err)
@@ -343,7 +306,7 @@ func (r *WaitReconciler) RegisterWait(
 		}
 		wait := tokenWaitLockedWait{
 			id: request.WaitID, runID: runID,
-			workspaceID: pgvalue.MustUUIDValue(locator.WorkspaceID), kind: db.WaitKindToken,
+			computerID: pgvalue.MustUUIDValue(locator.ComputerID), kind: db.WaitKindToken,
 			conditionStatus: db.WaitStatusPending, suspensionStatus: db.RunWaitStatusHot,
 			expectedRunRevision: waitingRevision, attemptNumber: attemptNumber,
 			currentRunLeaseID: pgtype.UUID{Bytes: request.RunLeaseID, Valid: true},
@@ -379,17 +342,15 @@ func replayTokenWaitRegistration(
 		db.GetTokenWaitRegistrationReplayParams{
 			RunLeaseID: pgvalue.UUID(request.RunLeaseID),
 			TurnID:     request.TurnID, TurnRunGeneration: request.RunGeneration,
-			WaitID:                        pgvalue.UUID(request.WaitID),
-			TokenID:                       pgvalue.UUID(request.TokenID),
-			ResumeAttachID:                pgvalue.UUID(request.ResumeAttachID),
-			RequestFingerprint:            request.RequestFingerprint,
-			Metadata:                      metadata,
-			Tags:                          tags,
-			LeaseSequence:                 request.LeaseSequence,
-			WorkerGroupID:                 pgvalue.UUID(request.WorkerGroupID),
-			WorkerInstanceID:              pgvalue.UUID(request.WorkerInstanceID),
-			WorkerEpoch:                   request.WorkerEpoch,
-			ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
+			WaitID:             pgvalue.UUID(request.WaitID),
+			TokenID:            pgvalue.UUID(request.TokenID),
+			RequestFingerprint: request.RequestFingerprint,
+			Metadata:           metadata,
+			Tags:               tags,
+			LeaseSequence:      request.LeaseSequence,
+			WorkerGroupID:      pgvalue.UUID(request.WorkerGroupID),
+			WorkerHostID:       pgvalue.UUID(request.WorkerHostID),
+			WorkerEpoch:        request.WorkerEpoch,
 		},
 	)
 	if err == nil {
@@ -505,37 +466,6 @@ func (r *WaitReconciler) ReconcileTimeouts(
 	return resolved, nil
 }
 
-func validateAndLockTokenWaitWorkspace(
-	ctx context.Context,
-	q *db.Queries,
-	environmentID uuid.UUID,
-	locator db.GetTokenWaitRegistrationLocatorRow,
-	lineage []tokenWaitLockedRun,
-	lockedActorCurrentRunID pgtype.UUID,
-) (db.LockTokenWaitWorkspaceRow, error) {
-	workspace, err := q.LockTokenWaitWorkspace(ctx, db.LockTokenWaitWorkspaceParams{
-		WorkspaceID:   locator.WorkspaceID,
-		EnvironmentID: pgvalue.UUID(environmentID),
-	})
-	if err != nil {
-		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("lock run workspace", err)
-	}
-	if db.WorkspaceStatus(workspace.Status) != db.WorkspaceStatusActive ||
-		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
-		workspace.OwnerSessionID != locator.OwnerSessionID {
-		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("workspace ownership changed", nil)
-	}
-	if workspace.OwnerSessionID.Valid {
-		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
-			return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("actor current run is outside the locked lineage", nil)
-		}
-	} else if !workspace.OwnerRunID.Valid ||
-		!tokenWaitLineageContains(lineage, workspace.OwnerRunID) {
-		return db.LockTokenWaitWorkspaceRow{}, tokenWaitAuthorityError("workspace owner run is outside the locked lineage", nil)
-	}
-	return workspace, nil
-}
-
 func validateTokenWaitActorCursor(
 	cursor pgtype.Int8,
 	ownerSessionID pgtype.UUID,
@@ -570,8 +500,7 @@ func validateTokenWaitActorCursor(
 
 type tokenWaitLockedRun struct {
 	id                uuid.UUID
-	parentRunID       pgtype.UUID
-	workspaceID       uuid.UUID
+	computerID        uuid.UUID
 	actorID           pgtype.UUID
 	entrypointKind    string
 	status            db.RunStatus
@@ -579,14 +508,12 @@ type tokenWaitLockedRun struct {
 	currentAttempt    int32
 	currentRunLeaseID pgtype.UUID
 	activeStartedAt   pgtype.Timestamptz
-	depth             int32
-	cycle             bool
 }
 
 type tokenWaitLockedWait struct {
 	id                  uuid.UUID
 	runID               uuid.UUID
-	workspaceID         uuid.UUID
+	computerID          uuid.UUID
 	kind                db.WaitKind
 	conditionStatus     db.WaitStatus
 	suspensionStatus    db.RunWaitStatus
@@ -640,9 +567,20 @@ func (r *WaitReconciler) reconcileOne(
 		return false, false, err
 	}
 
+	if _, err := q.LockTokenWaitComputer(ctx, db.LockTokenWaitComputerParams{
+		ComputerID: locator.ComputerID, EnvironmentID: pgvalue.UUID(environmentID),
+	}); err != nil {
+		return false, false, tokenWaitAuthorityError("lock Computer", err)
+	}
+	if _, err := q.LockComputerInstance(ctx, db.LockComputerInstanceParams{
+		ComputerID: locator.ComputerID, EnvironmentID: pgvalue.UUID(environmentID),
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, false, tokenWaitAuthorityError("lock Computer Instance", err)
+	}
+
 	var lockedActorCurrentRunID pgtype.UUID
-	if locator.OwnerSessionID.Valid {
-		actor, err := q.LockTokenWaitActor(ctx, locator.OwnerSessionID)
+	if locator.SessionID.Valid {
+		actor, err := q.LockTokenWaitActor(ctx, locator.SessionID)
 		if err != nil {
 			return false, false, tokenWaitAuthorityError("lock owning actor", err)
 		}
@@ -652,48 +590,28 @@ func (r *WaitReconciler) reconcileOne(
 		lockedActorCurrentRunID = actor.CurrentRunID
 	}
 
-	lineage, addressedRun, err := lockTokenWaitLineage(ctx, q, environmentID, runID)
+	addressedRun, err := lockTokenWaitRun(ctx, q, environmentID, runID)
 	if err != nil {
 		return false, false, err
 	}
-	workspaceID := pgvalue.MustUUIDValue(locator.WorkspaceID)
-	if addressedRun.workspaceID != workspaceID ||
+	computerID := pgvalue.MustUUIDValue(locator.ComputerID)
+	if addressedRun.computerID != computerID ||
 		addressedRun.currentAttempt != locator.AttemptNumber {
 		return false, false, tokenWaitAuthorityError("run locator changed", nil)
 	}
-	workspace, err := q.LockTokenWaitWorkspace(ctx, db.LockTokenWaitWorkspaceParams{
-		WorkspaceID:   locator.WorkspaceID,
-		EnvironmentID: pgvalue.UUID(environmentID),
-	})
-	if err != nil {
-		return false, false, tokenWaitAuthorityError("lock run workspace", err)
-	}
-	if db.WorkspaceStatus(workspace.Status) != db.WorkspaceStatusActive ||
-		db.WorkspaceDesiredState(workspace.DesiredState) != db.WorkspaceDesiredStateActive ||
-		workspace.OwnerSessionID != locator.OwnerSessionID {
-		return false, false, tokenWaitAuthorityError("workspace ownership changed", nil)
-	}
-	if workspace.OwnerSessionID.Valid {
-		if !lockedActorCurrentRunID.Valid || !tokenWaitLineageContains(lineage, lockedActorCurrentRunID) {
-			return false, false, tokenWaitAuthorityError("actor current run is outside the locked lineage", nil)
-		}
-	} else if !workspace.OwnerRunID.Valid ||
-		!tokenWaitLineageContains(lineage, workspace.OwnerRunID) {
-		return false, false, tokenWaitAuthorityError("workspace owner run is outside the locked lineage", nil)
+	if locator.SessionID.Valid && (!lockedActorCurrentRunID.Valid || lockedActorCurrentRunID != locator.RunID) {
+		return false, false, tokenWaitAuthorityError("Session current Run changed", nil)
 	}
 
 	attempt, err := q.LockTokenWaitAttempt(ctx, db.LockTokenWaitAttemptParams{
 		RunID:         locator.RunID,
 		AttemptNumber: locator.AttemptNumber,
-		WorkspaceID:   locator.WorkspaceID,
+		ComputerID:    locator.ComputerID,
 	})
 	if err != nil || attempt.TerminalAt.Valid {
 		return false, false, tokenWaitAuthorityError("lock current run attempt", err)
 	}
 
-	if err := lockOuterTokenWait(ctx, q, runID); err != nil {
-		return false, false, err
-	}
 	wait, err := lockCurrentTokenWait(ctx, q, environmentID, tokenID, locator)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err := tx.Commit(ctx); err != nil {
@@ -757,6 +675,12 @@ func (r *WaitReconciler) reconcileOne(
 		err = reconcileHotTokenWait(ctx, q, addressedRun, wait, resolution)
 	case db.RunWaitStatusCheckpointing:
 		err = reconcileCheckpointingTokenWait(ctx, q, wait, resolution)
+	case db.RunWaitStatusResuming:
+		_, err = q.ResolveResumingRunWait(ctx, db.ResolveResumingRunWaitParams{
+			WaitID: pgvalue.UUID(wait.id), RunID: pgvalue.UUID(addressedRun.id), ExpectedRunRevision: addressedRun.revision,
+			ConditionStatus: string(resolution.conditionStatus), ConditionResult: resolution.result,
+			ConditionError: resolution.conditionError, ReasonCode: pgvalue.TextPtr(resolution.reasonCode),
+		})
 	case db.RunWaitStatusParked:
 		err = reconcileParkedTokenWait(ctx, q, addressedRun, wait, resolution)
 	default:
@@ -771,73 +695,19 @@ func (r *WaitReconciler) reconcileOne(
 	return true, wait.suspensionStatus == db.RunWaitStatusCheckpointing, nil
 }
 
-func lockTokenWaitLineage(
-	ctx context.Context,
-	q *db.Queries,
-	environmentID uuid.UUID,
-	runID uuid.UUID,
-) ([]tokenWaitLockedRun, tokenWaitLockedRun, error) {
-	rows, err := q.LockTokenWaitRunLineage(
-		ctx,
-		db.LockTokenWaitRunLineageParams{
-			EnvironmentID: pgvalue.UUID(environmentID),
-			RunID:         pgvalue.UUID(runID),
-		},
-	)
+func lockTokenWaitRun(ctx context.Context, q *db.Queries, environmentID, runID uuid.UUID) (tokenWaitLockedRun, error) {
+	run, err := q.LockTokenWaitRun(ctx, db.LockTokenWaitRunParams{
+		EnvironmentID: pgvalue.UUID(environmentID), RunID: pgvalue.UUID(runID),
+	})
 	if err != nil {
-		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("lock run lineage", err)
+		return tokenWaitLockedRun{}, tokenWaitAuthorityError("lock Run", err)
 	}
-	lineage := make([]tokenWaitLockedRun, 0, len(rows))
-	var addressed tokenWaitLockedRun
-	foundAddressed := false
-	for _, locked := range rows {
-		row := tokenWaitLockedRun{
-			id:                pgvalue.MustUUIDValue(locked.ID),
-			parentRunID:       locked.ParentRunID,
-			workspaceID:       pgvalue.MustUUIDValue(locked.WorkspaceID),
-			actorID:           locked.SessionID,
-			entrypointKind:    locked.EntrypointKind,
-			status:            db.RunStatus(locked.Status),
-			revision:          locked.Revision,
-			currentAttempt:    locked.CurrentAttemptNumber,
-			currentRunLeaseID: locked.CurrentRunLeaseID,
-			activeStartedAt:   locked.ActiveStartedAt,
-			depth:             locked.Depth,
-			cycle:             locked.Cycle,
-		}
-		if row.cycle {
-			return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("run lineage contains a cycle", nil)
-		}
-		lineage = append(lineage, row)
-		if row.depth == 0 && row.id == runID {
-			addressed = row
-			foundAddressed = true
-		}
-	}
-	if !foundAddressed {
-		return nil, tokenWaitLockedRun{}, tokenWaitAuthorityError("addressed run does not exist", nil)
-	}
-	return lineage, addressed, nil
-}
-
-func tokenWaitLineageContains(lineage []tokenWaitLockedRun, id pgtype.UUID) bool {
-	if !id.Valid {
-		return false
-	}
-	for _, run := range lineage {
-		if run.id == uuid.UUID(id.Bytes) {
-			return true
-		}
-	}
-	return false
-}
-
-func lockOuterTokenWait(ctx context.Context, q *db.Queries, runID uuid.UUID) error {
-	_, err := q.LockEnclosingRunWaits(ctx, pgvalue.UUID(runID))
-	if err != nil {
-		return tokenWaitAuthorityError("lock enclosing run wait", err)
-	}
-	return nil
+	return tokenWaitLockedRun{
+		id: pgvalue.MustUUIDValue(run.ID), computerID: pgvalue.MustUUIDValue(run.ComputerID),
+		actorID: run.SessionID, entrypointKind: run.EntrypointKind, status: db.RunStatus(run.Status),
+		revision: run.Revision, currentAttempt: run.CurrentAttemptNumber,
+		currentRunLeaseID: run.CurrentRunLeaseID, activeStartedAt: run.ActiveStartedAt,
+	}, nil
 }
 
 func lockCurrentTokenWait(
@@ -851,7 +721,7 @@ func lockCurrentTokenWait(
 		WaitID:        locator.WaitID,
 		EnvironmentID: pgvalue.UUID(environmentID),
 		RunID:         locator.RunID,
-		WorkspaceID:   locator.WorkspaceID,
+		ComputerID:    locator.ComputerID,
 		AttemptNumber: locator.AttemptNumber,
 		TokenID:       pgvalue.UUID(tokenID),
 	})
@@ -861,7 +731,7 @@ func lockCurrentTokenWait(
 	return tokenWaitLockedWait{
 		id:                  pgvalue.MustUUIDValue(locked.ID),
 		runID:               pgvalue.MustUUIDValue(locked.RunID),
-		workspaceID:         pgvalue.MustUUIDValue(locked.WorkspaceID),
+		computerID:          pgvalue.MustUUIDValue(locked.ComputerID),
 		kind:                locked.Kind,
 		conditionStatus:     db.WaitStatus(locked.ConditionStatus),
 		suspensionStatus:    db.RunWaitStatus(locked.SuspensionStatus),
@@ -877,7 +747,7 @@ func lockCurrentTokenWait(
 
 func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) error {
 	if wait.kind != db.WaitKindToken ||
-		wait.runID != run.id || wait.workspaceID != run.workspaceID ||
+		wait.runID != run.id || wait.computerID != run.computerID ||
 		wait.attemptNumber != run.currentAttempt || wait.expectedRunRevision != run.revision ||
 		run.status != db.RunStatusWaiting {
 		return tokenWaitAuthorityError("run and token wait fences do not match", nil)
@@ -891,6 +761,11 @@ func validateLockedTokenWait(run tokenWaitLockedRun, wait tokenWaitLockedWait) e
 			run.currentRunLeaseID != wait.currentRunLeaseID || wait.priorRunLeaseID.Valid ||
 			!run.activeStartedAt.Valid {
 			return tokenWaitAuthorityError("hot token wait lease fence does not match", nil)
+		}
+	case db.RunWaitStatusResuming:
+		if !run.currentRunLeaseID.Valid || run.currentRunLeaseID != wait.currentRunLeaseID ||
+			!wait.priorRunLeaseID.Valid || !wait.suspendCheckpointID.Valid {
+			return tokenWaitAuthorityError("restoring token wait provenance does not match", nil)
 		}
 	case db.RunWaitStatusParked:
 		if wait.conditionStatus != db.WaitStatusPending {

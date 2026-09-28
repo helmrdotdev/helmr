@@ -6,7 +6,7 @@ description: Execution records for Tasks and Actors, including attempts and tele
 # Runs
 
 A Run is one execution of a Task or Actor. It records the pinned Deployment and
-entrypoint, attached Workspace, cause, metadata, tags, attempt state, telemetry,
+entrypoint, attached Computer, cause, metadata, tags, attempt state, telemetry,
 and terminal output or failure. Actor Runs also identify their Session.
 
 | Status | Meaning |
@@ -23,7 +23,7 @@ and terminal output or failure. Actor Runs also identify their Session.
 | `system_failed` | Helmr could not safely continue execution. |
 
 A Run is pinned to the Deployment chosen at start. Promoting newer code does
-not rewrite the existing Run's authority. Its Workspace is a separate durable
+not rewrite the existing Run's authority. Its Computer is a separate durable
 resource and can survive the Run.
 
 A Task begins with Attempt 1. A retry creates the next Attempt before it is

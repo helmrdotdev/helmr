@@ -26,8 +26,8 @@ func StatusMutationLockKey(groupID uuid.UUID) int64 {
 type StatusStore interface {
 	GetWorkerGroupStatus(context.Context, pgtype.UUID) (db.GetWorkerGroupStatusRow, error)
 	TransitionWorkerGroupStatus(context.Context, db.TransitionWorkerGroupStatusParams) (db.TransitionWorkerGroupStatusRow, error)
-	GetWorkerInstanceStatusByResource(context.Context, db.GetWorkerInstanceStatusByResourceParams) (db.GetWorkerInstanceStatusByResourceRow, error)
-	MarkWorkerInstanceLost(context.Context, db.MarkWorkerInstanceLostParams) (db.MarkWorkerInstanceLostRow, error)
+	GetWorkerHostStatusByResource(context.Context, db.GetWorkerHostStatusByResourceParams) (db.GetWorkerHostStatusByResourceRow, error)
+	MarkWorkerHostLost(context.Context, db.MarkWorkerHostLostParams) (db.MarkWorkerHostLostRow, error)
 }
 
 type GroupStatus struct {
@@ -95,7 +95,7 @@ func ReadInstanceStatus(ctx context.Context, store StatusStore, groupID uuid.UUI
 	if err != nil {
 		return InstanceStatus{}, err
 	}
-	row, err := store.GetWorkerInstanceStatusByResource(ctx, db.GetWorkerInstanceStatusByResourceParams{
+	row, err := store.GetWorkerHostStatusByResource(ctx, db.GetWorkerHostStatusByResourceParams{
 		WorkerGroupID: pgvalue.UUID(groupID), ResourceID: resourceID,
 	})
 	if err != nil {
@@ -112,7 +112,7 @@ func MarkInstanceLost(ctx context.Context, store StatusStore, groupID uuid.UUID,
 	if expectedClaimVersion <= 0 {
 		return InstanceStatus{}, errors.New("expected claim version must be positive")
 	}
-	row, err := store.MarkWorkerInstanceLost(ctx, db.MarkWorkerInstanceLostParams{
+	row, err := store.MarkWorkerHostLost(ctx, db.MarkWorkerHostLostParams{
 		WorkerGroupID: pgvalue.UUID(groupID), ResourceID: resourceID, ExpectedClaimVersion: expectedClaimVersion,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

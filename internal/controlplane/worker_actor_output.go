@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -141,11 +142,11 @@ func (s *Server) appendActorOutput(
 		return api.SessionEvent{}, errActorOutputTooLarge
 	}
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
-		ID:               pgvalue.UUID(parsed.lease.leaseID),
-		LeaseSequence:    request.Lease.LeaseSequence,
-		WorkerGroupID:    pgvalue.UUID(worker.WorkerGroupID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:      worker.WorkerEpoch,
+		ID:            pgvalue.UUID(parsed.lease.leaseID),
+		LeaseSequence: request.Lease.LeaseSequence,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		WorkerHostID:  pgvalue.UUID(worker.WorkerHostID),
+		WorkerEpoch:   worker.WorkerEpoch,
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
 	if err != nil || !discovered.SessionID.Valid {
@@ -169,37 +170,29 @@ func (s *Server) appendActorOutput(
 			return staleActorOutputAppend(err)
 		}
 		if _, err := secret.LockAttemptDelivery(
-			ctx, work.q, locators.RunID, locators.AttemptNumber, locators.WorkspaceID,
+			ctx, work.q, locators.RunID, locators.AttemptNumber, locators.ComputerID,
 		); err != nil {
 			return fmt.Errorf("lock actor output secret authority: %w", err)
 		}
-		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
-		if err != nil || !owner.actor.ID.Valid {
+		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
+		if errors.Is(err, run.ErrExecutionWorkerClaims) {
+			return errStaleWorkerClaims
+		}
+		if err != nil || !authority.Session.ID.Valid {
 			return staleActorOutputAppend(err)
 		}
-		authority, err := lockLiveRunLeaseAuthority(
-			ctx,
-			work.q,
-			worker,
-			pgvalue.UUID(parsed.lease.leaseID),
-			request.Lease.LeaseSequence,
-			locators,
-		)
-		if err != nil {
-			return staleActorOutputAppend(err)
-		}
-		authority.actor = owner.actor
-		if authority.run.ParentRunID.Valid ||
-			authority.run.EntrypointKind != "actor" ||
-			authority.run.SessionID != authority.actor.ID ||
-			authority.actor.CurrentRunID != authority.run.ID ||
-			(authority.actor.Status != "open" && authority.actor.Status != "closing") ||
-			authority.run.Status != db.RunStatusRunning ||
-			authority.runLease.Status != db.RunLeaseStatusRunning ||
-			!authority.run.ActiveStartedAt.Valid ||
-			!authority.attempt.EntrypointEnteredAt.Valid ||
-			authority.attempt.TerminalAt.Valid ||
-			authority.runLease.FinalizationOperationID.Valid {
+
+		if authority.Run.ParentRunID.Valid ||
+			authority.Run.EntrypointKind != "actor" ||
+			authority.Run.SessionID != authority.Session.ID ||
+			authority.Session.CurrentRunID != authority.Run.ID ||
+			(authority.Session.Status != "open" && authority.Session.Status != "closing") ||
+			authority.Run.Status != db.RunStatusRunning ||
+			authority.Lease.Status != db.RunLeaseStatusRunning ||
+			!authority.Run.ActiveStartedAt.Valid ||
+			!authority.Attempt.EntrypointEnteredAt.Valid ||
+			authority.Attempt.TerminalAt.Valid ||
+			authority.Lease.FinalizationOperationID.Valid {
 			return errStaleActorOutputAppend
 		}
 		key := parsed.idempotencyKey
@@ -208,7 +201,7 @@ func (s *Server) appendActorOutput(
 		}
 		receipt, err := session.AppendTurnOutput(ctx, work.q, session.TurnScope{
 			EnvironmentID: environmentID, SessionID: actorID, TurnID: parsed.turnID,
-			RunID: pgvalue.MustUUIDValue(authority.run.ID), AttemptNumber: authority.attempt.Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
+			RunID: pgvalue.MustUUIDValue(authority.Run.ID), AttemptNumber: authority.Attempt.Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
 		}, key, parsed.data)
 		if err != nil {
 			return err
@@ -217,7 +210,10 @@ func (s *Server) appendActorOutput(
 			rejected = &session.OperationError{Code: receipt.Code}
 			return nil
 		}
-		response = projectWorkerSessionEvent(receipt.Event, authority.run.DeploymentID)
+		response = projectWorkerSessionEvent(receipt.Event, authority.Run.DeploymentID)
+		if _, err = run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease)); err != nil {
+			return staleActorOutputAppend(err)
+		}
 		return nil
 	})
 	if err == nil {
@@ -234,6 +230,10 @@ func staleActorOutputAppend(err error) error {
 }
 
 func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, bool) {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		return workerapi.RuntimeOperationFailure{Code: expired.ErrorCode(), Message: expired.Error()}, true
+	}
 	var conflictError idempotency.ConflictError
 	var operation *session.OperationError
 	switch {

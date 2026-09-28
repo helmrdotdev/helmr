@@ -337,9 +337,9 @@ func allAPIKeyPermissionScopes() []api.APIKeyScope {
 		api.APIKeyScopeRunsCreate, api.APIKeyScopeRunsRead, api.APIKeyScopeRunsManage,
 		api.APIKeyScopeSessionsRead, api.APIKeyScopeActorsStart, api.APIKeyScopeSessionsSend,
 		api.APIKeyScopeSessionsClose, api.APIKeyScopeSessionsInterrupt, api.APIKeyScopeSessionsResume, api.APIKeyScopeTokensCreate, api.APIKeyScopeTokensRead,
-		api.APIKeyScopeTokensComplete, api.APIKeyScopeTokensCancel, api.APIKeyScopeWorkspacesCreate,
-		api.APIKeyScopeWorkspacesRead, api.APIKeyScopeWorkspacesDelete,
-		api.APIKeyScopeWorkspaceExecCreate, api.APIKeyScopeSecretsWrite, api.APIKeyScopeTasksDeploy,
+		api.APIKeyScopeTokensComplete, api.APIKeyScopeTokensCancel, api.APIKeyScopeComputersCreate,
+		api.APIKeyScopeComputersRead, api.APIKeyScopeComputersDelete,
+		api.APIKeyScopeComputerCommandCreate, api.APIKeyScopeSecretsWrite, api.APIKeyScopeTasksDeploy,
 	}
 }
 

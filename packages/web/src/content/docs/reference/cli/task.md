@@ -9,7 +9,7 @@ sidebarLabel: task
 ```text
 helmr task list [-p PROJECT] [-e ENV] [--json]
 helmr task get TASK [-p PROJECT] [-e ENV] [--json]
-helmr task start TASK --workspace WORKSPACE [flags]
+helmr task start TASK --computer COMPUTER [flags]
 ```
 
 Start payload sources are mutually exclusive: `--payload-file FILE`,
@@ -20,4 +20,4 @@ metadata/retry JSON from `--metadata-file`/`--metadata-json` and
 
 `--idempotency-key` makes start retries stable. `--wait` waits for terminal
 state; `--follow` streams logs while waiting. `--timeout` bounds that wait and
-`--json` emits one JSON result. An existing `--workspace` is required.
+`--json` emits one JSON result. An existing `--computer` is required.

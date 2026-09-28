@@ -1,6 +1,6 @@
 import type { PayloadSchema } from "./schema/payload"
 import type { RequestOptions } from "./request"
-import type { WorkspaceRef } from "./workspace"
+import type { ComputerRef } from "./computer"
 
 export type JsonValue =
   | null
@@ -63,10 +63,10 @@ export interface RunDefaults {
   readonly retry?: RetryPolicy
 }
 
-declare const workspaceAddressTypeBrand: unique symbol
+declare const computerAddressTypeBrand: unique symbol
 
-export interface WorkspaceAddress {
-  readonly [workspaceAddressTypeBrand]: true
+export interface ComputerAddress {
+  readonly [computerAddressTypeBrand]: true
   readonly id: string
 }
 
@@ -93,7 +93,7 @@ interface RunContext {
     id: string
     version: string
   }>
-  readonly workspace: WorkspaceRef
+  readonly computer: ComputerRef
 }
 
 export interface TaskContext extends RunContext {
@@ -152,7 +152,7 @@ export interface Run<TOutput extends JsonValue = JsonValue>
     id: string
   }>
   readonly deployment: Readonly<{ id: string; version: string }>
-  readonly workspaceId: string
+  readonly computerId: string
   readonly sessionId?: string
   readonly parentRunId?: string
   readonly currentAttemptNumber: number
@@ -177,13 +177,13 @@ export interface TaskWait<T extends JsonValue>
 
 export interface TaskStartOptions extends RunOptions {
   readonly idempotencyKey?: string
-  readonly workspace: WorkspaceRef
+  readonly computer: ComputerRef
   readonly signal?: AbortSignal
 }
 
 export interface TaskCallOptions extends RunOptions {
   readonly idempotencyKey: string
-  readonly workspace: WorkspaceRef
+  readonly computer: ComputerRef
   readonly signal?: AbortSignal
 }
 
@@ -336,7 +336,7 @@ export interface ActorConfig extends RunDefaults {
 export interface ActorStartOptions {
   readonly key?: string
   readonly idempotencyKey?: string
-  readonly workspace: WorkspaceRef
+  readonly computer: ComputerRef
   readonly run?: RunOptions
   readonly signal?: AbortSignal
 }
@@ -364,7 +364,7 @@ export interface Session {
   readonly id: string
   readonly actorId: string
   readonly deploymentId: string
-  readonly workspaceId: string
+  readonly computerId: string
   readonly key?: string
   readonly status: SessionStatus
   readonly createdAt: string
@@ -393,7 +393,7 @@ export interface TurnState {
   readonly interruptRequested: boolean
   readonly acceptsMessages: boolean
   readonly terminalEventId?: string
-  readonly workspaceVersionId?: string
+  readonly computerDiskVersionId?: string
   readonly result?: JsonValue
   readonly error?: JsonValue
 }

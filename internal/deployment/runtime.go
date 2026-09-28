@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/runtimeid"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	productversion "github.com/helmrdotdev/helmr/internal/version"
+	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
 const NodeNoStripTypes = "--no-strip-types"
@@ -122,7 +122,7 @@ func NodeProgramFlags(version string) ([]string, error) {
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
-	architecture, err := runtimeid.ArchitectureFromGo(value)
+	architecture, err := vmplatform.ArchitectureFromGo(value)
 	return RuntimeArchitecture(architecture), err
 }
 

@@ -30,11 +30,11 @@ codes and display `message` without parsing it. They do not replace resource sta
 authorization, or retry rules.
 
 Write request bodies use `idempotency_key` where the endpoint supports stable
-retries, including Task/Actor starts, Session admission, messages and lifecycle operations, Workspace creation,
+retries, including Task/Actor starts, Session admission, messages and lifecycle operations, Computer creation,
 exec/deletion, Secret changes, Token changes, and Deployment creation. SDK
 request objects use `idempotencyKey`.
 
 Reuse a key only for retries of the same logical operation. A replay can return
 the accepted result; reusing a key with different canonical input can return a
 conflict. Whether the field is optional or required is endpoint-specific—for
-example Workspace exec requires it, while many creates generate or accept one.
+example Computer exec requires it, while many creates generate or accept one.

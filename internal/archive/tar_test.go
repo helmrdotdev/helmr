@@ -52,7 +52,7 @@ func TestCreateTarIsDeterministicAndKeepsCallerContent(t *testing.T) {
 	}
 	for _, name := range []string{"node_modules/pkg/index.js", ".helmr/cache", ".next/cache"} {
 		if !names[name] {
-			t.Fatalf("committed workspace entry %q was not archived: %+v", name, names)
+			t.Fatalf("committed computer entry %q was not archived: %+v", name, names)
 		}
 	}
 }

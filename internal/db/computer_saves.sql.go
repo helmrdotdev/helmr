@@ -11,25 +11,60 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const abandonReclaimedComputerSaves = `-- name: AbandonReclaimedComputerSaves :execrows
-WITH released AS (
- SELECT r.id FROM runtime_instances r
- WHERE r.reclaimed_at IS NOT NULL AND r.computer_save_version_id IS NOT NULL
- AND NOT EXISTS(SELECT 1 FROM computer_versions v WHERE v.publisher_runtime_instance_id=r.id
-   AND v.publisher_save_sequence=r.computer_save_sequence)
- ORDER BY r.id LIMIT $1
- FOR UPDATE OF r SKIP LOCKED
-)
-UPDATE runtime_instances r
-SET computer_save_version_id=NULL,computer_save_lease_id=NULL,computer_save_base_version_id=NULL,
- updated_at=clock_timestamp()
-FROM released WHERE r.id=released.id
+const abandonComputerInstanceSave = `-- name: AbandonComputerInstanceSave :execrows
+UPDATE computer_instances i
+SET save_disk_version_id=NULL,save_base_disk_version_id=NULL,updated_at=clock_timestamp()
+WHERE i.id=$1 AND i.environment_id=$2
+ AND i.worker_host_id=$3 AND i.worker_epoch=$4
+ AND i.writer_generation=$5 AND i.writer_token_hash=$6
+ AND i.save_sequence=$7 AND i.save_disk_version_id=$8
+ AND NOT EXISTS(SELECT 1 FROM computer_disk_versions v
+                WHERE v.publisher_computer_instance_id=i.id AND v.publisher_save_sequence=i.save_sequence)
 `
 
-// Worker/lease expiry alone is not exclusion evidence. Only physical reclaim
-// abandons an unpublished lost operation. Preserve the sequence. A committed
-// pending slot is not cleared: physical reclaim is not evidence of local adoption.
-// Its object pins are released separately after the same exclusion boundary.
+type AbandonComputerInstanceSaveParams struct {
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
+	WriterTokenHash    []byte      `json:"writer_token_hash"`
+	Sequence           int64       `json:"sequence"`
+	SaveID             pgtype.UUID `json:"save_id"`
+}
+
+// The host joins producers before abandoning an unpublished operation. The
+// sequence watermark remains, preventing a delayed admission from resurrecting it.
+func (q *Queries) AbandonComputerInstanceSave(ctx context.Context, arg AbandonComputerInstanceSaveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, abandonComputerInstanceSave,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
+		arg.WorkerEpoch,
+		arg.WriterGeneration,
+		arg.WriterTokenHash,
+		arg.Sequence,
+		arg.SaveID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const abandonReclaimedComputerSaves = `-- name: AbandonReclaimedComputerSaves :execrows
+WITH released AS (
+ SELECT i.id FROM computer_instances i WHERE i.reclaimed_at IS NOT NULL AND i.save_disk_version_id IS NOT NULL
+ AND NOT EXISTS(SELECT 1 FROM computer_disk_versions v WHERE v.publisher_computer_instance_id=i.id
+                AND v.publisher_save_sequence=i.save_sequence)
+ ORDER BY i.id LIMIT $1 FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE computer_instances i SET save_disk_version_id=NULL,save_base_disk_version_id=NULL,updated_at=clock_timestamp()
+FROM released WHERE i.id=released.id
+`
+
+// Only observed physical reclaim abandons an unpublished lost operation. Expiry
+// is not exclusion, and reclaim is not evidence of local source adoption.
 func (q *Queries) AbandonReclaimedComputerSaves(ctx context.Context, rowLimit int32) (int64, error) {
 	result, err := q.db.Exec(ctx, abandonReclaimedComputerSaves, rowLimit)
 	if err != nil {
@@ -38,38 +73,44 @@ func (q *Queries) AbandonReclaimedComputerSaves(ctx context.Context, rowLimit in
 	return result.RowsAffected(), nil
 }
 
-const abandonRuntimeComputerSave = `-- name: AbandonRuntimeComputerSave :execrows
-UPDATE runtime_instances r
-   SET computer_save_version_id=NULL, computer_save_lease_id=NULL,
-       computer_save_base_version_id=NULL, updated_at=clock_timestamp()
- WHERE r.id=$1
-   AND r.worker_instance_id=$2 AND r.worker_epoch=$3
-   AND r.computer_save_sequence=$4 AND r.computer_save_version_id=$5
-   AND r.computer_save_lease_id=$6
-   AND NOT EXISTS(SELECT 1 FROM computer_versions v
-       WHERE v.publisher_runtime_instance_id=r.id
-       AND v.publisher_save_sequence=r.computer_save_sequence)
+const adoptComputerInstanceSave = `-- name: AdoptComputerInstanceSave :execrows
+UPDATE computer_instances i
+SET source_disk_version_id=v.id,save_disk_version_id=NULL,
+    save_base_disk_version_id=NULL,updated_at=clock_timestamp()
+FROM computer_disk_versions v,computer_disk_version_roots root
+WHERE i.id=$1 AND i.environment_id=$2
+ AND i.worker_host_id=$3 AND i.worker_epoch=$4
+ AND i.writer_generation=$5 AND i.writer_token_hash=$6
+ AND i.reclaimed_at IS NULL
+ AND i.save_sequence=$7 AND i.save_disk_version_id=$8
+ AND v.id=i.save_disk_version_id AND v.publisher_computer_instance_id=i.id
+ AND v.publisher_save_sequence=i.save_sequence AND v.status='committed'
+ AND root.environment_id=i.environment_id AND root.computer_id=i.computer_id AND root.version_id=v.id
 `
 
-type AbandonRuntimeComputerSaveParams struct {
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch       int64       `json:"worker_epoch"`
-	Sequence          int64       `json:"sequence"`
-	SaveID            pgtype.UUID `json:"save_id"`
-	LeaseID           pgtype.UUID `json:"lease_id"`
+type AdoptComputerInstanceSaveParams struct {
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
+	WriterTokenHash    []byte      `json:"writer_token_hash"`
+	Sequence           int64       `json:"sequence"`
+	SaveID             pgtype.UUID `json:"save_id"`
 }
 
-// Abandon only an unpublished operation after its owner has joined producers. Keep the sequence watermark
-// so a delayed admission cannot resurrect a cleared operation.
-func (q *Queries) AbandonRuntimeComputerSave(ctx context.Context, arg AbandonRuntimeComputerSaveParams) (int64, error) {
-	result, err := q.db.Exec(ctx, abandonRuntimeComputerSave,
-		arg.RuntimeInstanceID,
-		arg.WorkerInstanceID,
+// Host acknowledgement follows durable local source adoption and producer
+// quiescence. Historical Run origins remain unchanged.
+func (q *Queries) AdoptComputerInstanceSave(ctx context.Context, arg AdoptComputerInstanceSaveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, adoptComputerInstanceSave,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
 		arg.WorkerEpoch,
+		arg.WriterGeneration,
+		arg.WriterTokenHash,
 		arg.Sequence,
 		arg.SaveID,
-		arg.LeaseID,
 	)
 	if err != nil {
 		return 0, err
@@ -77,148 +118,100 @@ func (q *Queries) AbandonRuntimeComputerSave(ctx context.Context, arg AbandonRun
 	return result.RowsAffected(), nil
 }
 
-const adoptRuntimeComputerSave = `-- name: AdoptRuntimeComputerSave :execrows
-UPDATE runtime_instances r
-SET computer_source_version_id=v.id,
-    computer_save_version_id=NULL, computer_save_lease_id=NULL,
-    computer_save_base_version_id=NULL, updated_at=clock_timestamp()
-FROM computer_versions v, computer_version_roots root
-WHERE r.id=$1
-  AND r.worker_instance_id=$2 AND r.worker_epoch=$3
-  AND r.reclaimed_at IS NULL
-  AND r.computer_save_sequence=$4 AND r.computer_save_version_id=$5
-  AND r.computer_save_lease_id=$6
-  AND v.id=r.computer_save_version_id AND v.publisher_runtime_instance_id=r.id
-  AND v.publisher_save_sequence=r.computer_save_sequence AND v.status='committed'
-  AND root.environment_id=r.environment_id AND root.computer_id=r.workspace_id
-  AND root.version_id=v.id
+const beginComputerInstanceSave = `-- name: BeginComputerInstanceSave :one
+UPDATE computer_instances i
+SET save_sequence=$1,save_disk_version_id=$2,
+    save_base_disk_version_id=$3,updated_at=clock_timestamp()
+FROM computers c,computer_disk_versions v
+WHERE i.id=$4 AND i.environment_id=$5
+ AND i.worker_host_id=$6 AND i.worker_epoch=$7
+ AND i.writer_generation=$8 AND i.writer_token_hash=$9
+ AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
+ AND i.desired_version=$10 AND i.desired_state='ready'
+ AND i.observed_state='ready' AND i.mount_state='mounted'
+ AND c.id=i.computer_id AND c.environment_id=i.environment_id AND c.status='active'
+ AND c.writer_generation=i.writer_generation
+ AND v.id=c.head_disk_version_id AND v.computer_id=c.id AND v.environment_id=c.environment_id
+ AND v.status='committed'
+ AND ((i.save_disk_version_id IS NULL AND i.save_sequence=$1::bigint-1
+       AND c.head_disk_version_id=$3
+       AND NOT EXISTS(SELECT 1 FROM computer_disk_versions existing WHERE existing.id=$2))
+   OR (i.save_sequence=$1 AND i.save_disk_version_id=$2
+       AND i.save_base_disk_version_id=$3))
+RETURNING i.save_sequence,i.save_disk_version_id,i.save_base_disk_version_id
 `
 
-type AdoptRuntimeComputerSaveParams struct {
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch       int64       `json:"worker_epoch"`
-	Sequence          int64       `json:"sequence"`
-	SaveID            pgtype.UUID `json:"save_id"`
-	LeaseID           pgtype.UUID `json:"lease_id"`
+type BeginComputerInstanceSaveParams struct {
+	Sequence           int64       `json:"sequence"`
+	SaveID             pgtype.UUID `json:"save_id"`
+	PredecessorID      pgtype.UUID `json:"predecessor_id"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
+	WriterTokenHash    []byte      `json:"writer_token_hash"`
+	DesiredVersion     int64       `json:"desired_version"`
 }
 
-// Host acknowledgement follows durable local adoption and producer quiescence.
-// Move only read-source retention; reservation/Run/Attempt/lease origins stay fixed.
-// The caller holds the live owner locks and validates the immutable receipt.
-func (q *Queries) AdoptRuntimeComputerSave(ctx context.Context, arg AdoptRuntimeComputerSaveParams) (int64, error) {
-	result, err := q.db.Exec(ctx, adoptRuntimeComputerSave,
-		arg.RuntimeInstanceID,
-		arg.WorkerInstanceID,
-		arg.WorkerEpoch,
+type BeginComputerInstanceSaveRow struct {
+	SaveSequence          int64       `json:"save_sequence"`
+	SaveDiskVersionID     pgtype.UUID `json:"save_disk_version_id"`
+	SaveBaseDiskVersionID pgtype.UUID `json:"save_base_disk_version_id"`
+}
+
+// The caller authenticates the Worker and locks the Computer before its instance.
+// Disk publication belongs to the physical writer, independently of Run lifetimes.
+func (q *Queries) BeginComputerInstanceSave(ctx context.Context, arg BeginComputerInstanceSaveParams) (BeginComputerInstanceSaveRow, error) {
+	row := q.db.QueryRow(ctx, beginComputerInstanceSave,
 		arg.Sequence,
 		arg.SaveID,
-		arg.LeaseID,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const beginRuntimeComputerSave = `-- name: BeginRuntimeComputerSave :one
-UPDATE runtime_instances r
-   SET computer_save_sequence=$1,
-       computer_save_version_id=$2,
-       computer_save_lease_id=$3,
-       computer_save_base_version_id=$4,
-       updated_at=clock_timestamp()
-  FROM computers c, workspace_leases l, computer_versions v
- WHERE r.id=$5
-   AND r.worker_instance_id=$6 AND r.worker_epoch=$7
-   AND r.desired_version=$8 AND r.desired_state='ready'
-   AND r.observed_state='ready' AND r.reclaimed_at IS NULL
-   AND c.id=r.workspace_id AND c.environment_id=r.environment_id
-   AND c.status='active'
-   AND v.id=c.head_version_id AND v.computer_id=c.id AND v.environment_id=c.environment_id
-   AND v.status='committed'
-   AND l.id=$3 AND l.workspace_id=c.id AND l.runtime_instance_id=r.id
-   AND l.worker_instance_id=r.worker_instance_id AND l.worker_epoch=r.worker_epoch
-   AND l.ownership_generation=c.ownership_generation AND l.writer_generation=c.writer_generation
-   AND l.status='active' AND l.expires_at>clock_timestamp()
-   AND (
-       (r.computer_save_version_id IS NULL AND r.computer_save_sequence=$1::bigint-1
-           AND c.head_version_id=$4
-           AND NOT EXISTS(SELECT 1 FROM computer_versions existing WHERE existing.id=$2))
-       OR (r.computer_save_sequence=$1 AND r.computer_save_version_id=$2
-           AND r.computer_save_lease_id=$3
-           AND r.computer_save_base_version_id=$4)
-   )
-RETURNING r.computer_save_sequence, r.computer_save_version_id, r.computer_save_lease_id, r.computer_save_base_version_id
-`
-
-type BeginRuntimeComputerSaveParams struct {
-	Sequence          int64       `json:"sequence"`
-	SaveID            pgtype.UUID `json:"save_id"`
-	LeaseID           pgtype.UUID `json:"lease_id"`
-	PredecessorID     pgtype.UUID `json:"predecessor_id"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
-	WorkerEpoch       int64       `json:"worker_epoch"`
-	DesiredVersion    int64       `json:"desired_version"`
-}
-
-type BeginRuntimeComputerSaveRow struct {
-	ComputerSaveSequence      int64       `json:"computer_save_sequence"`
-	ComputerSaveVersionID     pgtype.UUID `json:"computer_save_version_id"`
-	ComputerSaveLeaseID       pgtype.UUID `json:"computer_save_lease_id"`
-	ComputerSaveBaseVersionID pgtype.UUID `json:"computer_save_base_version_id"`
-}
-
-// The publication owner holds secret, Computer and execution locks and validates
-// live Run/process deadlines before calling these state transitions. These queries
-// do not authenticate Workers or authorize publication of bytes.
-func (q *Queries) BeginRuntimeComputerSave(ctx context.Context, arg BeginRuntimeComputerSaveParams) (BeginRuntimeComputerSaveRow, error) {
-	row := q.db.QueryRow(ctx, beginRuntimeComputerSave,
-		arg.Sequence,
-		arg.SaveID,
-		arg.LeaseID,
 		arg.PredecessorID,
-		arg.RuntimeInstanceID,
-		arg.WorkerInstanceID,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
 		arg.WorkerEpoch,
+		arg.WriterGeneration,
+		arg.WriterTokenHash,
 		arg.DesiredVersion,
 	)
-	var i BeginRuntimeComputerSaveRow
-	err := row.Scan(
-		&i.ComputerSaveSequence,
-		&i.ComputerSaveVersionID,
-		&i.ComputerSaveLeaseID,
-		&i.ComputerSaveBaseVersionID,
-	)
+	var i BeginComputerInstanceSaveRow
+	err := row.Scan(&i.SaveSequence, &i.SaveDiskVersionID, &i.SaveBaseDiskVersionID)
 	return i, err
 }
 
 const getWorkerComputerSave = `-- name: GetWorkerComputerSave :one
-SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired FROM computer_versions v JOIN runtime_instances r ON r.id=v.publisher_runtime_instance_id
- WHERE v.id=$1 AND v.publisher_save_sequence=$2
- AND r.worker_instance_id=$3
- AND r.worker_group_id=$4 AND r.worker_epoch=$5
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id FROM computer_disk_versions v JOIN computer_instances i ON i.id=v.publisher_computer_instance_id
+WHERE v.id=$1 AND v.publisher_save_sequence=$2
+ AND i.id=$3 AND i.environment_id=$4
+ AND i.worker_host_id=$5 AND i.worker_group_id=$6
+ AND i.worker_epoch=$7 AND i.writer_generation=$8
 `
 
 type GetWorkerComputerSaveParams struct {
-	SaveID           pgtype.UUID `json:"save_id"`
-	Sequence         pgtype.Int8 `json:"sequence"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
+	SaveID             pgtype.UUID `json:"save_id"`
+	Sequence           pgtype.Int8 `json:"sequence"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
 }
 
-// Replay uses immutable publication facts, not the current head or pending slot.
-func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComputerSaveParams) (ComputerVersion, error) {
+// Immutable receipts remain queryable after lease expiry and physical reclaim.
+func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComputerSaveParams) (ComputerDiskVersion, error) {
 	row := q.db.QueryRow(ctx, getWorkerComputerSave,
 		arg.SaveID,
 		arg.Sequence,
-		arg.WorkerInstanceID,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
+		arg.WriterGeneration,
 	)
-	var i ComputerVersion
+	var i ComputerDiskVersion
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -227,133 +220,146 @@ func (q *Queries) GetWorkerComputerSave(ctx context.Context, arg GetWorkerComput
 		&i.RootPackDigest,
 		&i.LogicalBytes,
 		&i.Status,
-		&i.SourceWorkspaceLeaseID,
-		&i.PublisherRuntimeInstanceID,
+		&i.PublisherComputerInstanceID,
 		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
 		&i.PayloadNotRetired,
+		&i.SourceComputerInstanceID,
 	)
 	return i, err
 }
 
+const isComputerInstanceSaveAdopted = `-- name: IsComputerInstanceSaveAdopted :one
+SELECT EXISTS(SELECT 1 FROM computer_disk_versions v
+              WHERE v.id=$1 AND v.publisher_computer_instance_id=i.id
+              AND v.publisher_save_sequence=$2)
+ AND (i.save_sequence>$2::bigint
+      OR (i.save_sequence=$2::bigint AND i.save_disk_version_id IS NULL)) AS adopted
+FROM computer_instances i
+WHERE i.id=$3 AND i.environment_id=$4
+ AND i.worker_host_id=$5 AND i.worker_group_id=$6
+ AND i.worker_epoch=$7 AND i.writer_generation=$8
+`
+
+type IsComputerInstanceSaveAdoptedParams struct {
+	SaveID             pgtype.UUID `json:"save_id"`
+	Sequence           pgtype.Int8 `json:"sequence"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
+}
+
+func (q *Queries) IsComputerInstanceSaveAdopted(ctx context.Context, arg IsComputerInstanceSaveAdoptedParams) (pgtype.Bool, error) {
+	row := q.db.QueryRow(ctx, isComputerInstanceSaveAdopted,
+		arg.SaveID,
+		arg.Sequence,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
+		arg.WriterGeneration,
+	)
+	var adopted pgtype.Bool
+	err := row.Scan(&adopted)
+	return adopted, err
+}
+
 const isComputerSaveAbandoned = `-- name: IsComputerSaveAbandoned :one
-SELECT (r.computer_save_sequence >= $1::bigint
-        AND (r.computer_save_sequence > $1::bigint OR r.computer_save_version_id IS NULL)
-        AND NOT EXISTS(SELECT 1 FROM computer_versions v WHERE v.publisher_runtime_instance_id=r.id
-          AND v.publisher_save_sequence=$1::bigint)) AS abandoned
-FROM runtime_instances r
-WHERE r.worker_instance_id=$2
-  AND r.worker_group_id=$3 AND r.worker_epoch=$4
-  AND (($5::uuid IS NOT NULL AND EXISTS(
-       SELECT 1 FROM run_leases l WHERE l.id=$5
-       AND l.lease_sequence=$6 AND l.runtime_instance_id=r.id
-       AND l.worker_instance_id=r.worker_instance_id AND l.worker_epoch=r.worker_epoch))
-    OR ($7::uuid IS NOT NULL AND EXISTS(
-       SELECT 1 FROM workspace_processes p JOIN workspace_mounts m ON m.id=p.workspace_mount_id
-       WHERE m.id=$7 AND m.org_id=$8
-       AND m.runtime_instance_id=r.id AND m.worker_instance_id=r.worker_instance_id
-       AND m.worker_epoch=r.worker_epoch AND p.runtime_instance_id=r.id)))
+SELECT (i.save_sequence>=$1::bigint
+        AND (i.save_sequence>$1::bigint OR i.save_disk_version_id IS NULL)
+        AND NOT EXISTS(SELECT 1 FROM computer_disk_versions v WHERE v.publisher_computer_instance_id=i.id
+                       AND v.publisher_save_sequence=$1::bigint)) AS abandoned
+FROM computer_instances i
+WHERE i.id=$2 AND i.environment_id=$3
+ AND i.worker_host_id=$4 AND i.worker_group_id=$5
+ AND i.worker_epoch=$6 AND i.writer_generation=$7
 `
 
 type IsComputerSaveAbandonedParams struct {
-	Sequence         int64       `json:"sequence"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    pgtype.UUID `json:"worker_group_id"`
-	WorkerEpoch      int64       `json:"worker_epoch"`
-	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
-	LeaseSequence    int64       `json:"lease_sequence"`
-	MountID          pgtype.UUID `json:"mount_id"`
-	OrgID            pgtype.UUID `json:"org_id"`
+	Sequence           int64       `json:"sequence"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
 }
 
-// Stable absence, not a historical receipt: this sequence cannot be admitted
-// again and no committed save at that sequence exists. Read-only history remains
-// scoped to the authenticated Worker and the original execution identity.
+// Stable absence is distinct from a committed save's historical receipt.
 func (q *Queries) IsComputerSaveAbandoned(ctx context.Context, arg IsComputerSaveAbandonedParams) (pgtype.Bool, error) {
 	row := q.db.QueryRow(ctx, isComputerSaveAbandoned,
 		arg.Sequence,
-		arg.WorkerInstanceID,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
-		arg.RunLeaseID,
-		arg.LeaseSequence,
-		arg.MountID,
-		arg.OrgID,
+		arg.WriterGeneration,
 	)
 	var abandoned pgtype.Bool
 	err := row.Scan(&abandoned)
 	return abandoned, err
 }
 
-const isRuntimeComputerSaveAdopted = `-- name: IsRuntimeComputerSaveAdopted :one
-SELECT computer_save_sequence > $1::bigint
-   OR (computer_save_sequence = $1::bigint
-       AND computer_save_version_id IS DISTINCT FROM $2::uuid) AS adopted
-FROM runtime_instances WHERE id=$3
-`
-
-type IsRuntimeComputerSaveAdoptedParams struct {
-	Sequence          int64       `json:"sequence"`
-	SaveID            pgtype.UUID `json:"save_id"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-}
-
-// Historical acknowledgement: a committed operation cannot be abandoned.
-func (q *Queries) IsRuntimeComputerSaveAdopted(ctx context.Context, arg IsRuntimeComputerSaveAdoptedParams) (pgtype.Bool, error) {
-	row := q.db.QueryRow(ctx, isRuntimeComputerSaveAdopted, arg.Sequence, arg.SaveID, arg.RuntimeInstanceID)
-	var adopted pgtype.Bool
-	err := row.Scan(&adopted)
-	return adopted, err
-}
-
-const publishRuntimeComputerSave = `-- name: PublishRuntimeComputerSave :one
+const publishComputerInstanceSave = `-- name: PublishComputerInstanceSave :one
 WITH created AS (
- INSERT INTO computer_versions(id,environment_id,computer_id,parent_version_id,
- root_pack_digest,logical_bytes,status,source_workspace_lease_id,ownership_generation,writer_generation,
- publisher_runtime_instance_id,publisher_desired_version,publisher_save_sequence,
+ INSERT INTO computer_disk_versions(id,environment_id,computer_id,parent_version_id,
+ root_pack_digest,logical_bytes,status,source_computer_instance_id,writer_generation,
+ publisher_computer_instance_id,publisher_desired_version,publisher_save_sequence,
  publication_request_fingerprint,published_at)
- SELECT r.computer_save_version_id,r.environment_id,r.workspace_id,r.computer_save_base_version_id,
- $1,$2,'committed',l.id,l.ownership_generation,l.writer_generation,
- r.id,r.desired_version,r.computer_save_sequence,$3,clock_timestamp()
- FROM runtime_instances r JOIN workspace_leases l ON l.id=r.computer_save_lease_id
- JOIN computers c ON c.id=r.workspace_id AND c.environment_id=r.environment_id
- WHERE r.id=$4 AND r.computer_save_version_id=$5
- AND r.computer_save_sequence=$6
- AND r.reclaimed_at IS NULL AND r.desired_state='ready'
- AND c.head_version_id=r.computer_save_base_version_id
- AND c.ownership_generation=l.ownership_generation AND c.writer_generation=l.writer_generation
- AND l.status='active' AND l.expires_at>clock_timestamp()
- RETURNING id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status, source_workspace_lease_id, publisher_runtime_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, ownership_generation, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired
+ SELECT i.save_disk_version_id,i.environment_id,i.computer_id,i.save_base_disk_version_id,
+ $1,$2,'committed',i.id,i.writer_generation,
+ i.id,i.desired_version,i.save_sequence,$3,clock_timestamp()
+ FROM computer_instances i JOIN computers c ON c.id=i.computer_id AND c.environment_id=i.environment_id
+ WHERE i.id=$4 AND i.environment_id=$5
+ AND i.worker_host_id=$6 AND i.worker_epoch=$7
+ AND i.writer_generation=$8 AND i.writer_token_hash=$9
+ AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
+ AND i.desired_version=$10 AND i.desired_state='ready'
+ AND i.observed_state='ready' AND i.mount_state='mounted'
+ AND i.save_disk_version_id=$11 AND i.save_sequence=$12
+ AND c.status='active' AND c.head_disk_version_id=i.save_base_disk_version_id
+ AND c.writer_generation=i.writer_generation
+ RETURNING id, environment_id, computer_id, parent_version_id, root_pack_digest, logical_bytes, status, publisher_computer_instance_id, publisher_save_sequence, publisher_desired_version, publication_request_fingerprint, writer_generation, created_at, published_at, discarded_at, payload_retired_at, payload_not_retired, source_computer_instance_id
 ), retained AS (
- INSERT INTO computer_version_roots(environment_id,computer_id,version_id,locator)
- SELECT environment_id,computer_id,id,$7 FROM created RETURNING version_id
+ INSERT INTO computer_disk_version_roots(environment_id,computer_id,version_id,locator)
+ SELECT environment_id,computer_id,id,$13 FROM created RETURNING version_id
 ), advanced AS (
- UPDATE computers c SET head_version_id=v.id,revision=revision+1,updated_at=v.published_at
+ UPDATE computers c SET head_disk_version_id=v.id,revision=revision+1,updated_at=v.published_at
  FROM created v,retained root WHERE c.id=v.computer_id AND root.version_id=v.id
- AND c.head_version_id=v.parent_version_id
+ AND c.head_disk_version_id=v.parent_version_id AND c.writer_generation=v.writer_generation
  RETURNING c.id
 )
-SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.source_workspace_lease_id, v.publisher_runtime_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.ownership_generation, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired FROM created v JOIN advanced c ON c.id=v.computer_id
+SELECT v.id, v.environment_id, v.computer_id, v.parent_version_id, v.root_pack_digest, v.logical_bytes, v.status, v.publisher_computer_instance_id, v.publisher_save_sequence, v.publisher_desired_version, v.publication_request_fingerprint, v.writer_generation, v.created_at, v.published_at, v.discarded_at, v.payload_retired_at, v.payload_not_retired, v.source_computer_instance_id FROM created v JOIN advanced c ON c.id=v.computer_id
 `
 
-type PublishRuntimeComputerSaveParams struct {
-	RootPackDigest    pgtype.Text `json:"root_pack_digest"`
-	LogicalBytes      int64       `json:"logical_bytes"`
-	Fingerprint       []byte      `json:"fingerprint"`
-	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
-	SaveID            pgtype.UUID `json:"save_id"`
-	Sequence          int64       `json:"sequence"`
-	Locator           []byte      `json:"locator"`
+type PublishComputerInstanceSaveParams struct {
+	RootPackDigest     pgtype.Text `json:"root_pack_digest"`
+	LogicalBytes       int64       `json:"logical_bytes"`
+	Fingerprint        []byte      `json:"fingerprint"`
+	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
+	WorkerEpoch        int64       `json:"worker_epoch"`
+	WriterGeneration   int64       `json:"writer_generation"`
+	WriterTokenHash    []byte      `json:"writer_token_hash"`
+	DesiredVersion     int64       `json:"desired_version"`
+	SaveID             pgtype.UUID `json:"save_id"`
+	Sequence           int64       `json:"sequence"`
+	Locator            []byte      `json:"locator"`
 }
 
-type PublishRuntimeComputerSaveRow struct {
+type PublishComputerInstanceSaveRow struct {
 	ID                            pgtype.UUID        `json:"id"`
 	EnvironmentID                 pgtype.UUID        `json:"environment_id"`
 	ComputerID                    pgtype.UUID        `json:"computer_id"`
@@ -361,34 +367,38 @@ type PublishRuntimeComputerSaveRow struct {
 	RootPackDigest                pgtype.Text        `json:"root_pack_digest"`
 	LogicalBytes                  int64              `json:"logical_bytes"`
 	Status                        string             `json:"status"`
-	SourceWorkspaceLeaseID        pgtype.UUID        `json:"source_workspace_lease_id"`
-	PublisherRuntimeInstanceID    pgtype.UUID        `json:"publisher_runtime_instance_id"`
+	PublisherComputerInstanceID   pgtype.UUID        `json:"publisher_computer_instance_id"`
 	PublisherSaveSequence         pgtype.Int8        `json:"publisher_save_sequence"`
 	PublisherDesiredVersion       pgtype.Int8        `json:"publisher_desired_version"`
 	PublicationRequestFingerprint []byte             `json:"publication_request_fingerprint"`
-	OwnershipGeneration           int64              `json:"ownership_generation"`
 	WriterGeneration              int64              `json:"writer_generation"`
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	PublishedAt                   pgtype.Timestamptz `json:"published_at"`
 	DiscardedAt                   pgtype.Timestamptz `json:"discarded_at"`
 	PayloadRetiredAt              pgtype.Timestamptz `json:"payload_retired_at"`
 	PayloadNotRetired             pgtype.Bool        `json:"payload_not_retired"`
+	SourceComputerInstanceID      pgtype.UUID        `json:"source_computer_instance_id"`
 }
 
-// All objects are certified and retained by the exact operation before this
-// transaction. The caller holds Computer/execution/Runtime locks and rechecks
-// deadlines before commit. Pending ownership remains until source adoption.
-func (q *Queries) PublishRuntimeComputerSave(ctx context.Context, arg PublishRuntimeComputerSaveParams) (PublishRuntimeComputerSaveRow, error) {
-	row := q.db.QueryRow(ctx, publishRuntimeComputerSave,
+// Certified objects and their exact operation pins are checked under the same
+// Computer/instance locks. Head publication and root retention commit atomically.
+func (q *Queries) PublishComputerInstanceSave(ctx context.Context, arg PublishComputerInstanceSaveParams) (PublishComputerInstanceSaveRow, error) {
+	row := q.db.QueryRow(ctx, publishComputerInstanceSave,
 		arg.RootPackDigest,
 		arg.LogicalBytes,
 		arg.Fingerprint,
-		arg.RuntimeInstanceID,
+		arg.ComputerInstanceID,
+		arg.EnvironmentID,
+		arg.WorkerHostID,
+		arg.WorkerEpoch,
+		arg.WriterGeneration,
+		arg.WriterTokenHash,
+		arg.DesiredVersion,
 		arg.SaveID,
 		arg.Sequence,
 		arg.Locator,
 	)
-	var i PublishRuntimeComputerSaveRow
+	var i PublishComputerInstanceSaveRow
 	err := row.Scan(
 		&i.ID,
 		&i.EnvironmentID,
@@ -397,18 +407,17 @@ func (q *Queries) PublishRuntimeComputerSave(ctx context.Context, arg PublishRun
 		&i.RootPackDigest,
 		&i.LogicalBytes,
 		&i.Status,
-		&i.SourceWorkspaceLeaseID,
-		&i.PublisherRuntimeInstanceID,
+		&i.PublisherComputerInstanceID,
 		&i.PublisherSaveSequence,
 		&i.PublisherDesiredVersion,
 		&i.PublicationRequestFingerprint,
-		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.CreatedAt,
 		&i.PublishedAt,
 		&i.DiscardedAt,
 		&i.PayloadRetiredAt,
 		&i.PayloadNotRetired,
+		&i.SourceComputerInstanceID,
 	)
 	return i, err
 }

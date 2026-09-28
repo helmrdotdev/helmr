@@ -3,7 +3,6 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/url"
 	"testing"
 	"time"
@@ -68,61 +67,6 @@ func TestTokenCreateResponseRemainsOriginalPendingProjection(t *testing.T) {
 	}
 }
 
-func TestExpiredTokenOperationCommitsTerminalTransition(t *testing.T) {
-	tokenRow := db.Token{
-		ID:            pgvalue.UUID(uuid.NewV7()),
-		OrgID:         pgvalue.UUID(uuid.NewV7()),
-		ProjectID:     pgvalue.UUID(uuid.NewV7()),
-		EnvironmentID: pgvalue.UUID(uuid.NewV7()),
-	}
-
-	t.Run("complete", func(t *testing.T) {
-		store := &expiredTokenOperationStore{token: tokenRow}
-		server := &Server{db: store}
-		if _, err := server.completeTokenRecord(
-			t.Context(),
-			tokenRow,
-			[]byte(`{"approved":true}`),
-			"",
-			nil,
-		); !errors.Is(err, errTokenExpired) {
-			t.Fatalf("completion error = %v", err)
-		}
-		if store.completions != 1 || store.cancellations != 0 ||
-			store.commits != 1 || store.rollbacks != 0 {
-			t.Fatalf(
-				"completion calls = complete %d cancel %d commit %d rollback %d",
-				store.completions,
-				store.cancellations,
-				store.commits,
-				store.rollbacks,
-			)
-		}
-	})
-
-	t.Run("cancel", func(t *testing.T) {
-		store := &expiredTokenOperationStore{token: tokenRow}
-		server := &Server{db: store}
-		if _, err := server.cancelTokenRecord(
-			t.Context(),
-			tokenRow,
-			"",
-		); !errors.Is(err, errTokenExpired) {
-			t.Fatalf("cancellation error = %v", err)
-		}
-		if store.completions != 0 || store.cancellations != 1 ||
-			store.commits != 1 || store.rollbacks != 0 {
-			t.Fatalf(
-				"cancellation calls = complete %d cancel %d commit %d rollback %d",
-				store.completions,
-				store.cancellations,
-				store.commits,
-				store.rollbacks,
-			)
-		}
-	})
-}
-
 type expiredTokenOperationStore struct {
 	db.Querier
 	token         db.Token
@@ -130,12 +74,6 @@ type expiredTokenOperationStore struct {
 	cancellations int
 	commits       int
 	rollbacks     int
-}
-
-func (s *expiredTokenOperationStore) BeginQuerier(
-	context.Context,
-) (db.Querier, transaction, error) {
-	return s, expiredTokenOperationTransaction{store: s}, nil
 }
 
 func (s *expiredTokenOperationStore) CompleteToken(

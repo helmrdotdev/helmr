@@ -4,7 +4,7 @@ declare const builderTypeBrand: unique symbol
 
 // Builder prepares the Helmr-managed Linux environment in which dependencies
 // are installed and declarations are analyzed. It is a separate role from
-// image(): it has no base, key or Workspace identity, and its copy sources are
+// image(): it has no base, key or Computer identity, and its copy sources are
 // paths in the captured project source rather than the installed tree.
 export interface Builder {
   readonly [builderTypeBrand]: true

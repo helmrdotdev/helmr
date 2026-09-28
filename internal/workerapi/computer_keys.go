@@ -4,8 +4,8 @@ import "github.com/helmrdotdev/helmr/internal/computer"
 
 // InitialComputerKeyRequest selects authority, never a caller-chosen key or scope.
 type InitialComputerKeyRequest struct {
-	RuntimeInstanceID string `json:"runtime_instance_id"`
-	DesiredVersion    int64  `json:"desired_version"`
+	ComputerInstanceID string `json:"computer_instance_id"`
+	DesiredVersion     int64  `json:"desired_version"`
 }
 
 // ComputerKeyMaterial is host-only. Its owner must clear Key after use and must
@@ -19,8 +19,8 @@ type ComputerKeyMaterial struct {
 // ComputerSourceRequest selects the preparing Runtime; source/key identities are
 // resolved by the Control Plane, never chosen by the caller.
 type ComputerSourceRequest struct {
-	RuntimeInstanceID string `json:"runtime_instance_id"`
-	DesiredVersion    int64  `json:"desired_version"`
+	ComputerInstanceID string `json:"computer_instance_id"`
+	DesiredVersion     int64  `json:"desired_version"`
 }
 
 type ComputerSourceMaterial struct {

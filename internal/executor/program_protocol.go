@@ -135,52 +135,29 @@ func (task *guestRunLeaseTask) programStream() io.ReadWriteCloser {
 	return task.program.controlStream()
 }
 
-type checkpointCall struct {
-	ctx     context.Context
-	request CheckpointRequest
-	result  chan checkpointReply
-}
-type checkpointReply struct {
-	value CheckpointResult
-	err   error
-}
-type hotWaitCheckpointer struct {
-	Checkpointer
-	requests chan checkpointCall
-}
-
-func (c hotWaitCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (CheckpointResult, error) {
-	call := checkpointCall{ctx: ctx, request: request, result: make(chan checkpointReply, 1)}
-	select {
-	case c.requests <- call:
-	case <-ctx.Done():
-		return CheckpointResult{}, ctx.Err()
-	}
-	select {
-	case r := <-call.result:
-		return r.value, r.err
-	case <-ctx.Done():
-		return CheckpointResult{}, ctx.Err()
-	}
-}
-
 // runHotWait lets bounded non-consuming operations proceed while the durable
-// wait is polled. Checkpoint work returns to this same reader owner before pause.
-func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitRequest, run func(context.Context, WaitRequest) error) error {
-	task.mu.Lock()
-	task.saveWaiting++
-	task.mu.Unlock()
-	defer func() { task.mu.Lock(); task.saveWaiting--; task.mu.Unlock() }()
-
+// wait is polled. Physical capture is owned by the Computer coordinator.
+func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitRequest, run func(context.Context, WaitRequest) error) (retErr error) {
 	if task.program.protocol == nil {
 		return run(ctx, request)
 	}
+	if task.captures == nil {
+		return errors.New("Computer capture registry is required for hot waits")
+	}
+	var captureRequests <-chan *computerMemberPause
+	{
+		task.mu.Lock()
+		lease := task.lease
+		task.mu.Unlock()
+		entry, detach, err := task.captures.register(lease, request.RunWaitID)
+		if err != nil {
+			return err
+		}
+		defer func() { retErr = errors.Join(retErr, detach()) }()
+		captureRequests = entry.requests
+	}
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	calls := make(chan checkpointCall)
-	if request.Checkpointer != nil {
-		request.Checkpointer = hotWaitCheckpointer{Checkpointer: request.Checkpointer, requests: calls}
-	}
 	resuming := make(chan struct{})
 	var resumeOnce sync.Once
 	if resume := request.Resume; resume != nil {
@@ -202,15 +179,35 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 
 	for {
 		select {
+		case pause := <-captureRequests:
+			stopAbort := context.AfterFunc(ctx, func() { pause.abort(ctx.Err()) })
+			finish := func(err error) error {
+				pause.ready <- err
+				// Once a pause is dispatched the logical owner stays joined
+				// through physical exclusion, even when its caller cancels.
+				<-pause.finished
+				stopAbort()
+				if result := errors.Join(err, pause.result); result != nil {
+					return result
+				}
+				return ErrDetached
+			}
+			cancel()
+			// Join the poller before transferring the reader. A simultaneous
+			// resume decision invalidates this capture rather than being lost.
+			pollErr := <-done
+			select {
+			case <-resuming:
+				return finish(errors.New("computer capture raced a wait resume"))
+			default:
+			}
+			if pollErr != nil && !errors.Is(pollErr, context.Canceled) {
+				return finish(pollErr)
+			}
+			return finish(task.pauseComputerMember(pause.ctx, request, pause))
 		case err := <-done:
 			return err
 		case <-resuming:
-			return awaitDone()
-		case call := <-calls:
-			result, err := task.checkpointer.CreateCheckpoint(call.ctx, call.request)
-			call.result <- checkpointReply{value: result, err: err}
-			// A checkpoint detaches this source. Its physical stream remains owned by
-			// the checkpointer until the Wait owner has recorded ready or failure.
 			return awaitDone()
 		case r := <-task.program.protocol.events:
 			select {

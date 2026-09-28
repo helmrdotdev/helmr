@@ -40,7 +40,7 @@ key from your application's configuration to its constructor.
 Required: `DATABASE_URL`, `CAS_URI`, `CLICKHOUSE_URL`,
 `DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH`, `PLATFORM_STORE_URI`,
 `WORKER_TOKEN_SIGNING_KEY`, `AUTH_KEY`, `ENCRYPTION_KEY`,
-`WORKSPACE_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
+`COMPUTER_FENCING_KEY`, `TOKEN_CREDENTIAL_KEY`,
 `GITHUB_OAUTH_CLIENT_ID`, and `GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
@@ -87,7 +87,7 @@ scaling](/docs/self-hosting/capacity-scaling) for setup and rotation.
 
 ClickHouse telemetry: `CLICKHOUSE_URL` is required. Set `CLICKHOUSE_USER` when the service user is not `default`, and set `CLICKHOUSE_PASSWORD` when the service requires a password.
 
-`AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `WORKSPACE_FENCING_KEY`,
+`AUTH_KEY`, `TOKEN_CREDENTIAL_KEY`, `COMPUTER_FENCING_KEY`,
 `ENCRYPTION_KEY`, and `WORKER_TOKEN_SIGNING_KEY` are distinct single roots.
 Each must be base64 and decode to exactly 32 bytes. Every Control Plane replica uses
 the same values. Online rotation and multi-key verification are not supported.
@@ -137,13 +137,13 @@ administrative credentials.
 
 ## Dispatcher
 
-Required: `DATABASE_URL`, `CLICKHOUSE_URL`, `WORKSPACE_FENCING_KEY`, and `ENCRYPTION_KEY`.
+Required: `DATABASE_URL`, `CLICKHOUSE_URL`, `COMPUTER_FENCING_KEY`, and `ENCRYPTION_KEY`.
 
 The dispatcher uses the same `ENCRYPTION_KEY` as the Control Plane to encrypt
-CA signers when it creates protected Workspaces for scheduled tasks.
+CA signers when it creates protected Computers for scheduled tasks.
 
 The dispatcher uses the same single base64-encoded 32-byte
-`WORKSPACE_FENCING_KEY` as the Control Plane service.
+`COMPUTER_FENCING_KEY` as the Control Plane service.
 
 The AWS Control Plane module provisions cluster-mode disabled ElastiCache Valkey/Redis for the
 Control Plane event stream and injects `REDIS_URL` into the Control Plane service.
@@ -197,7 +197,6 @@ VM sizing, Worker capacity, disk budgeting, and concurrency use these settings:
 | `WORKER_CAPACITY_MEMORY_MIB` | `VM_MEMORY_MIB` | Total memory capacity advertised by the Worker. It cannot be smaller than `VM_MEMORY_MIB`. |
 | `WORKER_DISK_MIB` | Total capacity of the Worker filesystem. | Overrides the physical capacity used for disk budgeting. |
 | `WORKER_DISK_RESERVE_MIB` | `1024` | Host disk space subtracted to form the physical disk budget. |
-| `WORKER_SUBSTRATE_CACHE_MAX_MIB` | Derived when `0`. | Maximum substrate-cache size. |
 | `WORKER_ARTIFACT_CACHE_MAX_MIB` | Derived when `0`. | Maximum artifact-cache size. |
 | `WORKER_EXECUTION_SLOTS` | `1` | Maximum concurrent executions admitted by the Worker. |
 | `VM_INIT_TIMEOUT` | `30s` | Timeout for Firecracker SDK initialization. |

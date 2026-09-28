@@ -9,7 +9,7 @@ SELECT id
 -- name: ListCancellationLineage :many
 WITH RECURSIVE lineage AS (
     SELECT runs.id,
-           runs.workspace_id,
+           runs.computer_id,
            runs.parent_run_id,
            runs.parent_owns_lifecycle,
            0 AS depth,
@@ -20,7 +20,7 @@ WITH RECURSIVE lineage AS (
      WHERE runs.id = sqlc.arg(target_id)
     UNION ALL
     SELECT parent.id,
-           parent.workspace_id,
+           parent.computer_id,
            parent.parent_run_id,
            parent.parent_owns_lifecycle,
            lineage.depth + 1,
@@ -34,7 +34,7 @@ WITH RECURSIVE lineage AS (
        AND NOT lineage.cycle
        AND lineage.depth < lineage.max_depth
 )
-SELECT id, workspace_id, depth, cycle
+SELECT id, computer_id, depth, cycle
   FROM lineage
  ORDER BY depth DESC;
 
@@ -90,13 +90,13 @@ SELECT id,
        parent_run_id,
        parent_owns_lifecycle,
        environment_id,
-       workspace_id,
+       computer_id,
        session_id,
        status,
        current_attempt_number,
        current_run_lease_id,
        revision,
-       runtime_preparation_count
+       instance_preparation_count
   FROM runs
  WHERE id = sqlc.arg(id)
    AND org_id = sqlc.arg(org_id)
@@ -104,38 +104,38 @@ SELECT id,
    AND environment_id = sqlc.arg(environment_id)
  FOR UPDATE;
 
--- name: ChargeRunRuntimePreparationFailure :one
+-- name: ChargeRunInstancePreparationFailure :one
 UPDATE runs
-   SET runtime_preparation_count = runtime_preparation_count + 1,
-       next_runtime_preparation_at = transaction_timestamp() + make_interval(
-           secs => LEAST(60, power(2, runtime_preparation_count + 1)::integer)
+   SET instance_preparation_count = instance_preparation_count + 1,
+       next_instance_preparation_at = transaction_timestamp() + make_interval(
+           secs => LEAST(60, power(2, instance_preparation_count + 1)::integer)
        ),
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
    AND status = 'queued'
    AND current_run_lease_id IS NULL
    AND current_attempt_number = sqlc.arg(attempt_number)
-   AND runtime_preparation_count = sqlc.arg(expected_count)
-   AND runtime_preparation_count < 7
+   AND instance_preparation_count = sqlc.arg(expected_count)
+   AND instance_preparation_count < 7
 RETURNING *;
 
--- name: ExhaustRunRuntimePreparation :one
+-- name: ExhaustRunInstancePreparation :one
 UPDATE runs
-   SET runtime_preparation_count = 8,
-       next_runtime_preparation_at = NULL,
+   SET instance_preparation_count = 8,
+       next_instance_preparation_at = NULL,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(id)
    AND status = 'queued'
    AND current_run_lease_id IS NULL
    AND current_attempt_number = sqlc.arg(attempt_number)
-   AND runtime_preparation_count = 7
+   AND instance_preparation_count = 7
 RETURNING *;
 
--- name: LockCancellationWorkspaces :many
+-- name: LockCancellationComputers :many
 SELECT id
   FROM computers
  WHERE id IN (
-       SELECT workspace_id
+       SELECT computer_id
          FROM runs
         WHERE id = ANY(sqlc.arg(run_ids)::uuid[])
  )
@@ -148,30 +148,17 @@ SELECT run_attempts.run_id
   JOIN runs
     ON runs.id = run_attempts.run_id
    AND runs.current_attempt_number = run_attempts.number
-   AND runs.workspace_id = run_attempts.workspace_id
+   AND runs.computer_id = run_attempts.computer_id
  WHERE runs.id = ANY(sqlc.arg(run_ids)::uuid[])
  ORDER BY array_position(sqlc.arg(run_ids)::uuid[], run_attempts.run_id),
           run_attempts.number
  FOR UPDATE OF run_attempts;
 
--- name: LockCancellationRuntimes :many
-WITH target_runtimes AS (
-    SELECT run_leases.runtime_instance_id AS id
-      FROM runs
-      JOIN run_leases
-        ON run_leases.id = runs.current_run_lease_id
-       AND run_leases.run_id = runs.id
-     WHERE runs.id = ANY(sqlc.arg(cancel_ids)::uuid[])
-    UNION
-    SELECT runtime_instances.id
-      FROM runtime_instances
-     WHERE runtime_instances.reserved_run_id = ANY(sqlc.arg(cancel_ids)::uuid[])
-)
-SELECT runtime_instances.id
-  FROM runtime_instances
-  JOIN target_runtimes ON target_runtimes.id = runtime_instances.id
- ORDER BY runtime_instances.id
- FOR UPDATE OF runtime_instances;
+-- name: LockCancellationInstances :many
+SELECT i.id FROM computer_instances i
+WHERE i.reclaimed_at IS NULL AND EXISTS(SELECT 1 FROM runs r WHERE r.computer_id=i.computer_id
+ AND r.id=ANY(sqlc.arg(cancel_ids)::uuid[]))
+ORDER BY i.id FOR UPDATE OF i;
 
 -- name: LockCancellationRunLeases :many
 SELECT run_leases.id
@@ -183,26 +170,10 @@ SELECT run_leases.id
  ORDER BY run_leases.id
  FOR UPDATE OF run_leases;
 
--- name: LockCancellationMounts :many
-SELECT id
-  FROM workspace_mounts
- WHERE runtime_instance_id = ANY(sqlc.arg(runtime_ids)::uuid[])
-   AND status IN ('mounting', 'mounted', 'unmounting')
- ORDER BY id
- FOR UPDATE;
-
--- name: LockCancellationWorkspaceLeases :many
-SELECT id
-  FROM workspace_leases
- WHERE owner_run_lease_id = ANY(sqlc.arg(run_lease_ids)::uuid[])
-   AND status IN ('active', 'releasing')
- ORDER BY id
- FOR UPDATE;
-
 -- name: LockCancellationWaits :many
 SELECT id,
        run_id,
-       workspace_id,
+       computer_id,
        child_run_id,
        condition_status,
        suspension_status,
@@ -210,9 +181,7 @@ SELECT id,
        attempt_number,
        current_run_lease_id,
        prior_run_lease_id,
-       suspend_checkpoint_id,
-       base_workspace_version_id,
-       child_writer_generation
+       suspend_checkpoint_id
   FROM run_waits
  WHERE (
        run_id = ANY(sqlc.arg(run_ids)::uuid[])
@@ -221,14 +190,6 @@ SELECT id,
    AND suspension_status IN (
        'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
    )
- ORDER BY array_position(sqlc.arg(run_ids)::uuid[], run_id), id
- FOR UPDATE;
-
--- name: LockCancellationCheckpoints :many
-SELECT id
-  FROM run_checkpoints
- WHERE run_id = ANY(sqlc.arg(run_ids)::uuid[])
-   AND status IN ('creating', 'ready')
  ORDER BY array_position(sqlc.arg(run_ids)::uuid[], run_id), id
  FOR UPDATE;
 
@@ -296,12 +257,7 @@ UPDATE run_waits
        condition_terminal_at = transaction_timestamp(),
        condition_reason_code = sqlc.narg(reason_code)::text,
        suspension_status = 'resume_pending',
-       resume_request_version = run_waits.resume_request_version + 1,
        expected_run_revision = moved_run.revision,
-       resume_workspace_version_id = COALESCE(
-           run_waits.resume_workspace_version_id,
-           sqlc.narg(resolved_workspace_version_id)
-       ),
        updated_at = transaction_timestamp()
   FROM moved_run
  WHERE run_waits.id = sqlc.arg(wait_id)
@@ -311,8 +267,7 @@ UPDATE run_waits
 RETURNING run_waits.id,
           run_waits.environment_id,
           run_waits.run_id,
-          run_waits.workspace_id,
-          run_waits.resume_request_version;
+          run_waits.computer_id;
 
 -- name: TerminalizeRunSuspensions :exec
 UPDATE run_waits
@@ -345,17 +300,9 @@ UPDATE run_waits
  WHERE run_id = sqlc.arg(run_id)
    AND suspension_status IN ('hot', 'checkpointing', 'parked', 'resume_pending', 'resuming');
 
--- name: InvalidateRunCheckpoints :exec
-UPDATE run_checkpoints
-   SET status = 'invalid',
-       invalidated_at = transaction_timestamp(),
-       invalidation_reason_code = sqlc.arg(reason_code)::text
- WHERE run_id = sqlc.arg(run_id)
-   AND status IN ('creating', 'ready');
-
 -- name: GetRunExecutionLeaseLossAuthority :one
 SELECT runs.id AS run_id,
-       runs.workspace_id,
+       runs.computer_id,
        runs.status AS run_status,
        runs.revision,
        runs.current_attempt_number,
@@ -370,20 +317,19 @@ SELECT runs.id AS run_id,
        run_leases.worker_epoch,
        run_leases.start_deadline_at,
        run_leases.expires_at AS run_lease_expires_at,
-       worker_instances.status AS worker_status,
-       worker_instances.current_epoch AS worker_current_epoch,
-       worker_instances.epoch_started_at AS worker_epoch_started_at,
-       worker_instances.updated_at AS worker_updated_at,
-       worker_instances.lost_at AS worker_lost_at,
-       worker_instances.termination_ready_at AS worker_termination_ready_at,
-       runtime_instances.desired_state AS runtime_desired_state,
-       runtime_instances.observed_state AS runtime_observed_state,
-       CASE WHEN runtime_instances.observed_state = 'lost' THEN runtime_instances.terminal_at END::timestamptz AS runtime_lost_at,
-       CASE WHEN runtime_instances.observed_state = 'failed' THEN runtime_instances.terminal_at END::timestamptz AS runtime_failed_at,
-       workspace_leases.status AS workspace_lease_status,
-       workspace_mounts.status AS mount_status,
-       workspace_mounts.lost_at AS mount_lost_at,
-       workspace_mounts.failed_at AS mount_failed_at,
+       worker_hosts.status AS worker_status,
+       worker_hosts.current_epoch AS worker_current_epoch,
+       worker_hosts.epoch_started_at AS worker_epoch_started_at,
+       worker_hosts.updated_at AS worker_updated_at,
+       worker_hosts.lost_at AS worker_lost_at,
+       worker_hosts.termination_ready_at AS worker_termination_ready_at,
+       computer_instances.desired_state AS instance_desired_state,
+       computer_instances.observed_state AS instance_observed_state,
+       CASE WHEN computer_instances.observed_state = 'lost' THEN computer_instances.terminal_at END::timestamptz AS instance_lost_at,
+       CASE WHEN computer_instances.observed_state = 'failed' THEN computer_instances.terminal_at END::timestamptz AS instance_failed_at,
+       computer_instances.writer_expires_at,
+       computer_instances.reclaimed_at,
+       computer_instances.mount_state,
        sessions.run_generation AS actor_run_generation,
        sessions.dispatch_hold_id AS actor_dispatch_hold_id,
        EXISTS (SELECT 1 FROM run_waits WHERE run_waits.run_id = runs.id
@@ -394,47 +340,43 @@ SELECT runs.id AS run_id,
   JOIN run_attempts
     ON run_attempts.run_id = runs.id
    AND run_attempts.number = runs.current_attempt_number
-   AND run_attempts.workspace_id = runs.workspace_id
+   AND run_attempts.computer_id = runs.computer_id
    AND run_attempts.terminal_at IS NULL
   JOIN run_leases
     ON run_leases.id = runs.current_run_lease_id
    AND run_leases.run_id = runs.id
    AND run_leases.attempt_number = runs.current_attempt_number
-   AND run_leases.workspace_id = runs.workspace_id
-  JOIN worker_instances
-    ON worker_instances.id = run_leases.worker_instance_id
-  JOIN runtime_instances
-    ON runtime_instances.id = run_leases.runtime_instance_id
-   AND runtime_instances.worker_instance_id = run_leases.worker_instance_id
-   AND runtime_instances.worker_epoch = run_leases.worker_epoch
-   AND runtime_instances.workspace_id = runs.workspace_id
-   AND runtime_instances.reclaimed_at IS NULL
-  JOIN workspace_leases
-    ON workspace_leases.owner_run_lease_id = run_leases.id
-   AND workspace_leases.workspace_id = runs.workspace_id
-   AND workspace_leases.runtime_instance_id = run_leases.runtime_instance_id
-   AND workspace_leases.status IN ('active', 'releasing')
-  JOIN workspace_mounts
-    ON workspace_mounts.id = workspace_leases.workspace_mount_id
-   AND workspace_mounts.runtime_instance_id = run_leases.runtime_instance_id
-   AND workspace_mounts.workspace_id = runs.workspace_id
-   AND workspace_mounts.status IN ('mounting', 'mounted', 'unmounting', 'lost', 'failed')
+   AND run_leases.computer_id = runs.computer_id
+  JOIN worker_hosts
+    ON worker_hosts.id = run_leases.worker_host_id
+  JOIN computer_instances
+    ON computer_instances.id = run_leases.computer_instance_id
+   AND computer_instances.worker_host_id = run_leases.worker_host_id
+   AND computer_instances.worker_epoch = run_leases.worker_epoch
+   AND computer_instances.computer_id = runs.computer_id
   LEFT JOIN sessions
     ON sessions.id = runs.session_id
    AND sessions.current_run_id = runs.id
-   AND sessions.workspace_id = runs.workspace_id
+   AND sessions.computer_id = runs.computer_id
    AND sessions.status IN ('open', 'closing')
  WHERE runs.id = sqlc.arg(run_id)
-   AND runs.workspace_id = sqlc.arg(workspace_id)
+   AND runs.computer_id = sqlc.arg(computer_id)
    AND runs.current_attempt_number = sqlc.arg(attempt_number)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
    AND run_leases.id = sqlc.arg(run_lease_id)
    AND run_leases.status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
    AND ((run_leases.status IN ('assigned', 'starting')
-         AND runs.status = 'queued'
+         AND (runs.status='queued' OR (runs.status='waiting' AND EXISTS(
+             SELECT 1 FROM computer_checkpoints c
+             JOIN computer_checkpoint_runs m ON m.checkpoint_id=c.id AND m.run_id=runs.id
+               AND m.attempt_number=runs.current_attempt_number
+             JOIN run_waits w ON w.id=m.run_wait_id AND w.suspend_checkpoint_id=c.id
+             WHERE c.id=computer_instances.source_checkpoint_id
+               AND c.resume_computer_instance_id=computer_instances.id AND c.resume_committed_at IS NOT NULL
+               AND w.current_run_lease_id=run_leases.id AND w.suspension_status='resuming')))
          AND runs.active_started_at IS NULL)
         OR (run_leases.status = 'running'
-            AND runs.status = 'running'
+            AND runs.status IN ('running','waiting')
             AND runs.active_started_at IS NOT NULL)
         OR (run_leases.status = 'checkpointing'
             AND runs.status = 'waiting'
@@ -449,38 +391,7 @@ SELECT runs.id AS run_id,
         OR EXISTS (SELECT 1 FROM sessions
                     WHERE sessions.id = runs.session_id
                       AND sessions.current_run_id = runs.id
-                      AND sessions.status IN ('open', 'closing')))
-   AND NOT EXISTS (
-       SELECT 1 FROM run_waits
-        WHERE run_waits.run_id = runs.id
-          AND run_waits.attempt_number = runs.current_attempt_number
-          AND run_waits.current_run_lease_id = run_leases.id
-          AND run_waits.suspension_status = 'resuming'
-          AND run_leases.status IN ('assigned', 'starting')
-          AND (runs.entrypoint_kind = 'task' OR EXISTS (
-              SELECT 1 FROM sessions
-              JOIN run_checkpoints ON run_checkpoints.id = run_waits.suspend_checkpoint_id
-               AND run_checkpoints.run_id = runs.id
-               AND run_checkpoints.attempt_number = runs.current_attempt_number
-               AND run_checkpoints.run_wait_id = run_waits.id
-               AND run_checkpoints.workspace_id = runs.workspace_id
-              JOIN computer_versions ON computer_versions.id = run_checkpoints.private_workspace_version_id
-               AND computer_versions.computer_id = run_checkpoints.workspace_id
-              JOIN run_leases AS source_run_leases ON source_run_leases.id = run_checkpoints.source_run_lease_id
-               AND source_run_leases.run_id = runs.id
-               AND source_run_leases.attempt_number = runs.current_attempt_number
-               AND source_run_leases.workspace_id = runs.workspace_id
-              WHERE sessions.id = runs.session_id AND sessions.current_run_id = runs.id
-                AND sessions.dispatch_hold_id IS NULL
-                AND run_checkpoints.status = 'ready'
-                AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
-                AND computer_versions.status = 'private'
-                AND source_run_leases.status = 'checkpointed'
-                AND run_checkpoints.actor_speculative_input_sequence
-                    BETWEEN sessions.committed_input_sequence AND sessions.next_input_sequence - 1
-
-          ))
-   );
+                      AND sessions.status IN ('open', 'closing')));
 
 -- name: StopLostRunActiveInterval :one
 UPDATE runs
@@ -496,7 +407,7 @@ UPDATE runs
        active_started_at = NULL,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND status IN ('running', 'waiting')
    AND revision = sqlc.arg(expected_revision)
    AND current_attempt_number = sqlc.arg(attempt_number)
@@ -511,23 +422,13 @@ UPDATE runs
        revision = revision + 1,
        updated_at = transaction_timestamp()
  WHERE id = sqlc.arg(run_id)
-   AND workspace_id = sqlc.arg(workspace_id)
+   AND computer_id = sqlc.arg(computer_id)
    AND status = 'queued'
    AND revision = sqlc.arg(expected_revision)
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
    AND active_started_at IS NULL
 RETURNING *;
-
--- name: FenceRunWorkspaceLease :execrows
-UPDATE workspace_leases
-   SET status = 'fenced',
-       terminal_at = transaction_timestamp(),
-       terminal_reason_code = sqlc.arg(reason_code)::text,
-       terminal_error = sqlc.arg(error_payload)::jsonb,
-       updated_at = transaction_timestamp()
- WHERE owner_run_lease_id = sqlc.arg(run_lease_id)
-   AND status IN ('active', 'releasing');
 
 -- name: TerminalizeRunLease :execrows
 UPDATE run_leases
@@ -543,44 +444,6 @@ UPDATE run_leases
  WHERE id = sqlc.arg(id)
    AND run_id = sqlc.arg(run_id)
    AND status IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
-
--- name: CloseRunRuntimes :exec
-WITH candidate_runtimes AS (
-    SELECT run_leases.runtime_instance_id
-      FROM run_leases
-     WHERE run_leases.id = sqlc.narg(run_lease_id)
-       AND run_leases.run_id = sqlc.arg(run_id)
-    UNION
-    SELECT runtime_instances.id AS runtime_instance_id
-      FROM runtime_instances
-     WHERE runtime_instances.reserved_run_id = sqlc.arg(run_id)
-), close_runtimes AS (
-    UPDATE runtime_instances
-       SET desired_state = 'closed',
-           desired_version = CASE
-               WHEN desired_state = 'closed' THEN desired_version
-               ELSE desired_version + 1
-           END,
-           desired_at = transaction_timestamp(),
-           desired_reason = sqlc.arg(reason_code),
-           updated_at = transaction_timestamp()
-     WHERE runtime_instances.id IN (
-           SELECT runtime_instance_id FROM candidate_runtimes
-       )
-       AND runtime_instances.observed_state IN ('allocated', 'ready', 'failed')
-       AND runtime_instances.reclaimed_at IS NULL
-    RETURNING runtime_instances.id
-)
-UPDATE workspace_mounts
-   SET status = 'unmounting',
-       stopped_at = COALESCE(stopped_at, transaction_timestamp()),
-       updated_at = transaction_timestamp()
- WHERE runtime_instance_id IN (
-       SELECT runtime_instance_id FROM candidate_runtimes
-       UNION
-       SELECT id FROM close_runtimes
-   )
-   AND status IN ('mounting', 'mounted');
 
 -- name: TerminalizeRunAttempt :execrows
 UPDATE run_attempts
@@ -617,17 +480,6 @@ UPDATE runs
  WHERE id = sqlc.arg(id)
    AND revision = sqlc.arg(expected_revision)
    AND status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested');
-
--- name: ReleaseTaskWorkspace :exec
-UPDATE computers
-   SET owner_run_id = NULL,
-       ownership_generation = ownership_generation + 1,
-       revision = revision + 1,
-       last_activity_at = transaction_timestamp(),
-       updated_at = transaction_timestamp()
- WHERE id = sqlc.arg(workspace_id)
-   AND owner_run_id = sqlc.arg(run_id)
-   AND owner_session_id IS NULL;
 
 -- name: RecordRunTerminalEvent :exec
 INSERT INTO telemetry_outbox (
@@ -674,25 +526,3 @@ SELECT org_id,
        transaction_timestamp()
   FROM runs
  WHERE runs.id = sqlc.arg(run_id);
-
--- name: RequireLostRunComputerRecovery :execrows
-UPDATE computers
-   SET status = 'recovery_required',
-       recovery_id = sqlc.arg(recovery_id),
-       recovery_version_id = head_version_id,
-       recovery_reason = sqlc.arg(recovery_reason),
-       recovery_started_at = transaction_timestamp(),
-       recovery_preparation_count = 0, next_recovery_preparation_at = NULL,
-       recovery_runtime_id = NULL, recovery_completed_at = NULL,
-       desired_state = 'stopped',
-       dirty_state = 'dirty_state_lost',
-       revision = revision + 1,
-       updated_at = transaction_timestamp()
-  FROM workspace_leases
- WHERE computers.id = sqlc.arg(workspace_id)
-   AND workspace_leases.workspace_id = computers.id
-   AND workspace_leases.owner_run_lease_id = sqlc.arg(run_lease_id)
-   AND workspace_leases.ownership_generation = computers.ownership_generation
-   AND workspace_leases.writer_generation = computers.writer_generation
-   AND workspace_leases.status IN ('active', 'releasing')
-   AND computers.status = 'active';

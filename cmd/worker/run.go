@@ -21,7 +21,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
-	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -95,12 +94,11 @@ func run(log *slog.Logger) error {
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
-	substrateCacheDir := filepath.Join(workDir, "substrate-cache")
 	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
 	var controlPlaneClient *workerclient.Client
 	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
 		candidate, candidateErr := workerclient.New(cfg.ControlPlaneURL,
-			workerclient.WithAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
+			workerclient.WithAuth(credential.WorkerHostID, credential.WorkerHostSecret),
 			workerclient.WithService(serviceID),
 		)
 		if candidateErr != nil {
@@ -185,9 +183,8 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
-	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
-	cacheBytesOnWorkerDisk := substrateCacheMaxBytes + artifactCacheMaxBytes
-	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, cacheBytesOnWorkerDisk)
+	artifactCacheMaxBytes := workerCacheBudgetBytes(cfg.ArtifactCacheMaxMiB, hostDiskMiB, 1, 6, 2048, 16384)
+	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, vmResources.DiskMiB, artifactCacheMaxBytes)
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
@@ -208,8 +205,6 @@ func run(log *slog.Logger) error {
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 	}
-	workerCapabilities.SubstrateFormat = substrate.Format
-	workerCapabilities.SubstrateContract = substrate.Contract
 	hostCapacity, err := capacity.New(capacity.Vector{
 		CPUMillis:               workerCapabilities.MaxVCPUs * 1000,
 		MemoryBytes:             workerCapabilities.MaxMemoryMiB * 1024 * 1024,
@@ -219,13 +214,8 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
-	substrateResolver := &substrate.Resolver{
-		CacheDir:         substrateCacheDir,
-		MkfsExt4Path:     cfg.MkfsExt4Path,
-		Mke2fsConfigPath: cfg.Mke2fsConfigPath,
-		MaxCacheBytes:    substrateCacheMaxBytes,
-	}
-	workspaceMountSessions := executor.NewWorkspaceMountSessions()
+	computerMountSessions := executor.NewComputerMountSessions()
+	computerCaptures := &executor.ComputerCaptureRuns{}
 	var preparedRuntimePool *executor.PreparedRuntimePool
 	closePreparedRuntime := retryableWorkerCloser{close: func(closeCtx context.Context) error {
 		if preparedRuntimePool != nil {
@@ -243,9 +233,9 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
 		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
-		preparedRuntimePool.Substrates = substrateResolver
-		preparedRuntimePool.RuntimeSubstrates = controlPlaneClient
 		preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
+		preparedRuntimePool.ComputerCaptures = computerCaptures
+		preparedRuntimePool.Checkpoints = controlPlaneClient
 		preparedRuntimePool.ComputerObjects = store
 		preparedRuntimePool.ComputerPreparation = controlPlaneClient
 		preparedRuntimePool.ComputerRanges = store
@@ -255,7 +245,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		preparedRuntimePool.RuntimeInstances = controlPlaneClient
+		preparedRuntimePool.ComputerInstances = controlPlaneClient
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.PlatformStore = platformStore
 		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
@@ -263,10 +253,11 @@ func run(log *slog.Logger) error {
 		log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
 	}
 	runLeaseTasks := executor.ProgramRunner{
+		ComputerCaptures:  computerCaptures,
 		CheckpointObjects: store, Capacity: hostCapacity,
 		CAS:                 store,
 		CheckpointEncryptor: checkpointEncryptor,
-		WorkspaceMounts:     workspaceMountSessions,
+		ComputerMounts:      computerMountSessions,
 		Log:                 log,
 		TempDir:             filepath.Join(workDir, "tmp"),
 	}
@@ -280,12 +271,13 @@ func run(log *slog.Logger) error {
 		worker.WithCapacity(hostCapacity),
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
-		worker.WithMaterializer(executor.WorkspaceMaterializer{
+		worker.WithMaterializer(executor.ComputerMaterializer{
+			RestoreControl:        controlPlaneClient,
 			ComputerSaves:         controlPlaneClient,
 			ComputerSaveEvery:     cfg.ComputerSaveEvery,
-			ComputerObjects:       platformStore,
+			ComputerObjects:       store,
 			CAS:                   store,
-			Sessions:              workspaceMountSessions,
+			Sessions:              computerMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),
 			ArtifactCacheDir:      artifactCacheDir,
 			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
@@ -299,10 +291,10 @@ func run(log *slog.Logger) error {
 	consumerSpecs := make([]worker.ConsumerSpec, 0, 4)
 	admission := map[string]int{}
 	admission["run"] = int(cfg.WorkerExecutionSlots)
-	admission["workspace"] = int(cfg.WorkerExecutionSlots)
+	admission["computer"] = int(cfg.WorkerExecutionSlots)
 	consumerSpecs = append(consumerSpecs,
 		worker.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", ContinueDuringDrain: true, Consumer: worker.NewRunConsumer(runner)},
-		worker.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewWorkspaceConsumer(runner)},
+		worker.ConsumerSpec{Name: "computer", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "computer", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewComputerConsumer(runner)},
 	)
 	background := make([]worker.BackgroundSpec, 0, 1)
 	if preparedRuntimePool != nil {
@@ -374,7 +366,7 @@ func run(log *slog.Logger) error {
 			return worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 		},
 		DrainCompleted: func(status workerapi.StatusResponse) error {
-			return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
+			return writeDrainCompleteMarker(workDir, status.WorkerHostID)
 		},
 	})
 	if err != nil {
@@ -383,7 +375,7 @@ func run(log *slog.Logger) error {
 	if preparedRuntimePool != nil {
 		preparedRuntimePool.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
 	}
-	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_instance_id", workerCredential.WorkerInstanceID)
+	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerCredential.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}

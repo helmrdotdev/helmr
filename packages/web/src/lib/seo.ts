@@ -7,7 +7,7 @@ export const SITE = {
   tagline: "Build your own software factory",
   defaultTitle: "Helmr — Build your own software factory",
   defaultDescription:
-    "Infrastructure and APIs for your own agent harness. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable workspaces.",
+    "Infrastructure and APIs for your own agent harness. Define agent workloads in TypeScript and run them in isolated Linux microVMs with durable computers.",
   defaultImage: "/og/helmr.png",
   logoImage: "/web-app-manifest-512x512.png",
   locale: "en_US",

@@ -6,7 +6,7 @@ import { baseAgentEnv } from "../env"
 const require = createRequire(import.meta.url)
 
 export type CodexApprovalPolicy = "never" | "on-request" | "on-failure" | "untrusted"
-export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access"
+export type CodexSandboxMode = "read-only" | "computer-write" | "danger-full-access"
 export type CodexReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh"
 
 export interface CodexThreadOptions {
@@ -126,7 +126,7 @@ class CodexAppServer {
       model: options.model ?? null,
       cwd: options.workingDirectory ?? process.cwd(),
       approvalPolicy: options.approvalPolicy ?? "never",
-      workspace: options.sandboxMode ?? "read-only",
+      computer: options.sandboxMode ?? "read-only",
       config: codexConfig(options),
       serviceName: "helmr-dev-workflows",
       developerInstructions: null,

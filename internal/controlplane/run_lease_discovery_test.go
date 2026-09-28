@@ -32,7 +32,7 @@ func TestDiscoverWorkerRunLeasesReturnsOnlyExactWorkTuples(t *testing.T) {
 		t.Fatal(err)
 	}
 	if store.params.WorkerGroupID != controlplaneTestWorkerGroupDBID ||
-		store.params.WorkerInstanceID != pgvalue.UUID(workerID) ||
+		store.params.WorkerHostID != pgvalue.UUID(workerID) ||
 		store.params.WorkerEpoch != 11 ||
 		store.params.RowLimit != workerRunLeaseDiscoveryLimit {
 		t.Fatalf("discovery params = %+v", store.params)

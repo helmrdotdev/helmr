@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
@@ -50,16 +50,16 @@ func (controlPlane *childTaskControlPlane) InvokeChildTask(
 }
 
 type acceptingChildTaskRenewalMounts struct {
-	WorkspaceMountSessionRegistry
+	ComputerMountSessionRegistry
 	calls int
 }
 
-func (mounts *acceptingChildTaskRenewalMounts) RenewWorkspaceAuthority(
+func (mounts *acceptingChildTaskRenewalMounts) RenewComputerAuthority(
 	_ context.Context,
-	request *workspacev0.RenewWorkspaceAuthorityRequest,
-) (*workspacev0.WorkspaceAuthorityFence, error) {
+	request *computerv0.RenewComputerAuthorityRequest,
+) (*computerv0.ComputerAuthorityFence, error) {
 	mounts.calls++
-	fence := proto.Clone(request.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+	fence := proto.Clone(request.GetPrevious().GetFence()).(*computerv0.ComputerAuthorityFence)
 	fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
 	return fence, nil
 }
@@ -95,7 +95,7 @@ func TestHandleChildTaskInvokeDoesNotBlockRunLeaseRenewal(t *testing.T) {
 		controlPlane: controlPlane,
 		mounts:       mounts,
 		lease:        previous,
-		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{
+		authority: &computerv0.ComputerRunAuthority{Fence: &computerv0.ComputerAuthorityFence{
 			ExpiresAtUnixNano: previous.ExpiresAt.UnixNano(),
 		}},
 	}
@@ -105,7 +105,7 @@ func TestHandleChildTaskInvokeDoesNotBlockRunLeaseRenewal(t *testing.T) {
 			CorrelationId: correlationID,
 			DeclaredId:    "resize-image",
 			Method:        "start",
-			WorkspaceJson: `{}`,
+			ComputerJson:  `{}`,
 			OptionsJson:   `{}`,
 		})
 	}()
@@ -165,7 +165,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 			Method:         "start",
 			PayloadPresent: true,
 			PayloadJson:    &payload,
-			WorkspaceJson:  `{"key":"image-workspace"}`,
+			ComputerJson:   `{"key":"image-computer"}`,
 			OptionsJson:    `{"queue":"priority"}`,
 			IdempotencyKey: &idempotencyKey,
 		})
@@ -192,7 +192,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 		controlPlane.request.Method != "start" ||
 		!controlPlane.request.PayloadPresent ||
 		string(controlPlane.request.Payload) != payload ||
-		string(controlPlane.request.Workspace) != `{"key":"image-workspace"}` ||
+		string(controlPlane.request.Computer) != `{"key":"image-computer"}` ||
 		string(controlPlane.request.Options) != `{"queue":"priority"}` ||
 		controlPlane.request.IdempotencyKey != idempotencyKey {
 		t.Fatalf("request = %+v", controlPlane.request)
@@ -225,7 +225,7 @@ func TestHandleChildTaskCallRejectsCompletedResponseWithoutOpenedWait(t *testing
 	err := task.handleChildTaskInvoke(t.Context(), &programv0.TaskChildInvokeRequested{
 		CorrelationId: correlationID, DeclaredId: "resize-image", Method: "call",
 		RunWaitId: runWaitID, ResumeAttachId: resumeAttachID,
-		WorkspaceJson: `{}`, OptionsJson: `{}`,
+		ComputerJson: `{}`, OptionsJson: `{}`,
 	})
 	if err == nil || !strings.Contains(err.Error(), "requires an opened Wait") {
 		t.Fatalf("error = %v", err)
@@ -236,7 +236,7 @@ func TestWorkerChildTaskInvokeRequestRejectsUnknownMethod(t *testing.T) {
 	_, err := workerChildTaskInvokeRequest(&programv0.TaskChildInvokeRequested{
 		CorrelationId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc28",
 		DeclaredId:    "resize-image", Method: "enqueue",
-		WorkspaceJson: `{}`, OptionsJson: `{}`,
+		ComputerJson: `{}`, OptionsJson: `{}`,
 	})
 	if err == nil {
 		t.Fatal("unknown child task invocation method was accepted")
@@ -278,7 +278,7 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 			CorrelationId: correlationID,
 			DeclaredId:    "resize-image",
 			Method:        "start",
-			WorkspaceJson: `{}`,
+			ComputerJson:  `{}`,
 			OptionsJson:   `{}`,
 		})
 	}()
@@ -347,7 +347,7 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 			ResumeAttachId:                resumeAttachID,
 			DeclaredId:                    "resize-image",
 			Method:                        "call",
-			WorkspaceJson:                 `{"key":"image-workspace"}`,
+			ComputerJson:                  `{"key":"image-computer"}`,
 			OptionsJson:                   `{}`,
 			ActorSpeculativeInputSequence: &actorSequence,
 		})
@@ -413,7 +413,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 			ResumeAttachId: resumeAttachID,
 			DeclaredId:     "resize-image",
 			Method:         "call",
-			WorkspaceJson:  `{"key":"image-workspace"}`,
+			ComputerJson:   `{"key":"image-computer"}`,
 			OptionsJson:    `{}`,
 		})
 	}()

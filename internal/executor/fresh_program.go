@@ -13,8 +13,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -71,23 +71,22 @@ type freshProgram struct {
 	protocol         *programProtocol
 	execution        *programv0.SessionExecution
 	session          vm.Session
-	mount            workerapi.WorkspaceMount
+	mount            workerapi.ComputerInstanceAssignment
 	lease            workerapi.RunLeaseAssignment
-	authority        *workspacev0.WorkspaceRunAuthority
+	authority        *computerv0.ComputerRunAuthority
 	entrypoint       *programv0.EntrypointIdentity
 	observedEventSeq uint64
 }
 
 type newProgramAdmission struct {
 	programStart []byte
-	start        workerapi.RunStartRequest
 }
 
 type freshAdmissionState struct {
 	mu           sync.Mutex
 	lease        workerapi.RunLeaseAssignment
-	authority    *workspacev0.WorkspaceRunAuthority
-	mounts       WorkspaceMountSessionRegistry
+	authority    *computerv0.ComputerRunAuthority
+	mounts       ComputerMountSessionRegistry
 	controlPlane FreshProgramControlPlane
 	events       freshProgramEventSink
 }
@@ -150,10 +149,10 @@ func (state *freshAdmissionState) expiresAt() time.Time {
 	return state.lease.ExpiresAt
 }
 
-func (state *freshAdmissionState) snapshot() (workerapi.RunLeaseAssignment, *workspacev0.WorkspaceRunAuthority) {
+func (state *freshAdmissionState) snapshot() (workerapi.RunLeaseAssignment, *computerv0.ComputerRunAuthority) {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	return state.lease, proto.Clone(state.authority).(*workspacev0.WorkspaceRunAuthority)
+	return state.lease, proto.Clone(state.authority).(*computerv0.ComputerRunAuthority)
 }
 
 func runWithFreshAdmissionRenewal(
@@ -342,10 +341,10 @@ func (program *freshProgram) awaitTaskCompletion(
 			*programv0.RunEvent_SessionCloseRequested,
 			*programv0.RunEvent_SessionCancelRequested,
 			*programv0.RunEvent_SessionEventsRequested,
-			*programv0.RunEvent_WorkspaceCreateRequested,
-			*programv0.RunEvent_WorkspaceRetrieveRequested,
-			*programv0.RunEvent_WorkspaceExecRequested,
-			*programv0.RunEvent_WorkspaceDeleteRequested:
+			*programv0.RunEvent_ComputerCreateRequested,
+			*programv0.RunEvent_ComputerRetrieveRequested,
+			*programv0.RunEvent_ComputerMembersRequested,
+			*programv0.RunEvent_ComputerDeleteRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor operation after task outcome")
 			}
@@ -521,10 +520,10 @@ func (program *freshProgram) awaitActorCompletion(
 			*programv0.RunEvent_SessionCloseRequested,
 			*programv0.RunEvent_SessionCancelRequested,
 			*programv0.RunEvent_SessionEventsRequested,
-			*programv0.RunEvent_WorkspaceCreateRequested,
-			*programv0.RunEvent_WorkspaceRetrieveRequested,
-			*programv0.RunEvent_WorkspaceExecRequested,
-			*programv0.RunEvent_WorkspaceDeleteRequested:
+			*programv0.RunEvent_ComputerCreateRequested,
+			*programv0.RunEvent_ComputerRetrieveRequested,
+			*programv0.RunEvent_ComputerMembersRequested,
+			*programv0.RunEvent_ComputerDeleteRequested:
 			if outcome != nil {
 				return nil, nil, errors.New("program emitted an actor operation after actor outcome")
 			}
@@ -671,9 +670,9 @@ func (r ProgramRunner) startNewProgram(
 	if events == nil {
 		return freshProgram{}, errors.New("fresh program event sink is required")
 	}
-	if r.WorkspaceMounts == nil {
+	if r.ComputerMounts == nil {
 		return freshProgram{}, errors.New(
-			"workspace mount session registry is required",
+			"computer mount session registry is required",
 		)
 	}
 	admission, err := validateNewProgramClaim(claim)
@@ -696,10 +695,26 @@ func (r ProgramRunner) startNewProgram(
 		claim.Lease.StartDeadlineAt,
 	)
 	defer cancelAdmission()
-	opened, err := r.WorkspaceMounts.OpenWorkspaceMountSession(
-		admissionCtx,
-		claim.Lease.WorkspaceMountID,
-	)
+	// The prepared VM can be advertised before the independent mount consumer
+	// registers its local channel. Wait only for that channel, before admission
+	// writes can start a process, and retain the original admission deadline.
+	var opened ComputerMountSession
+	for {
+		if err := admissionCtx.Err(); err != nil {
+			return freshProgram{}, err
+		}
+		opened, err = r.ComputerMounts.OpenComputerInstanceSession(admissionCtx, claim.Lease.ComputerInstanceID)
+		if !errors.Is(err, ErrComputerMountSessionNotFound) {
+			break
+		}
+		timer := time.NewTimer(runLeaseRetryEvery)
+		select {
+		case <-admissionCtx.Done():
+			timer.Stop()
+			return freshProgram{}, admissionCtx.Err()
+		case <-timer.C:
+		}
+	}
 	if err != nil {
 		return freshProgram{}, err
 	}
@@ -710,7 +725,7 @@ func (r ProgramRunner) startNewProgram(
 		}
 	}()
 	if opened.Session.Stream() == nil {
-		return freshProgram{}, errors.New("workspace mount stream is required")
+		return freshProgram{}, errors.New("computer mount stream is required")
 	}
 	if err := validateNewProgramMount(
 		claim.Lease,
@@ -725,6 +740,7 @@ func (r ProgramRunner) startNewProgram(
 			return writeFreshProgramAdmission(
 				stream,
 				opened.ChannelToken,
+				opened.Mount,
 				claim,
 				admission.programStart,
 			)
@@ -776,8 +792,8 @@ func (r ProgramRunner) startNewProgram(
 				"Program process start failed",
 				"run_id", claim.Lease.RunID,
 				"run_lease_id", claim.Lease.ID,
-				"runtime_instance_id", claim.Lease.RuntimeInstanceID,
-				"workspace_mount_id", claim.Lease.WorkspaceMountID,
+				"computer_instance_id", claim.Lease.ComputerInstanceID,
+
 				"phase", failed.GetPhase(),
 				"diagnostic", diagnostic,
 			)
@@ -791,9 +807,9 @@ func (r ProgramRunner) startNewProgram(
 		if diagnostic == wire.SecretEnvCollisionDiagnostic {
 			failure = fmt.Errorf("program process failed before start proof: %s", diagnostic)
 		}
-		if err := r.WorkspaceMounts.FailWorkspaceMountSession(
+		if err := r.ComputerMounts.FailComputerInstanceSession(
 			failureCtx,
-			claim.Lease.WorkspaceMountID,
+			claim.Lease.ComputerInstanceID,
 		); err != nil {
 			return freshProgram{}, errors.Join(failure, err)
 		}
@@ -814,10 +830,9 @@ func (r ProgramRunner) startNewProgram(
 	var startResponse workerapi.RunStartResponse
 	if err := retryRunLeaseRequest(ackCtx, func(requestCtx context.Context) error {
 		var requestErr error
-		admission.start.Lease = claim.Lease.Fence()
 		startResponse, requestErr = controlPlane.AcknowledgeRunStart(
 			requestCtx,
-			admission.start,
+			workerapi.RunStartRequest{Lease: claim.Lease.Fence()},
 		)
 		return requestErr
 	}); err != nil {
@@ -830,8 +845,8 @@ func (r ProgramRunner) startNewProgram(
 	}
 	state := &freshAdmissionState{
 		lease:        claim.Lease,
-		authority:    freshWorkspaceAuthority(claim, opened.ChannelToken),
-		mounts:       r.WorkspaceMounts,
+		authority:    freshComputerAuthority(claim, opened.ChannelToken, opened.Mount),
+		mounts:       r.ComputerMounts,
 		controlPlane: controlPlane,
 		events:       events,
 	}
@@ -1046,45 +1061,28 @@ func validateNewProgramClaim(
 		strings.TrimSpace(lease.RunID) == "" ||
 		lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
-		strings.TrimSpace(lease.WorkerInstanceID) == "" ||
+		strings.TrimSpace(lease.WorkerHostID) == "" ||
 		lease.WorkerEpoch <= 0 ||
-		strings.TrimSpace(lease.RuntimeInstanceID) == "" ||
-		strings.TrimSpace(lease.RuntimeIdentityID) == "" ||
-		strings.TrimSpace(lease.WorkspaceID) == "" ||
-		strings.TrimSpace(lease.WorkspaceMountID) == "" ||
-		strings.TrimSpace(lease.WorkspaceLeaseID) == "" ||
-		strings.TrimSpace(lease.BaseWorkspaceVersionID) == "" ||
-		lease.OwnershipGeneration <= 0 ||
+		strings.TrimSpace(lease.ComputerInstanceID) == "" ||
+		strings.TrimSpace(lease.VMPlatformID) == "" ||
+		strings.TrimSpace(lease.ComputerID) == "" ||
+		strings.TrimSpace(lease.BaseComputerDiskVersionID) == "" ||
 		lease.WriterGeneration <= 0 ||
-		lease.MountFencingGeneration <= 0 ||
 		lease.StartDeadlineAt.IsZero() ||
 		!lease.StartDeadlineAt.After(time.Now()) ||
 		lease.ExpiresAt.IsZero() ||
 		!lease.ExpiresAt.After(time.Now()) {
 		return newProgramAdmission{}, errors.New("new program run lease assignment is incomplete")
 	}
-	if strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
+	if strings.TrimSpace(claim.Computer.WriteCapability) == "" {
 		return newProgramAdmission{}, errors.New(
-			"new program workspace write capability is required",
+			"new program computer write capability is required",
 		)
 	}
-	execution := claim.Execution
-	var admission newProgramAdmission
-	switch {
-	case execution.Fresh != nil &&
-		execution.Restore == nil &&
-		len(execution.Fresh.ProgramStart) > 0:
-		admission = newProgramAdmission{
-			programStart: execution.Fresh.ProgramStart,
-			start: workerapi.RunStartRequest{
-				Fresh: &workerapi.RunStartFresh{},
-			},
-		}
-	default:
-		return newProgramAdmission{}, errors.New(
-			"run lease execution must contain exactly one fresh program",
-		)
+	if len(claim.ProgramStart) == 0 {
+		return newProgramAdmission{}, errors.New("run lease requires program start data")
 	}
+	admission := newProgramAdmission{programStart: claim.ProgramStart}
 	if len(claim.Secrets) > maxFreshProgramSecrets {
 		return newProgramAdmission{}, fmt.Errorf(
 			"new program has %d secrets, exceeds max %d",
@@ -1107,15 +1105,18 @@ func validateNewProgramClaim(
 
 func validateNewProgramMount(
 	lease workerapi.RunLeaseAssignment,
-	mount workerapi.WorkspaceMount,
+	mount workerapi.ComputerInstanceAssignment,
 ) error {
-	if mount.ID != lease.WorkspaceMountID {
-		return errors.New("new program workspace mount ID does not match the claimed physical authority")
+	if mount.ComputerInstanceID == "" || mount.Target.BaseComputerDiskVersionID == "" || mount.WriterGeneration <= 0 {
+		return errors.New("new program mounted Computer authority is incomplete")
 	}
-	if mount.WorkspaceID != lease.WorkspaceID {
-		return errors.New("new program workspace ID does not match the claimed physical authority")
+	if mount.WriterGeneration != lease.WriterGeneration {
+		return errors.New("new program writer generation does not match the claimed physical authority")
 	}
-	if mount.RuntimeInstanceID != lease.RuntimeInstanceID {
+	if mount.ComputerID != lease.ComputerID {
+		return errors.New("new program computer ID does not match the claimed physical authority")
+	}
+	if mount.ComputerInstanceID != lease.ComputerInstanceID {
 		return errors.New("new program Runtime Instance does not match the claimed physical authority")
 	}
 	return nil
@@ -1124,21 +1125,22 @@ func validateNewProgramMount(
 func writeFreshProgramAdmission(
 	stream vm.Stream,
 	channelToken string,
+	mount workerapi.ComputerInstanceAssignment,
 	claim *workerapi.RunLeaseClaimResponse,
 	programStart []byte,
 ) error {
 	lease := claim.Lease
 	channelToken = strings.TrimSpace(channelToken)
 	if channelToken == "" {
-		return errors.New("workspace mount guest channel token is required")
+		return errors.New("computer mount guest channel token is required")
 	}
 	if err := wire.WriteStreamFrameHeader(
 		stream,
 		wire.StreamHeader{
-			Type:             wire.StreamTypeProgramRun,
-			RunID:            lease.RunID,
-			WorkspaceID:      lease.WorkspaceID,
-			WorkspaceMountID: lease.WorkspaceMountID,
+			Type:               wire.StreamTypeProgramRun,
+			RunID:              lease.RunID,
+			ComputerID:         lease.ComputerID,
+			ComputerInstanceID: mount.ComputerInstanceID,
 		},
 		0,
 	); err != nil {
@@ -1146,9 +1148,9 @@ func writeFreshProgramAdmission(
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
-		freshWorkspaceAuthority(claim, channelToken),
+		freshComputerAuthority(claim, channelToken, mount),
 	); err != nil {
-		return fmt.Errorf("write program workspace authority: %w", err)
+		return fmt.Errorf("write program computer authority: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
@@ -1204,32 +1206,29 @@ func writeFreshProgramAdmission(
 	return nil
 }
 
-func freshWorkspaceAuthority(
+func freshComputerAuthority(
 	claim *workerapi.RunLeaseClaimResponse,
 	channelToken string,
-) *workspacev0.WorkspaceRunAuthority {
+	mount workerapi.ComputerInstanceAssignment,
+) *computerv0.ComputerRunAuthority {
 	lease := claim.Lease
-	return &workspacev0.WorkspaceRunAuthority{
-		Fence: &workspacev0.WorkspaceAuthorityFence{
-			WorkerInstanceId:       lease.WorkerInstanceID,
-			WorkerEpoch:            lease.WorkerEpoch,
-			RuntimeInstanceId:      lease.RuntimeInstanceID,
-			RuntimeIdentityId:      lease.RuntimeIdentityID,
-			WorkspaceId:            lease.WorkspaceID,
-			WorkspaceMountId:       lease.WorkspaceMountID,
-			RunId:                  lease.RunID,
-			AttemptNumber:          uint32(lease.AttemptNumber),
-			RunLeaseId:             lease.ID,
-			LeaseSequence:          lease.LeaseSequence,
-			WorkspaceLeaseId:       lease.WorkspaceLeaseID,
-			OwnershipGeneration:    lease.OwnershipGeneration,
-			WriterGeneration:       lease.WriterGeneration,
-			MountFencingGeneration: lease.MountFencingGeneration,
-			ExpiresAtUnixNano:      lease.ExpiresAt.UnixNano(),
-			BaseWorkspaceVersionId: lease.BaseWorkspaceVersionID,
+	return &computerv0.ComputerRunAuthority{
+		Fence: &computerv0.ComputerAuthorityFence{
+			WorkerHostId:              lease.WorkerHostID,
+			WorkerEpoch:               lease.WorkerEpoch,
+			ComputerInstanceId:        lease.ComputerInstanceID,
+			VmPlatformId:              lease.VMPlatformID,
+			ComputerId:                lease.ComputerID,
+			RunId:                     lease.RunID,
+			AttemptNumber:             uint32(lease.AttemptNumber),
+			RunLeaseId:                lease.ID,
+			LeaseSequence:             lease.LeaseSequence,
+			WriterGeneration:          lease.WriterGeneration,
+			ExpiresAtUnixNano:         lease.ExpiresAt.UnixNano(),
+			BaseComputerDiskVersionId: mount.Target.BaseComputerDiskVersionID,
 		},
 		ChannelToken:    channelToken,
-		WriteCapability: claim.Workspace.WriteCapability,
+		WriteCapability: claim.Computer.WriteCapability,
 	}
 }
 
@@ -1313,15 +1312,13 @@ func clearFreshProgramDelivery(claim *workerapi.RunLeaseClaimResponse) {
 	if claim == nil {
 		return
 	}
-	if claim.Execution.Fresh != nil {
-		clearBytes(claim.Execution.Fresh.ProgramStart)
-		claim.Execution.Fresh.ProgramStart = nil
-	}
+	clearBytes(claim.ProgramStart)
+	claim.ProgramStart = nil
 	for index := range claim.Secrets {
 		clearBytes(claim.Secrets[index].Value)
 		claim.Secrets[index].Value = nil
 	}
-	claim.Workspace.WriteCapability = ""
+	claim.Computer.WriteCapability = ""
 }
 
 func clearBytes(value []byte) {

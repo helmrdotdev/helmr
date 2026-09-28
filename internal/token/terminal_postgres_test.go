@@ -20,12 +20,12 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 	t.Run("complete and replay", func(t *testing.T) {
 		tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
 		work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-		var workspaceID uuid.UUID
-		if err := fixture.pool.QueryRow(ctx, `SELECT workspace_id FROM runs WHERE id = $1`, work.runID).Scan(&workspaceID); err != nil {
+		var computerID uuid.UUID
+		if err := fixture.pool.QueryRow(ctx, `SELECT computer_id FROM runs WHERE id = $1`, work.runID).Scan(&computerID); err != nil {
 			t.Fatal(err)
 		}
 		waitID := uuid.NewV7()
-		insertTokenWaitFixture(t, ctx, fixture, waitID, work.runID, workspaceID, tokenID, work.leaseID, 1)
+		insertTokenWaitFixture(t, ctx, fixture, waitID, work.runID, computerID, tokenID, work.leaseID, 1)
 
 		params := tokenCompletionParams(fixture, tokenID, "sha256:first", `{"approved":true}`)
 		completed, err := fixture.queries.CompleteToken(ctx, params)

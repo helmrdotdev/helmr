@@ -60,7 +60,7 @@ func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, tar
 			return nil, err
 		}
 	}
-	material, err := p.ComputerPreparation.ComputerSource(ctx, workerapi.ComputerSourceRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
+	material, err := p.ComputerPreparation.ComputerSource(ctx, workerapi.ComputerSourceRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +99,7 @@ func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target wo
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, file.Close(), os.Remove(path)) }()
-	key, err := p.ComputerPreparation.InitialComputerKey(ctx, workerapi.InitialComputerKeyRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
+	key, err := p.ComputerPreparation.InitialComputerKey(ctx, workerapi.InitialComputerKeyRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion})
 	if err != nil {
 		return err
 	}
@@ -121,11 +121,11 @@ func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target wo
 	if err != nil {
 		return err
 	}
-	published, err := p.ComputerPreparation.PublishInitialComputerGeneration(ctx, workerapi.InitialComputerGenerationRequest{RuntimeInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
+	published, err := p.ComputerPreparation.PublishInitialComputerGeneration(ctx, workerapi.InitialComputerGenerationRequest{ComputerInstanceID: target.ID, DesiredVersion: target.DesiredVersion, Root: root, Config: source.Config})
 	if err != nil {
 		return fmt.Errorf("publish initial computer generation: %w", err)
 	}
-	if published.ComputerID != target.Source.WorkspaceID || published.VersionID != source.VersionID {
+	if published.ComputerID != target.Source.ComputerID || published.VersionID != source.VersionID {
 		return errors.New("published computer generation identity mismatch")
 	}
 	return nil

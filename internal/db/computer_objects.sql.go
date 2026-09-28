@@ -76,8 +76,8 @@ func (q *Queries) DeleteUnreferencedComputerCasMembership(ctx context.Context, a
 const deleteUnreferencedComputerObject = `-- name: DeleteUnreferencedComputerObject :execrows
 DELETE FROM computer_objects o
  WHERE o.environment_id=$1 AND o.computer_id=$2 AND o.digest=$3
- AND NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_disk_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
 `
 
@@ -97,10 +97,10 @@ func (q *Queries) DeleteUnreferencedComputerObject(ctx context.Context, arg Dele
 
 const hasRegisteredInitialComputerObject = `-- name: HasRegisteredInitialComputerObject :one
 SELECT EXISTS (
- SELECT 1 FROM runtime_instances r
- JOIN runtime_computer_object_pins p ON p.runtime_instance_id=r.id AND p.publication_key=$1 AND p.runtime_desired_version=r.desired_version
+ SELECT 1 FROM computer_instances r
+ JOIN computer_object_pins p ON p.computer_instance_id=r.id AND p.publication_key=$1 AND p.instance_desired_version=r.desired_version
  JOIN computer_objects o ON o.environment_id=p.environment_id AND o.computer_id=p.computer_id AND o.digest=p.digest
- WHERE r.id=$2 AND r.worker_instance_id=$3
+ WHERE r.id=$2 AND r.worker_host_id=$3
    AND r.worker_group_id=$4 AND r.worker_epoch=$5
    AND r.desired_version=$6 AND r.reclaimed_at IS NULL
    AND o.digest=$7 AND o.inspection=$8::jsonb
@@ -182,8 +182,8 @@ func (q *Queries) ListComputerObjectReadKeys(ctx context.Context, arg ListComput
 const listUnreferencedComputerObjects = `-- name: ListUnreferencedComputerObjects :many
 SELECT o.environment_id,o.computer_id,o.digest,o.org_id
  FROM computer_objects o
- WHERE NOT EXISTS (SELECT 1 FROM computer_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
- AND NOT EXISTS (SELECT 1 FROM runtime_computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
+ WHERE NOT EXISTS (SELECT 1 FROM computer_disk_version_roots r WHERE r.environment_id=o.environment_id AND r.computer_id=o.computer_id AND r.root_pack_digest=o.digest)
+ AND NOT EXISTS (SELECT 1 FROM computer_object_pins p WHERE p.environment_id=o.environment_id AND p.computer_id=o.computer_id AND p.digest=o.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_object_edges e WHERE e.environment_id=o.environment_id AND e.computer_id=o.computer_id AND e.child_digest=o.digest)
  ORDER BY o.rank DESC,o.environment_id,o.computer_id,o.digest
  LIMIT $1
@@ -281,14 +281,14 @@ func (q *Queries) LockComputerObject(ctx context.Context, arg LockComputerObject
 
 const releaseReclaimedComputerObjects = `-- name: ReleaseReclaimedComputerObjects :execrows
 WITH released AS (
- SELECT p.runtime_instance_id,p.publication_key,p.digest FROM runtime_computer_object_pins p
- JOIN runtime_instances r ON r.id=p.runtime_instance_id
+ SELECT p.computer_instance_id,p.publication_key,p.digest FROM computer_object_pins p
+ JOIN computer_instances r ON r.id=p.computer_instance_id
  WHERE r.reclaimed_at IS NOT NULL
- ORDER BY p.runtime_instance_id,p.publication_key,p.digest LIMIT $1
+ ORDER BY p.computer_instance_id,p.publication_key,p.digest LIMIT $1
  FOR UPDATE OF p SKIP LOCKED
 )
-DELETE FROM runtime_computer_object_pins p USING released r
- WHERE p.runtime_instance_id=r.runtime_instance_id AND p.publication_key=r.publication_key AND p.digest=r.digest
+DELETE FROM computer_object_pins p USING released r
+ WHERE p.computer_instance_id=r.computer_instance_id AND p.publication_key=r.publication_key AND p.digest=r.digest
 `
 
 // Physical reclamation is monotonic and already requires exclusion evidence.
@@ -306,7 +306,7 @@ UPDATE cas_blobs l SET retired_at=clock_timestamp(),next_reclaim_at=clock_timest
  WHERE l.digest=$1 AND l.retired_at IS NULL
  AND NOT EXISTS (SELECT 1 FROM cas_objects c WHERE c.digest=l.digest)
  AND NOT EXISTS (SELECT 1 FROM computer_objects o WHERE o.digest=l.digest)
- AND NOT EXISTS (SELECT 1 FROM run_checkpoint_objects c WHERE c.digest=l.digest AND c.checkpoint_status='creating')
+ AND NOT EXISTS (SELECT 1 FROM computer_checkpoint_objects c WHERE c.digest=l.digest AND c.checkpoint_status='creating')
 `
 
 // The caller has removed an abandoned graph owner in this transaction, not

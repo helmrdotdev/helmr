@@ -33,7 +33,8 @@ func (t *Tree) ReadRange(ctx context.Context, offset int64, length int) ([]byte,
 			return err
 		}
 		span := stride(t.shape.Fanout, level)
-		for _, entry := range node.Entries {
+		for i := 0; i < len(node.Entries); i++ {
+			entry := node.Entries[i]
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -51,13 +52,26 @@ func (t *Tree) ReadRange(ctx context.Context, offset int64, length int) ([]byte,
 				continue
 			}
 			segment := node.Segments[entry.Segment]
-			data, err := ReadBlock(ctx, t.source, t.scope, t.keys[segment.Key], segment, entry.Record)
+			// A leaf bounds the batch to at most 256 blocks. Coalesce only
+			// adjacent logical blocks backed by consecutive authenticated frames.
+			count := 1
+			for i+count < len(node.Entries) {
+				next := node.Entries[i+count]
+				if start+uint64(next.Slot) > last || next.Slot != entry.Slot+count ||
+					node.Segments[next.Segment] != segment || next.Record != entry.Record+uint32(count) {
+					break
+				}
+				count++
+			}
+			data, err := readBlocks(ctx, t.source, t.scope, t.keys[segment.Key], segment, entry.Record, uint32(count))
 			if err != nil {
 				return err
 			}
 			blockOffset := int64(block) * BlockSize
-			from, to := max(offset, blockOffset), min(end, blockOffset+BlockSize)
+			from, to := max(offset, blockOffset), min(end, blockOffset+int64(count)*BlockSize)
 			copy(out[from-offset:to-offset], data[from-blockOffset:to-blockOffset])
+			clear(data)
+			i += count - 1
 		}
 		return nil
 	}

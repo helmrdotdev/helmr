@@ -110,7 +110,7 @@ type Session struct {
 	ID                string          `json:"id"`
 	ActorID           string          `json:"actor_id"`
 	DeploymentID      string          `json:"deployment_id"`
-	WorkspaceID       string          `json:"workspace_id"`
+	ComputerID        string          `json:"computer_id"`
 	Key               *string         `json:"key,omitempty"`
 	Status            SessionStatus   `json:"status"`
 	CreatedAt         time.Time       `json:"created_at"`
@@ -130,19 +130,19 @@ type SessionTurnSource struct {
 	RunID string `json:"run_id,omitempty"`
 }
 type SessionTurn struct {
-	ID                 string            `json:"id"`
-	SessionID          string            `json:"session_id"`
-	Sequence           int64             `json:"sequence"`
-	Input              json.RawMessage   `json:"input"`
-	Source             SessionTurnSource `json:"source"`
-	Status             string            `json:"status"`
-	CreatedAt          time.Time         `json:"created_at"`
-	InterruptRequested bool              `json:"interrupt_requested"`
-	AcceptsMessages    bool              `json:"accepts_messages"`
-	TerminalEventID    *string           `json:"terminal_event_id,omitempty"`
-	WorkspaceVersionID *string           `json:"workspace_version_id,omitempty"`
-	Result             json.RawMessage   `json:"result,omitempty"`
-	Error              json.RawMessage   `json:"error,omitempty"`
+	ID                    string            `json:"id"`
+	SessionID             string            `json:"session_id"`
+	Sequence              int64             `json:"sequence"`
+	Input                 json.RawMessage   `json:"input"`
+	Source                SessionTurnSource `json:"source"`
+	Status                string            `json:"status"`
+	CreatedAt             time.Time         `json:"created_at"`
+	InterruptRequested    bool              `json:"interrupt_requested"`
+	AcceptsMessages       bool              `json:"accepts_messages"`
+	TerminalEventID       *string           `json:"terminal_event_id,omitempty"`
+	ComputerDiskVersionID *string           `json:"computer_disk_version_id,omitempty"`
+	Result                json.RawMessage   `json:"result,omitempty"`
+	Error                 json.RawMessage   `json:"error,omitempty"`
 }
 type SessionEventProvenance struct {
 	RunID         string `json:"run_id"`

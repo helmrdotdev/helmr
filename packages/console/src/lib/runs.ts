@@ -26,7 +26,7 @@ export type RunListItem = {
     kind: string;
     id: string;
   };
-  workspace_id: string;
+  computer_id: string;
   session_id?: string;
   current_attempt_number: number;
   created_at: string;

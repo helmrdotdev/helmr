@@ -42,10 +42,10 @@ test("console demo seed populates overview and navigation pages", async ({ page 
   await expect(page.getByText("demo-approval")).toBeVisible();
   await expect(page.getByText("No Tokens match this filter.")).toHaveCount(0);
 
-  await navigation.getByRole("link", { name: "Workspaces", exact: true }).click();
-  await expect(page).toHaveURL("/workspaces");
+  await navigation.getByRole("link", { name: "Computers", exact: true }).click();
+  await expect(page).toHaveURL("/computers");
   await expect(page.locator("code", { hasText: "demo-actor" })).toBeVisible();
-  await expect(page.getByText("No Workspaces yet.")).toHaveCount(0);
+  await expect(page.getByText("No Computers yet.")).toHaveCount(0);
 
   await navigation.getByRole("link", { name: "Runs", exact: true }).click();
   await expect(page).toHaveURL("/runs");

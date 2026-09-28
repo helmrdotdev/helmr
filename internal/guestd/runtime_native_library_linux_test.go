@@ -32,37 +32,37 @@ type nativeLibraryProbe struct {
 }
 
 // TestManagedNodeNativeLibraries launches the platform Node through the real
-// managed Program path (namespace init, pivot into the Workspace root, sealed
+// managed Program path (namespace init, pivot into the Computer root, sealed
 // Runtime and Program mounts, identity drop, direct exec) inside prepared
-// Workspace roots. tests/build/guestd-native-library.test.sh provides the admitted
+// Computer roots. tests/build/guestd-native-library.test.sh provides the admitted
 // Program, the Runtime artifact and the roots; it needs root on Linux.
 func TestManagedNodeNativeLibraries(t *testing.T) {
-	roots := os.Getenv("HELMR_GUESTD_NATIVE_WORKSPACES")
+	roots := os.Getenv("HELMR_GUESTD_NATIVE_COMPUTERS")
 	if roots == "" {
-		t.Skip("HELMR_GUESTD_NATIVE_WORKSPACES is not set")
+		t.Skip("HELMR_GUESTD_NATIVE_COMPUTERS is not set")
 	}
 	tests := []struct {
-		workspace string
-		// library is whether the Workspace image installs the distribution
+		computer string
+		// library is whether the Computer image installs the distribution
 		// library the source-built addon links; glibc whether it can run the
 		// dependency's glibc-linked executable at all.
 		library, glibc bool
 	}{
-		{workspace: "bookworm-lib", library: true, glibc: true},
-		{workspace: "bookworm-lib-nocache", library: true, glibc: true},
-		{workspace: "ubuntu2004-lib", library: true, glibc: true},
-		{workspace: "ubuntu2510-lib", library: true, glibc: true},
-		{workspace: "bookworm-nolib", library: false, glibc: true},
-		{workspace: "alpine", library: false, glibc: false},
+		{computer: "bookworm-lib", library: true, glibc: true},
+		{computer: "bookworm-lib-nocache", library: true, glibc: true},
+		{computer: "ubuntu2004-lib", library: true, glibc: true},
+		{computer: "ubuntu2510-lib", library: true, glibc: true},
+		{computer: "bookworm-nolib", library: false, glibc: true},
+		{computer: "alpine", library: false, glibc: false},
 	}
 	for _, test := range tests {
-		t.Run(test.workspace, func(t *testing.T) {
-			imageRoot := filepath.Join(roots, test.workspace)
+		t.Run(test.computer, func(t *testing.T) {
+			imageRoot := filepath.Join(roots, test.computer)
 			if _, err := os.Stat(imageRoot); err != nil {
 				t.Fatal(err)
 			}
 			user := &resolvedRuntimeUser{Name: "helmr", UID: 65532, GID: 65532, Home: "/tmp"}
-			// A Workspace image may carry loader variables; pointing them at its
+			// A Computer image may carry loader variables; pointing them at its
 			// own libc is what would crash a Runtime that honoured them.
 			env := managedRuntimeEnv(ociRuntimeConfig{Env: []string{
 				"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -98,7 +98,7 @@ func TestManagedNodeNativeLibraries(t *testing.T) {
 				t.Fatalf("spawned process inherited loader variables %s", probe.Child)
 			}
 			if len(probe.ForeignFamily) != 0 {
-				t.Fatalf("C runtime components came from the Workspace image: %q", probe.ForeignFamily)
+				t.Fatalf("C runtime components came from the Computer image: %q", probe.ForeignFamily)
 			}
 			if probe.DNS != "ok" {
 				t.Fatalf("name resolution = %q", probe.DNS)
@@ -108,7 +108,7 @@ func TestManagedNodeNativeLibraries(t *testing.T) {
 			}
 			if test.library {
 				if !probe.Distro.OK {
-					t.Fatalf("addon linked to a Workspace library failed: %s", probe.Distro.Error)
+					t.Fatalf("addon linked to a Computer library failed: %s", probe.Distro.Error)
 				}
 				values, _ := probe.Distro.Value.(map[string]any)
 				if values["resolver"] != float64(0) || values["shm"] != true || values["aio"] != float64(0) ||
@@ -116,7 +116,7 @@ func TestManagedNodeNativeLibraries(t *testing.T) {
 					t.Fatalf("addon calls = %v", values)
 				}
 			} else if probe.Distro.OK || !strings.Contains(probe.Distro.Error, "libsqlite3.so.0: cannot open shared object file") {
-				t.Fatalf("missing Workspace library must be the ordinary loader error, got %+v", probe.Distro)
+				t.Fatalf("missing Computer library must be the ordinary loader error, got %+v", probe.Distro)
 			}
 			if probe.Future.OK || !strings.Contains(probe.Future.Error, "GLIBC_9.99") {
 				t.Fatalf("object needing a newer glibc must name the missing version, got %+v", probe.Future)
@@ -126,7 +126,7 @@ func TestManagedNodeNativeLibraries(t *testing.T) {
 					t.Fatalf("spawned dependency executable = %+v", probe.OpenCode)
 				}
 			} else if probe.OpenCode.Status != nil && *probe.OpenCode.Status == 0 {
-				t.Fatalf("glibc executable unexpectedly ran in a musl Workspace: %+v", probe.OpenCode)
+				t.Fatalf("glibc executable unexpectedly ran in a musl Computer: %+v", probe.OpenCode)
 			}
 		})
 	}

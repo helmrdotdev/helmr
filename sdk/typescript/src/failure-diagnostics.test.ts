@@ -14,7 +14,7 @@ for (const kind of ["schedule", "session"] as const) {
         status: status ?? "errored", last_failure: failure,
         created_at: timestamp, updated_at: timestamp,
       } : {
-        id, actor_id: "actor", deployment_id: runId, workspace_id: runId,
+        id, actor_id: "actor", deployment_id: runId, computer_id: runId,
         status: status ?? "failed", failure,
  current_run_id:null,active_turn_id:null,dispatch:{state:"ready"},
         created_at: timestamp, updated_at: timestamp,

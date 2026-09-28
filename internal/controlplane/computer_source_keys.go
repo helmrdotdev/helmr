@@ -69,7 +69,7 @@ func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFe
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
 	}
 	var claims bool
-	err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_instances w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
+	err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
 	if err != nil || !claims {
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
 	}
@@ -79,11 +79,11 @@ func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFe
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
 	}
 
-	writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+	writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
 	if err != nil {
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
 	}
-	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, RuntimeInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
 	if err != nil || n != 1 {
 		return computerSourceKeys{}, nil, errComputerKeyUnavailable
 	}

@@ -49,9 +49,9 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_actor_start", message: err.Error()}))
 		return
 	}
-	if err := api.ValidateWorkspaceIDTarget(request.Workspace); err != nil {
+	if err := api.ValidateComputerIDTarget(request.Computer); err != nil {
 		writeError(w, badRequest(codedError{
-			code:    "invalid_workspace_reference",
+			code:    "invalid_computer_reference",
 			message: err.Error(),
 		}))
 		return
@@ -207,21 +207,21 @@ func rejectActorStartNulls(canonical []byte) error {
 	if err := validateActorStartIdempotencyWire(root["idempotency_key"]); err != nil {
 		return err
 	}
-	if raw := root["workspace"]; len(raw) > 0 {
-		workspace, err := decodeActorStartObject(raw, "workspace")
+	if raw := root["computer"]; len(raw) > 0 {
+		computer, err := decodeActorStartObject(raw, "computer")
 		if err != nil {
-			return codedError{code: "invalid_workspace_reference", message: err.Error()}
+			return codedError{code: "invalid_computer_reference", message: err.Error()}
 		}
-		if err := rejectActorStartNullFields(workspace, "workspace.", "id", "key"); err != nil {
-			return codedError{code: "invalid_workspace_reference", message: err.Error()}
+		if err := rejectActorStartNullFields(computer, "computer.", "id", "key"); err != nil {
+			return codedError{code: "invalid_computer_reference", message: err.Error()}
 		}
 		for _, field := range []string{"id", "key"} {
-			if value, ok := workspace[field]; ok {
+			if value, ok := computer[field]; ok {
 				var decoded string
 				if err := json.Unmarshal(value, &decoded); err != nil {
 					return codedError{
-						code:    "invalid_workspace_reference",
-						message: "workspace." + field + " must be a string",
+						code:    "invalid_computer_reference",
+						message: "computer." + field + " must be a string",
 					}
 				}
 			}
@@ -391,8 +391,8 @@ func actorStartRequestFromAPI(
 		actorDeclaredID,
 		idempotencyKey,
 		api.ActorStartOptions{
-			Key:       request.Key,
-			Workspace: request.Workspace, Run: request.Run,
+			Key:      request.Key,
+			Computer: request.Computer, Run: request.Run,
 		},
 	)
 }
@@ -431,7 +431,7 @@ func actorStartRequestFromScope(
 			return actorStartRequest{}, fmt.Errorf("normalize run.retry: %w", err)
 		}
 	}
-	workspaceID, err := ids.Parse(request.Workspace.ID)
+	computerID, err := ids.Parse(request.Computer.ID)
 	if err != nil {
 		return actorStartRequest{}, err
 	}
@@ -440,7 +440,7 @@ func actorStartRequestFromScope(
 		ProjectID:             projectID,
 		EnvironmentID:         environmentID,
 		ActorDeclaredID:       actorDeclaredID,
-		WorkspaceID:           workspaceID,
+		ComputerID:            computerID,
 		Key:                   request.Key,
 		IdempotencyKey:        idempotencyKey,
 		ManagedQueueName:      run.Queue,
@@ -454,9 +454,17 @@ func actorStartRequestFromScope(
 }
 
 func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
+	var expired idempotency.ExpiredError
+	if errors.As(err, &expired) {
+		writeError(w, gone(expired))
+		return
+	}
 	var idempotencyConflict idempotency.ConflictError
 	var keyConflict ActorKeyConflictError
+	var classified apiError
 	switch {
+	case errors.As(err, &classified):
+		writeError(w, classified)
 	case errors.As(err, &idempotencyConflict):
 		writeError(w, conflict(codedError{
 			code:    "idempotency_conflict",
@@ -466,15 +474,15 @@ func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
 		writeError(w, conflict(codedError{code: "actor_key_conflict", message: keyConflict.Error()}))
 	case errors.Is(err, errActorStartNotDeployed):
 		writeError(w, notFound(codedError{code: "actor_not_deployed", message: errActorStartNotDeployed.Error()}))
-	case errors.Is(err, errActorStartWorkspaceNotFound):
+	case errors.Is(err, errActorStartComputerNotFound):
 		writeError(w, notFound(codedError{
-			code:    "workspace_not_found",
-			message: errActorStartWorkspaceNotFound.Error(),
+			code:    "computer_not_found",
+			message: errActorStartComputerNotFound.Error(),
 		}))
-	case errors.Is(err, errActorStartWorkspaceConflict):
+	case errors.Is(err, errActorStartComputerConflict):
 		writeError(w, conflict(codedError{
-			code:      "workspace_unavailable",
-			message:   errActorStartWorkspaceConflict.Error(),
+			code:      "computer_unavailable",
+			message:   errActorStartComputerConflict.Error(),
 			retryable: true,
 		}))
 	case errors.Is(err, errActorStartSecretUnavailable):

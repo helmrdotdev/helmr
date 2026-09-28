@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"unsafe"
 
-	firecracker "github.com/firecracker-microvm/firecracker-go-sdk"
-	"github.com/firecracker-microvm/firecracker-go-sdk/client/models"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"golang.org/x/sys/unix"
@@ -80,20 +78,6 @@ func attachComputerDisk(ctx context.Context, disk *vm.RuntimeComputer, directory
 		return "", fmt.Errorf("attach computer disk: %w", err)
 	}
 	return path, nil
-}
-
-func runtimeDrivesWithComputer(root, scratch, substrate, computer string, drives []vm.ReadOnlyDrive, paths map[string]string) []models.Drive {
-	backing := substrate
-	if computer != "" {
-		backing = computer
-	}
-	result := runtimeDrivesWithReadOnlyPaths(root, scratch, backing, drives, paths)
-	if computer != "" {
-		result[2].DriveID = firecracker.String("computer")
-		result[2].IsReadOnly = firecracker.Bool(false)
-		result[2].CacheType = firecracker.String(writableBlockCache)
-	}
-	return result
 }
 
 // A block node's stat size is zero; query the retained descriptor, never a device

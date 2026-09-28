@@ -24,21 +24,21 @@ import (
 const workerCredentialFileName = "worker-credential.json"
 
 type workerCredentialFile struct {
-	WorkerInstanceID     string    `json:"worker_instance_id"`
-	WorkerInstanceSecret string    `json:"worker_instance_secret"`
-	CreatedAt            time.Time `json:"created_at"`
+	WorkerHostID     string    `json:"worker_host_id"`
+	WorkerHostSecret string    `json:"worker_host_secret"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
-func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, workDir string) (workerCredentialFile, error) {
-	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
-	if credential, err := readWorkerInstanceCredential(path); err == nil {
+func resolveWorkerHostCredential(ctx context.Context, cfg config.Worker, workDir string) (workerCredentialFile, error) {
+	path := workerCredentialPath(workDir, cfg.WorkerHostCredentialPath)
+	if credential, err := readWorkerHostCredential(path); err == nil {
 		return credential, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return workerCredentialFile{}, err
 	}
 	var credential workerCredentialFile
 	if err := withWorkerCredentialLock(path, func() error {
-		if stored, err := readWorkerInstanceCredential(path); err == nil {
+		if stored, err := readWorkerHostCredential(path); err == nil {
 			credential = stored
 			return nil
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -58,24 +58,24 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err != nil {
 			return fmt.Errorf("enroll worker: %w", err)
 		}
-		registered.WorkerInstanceID = strings.TrimSpace(registered.WorkerInstanceID)
+		registered.WorkerHostID = strings.TrimSpace(registered.WorkerHostID)
 		registered.WorkerPoolID = strings.TrimSpace(registered.WorkerPoolID)
-		registered.WorkerInstanceSecret = strings.TrimSpace(registered.WorkerInstanceSecret)
-		if registered.WorkerInstanceID == "" {
-			return errors.New("worker enrollment response worker_instance_id is empty")
+		registered.WorkerHostSecret = strings.TrimSpace(registered.WorkerHostSecret)
+		if registered.WorkerHostID == "" {
+			return errors.New("worker enrollment response worker_host_id is empty")
 		}
-		if registered.WorkerInstanceSecret == "" {
+		if registered.WorkerHostSecret == "" {
 			return errors.New("worker enrollment response secret is empty")
 		}
 		if _, err := ids.Parse(registered.WorkerPoolID); err != nil {
 			return errors.New("worker enrollment response worker_pool_id is not a canonical UUIDv7")
 		}
 		credential = workerCredentialFile{
-			WorkerInstanceID:     registered.WorkerInstanceID,
-			WorkerInstanceSecret: registered.WorkerInstanceSecret,
-			CreatedAt:            time.Now().UTC(),
+			WorkerHostID:     registered.WorkerHostID,
+			WorkerHostSecret: registered.WorkerHostSecret,
+			CreatedAt:        time.Now().UTC(),
 		}
-		if err := writeWorkerInstanceSecret(path, credential); err != nil {
+		if err := writeWorkerHostSecret(path, credential); err != nil {
 			return err
 		}
 		return nil
@@ -91,7 +91,7 @@ func resolveAuthenticatedWorkerCredential(
 	workDir string,
 	authenticate func(workerCredentialFile) error,
 ) (workerCredentialFile, error) {
-	credential, err := resolveWorkerInstanceCredential(ctx, cfg, workDir)
+	credential, err := resolveWorkerHostCredential(ctx, cfg, workDir)
 	if err != nil {
 		return workerCredentialFile{}, err
 	}
@@ -100,11 +100,11 @@ func resolveAuthenticatedWorkerCredential(
 	} else if !httpclient.IsStatus(err, http.StatusUnauthorized) {
 		return workerCredentialFile{}, fmt.Errorf("authenticate worker credential: %w", err)
 	}
-	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
+	path := workerCredentialPath(workDir, cfg.WorkerHostCredentialPath)
 	if err := removeWorkerCredentialIfMatch(path, credential); err != nil {
 		return workerCredentialFile{}, err
 	}
-	credential, err = resolveWorkerInstanceCredential(ctx, cfg, workDir)
+	credential, err = resolveWorkerHostCredential(ctx, cfg, workDir)
 	if err != nil {
 		return workerCredentialFile{}, fmt.Errorf("replace rejected worker credential: %w", err)
 	}
@@ -116,14 +116,14 @@ func resolveAuthenticatedWorkerCredential(
 
 func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) error {
 	return withWorkerCredentialLock(path, func() error {
-		current, err := readWorkerInstanceCredential(path)
+		current, err := readWorkerHostCredential(path)
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		if current.WorkerInstanceID != rejected.WorkerInstanceID || current.WorkerInstanceSecret != rejected.WorkerInstanceSecret {
+		if current.WorkerHostID != rejected.WorkerHostID || current.WorkerHostSecret != rejected.WorkerHostSecret {
 			return nil
 		}
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -137,8 +137,8 @@ func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) e
 }
 
 func resolveWorkerControlPlaneCredential(cfg config.WorkerControlPlane, workDir string) (workerCredentialFile, error) {
-	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
-	return readWorkerInstanceCredential(path)
+	path := workerCredentialPath(workDir, cfg.WorkerHostCredentialPath)
+	return readWorkerHostCredential(path)
 }
 
 func workerCredentialPath(workDir string, configured string) string {
@@ -191,7 +191,7 @@ func readWorkerEnrollmentToken(path string) (string, error) {
 	return secret, nil
 }
 
-func readWorkerInstanceCredential(path string) (workerCredentialFile, error) {
+func readWorkerHostCredential(path string) (workerCredentialFile, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return workerCredentialFile{}, err
@@ -223,15 +223,15 @@ func readWorkerInstanceCredential(path string) (workerCredentialFile, error) {
 	if err := json.Unmarshal(bytes, &credential); err != nil {
 		return workerCredentialFile{}, fmt.Errorf("read worker instance credential %s: %w", path, err)
 	}
-	credential.WorkerInstanceID = strings.TrimSpace(credential.WorkerInstanceID)
-	credential.WorkerInstanceSecret = strings.TrimSpace(credential.WorkerInstanceSecret)
-	if credential.WorkerInstanceID == "" || credential.WorkerInstanceSecret == "" {
+	credential.WorkerHostID = strings.TrimSpace(credential.WorkerHostID)
+	credential.WorkerHostSecret = strings.TrimSpace(credential.WorkerHostSecret)
+	if credential.WorkerHostID == "" || credential.WorkerHostSecret == "" {
 		return workerCredentialFile{}, fmt.Errorf("worker instance credential %s is incomplete", path)
 	}
 	return credential, nil
 }
 
-func writeWorkerInstanceSecret(path string, credential workerCredentialFile) error {
+func writeWorkerHostSecret(path string, credential workerCredentialFile) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create worker instance credential directory: %w", err)
 	}

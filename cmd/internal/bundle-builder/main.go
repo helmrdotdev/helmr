@@ -31,7 +31,7 @@ func run(ctx context.Context, arguments []string) error {
 	work := flags.String("work", "", "private working directory")
 	bundleOutput := flags.String("bundle-output", "", "new deployment bundle directory")
 	analysisOutput := flags.String("analysis-output", "", "new canonical build-plan file")
-	workspaceImageInput := flags.String("workspace-images", "", "workspace image input document")
+	computerImageInput := flags.String("computer-images", "", "computer image input document")
 	expectedPlanInput := flags.String("expected-plan", "", "canonical analysis build plan")
 	runtimeDescriptor := flags.String("runtime-descriptor", "", "canonical Runtime descriptor")
 	runtimeMetadata := flags.String("runtime-metadata", "", "canonical Runtime metadata")
@@ -112,7 +112,7 @@ func run(ctx context.Context, arguments []string) error {
 		return err
 	}
 	defer os.RemoveAll(imageWork)
-	images, objects, err := builder.ReadWorkspaceImageInputs(ctx, cleanAbsolute(*workspaceImageInput), imageWork, cleanAbsolute(*mkfs), cleanAbsolute(*filesystemConfig))
+	images, objects, err := builder.ReadComputerImageInputs(ctx, cleanAbsolute(*computerImageInput), imageWork, cleanAbsolute(*mkfs), cleanAbsolute(*filesystemConfig))
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func run(ctx context.Context, arguments []string) error {
 		Compiler:          compiler,
 		Runtime:           runtime,
 		RuntimeMetadata:   metadata,
-		WorkspaceImages:   images,
+		ComputerImages:    images,
 	})
 	if err != nil {
 		return err
@@ -159,10 +159,10 @@ func run(ctx context.Context, arguments []string) error {
 		Path:   result.ObjectPath,
 	})
 	_, err = builder.FinalizeBundle(ctx, cleanAbsolute(*bundleOutput), builder.BundleInput{
-		Runtime:         runtime,
-		Program:         result.Program,
-		WorkspaceImages: images,
-		Objects:         objects,
+		Runtime:        runtime,
+		Program:        result.Program,
+		ComputerImages: images,
+		Objects:        objects,
 	})
 	return err
 }

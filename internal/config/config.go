@@ -46,7 +46,7 @@ type ControlPlane struct {
 	ComputerWrappingKey             []byte
 	ComputerWrappingKeyID           string
 	ComputerKMSKeyARN               string
-	WorkspaceFencingKey             []byte
+	ComputerFencingKey              []byte
 	TokenCredentialKey              []byte
 	PublicURL                       string
 	APIOrigin                       string
@@ -72,12 +72,12 @@ type Bootstrap struct {
 }
 
 type Dispatcher struct {
-	EncryptionKey       []byte
-	DatabaseURL         string
-	ClickHouseURL       string
-	ClickHouseUser      string
-	ClickHousePassword  string
-	WorkspaceFencingKey []byte
+	EncryptionKey      []byte
+	DatabaseURL        string
+	ClickHouseURL      string
+	ClickHouseUser     string
+	ClickHousePassword string
+	ComputerFencingKey []byte
 }
 
 type Database struct {
@@ -91,55 +91,54 @@ type ClickHouse struct {
 }
 
 type Worker struct {
-	ComputerSaveEvery            time.Duration
-	ComputerDevices              []string
-	ComputerStagingMiB           int64
-	ControlPlaneURL              string
-	WorkerResourceID             string
-	WorkerPoolName               string
-	WorkerEnrollmentTokenFile    string
-	CASURI                       string
-	WorkerInstanceCredentialPath string
-	CheckpointKey                []byte
-	PlatformStoreURI             string
-	WorkDir                      string
-	ImagesDir                    string
-	FirecrackerPath              string
-	CPUTemplateHelperPath        string
-	JailerPath                   string
-	MkfsExt4Path                 string
-	Mke2fsConfigPath             string
-	JailerUID                    int
-	JailerGID                    int
-	JailerNumaNode               int
-	JailerChrootDir              string
-	CgroupVersion                string
-	NetworkLinkPool              string
-	NetworkTranslationPool       string
-	NetworkResolverIPv4          string
-	NetworkBlockedIPv4CIDRs      []netip.Prefix
-	IPPath                       string
-	NFTPath                      string
-	VMVCPUCount                  int64
-	VMMemoryMiB                  int64
-	VMScratchDiskMiB             int64
-	WorkerCapacityVCPUs          int64
-	WorkerCapacityMemoryMiB      int64
-	WorkerDiskMiB                int64
-	WorkerDiskReserveMiB         int64
-	SubstrateCacheMaxMiB         int64
-	ArtifactCacheMaxMiB          int64
-	WorkerExecutionSlots         int32
-	VMInitTimeout                time.Duration
-	VMHealthTimeout              time.Duration
-	PollEvery                    time.Duration
+	ComputerSaveEvery         time.Duration
+	ComputerDevices           []string
+	ComputerStagingMiB        int64
+	ControlPlaneURL           string
+	WorkerResourceID          string
+	WorkerPoolName            string
+	WorkerEnrollmentTokenFile string
+	CASURI                    string
+	WorkerHostCredentialPath  string
+	CheckpointKey             []byte
+	PlatformStoreURI          string
+	WorkDir                   string
+	ImagesDir                 string
+	FirecrackerPath           string
+	CPUTemplateHelperPath     string
+	JailerPath                string
+	MkfsExt4Path              string
+	Mke2fsConfigPath          string
+	JailerUID                 int
+	JailerGID                 int
+	JailerNumaNode            int
+	JailerChrootDir           string
+	CgroupVersion             string
+	NetworkLinkPool           string
+	NetworkTranslationPool    string
+	NetworkResolverIPv4       string
+	NetworkBlockedIPv4CIDRs   []netip.Prefix
+	IPPath                    string
+	NFTPath                   string
+	VMVCPUCount               int64
+	VMMemoryMiB               int64
+	VMScratchDiskMiB          int64
+	WorkerCapacityVCPUs       int64
+	WorkerCapacityMemoryMiB   int64
+	WorkerDiskMiB             int64
+	WorkerDiskReserveMiB      int64
+	ArtifactCacheMaxMiB       int64
+	WorkerExecutionSlots      int32
+	VMInitTimeout             time.Duration
+	VMHealthTimeout           time.Duration
+	PollEvery                 time.Duration
 }
 
 type WorkerControlPlane struct {
-	ControlPlaneURL              string
-	WorkerInstanceCredentialPath string
-	WorkDir                      string
-	PollEvery                    time.Duration
+	ControlPlaneURL          string
+	WorkerHostCredentialPath string
+	WorkDir                  string
+	PollEvery                time.Duration
 }
 
 func LoadDatabase() (Database, error) {

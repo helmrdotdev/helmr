@@ -86,13 +86,3 @@ func workerDerivedCacheBudgetBytes(hostDiskMiB int64, numerator int64, denominat
 	}
 	return budgetMiB * 1024 * 1024
 }
-
-func workerCacheBudgetsBytes(substrateConfiguredMiB int64, artifactConfiguredMiB int64, hostDiskMiB int64) (int64, int64) {
-	if substrateConfiguredMiB > 0 || artifactConfiguredMiB > 0 {
-		return workerCacheBudgetBytes(substrateConfiguredMiB, hostDiskMiB, 1, 3, 4096, 32768),
-			workerCacheBudgetBytes(artifactConfiguredMiB, hostDiskMiB, 1, 6, 2048, 16384)
-	}
-	totalBytes := workerDerivedCacheBudgetBytes(hostDiskMiB, 1, 2, 6144, 49152)
-	substrateBytes := totalBytes * 2 / 3
-	return substrateBytes, totalBytes - substrateBytes
-}

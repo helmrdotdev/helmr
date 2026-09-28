@@ -226,6 +226,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresMaximumBulkBudget(t *testing.T
 	beginner := &deploymentFinalizeCountingBeginner{pool: fixture.pool}
 	fixture.server.tx = beginner
 
+	flushDeploymentMeasurementStats(t, fixture.pool)
 	var walBefore string
 	var tempFilesBefore, tempBytesBefore int64
 	if err := fixture.pool.QueryRow(t.Context(), `
@@ -251,6 +252,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresMaximumBulkBudget(t *testing.T
 		t.Fatal("maximum finalization returned no deployment")
 	}
 
+	flushDeploymentMeasurementStats(t, fixture.pool)
 	var walBytes, tempFilesAfter, tempBytesAfter int64
 	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT pg_wal_lsn_diff(pg_current_wal_insert_lsn(), $1::pg_lsn)::bigint,
@@ -434,7 +436,7 @@ func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t 
 			t.Fatal("duplicate definition membership succeeded")
 		}
 	})
-	t.Run("cross-scope artifact", func(t *testing.T) {
+	t.Run("cross-scope spec", func(t *testing.T) {
 		otherEnvironmentID := pgvalue.UUID(uuid.NewV7())
 		if _, err := queries.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
 			ID: otherEnvironmentID, OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
@@ -444,23 +446,23 @@ func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t 
 		}
 		digest := "sha256:" + strings.Repeat("d", 64)
 		if _, err := queries.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{
-			OrgID: pgvalue.UUID(fixture.orgID), Digest: digest, SizeBytes: 1, MediaType: "application/octet-stream",
+			OrgID: pgvalue.UUID(fixture.orgID), Digest: digest, SizeBytes: 1, MediaType: deployment.ComputerImageArtifactMediaType,
 		}); err != nil {
 			t.Fatal(err)
 		}
 		artifact, err := queries.CreateArtifact(t.Context(), db.CreateArtifactParams{
 			ID: pgvalue.UUID(uuid.NewV7()), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
-			EnvironmentID: otherEnvironmentID, Digest: digest, Kind: db.ArtifactKindWorkspaceImage,
-			SizeBytes: 1, MediaType: "application/octet-stream",
+			EnvironmentID: otherEnvironmentID, Digest: digest, Kind: db.ArtifactKindComputerImage,
+			SizeBytes: 1, MediaType: deployment.ComputerImageArtifactMediaType,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 		params := deploymentDefinitionBatchParams(fixture.environmentID, pgvalue.UUID(deploymentUUID), 1)
 		params.Kinds[0] = "sandbox"
-		params.ArtifactIds[0] = artifact.ID
+		params.ComputerSpecIds[0] = pgvalue.UUID(dbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, artifact.ID))
 		if _, err := queries.CreateDeploymentDefinitions(t.Context(), params); err == nil {
-			t.Fatal("cross-scope artifact succeeded")
+			t.Fatal("cross-scope spec succeeded")
 		}
 	})
 
@@ -493,7 +495,7 @@ func deploymentDefinitionBatchParams(
 	params := db.CreateDeploymentDefinitionsParams{
 		Ids: make([]pgtype.UUID, count), Kinds: make([]string, count),
 		DeclaredIds: make([]string, count), Manifests: make([][]byte, count),
-		ManifestDigests: make([][]byte, count), ArtifactIds: make([]pgtype.UUID, count),
+		ManifestDigests: make([][]byte, count), ComputerSpecIds: make([]pgtype.UUID, count),
 		EnvironmentID: environmentID, DeploymentID: deploymentID,
 		ManifestVersion: deployment.DeploymentPlanFormatVersion,
 	}

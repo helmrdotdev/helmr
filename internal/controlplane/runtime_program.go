@@ -56,7 +56,7 @@ func projectRuntimeProgram(
 		return workerapi.RuntimeProgram{}, err
 	}
 	if expectedArchitecture != "" && expectedArchitecture != string(deployment.ArchitectureX8664) {
-		return workerapi.RuntimeProgram{}, errors.New("program architecture does not match workspace")
+		return workerapi.RuntimeProgram{}, errors.New("program architecture does not match computer")
 	}
 	runtimeDigest := authority.runtimeDigest
 	if _, err := cas.ObjectKey("", runtimeDigest); err != nil {

@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	testSessionID          = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
-	testTurnID             = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
-	testHoldID             = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
-	testWorkspaceVersionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
+	testSessionID             = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33"
+	testTurnID                = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc34"
+	testHoldID                = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc35"
+	testComputerDiskVersionID = "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc36"
 )
 
 func TestSessionMutations(t *testing.T) {
@@ -142,7 +142,7 @@ func TestSessionReads(t *testing.T) {
 					if explicitResult {
 						result = `,"result":null`
 					}
-					_, _ = io.WriteString(w, `{"id":"`+testTurnID+`","sequence":1,"status":"completed","interrupt_requested":false,"accepts_messages":false,"terminal_event_id":"event-1","workspace_version_id":"`+testWorkspaceVersionID+`"`+result+`}`)
+					_, _ = io.WriteString(w, `{"id":"`+testTurnID+`","sequence":1,"status":"completed","interrupt_requested":false,"accepts_messages":false,"terminal_event_id":"event-1","computer_disk_version_id":"`+testComputerDiskVersionID+`"`+result+`}`)
 				case prefix + "/sessions":
 					if r.URL.RawQuery != "limit=5&status=closing" {
 						t.Errorf("query = %s", r.URL.RawQuery)
@@ -167,7 +167,7 @@ func TestSessionReads(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if turn.ID != testTurnID || turn.Status != "completed" || turn.WorkspaceVersionID == nil || *turn.WorkspaceVersionID != testWorkspaceVersionID {
+				if turn.ID != testTurnID || turn.Status != "completed" || turn.ComputerDiskVersionID == nil || *turn.ComputerDiskVersionID != testComputerDiskVersionID {
 					t.Fatalf("turn = %+v", turn)
 				}
 				if explicit && string(turn.Result) != "null" || !explicit && turn.Result != nil {
@@ -247,14 +247,14 @@ func TestStartActorRoutes(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Error(err)
 				}
-				if ids.Validate(request.IdempotencyKey) != nil || request.Workspace.ID != testWorkspaceVersionID {
+				if ids.Validate(request.IdempotencyKey) != nil || request.Computer.ID != testComputerDiskVersionID {
 					t.Errorf("request = %+v", request)
 				}
 				_, _ = io.WriteString(w, `{"session_id":"`+testSessionID+`","run_id":"run-1"}`)
 			}))
 			defer server.Close()
 			c := sessionTestClient(t, server, scoped)
-			response, err := c.StartActor(context.Background(), "operator.v1", api.StartActorRequest{Workspace: api.WorkspaceIDTarget{ID: testWorkspaceVersionID}}, scope)
+			response, err := c.StartActor(context.Background(), "operator.v1", api.StartActorRequest{Computer: api.ComputerIDTarget{ID: testComputerDiskVersionID}}, scope)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -355,7 +355,7 @@ func assertSessionJSON(t *testing.T, actual, want []byte) {
 func actorStatusFixture() api.Session {
 	return api.Session{
 		ID: testSessionID, ActorID: "operator.v1", DeploymentID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc32",
-		WorkspaceID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.SessionStatusOpen,
+		ComputerID: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31", Status: api.SessionStatusOpen,
 		Dispatch: api.SessionDispatch{State: "ready"},
 	}
 }

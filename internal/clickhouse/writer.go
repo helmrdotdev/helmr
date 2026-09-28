@@ -182,3 +182,70 @@ func (w *Writer) WriteRunLogs(ctx context.Context, rows []telemetry.RunLogRecord
 	}
 	return rejected, nil
 }
+
+var commandLogColumns = []ch.ColumnNameAndType{
+	{Name: "org_id", Type: "UUID"}, {Name: "project_id", Type: "UUID"},
+	{Name: "environment_id", Type: "UUID"}, {Name: "command_id", Type: "UUID"},
+	{Name: "stream_name", Type: "LowCardinality(String)"}, {Name: "seq", Type: "UInt64"},
+	{Name: "observed_seq", Type: "UInt64"}, {Name: "content", Type: "String"},
+	{Name: "size_bytes", Type: "UInt32"}, {Name: "idempotency_key", Type: "String"},
+	{Name: "retention_class", Type: "LowCardinality(String)"}, {Name: "redaction_class", Type: "LowCardinality(String)"},
+	{Name: "source", Type: "LowCardinality(String)"}, {Name: "observed_at", Type: "DateTime64(3, 'UTC')"},
+	{Name: "accepted_at", Type: "DateTime64(3, 'UTC')"},
+}
+
+func (w *Writer) WriteCommandLogs(ctx context.Context, rows []telemetry.CommandLogRecord) ([]telemetry.RejectedRow, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	var rejected []telemetry.RejectedRow
+	valid := make([]int, len(rows))
+	for idx := range valid {
+		valid[idx] = idx
+	}
+	for len(valid) > 0 {
+		batch, err := w.client.PrepareBatch(ch.Context(ctx, ch.WithSettings(ch.Settings{"async_insert": 0}), ch.WithColumnNamesAndTypes(commandLogColumns)), `INSERT INTO helmr_telemetry.command_logs (
+    org_id, project_id, environment_id, command_id, stream_name, seq, observed_seq, content, size_bytes, idempotency_key,
+    retention_class, redaction_class, source, observed_at, accepted_at
+)`)
+		if err != nil {
+			return rejected, err
+		}
+		rejectedAt := -1
+		for position, idx := range valid {
+			row := rows[idx]
+			if err := batch.Append(
+				row.OrgID,
+				row.ProjectID,
+				row.EnvironmentID,
+				row.CommandID,
+				row.StreamName,
+				row.Seq,
+				row.ObservedSeq,
+				row.Content,
+				row.SizeBytes,
+				row.IdempotencyKey,
+				row.RetentionClass,
+				row.RedactionClass,
+				row.Source,
+				row.ObservedAt,
+				row.AcceptedAt,
+			); err != nil {
+				rejected = append(rejected, telemetry.RejectedRow{
+					Index: idx, Err: fmt.Errorf("append exec log row %d: %w", idx, err),
+				})
+				rejectedAt = position
+				break
+			}
+		}
+		if rejectedAt >= 0 {
+			_ = batch.Close()
+			valid = append(valid[:rejectedAt], valid[rejectedAt+1:]...)
+			continue
+		}
+		err = batch.Send()
+		_ = batch.Close()
+		return rejected, err
+	}
+	return rejected, nil
+}

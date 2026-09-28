@@ -9,7 +9,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -87,7 +86,7 @@ func TestAppendRunLogChunkRequiresExactCurrentReceipt(t *testing.T) {
 		{"worker group", func(p *AppendRunLogChunkParams) {
 			p.WorkerGroupID = pgvalue.UUID(uuid.MustParse("01900000-0000-7000-8000-000000000003"))
 		}},
-		{"worker", func(p *AppendRunLogChunkParams) { p.WorkerInstanceID = randomPGUUID() }},
+		{"worker", func(p *AppendRunLogChunkParams) { p.WorkerHostID = randomPGUUID() }},
 		{"worker epoch", func(p *AppendRunLogChunkParams) { p.WorkerEpoch++ }},
 	}
 	for index, mismatch := range mismatches {
@@ -132,82 +131,6 @@ func TestAppendRunLogChunkRejectsSupersededAuthority(t *testing.T) {
 
 func TestAppendRunLogChunkRequiresCoherentRunAndLeaseState(t *testing.T) {
 	ctx := context.Background()
-
-	t.Run("checkpoint pause", func(t *testing.T) {
-		fixture := newRunLeaseClaimFixture(t, ctx)
-		params := fixture.runningRunLogParams(t, ctx)
-		var runID, workspaceID pgtype.UUID
-		var attemptNumber int32
-		var leaseSequence, runRevision int64
-		if err := fixture.pool.QueryRow(ctx, `
-			SELECT rl.run_id, rl.workspace_id, rl.attempt_number, rl.lease_sequence, r.revision
-			  FROM run_leases rl
-			  JOIN runs r ON r.id = rl.run_id
-			 WHERE rl.id = $1
-		`, params.RunLeaseID).Scan(
-			&runID,
-			&workspaceID,
-			&attemptNumber,
-			&leaseSequence,
-			&runRevision,
-		); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := fixture.queries.RegisterTimerRunWait(ctx, RegisterTimerRunWaitParams{
-			ID:                             randomPGUUID(),
-			EnvironmentID:                  pgvalue.UUID(fixture.environmentID),
-			DueAt:                          pgvalue.Timestamptz(time.Now().Add(time.Minute)),
-			IdleTimeoutMs:                  pgtype.Int8{Int64: 30_000, Valid: true},
-			RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("checkpoint-log-wait")),
-			AttemptNumber:                  attemptNumber,
-			CurrentRunLeaseID:              params.RunLeaseID,
-			CheckpointDueAt:                pgvalue.Timestamptz(time.Now().Add(-time.Millisecond)),
-			ResumeAttachID:                 randomPGUUID(),
-			Metadata:                       []byte(`{}`),
-			Tags:                           []string{},
-			RunID:                          runID,
-			ExpectedRunningRevision:        runRevision,
-		}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := fixture.queries.BeginRunLeaseCheckpoint(
-			ctx,
-			BeginRunLeaseCheckpointParams{
-				ID:            params.RunLeaseID,
-				RunID:         runID,
-				WorkspaceID:   workspaceID,
-				AttemptNumber: attemptNumber,
-				LeaseSequence: leaseSequence,
-			},
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		first, err := fixture.queries.AppendRunLogChunk(ctx, params)
-		if err != nil {
-			t.Fatal(err)
-		}
-		replay, err := fixture.queries.AppendRunLogChunk(ctx, params)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !first.ReplayMatches || !replay.ReplayMatches || replay.Seq != first.Seq {
-			t.Fatalf("checkpoint replay first=%+v replay=%+v", first, replay)
-		}
-
-		var chunks, events int
-		if err := fixture.pool.QueryRow(ctx, `
-			SELECT count(*) FILTER (WHERE stream_kind = 'run_log'),
-			       count(*) FILTER (WHERE stream_kind = 'event')
-			  FROM telemetry_outbox
-			 WHERE run_lease_id = $1
-		`, params.RunLeaseID).Scan(&chunks, &events); err != nil {
-			t.Fatal(err)
-		}
-		if chunks != 1 || events != 1 {
-			t.Fatalf("checkpoint replay side effects = chunks %d events %d", chunks, events)
-		}
-	})
 
 	tests := []struct {
 		name        string
@@ -254,9 +177,9 @@ func TestGetRunMetadataClaimScopeUsesStableAttemptAuthority(t *testing.T) {
 	logParams := fixture.runningRunLogParams(t, ctx)
 	params := GetRunMetadataClaimScopeParams{
 		RunLeaseID: logParams.RunLeaseID, LeaseSequence: logParams.LeaseSequence,
-		WorkerGroupID:    logParams.WorkerGroupID,
-		WorkerInstanceID: logParams.WorkerInstanceID,
-		WorkerEpoch:      logParams.WorkerEpoch,
+		WorkerGroupID: logParams.WorkerGroupID,
+		WorkerHostID:  logParams.WorkerHostID,
+		WorkerEpoch:   logParams.WorkerEpoch,
 	}
 
 	scope, err := fixture.queries.GetRunMetadataClaimScope(ctx, params)
@@ -410,15 +333,15 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 	if _, err := fixture.queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		WorkspaceID: locators.WorkspaceID, ExpectedRevision: 1,
+		ComputerID: locators.ComputerID, ExpectedRevision: 1,
 		AttemptNumber: locators.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
-		ID: locators.WorkspaceID, OrgID: workUUID(fixture.orgID),
+	if _, err := fixture.queries.TouchRunComputerActivity(ctx, TouchRunComputerActivityParams{
+		ID: locators.ComputerID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 1,
+		WriterGeneration: locators.WriterGeneration,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +351,7 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 		LeaseFenceFingerprint: "fixture-receipt-fingerprint",
 		RunLeaseID:            workUUID(work.leaseID),
 		LeaseSequence:         1, WorkerGroupID: runLeaseTestWorkerGroup,
-		WorkerInstanceID: workUUID(fixture.workerID), WorkerEpoch: 1,
+		WorkerHostID: workUUID(fixture.workerID), WorkerEpoch: 1,
 		Stream: "stdout", ObservedSeq: 1, Content: []byte("alpha"),
 	}
 	return params

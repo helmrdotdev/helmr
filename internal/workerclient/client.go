@@ -23,20 +23,20 @@ type Client struct {
 }
 
 type authentication struct {
-	workerInstanceID string
-	secret           string
-	serviceID        string
-	token            string
-	expiresAt        time.Time
-	refreshDone      chan struct{}
-	mu               sync.Mutex
+	workerHostID string
+	secret       string
+	serviceID    string
+	token        string
+	expiresAt    time.Time
+	refreshDone  chan struct{}
+	mu           sync.Mutex
 }
 
 type options struct {
-	httpClient       *http.Client
-	workerInstanceID string
-	secret           string
-	serviceID        string
+	httpClient   *http.Client
+	workerHostID string
+	secret       string
+	serviceID    string
 }
 
 type Option func(*options)
@@ -45,9 +45,9 @@ func WithHTTPClient(httpClient *http.Client) Option {
 	return func(options *options) { options.httpClient = httpClient }
 }
 
-func WithAuth(workerInstanceID string, secret string) Option {
+func WithAuth(workerHostID string, secret string) Option {
 	return func(options *options) {
-		options.workerInstanceID = workerInstanceID
+		options.workerHostID = workerHostID
 		options.secret = secret
 	}
 }
@@ -68,9 +68,9 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		return nil, err
 	}
 	return &Client{transport: transport, auth: authentication{
-		workerInstanceID: config.workerInstanceID,
-		secret:           config.secret,
-		serviceID:        config.serviceID,
+		workerHostID: config.workerHostID,
+		secret:       config.secret,
+		serviceID:    config.serviceID,
 	}}, nil
 }
 
@@ -149,7 +149,7 @@ func (c *Client) invalidateToken(token string) {
 func (c *Client) token(ctx context.Context) (string, error) {
 	for {
 		c.auth.mu.Lock()
-		if strings.TrimSpace(c.auth.workerInstanceID) == "" {
+		if strings.TrimSpace(c.auth.workerHostID) == "" {
 			c.auth.mu.Unlock()
 			return "", errors.New("worker instance id is required")
 		}
@@ -194,7 +194,7 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	}
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
-		WorkerInstanceID: c.auth.workerInstanceID, WorkerInstanceSecret: c.auth.secret,
+		WorkerHostID: c.auth.workerHostID, WorkerHostSecret: c.auth.secret,
 		ServiceID: c.auth.serviceID,
 	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)

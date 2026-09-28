@@ -43,7 +43,7 @@ func (r *Reconciler) ReconcileLifecycle(
 	if err != nil {
 		return false, err
 	}
-	if locator.Status != "closing" && locator.DispatchHoldReason.String != "recovery_required" && locator.DispatchHoldReason.String != "interrupt_requested" {
+	if locator.Status != "open" && locator.Status != "closing" && locator.DispatchHoldReason.String != "recovery_required" && locator.DispatchHoldReason.String != "interrupt_requested" {
 		return false, nil
 	}
 	tx, err := r.db.Begin(ctx)
@@ -52,8 +52,11 @@ func (r *Reconciler) ReconcileLifecycle(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
-	bindings, err := q.LockWorkspaceSecretsForAdmission(ctx, locator.WorkspaceID)
+	bindings, err := q.LockComputerSecretsForAdmission(ctx, locator.ComputerID)
 	if err != nil {
+		return false, err
+	}
+	if err := lockSessionComputer(ctx, q, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return false, err
 	}
 	actor, err := q.LockActorClose(ctx, db.LockActorCloseParams{
@@ -66,7 +69,7 @@ func (r *Reconciler) ReconcileLifecycle(
 	if err != nil {
 		return false, err
 	}
-	if actor.WorkspaceID != locator.WorkspaceID {
+	if actor.ComputerID != locator.ComputerID {
 		return false, ErrAuthority
 	}
 	actor, deferred, err = reconcileStoppedExecution(ctx, tx, actor)
@@ -82,6 +85,23 @@ func (r *Reconciler) ReconcileLifecycle(
 	}
 	if deferred {
 		return true, tx.Commit(ctx)
+	}
+	// Completion commits before process cleanup. The same durable lifecycle
+	// intent admits a continuation only after the previous scopes are excluded.
+	if actor.Status == "open" && !actor.CancelRequestedAt.Valid && CanStartContinuation(actor) {
+		computer, err := q.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{EnvironmentID: actor.EnvironmentID, ComputerID: actor.ComputerID, SessionID: actor.ID})
+		if err != nil {
+			return false, err
+		}
+		if !bindingsCanAdmit(actor, bindings) {
+			return true, tx.Commit(ctx)
+		}
+		if _, err = CreateContinuation(ctx, q, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
+			return true, tx.Commit(ctx)
+		} else if err != nil {
+			return false, err
+		}
+		return false, tx.Commit(ctx)
 	}
 	_, deferred, err = ReconcileClose(ctx, q, actor, bindings)
 	if err != nil {
@@ -117,8 +137,11 @@ func (r *Reconciler) ReconcileInput(
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	q := db.New(tx)
-	bindings, err := q.LockWorkspaceSecretsForAdmission(ctx, locator.WorkspaceID)
+	bindings, err := q.LockComputerSecretsForAdmission(ctx, locator.ComputerID)
 	if err != nil {
+		return false, err
+	}
+	if err := lockSessionComputer(ctx, q, locator.EnvironmentID, locator.ComputerID); err != nil {
 		return false, err
 	}
 	actor, err := q.LockActorForInputReconcile(ctx, db.LockActorForInputReconcileParams{
@@ -127,11 +150,11 @@ func (r *Reconciler) ReconcileInput(
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, tx.Commit(ctx)
 	}
-	if err != nil || actor.WorkspaceID != locator.WorkspaceID {
+	if err != nil || actor.ComputerID != locator.ComputerID {
 		return false, ErrAuthority
 	}
 	// Cancellation terminalizes queued input atomically under this same owner.
-	// Its prior delivery records no longer need execution or Workspace authority.
+	// Its prior delivery records no longer need execution or Computer authority.
 	if actor.CancelRequestedAt.Valid {
 		return false, tx.Commit(ctx)
 	}
@@ -144,15 +167,15 @@ func (r *Reconciler) ReconcileInput(
 			return false, ErrAuthority
 		}
 	}
-	workspace, err := q.LockActorInputWorkspace(ctx, db.LockActorInputWorkspaceParams{
-		EnvironmentID: actor.EnvironmentID, ID: actor.WorkspaceID, SessionID: actor.ID,
+	computer, err := q.LockActorInputComputer(ctx, db.LockActorInputComputerParams{
+		EnvironmentID: actor.EnvironmentID, ID: actor.ComputerID, SessionID: actor.ID,
 	})
 	if err != nil {
 		return false, ErrAuthority
 	}
 	if actor.CurrentRunID.Valid {
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-			RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, WorkspaceID: workspace.ID,
+			RunID: currentRun.ID, Number: currentRun.CurrentAttemptNumber, ComputerID: computer.ID,
 		})
 		if err != nil || attempt.TerminalAt.Valid {
 			return false, ErrAuthority
@@ -180,7 +203,7 @@ func (r *Reconciler) ReconcileInput(
 		return false, err
 	}
 	if CanStartContinuation(actor) {
-		if _, err := CreateContinuation(ctx, q, actor, workspace, bindings); errors.Is(err, pgx.ErrNoRows) {
+		if _, err := CreateContinuation(ctx, q, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
 				return false, err
 			}
@@ -213,8 +236,12 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			return resolved, err
 		}
 		q := db.New(tx)
-		_, err = q.LockWorkspaceSecretsForAdmission(ctx, candidate.WorkspaceID)
+		_, err = q.LockComputerSecretsForAdmission(ctx, candidate.ComputerID)
 		if err != nil {
+			_ = tx.Rollback(context.Background())
+			return resolved, err
+		}
+		if err := lockSessionComputer(ctx, q, candidate.EnvironmentID, candidate.ComputerID); err != nil {
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}
@@ -240,15 +267,15 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
-		workspace, err := q.LockActorInputWorkspace(ctx, db.LockActorInputWorkspaceParams{
-			EnvironmentID: candidate.EnvironmentID, ID: candidate.WorkspaceID, SessionID: candidate.SessionID,
+		computer, err := q.LockActorInputComputer(ctx, db.LockActorInputComputerParams{
+			EnvironmentID: candidate.EnvironmentID, ID: candidate.ComputerID, SessionID: candidate.SessionID,
 		})
 		if err != nil {
 			_ = tx.Rollback(context.Background())
 			return resolved, ErrAuthority
 		}
 		attempt, err := q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
-			RunID: run.ID, Number: run.CurrentAttemptNumber, WorkspaceID: workspace.ID,
+			RunID: run.ID, Number: run.CurrentAttemptNumber, ComputerID: computer.ID,
 		})
 		if err != nil || attempt.TerminalAt.Valid {
 			_ = tx.Rollback(context.Background())
