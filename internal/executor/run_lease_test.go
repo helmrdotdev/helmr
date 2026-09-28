@@ -8,6 +8,7 @@ import (
 	"net"
 	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -26,8 +27,9 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 	frozen := renewed
 	frozen.ExpiresAt = renewed.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
-		trace:   trace,
-		renewed: renewed,
+		trace:    trace,
+		renewErr: errors.New("program claim is not active"),
+		renewed:  renewed,
 		result: RunLeaseTaskResult{
 			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 				Output: json.RawMessage(`{"ok":true}`),
@@ -54,7 +56,7 @@ func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin",
+		"claim", "start", "wait", "begin",
 		"complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
@@ -71,8 +73,9 @@ func TestExecutorCompletesFailedRunLeaseTask(t *testing.T) {
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
-		trace:   trace,
-		renewed: lease,
+		trace:    trace,
+		renewErr: errors.New("program claim is not active"),
+		renewed:  lease,
 		result: RunLeaseTaskResult{
 			Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "failed"}},
 			ProgramQuiesced: workerapi.RunQuiescenceProof{
@@ -99,7 +102,7 @@ func TestExecutorCompletesFailedRunLeaseTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "complete",
+		"claim", "start", "wait", "begin", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
@@ -115,8 +118,9 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
-		trace:   trace,
-		renewed: lease,
+		trace:    trace,
+		renewErr: errors.New("program claim is not active"),
+		renewed:  lease,
 		result: RunLeaseTaskResult{
 			ActorOutcome: &workerapi.ActorOutcome{
 				RunGeneration: 4,
@@ -135,7 +139,7 @@ func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
 	if err := executor.ExecuteRunLease(context.Background(), workerapi.RunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "renew", "begin", "complete-actor"}) {
+	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "begin", "complete-actor"}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
 	if controlPlane.completedActor.Outcome.Succeeded == nil || controlPlane.completedActor.Outcome.RunGeneration != 4 || controlPlane.completedActor.OperationID != controlPlane.beginOperationIDs[0] {
@@ -149,8 +153,9 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	frozen := lease
 	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
 	task := &testRunLeaseTask{
-		trace:   trace,
-		renewed: lease,
+		trace:    trace,
+		renewErr: errors.New("program claim is not active"),
+		renewed:  lease,
 		result: RunLeaseTaskResult{
 			Outcome: workerapi.TaskOutcome{Succeeded: &workerapi.TaskSucceeded{
 				Output: json.RawMessage(`null`),
@@ -182,7 +187,7 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 		t.Fatalf("begin operation IDs = %v", controlPlane.beginOperationIDs)
 	}
 	if !slices.Equal(trace.calls, []string{
-		"claim", "start", "wait", "renew", "begin", "begin", "complete", "complete",
+		"claim", "start", "wait", "begin", "begin", "complete", "complete",
 	}) {
 		t.Fatalf("calls = %v", trace.calls)
 	}
@@ -429,6 +434,7 @@ func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 
 type testRunLeaseTask struct {
 	waitErr  error
+	renewErr error
 	trace    *runLeaseTrace
 	result   RunLeaseTaskResult
 	previous workerapi.RunLeaseAssignment
@@ -446,6 +452,9 @@ func (task *testRunLeaseTask) RenewRunLease(
 	context.Context,
 ) (RunLeaseTaskRenewal, error) {
 	task.trace.add("renew")
+	if task.renewErr != nil {
+		return RunLeaseTaskRenewal{}, task.renewErr
+	}
 	return RunLeaseTaskRenewal{Previous: task.previous, Lease: task.renewed}, nil
 }
 
@@ -607,4 +616,60 @@ func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) 
 			}
 		})
 	}
+}
+
+// A released Guest claim can reject renewal before its terminal proof reaches
+// the Worker. The reader must retain that proof for Control Plane settlement.
+func TestRunLeaseRenewalRaceWithQuiescence(t *testing.T) {
+	for _, scenario := range []string{"completed", "reader-error", "expired", "cancelled"} {
+		t.Run(scenario, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				task := &quiescingRenewalTask{renewed: make(chan struct{}), scenario: scenario, cancel: cancel}
+				lease := testRunLeaseAssignment(time.Now().Add(90 * time.Millisecond))
+				task.result = RunLeaseTaskResult{Outcome: workerapi.TaskOutcome{Failed: &workerapi.TaskFailure{Message: "task failed"}}, ProgramQuiesced: workerapi.RunQuiescenceProof{RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID}}
+				result, current, err := (Executor{}).awaitRunLeaseTask(ctx, task, lease)
+				if scenario == "completed" {
+					if err != nil || result.Outcome.Failed == nil || result.ProgramQuiesced != task.result.ProgramQuiesced || current.ID != lease.ID {
+						t.Fatalf("result=%+v current=%+v err=%v", result, current, err)
+					}
+				} else if err == nil || result.Outcome.Failed != nil {
+					t.Fatalf("accepted incomplete result: %+v, %v", result, err)
+				}
+			})
+		})
+	}
+}
+
+type quiescingRenewalTask struct {
+	renewed  chan struct{}
+	scenario string
+	cancel   context.CancelFunc
+	result   RunLeaseTaskResult
+}
+
+func (*quiescingRenewalTask) Close() {}
+func (task *quiescingRenewalTask) Wait(ctx context.Context) (RunLeaseTaskResult, error) {
+	select {
+	case <-task.renewed:
+	case <-ctx.Done():
+		return RunLeaseTaskResult{}, ctx.Err()
+	}
+	switch task.scenario {
+	case "completed":
+		return task.result, nil
+	case "reader-error":
+		return RunLeaseTaskResult{}, errors.New("invalid quiescence proof")
+	default:
+		<-ctx.Done()
+		return RunLeaseTaskResult{}, ctx.Err()
+	}
+}
+func (task *quiescingRenewalTask) RenewRunLease(context.Context) (RunLeaseTaskRenewal, error) {
+	close(task.renewed)
+	if task.scenario == "cancelled" {
+		task.cancel()
+	}
+	return RunLeaseTaskRenewal{}, errors.New("program claim is not active")
 }

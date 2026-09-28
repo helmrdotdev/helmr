@@ -59,10 +59,6 @@ func (e Executor) ExecuteRunLease(
 		}
 		return err
 	}
-	current, err = e.renewRunLease(ctx, task, current)
-	if err != nil {
-		return fmt.Errorf("renew run lease before finalization: %w", err)
-	}
 
 	operationID := uuid.NewV7()
 	beginRequest := workerapi.BeginRunFinalizationRequest{
@@ -226,8 +222,25 @@ func (e Executor) awaitRunLeaseTask(
 		case <-renewTimer.C:
 			renewed, err := e.renewRunLease(ctx, task, current)
 			if err != nil {
-				cancelWait()
-				<-waited
+				// Guest may have released its claim after sending quiescence,
+				// while the completion reader is still draining that proof.
+				// Accept only a complete result within the last known lease;
+				// Control Plane still validates authority at finalization.
+				deadline := time.NewTimer(max(time.Until(current.ExpiresAt), 0))
+				defer deadline.Stop()
+				select {
+				case result := <-waited:
+					if result.err == nil && time.Now().Before(current.ExpiresAt) && ctx.Err() == nil {
+						return result.result, current, nil
+					}
+					err = errors.Join(err, result.err)
+				case <-deadline.C:
+					cancelWait()
+					<-waited
+				case <-ctx.Done():
+					cancelWait()
+					<-waited
+				}
 				return RunLeaseTaskResult{}, current, fmt.Errorf("renew run lease: %w", err)
 			}
 			current = renewed

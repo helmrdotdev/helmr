@@ -151,7 +151,7 @@ export const runtimeSmoke = task({
     }
     await writeFile("runtime-smoke-report.json", `${JSON.stringify(report, null, 2)}\n`)
     if (failures.length > 0) {
-      console.error({ phase: "runtime-smoke", marker, failures })
+      console.error(JSON.stringify({ phase: "runtime-smoke", marker, failures }))
       throw new Error(`runtime smoke failed ${failures.length} check(s): ${failures.map((check) => check.name).join(", ")}`)
     }
     await metadata.set("smoke.phase", "complete")
