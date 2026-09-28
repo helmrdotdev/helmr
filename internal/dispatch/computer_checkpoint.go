@@ -85,7 +85,7 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
  AND ((s.active_turn_id IS NULL AND w.turn_id IS NULL)
  OR (s.active_turn_id=w.turn_id AND w.turn_session_id=s.id AND w.turn_run_generation=s.run_generation
  AND t.status='running' AND t.run_id=r.id AND t.attempt_number=l.attempt_number AND t.run_generation=s.run_generation
- AND t.ready_run_lease_id=l.id AND t.sequence=s.committed_input_sequence+1
+ AND t.sequence=s.committed_input_sequence+1
  AND t.settlement_started_at IS NULL AND t.interrupt_requested_at IS NULL)))),false)
  FROM run_leases l JOIN runs r ON r.id=l.run_id
  JOIN run_attempts a ON a.run_id=l.run_id AND a.number=l.attempt_number

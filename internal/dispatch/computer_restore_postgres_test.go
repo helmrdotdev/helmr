@@ -347,7 +347,13 @@ func TestComputerRestoreAcknowledgementActorTurn(t *testing.T) {
 					t.Fatal(err)
 				}
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE session_turns SET ready_run_lease_id=$2 WHERE id=$1`, turn, work.LeaseID)
-				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET turn_id=$2,turn_session_id=$3,turn_run_generation=(SELECT run_generation FROM sessions WHERE id=$3) WHERE run_id=$1`, work.RunID, turn, session)
+				bind := db.BindRunWaitTurnParams{SessionID: pgvalue.UUID(session), TurnID: pgvalue.UUID(turn)}
+				if err = f.Pool.QueryRow(t.Context(), `SELECT w.id,s.run_generation FROM run_waits w JOIN sessions s ON s.current_run_id=w.run_id WHERE w.run_id=$1`, work.RunID).Scan(&bind.WaitID, &bind.RunGeneration); err != nil {
+					t.Fatal(err)
+				}
+				if _, err = db.New(f.Pool).BindRunWaitTurn(t.Context(), bind); err != nil {
+					t.Fatal(err)
+				}
 			})
 			if state == "cancel before grant" {
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET cancel_requested_at=clock_timestamp() WHERE id=(SELECT session_id FROM session_turns WHERE id=$1)`, turn)

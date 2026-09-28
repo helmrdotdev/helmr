@@ -147,7 +147,17 @@ func TestComputerCaptureActiveTurn(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), tx, `INSERT INTO session_turns(id,environment_id,session_id,sequence,data,status,run_generation,run_id,attempt_number,ready_run_lease_id)
  SELECT $2,environment_id,id,committed_input_sequence+1,'{}','running',run_generation,current_run_id,1,$3 FROM sessions WHERE id=$1`, actorID, turnID, work.LeaseID)
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, actorID, turnID)
-	dbtest.MustExec(t, t.Context(), tx, `UPDATE run_waits SET turn_session_id=s.id,turn_id=s.active_turn_id,turn_run_generation=s.run_generation FROM sessions s WHERE s.id=$2 AND run_waits.run_id=$1`, work.RunID, actorID)
+	bind := db.BindRunWaitTurnParams{SessionID: pgvalue.UUID(actorID), TurnID: pgvalue.UUID(turnID)}
+	if err = tx.QueryRow(t.Context(), `SELECT w.id,s.run_generation FROM run_waits w JOIN sessions s ON s.current_run_id=w.run_id WHERE w.run_id=$1`, work.RunID).Scan(&bind.WaitID, &bind.RunGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.New(tx).BindRunWaitTurn(t.Context(), bind); err != nil {
+		t.Fatal(err)
+	}
+	var unreadied bool
+	if err = tx.QueryRow(t.Context(), `SELECT ready_run_lease_id IS NULL FROM session_turns WHERE id=$1`, turnID).Scan(&unreadied); err != nil || !unreadied {
+		t.Fatalf("managed wait retained message readiness: unreadied=%v err=%v", unreadied, err)
+	}
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}

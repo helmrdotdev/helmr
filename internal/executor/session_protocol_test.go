@@ -180,46 +180,53 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}
 }
 
-func TestSessionStopPrecedesCancelledWaitAndKeepsFirstDeadline(t *testing.T) {
-	host, guest := net.Pipe()
-	defer host.Close()
-	defer guest.Close()
-	lease := testFreshProgramClaim(t).Lease
-	lease.ExpiresAt = time.Now().Add(time.Minute)
-	execution := testTurnExecution(lease)
-	hold := "019c10d5-a6f7-7af1-8f5f-000000000118"
-	reason := "interrupt_requested"
-	reads := 0
-	cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
-		reads++
-		return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
-	}}
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
-	done := make(chan error, 1)
-	go func() {
-		done <- task.beforeWaitResume(t.Context(), WaitResumeDecision{Kind: "cancelled", Data: json.RawMessage(`{"reason_code":"session_stopped"}`)})
-	}()
-	header, n, err := wire.ReadStreamFrameHeader(guest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stop, err := wire.ReadSessionStop(header, guest, n)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !proto.Equal(stop.GetExecution(), execution.Session) || stop.GetHoldId() != hold || stop.GetTurnId() != execution.TurnId {
-		t.Fatalf("stop=%v", stop)
-	}
-	if err := <-done; err != nil {
-		t.Fatal(err)
-	}
-	task.lease.ExpiresAt = lease.ExpiresAt.Add(time.Minute)
-	deadline, err := task.deliverSessionStop(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !deadline.Equal(lease.ExpiresAt) || reads != 1 {
-		t.Fatalf("stop was extended/reissued: %v reads=%d", deadline, reads)
+func TestSessionStopPrecedesStoppedWaitAndKeepsFirstDeadline(t *testing.T) {
+	for _, kind := range []string{"failed", "cancelled"} {
+		t.Run(kind, func(t *testing.T) {
+			host, guest := net.Pipe()
+			defer host.Close()
+			defer guest.Close()
+			if err := guest.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			lease := testFreshProgramClaim(t).Lease
+			lease.ExpiresAt = time.Now().Add(time.Minute)
+			execution := testTurnExecution(lease)
+			hold := "019c10d5-a6f7-7af1-8f5f-000000000118"
+			reason := "interrupt_requested"
+			reads := 0
+			cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
+				reads++
+				return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
+			}}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
+			done := make(chan error, 1)
+			go func() {
+				done <- task.beforeWaitResume(t.Context(), WaitResumeDecision{Kind: kind, Data: json.RawMessage(`{"reason_code":"session_stopped"}`)})
+			}()
+			header, n, err := wire.ReadStreamFrameHeader(guest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stop, err := wire.ReadSessionStop(header, guest, n)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !proto.Equal(stop.GetExecution(), execution.Session) || stop.GetHoldId() != hold || stop.GetTurnId() != execution.TurnId {
+				t.Fatalf("stop=%v", stop)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			task.lease.ExpiresAt = lease.ExpiresAt.Add(time.Minute)
+			deadline, err := task.deliverSessionStop(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !deadline.Equal(lease.ExpiresAt) || reads != 1 {
+				t.Fatalf("stop was extended/reissued: %v reads=%d", deadline, reads)
+			}
+		})
 	}
 }
 

@@ -561,7 +561,8 @@ test("managed waits retain exact Turn scope and the single consuming gate", asyn
   await run.outcome
 })
 
-test("stop aborts an active Token wait without exposing its result or consuming it", async () => {
+for (const kind of ["failed", "cancelled"] as const) {
+test(`stop aborts an active Token wait with ${kind} without exposing its result or consuming it`, async () => {
   const waiting = deferred()
   let cancel: (() => void) | undefined
   let exposed = false
@@ -582,7 +583,7 @@ test("stop aborts an active Token wait without exposing its result or consuming 
     ["work"],
     (event, reply) => {
       if (event.case === "runWaitRequested" && event.value.kind === "token") {
-        cancel = () => reply({ reason_code: "session_stopped" }, "cancelled")
+        cancel = () => reply({ reason_code: "session_stopped" }, kind)
         waiting.resolve()
         return true
       }
@@ -602,6 +603,8 @@ test("stop aborts an active Token wait without exposing its result or consuming 
   if (last.case !== "actorOutcome") assert.fail("missing outcome")
   assert.equal(last.value.outcome.case, "interrupted")
 })
+
+}
 
 test("a cancelled shared Token does not interrupt its Actor", async () => {
   const run = harness(
