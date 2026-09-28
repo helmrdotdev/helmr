@@ -49,6 +49,29 @@ export async function readTelemetry<T>(read: () => Promise<T>): Promise<T> {
     }
   }
 }
+export async function deleteComputer(ref: ComputerRef, idempotencyKey: string) {
+  const signal = deadline(120_000)
+  // Terminal outcomes can precede physical process reconciliation.
+  // Retry only that conflict, preserving the delete request's identity.
+  try {
+    for (;;) {
+      signal.throwIfAborted()
+      try {
+        return await ref.delete({ idempotencyKey }, { signal })
+      } catch (error) {
+        if (errorCode(error) !== "computer_busy") throw error
+      }
+      await delay(500, undefined, { signal })
+    }
+  } catch (error) {
+    if (signal.aborted) {
+      throw new Error(`Computer ${ref.id}: deletion did not complete within 120 seconds`, {
+        cause: error,
+      })
+    }
+    throw error
+  }
+}
 export async function verify(
   name: string,
   body: (context: {
@@ -116,31 +139,10 @@ export async function verify(
         )
         objects.computer_ids.push(ref.id)
         cleanup.push(async () => {
-          const signal = deadline(120_000)
-          // Terminal Runs may still be waiting for physical process reconciliation.
-          // Keep the same delete identity and wait only for that retryable conflict.
           try {
-            for (;;) {
-              signal.throwIfAborted()
-              try {
-                await ref.delete(
-                  { idempotencyKey: `delete:${suffix}:${marker}` },
-                  { signal },
-                )
-                return
-              } catch (error) {
-                if (errorCode(error) === "computer_not_found") return
-                if (errorCode(error) !== "computer_busy") throw error
-              }
-              await delay(500, undefined, { signal })
-            }
+            await deleteComputer(ref, `delete:${suffix}:${marker}`)
           } catch (error) {
-            if (signal.aborted) {
-              throw new Error(`Computer ${ref.id}: deletion did not complete within 120 seconds`, {
-                cause: error,
-              })
-            }
-            throw error
+            if (errorCode(error) !== "computer_not_found") throw error
           }
         })
         return ref

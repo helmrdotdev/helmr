@@ -1,4 +1,4 @@
-import { verify, assert, assertEqual, errorCode, readTelemetry } from "../../support/context"
+import { verify, assert, assertEqual, errorCode, readTelemetry, deleteComputer } from "../../support/context"
 import type { ComputerRef, CommandRef } from "@helmr/sdk"
 import type { runtimeSmoke } from "../runtime/task"
 await verify("computer-command", async ({ client, marker, objects, cleanup }) => {
@@ -12,12 +12,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
     computerCreateOptions,
   )
   objects.computer_ids.push(created.id)
-  cleanup(() =>
-    created.delete(
-      { idempotencyKey: `computer:delete:${marker}` },
-      { signal: AbortSignal.timeout(30_000) },
-    ),
-  )
+  cleanup(() => deleteComputer(created, `computer:delete:${marker}`))
   const replayedCreate = await client.sandboxes.createComputer(
     "helmr-runtime-smoke",
     computerCreateOptions,
@@ -150,9 +145,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
   const taskFile = new TextDecoder().decode(postTaskExec.stdout)
   assert(taskFile.includes(`marker=${taskMarker}`), "Task did not update the Computer file")
 
-  const deleted = await byKey.delete({
-    idempotencyKey: `computer:delete:${marker}`,
-  })
+  const deleted = await deleteComputer(byKey, `computer:delete:${marker}`)
   assertEqual(deleted.computerId, created.id, "Computer delete receipt changed the ID")
   const deleteReplay = await created.delete({
     idempotencyKey: `computer:delete:${marker}`,
