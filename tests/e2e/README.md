@@ -73,6 +73,12 @@ Rerun preparation into a new directory after source/SDK changes.
 Host-observing `actor`, `persistence` and `network` cases run on the dedicated host
 and require `HELMR_RUNTIME_HOST_TOOL` to name its installed `dev/runtime/host.py`.
 Other cases use only the native API and can target an explicitly authorized endpoint.
+Different-Computer child calls require at least two available VM slots: a hot
+parent can retain its slot while its child runs. Before selecting `child-tasks`,
+check the dedicated Worker's advertised capacity. On a sufficiently sized host,
+`WORKER_CAPACITY_VCPUS=4` and `WORKER_CAPACITY_MEMORY_MIB=4096` allow two default
+2-vCPU / 2-GiB VMs; the backing disk and assigned NBD devices must cover both.
+Configure this before enrollment, following the host profile's replacement rules.
 Cases requiring Secret management or Computer exec need those exact API-key
 permissions; do not broaden an existing key merely to run every case.
 

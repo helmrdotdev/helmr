@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
 import { HelmrClient, type Run, type ComputerRef } from "@helmr/sdk"
 import { deadline } from "./deadline"
 
@@ -115,13 +116,31 @@ export async function verify(
         )
         objects.computer_ids.push(ref.id)
         cleanup.push(async () => {
+          const signal = deadline(120_000)
+          // Terminal Runs may still be waiting for physical process reconciliation.
+          // Keep the same delete identity and wait only for that retryable conflict.
           try {
-            await ref.delete(
-              { idempotencyKey: `delete:${suffix}:${marker}` },
-              { signal: deadline(30_000) },
-            )
+            for (;;) {
+              signal.throwIfAborted()
+              try {
+                await ref.delete(
+                  { idempotencyKey: `delete:${suffix}:${marker}` },
+                  { signal },
+                )
+                return
+              } catch (error) {
+                if (errorCode(error) === "computer_not_found") return
+                if (errorCode(error) !== "computer_busy") throw error
+              }
+              await delay(500, undefined, { signal })
+            }
           } catch (error) {
-            if (errorCode(error) !== "computer_not_found") throw error
+            if (signal.aborted) {
+              throw new Error(`Computer ${ref.id}: deletion did not complete within 120 seconds`, {
+                cause: error,
+              })
+            }
+            throw error
           }
         })
         return ref
