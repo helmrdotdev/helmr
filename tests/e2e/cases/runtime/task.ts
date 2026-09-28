@@ -166,7 +166,14 @@ async function collectCheck(name: string, run: () => Promise<Check>): Promise<Ch
     return {
       name,
       ok: false,
-      detail: error instanceof Error ? { message: error.message, name: error.name } : { message: String(error) },
+      detail: error instanceof Error ? {
+        message: error.message,
+        name: error.name,
+        ...Object.fromEntries(["code", "signal", "killed", "stdout", "stderr"].flatMap((key) => {
+          const value = (error as unknown as Record<string, unknown>)[key]
+          return typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? [[key, value]] : []
+        })),
+      } : { message: String(error) },
     }
   }
 }

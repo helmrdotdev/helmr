@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -42,6 +43,9 @@ func handleComputerFreezeConnection(ctx context.Context, conn programConnection,
 			if err := verifyFrozenComputer(mounts, waits, identity); err != nil {
 				return err
 			}
+			// Disk-only replacement discards Guest RAM, including dirty pages.
+			// Flush even when there are no Run members to perform a pause.
+			syscall.Sync()
 			if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
 				return err
 			}
