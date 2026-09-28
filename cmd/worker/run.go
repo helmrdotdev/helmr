@@ -275,7 +275,7 @@ func run(log *slog.Logger) error {
 			RestoreControl:        controlPlaneClient,
 			ComputerSaves:         controlPlaneClient,
 			ComputerSaveEvery:     cfg.ComputerSaveEvery,
-			ComputerObjects:       platformStore,
+			ComputerObjects:       store,
 			CAS:                   store,
 			Sessions:              computerMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),

@@ -275,7 +275,11 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 				authority.DesiredState != db.ComputerDesiredStateStopped) ||
 			authority.DirtyState == db.ComputerDirtyStateCaptureFailed ||
 			authority.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
+			len(authority.RecoveryFailure) > 0 ||
 			!authority.HeadDiskVersionID.Valid {
+			if authority.DirtyState == db.ComputerDirtyStateCaptureFailed || len(authority.RecoveryFailure) > 0 {
+				return conflict(codedError{code: "computer_recovery_required", message: "computer requires recovery"})
+			}
 			switch authority.Status {
 			case db.ComputerStatusDeleting:
 				return conflict(codedError{code: "computer_deleting", message: "computer is deleting"})

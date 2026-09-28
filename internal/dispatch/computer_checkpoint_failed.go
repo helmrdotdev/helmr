@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -46,6 +47,18 @@ func FailComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptu
 	failure, err := json.Marshal(struct {
 		Message string `json:"message"`
 	}{request.Error})
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	// The last committed head may predate accepted work on this source. Once
+	// capture fails, exclude it without admitting work against that older head.
+	_, err = tx.Exec(ctx, `UPDATE computers SET desired_state='stopped',dirty_state='capture_failed',
+ recovery_id=CASE WHEN recovery_completed_at IS NULL THEN coalesce(recovery_id,$2) ELSE $2 END,
+ recovery_disk_version_id=head_disk_version_id,recovery_reason='computer_capture_failed',
+ recovery_started_at=CASE WHEN recovery_completed_at IS NULL THEN coalesce(recovery_started_at,clock_timestamp()) ELSE clock_timestamp() END,
+ recovery_completed_at=NULL,recovery_failure=coalesce(recovery_failure,jsonb_build_object('code','computer_capture_failed','message','Computer state could not be preserved','details',$3::jsonb)),
+ revision=revision+1,updated_at=clock_timestamp()
+ WHERE id=$1 AND status NOT IN ('deleting','deleted') AND desired_state<>'deleted'`, instance.ComputerID, pgvalue.UUID(uuid.NewV7()), failure)
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}

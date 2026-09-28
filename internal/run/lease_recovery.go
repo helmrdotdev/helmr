@@ -233,6 +233,9 @@ func decideExecutionLeaseLoss(
 	add(authority.WriterExpiresAt, "physical_loss", "computer_writer_expired", db.RunLeaseStatusLost)
 	add(authority.InstanceLostAt, "physical_loss", "worker_lost", db.RunLeaseStatusLost)
 	add(authority.InstanceFailedAt, "physical_failure", "runtime_failed", db.RunLeaseStatusLost)
+	if authority.InstanceObservedState == "closed" {
+		add(authority.ReclaimedAt, "physical_loss", "computer_instance_closed", db.RunLeaseStatusLost)
+	}
 	if len(candidates) == 0 {
 		return executionLeaseLoss{}, false, nil
 	}

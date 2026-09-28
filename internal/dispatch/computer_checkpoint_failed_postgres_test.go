@@ -8,6 +8,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -55,6 +56,14 @@ func TestComputerCheckpointFailureClosesWholeSourceAndReplays(t *testing.T) {
 			err := f.Pool.QueryRow(t.Context(), `SELECT desired_state='closed' AND desired_version=$2 AND admission_state='closed' AND mount_state='unmounting' AND finalization_action='discard' AND finalization_reason_code='checkpoint_failed' AND reclaimed_at IS NULL AND writer_generation=$3 AND finalization_error->>'message'='snapshot upload failed' FROM computer_instances WHERE id=$1`, request.ComputerInstanceID, request.DesiredVersion+1, registered.Manifest.RecoveryPoint.WriterGeneration).Scan(&closed)
 			if err != nil || !closed {
 				t.Fatalf("closed=%v err=%v", closed, err)
+			}
+			var blocked bool
+			err = f.Pool.QueryRow(t.Context(), `SELECT c.status='active' AND c.desired_state='stopped' AND c.dirty_state='capture_failed'
+ AND c.recovery_failure->>'code'='computer_capture_failed' AND c.recovery_failure->'details'->>'message'='snapshot upload failed'
+ AND c.recovery_disk_version_id=c.head_disk_version_id AND c.head_disk_version_id=cp.base_computer_disk_version_id
+ FROM computers c JOIN computer_checkpoints cp ON cp.computer_id=c.id WHERE cp.id=$1`, request.CheckpointID).Scan(&blocked)
+			if err != nil || !blocked {
+				t.Fatalf("capture failure left old head available=%v err=%v", blocked, err)
 			}
 			if !idle {
 				var count int
@@ -267,5 +276,69 @@ func TestComputerCheckpointFailureConcurrentReplay(t *testing.T) {
 	var version int64
 	if err := f.Pool.QueryRow(t.Context(), `SELECT desired_version FROM computer_instances WHERE id=$1`, request.ComputerInstanceID).Scan(&version); err != nil || version != request.DesiredVersion+1 {
 		t.Fatalf("concurrent close version=%d err=%v", version, err)
+	}
+}
+
+func TestComputerCheckpointFailureSettlesRetryingResidents(t *testing.T) {
+	f, worker, registered := dispatchtest.RegisteredCapture(t, false)
+	request := failedComputerRequest(registered)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000,retry_policy='{"enabled":true,"maxAttempts":2,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'`)
+	var originalInstances int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_instances`).Scan(&originalInstances); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := dispatch.FailComputerCheckpoint(t.Context(), tx, worker, request); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(uuid.MustParse(request.ComputerInstanceID))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err = f.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err := dispatch.RecordComputerInstanceReclaim(t.Context(), tx, pgvalue.MustUUIDValue(i.WorkerGroupID), db.ReclaimComputerInstanceParams{ID: i.ID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion, ExpectedObservedVersion: i.ObservedVersion, Reason: pgvalue.Text("checkpoint_failed"), Evidence: []byte(`{"method":"host_reconciled"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	key, err := computer.NewFencingKey(make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority, err := dispatch.NewRunAuthority(f.Pool, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := authority.RecoverRunExecutionLeases(t.Context(), 10); err != nil || n != 2 {
+		t.Fatalf("resident recovery=%d err=%v", n, err)
+	}
+	var retries int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE status='retry_delayed' AND current_run_lease_id IS NULL`).Scan(&retries); err != nil || retries != 2 {
+		t.Fatalf("retry candidates=%d err=%v", retries, err)
+	}
+	for range 2 {
+		if _, err := authority.ReconcileComputerInstances(t.Context(), 10); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var settled int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM runs WHERE status='system_failed' AND current_run_lease_id IS NULL AND failure->>'code'='computer_source_unavailable'`).Scan(&settled); err != nil || settled != 2 {
+		t.Fatalf("settled residents=%d err=%v", settled, err)
+	}
+	var replacements int
+	if err := f.Pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_instances`).Scan(&replacements); err != nil || replacements != originalInstances {
+		t.Fatalf("stale-head replacements=%d err=%v", replacements, err)
 	}
 }

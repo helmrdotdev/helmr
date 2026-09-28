@@ -148,3 +148,19 @@ func TestExecuteComputerHTTPReplaySurvivesComputerDeletion(t *testing.T) {
 		t.Fatalf("retained exec count=%d, %v", count, err)
 	}
 }
+
+func TestExecuteComputerHTTPRejectsCaptureFailureWithoutRetry(t *testing.T) {
+	fixture := newActorStartPostgresFixture(t, 1)
+	if _, err := fixture.pool.Exec(t.Context(), `UPDATE computers SET dirty_state='capture_failed',desired_state='stopped' WHERE id=$1`, fixture.computerIDs[0]); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	fixture.server.executeComputerHTTP(response, computerCommandHTTPPostRequest(`{"command":["true"],"idempotency_key":"failed-capture"}`, fixture.computerRefs[0], computerCommandHTTPPrincipal(fixture.orgID, fixture.projectID, fixture.environmentID)))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), `"code":"computer_recovery_required"`) || strings.Contains(response.Body.String(), `"retryable":true`) {
+		t.Fatalf("capture failure response=%d %s", response.Code, response.Body.String())
+	}
+	var admitted int
+	if err := fixture.pool.QueryRow(t.Context(), `SELECT count(*) FROM computer_commands`).Scan(&admitted); err != nil || admitted != 0 {
+		t.Fatalf("admitted=%d err=%v", admitted, err)
+	}
+}
