@@ -35,7 +35,8 @@ await verify("shared-persistence", async ({ client, marker, objects, computer, c
       { timeout: 200_000, maxBuffer: 65536 })
     return JSON.parse(stdout)
   }
-  const parked = await Promise.all(runs.map(run => observe("wait-parked", run.id)))
+  const parked = []
+  for (const run of runs) parked.push(await observe("wait-parked", run.id))
   assertEqual(parked[0].checkpoint_id, parked[1].checkpoint_id, "Members were not captured in one checkpoint")
   assertEqual(parked[0].prior_runtime_id, parked[1].prior_runtime_id, "Members did not share one source VM")
   const nonces = await Promise.all(runs.map(async (run, i) => {
@@ -54,7 +55,8 @@ await verify("shared-persistence", async ({ client, marker, objects, computer, c
     result: { resume: true }, idempotencyKey: `${member.marker}:resume`,
   }, request())))
   const outputs = await Promise.all(runs.map(run => client.runs.wait(run, { signal: deadline(180_000) }).unwrap()))
-  const restored = await Promise.all(runs.map(run => observe("verify-restored", run.id)))
+  const restored = []
+  for (const run of runs) restored.push(await observe("verify-restored", run.id))
   for (const [i, run] of runs.entries()) {
     assertEqual(outputs[i], { marker: members[i]!.marker, nonce: nonces[i], runId: run.id, computerId: shared.id },
       "Restored member lost its original memory or files")
