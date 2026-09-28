@@ -491,7 +491,6 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 		return nil, errors.New("restored computer materialization requires a prepared runtime")
 	}
 	checkpointID := strings.TrimSpace(request.GetRestoredCheckpointId())
-	sourceVersionID := strings.TrimSpace(request.GetRestoreSourceVersionId())
 	target, err := computerMountTargetFromProto(request.GetTarget())
 	if err != nil {
 		return nil, fmt.Errorf("restored computer target: %w", err)
@@ -505,7 +504,7 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 	computerInstanceID := strings.TrimSpace(envelope.GetComputerInstanceId())
 	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
 	if computerInstanceID == "" || computerID == "" || channelToken == "" ||
-		checkpointID == "" || sourceVersionID == "" || envelope.GetWriterGeneration() == 0 || envelope.GetWriterGeneration() > math.MaxInt64 || mountPath == "." ||
+		checkpointID == "" || envelope.GetWriterGeneration() == 0 || envelope.GetWriterGeneration() > math.MaxInt64 || mountPath == "." ||
 		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, errors.New("restored computer materialization authority is incomplete")
 	}
@@ -530,7 +529,6 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 			writerGeneration: prepared.writerGeneration, imageRoot: prepared.imageRoot,
 			imageConfig: prepared.imageConfig, runtimeUser: prepared.runtimeUser,
 			computerMount: prepared.computerMount, computerRoot: prepared.computerRoot,
-			baseComputerDiskVersionID: sourceVersionID,
 		}
 	}
 	r.mu.Unlock()
@@ -579,9 +577,6 @@ func (r *computerOperationRegistry) materializeRestoredComputerMount(
 	}
 	if current := r.entries[computerInstanceID]; current != nil && current != entry {
 		return nil, errors.New("restored computer materialization target mount is already registered")
-	}
-	if entry.baseComputerDiskVersionID != sourceVersionID {
-		return nil, errors.New("restored computer source version does not match the frozen mounted runtime")
 	}
 	for id, current := range r.entries {
 		if current == entry {

@@ -40,7 +40,7 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 		},
 		MountPath: "/computer", Target: testComputerMountTarget("version-c"),
 		UsePreparedRuntime:   true,
-		RestoredCheckpointId: "checkpoint-b", RestoreSourceVersionId: "version-a",
+		RestoredCheckpointId: "checkpoint-b",
 	}
 	entry := &computerMountEntry{
 		computerID: "computer-1", channelToken: "channel-b",

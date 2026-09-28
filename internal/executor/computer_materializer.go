@@ -784,10 +784,6 @@ func (m ComputerMaterializer) materializeSession(ctx context.Context, mount *wor
 		err := computerMountFailure{code: "computer_restore_checkpoint_mismatch", err: errors.New("computer mount restore checkpoint does not match prepared runtime provenance")}
 		return nil, key, releaseFailedCheckout(err)
 	}
-	if (preparedCheckpointID == "") != (strings.TrimSpace(mount.RestoreSourceVersionID) == "") {
-		err := computerMountFailure{code: "computer_restore_source_invalid", err: errors.New("computer mount restore source version must accompany its checkpoint")}
-		return nil, key, releaseFailedCheckout(err)
-	}
 	m.logComputerMountPhase(*mount, "computer prepared runtime checked out", "computer_instance_id", key)
 	return session, key, nil
 }
@@ -1117,8 +1113,7 @@ func (m ComputerMaterializer) registerComputerMount(ctx context.Context, session
 		},
 		UsePreparedRuntime: true,
 
-		RestoredCheckpointId:   strings.TrimSpace(mount.RestoreCheckpointID),
-		RestoreSourceVersionId: strings.TrimSpace(mount.RestoreSourceVersionID),
+		RestoredCheckpointId: strings.TrimSpace(mount.RestoreCheckpointID),
 	}
 	phaseStarted = time.Now()
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {

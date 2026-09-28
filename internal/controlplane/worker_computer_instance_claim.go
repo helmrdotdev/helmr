@@ -52,9 +52,6 @@ func (s *Server) workerClaimComputerInstance(w http.ResponseWriter, r *http.Requ
 				ComputerMountPath: "/computer", RequestedMilliCPU: i.ReservedCPUMillis, RequestedMemoryMiB: i.ReservedMemoryBytes / 1048576,
 				RequestedDiskMiB: i.ReservedGuestEphemeralDiskBytes / 1048576, RequestedExecutionSlots: i.ReservedExecutionSlots,
 			}
-			if i.SourceCheckpointID.Valid {
-				assignment.RestoreSourceVersionID = pgvalue.UUIDString(i.SourceDiskVersionID)
-			}
 			return nil
 		})
 		if writeStaleWorkerClaims(w, err) {

@@ -1084,16 +1084,15 @@ func (x *VerifyComputerRestoreResponse) GetIdentity() *ComputerRestoreIdentity {
 }
 
 type MaterializeComputerRequest struct {
-	state                  protoimpl.MessageState     `protogen:"open.v1"`
-	Envelope               *ComputerOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
-	MountPath              string                     `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
-	Target                 *ComputerMountTarget       `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
-	ComputerImage          *ComputerArtifact          `protobuf:"bytes,4,opt,name=computer_image,json=computerImage,proto3" json:"computer_image,omitempty"`
-	UsePreparedRuntime     bool                       `protobuf:"varint,5,opt,name=use_prepared_runtime,json=usePreparedRuntime,proto3" json:"use_prepared_runtime,omitempty"`
-	RestoredCheckpointId   string                     `protobuf:"bytes,7,opt,name=restored_checkpoint_id,json=restoredCheckpointId,proto3" json:"restored_checkpoint_id,omitempty"`
-	RestoreSourceVersionId string                     `protobuf:"bytes,8,opt,name=restore_source_version_id,json=restoreSourceVersionId,proto3" json:"restore_source_version_id,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	state                protoimpl.MessageState     `protogen:"open.v1"`
+	Envelope             *ComputerOperationEnvelope `protobuf:"bytes,1,opt,name=envelope,proto3" json:"envelope,omitempty"`
+	MountPath            string                     `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	Target               *ComputerMountTarget       `protobuf:"bytes,3,opt,name=target,proto3" json:"target,omitempty"`
+	ComputerImage        *ComputerArtifact          `protobuf:"bytes,4,opt,name=computer_image,json=computerImage,proto3" json:"computer_image,omitempty"`
+	UsePreparedRuntime   bool                       `protobuf:"varint,5,opt,name=use_prepared_runtime,json=usePreparedRuntime,proto3" json:"use_prepared_runtime,omitempty"`
+	RestoredCheckpointId string                     `protobuf:"bytes,7,opt,name=restored_checkpoint_id,json=restoredCheckpointId,proto3" json:"restored_checkpoint_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *MaterializeComputerRequest) Reset() {
@@ -1164,13 +1163,6 @@ func (x *MaterializeComputerRequest) GetUsePreparedRuntime() bool {
 func (x *MaterializeComputerRequest) GetRestoredCheckpointId() string {
 	if x != nil {
 		return x.RestoredCheckpointId
-	}
-	return ""
-}
-
-func (x *MaterializeComputerRequest) GetRestoreSourceVersionId() string {
-	if x != nil {
-		return x.RestoreSourceVersionId
 	}
 	return ""
 }
@@ -2697,7 +2689,7 @@ const file_computer_proto_rawDesc = "" +
 	"\x1cVerifyComputerRestoreRequest\x12F\n" +
 	"\bidentity\x18\x01 \x01(\v2*.helmr.computer.v0.ComputerRestoreIdentityR\bidentity\"g\n" +
 	"\x1dVerifyComputerRestoreResponse\x12F\n" +
-	"\bidentity\x18\x01 \x01(\v2*.helmr.computer.v0.ComputerRestoreIdentityR\bidentity\"\xb4\x03\n" +
+	"\bidentity\x18\x01 \x01(\v2*.helmr.computer.v0.ComputerRestoreIdentityR\bidentity\"\xf9\x02\n" +
 	"\x1aMaterializeComputerRequest\x12H\n" +
 	"\benvelope\x18\x01 \x01(\v2,.helmr.computer.v0.ComputerOperationEnvelopeR\benvelope\x12\x1d\n" +
 	"\n" +
@@ -2705,8 +2697,7 @@ const file_computer_proto_rawDesc = "" +
 	"\x06target\x18\x03 \x01(\v2&.helmr.computer.v0.ComputerMountTargetR\x06target\x12J\n" +
 	"\x0ecomputer_image\x18\x04 \x01(\v2#.helmr.computer.v0.ComputerArtifactR\rcomputerImage\x120\n" +
 	"\x14use_prepared_runtime\x18\x05 \x01(\bR\x12usePreparedRuntime\x124\n" +
-	"\x16restored_checkpoint_id\x18\a \x01(\tR\x14restoredCheckpointId\x129\n" +
-	"\x19restore_source_version_id\x18\b \x01(\tR\x16restoreSourceVersionId\"\x9f\x01\n" +
+	"\x16restored_checkpoint_id\x18\a \x01(\tR\x14restoredCheckpointId\"\x9f\x01\n" +
 	"\x12ComputerMountPhase\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vduration_ms\x18\x02 \x01(\x04R\n" +

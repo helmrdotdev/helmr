@@ -124,7 +124,6 @@ message MaterializeComputerRequest {
   ComputerArtifact computer_image = 4;
   bool use_prepared_runtime = 5;
   string restored_checkpoint_id = 7;
-  string restore_source_version_id = 8;
 }
 
 message ComputerMountPhase {

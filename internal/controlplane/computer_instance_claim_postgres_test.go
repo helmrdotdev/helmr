@@ -121,7 +121,7 @@ func TestComputerInstanceClaimHandlerProjectsFreshAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	i := response.Assignment
-	if i == nil || i.ComputerInstanceID != r.ComputerInstanceID || i.WriterGeneration != r.WriterGeneration || i.DesiredVersion != 1 || i.ObservedVersion != 1 || i.Target.BaseComputerDiskVersionID == "" || i.RestoreCheckpointID != "" || i.RestoreSourceVersionID != "" || i.GuestdChannelToken == "" {
+	if i == nil || i.ComputerInstanceID != r.ComputerInstanceID || i.WriterGeneration != r.WriterGeneration || i.DesiredVersion != 1 || i.ObservedVersion != 1 || i.Target.BaseComputerDiskVersionID == "" || i.RestoreCheckpointID != "" || i.GuestdChannelToken == "" {
 		t.Fatal("fresh Instance authority incorrectly projected")
 	}
 	if out := call(`{}`); out.Code != 200 || out.Body.String() != "{}\n" {

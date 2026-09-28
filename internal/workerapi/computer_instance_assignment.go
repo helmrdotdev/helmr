@@ -18,7 +18,6 @@ type ComputerInstanceAssignment struct {
 	Target                  ComputerMountTarget `json:"target"`
 	ComputerInstanceID      string              `json:"computer_instance_id,omitempty"`
 	RestoreCheckpointID     string              `json:"restore_checkpoint_id,omitempty"`
-	RestoreSourceVersionID  string              `json:"restore_source_version_id,omitempty"`
 	RuntimeEpoch            int64               `json:"runtime_epoch"`
 	GuestdChannelToken      string              `json:"guestd_channel_token"`
 	GuestdChannelTokenHash  string              `json:"guestd_channel_token_hash"`

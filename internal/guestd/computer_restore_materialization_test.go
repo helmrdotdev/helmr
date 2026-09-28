@@ -21,7 +21,7 @@ func restoreSetFixture(t *testing.T) (*computerOperationRegistry, *waitingRunReg
 	for _, m := range identity.Runs {
 		r.captureRequest.Runs = append(r.captureRequest.Runs, &computerv0.ComputerCaptureRun{RunId: m.RunId, AttemptNumber: m.AttemptNumber, RunWaitId: m.RunWaitId, RunLeaseId: m.RunLeaseId})
 	}
-	request := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "destination-token"}, MountPath: "/computer", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "destination-version"}, RestoredCheckpointId: identity.CheckpointId, RestoreSourceVersionId: "source-version", UsePreparedRuntime: true}
+	request := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "destination-token"}, MountPath: "/computer", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "destination-version"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
 	return r, w, entry, request
 }
 
@@ -47,9 +47,6 @@ func TestRestoreMaterializationValidatesAllFrozenProgramsBeforeRebind(t *testing
 		},
 		"unsealed": func(r *computerOperationRegistry, w *waitingRunRegistry, q *computerv0.MaterializeComputerRequest) {
 			r.captureRequest = nil
-		},
-		"wrong source version": func(r *computerOperationRegistry, w *waitingRunRegistry, q *computerv0.MaterializeComputerRequest) {
-			q.RestoreSourceVersionId = "other"
 		},
 	}
 	for name, change := range changes {
@@ -97,7 +94,7 @@ func TestRestoreMaterializationHandlerRebindsSetWithoutReleasingPrograms(t *test
 		}
 	}
 	changed := proto.Clone(q).(*computerv0.MaterializeComputerRequest)
-	changed.RestoreSourceVersionId = "different-source"
+	changed.Target.BaseComputerDiskVersionId = "different-destination"
 	if _, err := r.materializeRestoredComputerMount(changed, w); err == nil {
 		t.Fatal("changed replay accepted")
 	}
@@ -116,7 +113,7 @@ func TestPreparedOnlyRestoreTransfersFilesystemOwnershipOnce(t *testing.T) {
 	cleaned := 0
 	prepared.cleanup = func() { cleaned++ }
 	r.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: identity.ComputerId, ComputerInstanceId: identity.SourceComputerInstanceId, WriterGeneration: 3, CheckpointId: identity.CheckpointId, DesiredVersion: 1}
-	q := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "new-token"}, MountPath: "/computer", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "restored-base"}, RestoredCheckpointId: identity.CheckpointId, RestoreSourceVersionId: "source-base", UsePreparedRuntime: true}
+	q := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "new-token"}, MountPath: "/computer", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "restored-base"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
 	invalid := proto.Clone(q).(*computerv0.MaterializeComputerRequest)
 	invalid.Envelope.WriterGeneration = 3
 	if _, err := r.materializeRestoredComputerMount(invalid, w); err == nil {

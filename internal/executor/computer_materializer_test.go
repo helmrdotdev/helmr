@@ -280,25 +280,19 @@ func TestComputerMaterializerChecksOutPreparedRuntime(t *testing.T) {
 
 func TestComputerMaterializerReleasesCheckoutOnRestoreProvenanceFailure(t *testing.T) {
 	tests := []struct {
-		name                 string
-		mountCheckpointID    string
-		mountSourceVersionID string
-		wantCode             string
+		name              string
+		mountCheckpointID string
+		wantCode          string
 	}{
 		{
 			name: "checkpoint mismatch", mountCheckpointID: "checkpoint-other",
-			mountSourceVersionID: "version-b", wantCode: "computer_restore_checkpoint_mismatch",
-		},
-		{
-			name: "missing source version", mountCheckpointID: "checkpoint-b",
-			wantCode: "computer_restore_source_invalid",
+			wantCode: "computer_restore_checkpoint_mismatch",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			store, mount := testComputerMountArtifacts(t)
 			mount.RestoreCheckpointID = test.mountCheckpointID
-			mount.RestoreSourceVersionID = test.mountSourceVersionID
 			session := &computerMaterializerTestSession{}
 			pool := computerPreparedRuntimePool(t, mount, session)
 			key := computerInstanceIDFromComputerMount(mount)
