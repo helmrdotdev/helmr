@@ -44,12 +44,13 @@ type localGenerationHead struct {
 type localGenerationSource struct {
 	local *cas.File
 	base  blockformat.RangeSource
+	reads *generationRangeCache
 }
 
 func (s localGenerationSource) GetRange(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
 	r, err := s.local.GetRange(ctx, digest, size, offset, length)
 	if errors.Is(err, os.ErrNotExist) {
-		return s.base.GetRange(ctx, digest, size, offset, length)
+		return s.reads.GetRange(ctx, digest, size, offset, length)
 	}
 	return r, err
 }
@@ -63,6 +64,7 @@ type LocalGeneration struct {
 	commit        sync.Mutex
 	publication   sync.RWMutex // Joins local-file publishers before reachable eviction.
 	store         *cas.File
+	reads         *generationRangeCache
 	disk          *WritableGeneration
 	directory     string
 	head          localGenerationHead
@@ -248,12 +250,13 @@ func newLocalGeneration(ctx context.Context, cfg LocalGenerationConfig, lock *os
 	if err != nil {
 		return nil, err
 	}
-	writer := blockformat.Writer{Source: localGenerationSource{local: store, base: cfg.BaseSource}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
+	reads := newGenerationRangeCache(cfg.BaseSource)
+	writer := blockformat.Writer{Source: localGenerationSource{local: store, base: cfg.BaseSource, reads: reads}, Sink: store, Scope: cfg.Scope, ActiveKey: cfg.ActiveKey, Keys: cfg.Keys, PackLimit: cfg.PackLimit}
 	disk, err := OpenWritableGeneration(ctx, writer, head.Root, cfg.DirtyBlocks, remaining)
 	if err != nil {
 		return nil, err
 	}
-	return &LocalGeneration{store: store, disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]GenerationRoot)}, nil
+	return &LocalGeneration{store: store, reads: reads, disk: disk, directory: cfg.Directory, head: head, installedRoot: head.Root, lock: lock, stagedBytes: cfg.StagedBytes, captures: make(map[*LocalCapture]GenerationRoot)}, nil
 }
 
 func (p *LocalGeneration) step(phase string) error {
@@ -366,5 +369,6 @@ func (p *LocalGeneration) Close() error {
 		return nil
 	}
 	p.closed = true
+	p.reads.clear()
 	return errors.Join(p.disk.Close(), p.lock.Close())
 }

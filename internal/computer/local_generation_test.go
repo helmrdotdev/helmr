@@ -4,8 +4,10 @@ package computer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -402,5 +404,45 @@ func TestLocalGenerationSourceLossStopsAllDiskOperations(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestLocalGenerationCachesReadsWithoutCachingPublicationProof(t *testing.T) {
+	cfg, _ := localGenerationFixture(t)
+	remote := cfg.BaseSource
+	calls := 0
+	unavailable := false
+	failure := errors.New("remote unavailable")
+	cfg.BaseSource = cacheRangeSource(func(ctx context.Context, digest string, size, offset, length int64) (io.ReadCloser, error) {
+		calls++
+		if unavailable {
+			return nil, failure
+		}
+		return remote.GetRange(ctx, digest, size, offset, length)
+	})
+	p, err := CreateLocalGeneration(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	if localByte(t, p) != 1 {
+		t.Fatal("wrong first read")
+	}
+	initial := calls
+	if localByte(t, p) != 1 || calls != initial {
+		t.Fatal("repeated read fetched remote ciphertext")
+	}
+	unavailable = true
+	if localByte(t, p) != 1 {
+		t.Fatal("cached read changed")
+	}
+	if _, err := p.remoteBacked(t.Context(), cfg.Base, 100); !errors.Is(err, failure) {
+		t.Fatalf("cache masked remote proof failure: %v", err)
+	}
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if p.reads.bytes != 0 || len(p.reads.entries) != 0 {
+		t.Fatal("closed owner retained cache")
 	}
 }
