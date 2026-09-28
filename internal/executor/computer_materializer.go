@@ -82,6 +82,9 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 				err:  errors.New("computer mount runtime cleanup failed"),
 			}
 			m.logComputerMountPhase(mount, "computer mount session close failed", "error", closeErr.Error())
+			// The materializer no longer owns this session. Retain its resources
+			// until reconciliation proves physical cleanup.
+			m.RuntimePool.relinquishCheckout(mount.ComputerInstanceID, mount.RuntimeEpoch)
 			var priorFailure computerMountFailure
 			if !errors.As(runErr, &priorFailure) || !priorFailure.reported {
 				runErr = errors.Join(runErr, m.failComputerMount(client, renewal.authority(mount), failure))
@@ -766,6 +769,7 @@ func (m ComputerMaterializer) materializeSession(ctx context.Context, mount *wor
 		return nil, key, computerMountFailure{code: "computer_runtime_not_prepared", err: err}
 	}
 	releaseFailedCheckout := func(err error) error {
+		defer m.RuntimePool.relinquishCheckout(mount.ComputerInstanceID, mount.RuntimeEpoch)
 		if closeErr := m.closeSession(session); closeErr != nil {
 			return errors.Join(err, computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
@@ -1199,6 +1203,9 @@ func (m ComputerMaterializer) stopControlledComputerMount(ctx context.Context, s
 			err:  fmt.Errorf("close computer runtime: %w", err),
 		})
 		return fmt.Errorf("close computer runtime: %w", err)
+	}
+	if err := m.RuntimePool.ReleaseCheckout(mount.ComputerInstanceID, mount.RuntimeEpoch); err != nil {
+		return fmt.Errorf("release computer mount resources: %w", err)
 	}
 	stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.failureTimeout())
 	defer cancel()

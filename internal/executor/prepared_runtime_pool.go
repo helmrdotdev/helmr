@@ -1219,6 +1219,20 @@ func (p *PreparedRuntimePool) checkedOutRestoreCheckpoint(computerInstanceID str
 	return p.checkedOutRestore[preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}]
 }
 
+// relinquishCheckout hands an exited materializer back to reconciliation without
+// releasing capacity or device ownership before physical cleanup is proved.
+func (p *PreparedRuntimePool) relinquishCheckout(computerInstanceID string, runtimeEpoch int64) {
+	if p == nil {
+		return
+	}
+	ref := preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.checkedOut, ref)
+	delete(p.checkedOutEntries, ref)
+	delete(p.checkedOutRestore, ref)
+}
+
 func (p *PreparedRuntimePool) ReleaseCheckout(computerInstanceID string, runtimeEpoch int64) error {
 	if p == nil {
 		return nil
@@ -1230,14 +1244,10 @@ func (p *PreparedRuntimePool) ReleaseCheckout(computerInstanceID string, runtime
 	if !checkedOut {
 		return nil
 	}
+	defer p.relinquishCheckout(ref.id, ref.epoch)
 	if err := p.releaseRuntimeCapacity(ref.id, ref.epoch); err != nil {
 		return err
 	}
-	p.mu.Lock()
-	delete(p.checkedOut, ref)
-	delete(p.checkedOutEntries, ref)
-	delete(p.checkedOutRestore, ref)
-	p.mu.Unlock()
 	return nil
 }
 

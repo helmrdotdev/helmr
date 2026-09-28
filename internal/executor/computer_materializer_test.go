@@ -650,64 +650,100 @@ func TestComputerMaterializerFailsComputerMountOnFatalHeartbeatError(t *testing.
 	}
 }
 
-func TestRunComputerMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckout(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	preparedClient, preparedServer := net.Pipe()
-	defer preparedServer.Close()
-	store, computerMount := testComputerMountArtifacts(t)
+func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testing.T) {
+	for _, preservationFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("preservation_failure=%t", preservationFailure), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			preparedClient, preparedServer := net.Pipe()
+			defer preparedServer.Close()
+			store, computerMount := testComputerMountArtifacts(t)
 
-	computerMount.OrgID = "org-1"
-	computerMount.ComputerID = uuid.NewV7().String()
-	computerMount.GuestdChannelToken = "channel-token"
-	computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
-	target := runtimeCapacityTarget(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch)
-	target.Source.ComputerID = computerMount.ComputerID
-	target.Source.WriterGeneration = computerMount.WriterGeneration
-	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: computerMount.Target.BaseComputerDiskVersionID}
-	closeFailure := errors.New("prepared runtime cleanup failed")
-	session := &computerMaterializerTestSession{
-		streams:   []io.ReadWriteCloser{preparedClient},
-		operation: discardReadWriteCloser{},
-		closeErr:  closeFailure,
-	}
-	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
-	if err := pool.reserveRuntimeCapacity(target); err != nil {
-		t.Fatal(err)
-	}
-	key := computerInstanceIDFromComputerMount(computerMount)
-	ready := newPreparedRuntimeSignal()
-	ready.finish(nil)
-	pool.entries[key] = []preparedRuntimeEntry{{
-		session: session, poolKey: key, computerInstanceID: target.ID,
-		runtimeEpoch: target.WorkerEpoch, target: target,
-		exit: newPreparedRuntimeSignal(), ready: ready,
-	}}
-	go acknowledgePreparedComputerMount(t, preparedServer, computerMount, key)
-	client := &computerMaterializerTestClient{
-		onReady: cancel,
-	}
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
-		CAS:         store,
-		TempDir:     t.TempDir(),
-		Heartbeat:   time.Hour,
-		PollEvery:   time.Hour,
-		RuntimePool: pool,
-	}
+			computerMount.OrgID = "org-1"
+			computerMount.ComputerID = uuid.NewV7().String()
+			computerMount.GuestdChannelToken = "channel-token"
+			computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+			target := runtimeCapacityTarget(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch)
+			target.Source.ComputerID = computerMount.ComputerID
+			target.Source.WriterGeneration = computerMount.WriterGeneration
+			target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: computerMount.Target.BaseComputerDiskVersionID}
+			var closeFailure error = errors.New("prepared runtime cleanup failed")
+			if preservationFailure {
+				closeFailure = nil
+			}
+			session := &computerMaterializerTestSession{
+				streams:   []io.ReadWriteCloser{preparedClient},
+				operation: discardReadWriteCloser{},
+				closeErr:  closeFailure,
+			}
+			pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+			pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+			if err := pool.reserveRuntimeCapacity(target); err != nil {
+				t.Fatal(err)
+			}
+			key := computerInstanceIDFromComputerMount(computerMount)
+			ready := newPreparedRuntimeSignal()
+			ready.finish(nil)
+			pool.entries[key] = []preparedRuntimeEntry{{
+				session: session, poolKey: key, computerInstanceID: target.ID,
+				runtimeEpoch: target.WorkerEpoch, target: target,
+				exit: newPreparedRuntimeSignal(), ready: ready,
+			}}
+			go acknowledgePreparedComputerMount(t, preparedServer, computerMount, key)
+			sessions := NewComputerMountSessions()
+			client := &computerMaterializerTestClient{onReady: func() {
+				if preservationFailure {
+					_, pending := newSaveHostFixture(t, "capture")
+					closeFailure = pending.Wait(context.Background())
+					sessions.mu.RLock()
+					managed := sessions.sessions[computerMount.ComputerInstanceID].session.(*managedComputerMountSession)
+					sessions.mu.RUnlock()
+					managed.saves.mu.Lock()
+					managed.saves.pending = pending
+					managed.saves.mu.Unlock()
+				}
+				cancel()
+			}}
+			materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+				Sessions:    sessions,
+				CAS:         store,
+				TempDir:     t.TempDir(),
+				Heartbeat:   time.Hour,
+				PollEvery:   time.Hour,
+				RuntimePool: pool,
+			}
 
-	err := materializer.RunComputerMount(ctx, computerMount, client)
-	if len(client.execClaims) != 1 {
-		t.Fatalf("mounted requests = %d, want 1", len(client.execClaims))
-	}
-	if !errors.Is(err, closeFailure) {
-		t.Fatalf("materializer error = %v, want close failure", err)
-	}
-	if !pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
-		t.Fatal("prepared runtime checkout was released after close failure")
-	}
-	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
-		t.Fatalf("capacity reservations after close failure = %d, want 1", got)
+			err := materializer.RunComputerMount(ctx, computerMount, client)
+			if len(client.execClaims) != 1 {
+				t.Fatalf("mounted requests = %d, want 1", len(client.execClaims))
+			}
+			if !errors.Is(err, closeFailure) {
+				t.Fatalf("materializer error = %v, want close failure", err)
+			}
+			if pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+				t.Fatal("exited materializer retained checkout ownership")
+			}
+			if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+				t.Fatalf("capacity reservations after close failure = %d, want 1", got)
+			}
+			connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
+			pool.Connector = connector
+			control := &typedRuntimeClient{}
+			if err := pool.StopRuntimeTarget(context.Background(), control, target); err == nil {
+				t.Fatal("unproved host cleanup succeeded")
+			}
+			if len(pool.Capacity.Snapshot().Reservations) != 1 || len(control.closed) != 0 {
+				t.Fatal("released capacity or published proof before physical cleanup")
+			}
+			connector.err = nil
+			if err := pool.StopRuntimeTarget(context.Background(), control, target); err != nil {
+				t.Fatal(err)
+			}
+			if len(pool.Capacity.Snapshot().Reservations) != 0 || len(control.closed) != 1 || control.closed[0].CleanupProof == nil {
+				t.Fatal("physical cleanup did not release capacity and publish proof")
+			}
+
+		})
 	}
 }
 
@@ -1401,8 +1437,8 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	if len(client.failures) != 2 {
 		t.Fatalf("failure reporting attempts = %d", len(client.failures))
 	}
-	if !pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) {
-		t.Fatal("released unproven runtime")
+	if pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) {
+		t.Fatal("exited materializer retained checkout ownership")
 	}
 	if len(pool.Capacity.Snapshot().Reservations) != 1 {
 		t.Fatal("released capacity before physical reclaim")
@@ -1421,7 +1457,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	if err := pool.ReclaimFailedRuntimeTarget(ctx, control, target); err == nil {
 		t.Fatal("unproved host cleanup succeeded")
 	}
-	if !pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) || len(control.failed) != 0 {
+	if len(pool.Capacity.Snapshot().Reservations) != 1 || len(control.failed) != 0 {
 		t.Fatal("released or published proof before physical cleanup")
 	}
 	connector.err = nil
