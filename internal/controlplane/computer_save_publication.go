@@ -171,7 +171,9 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 // abandonComputerSave is called only after the host has cancelled and joined
 // every producer/upload for this operation. Published saves require source
 // adoption instead; they cannot be abandoned. Lost execution authority leaves
-// retention to the existing physical Runtime reclamation path.
+// retention to the existing physical Runtime reclamation path. Abandonment keeps
+// object pins until that reclamation: the live disk can still reuse the same
+// ciphertext in a later save or checkpoint, even after this producer has joined.
 func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest) error {
 	receipt, err := computerSaveReceiptParams(worker, request)
 	if err != nil {
@@ -195,8 +197,7 @@ func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, re
 		if cleared != 1 {
 			return computerObjectConflict("save operation changed during abandonment")
 		}
-		_, err = tx.Exec(ctx, `DELETE FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$2`, r.ID, computerSavePublicationKey(r))
-		return err
+		return nil
 	})
 	if err != nil && absent() {
 		return nil
