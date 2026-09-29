@@ -26,7 +26,7 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	if group.Status != "active" && group.Status != "draining" {
+	if group.Status != "active" && group.Status != "paused" && group.Status != "draining" {
 		return db.ComputerCheckpoint{}, pgx.ErrNoRows
 	}
 	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: workerID, WorkerGroupID: groupID})

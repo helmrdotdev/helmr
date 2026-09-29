@@ -79,25 +79,25 @@ SELECT target.id, target.worker_group_id, target.current_epoch, target.status
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_runtimes) >= 0;
 
--- Caller holds the Worker Group and pool locks. Observation freshness and the
--- Run pause are rechecked while the Worker Host row is locked.
+-- Worker Host fence for placement and Computer preparation. The caller
+-- (dispatch.lockWorkerFence) must already hold the Worker Group and Pool share
+-- locks and have validated their status. This query locks the Worker Host and
+-- checks epoch, observation freshness and platform. Admission also requires an
+-- active host without a Run pause; continuation of admitted work accepts a
+-- draining host and ignores pauses. admitting reports whether the locked host
+-- could admit new work, including the VM pause.
 -- name: LockRunEligibleWorkerHost :one
-SELECT worker_hosts.id
+SELECT (worker_hosts.status = 'active' AND worker_hosts.run_paused_reason IS NULL
+        AND worker_hosts.vm_paused_reason IS NULL)::boolean AS admitting
   FROM worker_hosts
-  JOIN worker_groups
-    ON worker_groups.id = worker_hosts.worker_group_id
-  JOIN worker_pools
-    ON worker_pools.id = worker_hosts.worker_pool_id
-   AND worker_pools.worker_group_id = worker_hosts.worker_group_id
   LEFT JOIN vm_platforms
     ON vm_platforms.id = worker_hosts.vm_platform_id
  WHERE worker_hosts.id = sqlc.arg(id)
    AND worker_hosts.worker_group_id = sqlc.arg(worker_group_id)
    AND worker_hosts.current_epoch = sqlc.arg(worker_epoch)::bigint
-   AND (worker_hosts.status = 'active' OR (sqlc.arg(allow_draining)::boolean AND worker_hosts.status='draining'))
-   AND worker_pools.status = 'active'
+   AND (worker_hosts.status = 'active' OR (sqlc.arg(continuation)::boolean AND worker_hosts.status = 'draining'))
    AND worker_hosts.observed_at >= clock_timestamp() - sqlc.arg(worker_freshness_seconds)::bigint * interval '1 second'
-   AND worker_hosts.run_paused_reason IS NULL
+   AND (sqlc.arg(continuation)::boolean OR worker_hosts.run_paused_reason IS NULL)
    AND vm_platforms.arch = sqlc.arg(run_architecture)
    AND vm_platforms.contract = sqlc.arg(contract)
  FOR UPDATE OF worker_hosts;

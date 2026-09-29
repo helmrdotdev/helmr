@@ -88,7 +88,8 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, fence 
 	if committed {
 		return q.LockComputerCheckpoint(ctx, db.LockComputerCheckpointParams{EnvironmentID: environmentID, ComputerID: i.ComputerID, CheckpointID: i.SourceCheckpointID})
 	}
-	if i.AdmissionState != "restoring" {
+	// A first commit starts Runs, so it needs admitting supply.
+	if !preparation.admitting || i.AdmissionState != "restoring" {
 		return checkpoint, pgx.ErrNoRows
 	}
 	if _, err = q.GetComputerInstanceRestoreCheckpoint(ctx, db.GetComputerInstanceRestoreCheckpointParams{ComputerInstanceID: i.ID, EnvironmentID: environmentID, WorkerGroupID: i.WorkerGroupID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion}); err != nil {

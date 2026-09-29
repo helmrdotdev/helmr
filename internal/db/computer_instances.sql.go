@@ -555,20 +555,21 @@ func (q *Queries) GetComputerInstanceAssignmentSource(ctx context.Context, id pg
 
 const getComputerInstanceWriterLive = `-- name: GetComputerInstanceWriterLive :one
 SELECT (i.writer_expires_at>clock_timestamp()
- AND (w.status='active' OR ($1::boolean AND w.status='draining')) AND w.current_epoch=i.worker_epoch
- AND w.observed_at>=clock_timestamp()-$2::bigint*interval '1 second')::boolean AS writer_live
- FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$3
+ AND w.observed_at>=clock_timestamp()-$1::bigint*interval '1 second')::boolean AS writer_live
+ FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$2
 `
 
 type GetComputerInstanceWriterLiveParams struct {
-	AllowDraining          bool        `json:"allow_draining"`
 	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
 	ID                     pgtype.UUID `json:"id"`
 }
 
-// Ready-Instance writer liveness for preparation readiness checks.
+// Post-lock time check for a ready Instance's readiness or restore receipt.
+// The caller (dispatch.lockComputerPreparation) must already hold the Worker
+// Group, Pool and Host fence (which pins supply status for the chosen mode, the
+// epoch and a present observation) and the Computer and Instance locks.
 func (q *Queries) GetComputerInstanceWriterLive(ctx context.Context, arg GetComputerInstanceWriterLiveParams) (bool, error) {
-	row := q.db.QueryRow(ctx, getComputerInstanceWriterLive, arg.AllowDraining, arg.WorkerFreshnessSeconds, arg.ID)
+	row := q.db.QueryRow(ctx, getComputerInstanceWriterLive, arg.WorkerFreshnessSeconds, arg.ID)
 	var writer_live bool
 	err := row.Scan(&writer_live)
 	return writer_live, err

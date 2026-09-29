@@ -29,7 +29,9 @@ const (
 )
 
 // ObservationFreshnessSeconds bounds how old a Worker Host observation may be
-// while the host still counts as live for placement, execution and capture.
+// for admission (placement, preparation, Run claim and start) and capture.
+// Operations continuing an already started Run do not require freshness; stale
+// fencing revokes them instead.
 const ObservationFreshnessSeconds = int64(120)
 
 type WorkerPoolStatus string

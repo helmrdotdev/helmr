@@ -66,7 +66,7 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 	if len(order) > maxCancellationGraphSize {
 		return fail(cancellationAuthority("session control graph exceeds the transaction bound", nil))
 	}
-	if err = lockExecutionWorker(ctx, q, fence, loc.RegionID); err != nil {
+	if err = lockExecutionWorker(ctx, q, fence, loc.RegionID, false); err != nil {
 		return fail(err)
 	}
 	if err = lockExecutionPlacement(ctx, tx, order, loc.EnvironmentID, executionTarget{session: targetID}); err != nil {

@@ -86,7 +86,8 @@ func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, fence ComputerPr
 	if i.AdmissionState == "open" || i.AdmissionState == "draining" {
 		return i, nil
 	}
-	if i.AdmissionState != "restoring" {
+	// Opening a restored Instance starts its Runs, so it needs admitting supply.
+	if !p.admitting || i.AdmissionState != "restoring" {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	for _, m := range members {

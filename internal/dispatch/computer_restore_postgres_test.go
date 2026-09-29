@@ -274,7 +274,7 @@ func installedRestoreGrants(t *testing.T, f runtest.Fixture, fence dispatch.Comp
 }
 
 func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
-	for _, failure := range []string{"missing member", "duplicate member", "wrong lease", "wrong sequence", "wrong checkpoint", "wrong generation", "expired peer", "cancelled peer", "preparation expired", "delivery recording failed", "draining Worker"} {
+	for _, failure := range []string{"missing member", "duplicate member", "wrong lease", "wrong sequence", "wrong checkpoint", "wrong generation", "expired peer", "cancelled peer", "preparation expired", "delivery recording failed", "draining Worker", "draining Group"} {
 		t.Run(failure, func(t *testing.T) {
 			f, authority, fence := dispatchtest.Restore(t, false)
 			tx, err := f.Pool.Begin(t.Context())
@@ -313,6 +313,8 @@ func TestComputerRestoreAcknowledgementRejectsPartialAuthority(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), f.Pool, `CREATE TRIGGER reject_restore_delivery BEFORE UPDATE ON control_outbox FOR EACH ROW EXECUTE FUNCTION reject_restore_delivery()`)
 			case "draining Worker":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, f.WorkerID)
+			case "draining Group":
+				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='draining',primary_pool_id=NULL,claim_version=claim_version+1 WHERE id=$1`, runtest.WorkerGroupID)
 			case "preparation expired":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET preparation_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, fence.RuntimeID)
 			}

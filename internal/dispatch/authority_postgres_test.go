@@ -52,7 +52,7 @@ SELECT $2, $3, worker_group_id, worker_pool_id, status,
 	if isolation != "read committed" {
 		t.Fatalf("placement transaction isolation = %q, want read committed", isolation)
 	}
-	if err := lockWorkerFence(t.Context(), first, workerFence{
+	if _, err := lockWorkerFence(t.Context(), first, workerFence{
 		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
 		WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
@@ -67,7 +67,7 @@ SELECT $2, $3, worker_group_id, worker_pool_id, status,
 	defer rollback(context.Background(), second)
 	secondCtx, cancelSecond := context.WithTimeout(t.Context(), time.Second)
 	defer cancelSecond()
-	if err := lockWorkerFence(secondCtx, second, workerFence{
+	if _, err := lockWorkerFence(secondCtx, second, workerFence{
 		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
 		WorkerHostID: pgvalue.UUID(workerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
@@ -101,7 +101,7 @@ UPDATE worker_groups SET status = 'paused' WHERE id = $1`, pgvalue.UUID(runtest.
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), recheck)
-	err = lockWorkerFence(t.Context(), recheck, workerFence{
+	_, err = lockWorkerFence(t.Context(), recheck, workerFence{
 		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
 		WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
@@ -123,7 +123,7 @@ UPDATE worker_hosts
 		t.Fatal(err)
 	}
 	defer rollback(context.Background(), tx)
-	if err := lockWorkerFence(t.Context(), tx, workerFence{
+	if _, err := lockWorkerFence(t.Context(), tx, workerFence{
 		GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
 		WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
 		RunArchitecture: runtimeArchitecture,
@@ -140,18 +140,23 @@ UPDATE worker_hosts
 
 func TestWorkerFenceRequiresRunReadyWorker(t *testing.T) {
 	for _, test := range []struct {
-		name, sql     string
-		allowDraining bool
-		eligible      bool
+		name, sql    string
+		continuation bool
+		eligible     bool
 	}{
 		{"ready", ``, false, true},
 		{"Run paused", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, false, false},
-		{"Run paused with draining allowed", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, true, false},
+		{"Run paused continuation", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, true, true},
 		{"stale observation", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, false, false},
 		{"unobserved", `UPDATE worker_hosts SET observed_at=NULL WHERE id=$1`, false, false},
 		{"draining", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, false, false},
-		{"draining allowed", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, true, true},
-		{"stale draining allowed", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, true, false},
+		{"draining continuation", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, true, true},
+		{"stale draining continuation", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, true, false},
+		{"paused Group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, false, false},
+		{"paused Group continuation", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, true, true},
+		{"draining Group continuation", `UPDATE worker_groups SET status='draining',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, true, true},
+		{"draining Pool", `UPDATE worker_pools SET status='draining' WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, false, false},
+		{"draining Pool continuation", `UPDATE worker_pools SET status='draining' WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, true, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f, _, authority := commandPlacementFixture(t)
@@ -163,10 +168,10 @@ func TestWorkerFenceRequiresRunReadyWorker(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer rollback(context.Background(), tx)
-			err = lockWorkerFence(t.Context(), tx, workerFence{
+			_, err = lockWorkerFence(t.Context(), tx, workerFence{
 				GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
 				WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
-				RunArchitecture: runtimeArchitecture, AllowDraining: test.allowDraining,
+				RunArchitecture: runtimeArchitecture, Continuation: test.continuation,
 			})
 			if test.eligible && err != nil {
 				t.Fatalf("eligible Worker rejected: %v", err)

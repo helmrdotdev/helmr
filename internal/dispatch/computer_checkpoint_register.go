@@ -168,7 +168,7 @@ func lockComputerCheckpointSource(ctx context.Context, tx pgx.Tx, worker Compute
 	if err != nil {
 		return computerCheckpointSource{}, err
 	}
-	if group.Status != "active" && group.Status != "draining" {
+	if group.Status != "active" && group.Status != "paused" && group.Status != "draining" {
 		return computerCheckpointSource{}, pgx.ErrNoRows
 	}
 	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: worker.HostID, WorkerGroupID: worker.GroupID})

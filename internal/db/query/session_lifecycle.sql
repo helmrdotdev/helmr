@@ -201,7 +201,7 @@ WHERE l.id=sqlc.arg(run_lease_id) AND l.lease_sequence=sqlc.arg(lease_sequence)
  AND l.finalization_operation_id IS NULL AND r.status IN ('running','waiting')
  AND a.entrypoint_entered_at IS NOT NULL AND a.terminal_at IS NULL
  AND s.run_generation=sqlc.arg(run_generation) AND s.status IN ('open','closing')
- AND wi.status IN ('active','draining') AND wg.status IN ('active','draining')
+ AND wi.status IN ('active','draining') AND wg.status IN ('active','paused','draining')
  AND rt.computer_id=l.computer_id AND rt.writer_generation=l.writer_generation
  AND rt.worker_host_id=l.worker_host_id AND rt.worker_epoch=l.worker_epoch
  AND rt.writer_expires_at>clock_timestamp() AND rt.mount_state='mounted'

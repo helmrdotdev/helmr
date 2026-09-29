@@ -4,11 +4,12 @@ JOIN worker_hosts h ON h.id=l.worker_host_id AND h.worker_group_id=l.worker_grou
 JOIN worker_groups g ON g.id=h.worker_group_id
 JOIN computer_instances i ON i.id=l.computer_instance_id AND i.writer_generation=l.writer_generation
 WHERE l.worker_host_id=sqlc.arg(worker_host_id) AND l.worker_group_id=sqlc.arg(worker_group_id)
- AND l.worker_epoch=sqlc.arg(worker_epoch) AND h.status IN ('active','draining') AND g.status IN ('active','draining')
+ AND l.worker_epoch=sqlc.arg(worker_epoch) AND h.status IN ('active','draining')
  AND i.observed_state='ready' AND i.desired_state='ready' AND i.mount_state='mounted'
  AND i.admission_state<>'restoring'
- AND i.reclaimed_at IS NULL AND i.writer_expires_at>clock_timestamp()
- AND l.expires_at>clock_timestamp() AND ((l.status IN ('assigned','starting') AND l.start_deadline_at>clock_timestamp()) OR (l.status='running' AND EXISTS(SELECT 1 FROM run_waits w WHERE w.current_run_lease_id=l.id AND w.suspension_status='resuming')))
+ AND i.reclaimed_at IS NULL AND i.writer_expires_at>clock_timestamp() AND l.expires_at>clock_timestamp()
+ AND ((l.status IN ('assigned','starting') AND l.start_deadline_at>clock_timestamp() AND g.status IN ('active','draining'))
+  OR (l.status='running' AND g.status IN ('active','paused','draining') AND EXISTS(SELECT 1 FROM run_waits w WHERE w.current_run_lease_id=l.id AND w.suspension_status='resuming')))
  ORDER BY CASE l.status WHEN 'starting' THEN 0 ELSE 1 END,l.created_at,l.id LIMIT sqlc.arg(row_limit);
 
 -- name: GetRunLeaseClaimLocators :one
@@ -105,7 +106,7 @@ LEFT JOIN run_waits wait ON wait.run_id=l.run_id AND wait.attempt_number=l.attem
  AND wait.current_run_lease_id=l.id AND wait.suspension_status IN ('hot','checkpointing','resuming')
 WHERE l.id=sqlc.arg(id) AND l.lease_sequence=sqlc.arg(lease_sequence)
  AND l.worker_group_id=sqlc.arg(worker_group_id) AND l.worker_host_id=sqlc.arg(worker_host_id)
- AND l.worker_epoch=sqlc.arg(worker_epoch) AND h.status IN ('active','draining') AND g.status IN ('active','draining')
+ AND l.worker_epoch=sqlc.arg(worker_epoch) AND h.status IN ('active','draining') AND g.status IN ('active','paused','draining')
  AND i.desired_state='ready' AND i.observed_state='ready' AND i.mount_state='mounted'
  AND i.writer_expires_at>clock_timestamp() AND i.reclaimed_at IS NULL
  AND l.expires_at>clock_timestamp() AND l.status IN ('running','checkpointing','finalizing') AND r.status IN ('running','waiting');
@@ -441,10 +442,15 @@ SELECT *
    AND computer_id = sqlc.arg(computer_id)
  FOR UPDATE;
 
--- Caller holds every execution authority lock; time is evaluated afterwards.
+-- Post-lock time check only. The caller (run.lockExecution) must already hold
+-- the Worker Group, Worker Host, Computer, Instance and lease locks and have
+-- validated Group/Host status, claim versions, epoch, Instance writer generation
+-- and the lease binding. Claim and start pass skip_worker_readiness=false so
+-- observation freshness and the Run pause gate admission; continuing
+-- operations skip them. A host that was never observed is not live.
 -- name: GetRunLeaseExecutionLive :one
-SELECT (l.expires_at>clock_timestamp() AND (l.status NOT IN ('assigned','starting') OR l.start_deadline_at>clock_timestamp())
+SELECT COALESCE(l.expires_at>clock_timestamp() AND (l.status NOT IN ('assigned','starting') OR l.start_deadline_at>clock_timestamp())
  AND i.writer_expires_at>clock_timestamp() AND (sqlc.arg(skip_worker_readiness)::boolean OR (h.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second'
- AND h.run_paused_reason IS NULL)))::boolean AS live
+ AND h.run_paused_reason IS NULL)),false)::boolean AS live
  FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id
  JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.id=sqlc.arg(id);
