@@ -121,3 +121,30 @@ func (f identityFixture) expire(t *testing.T, table string, id pgtype.UUID) {
 	t.Helper()
 	f.exec(t, `UPDATE `+table+` SET expires_at = $2 WHERE id = $1`, id, time.Now().Add(-time.Second))
 }
+
+// rejectLoginSessions makes every login session insert fail until the
+// returned function restores it, so that a sign-in fails after its earlier
+// writes.
+func (f identityFixture) rejectLoginSessions(t *testing.T) func() {
+	t.Helper()
+	f.exec(t, `
+		CREATE FUNCTION reject_login_session() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected login session failure';
+		END
+		$$`)
+	f.exec(t, `CREATE TRIGGER reject_login_session BEFORE INSERT ON auth_sessions FOR EACH ROW EXECUTE FUNCTION reject_login_session()`)
+	return func() {
+		f.exec(t, `DROP TRIGGER reject_login_session ON auth_sessions`)
+		f.exec(t, `DROP FUNCTION reject_login_session()`)
+	}
+}
+
+func (f identityFixture) sessionCount(t *testing.T) int {
+	t.Helper()
+	var count int
+	if err := f.pool.QueryRow(t.Context(), `SELECT count(*) FROM auth_sessions`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}

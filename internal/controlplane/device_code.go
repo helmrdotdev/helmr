@@ -89,7 +89,7 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid device token JSON: %w", err))
 		return
 	}
-	rawSession, err := identity.ExchangeDeviceCode(r.Context(), s.db, s.identity, request.DeviceCode)
+	rawSession, err := identity.ExchangeDeviceCode(r.Context(), s.tx, s.identity, request.DeviceCode)
 	switch {
 	case err == nil:
 		writeJSON(w, http.StatusOK, api.DeviceTokenResponse{

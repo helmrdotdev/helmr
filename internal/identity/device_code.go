@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 )
 
 // DeviceAuthorization is a started device authorization: the device code the
@@ -129,42 +130,51 @@ func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver au
 }
 
 // ExchangeDeviceCode consumes an approved device code once and issues a login
-// session of its approver for the approved organization, returning the raw
-// session token. A device code still awaiting a decision is
+// session of its approver for the approved organization in one transaction,
+// returning the raw session token. A device code still awaiting a decision is
 // ErrAuthorizationPending, a denied one ErrDeviceAccessDenied and an expired
 // one ErrDeviceCodeExpired; an unknown or already consumed one is
 // ErrInvalidDeviceCode.
-func ExchangeDeviceCode(ctx context.Context, q db.Querier, cfg Config, deviceCode string) (string, error) {
+func ExchangeDeviceCode(ctx context.Context, txb db.TxBeginner, cfg Config, deviceCode string) (string, error) {
 	hash, err := auth.HashToken(cfg.deviceCodeKey, strings.TrimSpace(deviceCode))
 	if err != nil {
 		return "", ErrInvalidDeviceCode
 	}
-	device, err := q.GetDeviceCodeForPoll(ctx, hash)
-	if isNoRows(err) {
-		return "", ErrInvalidDeviceCode
-	}
+	var rawSession string
+	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		device, err := q.GetDeviceCodeForPoll(ctx, hash)
+		if isNoRows(err) {
+			return ErrInvalidDeviceCode
+		}
+		if err != nil {
+			return fmt.Errorf("poll device code: %w", err)
+		}
+		switch deviceStatus(device) {
+		case "pending":
+			return ErrAuthorizationPending
+		case "denied":
+			return ErrDeviceAccessDenied
+		case "expired":
+			return ErrDeviceCodeExpired
+		case "approved":
+		default:
+			return ErrInvalidDeviceCode
+		}
+		consumed, err := q.ConsumeDeviceCode(ctx, hash)
+		if isNoRows(err) {
+			return ErrInvalidDeviceCode
+		}
+		if err != nil {
+			return fmt.Errorf("consume device code: %w", err)
+		}
+		rawSession, err = issueLoginSession(ctx, q, cfg, consumed.DecidedByUserID, consumed.OrgID)
+		return err
+	})
 	if err != nil {
-		return "", fmt.Errorf("poll device code: %w", err)
+		return "", err
 	}
-	switch deviceStatus(device) {
-	case "pending":
-		return "", ErrAuthorizationPending
-	case "denied":
-		return "", ErrDeviceAccessDenied
-	case "expired":
-		return "", ErrDeviceCodeExpired
-	case "approved":
-	default:
-		return "", ErrInvalidDeviceCode
-	}
-	consumed, err := q.ConsumeDeviceCode(ctx, hash)
-	if isNoRows(err) {
-		return "", ErrInvalidDeviceCode
-	}
-	if err != nil {
-		return "", fmt.Errorf("consume device code: %w", err)
-	}
-	return issueLoginSession(ctx, q, cfg, consumed.DecidedByUserID, consumed.OrgID)
+	return rawSession, nil
 }
 
 func userCodeHash(cfg Config, userCode string) ([]byte, error) {

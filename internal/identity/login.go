@@ -50,14 +50,23 @@ func (i ExternalIdentity) Verifies(email string) bool {
 }
 
 // SignIn records the external identity, creating its user on first sign-in,
-// and issues a login session that selects no organization. It returns the raw
-// session token.
-func SignIn(ctx context.Context, q db.Querier, cfg Config, external ExternalIdentity) (string, error) {
-	user, err := upsertExternalIdentity(ctx, q, cfg, external)
+// and issues a login session that selects no organization in one
+// transaction. It returns the raw session token.
+func SignIn(ctx context.Context, txb db.TxBeginner, cfg Config, external ExternalIdentity) (string, error) {
+	var rawSession string
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		user, err := upsertExternalIdentity(ctx, q, cfg, external)
+		if err != nil {
+			return err
+		}
+		rawSession, err = startLoginSession(ctx, q, cfg, user, external.DisplayName, nil)
+		return err
+	})
 	if err != nil {
 		return "", err
 	}
-	return startLoginSession(ctx, q, cfg, user, external.DisplayName, nil)
+	return rawSession, nil
 }
 
 // ResolveInvitation hashes a raw invitation token and loads the pending
@@ -65,8 +74,11 @@ func SignIn(ctx context.Context, q db.Querier, cfg Config, external ExternalIden
 // invitation sign-in started from it carries.
 func ResolveInvitation(ctx context.Context, q db.Querier, cfg Config, rawToken string) (org.PendingInvitation, []byte, error) {
 	tokenHash, err := auth.HashToken(cfg.invitationKey, rawToken)
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return org.PendingInvitation{}, nil, ErrInvalidToken
+	}
 	if err != nil {
-		return org.PendingInvitation{}, nil, errors.New("invalid invite token")
+		return org.PendingInvitation{}, nil, fmt.Errorf("hash invitation token: %w", err)
 	}
 	invitation, err := org.PendingInvitationByTokenHash(ctx, q, tokenHash)
 	if err != nil {
