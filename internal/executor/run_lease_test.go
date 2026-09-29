@@ -5,18 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"slices"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
-	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestExecutorCompletesSuccessfulRunLeaseTask(t *testing.T) {
@@ -222,14 +218,12 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 		cancel:   cancel,
 		response: testRunLeaseRenewResponse(renewed),
 	}
-	host, guest := net.Pipe()
-	defer host.Close()
-	defer guest.Close()
-	registry := NewMounts()
-	registry.Register(workerapi.ComputerInstanceAssignment{
+	registry := newTestMounts()
+	_, unregister := registry.add(workerapi.ComputerInstanceAssignment{
 		ComputerID: "computer-1", ComputerInstanceID: "runtime-1",
 		WriterGeneration: 4, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, newInstanceMount(&mountedMachine{stream: discardReadWriteCloser{}, openStream: host}), "channel-1")
+	}, fakeGuestSession{}, "channel-1")
+	defer unregister()
 	authority := &computerv0.ComputerRunAuthority{
 		Fence: &computerv0.ComputerAuthorityFence{
 			ComputerInstanceId: "runtime-1", ComputerId: "computer-1", WriterGeneration: 4,
@@ -238,29 +232,6 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 		},
 		ChannelToken: "channel-1",
 	}
-	serverResult := make(chan error, 1)
-	go func() {
-		header, _, err := wire.ReadStreamFrameHeader(guest)
-		if err != nil {
-			serverResult <- err
-			return
-		}
-		if header.Type != wire.StreamTypeComputerAuthorityRenew {
-			serverResult <- errors.New("unexpected renewal stream")
-			return
-		}
-		var request computerv0.RenewComputerAuthorityRequest
-		if err := frameio.ReadProtoFrame(guest, &request); err != nil {
-			serverResult <- err
-			return
-		}
-		fence := proto.Clone(request.GetPrevious().GetFence()).(*computerv0.ComputerAuthorityFence)
-		fence.ExpiresAtUnixNano = request.GetNewExpiresAtUnixNano()
-		serverResult <- frameio.WriteProtoFrame(
-			guest,
-			&computerv0.RenewComputerAuthorityResponse{Fence: fence},
-		)
-	}()
 	got, fence, err := renewRunLeaseAuthority(ctx, controlPlane, registry, previous, authority)
 	if err != nil {
 		t.Fatal(err)
@@ -268,9 +239,6 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	if !equalRunLeaseAssignment(got, renewed) ||
 		fence.GetExpiresAtUnixNano() != renewed.ExpiresAt.UnixNano() {
 		t.Fatalf("renewal = (%+v, %+v)", got, fence)
-	}
-	if err := <-serverResult; err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -598,7 +566,7 @@ func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) 
 			releaseErr := errors.New("physical stop uncertain")
 			waitErr := ErrDetached
 			if failed {
-				waitErr = errors.Join(ErrDetached, &checkpointSourceReleaseError{err: releaseErr})
+				waitErr = errors.Join(ErrDetached, &SourceReleaseError{Err: releaseErr})
 			}
 			task := &testRunLeaseTask{trace: trace, waitErr: waitErr}
 			client := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}}

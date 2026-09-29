@@ -8,20 +8,20 @@ import (
 
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 // The hot-wait loop owns the only Program reader. Holding the renewal gate
 // prevents a late guest renewal from overlapping the cgroup freeze. Control
 // Plane renewals continue after the frozen transition until the physical owner
 // finishes its operation.
-func (task *guestRunLeaseTask) pauseComputerMember(ctx context.Context, wait WaitRequest, pause *computerMemberPause) error {
+func (task *guestRunLeaseTask) pauseComputerMember(ctx context.Context, wait WaitRequest, target workerapi.RuntimeReconcileTarget, member workerapi.RuntimeCaptureRun) error {
 	task.renewalGate.Lock()
 	defer task.renewalGate.Unlock()
 	task.mu.Lock()
 	lease := task.lease
 	valid := !task.finished && !task.checkpointFrozen && lease.ExpiresAt.After(time.Now())
 	task.mu.Unlock()
-	member, target := pause.member, pause.target
 	if !valid || lease.ID != member.RunLeaseID || lease.RunID != member.RunID || lease.AttemptNumber != member.AttemptNumber || lease.ComputerInstanceID != target.ID || lease.WorkerEpoch != target.WorkerEpoch || lease.ComputerID != target.Source.ComputerID || lease.WriterGeneration != target.Source.WriterGeneration || wait.RunWaitID != member.RunWaitID || wait.CorrelationID == "" || wait.ResumeAttachID == "" || task.program.protocol == nil {
 		return errors.New("computer member pause authority changed")
 	}

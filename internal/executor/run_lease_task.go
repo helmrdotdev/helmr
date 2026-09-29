@@ -120,7 +120,7 @@ type RunLeaseTaskRunner interface {
 
 type guestRunLeaseTask struct {
 	resumeWait   *programv0.ResumeAttach
-	captures     *ComputerCaptureRuns
+	captures     *CaptureRuns
 	stopMu       sync.Mutex
 	stopDeadline time.Time
 	program      freshProgram
@@ -668,7 +668,7 @@ func retryComputerAuthorityTransport(
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, errComputerControlTransport) {
+		if !errors.Is(err, ErrControlTransport) {
 			return err
 		}
 		timer := time.NewTimer(delay)

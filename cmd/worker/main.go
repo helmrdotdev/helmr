@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 )
@@ -64,4 +65,10 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+// defaultWorkDir is the worker's temporary state root when no work directory
+// is configured.
+func defaultWorkDir() string {
+	return filepath.Join(os.TempDir(), "helmr-worker")
 }

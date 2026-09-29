@@ -5,13 +5,11 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math"
-	"strings"
 )
 
 const (
@@ -36,17 +34,6 @@ func New(key []byte) (*Encryptor, error) {
 		return nil, fmt.Errorf("configure checkpoint cipher: %w", err)
 	}
 	return &Encryptor{aead: aead, rand: rand.Reader}, nil
-}
-
-func KeyFromBase64(raw string) ([]byte, error) {
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
-	if err != nil {
-		return nil, fmt.Errorf("decode checkpoint encryption key: %w", err)
-	}
-	if len(decoded) != 32 {
-		return nil, fmt.Errorf("checkpoint encryption key must decode to 32 bytes, got %d", len(decoded))
-	}
-	return decoded, nil
 }
 
 // EncryptedSize returns the exact framed size for this plaintext length. The

@@ -6,26 +6,19 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
-)
-
-var (
-	restoreAttachTimeout     = 30 * time.Second
-	checkpointSuspendTimeout = 5 * time.Minute
 )
 
 const (
@@ -34,9 +27,18 @@ const (
 	waitTagMaxBytes          = 128
 )
 
+// MountRegistry is the Run side's view of mounted Computers: it borrows a
+// Run's channel, asks the physical owner to fail a mount, and renews the
+// Computer authority installed in the guest.
+type MountRegistry interface {
+	OpenChannel(context.Context, string) (MountChannel, error)
+	RequestFailure(context.Context, string) error
+	RenewComputerAuthority(context.Context, *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error)
+}
+
 type ProgramRunner struct {
 	ControlPlane     ControlPlane
-	ComputerCaptures *ComputerCaptureRuns
+	ComputerCaptures *CaptureRuns
 	CAS              cas.Store
 	Mounts           MountRegistry
 	Log              *slog.Logger
@@ -75,33 +77,6 @@ func (r ProgramRunner) tempDir() string {
 	return os.TempDir()
 }
 
-type runtimePhaseCollector struct {
-	mu     sync.Mutex
-	phases []vm.RuntimePhase
-}
-
-func (c *runtimePhaseCollector) Record(phase vm.RuntimePhase) {
-	if c == nil || strings.TrimSpace(phase.Name) == "" {
-		return
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.phases = append(c.phases, phase)
-}
-
-func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
-	if c == nil {
-		return nil
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	result := make([]workerapi.CheckpointPhase, 0, len(c.phases))
-	for _, phase := range c.phases {
-		result = append(result, workerCheckpointPhase(phase))
-	}
-	return result
-}
-
 func readResumeAck(ctx context.Context, session vm.Machine) (*programv0.ResumeAck, error) {
 	var ack programv0.ResumeAck
 	if err := readProtoFrameContext(ctx, session, &ack); err != nil {
@@ -115,7 +90,17 @@ func readProtoFrameContext(
 	session vm.Machine,
 	message proto.Message,
 ) error {
-	return readProtoFrameFromReaderContext(ctx, session, session.Stream(), message)
+	result := make(chan error, 1)
+	go func() {
+		result <- frameio.ReadProtoFrame(session.Stream(), message)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		_ = session.Close(context.Background())
+		return ctx.Err()
+	}
 }
 
 func readProtoFrameBoundedContext(
@@ -127,25 +112,6 @@ func readProtoFrameBoundedContext(
 	result := make(chan error, 1)
 	go func() {
 		result <- frameio.ReadProtoFrameBounded(session.Stream(), maxBytes, message)
-	}()
-	select {
-	case err := <-result:
-		return err
-	case <-ctx.Done():
-		_ = session.Close(context.Background())
-		return ctx.Err()
-	}
-}
-
-func readProtoFrameFromReaderContext(
-	ctx context.Context,
-	session vm.Machine,
-	reader io.Reader,
-	message proto.Message,
-) error {
-	result := make(chan error, 1)
-	go func() {
-		result <- frameio.ReadProtoFrame(reader, message)
 	}()
 	select {
 	case err := <-result:

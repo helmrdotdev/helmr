@@ -13,8 +13,8 @@ import (
 func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 	complete := ProgramRunner{
 		ControlPlane:     testControlPlane(t),
-		CAS:              &checkpointCAS{},
-		ComputerCaptures: &ComputerCaptureRuns{},
+		CAS:              unusedCAS{},
+		ComputerCaptures: &CaptureRuns{},
 		Mounts:           NewMounts(),
 	}
 	if _, err := NewProgramRunner(complete); err != nil {
@@ -55,11 +55,11 @@ func TestStartRunLeaseTaskRejectsUnvalidatedRunner(t *testing.T) {
 	}{
 		"zero value": {ProgramRunner{}, "run lease control plane is required"},
 		"missing capability": {ProgramRunner{
-			ControlPlane: withoutWaits, CAS: &checkpointCAS{},
-			ComputerCaptures: &ComputerCaptureRuns{}, Mounts: NewMounts(),
+			ControlPlane: withoutWaits, CAS: unusedCAS{},
+			ComputerCaptures: &CaptureRuns{}, Mounts: NewMounts(),
 		}, "run wait control plane is required"},
 		"missing computer mounts": {ProgramRunner{
-			ControlPlane: complete, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{},
+			ControlPlane: complete, CAS: unusedCAS{}, ComputerCaptures: &CaptureRuns{},
 		}, "computer mount session registry is required"},
 	} {
 		t.Run(name, func(t *testing.T) {

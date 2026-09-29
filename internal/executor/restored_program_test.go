@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -18,15 +19,35 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// restoredProgramHarness is the restored Computer's guest and the Control
+// Plane. The physical owner installs the restore on it before the runner
+// resumes the Program over the same machine.
 type restoredProgramHarness struct {
-	mountedMachine
 	RunLeaseControlPlane
 	SessionExecutionControlPlane
 	actor        bool
+	plan         *workerapi.ComputerRestorePlan
 	installed    *computerv0.ComputerRunAuthority
+	restoreSteps []string
 	mu           sync.Mutex
 	acked, polls int
 	err          chan error
+}
+
+func (h *restoredProgramHarness) Stream() vm.Stream { return nil }
+func (h *restoredProgramHarness) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (h *restoredProgramHarness) Close(context.Context) error { return nil }
+func (h *restoredProgramHarness) GetComputerRestorePlan(context.Context, workerapi.ComputerRestorePlanRequest) (workerapi.ComputerRestorePlanResponse, error) {
+	return workerapi.ComputerRestorePlanResponse{Plan: h.plan}, nil
+}
+func (h *restoredProgramHarness) AcknowledgeComputerRestore(_ context.Context, q workerapi.ComputerRestoreAckRequest) (workerapi.ComputerRestoreAckResponse, error) {
+	h.mu.Lock()
+	h.restoreSteps = append(h.restoreSteps, "ack")
+	h.mu.Unlock()
+	return workerapi.ComputerRestoreAckResponse{ComputerInstanceID: q.ComputerInstanceID, CheckpointID: q.CheckpointID, DesiredVersion: q.DesiredVersion, WriterGeneration: q.WriterGeneration}, nil
 }
 
 func (h *restoredProgramHarness) ReadSessionControl(_ context.Context, r workerapi.SessionControlRequest) (workerapi.SessionControlResponse, error) {
@@ -72,6 +93,20 @@ func (h *restoredProgramHarness) serve(stream net.Conn) error {
 		if err != nil {
 			return err
 		}
+		if header.Type == wire.StreamTypeComputerRestoreInstall || header.Type == wire.StreamTypeComputerRestoreActivate {
+			var installation computerv0.ComputerRestoreInstallation
+			if err := frameio.ReadProtoFrame(reader, &installation); err != nil {
+				return err
+			}
+			if len(installation.Grants) != 1 {
+				return errors.New("restore installation does not carry the member grant")
+			}
+			h.mu.Lock()
+			h.restoreSteps = append(h.restoreSteps, string(header.Type))
+			h.installed = proto.Clone(installation.Grants[0]).(*computerv0.ComputerRunAuthority)
+			h.mu.Unlock()
+			return frameio.WriteProtoFrame(stream, &computerv0.ComputerRestoreInstallationResponse{Installation: &installation})
+		}
 		if header.Type != wire.StreamTypeProgramResumeGrant {
 			return errors.New("restore attempted a new Program admission")
 		}
@@ -79,7 +114,10 @@ func (h *restoredProgramHarness) serve(stream net.Conn) error {
 		if err := frameio.ReadProtoFrame(reader, &q); err != nil {
 			return err
 		}
-		if !proto.Equal(q.Authority, h.installed) {
+		h.mu.Lock()
+		installed := h.installed
+		h.mu.Unlock()
+		if installed == nil || !proto.Equal(q.Authority, installed) {
 			return errors.New("resume grant differs from materializer installation")
 		}
 		a := &programv0.ResumeAttach{RunId: q.Authority.Fence.RunId, AttemptNumber: q.Authority.Fence.AttemptNumber, RunLeaseId: q.Authority.Fence.RunLeaseId, RunWaitId: q.RunWaitId, CheckpointId: q.CheckpointId, ResumeRequestVersion: 7, ResumeAttachId: "attach", CorrelationId: "correlation"}
@@ -131,25 +169,29 @@ func TestRestoredProgramReattachesAndContinuesExistingWait(t *testing.T) {
 func testRestoredProgram(t *testing.T, kind string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	h := &restoredProgramHarness{actor: kind == "actor", err: make(chan error, 2)}
+	h := &restoredProgramHarness{actor: kind == "actor", err: make(chan error, 4)}
 	mounts := NewMounts()
 	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, RestoreCheckpointID: "checkpoint", DesiredVersion: 4, RuntimeEpoch: 1, VMPlatformID: "platform", GuestdChannelToken: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "private-disk"}}
-	unregister := mounts.Register(mount, newInstanceMount(h), "channel")
-	defer unregister()
 	claim := &workerapi.RunLeaseClaimResponse{Lease: workerapi.RunLeaseAssignment{ID: "lease", RunID: "run", AttemptNumber: 1, LeaseSequence: 2, ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, WorkerEpoch: 1, WorkerHostID: "worker", VMPlatformID: "platform", BaseComputerDiskVersionID: "disk", ExpiresAt: time.Now().Add(time.Minute)}, Computer: workerapi.ComputerAttachment{WriteCapability: "capability", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: "checkpoint", RunWaitID: "wait", EntrypointKind: kind}}
-	activation := &restorePlanHarness{restoreActivationHarness: &restoreActivationHarness{}, planCalls: 1, plan: &workerapi.ComputerRestorePlan{
+	h.plan = &workerapi.ComputerRestorePlan{
 		ComputerInstanceID: mount.ComputerInstanceID, ComputerID: mount.ComputerID, CheckpointID: mount.RestoreCheckpointID, WriterGeneration: mount.WriterGeneration, WorkerEpoch: claim.Lease.WorkerEpoch, WorkerHostID: claim.Lease.WorkerHostID, VMPlatformID: claim.Lease.VMPlatformID, DesiredVersion: mount.DesiredVersion, WriteCapability: claim.Computer.WriteCapability,
 		Members: []workerapi.ComputerRestoreMember{{RunID: claim.Lease.RunID, AttemptNumber: claim.Lease.AttemptNumber, Lease: claim.Lease.Fence(), BaseComputerDiskVersionID: claim.Lease.BaseComputerDiskVersionID, ExpiresAt: claim.Lease.ExpiresAt}},
-	}}
-	// Exercise the actual materializer projection before the runner rebuilds the
-	// same grant. The private physical restore source differs from the Run's base.
-	if err := (ComputerMaterializer{RestoreControl: activation}).activateRestore(ctx, activation, mount); err != nil {
+	}
+	// The physical owner installs the restore on the machine before the runner
+	// rebuilds the same grant. The private physical restore source differs from
+	// the Run's base.
+	unregister, err := mountComputer(ctx, mounts, h, h, mount)
+	if err != nil {
 		t.Fatal(err)
 	}
-	activation.mu.Lock()
-	h.installed = proto.Clone(activation.installation.Grants[0]).(*computerv0.ComputerRunAuthority)
-	activation.mu.Unlock()
-	task, err := (ProgramRunner{ControlPlane: testControlPlane(t, h), Mounts: mounts, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{}}).StartRunLeaseTask(ctx, claim)
+	defer unregister()
+	h.mu.Lock()
+	steps := append([]string(nil), h.restoreSteps...)
+	h.mu.Unlock()
+	if want := []string{string(wire.StreamTypeComputerRestoreInstall), "ack", string(wire.StreamTypeComputerRestoreActivate)}; !slices.Equal(steps, want) {
+		t.Fatalf("restore steps = %v, want %v", steps, want)
+	}
+	task, err := (ProgramRunner{ControlPlane: testControlPlane(t, h), Mounts: mounts, CAS: unusedCAS{}, ComputerCaptures: &CaptureRuns{}}).StartRunLeaseTask(ctx, claim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +203,7 @@ func testRestoredProgram(t *testing.T, kind string) {
 	if result.ProgramQuiesced.RunLeaseID != "lease" || (kind == "task" && (result.Outcome.Succeeded == nil || string(result.Outcome.Succeeded.Output) != `{"ok":true}`)) || (kind == "actor" && (result.ActorOutcome == nil || result.ActorOutcome.Succeeded == nil || result.ActorOutcome.RunGeneration != 3)) {
 		t.Fatal("restored task did not finish under current authority")
 	}
-	for range 2 {
+	for range 4 {
 		if err := <-h.err; err != nil {
 			t.Fatal(err)
 		}

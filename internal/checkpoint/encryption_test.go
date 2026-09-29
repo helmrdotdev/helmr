@@ -100,19 +100,6 @@ func TestEncryptorRoundTripEmptyPlaintext(t *testing.T) {
 	}
 }
 
-func TestKeyFromBase64(t *testing.T) {
-	key, err := KeyFromBase64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(key) != 32 {
-		t.Fatalf("len = %d", len(key))
-	}
-	if _, err := KeyFromBase64("short"); err == nil {
-		t.Fatal("expected invalid key")
-	}
-}
-
 func TestEncryptedSizeMatchesActualFraming(t *testing.T) {
 	cipher, err := New(bytes.Repeat([]byte{7}, 32))
 	if err != nil {

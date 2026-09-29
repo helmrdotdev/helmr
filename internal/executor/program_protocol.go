@@ -144,17 +144,17 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 	if task.captures == nil {
 		return errors.New("Computer capture registry is required for hot waits")
 	}
-	var captureRequests <-chan *computerMemberPause
+	var captureRequests <-chan *MemberPause
 	{
 		task.mu.Lock()
 		lease := task.lease
 		task.mu.Unlock()
-		entry, detach, err := task.captures.register(lease, request.RunWaitID)
+		captureWait, err := task.captures.Register(lease, request.RunWaitID)
 		if err != nil {
 			return err
 		}
-		defer func() { retErr = errors.Join(retErr, detach()) }()
-		captureRequests = entry.requests
+		defer func() { retErr = errors.Join(retErr, captureWait.Detach()) }()
+		captureRequests = captureWait.Pauses()
 	}
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -180,14 +180,13 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 	for {
 		select {
 		case pause := <-captureRequests:
-			stopAbort := context.AfterFunc(ctx, func() { pause.abort(ctx.Err()) })
+			stopAbort := context.AfterFunc(ctx, func() { pause.Abort(ctx.Err()) })
 			finish := func(err error) error {
-				pause.ready <- err
 				// Once a pause is dispatched the logical owner stays joined
 				// through physical exclusion, even when its caller cancels.
-				<-pause.finished
+				result := pause.Settle(err)
 				stopAbort()
-				if result := errors.Join(err, pause.result); result != nil {
+				if result != nil {
 					return result
 				}
 				return ErrDetached
@@ -204,7 +203,7 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 			if pollErr != nil && !errors.Is(pollErr, context.Canceled) {
 				return finish(pollErr)
 			}
-			return finish(task.pauseComputerMember(pause.ctx, request, pause))
+			return finish(task.pauseComputerMember(pause.Context(), request, pause.Target(), pause.Member()))
 		case err := <-done:
 			return err
 		case <-resuming:

@@ -33,14 +33,10 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	events := &testFreshProgramEventSink{}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	mounts := NewMounts()
+	mounts := newTestMounts()
 	mount := testComputerMount(claim.Lease)
 	mount.Target.BaseComputerDiskVersionID = "version-before-capture"
-	unregister := mounts.Register(
-		mount,
-		newInstanceMount(fakeGuestSession{stream: host}),
-		"channel-1",
-	)
+	_, unregister := mounts.add(mount, fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -149,12 +145,8 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	mounts := NewMounts()
-	unregister := mounts.Register(
-		testComputerMount(claim.Lease),
-		newInstanceMount(fakeGuestSession{stream: host}),
-		"channel-1",
-	)
+	mounts := newTestMounts()
+	_, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	proofSent := make(chan error, 1)
 	go func() {
@@ -200,13 +192,8 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newInstanceMount(fakeGuestSession{stream: host})
-	mounts := NewMounts()
-	unregister := mounts.Register(
-		testComputerMount(claim.Lease),
-		session,
-		"channel-1",
-	)
+	mounts := newTestMounts()
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -228,7 +215,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	}()
 	failureRequested := make(chan struct{}, 1)
 	go func() {
-		request := <-session.failureRequests
+		request := <-session.failures
 		failureRequested <- struct{}{}
 		request.result <- nil
 	}()
@@ -259,13 +246,8 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	claim := testFreshProgramClaim(t)
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newInstanceMount(fakeGuestSession{stream: host})
-	mounts := NewMounts()
-	unregister := mounts.Register(
-		testComputerMount(claim.Lease),
-		session,
-		"channel-1",
-	)
+	mounts := newTestMounts()
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
@@ -292,7 +274,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 		t.Fatalf("startNewProgram() error = %v", err)
 	}
 	select {
-	case <-session.failureRequests:
+	case <-session.failures:
 		t.Fatal("noncanonical guest diagnostic redirected Computer Mount cleanup")
 	case <-time.After(50 * time.Millisecond):
 	}
@@ -302,13 +284,8 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	claim := testFreshProgramClaim(t)
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newInstanceMount(fakeGuestSession{stream: host})
-	mounts := NewMounts()
-	unregister := mounts.Register(
-		testComputerMount(claim.Lease),
-		session,
-		"channel-1",
-	)
+	mounts := newTestMounts()
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	go func() {
 		_ = readFreshProgramAdmission(guest, claim.Lease, testComputerMount(claim.Lease))
@@ -332,7 +309,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 		t.Fatalf("startNewProgram() error = %v", err)
 	}
 	select {
-	case <-session.failureRequests:
+	case <-session.failures:
 		t.Fatal("mismatched guest proof redirected Computer Mount cleanup")
 	case <-time.After(50 * time.Millisecond):
 	}
@@ -343,12 +320,8 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond).UTC()
 	guest, host := net.Pipe()
 	defer guest.Close()
-	mounts := NewMounts()
-	unregister := mounts.Register(
-		testComputerMount(claim.Lease),
-		newInstanceMount(fakeGuestSession{stream: host}),
-		"channel-1",
-	)
+	mounts := newTestMounts()
+	_, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	started := time.Now()
 	_, err := (ProgramRunner{
@@ -1040,13 +1013,8 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newInstanceMount(fakeGuestSession{stream: host})
-	mounts := NewMounts()
-	unregister := mounts.Register(
-		testComputerMount(claim.Lease),
-		session,
-		"channel-1",
-	)
+	mounts := newTestMounts()
+	session, unregister := mounts.add(testComputerMount(claim.Lease), fakeGuestSession{stream: host}, "channel-1")
 	defer unregister()
 	guestResult := make(chan error, 1)
 	go func() {
@@ -1068,7 +1036,7 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	}()
 	failureRequested := make(chan struct{}, 1)
 	go func() {
-		request := <-session.failureRequests
+		request := <-session.failures
 		failureRequested <- struct{}{}
 		request.result <- nil
 	}()
@@ -1102,12 +1070,12 @@ func TestFreshProgramWaitsForLocalMountRegistration(t *testing.T) {
 		events := &testFreshProgramEventSink{}
 		guest, host := net.Pipe()
 		defer guest.Close()
-		mounts := NewMounts()
+		mounts := newTestMounts()
 		mount := testComputerMount(claim.Lease)
 		guestResult := make(chan error, 1)
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			unregister := mounts.Register(mount, newInstanceMount(fakeGuestSession{stream: host}), "channel-1")
+			_, unregister := mounts.add(mount, fakeGuestSession{stream: host}, "channel-1")
 			defer unregister()
 			guestResult <- serveFreshProgramProtocol(guest, claim.Lease, mount, control)
 		}()
@@ -1137,7 +1105,7 @@ func TestFreshProgramMissingMountHonorsAdmissionDeadlineAndCancellation(t *testi
 				if cancelled {
 					go func() { time.Sleep(10 * time.Millisecond); cancel() }()
 				}
-				_, err := (ProgramRunner{Mounts: NewMounts()}).startNewProgram(ctx, &claim, &testFreshProgramControlPlane{lease: claim.Lease}, &testFreshProgramEventSink{})
+				_, err := (ProgramRunner{Mounts: newTestMounts()}).startNewProgram(ctx, &claim, &testFreshProgramControlPlane{lease: claim.Lease}, &testFreshProgramEventSink{})
 				want := context.DeadlineExceeded
 				if cancelled {
 					want = context.Canceled

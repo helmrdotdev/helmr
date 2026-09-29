@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/config"
-	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
@@ -43,7 +42,7 @@ func runDrain(log *slog.Logger, args []string) error {
 	}
 	workDir := cfg.WorkDir
 	if workDir == "" {
-		workDir = executor.DefaultWorkDir()
+		workDir = defaultWorkDir()
 	}
 	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {
@@ -153,7 +152,7 @@ func workerControlPlaneClient() (*workerclient.Client, error) {
 	}
 	workDir := cfg.WorkDir
 	if workDir == "" {
-		workDir = executor.DefaultWorkDir()
+		workDir = defaultWorkDir()
 	}
 	workerCredential, err := resolveWorkerControlPlaneCredential(cfg, workDir)
 	if err != nil {

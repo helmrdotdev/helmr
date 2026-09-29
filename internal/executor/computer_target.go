@@ -2,9 +2,9 @@ package executor
 
 import (
 	"errors"
-	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func validateComputerMountTarget(target workerapi.ComputerMountTarget) error {
@@ -12,7 +12,4 @@ func validateComputerMountTarget(target workerapi.ComputerMountTarget) error {
 		return errors.New("computer mount version is required")
 	}
 	return nil
-}
-func computerMountTargetProto(target workerapi.ComputerMountTarget) *computerv0.ComputerMountTarget {
-	return &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: target.BaseComputerDiskVersionID}
 }

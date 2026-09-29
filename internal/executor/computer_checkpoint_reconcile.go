@@ -65,7 +65,7 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 	if !ok {
 		return errors.New("Computer capture source cannot produce a checkpoint")
 	}
-	checkpointer := computerCheckpointer{session: session, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(ComputerCheckpointRequest) disk.ContinuationPublication {
+	checkpointer := computerCheckpointer{session: session, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(computerCheckpointRequest) disk.ContinuationPublication {
 		return checkpointComputerPublisher{client: p.Checkpoints, objects: p.ComputerObjects, request: workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID}}
 	}}
 	retainCleanup := func() {
@@ -96,10 +96,10 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 		}
 		return errors.Join(cause, err)
 	}
-	return p.ComputerCaptures.Capture(ctx, target, func(captureCtx context.Context) error {
+	return p.ComputerCaptures.capture(ctx, target, func(captureCtx context.Context) error {
 		retainCleanup()
-		result, err := checkpointer.CreateCheckpoint(captureCtx, ComputerCheckpointRequest{Target: target, Register: func(ctx context.Context, manifest workerapi.CheckpointManifest) error {
-			return retryRunLeaseRequest(ctx, func(ctx context.Context) error {
+		result, err := checkpointer.CreateCheckpoint(captureCtx, computerCheckpointRequest{Target: target, Register: func(ctx context.Context, manifest workerapi.CheckpointManifest) error {
+			return retryControlRequest(ctx, func(ctx context.Context) error {
 				receipt, err := p.Checkpoints.RegisterCheckpoint(ctx, workerapi.RegisterCheckpointRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID, Manifest: manifest})
 				if err != nil {
 					return err
@@ -110,7 +110,7 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 		if err != nil {
 			return fail(captureCtx, err)
 		}
-		err = retryRunLeaseRequest(captureCtx, func(ctx context.Context) error {
+		err = retryControlRequest(captureCtx, func(ctx context.Context) error {
 			receipt, err := p.Checkpoints.MarkCheckpointReady(ctx, workerapi.CheckpointReadyRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID, Manifest: result.Manifest})
 			if err != nil {
 				return err
@@ -119,7 +119,7 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 				return err
 			}
 			if receipt.ComputerDiskVersionID == "" {
-				return fmt.Errorf("%w: checkpoint ready receipt omitted saved Computer version", errRunSourceOperationUnavailable)
+				return fmt.Errorf("%w: checkpoint ready receipt omitted saved Computer version", errSourceOperationUnavailable)
 			}
 			return nil
 		})
@@ -154,7 +154,7 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 
 func validateComputerCheckpointReceipt(target workerapi.RuntimeReconcileTarget, response workerapi.ComputerCheckpointResponse) error {
 	if response.ComputerInstanceID != target.ID || response.WorkerEpoch != target.WorkerEpoch || response.DesiredVersion != target.DesiredVersion || response.CheckpointID != target.Capture.CheckpointID {
-		return fmt.Errorf("%w: checkpoint receipt does not match source operation", errRunSourceOperationUnavailable)
+		return fmt.Errorf("%w: checkpoint receipt does not match source operation", errSourceOperationUnavailable)
 	}
 	return nil
 }

@@ -181,13 +181,6 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-func durationMilliseconds(value time.Duration) int64 {
-	if value <= 0 {
-		return 0
-	}
-	return value.Milliseconds()
-}
-
 func executionGeneration(execution *programv0.SessionExecution) *int64 {
 	if execution == nil {
 		return nil

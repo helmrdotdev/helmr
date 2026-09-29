@@ -101,7 +101,7 @@ func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	registry := NewMounts()
-	unregister := registry.Register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newInstanceMount(parent), "channel-1")
+	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newInstanceMount(parent), "channel-1")
 	defer unregister()
 	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
 	if err != nil {
@@ -128,7 +128,7 @@ func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *tes
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	managed := newInstanceMount(parent)
 	registry := NewMounts()
-	unregister := registry.Register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
+	unregister := registry.register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
 	defer unregister()
 	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
 	if err != nil {
@@ -154,7 +154,7 @@ func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 	defer guest.Close()
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewMounts()
-	registry.Register(workerapi.ComputerInstanceAssignment{
+	registry.register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
 		ComputerInstanceID: "runtime-1",
@@ -224,7 +224,7 @@ func TestMountChannelGrantProgramResumeUsesOpenedMount(t *testing.T) {
 	grantStream := &closeCountingConn{Conn: host}
 	machine := &queuedStreamMachine{streams: []io.ReadWriteCloser{&countingReadWriteCloser{}, grantStream}}
 	registry := NewMounts()
-	unregister := registry.Register(testGrantMount(), newInstanceMount(machine), "channel-1")
+	unregister := registry.register(testGrantMount(), newInstanceMount(machine), "channel-1")
 	defer unregister()
 	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
 	if err != nil {
@@ -257,13 +257,13 @@ func TestMountChannelGrantProgramResumeKeepsOpenedMountAfterReregistration(t *te
 	opened := &queuedStreamMachine{streams: []io.ReadWriteCloser{&countingReadWriteCloser{}, host}}
 	replacement := &queuedStreamMachine{}
 	registry := NewMounts()
-	unregister := registry.Register(testGrantMount(), newInstanceMount(opened), "channel-1")
+	unregister := registry.register(testGrantMount(), newInstanceMount(opened), "channel-1")
 	channel, err := registry.OpenChannel(context.Background(), "runtime-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	unregister()
-	defer registry.Register(testGrantMount(), newInstanceMount(replacement), "channel-2")()
+	defer registry.register(testGrantMount(), newInstanceMount(replacement), "channel-2")()
 	request, want := testProgramResumeGrant()
 	serverResult := serveProgramResumeGrant(guest, request, want)
 	attach, err := channel.GrantProgramResume(context.Background(), request)
@@ -388,7 +388,7 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 	defer guest.Close()
 	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewMounts()
-	registry.Register(workerapi.ComputerInstanceAssignment{
+	registry.register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
 		ComputerInstanceID: "runtime-1",
@@ -526,7 +526,7 @@ func TestRenewComputerAuthorityRejectsDifferentPhysicalWriterBeforeOpeningStream
 	for _, generation := range []int64{0, 2, 4} {
 		parent := &renewalStreamProbe{}
 		registry := NewMounts()
-		registry.Register(workerapi.ComputerInstanceAssignment{
+		registry.register(workerapi.ComputerInstanceAssignment{
 			ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 3,
 		}, newInstanceMount(parent), "channel-1")
 		_, err := registry.RenewComputerAuthority(t.Context(), &computerv0.RenewComputerAuthorityRequest{

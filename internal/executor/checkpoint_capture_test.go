@@ -33,14 +33,14 @@ type retryableCaptureError struct{}
 func (retryableCaptureError) Error() string   { return "storage response lost" }
 func (retryableCaptureError) Temporary() bool { return true }
 
-func newCaptureTest(t *testing.T) (computerCheckpointer, ComputerCheckpointRequest, *checkpointSession, *captureStore) {
+func newCaptureTest(t *testing.T) (computerCheckpointer, computerCheckpointRequest, *checkpointSession, *captureStore) {
 	t.Helper()
 	target := checkpointCaptureTarget(2)
 	stream := checkpointFreezeStream(t, target)
 	session := &checkpointSession{stream: stream, artifact: checkpointArtifact(t)}
 	store := &captureStore{}
 	c := computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
-	request := ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }}
+	request := computerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }}
 	return c, request, session, store
 }
 
@@ -154,7 +154,7 @@ func TestCheckpointStopFailureRetainsChargeAndRawSnapshot(t *testing.T) {
 	session.closeErr = errors.New("VM exit unproved")
 	request.Register = func(context.Context, workerapi.CheckpointManifest) error { return errors.New("registration failed") }
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	var cleanup *checkpointSourceReleaseError
+	var cleanup *SourceReleaseError
 	if !errors.As(err, &cleanup) || session.closeCount != 1 {
 		t.Fatalf("err=%v closes=%d", err, session.closeCount)
 	}
@@ -188,7 +188,7 @@ func TestCheckpointCleanupFailureAfterUploadStopsSourceAndRetainsCharge(t *testi
 		return nil
 	}
 	_, err := c.CreateCheckpoint(t.Context(), request)
-	var cleanup *checkpointSourceReleaseError
+	var cleanup *SourceReleaseError
 	if !errors.As(err, &cleanup) || session.closeCount != 1 || len(store.puts) != 4 {
 		t.Fatalf("err=%v closes=%d uploads=%d", err, session.closeCount, len(store.puts))
 	}

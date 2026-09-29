@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"io"
 	"net"
 	"strings"
@@ -12,14 +11,6 @@ import (
 	"uuid"
 )
 
-type saveFailureRegistry struct {
-	MountRegistry
-	t *testing.T
-}
-
-func (r saveFailureRegistry) Register(m workerapi.ComputerInstanceAssignment, s *instanceMount, _ string) func() {
-	return func() {}
-}
 func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -36,7 +27,7 @@ func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 	raw := &computerMaterializerTestSession{streams: []io.ReadWriteCloser{pc}, operation: discardReadWriteCloser{}, exit: make(chan error)}
 	pool := computerPreparedRuntimePool(t, mount, raw)
 	client := &computerMaterializerTestClient{}
-	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool, Mounts: saveFailureRegistry{t: t}}
+	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool, Mounts: NewMounts()}
 	err := m.RunComputerMount(ctx, mount, client)
 	if err == nil || !strings.Contains(err.Error(), errTestLiveCapture.Error()) {
 		t.Fatalf("original failure lost: %v", err)
