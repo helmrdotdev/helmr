@@ -6,9 +6,9 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -16,15 +16,15 @@ import (
 )
 
 // Framing-only identity for tests that do not publish or read physical bytes.
-func testGenerationRoot(capacity int64) computer.GenerationRoot {
-	return computer.GenerationRoot{FormatVersion: 1, LogicalBytes: capacity,
-		Pack: computer.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
-		Page: computer.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
+func testGenerationRoot(capacity int64) disk.GenerationRoot {
+	return disk.GenerationRoot{FormatVersion: 1, LogicalBytes: capacity,
+		Pack: disk.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 1024, Rank: 2},
+		Page: disk.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: "01912345-6789-7abc-8def-0123456789ab", Kind: 3, Count: 1, SizeBytes: 128}, Offset: 8}
 }
 
 // Publish real authenticated bytes with a retained Runtime writer. Higher-level
 // checkpoint/outcome fixtures exercise their own live commit fences separately.
-func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, runtimeID string, publicationKey []byte) computer.GenerationRoot {
+func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, runtimeID string, publicationKey []byte) disk.GenerationRoot {
 	t.Helper()
 	ctx := t.Context()
 	var owner dispatch.ComputerPreparation
@@ -54,7 +54,7 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, server *Server, ru
 		t.Fatal(err)
 	}
 	evidence := blockformat.ObjectInspection{Pack: &inspected}
-	root, err := computer.NewGenerationRoot(locator, owner.LogicalBytes)
+	root, err := disk.NewGenerationRoot(locator, owner.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

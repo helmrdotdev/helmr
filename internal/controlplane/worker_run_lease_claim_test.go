@@ -17,10 +17,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -94,7 +94,7 @@ func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, 
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=$2,manifest_digest=$3 WHERE id=$1`, f.TaskDefinitionID, raw, digest[:])
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET payload=NULL WHERE id=$1`, work.RunID)
-	key, err := computer.NewFencingKey(make([]byte, computer.FencingKeySize))
+	key, err := disk.NewFencingKey(make([]byte, disk.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, 
 	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id,computer_id,writer_generation FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&instanceID, &computerID, &generation); err != nil {
 		t.Fatal(err)
 	}
-	capability, err := key.Derive(computer.FenceInput{InstanceID: instanceID, ComputerID: computerID, WriterGeneration: generation})
+	capability, err := key.Derive(disk.FenceInput{InstanceID: instanceID, ComputerID: computerID, WriterGeneration: generation})
 	if err != nil {
 		t.Fatal(err)
 	}

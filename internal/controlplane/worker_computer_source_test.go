@@ -7,12 +7,12 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -37,7 +37,7 @@ func initializingComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcil
 		PreparationDiskVersionID:  pgvalue.UUID(uuid.NewV7()),
 		ComputerDiskVersionStatus: pgvalue.Text("initializing"),
 		ComputerLogicalSizeBytes:  pgtype.Int8{Valid: true},
-		ComputerArchitecture:      "x86_64", ReservedGuestEphemeralDiskBytes: computer.SeedCapacity,
+		ComputerArchitecture:      "x86_64", ReservedGuestEphemeralDiskBytes: disk.SeedCapacity,
 		ComputerImageDigest: dbtest.Digest("seed"), ComputerImageSizeBytes: 1024, ComputerImageMediaType: definition.ComputerSeedMediaType,
 		ComputerConfig: spec.Config, ComputerSpecDigest: spec.Digest[:],
 	}
@@ -52,11 +52,11 @@ func committedComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTa
 	}
 	key := uuid.NewV7().String()
 	writer := blockformat.Writer{Source: store, Sink: store, Scope: "fixture", ActiveKey: key, Keys: map[string][]byte{key: bytes.Repeat([]byte{1}, 32)}, PackLimit: blockformat.MinPackLimit}
-	locator, err := writer.Empty(t.Context(), computer.SeedCapacity, 64)
+	locator, err := writer.Empty(t.Context(), disk.SeedCapacity, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, computer.SeedCapacity)
+	root, err := disk.NewGenerationRoot(locator, disk.SeedCapacity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func committedComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTa
 		t.Fatal(err)
 	}
 	r.ComputerContentDigest = pgvalue.Text(root.Pack.Digest)
-	r.ComputerLogicalSizeBytes.Int64 = computer.SeedCapacity
+	r.ComputerLogicalSizeBytes.Int64 = disk.SeedCapacity
 	r.ComputerInitialConfig = []byte(`{"User":"original","Env":["ORIGINAL=yes"]}`)
 	return r
 }

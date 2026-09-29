@@ -19,8 +19,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -278,7 +278,7 @@ func deploymentFinalizeDiskFixture(t *testing.T) []byte {
 	t.Helper()
 	var output bytes.Buffer
 	output.WriteString("helmr-firecracker-filepack-v0\n")
-	header := []byte(fmt.Sprintf(`{"version":0,"role":"computer-seed","logical_size":%d,"chunk_size":4194304,"codec":"zstd"}`, computer.SeedCapacity))
+	header := []byte(fmt.Sprintf(`{"version":0,"role":"computer-seed","logical_size":%d,"chunk_size":4194304,"codec":"zstd"}`, disk.SeedCapacity))
 	if err := binary.Write(&output, binary.BigEndian, uint32(len(header))); err != nil {
 		t.Fatal(err)
 	}

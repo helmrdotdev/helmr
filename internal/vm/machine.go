@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -111,7 +111,7 @@ type RuntimeComputer struct {
 // Wait must return when its context is canceled. A rejected bind leaves ownership
 // with the caller; successful binding retains ownership even if launch fails.
 type ComputerDevice interface {
-	Capture(context.Context) (computer.CapturedGeneration, error)
+	Capture(context.Context) (disk.CapturedGeneration, error)
 	BindConsumer(<-chan struct{}) error
 	LinkInto(context.Context, string, int, int) (string, error)
 	Wait(context.Context) error
@@ -126,7 +126,7 @@ type SnapshotRequest struct {
 // The receiver releases Capture after all publishers have joined.
 type ComputerSnapshot struct {
 	ComputerID string
-	Capture    computer.CapturedGeneration
+	Capture    disk.CapturedGeneration
 }
 
 type SnapshotArtifact struct {

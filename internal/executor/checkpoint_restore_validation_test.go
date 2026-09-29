@@ -4,15 +4,15 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func instanceRestoreValidationFixture(t *testing.T, count int) (workerapi.RuntimeReconcileTarget, workerapi.CheckpointManifest) {
 	t.Helper()
-	source := workerapi.RuntimeSource{WriterGeneration: 5, ComputerID: "computer", ComputerSpecID: "spec", VMPlatformID: "platform", VMRuntimeContract: "contract", RootfsDigest: "rootfs", VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu")), Computer: &workerapi.RuntimeComputerSource{LogicalBytes: computer.SeedCapacity, Root: ptrGenerationRoot(computer.SeedCapacity)}}
+	source := workerapi.RuntimeSource{WriterGeneration: 5, ComputerID: "computer", ComputerSpecID: "spec", VMPlatformID: "platform", VMRuntimeContract: "contract", RootfsDigest: "rootfs", VMVCPUCount: 2, CPUConfigDigest: sha256sum.DigestBytes([]byte("cpu")), Computer: &workerapi.RuntimeComputerSource{LogicalBytes: disk.SeedCapacity, Root: ptrGenerationRoot(disk.SeedCapacity)}}
 	point := workerapi.CheckpointRecoveryPoint{ID: "checkpoint", ComputerID: source.ComputerID, ComputerSpecID: source.ComputerSpecID, ComputerInstanceID: "captured", WriterGeneration: 4, MembershipRevision: 2, Runtime: workerapi.CheckpointRuntime{Backend: "firecracker", ID: source.VMPlatformID, Arch: string(definition.ArchitectureX8664), Contract: source.VMRuntimeContract, RootfsDigest: source.RootfsDigest, KernelDigest: "kernel", InitramfsDigest: "initramfs", ConfigDigest: "config", VMVCPUCount: 2, CPUConfigDigest: source.CPUConfigDigest}}
 	if count > 0 {
 		source.Program = &workerapi.RuntimeProgram{DeploymentID: "program"}
@@ -23,7 +23,7 @@ func instanceRestoreValidationFixture(t *testing.T, count int) (workerapi.Runtim
 		point.Runs = append(point.Runs, workerapi.CheckpointRun{RunID: "run-" + key, RunWaitID: "wait-" + key, RunLeaseID: "lease-" + key, AttemptNumber: 1, CorrelationID: "correlation-" + key})
 	}
 	a := workerapi.CheckpointArtifact{Digest: sha256sum.DigestBytes([]byte("object")), SizeBytes: 1, MediaType: "application/octet-stream"}
-	manifest := workerapi.CheckpointManifest{RecoveryPoint: point, RuntimeState: workerapi.CheckpointRuntimeState{Computer: &workerapi.CheckpointComputer{ComputerID: source.ComputerID, LogicalBytes: computer.SeedCapacity, Root: *source.Computer.Root}, ConfigArtifact: a, VMStateArtifact: a, MemoryArtifacts: []workerapi.CheckpointArtifact{a}, ScratchDiskArtifact: a}}
+	manifest := workerapi.CheckpointManifest{RecoveryPoint: point, RuntimeState: workerapi.CheckpointRuntimeState{Computer: &workerapi.CheckpointComputer{ComputerID: source.ComputerID, LogicalBytes: disk.SeedCapacity, Root: *source.Computer.Root}, ConfigArtifact: a, VMStateArtifact: a, MemoryArtifacts: []workerapi.CheckpointArtifact{a}, ScratchDiskArtifact: a}}
 	source.Restore = &workerapi.RuntimeRestore{CheckpointID: point.ID}
 	for _, role := range []string{"vm_config", "vm_state", "memory", "scratch_disk"} {
 		source.Restore.Artifacts = append(source.Restore.Artifacts, workerapi.RunLeaseCheckpointArtifact{Role: role, Object: workerapi.CASObject{Digest: a.Digest, SizeBytes: a.SizeBytes, MediaType: a.MediaType}})

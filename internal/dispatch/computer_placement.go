@@ -11,9 +11,9 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -157,7 +157,7 @@ func (d *Authority) allocateComputerPlacement(ctx context.Context, tx pgx.Tx, p 
 	}
 	id := uuid.NewV7()
 	generation := p.computer.WriterGeneration + 1
-	fence, err := d.fencingKey.Derive(computer.FenceInput{InstanceID: id, ComputerID: pgvalue.MustUUIDValue(p.computer.ID), WriterGeneration: generation})
+	fence, err := d.fencingKey.Derive(disk.FenceInput{InstanceID: id, ComputerID: pgvalue.MustUUIDValue(p.computer.ID), WriterGeneration: generation})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}

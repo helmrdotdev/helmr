@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -237,8 +237,8 @@ func verifyFinalObject(
 			return fmt.Errorf("verify finalized Program object: %w", err)
 		}
 	case bundle.ComputerImageMediaType:
-		artifact := computer.SeedArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: computer.SeedCapacity}
-		if err := computer.VerifySeed(ctx, file, artifact, computer.SeedCapacity); err != nil {
+		artifact := disk.SeedArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: disk.SeedCapacity}
+		if err := disk.VerifySeed(ctx, file, artifact, disk.SeedCapacity); err != nil {
 			return fmt.Errorf("verify finalized computer image object: %w", err)
 		}
 

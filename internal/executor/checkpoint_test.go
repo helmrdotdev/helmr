@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"io"
 	"os"
@@ -390,19 +390,19 @@ func (c *checkpointCAS) Publish(ctx context.Context, d cas.Descriptor, file *os.
 	return c.put(d.MediaType, data)
 }
 
-func testCheckpointPublication(ComputerCheckpointRequest) computer.ContinuationPublication {
+func testCheckpointPublication(ComputerCheckpointRequest) disk.ContinuationPublication {
 	return nil
 }
 
 type generationCaptureFixture struct {
-	root     computer.GenerationRoot
-	publish  func(context.Context, computer.ContinuationPublication) error
+	root     disk.GenerationRoot
+	publish  func(context.Context, disk.ContinuationPublication) error
 	release  func()
 	released bool
 }
 
-func (c *generationCaptureFixture) Root() computer.GenerationRoot { return c.root }
-func (c *generationCaptureFixture) Publish(ctx context.Context, p computer.ContinuationPublication) error {
+func (c *generationCaptureFixture) Root() disk.GenerationRoot { return c.root }
+func (c *generationCaptureFixture) Publish(ctx context.Context, p disk.ContinuationPublication) error {
 	if c.released {
 		return errors.New("capture already released")
 	}

@@ -12,7 +12,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
@@ -718,8 +718,8 @@ func retryableWarmTarget() workerapi.RuntimeReconcileTarget {
 		Source: workerapi.RuntimeSource{
 			ComputerID:           "019c10d5-a6f7-7af1-8f5f-000000000702",
 			ComputerSpecID:       "019c10d5-a6f7-7af1-8f5f-000000000703",
-			ComputerArchitecture: "x86_64", ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: computer.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
-			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: computer.SeedCapacity, Root: ptrGenerationRoot(computer.SeedCapacity)},
+			ComputerArchitecture: "x86_64", ReservedCPUMillis: 1000, ReservedMemoryMiB: 512, ReservedDiskMiB: disk.SeedCapacity / mebibyte, ReservedExecutionSlots: 1,
+			Computer: &workerapi.RuntimeComputerSource{VersionID: "019c10d5-a6f7-7af1-8f5f-000000000704", LogicalBytes: disk.SeedCapacity, Root: ptrGenerationRoot(disk.SeedCapacity)},
 		},
 	}
 }

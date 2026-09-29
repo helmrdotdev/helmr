@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -41,4 +41,4 @@ func (p checkpointComputerPublisher) Upload(ctx context.Context, d cas.Descripto
 	return
 }
 
-var _ computer.ContinuationPublication = checkpointComputerPublisher{}
+var _ disk.ContinuationPublication = checkpointComputerPublisher{}

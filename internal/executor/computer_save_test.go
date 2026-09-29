@@ -13,7 +13,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -23,7 +23,7 @@ type saveHostFixture struct {
 	fail              string
 	failed            bool
 	runtime, computer string
-	root              computer.GenerationRoot
+	root              disk.GenerationRoot
 	requests          []workerapi.ComputerSavePublicationRequest
 	blocked, joined   chan struct{}
 }
@@ -78,8 +78,8 @@ func (f *saveHostFixture) Publish(context.Context, cas.Descriptor, *os.File) (ca
 
 type saveHostCapture struct{ f *saveHostFixture }
 
-func (c saveHostCapture) Root() computer.GenerationRoot { return c.f.root }
-func (c saveHostCapture) Publish(ctx context.Context, _ computer.ContinuationPublication) error {
+func (c saveHostCapture) Root() disk.GenerationRoot { return c.f.root }
+func (c saveHostCapture) Publish(ctx context.Context, _ disk.ContinuationPublication) error {
 	if c.f.blocked != nil {
 		close(c.f.blocked)
 		<-ctx.Done()
@@ -100,7 +100,7 @@ func (c saveHostCapture) Release()                                    { _ = c.f.
 
 func newSaveHostFixture(t *testing.T, failure string) (*saveHostFixture, *computerSave) {
 	t.Helper()
-	f := &saveHostFixture{fail: failure, runtime: uuid.NewV7().String(), computer: uuid.NewV7().String(), root: computer.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 20}}
+	f := &saveHostFixture{fail: failure, runtime: uuid.NewV7().String(), computer: uuid.NewV7().String(), root: disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 1 << 20}}
 	if failure == "blocked" {
 		f.blocked = make(chan struct{})
 		f.joined = make(chan struct{})

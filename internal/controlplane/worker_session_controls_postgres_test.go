@@ -8,10 +8,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -216,7 +216,7 @@ func workerControlChild(t *testing.T, parent *actorExecutionFixture, detached bo
 	if err = f.Pool.QueryRow(t.Context(), `SELECT id FROM runs WHERE computer_id=$1`, f.computerID).Scan(&f.runID); err != nil {
 		t.Fatal(err)
 	}
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

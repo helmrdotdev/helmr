@@ -21,9 +21,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -69,7 +69,7 @@ type Server struct {
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
 	secretProxy           *secret.Store
-	computerFencingKey    computer.FencingKey
+	computerFencingKey    disk.FencingKey
 	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
 	telemetryReader       telemetry.Reader
@@ -121,7 +121,7 @@ type ServerConfig struct {
 	Secrets            SecretManager
 	SecretDelivery     SecretDeliveryOpener
 	SecretProxy        *secret.Store
-	ComputerFencingKey computer.FencingKey
+	ComputerFencingKey disk.FencingKey
 	TokenCredentialKey auth.CredentialKey
 	EventStream        SubjectEventReader
 	TelemetryReader    telemetry.Reader

@@ -13,15 +13,15 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/executor"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -161,18 +161,18 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	}
 	// Exercise the actual bounded producer and execution adapter through these
 	// authenticated routes, using the admitted disk geometry and sparse contents.
-	disk, err := os.CreateTemp(t.TempDir(), "disk")
+	diskFile, err := os.CreateTemp(t.TempDir(), "disk")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer disk.Close()
-	if err = disk.Truncate(owner.LogicalBytes); err != nil {
+	defer diskFile.Close()
+	if err = diskFile.Truncate(owner.LogicalBytes); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = disk.WriteAt(bytes.Repeat([]byte{9}, 4096), (4<<20)+4096); err != nil {
+	if _, err = diskFile.WriteAt(bytes.Repeat([]byte{9}, 4096), (4<<20)+4096); err != nil {
 		t.Fatal(err)
 	}
-	generation, err := computer.CaptureInitialGeneration(t.Context(), computer.GenerationCapture{Disk: disk, Capacity: owner.LogicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000})
+	generation, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: diskFile, Capacity: owner.LogicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}

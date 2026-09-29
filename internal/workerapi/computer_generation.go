@@ -1,17 +1,17 @@
 package workerapi
 
 import (
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
 // InitialComputerGenerationRequest publishes a certified generation for one
 // preparation. Computer and version identities are resolved by the Control Plane.
 type InitialComputerGenerationRequest struct {
-	ComputerInstanceID string                  `json:"computer_instance_id"`
-	DesiredVersion     int64                   `json:"desired_version"`
-	Root               computer.GenerationRoot `json:"root"`
-	Config             oci.RuntimeConfig       `json:"config"`
+	ComputerInstanceID string              `json:"computer_instance_id"`
+	DesiredVersion     int64               `json:"desired_version"`
+	Root               disk.GenerationRoot `json:"root"`
+	Config             oci.RuntimeConfig   `json:"config"`
 }
 
 type InitialComputerGenerationResponse struct {

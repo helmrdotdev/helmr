@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
@@ -889,9 +889,9 @@ type CheckpointRuntime struct {
 // CheckpointComputer binds the writable disk captured with the VM state and RAM.
 // Its exact authenticated generation also serves as a cold continuation.
 type CheckpointComputer struct {
-	ComputerID   string                  `json:"computer_id"`
-	LogicalBytes int64                   `json:"logical_bytes"`
-	Root         computer.GenerationRoot `json:"root"`
+	ComputerID   string              `json:"computer_id"`
+	LogicalBytes int64               `json:"logical_bytes"`
+	Root         disk.GenerationRoot `json:"root"`
 }
 
 type CheckpointRuntimeState struct {

@@ -16,9 +16,9 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -27,7 +27,7 @@ type computerPreparationTransport struct {
 	cas.Store
 	mu           sync.Mutex
 	targets      map[string]workerapi.RuntimeReconcileTarget
-	root         computer.GenerationRoot
+	root         disk.GenerationRoot
 	fail         string
 	key          []byte
 	publications int
@@ -81,7 +81,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = file.Truncate(computer.SeedCapacity); err != nil {
+	if err = file.Truncate(disk.SeedCapacity); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = file.WriteAt([]byte("customer-state"), 8192); err != nil {
@@ -89,7 +89,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	}
 	file.Close()
 	packed := filepath.Join(dir, "seed.pack")
-	seed, err := computer.EncodeSeed(t.Context(), raw, packed)
+	seed, err := disk.EncodeSeed(t.Context(), raw, packed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: definition.ComputerSeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
+	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: disk.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: disk.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: definition.ComputerSeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
 	const budget = 64 << 20
 	for _, failure := range []string{"capacity", "register", "upload", "commit", ""} {
 		t.Run("failure="+failure, func(t *testing.T) {
@@ -116,9 +116,9 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 			}
 			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.RuntimeReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
 			pool := &PreparedRuntimePool{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Reservations: ledger}
-			disk, err := pool.prepareComputerGeneration(t.Context(), target)
+			prepared, err := pool.prepareComputerGeneration(t.Context(), target)
 			if failure != "" {
-				if err == nil || disk != nil {
+				if err == nil || prepared != nil {
 					t.Fatal("failed preparation exposed generation")
 				}
 			} else {
@@ -126,10 +126,10 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 					t.Fatal(err)
 				}
 				data := make([]byte, 14)
-				if _, err := disk.ReadAt(t.Context(), data, 8192); err != nil || string(data) != "customer-state" {
+				if _, err := prepared.ReadAt(t.Context(), data, 8192); err != nil || string(data) != "customer-state" {
 					t.Fatalf("initial data: %q %v", data, err)
 				}
-				if err := disk.Close(); err != nil {
+				if err := prepared.Close(); err != nil {
 					t.Fatal(err)
 				}
 				if err := pool.releaseRuntimeCapacity(target.ID, target.WorkerEpoch); err != nil {
@@ -140,17 +140,17 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 				source.Seed = nil
 				source.Root = &client.root
 				continuation.Source.Computer = &source
-				disk, err = pool.prepareComputerGeneration(t.Context(), continuation)
+				prepared, err = pool.prepareComputerGeneration(t.Context(), continuation)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := disk.ReadAt(t.Context(), data, 8192); err != nil || string(data) != "customer-state" {
+				if _, err := prepared.ReadAt(t.Context(), data, 8192); err != nil || string(data) != "customer-state" {
 					t.Fatalf("restored data: %q %v", data, err)
 				}
 				if client.publications != 1 {
 					t.Fatal("continuation republished seed")
 				}
-				if err := disk.Close(); err != nil {
+				if err := prepared.Close(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -289,11 +289,11 @@ func configureComputerPreparationTest(t *testing.T, pool *PreparedRuntimePool, t
 	}
 	key := bytes.Repeat([]byte{8}, 32)
 	writer := blockformat.Writer{Source: objects, Sink: objects, Scope: "fixture", ActiveKey: preparationKey, Keys: map[string][]byte{preparationKey: key}, PackLimit: blockformat.MinPackLimit}
-	locator, err := writer.Empty(t.Context(), computer.SeedCapacity, 64)
+	locator, err := writer.Empty(t.Context(), disk.SeedCapacity, 64)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, computer.SeedCapacity)
+	root, err := disk.NewGenerationRoot(locator, disk.SeedCapacity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func configureComputerPreparationTest(t *testing.T, pool *PreparedRuntimePool, t
 	pool.CAS = objects
 	pool.ComputerStagingBytes = 64 << 20
 	n := int64(len(targets))
-	pool.Reservations, err = reservation.New(reservation.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * (2*computer.SeedCapacity + pool.ComputerStagingBytes), VMSlots: n})
+	pool.Reservations, err = reservation.New(reservation.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * (2*disk.SeedCapacity + pool.ComputerStagingBytes), VMSlots: n})
 	if err != nil {
 		t.Fatal(err)
 	}

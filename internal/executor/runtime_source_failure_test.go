@@ -2,7 +2,7 @@ package executor
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"io/fs"
 	"testing"
@@ -14,8 +14,8 @@ func TestRuntimeFailurePreservesSourceProvenance(t *testing.T) {
 		err  error
 		code string
 	}{
-		{computer.PublishedSourceFailure(fs.ErrNotExist), workerapi.RuntimeFailureComputerSource},
-		{&computer.DeviceFailure{Cause: fs.ErrNotExist}, workerapi.RuntimeFailureReconcile},
+		{disk.PublishedSourceFailure(fs.ErrNotExist), workerapi.RuntimeFailureComputerSource},
+		{&disk.DeviceFailure{Cause: fs.ErrNotExist}, workerapi.RuntimeFailureReconcile},
 		{errors.New("temporary network failure"), workerapi.RuntimeFailureReconcile},
 	} {
 		got := runtimeTargetStatusRequest(target, tc.err)

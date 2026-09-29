@@ -6,8 +6,8 @@ import (
 	"bytes"
 	"context"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"os"
 	"path/filepath"
@@ -32,12 +32,12 @@ func TestComputerAttachmentOwnsExactInode(t *testing.T) {
 	if _, err := file.WriteAt([]byte("customer state"), 512); err != nil {
 		t.Fatal(err)
 	}
-	disk := &vm.RuntimeComputer{File: file, SizeBytes: 4096, VersionID: "01950000-0000-7000-8000-000000000001"}
-	destination, err := attachComputerDisk(t.Context(), disk, dir, os.Getuid(), os.Getgid())
+	runtimeComputer := &vm.RuntimeComputer{File: file, SizeBytes: 4096, VersionID: "01950000-0000-7000-8000-000000000001"}
+	destination, err := attachComputerDisk(t.Context(), runtimeComputer, dir, os.Getuid(), os.Getgid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := attachComputerDisk(t.Context(), disk, dir, os.Getuid(), os.Getgid()); err == nil {
+	if _, err := attachComputerDisk(t.Context(), runtimeComputer, dir, os.Getuid(), os.Getgid()); err == nil {
 		t.Fatal("replaced existing disk")
 	}
 	original, _ := file.Stat()
@@ -55,7 +55,7 @@ func TestComputerAttachmentOwnsExactInode(t *testing.T) {
 	if err != nil || string(got[512:526]) != "customer state" {
 		t.Fatalf("lost transferred disk: %v", err)
 	}
-	if err := validateComputerDisk(disk); err == nil {
+	if err := validateComputerDisk(runtimeComputer); err == nil {
 		t.Fatal("closed source accepted")
 	}
 	drives := runtimeDrivesWithComputer("root", "scratch", destination, nil, nil)
@@ -92,16 +92,16 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, size)
+	root, err := disk.NewGenerationRoot(locator, size)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := computer.LocalGenerationConfig{Directory: filepath.Join(arena, "local"), Base: root, BaseSource: store, Scope: "fixture", ActiveKey: key, Keys: keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
-	generation, err := computer.CreateLocalGeneration(ctx, cfg)
+	cfg := disk.LocalGenerationConfig{Directory: filepath.Join(arena, "local"), Base: root, BaseSource: store, Scope: "fixture", ActiveKey: key, Keys: keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
+	generation, err := disk.CreateLocalGeneration(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := computer.AttachDevice(ctx, generation, nbd.Config{Helper: helper, Arena: arena, Socket: filepath.Join(arena, "nbd"), Size: size, Devices: []string{"/dev/nbd15", "/dev/nbd14"}})
+	device, err := disk.AttachDevice(ctx, generation, nbd.Config{Helper: helper, Arena: arena, Socket: filepath.Join(arena, "nbd"), Size: size, Devices: []string{"/dev/nbd15", "/dev/nbd14"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +118,8 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err := retainComputerDevice(retained, device); err != nil {
 		t.Fatal(err)
 	}
-	disk := &vm.RuntimeComputer{Device: device, SizeBytes: size, VersionID: key}
-	attached, err := attachComputerDisk(ctx, disk, dir, os.Getuid(), os.Getgid())
+	runtimeComputer := &vm.RuntimeComputer{Device: device, SizeBytes: size, VersionID: key}
+	attached, err := attachComputerDisk(ctx, runtimeComputer, dir, os.Getuid(), os.Getgid())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestComputerBlockAttachmentAndPausedFlush(t *testing.T) {
 	if err := connector.cleanup(ctx, owner); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := computer.OpenLocalGeneration(ctx, cfg)
+	reopened, err := disk.OpenLocalGeneration(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

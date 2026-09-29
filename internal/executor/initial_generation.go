@@ -6,8 +6,8 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -41,7 +41,7 @@ func (p InitialGenerationPublisher) Certify(ctx context.Context, e blockformat.O
 	return p.client.CertifyInitialComputerObject(ctx, workerapi.InitialComputerObjectRequest{ComputerInstanceID: p.runtimeID, DesiredVersion: p.desiredVersion, Inspection: e})
 }
 
-var _ computer.GenerationPublication = InitialGenerationPublisher{}
+var _ disk.GenerationPublication = InitialGenerationPublisher{}
 
 type generationObjectPublisher interface {
 	Publish(context.Context, cas.Descriptor, *os.File) (cas.Object, error)

@@ -13,7 +13,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -341,7 +341,7 @@ func removeCheckpointSnapshot(artifact vm.SnapshotArtifact) error {
 func checkpointDescriptor(d cas.Descriptor) workerapi.CheckpointArtifact {
 	return workerapi.CheckpointArtifact{Digest: d.Digest, SizeBytes: d.SizeBytes, MediaType: d.MediaType}
 }
-func (c computerCheckpointer) checkpointManifest(point workerapi.CheckpointRecoveryPoint, artifact vm.SnapshotArtifact, root computer.GenerationRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
+func (c computerCheckpointer) checkpointManifest(point workerapi.CheckpointRecoveryPoint, artifact vm.SnapshotArtifact, root disk.GenerationRoot, candidates []*checkpointCandidate) workerapi.CheckpointManifest {
 	point.Runtime = workerapi.CheckpointRuntime{
 		Backend:         artifact.RuntimeBackend,
 		ID:              artifact.RuntimeID,

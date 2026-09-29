@@ -62,7 +62,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	seed := initializingComputerSourceRow(t)
 	// Bind a valid admitted deployment to this reserved runtime. The existing
 	// publication fixture's opaque candidate isolates the database protocol;
-	// disk encoding/authentication is exercised by the computer package.
+	// disk encoding/authentication is exercised by the disk package.
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH lifetime AS (INSERT INTO cas_blobs (digest, size_bytes) VALUES ($2, $3) ON CONFLICT DO NOTHING) INSERT INTO cas_objects (org_id,digest,size_bytes,media_type) VALUES ($1,$2,$3,$4)`,
 		f.OrgID, seed.ComputerImageDigest, seed.ComputerImageSizeBytes, seed.ComputerImageMediaType)
 	seedID := uuid.NewV7()

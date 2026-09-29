@@ -4,21 +4,21 @@ import (
 	"context"
 	"slices"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func computerSecretAuthority(ctx context.Context, q db.Querier, id pgtype.UUID) ([]computer.SecretAuthority, error) {
+func computerSecretAuthority(ctx context.Context, q db.Querier, id pgtype.UUID) ([]disk.SecretAuthority, error) {
 	rows, err := q.ListComputerSecrets(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]computer.SecretAuthority, 0, len(rows))
+	result := make([]disk.SecretAuthority, 0, len(rows))
 	for _, row := range rows {
-		result = append(result, computer.SecretAuthority{ID: pgvalue.UUIDString(row.SecretID), Mode: row.Mode, Origins: row.AllowedOrigins})
+		result = append(result, disk.SecretAuthority{ID: pgvalue.UUIDString(row.SecretID), Mode: row.Mode, Origins: row.AllowedOrigins})
 	}
 	return result, nil
 }
@@ -34,7 +34,7 @@ func authorizeComputerSecretTarget(ctx context.Context, q db.Querier, sourceID, 
 	if err != nil {
 		return err
 	}
-	if !computer.AllowsSecretAuthority(source, target) {
+	if !disk.AllowsSecretAuthority(source, target) {
 		return errComputerSecretUnavailable
 	}
 	return nil
@@ -67,14 +67,14 @@ func authorizeComputerSecretCreate(ctx context.Context, q db.Querier, sourceID, 
 	for _, row := range rows {
 		ids[row.Name] = pgvalue.UUIDString(row.ID)
 	}
-	target := []computer.SecretAuthority{}
+	target := []disk.SecretAuthority{}
 	for _, p := range placements {
 		if ids[p.Name] == "" {
 			return errComputerSecretUnavailable
 		}
-		target = append(target, computer.SecretAuthority{ID: ids[p.Name], Mode: p.Mode, Origins: p.AllowedOrigins})
+		target = append(target, disk.SecretAuthority{ID: ids[p.Name], Mode: p.Mode, Origins: p.AllowedOrigins})
 	}
-	if !computer.AllowsSecretAuthority(source, target) {
+	if !disk.AllowsSecretAuthority(source, target) {
 		return errComputerSecretUnavailable
 	}
 	return nil

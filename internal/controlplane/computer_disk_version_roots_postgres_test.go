@@ -10,10 +10,10 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
@@ -35,13 +35,13 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	env := pgvalue.UUID(f.EnvironmentID)
 	q := db.New(f.Pool)
 	digest := dbtest.Digest("generation-root-pack")
-	root := computer.GenerationRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes, Offset: 128,
-		Pack: computer.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
-		Page: computer.GenerationPage{Digest: dbtest.Digest("generation-root-page"), Salt: strings.Repeat("aa", 32), KeyID: key.ID, Kind: 3, Count: 1, SizeBytes: 64}}
+	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes, Offset: 128,
+		Pack: disk.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
+		Page: disk.GenerationPage{Digest: dbtest.Digest("generation-root-page"), Salt: strings.Repeat("aa", 32), KeyID: key.ID, Kind: 3, Count: 1, SizeBytes: 64}}
 	if err = root.Validate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
-	encode := func(r computer.GenerationRoot) []byte {
+	encode := func(r disk.GenerationRoot) []byte {
 		t.Helper()
 		v, e := json.Marshal(r)
 		if e != nil {
@@ -72,7 +72,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if n, err := q.CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: env, ComputerID: computerID, Digest: digest}); err != nil || n != 1 {
 		t.Fatalf("certify root: %d %v", n, err)
 	}
-	for _, mutate := range []func(*computer.GenerationRoot){func(r *computer.GenerationRoot) { r.Pack.SizeBytes++ }, func(r *computer.GenerationRoot) { r.Pack.Rank++ }, func(r *computer.GenerationRoot) { r.Page.KeyID = uuid.NewV7().String() }} {
+	for _, mutate := range []func(*disk.GenerationRoot){func(r *disk.GenerationRoot) { r.Pack.SizeBytes++ }, func(r *disk.GenerationRoot) { r.Pack.Rank++ }, func(r *disk.GenerationRoot) { r.Page.KeyID = uuid.NewV7().String() }} {
 		bad := root
 		mutate(&bad)
 		p := params
@@ -118,7 +118,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := computer.ParseGenerationRoot(raw, f.logicalBytes); err != nil || got != root {
+	if got, err := disk.ParseGenerationRoot(raw, f.logicalBytes); err != nil || got != root {
 		t.Fatalf("stored full locator changed: %v", err)
 	}
 	if _, err := q.GetInstanceComputerSourceRoot(t.Context(), f.runtime); !errors.Is(err, pgx.ErrNoRows) {

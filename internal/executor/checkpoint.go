@@ -10,7 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -66,7 +66,7 @@ func (e *checkpointSourceReleaseError) Unwrap() error { return e.err }
 
 type computerCheckpointer struct {
 	pendingCleanup func() error
-	publication    func(ComputerCheckpointRequest) computer.ContinuationPublication
+	publication    func(ComputerCheckpointRequest) disk.ContinuationPublication
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
 	session        vm.CheckpointableMachine

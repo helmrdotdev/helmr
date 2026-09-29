@@ -10,9 +10,9 @@ import (
 	"strconv"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -92,7 +92,7 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 // publishComputerSave atomically records the exact receipt, retained generation
 // and saved head. It deliberately leaves the pending slot and object pins intact:
 // upload success does not prove that the host has adopted its durable source.
-func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest, root computer.GenerationRoot) (computerPublicationResult, error) {
+func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest, root disk.GenerationRoot) (computerPublicationResult, error) {
 	var zero computerPublicationResult
 	locator, err := root.Locator(root.LogicalBytes)
 	if err != nil {
@@ -205,10 +205,10 @@ func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, re
 	return err
 }
 
-func computerSaveFingerprint(request workerapi.ComputerSaveBeginRequest, root computer.GenerationRoot) ([32]byte, error) {
+func computerSaveFingerprint(request workerapi.ComputerSaveBeginRequest, root disk.GenerationRoot) ([32]byte, error) {
 	raw, err := json.Marshal(struct {
 		Request workerapi.ComputerSaveBeginRequest
-		Root    computer.GenerationRoot
+		Root    disk.GenerationRoot
 	}{request, root})
 	if err != nil {
 		return [32]byte{}, err

@@ -13,8 +13,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -25,7 +25,7 @@ func (p saveStoragePublisher) Publish(ctx context.Context, d cas.Descriptor, f *
 }
 
 type collectedSaveCapture struct {
-	*computer.LocalCapture
+	*disk.LocalCapture
 	collected chan int64
 }
 
@@ -50,16 +50,16 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, 1<<20)
+	root, err := disk.NewGenerationRoot(locator, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := computer.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "local"), Base: root, BaseSource: remote, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 96 << 10, PackLimit: blockformat.MinPackLimit}
-	disk, err := computer.CreateLocalGeneration(t.Context(), cfg)
+	cfg := disk.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "local"), Base: root, BaseSource: remote, Scope: writer.Scope, ActiveKey: key, Keys: writer.Keys, DirtyBlocks: 8, StagedBytes: 96 << 10, PackLimit: blockformat.MinPackLimit}
+	local, err := disk.CreateLocalGeneration(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer disk.Close()
+	defer local.Close()
 	owner := &runtimeComputerSaves{}
 	client := &saveHostFixture{runtime: uuid.NewV7().String(), computer: uuid.NewV7().String()}
 	err = owner.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: uuid.NewV7().String(), ComputerInstanceID: client.runtime, WriterGeneration: 2}, client.computer)
@@ -73,7 +73,7 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- owner.loop(ctx, ticks, client, saveStoragePublisher{remote}, func(ctx context.Context) (computerSaveCapture, error) {
-			capture, err := disk.Capture(ctx)
+			capture, err := local.Capture(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -85,7 +85,7 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 	for i := 1; i <= 32; i++ {
 		want := bytes.Repeat([]byte{byte(i)}, 4096)
 		offset := int64(i * 4096)
-		if _, err = disk.WriteAt(ctx, want, offset); err != nil {
+		if _, err = local.WriteAt(ctx, want, offset); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -106,7 +106,7 @@ func TestRuntimeComputerSaveLoopReclaimsStagingAcrossSaves(t *testing.T) {
 			t.Fatal("adopted save did not reclaim local staging")
 		}
 		got := make([]byte, len(want))
-		if _, err = disk.ReadAt(ctx, got, offset); err != nil || !bytes.Equal(got, want) {
+		if _, err = local.ReadAt(ctx, got, offset); err != nil || !bytes.Equal(got, want) {
 			t.Fatalf("read after collection: %v", err)
 		}
 	}

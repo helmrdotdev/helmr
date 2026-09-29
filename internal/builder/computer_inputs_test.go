@@ -15,8 +15,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
@@ -244,7 +244,7 @@ func TestDiskBuildFinalizeAndUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer body.Close()
-	if err := computer.VerifySeed(t.Context(), body, computer.SeedArtifact{Object: cas.Descriptor{Digest: image.Digest, SizeBytes: image.SizeBytes, MediaType: image.MediaType}, LogicalBytes: computer.SeedCapacity}, computer.SeedCapacity); err != nil {
+	if err := disk.VerifySeed(t.Context(), body, disk.SeedArtifact{Object: cas.Descriptor{Digest: image.Digest, SizeBytes: image.SizeBytes, MediaType: image.MediaType}, LogicalBytes: disk.SeedCapacity}, disk.SeedCapacity); err != nil {
 		t.Fatal(err)
 	}
 }

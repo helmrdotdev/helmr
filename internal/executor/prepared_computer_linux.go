@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -28,14 +28,14 @@ func (p *PreparedRuntimePool) prepareComputerDevice(ctx context.Context, target 
 		return nil, err
 	}
 	dir := p.computerPreparationDirectory(target.ID, target.WorkerEpoch)
-	device, err := computer.AttachDevice(ctx, generation, nbd.Config{Helper: p.ComputerHelper, Devices: p.ComputerDevices, Arena: dir, Socket: filepath.Join(dir, "nbd.sock"), Size: target.Source.Computer.LogicalBytes})
+	device, err := disk.AttachDevice(ctx, generation, nbd.Config{Helper: p.ComputerHelper, Devices: p.ComputerDevices, Arena: dir, Socket: filepath.Join(dir, "nbd.sock"), Size: target.Source.Computer.LogicalBytes})
 	if device != nil {
 		p.retainComputerDevice(target.ID, target.WorkerEpoch, device)
 	}
 	return device, err
 }
 
-func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, target workerapi.RuntimeReconcileTarget) (*computer.LocalGeneration, error) {
+func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, target workerapi.RuntimeReconcileTarget) (*disk.LocalGeneration, error) {
 	if err := validateComputerPreparationSource(target); err != nil {
 		return nil, err
 	}
@@ -79,10 +79,10 @@ func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, tar
 		}
 		keys[key.ID] = key.Key
 	}
-	if _, err := computer.OpenGeneration(ctx, p.ComputerRanges, scope, keys, material.Root, source.LogicalBytes); err != nil {
-		return nil, computer.PublishedSourceFailure(err)
+	if _, err := disk.OpenGeneration(ctx, p.ComputerRanges, scope, keys, material.Root, source.LogicalBytes); err != nil {
+		return nil, disk.PublishedSourceFailure(err)
 	}
-	return computer.CreateLocalGeneration(ctx, computer.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
+	return disk.CreateLocalGeneration(ctx, disk.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: material.Root, BaseSource: p.ComputerRanges, Scope: scope, ActiveKey: material.WriteKeyID, Keys: keys, DirtyBlocks: 256, StagedBytes: p.ComputerStagingBytes, PackLimit: blockformat.MinPackLimit})
 }
 
 func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target workerapi.RuntimeReconcileTarget, dir string) (retErr error) {
@@ -91,7 +91,7 @@ func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target wo
 	}
 	source := target.Source.Computer
 	path := filepath.Join(dir, "seed.raw")
-	if err := (computer.SeedStore{CAS: p.CAS}).Decode(ctx, computer.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}, path, source.LogicalBytes); err != nil {
+	if err := (disk.SeedStore{CAS: p.CAS}).Decode(ctx, disk.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}, path, source.LogicalBytes); err != nil {
 		return err
 	}
 	file, err := os.Open(path)
@@ -104,7 +104,7 @@ func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target wo
 		return err
 	}
 	defer clear(key.Key)
-	candidate, err := computer.CaptureInitialGeneration(ctx, computer.GenerationCapture{Disk: file, Capacity: source.LogicalBytes, StagingParent: dir, Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: p.ComputerStagingBytes, MaxObjects: 1 << 20})
+	candidate, err := disk.CaptureInitialGeneration(ctx, disk.GenerationCapture{Disk: file, Capacity: source.LogicalBytes, StagingParent: dir, Scope: key.Scope, KeyID: key.ID, Key: key.Key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: p.ComputerStagingBytes, MaxObjects: 1 << 20})
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func (p *PreparedRuntimePool) publishComputerSeed(ctx context.Context, target wo
 	if err != nil {
 		return err
 	}
-	root, err := computer.NewGenerationRoot(locator, source.LogicalBytes)
+	root, err := disk.NewGenerationRoot(locator, source.LogicalBytes)
 	if err != nil {
 		return err
 	}

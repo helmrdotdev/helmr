@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -33,21 +33,21 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clear(key.Key)
-	disk, err := os.CreateTemp(t.TempDir(), "seed")
+	seedFile, err := os.CreateTemp(t.TempDir(), "seed")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer disk.Close()
-	if err := disk.Truncate(f.logicalBytes); err != nil {
+	defer seedFile.Close()
+	if err := seedFile.Truncate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
 	const offset = 8192
 	initial := []byte("retained computer data")
-	if _, err := disk.WriteAt(initial, offset); err != nil {
+	if _, err := seedFile.WriteAt(initial, offset); err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := computer.CaptureInitialGeneration(t.Context(), computer.GenerationCapture{
-		Disk: disk, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key,
+	candidate, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{
+		Disk: seedFile, Capacity: f.logicalBytes, StagingParent: t.TempDir(), Scope: key.Scope, KeyID: key.ID, Key: key.Key,
 		Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 32 << 20, MaxObjects: 1000,
 	})
 	if err != nil {
@@ -62,7 +62,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, f.logicalBytes)
+	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,15 +100,15 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	for _, k := range source.Keys {
 		keys[k.ID] = k.Key
 	}
-	cfg := computer.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "working"), Base: source.Root, BaseSource: remote,
+	cfg := disk.LocalGenerationConfig{Directory: filepath.Join(t.TempDir(), "working"), Base: source.Root, BaseSource: remote,
 		Scope: source.Keys[0].Scope, ActiveKey: source.WriteKeyID, Keys: keys, DirtyBlocks: 8, StagedBytes: 32 << 20, PackLimit: blockformat.MinPackLimit}
-	local, err := computer.CreateLocalGeneration(t.Context(), cfg)
+	local, err := disk.CreateLocalGeneration(t.Context(), cfg)
 	source.Clear()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer local.Close()
-	read := func(d *computer.LocalGeneration, want []byte) {
+	read := func(d *disk.LocalGeneration, want []byte) {
 		t.Helper()
 		data := make([]byte, len(want))
 		if _, err := d.ReadAt(t.Context(), data, offset); err != nil || !bytes.Equal(data, want) {
@@ -134,13 +134,13 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	for _, k := range source.Keys {
 		cfg.Keys[k.ID] = k.Key
 	}
-	reopened, err := computer.OpenLocalGeneration(t.Context(), cfg)
+	reopened, err := disk.OpenLocalGeneration(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
 	read(reopened, changed)
-	tree, err := computer.OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, root, root.LogicalBytes)
+	tree, err := disk.OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, root, root.LogicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	if err != nil || !bytes.Equal(original[:len(initial)], initial) {
 		t.Fatalf("local writes changed published source: %v", err)
 	}
-	if _, err := computer.OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, updated, updated.LogicalBytes); err == nil {
+	if _, err := disk.OpenGeneration(t.Context(), remote, cfg.Scope, cfg.Keys, updated, updated.LogicalBytes); err == nil {
 		t.Fatal("local flush claimed remote persistence")
 	}
 }

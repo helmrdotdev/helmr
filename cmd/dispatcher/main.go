@@ -11,10 +11,10 @@ import (
 	"syscall"
 
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -78,7 +78,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run placement lane lock: %w", err)
 	}
-	computerFencingKey, err := computer.NewFencingKey(cfg.ComputerFencingKey)
+	computerFencingKey, err := disk.NewFencingKey(cfg.ComputerFencingKey)
 	if err != nil {
 		return fmt.Errorf("configure computer fencing key: %w", err)
 	}

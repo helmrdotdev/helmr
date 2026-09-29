@@ -9,9 +9,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -24,7 +24,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id,i.computer_id,i.source_disk_version_id FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.LeaseID).Scan(&instance, &computerID, &version); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_version=desired_version+1,reserved_guest_ephemeral_disk_bytes=$2 WHERE id=$1`, instance, computer.SeedCapacity)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_version=desired_version+1,reserved_guest_ephemeral_disk_bytes=$2 WHERE id=$1`, instance, disk.SeedCapacity)
 	read := func() db.ListComputerInstanceReconcileTargetsRow {
 		t.Helper()
 		rows, err := db.New(f.Pool).ListComputerInstanceReconcileTargets(t.Context(), db.ListComputerInstanceReconcileTargetsParams{WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: 1, RowLimit: 64})
@@ -40,7 +40,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 		return db.ListComputerInstanceReconcileTargetsRow{}
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET initial_config='{"User":"original"}' WHERE id=$1`, computerID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions v SET root_pack_digest=root.locator->'pack'->>'digest',logical_bytes=$2 FROM computer_disk_version_roots root WHERE v.id=$1 AND root.version_id=v.id`, version, computer.SeedCapacity)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions v SET root_pack_digest=root.locator->'pack'->>'digest',logical_bytes=$2 FROM computer_disk_version_roots root WHERE v.id=$1 AND root.version_id=v.id`, version, disk.SeedCapacity)
 	platform, err := cas.NewFile(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

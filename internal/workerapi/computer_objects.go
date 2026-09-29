@@ -1,6 +1,6 @@
 package workerapi
 
-import "github.com/helmrdotdev/helmr/internal/computer/blockformat"
+import "github.com/helmrdotdev/helmr/internal/disk/blockformat"
 
 // InitialComputerObjectRequest is a host-only attestation of inspected bytes.
 // Worker identity, Computer scope and key authority come from authentication and

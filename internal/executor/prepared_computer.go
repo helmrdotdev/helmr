@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -35,14 +35,14 @@ func validateComputerPreparationSource(target workerapi.RuntimeReconcileTarget) 
 	if err := ids.Validate(source.VersionID); err != nil {
 		return fmt.Errorf("computer version: %w", err)
 	}
-	if source.LogicalBytes != computer.SeedCapacity || target.Source.ReservedDiskMiB != source.LogicalBytes/mebibyte {
+	if source.LogicalBytes != disk.SeedCapacity || target.Source.ReservedDiskMiB != source.LogicalBytes/mebibyte {
 		return errors.New("computer capacity does not match runtime reservation")
 	}
 	if source.Seed != nil {
 		if source.Seed.Profile != definition.ComputerSeedProfile || target.Source.Restore != nil {
 			return errors.New("invalid initializing computer source")
 		}
-		return (computer.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes)
+		return (disk.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes)
 	}
 	return nil // Continuation is resolved by the fenced source/key broker, never a disk artifact.
 }

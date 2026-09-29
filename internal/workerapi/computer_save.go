@@ -1,8 +1,8 @@
 package workerapi
 
 import (
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 )
 
 // ComputerSaveBeginRequest identifies the physical writer and one publication.
@@ -31,7 +31,7 @@ type ComputerSaveObjectRequest struct {
 
 type ComputerSavePublicationRequest struct {
 	Save ComputerSaveBeginRequest `json:"save"`
-	Root computer.GenerationRoot  `json:"root"`
+	Root disk.GenerationRoot      `json:"root"`
 }
 
 type ComputerSavePublicationResponse struct {
