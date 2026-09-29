@@ -54,8 +54,8 @@ type ComputerRuntimeControlPlane interface {
 }
 
 // ControlPlane is the complete set of Control Plane capabilities a run lease
-// task uses. Every capability is required and is validated before any run
-// lease is claimed.
+// task uses. Every capability is required: NewProgramRunner validates it, and
+// StartRunLeaseTask validates it again before starting any work.
 type ControlPlane struct {
 	Leases        RunLeaseControlPlane
 	Waits         RunWaitClient
@@ -170,6 +170,11 @@ func (r ProgramRunner) StartRunLeaseTask(
 	ctx context.Context,
 	claim *workerapi.RunLeaseClaimResponse,
 ) (RunLeaseTask, error) {
+	// A runner built without NewProgramRunner fails the lease here instead of
+	// when a guest event first needs the missing collaborator.
+	if err := r.validate(); err != nil {
+		return nil, err
+	}
 	target, err := runLeaseMountTarget(claim)
 	if err != nil {
 		return nil, err
@@ -183,6 +188,8 @@ func (r ProgramRunner) StartRunLeaseTask(
 	if claim.ProgramResume != nil {
 		program, resumedWait, err = r.startRestoredProgram(ctx, claim)
 	} else {
+		// Admission takes its lease capability as a narrow argument so that
+		// admission can be exercised with a lease-only fake.
 		program, err = r.startNewProgram(ctx, claim, r.ControlPlane.Leases, runLeaseProgramEventSink{controlPlane: r.ControlPlane})
 	}
 	if err != nil {

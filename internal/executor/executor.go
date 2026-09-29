@@ -19,6 +19,8 @@ func DefaultWorkDir() string {
 }
 
 type Executor struct {
+	// RunLeases serves lease claim and finalization only. Calls made on behalf
+	// of a running task use the task runner's ControlPlane.Leases.
 	RunLeases     RunLeaseControlPlane
 	RunLeaseTasks RunLeaseTaskRunner
 }

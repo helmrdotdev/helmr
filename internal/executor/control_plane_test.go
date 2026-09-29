@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -30,8 +31,8 @@ func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 		"actors":          {func(r *ProgramRunner) { r.ControlPlane.Actors = nil }, "actor runtime control plane is required"},
 		"computers":       {func(r *ProgramRunner) { r.ControlPlane.Computers = nil }, "computer runtime control plane is required"},
 		"children":        {func(r *ProgramRunner) { r.ControlPlane.Children = nil }, "child task control plane is required"},
-		"cas":             {func(r *ProgramRunner) { r.CAS = nil }, "run lease task CAS and Computer capture registry are required"},
-		"captures":        {func(r *ProgramRunner) { r.ComputerCaptures = nil }, "run lease task CAS and Computer capture registry are required"},
+		"cas":             {func(r *ProgramRunner) { r.CAS = nil }, "run lease task CAS is required"},
+		"captures":        {func(r *ProgramRunner) { r.ComputerCaptures = nil }, "run lease task Computer capture registry is required"},
 		"computer mounts": {func(r *ProgramRunner) { r.ComputerMounts = nil }, "computer mount session registry is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -44,12 +45,43 @@ func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 	}
 }
 
+func TestStartRunLeaseTaskRejectsUnvalidatedRunner(t *testing.T) {
+	complete := testControlPlane(t)
+	withoutWaits := complete
+	withoutWaits.Waits = nil
+	for name, test := range map[string]struct {
+		runner ProgramRunner
+		want   string
+	}{
+		"zero value": {ProgramRunner{}, "run lease control plane is required"},
+		"missing capability": {ProgramRunner{
+			ControlPlane: withoutWaits, CAS: &checkpointCAS{},
+			ComputerCaptures: &ComputerCaptureRuns{}, ComputerMounts: NewComputerMountSessions(),
+		}, "run wait control plane is required"},
+		"missing computer mounts": {ProgramRunner{
+			ControlPlane: complete, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{},
+		}, "computer mount session registry is required"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			task, err := test.runner.StartRunLeaseTask(t.Context(), &workerapi.RunLeaseClaimResponse{})
+			if task != nil || err == nil || err.Error() != test.want {
+				t.Fatalf("StartRunLeaseTask() = %v, %v, want error %q", task, err, test.want)
+			}
+		})
+	}
+}
+
 // testControlPlane assembles a complete ControlPlane from test fakes. Each
 // capability is taken from the first fake implementing it; every remaining
 // capability fails the test when called.
 func testControlPlane(t testing.TB, fakes ...any) ControlPlane {
 	t.Helper()
-	unexpected := unexpectedControlPlane{t: t}
+	unexpected := unexpectedControlPlane{calls: &unexpectedControlPlaneCalls{}}
+	t.Cleanup(func() {
+		if calls := unexpected.calls.snapshot(); len(calls) != 0 {
+			t.Errorf("unexpected Control Plane calls %v", calls)
+		}
+	})
 	return ControlPlane{
 		Leases:        testCapability[RunLeaseControlPlane](unexpected, fakes),
 		Waits:         testCapability[RunWaitClient](unexpected, fakes),
@@ -80,12 +112,28 @@ type testSessionControlPlane struct {
 	SessionSubmitControlPlane
 }
 
+// unexpectedControlPlane records calls rather than failing the test directly,
+// because a call may arrive from a goroutine after the test has returned. The
+// owning test reports recorded calls during cleanup.
 type unexpectedControlPlane struct {
-	t testing.TB
+	calls *unexpectedControlPlaneCalls
+}
+
+type unexpectedControlPlaneCalls struct {
+	mu    sync.Mutex
+	names []string
+}
+
+func (c *unexpectedControlPlaneCalls) snapshot() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.names...)
 }
 
 func (u unexpectedControlPlane) fail(call string) error {
-	u.t.Errorf("unexpected Control Plane call %s", call)
+	u.calls.mu.Lock()
+	u.calls.names = append(u.calls.names, call)
+	u.calls.mu.Unlock()
 	return errors.New("unexpected Control Plane call " + call)
 }
 
