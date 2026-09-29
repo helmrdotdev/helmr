@@ -31,7 +31,7 @@ func (task *guestRunLeaseTask) handleTokenCreate(
 	) error {
 		request.Lease = lease.Fence()
 		var requestErr error
-		response, requestErr = task.controlPlane.CreateRuntimeToken(callCtx, request)
+		response, requestErr = task.controlPlane.Leases.CreateRuntimeToken(callCtx, request)
 		return requestErr
 	}); err != nil {
 		if failure, ok := tokenCreateFailure(err); ok {

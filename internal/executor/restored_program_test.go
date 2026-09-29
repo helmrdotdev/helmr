@@ -149,7 +149,7 @@ func testRestoredProgram(t *testing.T, kind string) {
 	activation.mu.Lock()
 	h.installed = proto.Clone(activation.installation.Grants[0]).(*computerv0.ComputerRunAuthority)
 	activation.mu.Unlock()
-	task, err := (ProgramRunner{ComputerMounts: sessions, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{}}).StartRunLeaseTask(ctx, claim, h)
+	task, err := (ProgramRunner{ControlPlane: testControlPlane(t, h), ComputerMounts: sessions, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{}}).StartRunLeaseTask(ctx, claim)
 	if err != nil {
 		t.Fatal(err)
 	}

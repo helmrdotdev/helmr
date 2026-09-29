@@ -13,22 +13,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type runObservabilityControlPlane interface {
+type RunObservabilityControlPlane interface {
 	UpdateRunMetadata(context.Context, workerapi.UpdateRunMetadataRequest) error
 	AppendStructuredRunLog(context.Context, workerapi.StructuredLogRequest) error
 }
 
-func requireRunObservabilityControlPlane(value any) (runObservabilityControlPlane, error) {
-	controlPlane, ok := value.(runObservabilityControlPlane)
-	if !ok {
-		return nil, errors.New("run observability control plane is required")
-	}
-	return controlPlane, nil
-}
-
 func updateRunMetadata(
 	ctx context.Context,
-	controlPlane runObservabilityControlPlane,
+	controlPlane RunObservabilityControlPlane,
 	lease workerapi.RunLeaseAssignment,
 	requested *programv0.MetadataUpdated,
 ) error {
@@ -49,7 +41,7 @@ func updateRunMetadata(
 
 func sendRunMetadataRequest(
 	ctx context.Context,
-	controlPlane runObservabilityControlPlane,
+	controlPlane RunObservabilityControlPlane,
 	request workerapi.UpdateRunMetadataRequest,
 ) error {
 	if err := controlPlane.UpdateRunMetadata(ctx, request); err != nil {
@@ -60,7 +52,7 @@ func sendRunMetadataRequest(
 
 func appendStructuredRunLog(
 	ctx context.Context,
-	controlPlane runObservabilityControlPlane,
+	controlPlane RunObservabilityControlPlane,
 	lease workerapi.RunLeaseAssignment,
 	sequence uint64,
 	requested *programv0.StructuredLogRequested,
@@ -82,7 +74,7 @@ func appendStructuredRunLog(
 
 func sendStructuredRunLogRequest(
 	ctx context.Context,
-	controlPlane runObservabilityControlPlane,
+	controlPlane RunObservabilityControlPlane,
 	request workerapi.StructuredLogRequest,
 ) error {
 	if err := controlPlane.AppendStructuredRunLog(ctx, request); err != nil {

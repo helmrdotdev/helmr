@@ -64,7 +64,7 @@ func TestHandleSessionSubmitWritesCorrelatedDecision(t *testing.T) {
 	defer host.Close()
 	task := &guestRunLeaseTask{
 		program:      freshProgram{session: fakeGuestSession{stream: guest}},
-		controlPlane: controlPlane,
+		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
 	result := make(chan error, 1)
@@ -123,7 +123,7 @@ func TestHandleSessionSubmitRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	defer host.Close()
 	task := &guestRunLeaseTask{
 		program:      freshProgram{session: fakeGuestSession{stream: guest}},
-		controlPlane: controlPlane,
+		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)

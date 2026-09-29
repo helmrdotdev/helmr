@@ -61,7 +61,7 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 	if err := task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
 		request.Lease = lease.Fence()
 		var err error
-		response, err = task.controlPlane.CommitActorTurn(callCtx, request)
+		response, err = task.controlPlane.Leases.CommitActorTurn(callCtx, request)
 		return err
 	}); err != nil {
 		return fmt.Errorf("commit actor turn: %w", err)

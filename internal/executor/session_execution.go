@@ -24,6 +24,14 @@ type SessionExecutionControlPlane interface {
 	ReadSessionControl(context.Context, workerapi.SessionControlRequest) (workerapi.SessionControlResponse, error)
 }
 
+// SessionControlPlane is the Session capability set a run lease task uses for
+// turn execution, Session references and Session submissions.
+type SessionControlPlane interface {
+	SessionExecutionControlPlane
+	SessionReferenceControlPlane
+	SessionSubmitControlPlane
+}
+
 func validateSessionExecution(execution *programv0.SessionExecution, lease workerapi.RunLeaseAssignment) error {
 	if execution == nil || api.ValidateSessionID(execution.GetSessionId()) != nil || execution.GetRunId() != lease.RunID || execution.GetAttemptNumber() != uint32(lease.AttemptNumber) || execution.GetRunGeneration() <= 0 {
 		return errors.New("session execution does not match Run authority")
@@ -86,10 +94,7 @@ func (task *guestRunLeaseTask) writeOwnSessionResult(ctx context.Context, correl
 }
 
 func (task *guestRunLeaseTask) handleTurnCommand(ctx context.Context, event *programv0.RunEvent) error {
-	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
-	if !ok {
-		return errors.New("session execution control plane is required")
-	}
+	cp := task.controlPlane.Sessions
 	var execution *programv0.TurnExecution
 	var correlation string
 	switch v := event.Event.(type) {

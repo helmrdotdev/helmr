@@ -45,7 +45,7 @@ func (e Executor) ExecuteRunLease(
 	if claim.Lease.ID != work.LeaseID || claim.Lease.LeaseSequence != work.LeaseSequence {
 		return errors.New("run lease claim does not match discovered work")
 	}
-	task, err := e.RunLeaseTasks.StartRunLeaseTask(ctx, &claim, e.RunLeases)
+	task, err := e.RunLeaseTasks.StartRunLeaseTask(ctx, &claim)
 	if err != nil {
 		return fmt.Errorf("start run lease task: %w", err)
 	}

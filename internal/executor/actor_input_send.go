@@ -23,10 +23,7 @@ func (task *guestRunLeaseTask) handleSessionSubmit(ctx context.Context, requeste
 	if err != nil {
 		return err
 	}
-	cp, ok := task.controlPlane.(SessionSubmitControlPlane)
-	if !ok {
-		return errors.New("session submission control plane is required")
-	}
+	cp := task.controlPlane.Sessions
 	var response workerapi.SubmitSessionDataResponse
 	err = task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
 		request.Lease = lease.Fence()

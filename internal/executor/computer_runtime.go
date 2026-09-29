@@ -20,10 +20,7 @@ func (task *guestRunLeaseTask) handleComputerRuntime(
 	ctx context.Context,
 	event *programv0.RunEvent,
 ) error {
-	controlPlane, ok := task.controlPlane.(ComputerRuntimeControlPlane)
-	if !ok {
-		return errors.New("run lease task computer runtime control plane is required")
-	}
+	controlPlane := task.controlPlane.Computers
 	var correlationID string
 	var completed any
 	var failed *workerapi.RuntimeOperationFailure

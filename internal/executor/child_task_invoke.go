@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type childTaskInvokeControlPlane interface {
+type ChildTaskControlPlane interface {
 	InvokeChildTask(context.Context, workerapi.InvokeChildTaskRequest) (workerapi.InvokeChildTaskResponse, error)
 }
 
@@ -34,10 +34,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 	}
 	request.TurnID = requested.TurnId
 	request.RunGeneration = executionGeneration(requested.GetExecution())
-	controlPlane, ok := task.controlPlane.(childTaskInvokeControlPlane)
-	if !ok {
-		return errors.New("run lease task child task invocation control plane is required")
-	}
+	controlPlane := task.controlPlane.Children
 	var response workerapi.InvokeChildTaskResponse
 	if err := task.callRunSourceRuntime(ctx, func(
 		callCtx context.Context,
@@ -68,9 +65,6 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			response.OpenedWait.ResumeAttachID != request.ResumeAttachID {
 			return errors.New("child task invocation response wait IDs did not match")
 		}
-		if task.waits == nil {
-			return errors.New("run lease task wait control plane is required")
-		}
 		runtimeWait := WaitRequest{
 			Execution: requested.GetExecution(), TurnID: requested.TurnId,
 			Leases:                        task,
@@ -100,7 +94,7 @@ func (task *guestRunLeaseTask) handleChildTaskInvoke(
 			},
 		}
 		return task.runHotWait(ctx, runtimeWait, func(waitCtx context.Context, request WaitRequest) error {
-			return task.waits.ContinueRunWait(waitCtx, request, *response.OpenedWait)
+			return task.runWaits().ContinueRunWait(waitCtx, request, *response.OpenedWait)
 		})
 	}
 	if request.Method == "call" && response.Completed != nil {
