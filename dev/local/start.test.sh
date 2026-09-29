@@ -33,6 +33,9 @@ configure_stack() {
   export HELMR_DEV_POSTGRES_PORT="$((port + 2))"
   export HELMR_DEV_CLICKHOUSE_HTTP_PORT="$((port + 3))"
   export PUBLIC_URL="http://127.0.0.1:${port}"
+  # Lifecycle checks never touch object storage; the closed endpoint keeps it so.
+  export CAS_URI="s3://helmr-dev-test-cas?endpoint=http://127.0.0.1:9"
+  export PLATFORM_STORE_URI="s3://helmr-dev-test-platform?endpoint=http://127.0.0.1:9"
   unset DATABASE_URL REDIS_URL CLICKHOUSE_URL DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH
   unset CONTROL_PLANE_ADDR HELMR_DEV_BACKEND_URL
   helmr_dev_init "${ROOT}"
@@ -447,6 +450,26 @@ test_live_sigterm_cleanup() {
   rm -rf "${dir}"
 }
 
+test_start_requires_s3_stores() {
+  local dir name
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/helmr-stack-s3.XXXXXX")"
+  for name in CAS_URI PLATFORM_STORE_URI; do
+    configure_stack "${dir}" 36350 preview
+    if (unset "${name}"; exec "${ROOT}/dev/local/start.sh") >"${dir}/${name}.log" 2>&1; then
+      fail "start succeeded without ${name}"
+    fi
+    if ! grep -q "${name} is required for the dev console stack" "${dir}/${name}.log"; then
+      cat "${dir}/${name}.log" >&2
+      fail "start without ${name} did not name the missing store"
+    fi
+    if [ -d "${dir}/.stack.lock" ]; then
+      fail "start without ${name} acquired the stack lock"
+    fi
+  done
+  rm -rf "${dir}"
+}
+
+test_start_requires_s3_stores
 test_foreign_clickhouse_port_untouched
 test_lock_missing_pid_refuses
 test_reset_holds_lock_exclusion

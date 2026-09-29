@@ -14,7 +14,8 @@ Open `http://127.0.0.1:<console-port>/dev/login` to create a local owner session
 prints the state directory, socket directory, URLs, and derived ports on startup.
 
 `make dev` starts managed dependencies when `DATABASE_URL`, `REDIS_URL`, and `CLICKHOUSE_URL`
-are unset. A synthetic runtime descriptor is written under the dev state directory; no
+are unset. `CAS_URI` and `PLATFORM_STORE_URI` are required: distinct S3 stores, as described in
+[scripts/README.md](../../scripts/README.md#development-console). A synthetic runtime descriptor is written under the dev state directory; no
 image build or real Deployment build is required. Live mode runs Vite with hot reload on the
 console port and the dev control plane on a separate loopback port (`HELMR_DEV_BACKEND_URL`).
 
@@ -31,7 +32,7 @@ The script fails fast if a required port is already in use or an owned stack is 
 
 ### Persistence and reset
 
-Owned Postgres, ClickHouse, and CAS data persist across restarts. Dev seed runs once on a fresh
+Owned Postgres and ClickHouse data persist across restarts; S3 objects are never reset. Dev seed runs once on a fresh
 owned database only; renames, deletions, and completed Tokens survive restarts. To restore
 fixtures:
 

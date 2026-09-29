@@ -12,6 +12,12 @@ type TxBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
+// TxDB runs direct statements and starts the transactions that RunTx owns.
+type TxDB interface {
+	DBTX
+	TxBeginner
+}
+
 type txLifecycleError struct {
 	stage string
 	err   error

@@ -119,6 +119,7 @@ func TestPlanDeploymentBundleUploadsFailsClosedOnRuntimeOrOwnedObjectDrift(t *te
 }
 
 type bundleUploadStoreFixture struct {
+	cas.Store
 	objects     map[string]cas.Object
 	quarantine  map[string]cas.Descriptor
 	quarantined []cas.Descriptor
@@ -263,5 +264,5 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, bundle.Manifest) {
 	return raw, manifest
 }
 
-var _ deploymentBundleUploadStore = (*bundleUploadStoreFixture)(nil)
+var _ cas.UploadStore = (*bundleUploadStoreFixture)(nil)
 var _ deploymentBundleOwnershipStore = (*bundleOwnershipFixture)(nil)

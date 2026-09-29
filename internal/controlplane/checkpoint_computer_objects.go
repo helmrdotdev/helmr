@@ -52,10 +52,6 @@ func (s *Server) workerCheckpointComputerObject(w http.ResponseWriter, r *http.R
 			s.writeComputerPublicationError(w, err)
 			return
 		}
-		if s.cas == nil {
-			writeError(w, unavailable(errors.New("computer storage unavailable")))
-			return
-		}
 		stored, e := s.cas.Stat(r.Context(), object.digest)
 		if e != nil {
 			writeError(w, unavailable(errors.New("computer object unavailable")))

@@ -136,16 +136,6 @@ func (s *Server) workerCreateTokenRunWait(
 	}
 	waitID := identity.waitID
 	resumeAttachID := identity.resumeAttachID
-	reconcileDB, ok := s.tx.(token.WaitDB)
-	if !ok {
-		writeError(w, unavailable(errors.New("durable token wait storage is not configured")))
-		return
-	}
-	reconciler, err := token.NewWaitReconciler(reconcileDB)
-	if err != nil {
-		writeError(w, unavailable(err))
-		return
-	}
 	actorCursor := pgtype.Int8{}
 	if request.ActorSpeculativeInputSequence != nil {
 		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
@@ -155,7 +145,7 @@ func (s *Server) workerCreateTokenRunWait(
 		writeError(w, badRequest(err))
 		return
 	}
-	registered, err := reconciler.RegisterWait(r.Context(), token.WaitRegistration{
+	registered, err := s.tokenWaits.RegisterWait(r.Context(), token.WaitRegistration{
 		TurnID: turnID, RunGeneration: generation,
 		TokenID: tokenID, WaitID: waitID,
 		RunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,

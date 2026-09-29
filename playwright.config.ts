@@ -21,6 +21,9 @@ const managedWebServerEnv: Record<string, string> = {
   HELMR_DEV_POSTGRES_PORT: String(selfPort + 1),
   HELMR_DEV_CLICKHOUSE_HTTP_PORT: String(selfPort + 2),
   PUBLIC_URL: `http://127.0.0.1:${selfPort}`,
+  // Browser acceptance never touches object storage; the closed endpoint keeps it so.
+  CAS_URI: "s3://helmr-e2e-cas?endpoint=http://127.0.0.1:9",
+  PLATFORM_STORE_URI: "s3://helmr-e2e-platform?endpoint=http://127.0.0.1:9",
 };
 
 export default defineConfig({

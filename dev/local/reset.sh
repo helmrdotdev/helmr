@@ -8,4 +8,4 @@ source "${ROOT}/dev/local/instance.sh"
 helmr_dev_init "${ROOT}"
 helmr_dev_reset_owned_storage
 
-echo "Reset owned dev storage under ${HELMR_DEV_DIR} (postgres, clickhouse, cas)."
+echo "Reset owned dev storage under ${HELMR_DEV_DIR} (postgres, clickhouse)."

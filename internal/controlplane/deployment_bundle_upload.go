@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"strings"
@@ -23,29 +22,11 @@ import (
 
 const deploymentBundleUploadExpiry = 15 * time.Minute
 
-type deploymentBundleUploadStore interface {
-	Stat(context.Context, string) (cas.Object, error)
-	Get(context.Context, string) (io.ReadCloser, error)
-	PutQuarantine(context.Context, string, cas.Descriptor, io.Reader) error
-	HasExactQuarantine(context.Context, string, cas.Descriptor) (bool, error)
-	PresignQuarantine(context.Context, string, cas.Descriptor, time.Duration) (cas.PresignedUpload, error)
-	PromoteQuarantine(context.Context, string, cas.Descriptor) (cas.Object, error)
-}
-
 type deploymentBundleOwnershipStore interface {
 	GetCasObject(context.Context, db.GetCasObjectParams) (db.CasObject, error)
 }
 
 func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Request) {
-	if s.bundleAdmission == nil || s.platformStore == nil {
-		writeError(w, unavailable(errors.New("deployment bundle admission is not configured")))
-		return
-	}
-	uploads, ok := s.cas.(deploymentBundleUploadStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment bundle upload storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
@@ -72,7 +53,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 	}
 
 	response, err := planDeploymentBundleUploads(
-		r.Context(), uploads, s.db, s.platformStore,
+		r.Context(), s.cas, s.db, s.platformStore,
 		strings.ToLower(actor.OrgID.String()), pgvalue.UUID(actor.OrgID), raw, manifest,
 	)
 	if err != nil {
@@ -84,7 +65,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 
 func planDeploymentBundleUploads(
 	ctx context.Context,
-	uploads deploymentBundleUploadStore,
+	uploads cas.UploadStore,
 	ownership deploymentBundleOwnershipStore,
 	platform cas.Reader,
 	owner string,
@@ -92,9 +73,6 @@ func planDeploymentBundleUploads(
 	raw []byte,
 	manifest bundle.Manifest,
 ) (api.DeploymentBundleUploadPlanResponse, error) {
-	if uploads == nil || ownership == nil || platform == nil {
-		return api.DeploymentBundleUploadPlanResponse{}, errors.New("deployment bundle upload dependencies are incomplete")
-	}
 	runtimeExpected := cas.Descriptor{
 		Digest: manifest.Runtime.Artifact.Digest, SizeBytes: manifest.Runtime.Artifact.SizeBytes,
 		MediaType: manifest.Runtime.Artifact.MediaType,

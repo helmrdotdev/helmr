@@ -9,14 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type RetryReconciliationDB interface {
-	db.DBTX
-	db.TxBeginner
-}
+type RetryReconciler struct{ db db.TxDB }
 
-type RetryReconciler struct{ db RetryReconciliationDB }
-
-func NewRetryReconciler(database RetryReconciliationDB) *RetryReconciler {
+func NewRetryReconciler(database db.TxDB) *RetryReconciler {
 	return &RetryReconciler{db: database}
 }
 

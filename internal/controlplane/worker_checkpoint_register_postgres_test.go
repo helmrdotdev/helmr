@@ -13,7 +13,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
@@ -33,10 +32,7 @@ func checkpointRegistrationFixture(t *testing.T) (*computerCheckpointFixture, wo
 	t.Helper()
 	base, worker, request := dispatchtest.RegisteredCapture(t, false)
 	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000 WHERE current_run_lease_id IN (SELECT id FROM run_leases WHERE computer_instance_id=$1)`, request.ComputerInstanceID)
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestUploadStore(t)
 	return &computerCheckpointFixture{Fixture: base,
 		server: &Server{db: db.New(base.Pool), tx: base.Pool, cas: store, log: slog.Default()},
 		worker: workerActor{WorkerHostID: base.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: worker.Epoch, ClaimVersion: 1, GroupClaimVersion: 1},

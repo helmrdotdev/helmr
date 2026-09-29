@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -21,10 +20,7 @@ import (
 // recovery: only the original published generation exists in remote storage.
 func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 	f, broker, fence := initialKeyFixture(t)
-	remote, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	remote := newTestUploadStore(t)
 	f.server.cas = remote
 	client := sourceKeyHTTPClient(t, f, broker, fence)
 	runtimeID := pgvalue.UUIDString(f.runtime)

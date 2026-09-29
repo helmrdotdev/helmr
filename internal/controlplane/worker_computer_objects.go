@@ -51,10 +51,6 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 			writeError(w, conflict(errors.New("computer object registration is unavailable")))
 			return
 		}
-		if s.cas == nil {
-			writeError(w, unavailable(errors.New("computer object storage is unavailable")))
-			return
-		}
 		stored, err := s.cas.Stat(r.Context(), object.digest)
 		if err != nil {
 			writeError(w, unavailable(errors.New("computer object is not available in storage")))

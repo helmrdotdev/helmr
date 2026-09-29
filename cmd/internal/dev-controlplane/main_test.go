@@ -41,6 +41,27 @@ func setDevRegionConfig(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", "/etc/helmr/runtime.descriptor.json")
 	t.Setenv("CLICKHOUSE_URL", "http://127.0.0.1:8123")
+	t.Setenv("CAS_URI", "s3://helmr-dev-cas")
+	t.Setenv("PLATFORM_STORE_URI", "s3://helmr-dev-platform")
+}
+
+func TestLoadConfigRequiresS3Stores(t *testing.T) {
+	for name, env := range map[string]map[string]string{
+		"CAS_URI is required":            {"CAS_URI": ""},
+		"PLATFORM_STORE_URI is required": {"PLATFORM_STORE_URI": ""},
+		"invalid S3 store URI":           {"CAS_URI": "file:///tmp/helmr-dev-cas"},
+		"distinct bucket authority":      {"PLATFORM_STORE_URI": "s3://helmr-dev-cas/platform"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			setDevRegionConfig(t)
+			for key, value := range env {
+				t.Setenv(key, value)
+			}
+			if _, err := loadConfig(); err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("store config error = %v", err)
+			}
+		})
+	}
 }
 
 func TestMigrationPathsFindsSourceRootWhenCwdDiffers(t *testing.T) {

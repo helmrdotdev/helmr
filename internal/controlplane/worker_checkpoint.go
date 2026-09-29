@@ -61,9 +61,6 @@ func (s *Server) commitCheckpointReady(ctx context.Context, worker workerActor, 
 	// A committed receipt is independent of current storage availability. Every
 	// replay still checks the authenticated source and exact candidate identity.
 	if checkpoint.Status != "ready" {
-		if s.cas == nil {
-			return workerapi.ComputerCheckpointResponse{}, unavailable(errors.New("checkpoint storage unavailable"))
-		}
 		var manifest workerapi.CheckpointManifest
 		if err = json.Unmarshal(checkpoint.Manifest, &manifest); err != nil {
 			return workerapi.ComputerCheckpointResponse{}, err
