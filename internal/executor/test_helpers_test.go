@@ -15,6 +15,18 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
+// unsupportedMachineStarts gives cleanup-only test backends the full vm.Backend
+// surface; starting a machine through it always fails.
+type unsupportedMachineStarts struct{}
+
+func (unsupportedMachineStarts) Restore(context.Context, vm.RestoreRequest) (vm.Machine, error) {
+	return nil, errors.New("test backend does not restore machines")
+}
+
+func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeRequest) (vm.Machine, error) {
+	return nil, errors.New("test backend does not materialize machines")
+}
+
 type fakeGuestSession struct {
 	stream io.ReadWriteCloser
 }

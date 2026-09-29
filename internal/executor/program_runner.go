@@ -15,11 +15,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
-	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
@@ -37,14 +35,11 @@ const (
 )
 
 type ProgramRunner struct {
-	ComputerCaptures    *ComputerCaptureRuns
-	CheckpointObjects   cas.ImmutableStore
-	Reservations        *reservation.Ledger
-	CAS                 cas.Store
-	CheckpointEncryptor *checkpoint.Encryptor
-	ComputerMounts      ComputerMountSessionRegistry
-	Log                 *slog.Logger
-	TempDir             string
+	ComputerCaptures *ComputerCaptureRuns
+	CAS              cas.Store
+	ComputerMounts   ComputerMountSessionRegistry
+	Log              *slog.Logger
+	TempDir          string
 }
 
 func (r ProgramRunner) tempDir() string {

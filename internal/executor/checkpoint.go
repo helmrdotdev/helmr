@@ -17,8 +17,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, artifact workerapi.CheckpointArtifact, suffix, directory string) (string, error) {
-	if r.CAS == nil || r.CheckpointEncryptor == nil {
+func materializeCheckpointObject(ctx context.Context, store cas.Reader, encryptor *checkpoint.Encryptor, artifact workerapi.CheckpointArtifact, suffix, directory string) (string, error) {
+	if store == nil || encryptor == nil {
 		return "", errors.New("checkpoint storage and encryption are required")
 	}
 	descriptor := cas.Descriptor{Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType}
@@ -28,7 +28,7 @@ func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, artifact
 	if artifact.SizeBytes == math.MaxInt64 {
 		return "", errors.New("checkpoint object size overflow")
 	}
-	body, err := r.CAS.Get(ctx, artifact.Digest)
+	body, err := store.Get(ctx, artifact.Digest)
 	if err != nil {
 		return "", err
 	}
@@ -41,7 +41,7 @@ func (r ProgramRunner) materializeCheckpointObject(ctx context.Context, artifact
 	// Ciphertext framing is larger than plaintext. Bound both the storage stream
 	// and filesystem writes before trusting the source's advertised length.
 	bounded := &checkpointBoundedWriter{writer: file, remaining: artifact.SizeBytes}
-	decryptErr := r.CheckpointEncryptor.Decrypt(ctx, io.TeeReader(limited, hash), bounded, checkpointPurpose(suffix))
+	decryptErr := encryptor.Decrypt(ctx, io.TeeReader(limited, hash), bounded, checkpointPurpose(suffix))
 	closeErr := errors.Join(body.Close(), file.Close())
 	if decryptErr == nil && (limited.N != 1 || sha256sum.DigestHash(hash) != artifact.Digest) {
 		decryptErr = errors.New("checkpoint object descriptor mismatch")

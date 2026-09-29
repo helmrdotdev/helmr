@@ -37,6 +37,7 @@ type batchRuntimeClient struct {
 }
 
 type blockingMaterializingBackend struct {
+	unsupportedMachineStarts
 	started  chan string
 	canceled chan string
 	failID   string
@@ -48,9 +49,13 @@ type blockingCloseRuntimeSession struct {
 	once    sync.Once
 }
 
-type countingRuntimeBackend struct{ calls atomic.Int32 }
+type countingRuntimeBackend struct {
+	unsupportedMachineStarts
+	calls atomic.Int32
+}
 
 type cleanupRuntimeBackend struct {
+	unsupportedMachineStarts
 	cleaned []string
 	err     error
 }
