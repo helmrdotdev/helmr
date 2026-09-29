@@ -171,6 +171,8 @@ type GetComputerPreparationDeadlinesValidParams struct {
 	ID                     pgtype.UUID `json:"id"`
 }
 
+// Caller holds the preparation locks and rechecks after object writes, before
+// commit. Preparation and writer deadlines and Worker liveness use wall-clock time.
 func (q *Queries) GetComputerPreparationDeadlinesValid(ctx context.Context, arg GetComputerPreparationDeadlinesValidParams) (bool, error) {
 	row := q.db.QueryRow(ctx, getComputerPreparationDeadlinesValid,
 		arg.DesiredVersion,

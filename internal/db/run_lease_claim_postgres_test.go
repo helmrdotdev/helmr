@@ -48,7 +48,9 @@ func TestRunLeaseClaimReadinessFailsClosedWithoutObservation(t *testing.T) {
 	worker, err := fixture.queries.LockRunLeaseClaimReadyWorker(ctx, LockRunLeaseClaimReadyWorkerParams{
 		ID:            pgvalue.UUID(fixture.workerID),
 		WorkerGroupID: runLeaseTestWorkerGroup,
-		// No freshness window admits a worker without an observation.
+		// Mirrors workergroup.ObservationFreshnessSeconds; a literal because this
+		// in-package test cannot import workergroup without an import cycle. No
+		// freshness window admits a worker without an observation.
 		ObservationFreshnessSeconds: 120,
 	})
 	if err != nil {

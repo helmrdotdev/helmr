@@ -245,6 +245,8 @@ type Querier interface {
 	// Ready-Instance writer liveness for preparation readiness checks.
 	GetComputerInstanceWriterLive(ctx context.Context, arg GetComputerInstanceWriterLiveParams) (bool, error)
 	GetComputerListItemByKey(ctx context.Context, arg GetComputerListItemByKeyParams) (GetComputerListItemByKeyRow, error)
+	// Caller holds the preparation locks and rechecks after object writes, before
+	// commit. Preparation and writer deadlines and Worker liveness use wall-clock time.
 	GetComputerPreparationDeadlinesValid(ctx context.Context, arg GetComputerPreparationDeadlinesValidParams) (bool, error)
 	// The Computer and its live instance are locked before this read. A deployment
 	// must declare the same immutable spec; open or unreconciled program members pin

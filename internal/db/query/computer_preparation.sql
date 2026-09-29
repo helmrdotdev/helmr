@@ -69,6 +69,8 @@ WHERE c.environment_id=sqlc.arg(environment_id) AND c.id=sqlc.arg(computer_id)
  AND (cp.resume_computer_instance_id IS NULL OR cp.resume_computer_instance_id=i.id)
  AND (i.desired_state='closed' OR i.observed_state IN ('failed','lost','closed') OR i.reclaimed_at IS NOT NULL);
 
+-- Caller holds the preparation locks and rechecks after object writes, before
+-- commit. Preparation and writer deadlines and Worker liveness use wall-clock time.
 -- name: GetComputerPreparationDeadlinesValid :one
 SELECT (i.preparation_expires_at>clock_timestamp() AND i.writer_expires_at>clock_timestamp()
  AND i.desired_state='ready' AND i.desired_version=sqlc.arg(desired_version) AND i.reclaimed_at IS NULL

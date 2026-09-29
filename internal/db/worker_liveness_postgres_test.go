@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -419,4 +420,41 @@ func (clock testFenceClock) Now() time.Time { return clock.now }
 func (testFenceClock) Wait(ctx context.Context, _ time.Duration) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+func TestComputerInstanceWriterLiveAppliesWorkerStatusAndFreshness(t *testing.T) {
+	for _, test := range []struct {
+		name, sql     string
+		allowDraining bool
+		live          bool
+	}{
+		{"active", ``, false, true},
+		{"Run pause is not applied", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, false, true},
+		{"draining", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, false, false},
+		{"draining allowed", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, true, true},
+		{"stale observation", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, true, false},
+		{"expired writer", `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE worker_host_id=$1`, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := runtest.New(t)
+			work := f.AddRunLease(t, "assigned", time.Now())
+			var instanceID pgtype.UUID
+			if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&instanceID); err != nil {
+				t.Fatal(err)
+			}
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.Pool, test.sql, f.WorkerID)
+			}
+			live, err := db.New(f.Pool).GetComputerInstanceWriterLive(t.Context(), db.GetComputerInstanceWriterLiveParams{
+				ID: instanceID, AllowDraining: test.allowDraining,
+				WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if live != test.live {
+				t.Fatalf("writer live = %v, want %v", live, test.live)
+			}
+		})
+	}
 }
