@@ -5,22 +5,22 @@ import (
 	"math"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 )
 
 const mebibyte = int64(1024 * 1024)
 
-func runtimeCapacityKey(id string, epoch int64) capacity.Key {
-	return capacity.Key{Kind: "runtime", Epoch: epoch, ID: strings.TrimSpace(id)}
+func runtimeCapacityKey(id string, epoch int64) reservation.Key {
+	return reservation.Key{Kind: "runtime", Epoch: epoch, ID: strings.TrimSpace(id)}
 }
 
-func runtimeCapacityVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64) (capacity.Vector, error) {
+func runtimeCapacityVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB int64) (reservation.Vector, error) {
 	if memoryMiB < 0 || guestEphemeralDiskMiB < 0 ||
 		memoryMiB > math.MaxInt64/mebibyte ||
 		guestEphemeralDiskMiB > math.MaxInt64/mebibyte {
-		return capacity.Vector{}, errors.New("runtime capacity vector is invalid")
+		return reservation.Vector{}, errors.New("runtime capacity vector is invalid")
 	}
-	return capacity.Vector{
+	return reservation.Vector{
 		CPUMillis:               cpuMillis,
 		MemoryBytes:             memoryMiB * mebibyte,
 		GuestEphemeralDiskBytes: guestEphemeralDiskMiB * mebibyte,
@@ -33,13 +33,13 @@ func runtimeCapacityVectorWithProjection(
 	memoryMiB,
 	guestEphemeralDiskMiB,
 	projectionBytes int64,
-) (capacity.Vector, error) {
+) (reservation.Vector, error) {
 	request, err := runtimeCapacityVector(cpuMillis, memoryMiB, guestEphemeralDiskMiB)
 	if err != nil {
-		return capacity.Vector{}, err
+		return reservation.Vector{}, err
 	}
 	if projectionBytes < 0 || request.GuestEphemeralDiskBytes > math.MaxInt64-projectionBytes {
-		return capacity.Vector{}, errors.New("runtime arena projection capacity is invalid")
+		return reservation.Vector{}, errors.New("runtime arena projection capacity is invalid")
 	}
 	request.GuestEphemeralDiskBytes += projectionBytes
 	return request, nil

@@ -441,7 +441,7 @@ func computerBasicExecProtocol(err error) error {
 
 func (m ComputerMaterializer) dispatchComputerBasicExec(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	mount workerapi.ComputerInstanceAssignment,
 	exec workerapi.ComputerCommand,
 	client workerapi.ComputerMaterializerControlPlaneClient,
@@ -727,7 +727,7 @@ func (e computerMountFailure) Unwrap() error {
 	return e.err
 }
 
-func (m ComputerMaterializer) materializeSession(ctx context.Context, mount *workerapi.ComputerInstanceAssignment) (vm.Session, string, error) {
+func (m ComputerMaterializer) materializeSession(ctx context.Context, mount *workerapi.ComputerInstanceAssignment) (vm.Machine, string, error) {
 	if mount == nil {
 		return nil, "", computerMountFailure{code: "computer_mount_missing", err: errors.New("computer mount is required")}
 	}
@@ -1079,7 +1079,7 @@ func validateCachedArtifact(path string, artifact workerapi.CASObject) error {
 	return nil
 }
 
-func (m ComputerMaterializer) registerComputerMount(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
+func (m ComputerMaterializer) registerComputerMount(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
 	channelToken := m.channelToken(mount)
 	if channelToken == "" {
 		return errors.New("computer mount guest channel token is required")
@@ -1180,7 +1180,7 @@ func computerMountPhaseError(phases []*computerv0.ComputerMountPhase) string {
 	return ""
 }
 
-func (m ComputerMaterializer) registerComputerMountContext(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
+func (m ComputerMaterializer) registerComputerMountContext(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, computerInstanceID string) error {
 	result := make(chan error, 1)
 	go func() {
 		result <- m.registerComputerMount(ctx, session, mount, computerInstanceID)
@@ -1194,7 +1194,7 @@ func (m ComputerMaterializer) registerComputerMountContext(ctx context.Context, 
 	}
 }
 
-func (m ComputerMaterializer) stopControlledComputerMount(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) error {
+func (m ComputerMaterializer) stopControlledComputerMount(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) error {
 	// Persistence is completed by Instance save/checkpoint publication before
 	// its owner requests physical closure. Member completion cannot publish here.
 	if err := m.closeSession(session); err != nil {
@@ -1237,7 +1237,7 @@ func (m ComputerMaterializer) failureTimeout() time.Duration {
 	return 30 * time.Second
 }
 
-func (m ComputerMaterializer) closeSession(session vm.Session) error {
+func (m ComputerMaterializer) closeSession(session vm.Machine) error {
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
 	defer cancel()
 	return session.Close(ctx)

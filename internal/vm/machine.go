@@ -14,39 +14,47 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
-type RestoringConnector interface {
-	Restore(context.Context, RestoreRequest) (Session, error)
+type RestoringBackend interface {
+	Restore(context.Context, RestoreRequest) (Machine, error)
 }
 
-type MaterializingConnector interface {
-	Materialize(context.Context, MaterializeRequest) (Session, error)
+type MaterializingBackend interface {
+	Materialize(context.Context, MaterializeRequest) (Machine, error)
 }
 
 type Cleaner interface {
 	Cleanup(context.Context, Owner) error
 }
 
+// Backend starts machines by restore or materialization and cleans up their
+// host state by owner.
+type Backend interface {
+	RestoringBackend
+	MaterializingBackend
+	Cleaner
+}
+
 type Stream interface {
 	io.ReadWriteCloser
 }
 
-type Session interface {
+type Machine interface {
 	Stream() Stream
 	OpenStream(context.Context) (Stream, error)
 	Wait(context.Context) error
 	Close(context.Context) error
 }
 
-type CheckpointableSession interface {
-	Session
+type CheckpointableMachine interface {
+	Machine
 	SnapshotLimits() (SnapshotLimits, error)
 	CreateSnapshot(context.Context, SnapshotRequest) (SnapshotArtifact, error)
 }
 
-// ComputerCaptureSession holds customer execution and device dispatch until
+// ComputerCaptureMachine holds customer execution and device dispatch until
 // source release. It captures no RAM and does not authorize continuation.
-type ComputerCaptureSession interface {
-	Session
+type ComputerCaptureMachine interface {
+	Machine
 	SnapshotLimits() (SnapshotLimits, error)
 	PauseComputer(context.Context) (*ComputerSnapshot, error)
 }
@@ -82,10 +90,10 @@ type RuntimeTopology struct {
 }
 
 // RuntimeComputer transfers an exclusively owned working disk to the VM owner.
-// File is a private backing inode, valid through Materialize; the connector
+// File is a private backing inode, valid through Materialize; the backend
 // retains its own inode link. For a block device the Runtime must also retain its
 // attachment and export until the VMM and all device users are proven absent.
-// Device transfers that ownership to the connector when BindConsumer succeeds.
+// Device transfers that ownership to the backend when BindConsumer succeeds.
 // VersionID identifies the published source, not subsequent guest writes.
 type RuntimeComputer struct {
 	ComputerID string
@@ -180,7 +188,7 @@ type MaterializeRequest struct {
 	RecordPhase               func(RuntimePhase)
 }
 
-// WorkloadBinding is the closed logical authority that a connector binds to
+// WorkloadBinding is the closed logical authority that a backend binds to
 // its locally owned network attachment before a guest can receive input or
 // network access. Runtime workloads use their immutable Runtime Instance ID
 // with generation 1.

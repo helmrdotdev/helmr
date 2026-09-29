@@ -120,14 +120,14 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 	}
 }
 
-func computerPreparedRuntimePool(t *testing.T, mount workerapi.ComputerInstanceAssignment, session vm.Session) *PreparedRuntimePool {
+func computerPreparedRuntimePool(t *testing.T, mount workerapi.ComputerInstanceAssignment, session vm.Machine) *PreparedRuntimePool {
 	t.Helper()
 	target := runtimeCapacityTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
 	target.Source.ComputerID = mount.ComputerID
 	target.Source.WriterGeneration = mount.WriterGeneration
 	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestComputerMaterializerReleasesCheckoutOnRestoreProvenanceFailure(t *testi
 			if pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) {
 				t.Fatal("failed restore provenance retained runtime checkout")
 			}
-			if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+			if got := len(pool.Reservations.Snapshot().Reservations); got != 0 {
 				t.Fatalf("capacity reservations = %d, want 0", got)
 			}
 		})
@@ -677,7 +677,7 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 				closeErr:  closeFailure,
 			}
 			pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-			pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+			pool.Reservations = newPreparedRuntimeReservations(t, 1)
 			if err := pool.reserveRuntimeCapacity(target); err != nil {
 				t.Fatal(err)
 			}
@@ -723,23 +723,23 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 			if pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
 				t.Fatal("exited materializer retained checkout ownership")
 			}
-			if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+			if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 				t.Fatalf("capacity reservations after close failure = %d, want 1", got)
 			}
 			connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
-			pool.Connector = connector
+			pool.Backend = connector
 			control := &typedRuntimeClient{}
 			if err := pool.StopRuntimeTarget(context.Background(), control, target); err == nil {
 				t.Fatal("unproved host cleanup succeeded")
 			}
-			if len(pool.Capacity.Snapshot().Reservations) != 1 || len(control.closed) != 0 {
+			if len(pool.Reservations.Snapshot().Reservations) != 1 || len(control.closed) != 0 {
 				t.Fatal("released capacity or published proof before physical cleanup")
 			}
 			connector.err = nil
 			if err := pool.StopRuntimeTarget(context.Background(), control, target); err != nil {
 				t.Fatal(err)
 			}
-			if len(pool.Capacity.Snapshot().Reservations) != 0 || len(control.closed) != 1 || control.closed[0].CleanupProof == nil {
+			if len(pool.Reservations.Snapshot().Reservations) != 0 || len(control.closed) != 1 || control.closed[0].CleanupProof == nil {
 				t.Fatal("physical cleanup did not release capacity and publish proof")
 			}
 
@@ -850,7 +850,7 @@ func TestComputerMaterializerOwnsProgramStartFailureCleanup(t *testing.T) {
 		strings.Contains(got, "exec image runtime") {
 		t.Fatalf("failure error = %s", got)
 	}
-	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
+	if got := len(pool.Reservations.Snapshot().Reservations); got != 0 {
 		t.Fatalf("capacity reservations = %d, want 0", got)
 	}
 }
@@ -917,7 +917,7 @@ func TestComputerMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFai
 		strings.Contains(got, rawCause) {
 		t.Fatalf("failure error = %s", got)
 	}
-	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+	if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 		t.Fatalf("capacity reservations = %d, want 1 until cleanup is proven", got)
 	}
 }
@@ -1440,7 +1440,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	if pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) {
 		t.Fatal("exited materializer retained checkout ownership")
 	}
-	if len(pool.Capacity.Snapshot().Reservations) != 1 {
+	if len(pool.Reservations.Snapshot().Reservations) != 1 {
 		t.Fatal("released capacity before physical reclaim")
 	}
 	if raw.closeCount() != 1 {
@@ -1449,7 +1449,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	// Reconciliation receives a CP-authorized target after active leases expire.
 	// It must use host cleanup, not retry the cached session Close failure.
 	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
-	pool.Connector = connector
+	pool.Backend = connector
 	target := runtimeCapacityTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
 	target.Source.ComputerID = mount.ComputerID
 	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
@@ -1457,14 +1457,14 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	if err := pool.ReclaimFailedRuntimeTarget(ctx, control, target); err == nil {
 		t.Fatal("unproved host cleanup succeeded")
 	}
-	if len(pool.Capacity.Snapshot().Reservations) != 1 || len(control.failed) != 0 {
+	if len(pool.Reservations.Snapshot().Reservations) != 1 || len(control.failed) != 0 {
 		t.Fatal("released or published proof before physical cleanup")
 	}
 	connector.err = nil
 	if err := pool.ReclaimFailedRuntimeTarget(ctx, control, target); err != nil {
 		t.Fatal(err)
 	}
-	if pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) || len(pool.Capacity.Snapshot().Reservations) != 0 {
+	if pool.runtimeCheckedOut(mount.ComputerInstanceID, mount.RuntimeEpoch) || len(pool.Reservations.Snapshot().Reservations) != 0 {
 		t.Fatal("retained runtime after proved cleanup")
 	}
 	if len(control.failed) != 1 || control.failed[0].CleanupProof == nil || raw.closeCount() != 1 {

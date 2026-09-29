@@ -241,7 +241,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				t.Logf("%s capture=%d pause_and_capture=%s publish=%s", name, i, pause, time.Since(start))
 				verifyMarker(root)
 			}
-			cut, err := session.(vm.ComputerCaptureSession).PauseComputer(t.Context())
+			cut, err := session.(vm.ComputerCaptureMachine).PauseComputer(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}

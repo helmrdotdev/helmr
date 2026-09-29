@@ -16,7 +16,7 @@ import (
 // The Computer owner continues cleanup after a Run's own context/stream closes.
 // A failed CP acknowledgement is retried with the same Guest receipt; inability
 // to prove scoped termination instead requires the physical owner's failure path.
-func (m ComputerMaterializer) reconcileComputerRuns(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) error {
+func (m ComputerMaterializer) reconcileComputerRuns(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) error {
 	request := workerapi.ComputerRunCleanupRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration}
 	var failedLease string
 	var failures int
@@ -64,7 +64,7 @@ func (m ComputerMaterializer) reconcileComputerRuns(ctx context.Context, session
 	}
 }
 
-func (m ComputerMaterializer) cleanupComputerRun(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, member workerapi.ComputerRunCleanup) error {
+func (m ComputerMaterializer) cleanupComputerRun(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, member workerapi.ComputerRunCleanup) error {
 	if member.RunID == "" || member.RunLeaseID == "" || member.AttemptNumber == 0 {
 		return errors.New("incomplete Program cleanup identity")
 	}

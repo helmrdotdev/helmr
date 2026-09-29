@@ -15,11 +15,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -110,12 +110,12 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 			if failure == "capacity" {
 				admitted--
 			}
-			ledger, err := capacity.New(capacity.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: admitted})
+			ledger, err := reservation.New(reservation.Vector{CPUMillis: 1, MemoryBytes: 1, GuestEphemeralDiskBytes: admitted})
 			if err != nil {
 				t.Fatal(err)
 			}
 			client := &computerPreparationTransport{Store: objects, targets: map[string]workerapi.RuntimeReconcileTarget{target.ID: target}, fail: failure, key: bytes.Repeat([]byte{7}, 32)}
-			pool := &PreparedRuntimePool{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Capacity: ledger}
+			pool := &PreparedRuntimePool{TempDir: t.TempDir(), CAS: objects, ComputerRanges: objects, ComputerObjects: client, ComputerPreparation: client, ComputerStagingBytes: budget, Reservations: ledger}
 			disk, err := pool.prepareComputerGeneration(t.Context(), target)
 			if failure != "" {
 				if err == nil || disk != nil {
@@ -169,14 +169,14 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 
 func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *testing.T) {
 	store, mount := testComputerMountArtifacts(t)
-	connector := &blockingMaterializingConnector{
+	connector := &blockingMaterializingBackend{
 		started: make(chan string, 2), canceled: make(chan string, 2), failID: "runtime-0",
 	}
 	var logs bytes.Buffer
 	pool := NewPreparedRuntimePool(connector, store, 2, slog.New(slog.NewTextHandler(&logs, nil)))
 	pool.TempDir = t.TempDir()
 	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
-	pool.Capacity = newPreparedRuntimeCapacity(t, 2)
+	pool.Reservations = newPreparedRuntimeReservations(t, 2)
 	items := make([]workerapi.RuntimeReconcileTarget, 2)
 	for i := range items {
 		items[i] = runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
@@ -225,11 +225,11 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 
 func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.T) {
 	store, mount := testComputerMountArtifacts(t)
-	connector := &blockingMaterializingConnector{started: make(chan string, 1), canceled: make(chan string, 1)}
+	connector := &blockingMaterializingBackend{started: make(chan string, 1), canceled: make(chan string, 1)}
 	pool := NewPreparedRuntimePool(connector, store, 1, nil)
 	pool.TempDir = t.TempDir()
 	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
-	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	client := &typedRuntimeClient{}
 	pool.ComputerInstances = client
 	target := runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
@@ -307,7 +307,7 @@ func configureComputerPreparationTest(t *testing.T, pool *PreparedRuntimePool, t
 	pool.CAS = objects
 	pool.ComputerStagingBytes = 64 << 20
 	n := int64(len(targets))
-	pool.Capacity, err = capacity.New(capacity.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * (2*computer.SeedCapacity + pool.ComputerStagingBytes), VMSlots: n})
+	pool.Reservations, err = reservation.New(reservation.Vector{CPUMillis: 1000 * n, MemoryBytes: n * 512 << 20, GuestEphemeralDiskBytes: n * (2*computer.SeedCapacity + pool.ComputerStagingBytes), VMSlots: n})
 	if err != nil {
 		t.Fatal(err)
 	}

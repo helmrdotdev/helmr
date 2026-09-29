@@ -6,14 +6,14 @@ import (
 	"testing"
 )
 
-type limitedStartConnector struct {
+type limitedStartBackend struct {
 	started chan string
 	release chan struct{}
 	active  atomic.Int32
 	peak    atomic.Int32
 }
 
-func (c *limitedStartConnector) start(ctx context.Context, kind string) (Session, error) {
+func (c *limitedStartBackend) start(ctx context.Context, kind string) (Machine, error) {
 	active := c.active.Add(1)
 	defer c.active.Add(-1)
 	for {
@@ -31,17 +31,17 @@ func (c *limitedStartConnector) start(ctx context.Context, kind string) (Session
 	}
 }
 
-func (c *limitedStartConnector) Restore(ctx context.Context, _ RestoreRequest) (Session, error) {
+func (c *limitedStartBackend) Restore(ctx context.Context, _ RestoreRequest) (Machine, error) {
 	return c.start(ctx, "restore")
 }
-func (c *limitedStartConnector) Materialize(ctx context.Context, _ MaterializeRequest) (Session, error) {
+func (c *limitedStartBackend) Materialize(ctx context.Context, _ MaterializeRequest) (Machine, error) {
 	return c.start(ctx, "materialize")
 }
-func (*limitedStartConnector) Cleanup(context.Context, Owner) error { return nil }
+func (*limitedStartBackend) Cleanup(context.Context, Owner) error { return nil }
 
 func TestStartLimiterSharesOneHostWideBudgetAcrossStartKinds(t *testing.T) {
-	connector := &limitedStartConnector{started: make(chan string, 2), release: make(chan struct{}, 2)}
-	limiter, err := NewStartLimiter(connector, 1)
+	backend := &limitedStartBackend{started: make(chan string, 2), release: make(chan struct{}, 2)}
+	limiter, err := NewStartLimiter(backend, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,18 +49,18 @@ func TestStartLimiterSharesOneHostWideBudgetAcrossStartKinds(t *testing.T) {
 	go func() { _, err := limiter.Restore(context.Background(), RestoreRequest{}); done <- err }()
 	go func() { _, err := limiter.Materialize(context.Background(), MaterializeRequest{}); done <- err }()
 	for range 2 {
-		<-connector.started
-		if got := connector.active.Load(); got != 1 {
+		<-backend.started
+		if got := backend.active.Load(); got != 1 {
 			t.Fatalf("active starts = %d, want 1", got)
 		}
-		connector.release <- struct{}{}
+		backend.release <- struct{}{}
 	}
 	for range 2 {
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := connector.peak.Load(); got != 1 {
+	if got := backend.peak.Load(); got != 1 {
 		t.Fatalf("peak starts = %d, want 1", got)
 	}
 }

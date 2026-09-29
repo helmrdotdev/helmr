@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -51,8 +51,8 @@ func computerObject(object workerapi.CASObject) cas.Descriptor {
 	return cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 }
 
-func computerStagingKey(id string, epoch int64) capacity.Key {
-	return capacity.Key{Kind: "computer-staging", ID: strings.TrimSpace(id), Epoch: epoch}
+func computerStagingKey(id string, epoch int64) reservation.Key {
+	return reservation.Key{Kind: "computer-staging", ID: strings.TrimSpace(id), Epoch: epoch}
 }
 
 func (p *PreparedRuntimePool) computerPreparationDirectory(id string, epoch int64) string {

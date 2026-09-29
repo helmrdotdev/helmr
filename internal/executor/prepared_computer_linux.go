@@ -9,10 +9,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -39,11 +39,11 @@ func (p *PreparedRuntimePool) prepareComputerGeneration(ctx context.Context, tar
 	if err := validateComputerPreparationSource(target); err != nil {
 		return nil, err
 	}
-	if p.CAS == nil || p.ComputerRanges == nil || p.ComputerPreparation == nil || p.Capacity == nil || p.ComputerStagingBytes <= 0 {
+	if p.CAS == nil || p.ComputerRanges == nil || p.ComputerPreparation == nil || p.Reservations == nil || p.ComputerStagingBytes <= 0 {
 		return nil, errors.New("computer preparation requires storage, source authority and bounded staging admission")
 	}
-	created, err := p.Capacity.Reserve(computerStagingKey(target.ID, target.WorkerEpoch), capacity.Vector{GuestEphemeralDiskBytes: p.ComputerStagingBytes})
-	if errors.Is(err, capacity.ErrCapacityExceeded) || err == nil && !created {
+	created, err := p.Reservations.Reserve(computerStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{GuestEphemeralDiskBytes: p.ComputerStagingBytes})
+	if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil && !created {
 		return nil, errPreparedRuntimeCapacityBusy
 	}
 	if err != nil {

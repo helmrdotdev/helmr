@@ -16,7 +16,7 @@ import (
 // freezeComputerOnSession returns the complete captured identity only after the
 // guest confirms every member. The physical owner must exclude the source on an
 // uncertain response; this function never thaws it or closes the whole VM.
-func freezeComputerOnSession(ctx context.Context, session vm.Session, target workerapi.RuntimeReconcileTarget) (workerapi.CheckpointRecoveryPoint, error) {
+func freezeComputerOnSession(ctx context.Context, session vm.Machine, target workerapi.RuntimeReconcileTarget) (workerapi.CheckpointRecoveryPoint, error) {
 	request, err := computerFreezeRequest(target)
 	if err != nil {
 		return workerapi.CheckpointRecoveryPoint{}, err

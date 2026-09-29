@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"io"
 	"os"
 	"path/filepath"
@@ -33,7 +33,7 @@ func TestComputerCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T)
 
 	result, err := (&computerCheckpointer{publication: testCheckpointPublication,
 		session: session,
-		objects: store, capacity: testCheckpointCapacity(t),
+		objects: store, reservations: testCheckpointReservations(t),
 		encryptor: encryptor,
 		tempDir:   t.TempDir(),
 		computer:  testCheckpointComputerBase(),
@@ -371,9 +371,9 @@ func (s *checkpointSession) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
 }
 
-func testCheckpointCapacity(t *testing.T) *capacity.Ledger {
+func testCheckpointReservations(t *testing.T) *reservation.Ledger {
 	t.Helper()
-	ledger, err := capacity.New(capacity.Vector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 1 << 30})
+	ledger, err := reservation.New(reservation.Vector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 1 << 30})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestComputerCheckpointerPreservesCaptureAndReleaseErrors(t *testing.T) {
 	stream := checkpointFreezeStream(t, target)
 	captureErr, releaseErr := errors.New("snapshot failed"), errors.New("stop failed")
 	session := &checkpointSession{stream: stream, snapshotErr: captureErr, closeErr: releaseErr}
-	_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: &checkpointCAS{}, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }})
+	_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: &checkpointCAS{}, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }})
 	var cleanup *checkpointSourceReleaseError
 	if !errors.Is(err, captureErr) || !errors.Is(err, releaseErr) || !errors.As(err, &cleanup) {
 		t.Fatalf("lost failure: %v", err)
@@ -484,7 +484,7 @@ func TestComputerCheckpointerRejectsMismatchedSnapshotBeforePublication(t *testi
 			}
 			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: artifact}
 			store := &checkpointCAS{}
-			_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, capacity: testCheckpointCapacity(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error {
+			_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error {
 				t.Fatal("registered changed snapshot")
 				return nil
 			}})

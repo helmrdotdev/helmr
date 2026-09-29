@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (m ComputerMaterializer) cancelComputerCommand(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, request workerapi.ComputerCommandCancellation) error {
+func (m ComputerMaterializer) cancelComputerCommand(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, request workerapi.ComputerCommandCancellation) error {
 	r := request
 	if request.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || request.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("Command cancellation does not match the Instance"))

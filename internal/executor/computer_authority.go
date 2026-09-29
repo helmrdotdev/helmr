@@ -16,7 +16,7 @@ import (
 
 var errComputerControlTransport = errors.New("computer control transport")
 
-func renewComputerAuthorityOnSession(ctx context.Context, session vm.Session, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
+func renewComputerAuthorityOnSession(ctx context.Context, session vm.Machine, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
 	if session == nil {
 		return nil, errors.New("computer mount session is required")
 	}
@@ -60,7 +60,7 @@ func renewComputerAuthorityOnSession(ctx context.Context, session vm.Session, re
 
 func grantProgramResumeOnSession(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	request *computerv0.GrantProgramResumeRequest,
 ) (*programv0.ResumeAttach, error) {
 	if session == nil || request == nil || request.GetAuthority() == nil || request.GetAuthority().GetFence() == nil {

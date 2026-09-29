@@ -23,7 +23,7 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 	if _, err := computerFreezeRequest(target); err != nil {
 		return err
 	}
-	if p.ComputerCaptures == nil || p.Checkpoints == nil || p.CheckpointEncryptor == nil || p.ComputerObjects == nil || p.Capacity == nil || instances == nil {
+	if p.ComputerCaptures == nil || p.Checkpoints == nil || p.CheckpointEncryptor == nil || p.ComputerObjects == nil || p.Reservations == nil || instances == nil {
 		return errors.New("Computer capture dependencies are required")
 	}
 	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
@@ -61,11 +61,11 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 	if entry.target.Source.ComputerID != target.Source.ComputerID || entry.target.Source.WriterGeneration != target.Source.WriterGeneration {
 		return errors.New("Computer capture source ownership changed")
 	}
-	session, ok := entry.session.(vm.CheckpointableSession)
+	session, ok := entry.session.(vm.CheckpointableMachine)
 	if !ok {
 		return errors.New("Computer capture source cannot produce a checkpoint")
 	}
-	checkpointer := computerCheckpointer{session: session, capacity: p.Capacity, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(ComputerCheckpointRequest) computer.ContinuationPublication {
+	checkpointer := computerCheckpointer{session: session, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(ComputerCheckpointRequest) computer.ContinuationPublication {
 		return checkpointComputerPublisher{client: p.Checkpoints, objects: p.ComputerObjects, request: workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID}}
 	}}
 	retainCleanup := func() {

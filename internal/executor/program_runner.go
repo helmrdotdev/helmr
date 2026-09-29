@@ -14,12 +14,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
@@ -39,7 +39,7 @@ const (
 type ProgramRunner struct {
 	ComputerCaptures    *ComputerCaptureRuns
 	CheckpointObjects   cas.ImmutableStore
-	Capacity            *capacity.Ledger
+	Reservations        *reservation.Ledger
 	CAS                 cas.Store
 	CheckpointEncryptor *checkpoint.Encryptor
 	ComputerMounts      ComputerMountSessionRegistry
@@ -81,7 +81,7 @@ func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
 	return result
 }
 
-func readResumeAck(ctx context.Context, session vm.Session) (*programv0.ResumeAck, error) {
+func readResumeAck(ctx context.Context, session vm.Machine) (*programv0.ResumeAck, error) {
 	var ack programv0.ResumeAck
 	if err := readProtoFrameContext(ctx, session, &ack); err != nil {
 		return nil, err
@@ -91,7 +91,7 @@ func readResumeAck(ctx context.Context, session vm.Session) (*programv0.ResumeAc
 
 func readProtoFrameContext(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	message proto.Message,
 ) error {
 	return readProtoFrameFromReaderContext(ctx, session, session.Stream(), message)
@@ -99,7 +99,7 @@ func readProtoFrameContext(
 
 func readProtoFrameBoundedContext(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	maxBytes uint32,
 	message proto.Message,
 ) error {
@@ -118,7 +118,7 @@ func readProtoFrameBoundedContext(
 
 func readProtoFrameFromReaderContext(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	reader io.Reader,
 	message proto.Message,
 ) error {

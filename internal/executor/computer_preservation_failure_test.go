@@ -18,7 +18,7 @@ type saveFailureRegistry struct {
 	t *testing.T
 }
 
-func (r saveFailureRegistry) RegisterComputerMountSession(m workerapi.ComputerInstanceAssignment, s vm.Session, _ string) func() {
+func (r saveFailureRegistry) RegisterComputerMountSession(m workerapi.ComputerInstanceAssignment, s vm.Machine, _ string) func() {
 	return func() {}
 }
 func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {

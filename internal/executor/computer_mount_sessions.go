@@ -22,15 +22,15 @@ type CheckpointSourceReleaser interface {
 }
 
 type ComputerMountSessionRegistry interface {
-	RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session vm.Session, channelToken string) func()
+	RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session vm.Machine, channelToken string) func()
 	OpenComputerInstanceSession(context.Context, string) (ComputerMountSession, error)
 	FailComputerInstanceSession(context.Context, string) error
 	RenewComputerAuthority(context.Context, *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error)
 }
 
 type ComputerMountSession struct {
-	Session        vm.Session
-	ControlSession vm.Session
+	Session        vm.Machine
+	ControlSession vm.Machine
 	ChannelToken   string
 	Mount          workerapi.ComputerInstanceAssignment
 }
@@ -45,7 +45,7 @@ type ComputerMountSessions struct {
 }
 
 type computerMountSessionEntry struct {
-	session      vm.Session
+	session      vm.Machine
 	channelToken string
 	mount        workerapi.ComputerInstanceAssignment
 }
@@ -54,7 +54,7 @@ func NewComputerMountSessions() *ComputerMountSessions {
 	return &ComputerMountSessions{sessions: map[string]computerMountSessionEntry{}}
 }
 
-func (s *ComputerMountSessions) RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session vm.Session, channelToken string) func() {
+func (s *ComputerMountSessions) RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session vm.Machine, channelToken string) func() {
 	id := strings.TrimSpace(mount.ComputerInstanceID)
 	if id == "" || session == nil {
 		return func() {}
@@ -154,7 +154,7 @@ func validateComputerMountPhysicalAuthority(
 
 type managedComputerMountSession struct {
 	saves                        runtimeComputerSaves
-	session                      vm.Session
+	session                      vm.Machine
 	mu                           sync.RWMutex
 	closeAttempt                 *computerSessionClose
 	releaseForCheckpointStarted  bool
@@ -164,7 +164,7 @@ type managedComputerMountSession struct {
 	failureRequests              chan computerMountFailureRequest
 }
 
-func newManagedComputerMountSession(session vm.Session) *managedComputerMountSession {
+func newManagedComputerMountSession(session vm.Machine) *managedComputerMountSession {
 	return &managedComputerMountSession{
 		session:                  session,
 		releaseForCheckpointDone: make(chan struct{}),
@@ -249,7 +249,7 @@ func (s *managedComputerMountSession) CreateSnapshot(ctx context.Context, reques
 		return vm.SnapshotArtifact{}, err
 	}
 
-	checkpointable, ok := s.session.(vm.CheckpointableSession)
+	checkpointable, ok := s.session.(vm.CheckpointableMachine)
 	if !ok {
 		return vm.SnapshotArtifact{}, errors.New("computer mount session does not support checkpoint snapshots")
 	}
@@ -307,13 +307,13 @@ func (s *managedComputerMountSession) CheckpointReleaseResult(ctx context.Contex
 }
 
 type borrowedRunSession struct {
-	parent vm.Session
+	parent vm.Machine
 	stream vm.Stream
 	once   sync.Once
 	err    error
 }
 
-func newBorrowedRunSession(parent vm.Session, stream vm.Stream) vm.Session {
+func newBorrowedRunSession(parent vm.Machine, stream vm.Stream) vm.Machine {
 	return &borrowedRunSession{parent: parent, stream: stream}
 }
 
@@ -350,7 +350,7 @@ func (s *borrowedRunSession) ReleaseCheckpointSource(ctx context.Context) error 
 }
 
 func (s *borrowedRunSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
-	checkpointable, ok := s.parent.(vm.CheckpointableSession)
+	checkpointable, ok := s.parent.(vm.CheckpointableMachine)
 	if !ok {
 		return vm.SnapshotArtifact{}, errors.New("computer mount session does not support checkpoint snapshots")
 	}
@@ -362,7 +362,7 @@ func (s *borrowedRunSession) CreateSnapshot(ctx context.Context, request vm.Snap
 }
 
 func (s *managedComputerMountSession) SnapshotLimits() (vm.SnapshotLimits, error) {
-	c, ok := s.session.(vm.CheckpointableSession)
+	c, ok := s.session.(vm.CheckpointableMachine)
 	if !ok {
 		return vm.SnapshotLimits{}, errors.New("session does not support checkpoints")
 	}
@@ -370,7 +370,7 @@ func (s *managedComputerMountSession) SnapshotLimits() (vm.SnapshotLimits, error
 }
 
 func (s *borrowedRunSession) SnapshotLimits() (vm.SnapshotLimits, error) {
-	c, ok := s.parent.(vm.CheckpointableSession)
+	c, ok := s.parent.(vm.CheckpointableMachine)
 	if !ok {
 		return vm.SnapshotLimits{}, errors.New("session does not support checkpoints")
 	}
@@ -382,14 +382,14 @@ func (s *managedComputerMountSession) PauseComputer(ctx context.Context) (*vm.Co
 		return nil, err
 	}
 
-	capture, ok := s.session.(vm.ComputerCaptureSession)
+	capture, ok := s.session.(vm.ComputerCaptureMachine)
 	if !ok {
 		return nil, errors.New("mounted session cannot capture a Computer")
 	}
 	return capture.PauseComputer(ctx)
 }
 func (s *borrowedRunSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
-	capture, ok := s.parent.(vm.ComputerCaptureSession)
+	capture, ok := s.parent.(vm.ComputerCaptureMachine)
 	if !ok {
 		return nil, errors.New("mounted session cannot capture a Computer")
 	}
