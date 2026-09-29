@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -393,7 +392,7 @@ func writeVerifiedProgramFixture(
 			t.Fatal(err)
 		}
 	}
-	inputDigest, err := deployment.ProgramPayloadDigest(t.Context(), inputRoot)
+	inputDigest, err := ProgramPayloadDigest(t.Context(), inputRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

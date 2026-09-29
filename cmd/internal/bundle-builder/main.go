@@ -125,7 +125,7 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("parse expected build plan: %w", err)
 	}
-	actualPlan, err := definition.ParseBuildPlan([]byte(result.Verification.Succeeded.Files[0].Content))
+	actualPlan, err := definition.ParseBuildPlan(result.Verification.BuildPlan())
 	if err != nil {
 		return err
 	}

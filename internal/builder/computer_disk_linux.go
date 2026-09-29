@@ -8,11 +8,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
 func buildComputerDisk(ctx context.Context, source, target, scratch, mkfs, config string) (bundle.ComputerImageArtifact, error) {
-	seed, err := substrate.BuildSeed(ctx, source, target, scratch, mkfs, config, computer.SeedCapacity)
+	seed, err := BuildSeed(ctx, source, target, scratch, mkfs, config, computer.SeedCapacity)
 	if err != nil {
 		return bundle.ComputerImageArtifact{}, err
 	}

@@ -22,13 +22,13 @@ func ComputerBuilds(plan definition.BuildPlan) ([]ComputerBuild, error) {
 		return nil, err
 	}
 	builds := make([]ComputerBuild, 0)
-	for _, definition := range plan.Definitions {
-		if definition.Sandbox == nil {
+	for _, declared := range plan.Definitions {
+		if declared.Sandbox == nil {
 			continue
 		}
 		builds = append(builds, ComputerBuild{
-			DeclaredID: definition.DeclaredID,
-			Build:      definition.Sandbox.ImageBuild,
+			DeclaredID: declared.DeclaredID,
+			Build:      declared.Sandbox.ImageBuild,
 		})
 	}
 	sort.Slice(builds, func(left, right int) bool {

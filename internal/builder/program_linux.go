@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 const (
@@ -55,7 +54,7 @@ type PreparedProgramInput struct {
 type ProgramResult struct {
 	Program      artifact.ProgramOutput
 	Config       artifact.BuildConfig
-	Verification deployment.VerificationResult
+	Verification VerificationResult
 	ObjectPath   string
 }
 
@@ -104,7 +103,7 @@ func PrepareProgram(
 	if err != nil {
 		return err
 	}
-	verificationRaw, err := deployment.CanonicalVerificationResult(verification)
+	verificationRaw, err := CanonicalVerificationResult(verification)
 	if err != nil {
 		return err
 	}
@@ -117,7 +116,7 @@ func PrepareProgram(
 	if err := copyPayload(input.ProjectDirectory, filepath.Join(stage, "payload")); err != nil {
 		return err
 	}
-	planRaw := []byte(verification.Succeeded.Files[0].Content)
+	planRaw := verification.BuildPlan()
 	if err := writeExclusiveFile(filepath.Join(stage, "build-plan.json"), planRaw); err != nil {
 		return err
 	}
@@ -164,7 +163,7 @@ func BuildPreparedProgram(
 	if err := copyPayload(filepath.Join(input.PreparedDirectory, "payload"), payload); err != nil {
 		return ProgramResult{}, err
 	}
-	actual, err := deployment.ProgramPayloadDigest(ctx, payload)
+	actual, err := ProgramPayloadDigest(ctx, payload)
 	if err != nil {
 		return ProgramResult{}, err
 	}
@@ -177,7 +176,7 @@ func BuildPreparedProgram(
 	treeArchive, cleanupArchive, err := archive.CreateTarWithOptionsContext(ctx, payload, input.WorkDirectory, archive.TarOptions{
 		CanonicalMetadata: true,
 		MaxBytes:          artifact.MaxProgramLogicalBytes,
-		MaxArchiveBytes:   deployment.MaxBuildTreeStreamBytes,
+		MaxArchiveBytes:   maxBuildTreeStreamBytes,
 		MaxNameBytes:      artifact.MaxNameBytes,
 		MaxFileBytes:      artifact.MaxFileSize,
 		MaxEntries:        artifact.MaxProgramTreeEntries - 1, // SquashFS adds the root.
@@ -190,7 +189,7 @@ func BuildPreparedProgram(
 	if err != nil {
 		return ProgramResult{}, fmt.Errorf("open installed Program tree: %w", err)
 	}
-	tree, ingestErr := deployment.IngestBuildTreeArchive(
+	tree, ingestErr := IngestBuildTreeArchive(
 		ctx,
 		work,
 		input.SquashFSEncoder,
@@ -208,7 +207,7 @@ func BuildPreparedProgram(
 	if err != nil {
 		return ProgramResult{}, err
 	}
-	program, err := deployment.EncodeProgram(
+	program, err := EncodeProgram(
 		ctx,
 		input.WorkDirectory,
 		input.SquashFSEncoder,
@@ -224,7 +223,7 @@ func BuildPreparedProgram(
 		return ProgramResult{}, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, program.Close()) }()
-	if err := deployment.ValidateVerifiedProgram(verification, program.Output.Index); err != nil {
+	if err := ValidateVerifiedProgram(verification, program.Output.Index); err != nil {
 		return ProgramResult{}, err
 	}
 	if err := program.Materialize(ctx, input.ProgramObjectPath); err != nil {
@@ -243,28 +242,28 @@ func analyzePayload(
 	input ProgramInput,
 	work string,
 	compilerOutput string,
-) (artifact.BuildConfig, deployment.VerificationResult, error) {
-	inputDigest, err := deployment.ProgramPayloadDigest(ctx, input.ProjectDirectory)
+) (artifact.BuildConfig, VerificationResult, error) {
+	inputDigest, err := ProgramPayloadDigest(ctx, input.ProjectDirectory)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	flags, err := artifact.NodeLanguageFlags(input.RuntimeMetadata.NodeVersion)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	// The config was evaluated once on the invoking host; this phase only reads
 	// its resolved discovery settings and never imports helmr.config.ts.
 	config, err := readResolvedConfig(input.ConfigPath)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	canonicalConfig, err := artifact.CanonicalBuildConfig(config)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	configPath := filepath.Join(work, "config.json")
 	if err := os.WriteFile(configPath, canonicalConfig, 0o600); err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("write canonical Helmr config: %w", err)
+		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("write canonical Helmr config: %w", err)
 	}
 	verificationFrame, err := runAnalysisCommand(ctx, analysisCommand{
 		NodePath: input.NodePath,
@@ -273,30 +272,30 @@ func analyzePayload(
 		Directory: filepath.Dir(input.ProjectDirectory), WorkDir: work,
 	})
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("compile Helmr Program: %w", err)
+		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("compile Helmr Program: %w", err)
 	}
-	verification, err := deployment.ReadVerificationResultFrame(bytes.NewReader(verificationFrame))
+	verification, err := ReadVerificationResultFrame(bytes.NewReader(verificationFrame))
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
-	if verification.Outcome != deployment.VerificationOutcomeSucceeded {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf(
+	if verification.Outcome != VerificationOutcomeSucceeded {
+		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf(
 			"compile Helmr Program: %s", verification.Failed.Error.Message)
 	}
 	raw, err := readBoundedRegularFile(filepath.Join(compilerOutput, "helmr/compiler-result.json"), compilerDocumentLimit)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	result, err := artifact.ParseProgramCompilerResult(raw)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
-	after, err := deployment.ProgramPayloadDigest(ctx, input.ProjectDirectory)
+	after, err := ProgramPayloadDigest(ctx, input.ProjectDirectory)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	if after != inputDigest || result.PayloadDigest != inputDigest || result.Bundler != input.Compiler.Bundler || result.NodeVersion != input.RuntimeMetadata.NodeVersion {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, errors.New("compiled Program input or language authority changed during preparation")
+		return artifact.BuildConfig{}, VerificationResult{}, errors.New("compiled Program input or language authority changed during preparation")
 	}
 	return config, verification, nil
 }
@@ -380,53 +379,53 @@ func validatePreparedProgramInput(input PreparedProgramInput) error {
 	return nil
 }
 
-func readPreparedProgram(directory string) (artifact.BuildConfig, deployment.VerificationResult, error) {
+func readPreparedProgram(directory string) (artifact.BuildConfig, VerificationResult, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("read prepared Program: %w", err)
+		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("read prepared Program: %w", err)
 	}
 	want := map[string]bool{"compiler-output": false, "config.json": false, "verification.json": false, "payload": false, "build-plan.json": false}
 	for _, entry := range entries {
 		if _, ok := want[entry.Name()]; !ok {
-			return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("prepared Program contains unexpected path %q", entry.Name())
+			return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("prepared Program contains unexpected path %q", entry.Name())
 		}
 		want[entry.Name()] = true
 	}
 	for name, present := range want {
 		if !present {
-			return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("prepared Program is missing %q", name)
+			return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("prepared Program is missing %q", name)
 		}
 	}
 	compilerOutput, err := os.Lstat(filepath.Join(directory, "compiler-output"))
 	if err != nil || compilerOutput.Mode()&os.ModeSymlink != 0 || !compilerOutput.IsDir() {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, errors.New("prepared compiler output is not a directory")
+		return artifact.BuildConfig{}, VerificationResult{}, errors.New("prepared compiler output is not a directory")
 	}
 	configRaw, err := readBoundedRegularFile(filepath.Join(directory, "config.json"), compilerDocumentLimit)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("read prepared config: %w", err)
+		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("read prepared config: %w", err)
 	}
 	config, err := artifact.ParseBuildConfig(configRaw)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
 	verificationRaw, err := readBoundedRegularFile(filepath.Join(directory, "verification.json"), compilerResultChannelLimit)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, fmt.Errorf("read prepared verification: %w", err)
+		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("read prepared verification: %w", err)
 	}
-	verification, err := deployment.ParseVerificationResult(verificationRaw)
+	verification, err := ParseVerificationResult(verificationRaw)
 	if err != nil {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
+		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
-	if verification.Outcome != deployment.VerificationOutcomeSucceeded || verification.Succeeded == nil || len(verification.Succeeded.Files) == 0 {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, errors.New("prepared verification did not succeed")
+	if verification.Outcome != VerificationOutcomeSucceeded || verification.Succeeded == nil || len(verification.Succeeded.Files) == 0 {
+		return artifact.BuildConfig{}, VerificationResult{}, errors.New("prepared verification did not succeed")
 	}
 	payload, err := os.Lstat(filepath.Join(directory, "payload"))
 	if err != nil || !payload.IsDir() || payload.Mode()&os.ModeSymlink != 0 {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, errors.New("prepared payload is not a directory")
+		return artifact.BuildConfig{}, VerificationResult{}, errors.New("prepared payload is not a directory")
 	}
 	plan, err := readBoundedRegularFile(filepath.Join(directory, "build-plan.json"), compilerDocumentLimit)
-	if err != nil || !bytes.Equal(plan, []byte(verification.Succeeded.Files[0].Content)) {
-		return artifact.BuildConfig{}, deployment.VerificationResult{}, errors.New("prepared plan does not match analysis")
+	if err != nil || !bytes.Equal(plan, verification.BuildPlan()) {
+		return artifact.BuildConfig{}, VerificationResult{}, errors.New("prepared plan does not match analysis")
 	}
 
 	return config, verification, nil
