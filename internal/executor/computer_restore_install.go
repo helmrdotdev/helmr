@@ -16,7 +16,7 @@ type computerRestoreAcknowledger interface {
 	AcknowledgeComputerRestore(context.Context, workerapi.ComputerRestoreAckRequest) (workerapi.ComputerRestoreAckResponse, error)
 }
 
-func activateRestoredComputerOnSession(ctx context.Context, session vm.Session, control computerRestoreAcknowledger, request *computerv0.ComputerRestoreInstallation) error {
+func activateRestoredComputerOnSession(ctx context.Context, session vm.Machine, control computerRestoreAcknowledger, request *computerv0.ComputerRestoreInstallation) error {
 	if session == nil || control == nil || request == nil || request.Envelope == nil || request.CheckpointId == "" || request.DesiredVersion <= 0 {
 		return errors.New("complete restore installation and control plane are required")
 	}
@@ -40,7 +40,7 @@ func activateRestoredComputerOnSession(ctx context.Context, session vm.Session, 
 	return sendComputerRestoreInstallation(ctx, session, request, wire.StreamTypeComputerRestoreActivate)
 }
 
-func sendComputerRestoreInstallation(ctx context.Context, session vm.Session, request *computerv0.ComputerRestoreInstallation, kind wire.StreamType) error {
+func sendComputerRestoreInstallation(ctx context.Context, session vm.Machine, request *computerv0.ComputerRestoreInstallation, kind wire.StreamType) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ type ComputerRestoreControl interface {
 	GetComputerRestorePlan(context.Context, workerapi.ComputerRestorePlanRequest) (workerapi.ComputerRestorePlanResponse, error)
 }
 
-func (m ComputerMaterializer) activateRestore(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment) error {
+func (m ComputerMaterializer) activateRestore(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment) error {
 	if m.RestoreControl == nil {
 		return errors.New("Computer restore control plane is required")
 	}

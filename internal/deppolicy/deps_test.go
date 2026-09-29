@@ -71,7 +71,7 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 		"./internal/artifact/verify",
 		"./internal/builder",
 		"./internal/bundle",
-		"./internal/capacity",
+		"./internal/reservation",
 		"./internal/definition",
 		"./internal/hostconfig",
 	}

@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"golang.org/x/sync/errgroup"
@@ -26,7 +26,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	topology vm.RuntimeTopology,
 	readOnlyDrives []vm.ReadOnlyDrive,
 	record func(vm.RuntimePhase),
-) (result vm.Session, retErr error) {
+) (result vm.Machine, retErr error) {
 	restore := target.Source.Restore
 	if restore == nil {
 		return nil, errors.New("prepared runtime restore authority is required")
@@ -35,14 +35,14 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	if err != nil {
 		return nil, err
 	}
-	restoring, ok := p.Connector.(vm.RestoringConnector)
+	restoring, ok := p.Backend.(vm.RestoringBackend)
 	if !ok {
 		return nil, errors.New("connector does not support checkpoint restore")
 	}
 	if p.CAS == nil || p.CheckpointEncryptor == nil {
 		return nil, errors.New("prepared runtime restore CAS and encryption are required")
 	}
-	if p.Capacity == nil {
+	if p.Reservations == nil {
 		return nil, errors.New("restore capacity ledger is required")
 	}
 	_, staging, err := p.checkpointRestoreCapacity(target)
@@ -50,7 +50,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		return nil, err
 	}
 	key := restoreStagingKey(target.ID, target.WorkerEpoch)
-	if p.Capacity.Snapshot().Reservations[key].GuestEphemeralDiskBytes != staging {
+	if p.Reservations.Snapshot().Reservations[key].GuestEphemeralDiskBytes != staging {
 		return nil, errors.New("checkpoint restore staging was not reserved")
 	}
 	directory := p.restorePreparationDirectory(target.ID, target.WorkerEpoch)
@@ -60,7 +60,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	defer func() {
 		cleanupErr := os.RemoveAll(directory)
 		if cleanupErr == nil {
-			cleanupErr = p.Capacity.Release(key)
+			cleanupErr = p.Reservations.Release(key)
 		}
 		if cleanupErr != nil {
 			if result != nil {
@@ -136,8 +136,8 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	return session, nil
 }
 
-func restoreStagingKey(id string, epoch int64) capacity.Key {
-	return capacity.Key{Kind: "checkpoint-restore", ID: id, Epoch: epoch}
+func restoreStagingKey(id string, epoch int64) reservation.Key {
+	return reservation.Key{Kind: "checkpoint-restore", ID: id, Epoch: epoch}
 }
 func (p *PreparedRuntimePool) restorePreparationDirectory(id string, epoch int64) string {
 	root := strings.TrimSpace(p.TempDir)
@@ -171,7 +171,7 @@ func (p *PreparedRuntimePool) checkpointRestoreCapacity(target workerapi.Runtime
 			return 0, 0, err
 		}
 		if artifact.SizeBytes >= math.MaxInt64-staging {
-			return 0, 0, capacity.ErrOverflow
+			return 0, 0, reservation.ErrOverflow
 		}
 		staging += artifact.SizeBytes
 	}
@@ -184,7 +184,7 @@ func (p *PreparedRuntimePool) checkpointRestoreCapacity(target workerapi.Runtime
 	}
 	state := checkpoint.RuntimeState.VMStateArtifact.SizeBytes
 	if state > math.MaxInt64-retained {
-		return 0, 0, capacity.ErrOverflow
+		return 0, 0, reservation.ErrOverflow
 	}
 	retained += state
 	return retained, staging, nil

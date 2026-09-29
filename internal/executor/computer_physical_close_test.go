@@ -58,17 +58,17 @@ func TestPhysicalCloseRetainsResourcesWithoutProofWhenDeviceCleanupFails(t *test
 	if !errors.Is(err, device.err) || client.stops != 0 {
 		t.Fatalf("err=%v stops=%d", err, client.stops)
 	}
-	if pool.runtimeCheckedOut(ref.id, ref.epoch) || len(pool.Capacity.Snapshot().Reservations) != 1 || pool.computerDevices[ref] == nil {
+	if pool.runtimeCheckedOut(ref.id, ref.epoch) || len(pool.Reservations.Snapshot().Reservations) != 1 || pool.computerDevices[ref] == nil {
 		t.Fatal("exited checkout must relinquish ownership while retaining uncleaned resources")
 	}
-	pool.Connector = &cleanupRuntimeConnector{}
+	pool.Backend = &cleanupRuntimeBackend{}
 	device.err = nil
-	target := runtimeCapacityTarget(ref.id, ref.epoch)
+	target := runtimeReservationTarget(ref.id, ref.epoch)
 	control := &typedRuntimeClient{}
 	if err := pool.StopRuntimeTarget(t.Context(), control, target); err != nil {
 		t.Fatal(err)
 	}
-	if len(pool.Capacity.Snapshot().Reservations) != 0 || len(control.closed) != 1 || control.closed[0].CleanupProof == nil {
+	if len(pool.Reservations.Snapshot().Reservations) != 0 || len(control.closed) != 1 || control.closed[0].CleanupProof == nil {
 		t.Fatal("cleanup did not release resources and publish proof")
 	}
 }

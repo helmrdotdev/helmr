@@ -11,11 +11,11 @@ import (
 	"os"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/filepack"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -54,7 +54,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *checkpoint.Encryptor
 	}
 	for _, n := range sizes {
 		if n > math.MaxInt64-limits.total {
-			return checkpointStagingLimits{}, capacity.ErrOverflow
+			return checkpointStagingLimits{}, reservation.ErrOverflow
 		}
 		limits.total += n
 	}
@@ -68,7 +68,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 	if _, err := computerFreezeRequest(request.Target); err != nil {
 		return result, err
 	}
-	var key capacity.Key
+	var key reservation.Key
 	var reserved bool
 	var otherOwner bool
 	var directory string
@@ -108,7 +108,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 			stopErr = stopSource()
 		}
 		if cleanupErr == nil && stopErr == nil && reserved {
-			cleanupErr = c.capacity.Release(key)
+			cleanupErr = c.reservations.Release(key)
 		}
 		if err := errors.Join(cleanupErr, stopErr); err != nil {
 			c.pendingCleanup = func() error {
@@ -121,7 +121,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 				}
 				cleanup = errors.Join(cleanup, removeCheckpointSnapshot(artifact))
 				if cleanup == nil && reserved {
-					cleanup = c.capacity.Release(key)
+					cleanup = c.reservations.Release(key)
 				}
 				return cleanup
 			}
@@ -129,7 +129,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 		}
 	}()
 
-	if c.capacity == nil || c.objects == nil || c.encryptor == nil || request.Register == nil || c.publication == nil {
+	if c.reservations == nil || c.objects == nil || c.encryptor == nil || request.Register == nil || c.publication == nil {
 		return result, errors.New("checkpoint capacity, immutable storage, encryption and registration are required")
 	}
 	shape, err := c.session.SnapshotLimits()
@@ -140,10 +140,10 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 	if err != nil {
 		return result, err
 	}
-	key = capacity.Key{Kind: "checkpoint-staging", ID: request.Target.Capture.CheckpointID, Epoch: request.Target.DesiredVersion}
-	reserved, err = c.capacity.Reserve(key, capacity.Vector{GuestEphemeralDiskBytes: limits.total})
+	key = reservation.Key{Kind: "checkpoint-staging", ID: request.Target.Capture.CheckpointID, Epoch: request.Target.DesiredVersion}
+	reserved, err = c.reservations.Reserve(key, reservation.Vector{GuestEphemeralDiskBytes: limits.total})
 	if err != nil {
-		if errors.Is(err, capacity.ErrDuplicateReservation) {
+		if errors.Is(err, reservation.ErrDuplicateReservation) {
 			otherOwner = true
 		}
 		return result, err

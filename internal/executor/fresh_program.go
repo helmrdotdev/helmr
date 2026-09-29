@@ -70,7 +70,7 @@ type freshProgramEventSink interface {
 type freshProgram struct {
 	protocol         *programProtocol
 	execution        *programv0.SessionExecution
-	session          vm.Session
+	session          vm.Machine
 	mount            workerapi.ComputerInstanceAssignment
 	lease            workerapi.RunLeaseAssignment
 	authority        *computerv0.ComputerRunAuthority
@@ -983,7 +983,7 @@ func (r ProgramRunner) startNewProgram(
 
 func writeFreshProgramContext(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	write func(vm.Stream) error,
 ) error {
 	if err := ctx.Err(); err != nil {
@@ -1006,7 +1006,7 @@ func writeFreshProgramContext(
 
 func readFreshEntrypointReady(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	lease workerapi.RunLeaseAssignment,
 	events freshProgramEventSink,
 	observedEventSeq *uint64,

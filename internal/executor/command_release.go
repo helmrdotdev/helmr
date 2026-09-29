@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func (m ComputerMaterializer) releaseComputerCommand(ctx context.Context, session vm.Session, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerMaterializerControlPlaneClient) error {
+func (m ComputerMaterializer) releaseComputerCommand(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerMaterializerControlPlaneClient) error {
 	r := release.Completion
 	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.OrgID != mount.OrgID || release.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("Command release does not match the Instance"))

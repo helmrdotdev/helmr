@@ -40,9 +40,9 @@ import (
 )
 
 var (
-	_ vm.RestoringConnector     = (*QualifiedRuntime)(nil)
-	_ vm.MaterializingConnector = (*QualifiedRuntime)(nil)
-	_ vm.Cleaner                = (*QualifiedRuntime)(nil)
+	_ vm.RestoringBackend     = (*QualifiedRuntime)(nil)
+	_ vm.MaterializingBackend = (*QualifiedRuntime)(nil)
+	_ vm.Cleaner              = (*QualifiedRuntime)(nil)
 )
 
 func TestRuntimeCandidateDoesNotExposeWorkloadInterfaces(t *testing.T) {

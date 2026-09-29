@@ -13,7 +13,7 @@ import (
 
 func verifyRestoredComputerOnSession(
 	ctx context.Context,
-	session vm.Session,
+	session vm.Machine,
 	request *computerv0.VerifyComputerRestoreRequest,
 ) error {
 	if session == nil || request == nil || request.GetIdentity() == nil {

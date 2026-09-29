@@ -14,7 +14,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
@@ -23,6 +22,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/worker"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -177,7 +177,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
 	vmResources := resolveVMResources(cfg)
-	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
+	runtimeBackend, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
@@ -207,7 +207,7 @@ func run(log *slog.Logger) error {
 		VMGuestEphemeralDiskBytes: diskCapacity.VMGuestEphemeralDiskBytes,
 		ExecutionSlotsAvailable:   int32(allocatable.Slots),
 	}
-	hostCapacity, err := capacity.New(capacity.Vector{
+	hostReservations, err := reservation.New(reservation.Vector{
 		CPUMillis:               workerCapabilities.MaxVCPUs * 1000,
 		MemoryBytes:             workerCapabilities.MaxMemoryMiB * 1024 * 1024,
 		GuestEphemeralDiskBytes: workerCapabilities.GuestEphemeralDiskBytes,
@@ -231,7 +231,7 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	if runtimeCapacity.preparedPoolSize > 0 {
-		preparedRuntimePool = executor.NewPreparedRuntimePool(runtimeConnector, store, runtimeCapacity.preparedPoolSize, log)
+		preparedRuntimePool = executor.NewPreparedRuntimePool(runtimeBackend, store, runtimeCapacity.preparedPoolSize, log)
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
 		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
@@ -248,7 +248,7 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		preparedRuntimePool.ComputerInstances = controlPlaneClient
-		preparedRuntimePool.Capacity = hostCapacity
+		preparedRuntimePool.Reservations = hostReservations
 		preparedRuntimePool.PlatformStore = platformStore
 		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
@@ -256,7 +256,7 @@ func run(log *slog.Logger) error {
 	}
 	runLeaseTasks := executor.ProgramRunner{
 		ComputerCaptures:  computerCaptures,
-		CheckpointObjects: store, Capacity: hostCapacity,
+		CheckpointObjects: store, Reservations: hostReservations,
 		CAS:                 store,
 		CheckpointEncryptor: checkpointEncryptor,
 		ComputerMounts:      computerMountSessions,
@@ -270,7 +270,7 @@ func run(log *slog.Logger) error {
 			RunLeaseTasks: runLeaseTasks,
 		},
 		workerCapabilities,
-		worker.WithCapacity(hostCapacity),
+		worker.WithReservations(hostReservations),
 		worker.WithPollEvery(cfg.PollEvery),
 		worker.WithLogger(log),
 		worker.WithMaterializer(executor.ComputerMaterializer{
@@ -334,9 +334,9 @@ func run(log *slog.Logger) error {
 				if owner.Kind != vm.OwnerRuntime {
 					continue
 				}
-				created, err := hostCapacity.Reserve(
-					capacity.Key{Kind: "quarantine", Epoch: 1, ID: owner.ID},
-					capacity.Vector{
+				created, err := hostReservations.Reserve(
+					reservation.Key{Kind: "quarantine", Epoch: 1, ID: owner.ID},
+					reservation.Vector{
 						CPUMillis:               workerCapabilities.VMMilliCPU,
 						MemoryBytes:             workerCapabilities.VMMemoryMiB * 1024 * 1024,
 						GuestEphemeralDiskBytes: workerCapabilities.VMGuestEphemeralDiskBytes,

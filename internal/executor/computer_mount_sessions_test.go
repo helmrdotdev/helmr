@@ -101,7 +101,7 @@ func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentComputerMount(t *t
 	runStream := &countingReadWriteCloser{}
 	session := newBorrowedRunSession(parent, testVMStream(runStream))
 
-	checkpointable, ok := session.(vm.CheckpointableSession)
+	checkpointable, ok := session.(vm.CheckpointableMachine)
 	if !ok {
 		t.Fatal("borrowed run session is not checkpointable")
 	}

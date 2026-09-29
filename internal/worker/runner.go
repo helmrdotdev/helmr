@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
+	"github.com/helmrdotdev/helmr/internal/reservation"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -31,7 +31,7 @@ type Runner struct {
 	runLeaseExecutor RunLeaseExecutor
 	materializer     Materializer
 	capabilities     workerapi.Capabilities
-	resources        *capacity.Ledger
+	reservations     *reservation.Ledger
 	pollEvery        time.Duration
 	renewEvery       time.Duration
 	renewWait        time.Duration
@@ -59,9 +59,9 @@ func WithMaterializer(materializer Materializer) Option {
 	}
 }
 
-func WithCapacity(resources *capacity.Ledger) Option {
+func WithReservations(reservations *reservation.Ledger) Option {
 	return func(runner *Runner) {
-		runner.resources = resources
+		runner.reservations = reservations
 	}
 }
 
@@ -100,7 +100,7 @@ func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, capabilitie
 	if runner.releaseWait <= 0 {
 		return nil, errors.New("worker release timeout must be positive")
 	}
-	if runner.resources == nil {
+	if runner.reservations == nil {
 		return nil, errors.New("worker capacity ledger is required")
 	}
 	if runner.log == nil {

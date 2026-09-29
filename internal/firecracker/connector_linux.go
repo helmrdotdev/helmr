@@ -192,7 +192,7 @@ func (c *Connector) probeGuest(ctx context.Context) error {
 	return nil
 }
 
-func (c *Connector) connect(ctx context.Context, mode launchMode, request vm.ConnectRequest) (vm.Session, error) {
+func (c *Connector) connect(ctx context.Context, mode launchMode, request vm.ConnectRequest) (vm.Machine, error) {
 	owner := vm.Owner{Kind: request.OwnerKind, ID: request.ID}
 	if err := request.Binding.Validate(owner); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
@@ -255,11 +255,11 @@ func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
 		present[vm.ProgramDrive]
 }
 
-func (runtime *QualifiedRuntime) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+func (runtime *QualifiedRuntime) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Machine, error) {
 	return runtime.connector.materialize(ctx, request)
 }
 
-func (c *Connector) materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
+func (c *Connector) materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Machine, error) {
 	if err := c.validateMaterializeRequest(request); err != nil {
 		return nil, err
 	}
@@ -641,11 +641,11 @@ func (c *Connector) kernelArgsValue() string {
 	return c.kernelArgs
 }
 
-func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
+func (runtime *QualifiedRuntime) Restore(ctx context.Context, request vm.RestoreRequest) (vm.Machine, error) {
 	return runtime.connector.restore(ctx, request)
 }
 
-func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Session, error) {
+func (c *Connector) restore(ctx context.Context, request vm.RestoreRequest) (vm.Machine, error) {
 	if err := request.Binding.Validate(vm.Owner{Kind: request.OwnerKind, ID: request.ComputerInstanceID}); err != nil {
 		return nil, fmt.Errorf("the Firecracker workload binding: %w", err)
 	}
@@ -943,7 +943,7 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), preparedOwner *computerDeviceOwner) (vm.CheckpointableSession, error) {
+func (c *Connector) start(ctx context.Context, mode launchMode, instanceID string, ownerKind vm.OwnerKind, binding vm.WorkloadBinding, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase), preparedOwner *computerDeviceOwner) (vm.CheckpointableMachine, error) {
 	session, err := c.prepareSession(ctx, mode, instanceID, ownerKind, binding, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, topology, readOnlyDrives, recordPhase, preparedOwner)
 	if err != nil {
 		return nil, err
@@ -1954,7 +1954,7 @@ func (s *guestSession) Stream() vm.Stream {
 	return s.stream
 }
 
-func (s *guestSession) Open(ctx context.Context) (vm.Session, error) {
+func (s *guestSession) Open(ctx context.Context) (vm.Machine, error) {
 	if ctx == nil {
 		return nil, errors.New("prepared session open context is nil")
 	}
