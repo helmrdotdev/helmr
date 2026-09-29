@@ -13,7 +13,7 @@ type dependencyVersion struct {
 }
 
 type dependencyVersions struct {
-	Node       dependencyVersion `json:"node"`
+	Node dependencyVersion `json:"node"`
 }
 
 var runtimeVersions = func() dependencyVersions {
