@@ -311,6 +311,10 @@ func (s *Server) validateInvitationToken(r *http.Request, raw string) ([]byte, e
 	return tokenHash, nil
 }
 
+func normalizeEmailAddress(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func identityMatchesInvitationEmail(identity authIdentity, inviteeEmail string) bool {
 	inviteeEmail = normalizeEmailAddress(inviteeEmail)
 	if inviteeEmail == "" {

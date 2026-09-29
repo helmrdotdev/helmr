@@ -25,11 +25,11 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"api":               {"workerapi"},
+		"api":               {"org", "workerapi"},
 		"artifact":          {"artifact/snapshot", "artifact/verify", "builder", "bundle", "cas", "computerhost", "controlplane", "db", "executor"},
 		"artifact/snapshot": {"artifact/verify", "builder", "bundle", "db"},
 		"artifact/verify":   {"builder", "bundle", "controlplane", "db"},
-		"auth":              {"db", "token"},
+		"auth":              {"db", "org", "token"},
 		"builder":           {"compute", "computerhost", "controlplane", "db", "dispatch", "executor", "scheduler", "vm", "wire", "worker"},
 		"bundle":            {"artifact/snapshot", "artifact/verify", "builder", "controlplane", "db"},
 		"cas":               {"cas/s3"},
@@ -38,16 +38,18 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"executor":          {"artifact/snapshot", "artifact/verify", "controlplane", "db", "disk", "firecracker", "guestd", "nbd", "reservation", "worker"},
 		"frameio":           {"api", "db", "proto/program/v0", "wire"},
 		"httpclient":        {"controlplane", "db", "workerapi"},
+		"org":               {"api", "controlplane", "dispatch", "run", "session", "workerapi"},
 		"wire":              {"api", "computerhost", "controlplane", "db", "disk", "executor", "guestd"},
 		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "computerhost", "controlplane", "db", "disk", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
 		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "computerhost", "controlplane", "db", "executor", "vm"},
 		"disk":              {"api", "computerhost", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
 		"computerhost":      {"controlplane", "db", "executor", "guestd", "worker"},
 		"controlplane":      {"computerhost", "eventstream", "executor", "firecracker", "guestd"},
+		"region":            {"org"},
 		"secret":            {"run"},
 		"secretbinding":     {"api", "db", "definition", "disk"},
 		"telemetry":         {"clickhouse"},
-		"workerapi":         {"controlplane", "db", "firecracker"},
+		"workerapi":         {"controlplane", "db", "firecracker", "org"},
 		"workerclient":      {"client"},
 	} {
 		if _, ok := actual[source]; !ok {

@@ -1,13 +1,11 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"uuid"
@@ -16,13 +14,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 )
-
-var scopeSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 const (
 	projectListDefaultLimit = int32(50)
@@ -36,10 +30,6 @@ type projectListCursor struct {
 	ID        string `json:"id"`
 }
 
-func protectedEnvironmentSlug(slug string) bool {
-	return slug == "production" || slug == "staging"
-}
-
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
 	if actor.Role == "" {
@@ -51,27 +41,18 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	params := db.ListProjectsParams{
-		OrgID: pgvalue.UUID(actor.OrgID), RowLimit: limit + 1,
-	}
+	var after *org.ProjectPosition
 	if cursor != nil {
-		params.HasAfter = true
-		params.AfterIsDefault = cursor.IsDefault
-		params.AfterSlug = cursor.Slug
-		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+		after = &org.ProjectPosition{IsDefault: cursor.IsDefault, Slug: cursor.Slug, ID: uuid.MustParse(cursor.ID)}
 	}
-	projects, err := s.db.ListProjects(r.Context(), params)
+	projects, hasMore, err := org.ListProjects(r.Context(), s.db, actor.OrgID, limit, after)
 	if err != nil {
-		writeError(w, errors.New("list projects"))
+		writeError(w, orgError(err))
 		return
-	}
-	hasMore := len(projects) > int(limit)
-	if hasMore {
-		projects = projects[:limit]
 	}
 	response := api.ListProjectsResponse{Projects: make([]api.ProjectSummary, 0, len(projects))}
 	for _, project := range projects {
-		response.Projects = append(response.Projects, projectResponse(projectRecordFromDB(project)))
+		response.Projects = append(response.Projects, projectResponse(project))
 	}
 	if hasMore {
 		last := projects[len(projects)-1]
@@ -89,38 +70,17 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	ref := strings.TrimSpace(chi.URLParam(r, "projectRef"))
-	projectID, idErr := ids.Parse(ref)
-	var project db.Project
-	var err error
-	if idErr == nil {
-		project, err = s.db.GetProject(r.Context(), db.GetProjectParams{
-			OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(projectID),
-		})
-	} else {
-		slug := strings.ToLower(ref)
-		if !scopeSlugPattern.MatchString(slug) {
-			writeError(w, badRequest(errors.New("invalid project reference")))
-			return
-		}
-		project, err = s.db.GetProjectBySlug(r.Context(), db.GetProjectBySlugParams{
-			OrgID: pgvalue.UUID(actor.OrgID), Slug: slug,
-		})
-	}
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("project not found")))
-		return
-	}
+	project, err := org.GetProject(r.Context(), s.db, actor.OrgID, chi.URLParam(r, "projectRef"))
 	if err != nil {
-		writeError(w, errors.New("load project"))
+		writeError(w, orgError(err))
 		return
 	}
-	response, err := s.projectResponseWithEnvironments(r.Context(), projectRecordFromDB(project))
+	environments, err := org.ListEnvironments(r.Context(), s.db, project)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, projectResponseWithEnvironments(project, environments))
 }
 
 func parseProjectListQuery(r *http.Request, orgID uuid.UUID) (int32, *projectListCursor, error) {
@@ -181,77 +141,16 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
-	slug, name, err := normalizeProjectInput(request.Slug, request.Name)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	actor := actorFromContext(r.Context())
-	defaultRegionID := request.DefaultRegionID
-	if defaultRegionID == "" {
-		regions, err := s.db.ListRegions(r.Context())
-		if err != nil {
-			writeError(w, errors.New("list regions"))
-			return
-		}
-		if len(regions) == 0 {
-			writeError(w, badRequest(errors.New("no region configured")))
-			return
-		}
-		defaultRegionID = regions[0].ID
-	}
-	if err := region.ValidateID(defaultRegionID); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid default_region_id: %w", err)))
-		return
-	}
-	var project db.CreateProjectWithDefaultEnvironmentRow
-	var environments []db.Environment
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		if _, err := work.q.LockOrganizationForProjectDefaults(r.Context(), pgvalue.UUID(actor.OrgID)); err != nil {
-			return errors.New("lock organization")
-		}
-		region, err := work.q.GetRegion(r.Context(), defaultRegionID)
-		if isNoRows(err) {
-			return badRequest(errors.New("default region not found"))
-		}
-		if err != nil {
-			return errors.New("load default region")
-		}
-		project, err = work.q.CreateProjectWithDefaultEnvironment(r.Context(), db.CreateProjectWithDefaultEnvironmentParams{
-			ID:                   pgvalue.UUID(uuid.NewV7()),
-			OrgID:                pgvalue.UUID(actor.OrgID),
-			DefaultRegionID:      region.ID,
-			Slug:                 slug,
-			Name:                 name,
-			IsDefault:            false,
-			EnvironmentID:        pgvalue.UUID(uuid.NewV7()),
-			StagingEnvironmentID: pgvalue.UUID(uuid.NewV7()),
-		})
-		if err != nil {
-			if isUniqueViolation(err) {
-				return badRequest(errors.New("project slug is already in use"))
-			}
-			return errors.New("create project")
-		}
-		environments, err = work.q.ListEnvironments(r.Context(), db.ListEnvironmentsParams{
-			OrgID:     project.OrgID,
-			ProjectID: project.ID,
-		})
-		if err != nil {
-			return errors.New("list environments")
-		}
-		return nil
+	project, environments, err := org.CreateProject(r.Context(), s.tx, actor.OrgID, org.ProjectInput{
+		ProjectDetails:  org.ProjectDetails{Slug: request.Slug, Name: request.Name},
+		DefaultRegionID: request.DefaultRegionID,
 	})
 	if err != nil {
-		writeError(w, err)
+		writeError(w, orgError(err))
 		return
 	}
-	response := projectResponse(projectRecordFromCreated(project))
-	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
-	for _, environment := range environments {
-		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
-	}
-	writeJSON(w, http.StatusCreated, response)
+	writeJSON(w, http.StatusCreated, projectResponseWithEnvironments(project, environments))
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
@@ -265,31 +164,15 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
-	slug, name, err := normalizeProjectInput(request.Slug, request.Name)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	actor := actorFromContext(r.Context())
-	project, err := s.db.UpdateProjectDetails(r.Context(), db.UpdateProjectDetailsParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(projectID),
-		Slug:  slug,
-		Name:  name,
+	project, err := org.UpdateProject(r.Context(), s.db, actor.OrgID, projectID, org.ProjectDetails{
+		Slug: request.Slug, Name: request.Name,
 	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("project not found")))
-		return
-	}
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, badRequest(errors.New("project slug is already in use")))
-			return
-		}
-		writeError(w, errors.New("update project"))
+		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, projectResponse(projectRecordFromDB(project)))
+	writeJSON(w, http.StatusOK, projectResponse(project))
 }
 
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -303,50 +186,20 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
 		return
 	}
-	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
-	var environment db.Environment
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		_, err := work.q.GetProject(r.Context(), db.GetProjectParams{
-			OrgID: pgvalue.UUID(actor.OrgID),
-			ID:    pgvalue.UUID(projectID),
-		})
-		if isNoRows(err) {
-			return notFound(errors.New("project not found"))
-		} else if err != nil {
-			return errors.New("load project")
-		}
-		environment, err = work.q.CreateEnvironment(r.Context(), db.CreateEnvironmentParams{
-			ID:        pgvalue.UUID(uuid.NewV7()),
-			OrgID:     pgvalue.UUID(actor.OrgID),
-			ProjectID: pgvalue.UUID(projectID),
-			Slug:      slug,
-			Name:      name,
-			ColorHex:  colorHex,
-			IsDefault: false,
-		})
-		if err != nil {
-			if isUniqueViolation(err) {
-				return badRequest(errors.New("environment slug is already in use"))
-			}
-			return errors.New("create environment")
-		}
-		return nil
+	environment, err := org.CreateEnvironment(r.Context(), s.tx, actor.OrgID, projectID, org.EnvironmentDetails{
+		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
 	})
 	if err != nil {
-		writeError(w, err)
+		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, environmentResponse(environmentRecordFromDB(environment)))
+	writeJSON(w, http.StatusCreated, environmentResponse(environment))
 }
 
 func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -361,20 +214,12 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	environment, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
-		OrgID:     pgvalue.UUID(actor.OrgID),
-		ProjectID: pgvalue.UUID(projectID),
-		ID:        pgvalue.UUID(environmentID),
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("environment not found")))
-		return
-	}
+	environment, err := org.GetEnvironment(r.Context(), s.db, actor.OrgID, projectID, environmentID)
 	if err != nil {
-		writeError(w, errors.New("load environment"))
+		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
+	writeJSON(w, http.StatusOK, environmentResponse(environment))
 }
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -393,83 +238,24 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
 		return
 	}
-	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	colorHex, err := normalizeEnvironmentColorHex(request.ColorHex)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
-	current, err := s.db.GetEnvironment(r.Context(), db.GetEnvironmentParams{
-		OrgID:     pgvalue.UUID(actor.OrgID),
-		ProjectID: pgvalue.UUID(projectID),
-		ID:        pgvalue.UUID(environmentID),
+	environment, err := org.UpdateEnvironment(r.Context(), s.db, actor.OrgID, projectID, environmentID, org.EnvironmentDetails{
+		Slug: request.Slug, Name: request.Name, ColorHex: colorHex,
 	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("environment not found")))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("load environment"))
+		writeError(w, orgError(err))
 		return
 	}
-	if current.Slug != slug && (protectedEnvironmentSlug(current.Slug) || protectedEnvironmentSlug(slug)) {
-		writeError(w, badRequest(errors.New("production and staging environment slugs cannot be renamed")))
-		return
-	}
-	environment, err := s.db.UpdateEnvironmentDetails(r.Context(), db.UpdateEnvironmentDetailsParams{
-		OrgID:     pgvalue.UUID(actor.OrgID),
-		ProjectID: pgvalue.UUID(projectID),
-		ID:        pgvalue.UUID(environmentID),
-		Slug:      slug,
-		Name:      name,
-		ColorHex:  colorHex,
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("environment not found")))
-		return
-	}
-	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, badRequest(errors.New("environment slug is already in use")))
-			return
-		}
-		writeError(w, errors.New("update environment"))
-		return
-	}
-	writeJSON(w, http.StatusOK, environmentResponse(environmentRecordFromDB(environment)))
+	writeJSON(w, http.StatusOK, environmentResponse(environment))
 }
 
-func normalizeScopeCreateInput(slug string, name string) (string, string, error) {
-	slug = strings.ToLower(strings.TrimSpace(slug))
-	name = strings.TrimSpace(name)
-	if !scopeSlugPattern.MatchString(slug) {
-		return "", "", fmt.Errorf("slug must match %s", scopeSlugPattern.String())
-	}
-	if name == "" {
-		name = slug
-	}
-	if len(name) > 80 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
-		return "", "", errors.New("name must be 1-80 characters and contain no control characters")
-	}
-	return slug, name, nil
-}
-
-func normalizeProjectInput(slug string, name string) (string, string, error) {
-	slug, name, err := normalizeScopeCreateInput(slug, name)
-	if err != nil {
-		return "", "", err
-	}
-	if _, err := ids.Parse(slug); err == nil {
-		return "", "", errors.New("project slug must not be a UUID")
-	}
-	return slug, name, nil
-}
-
+// normalizeEnvironmentColorHex applies the public #RRGGBB color grammar that
+// the API contract shares with the CLI.
 func normalizeEnvironmentColorHex(colorHex string) (string, error) {
 	normalized, err := api.NormalizeEnvironmentColorHex(colorHex)
 	if err != nil {
@@ -478,109 +264,36 @@ func normalizeEnvironmentColorHex(colorHex string) (string, error) {
 	return normalized, nil
 }
 
-type projectRecord struct {
-	id              pgtype.UUID
-	orgID           pgtype.UUID
-	defaultRegionID string
-	slug            string
-	name            string
-	isDefault       bool
-	createdAt       pgtype.Timestamptz
-	updatedAt       pgtype.Timestamptz
-}
-
-type environmentRecord struct {
-	id        pgtype.UUID
-	projectID pgtype.UUID
-	slug      string
-	name      string
-	colorHex  string
-	isDefault bool
-	createdAt pgtype.Timestamptz
-	updatedAt pgtype.Timestamptz
-}
-
-func projectResponse(project projectRecord) api.ProjectSummary {
+func projectResponse(project db.Project) api.ProjectSummary {
 	return api.ProjectSummary{
-		ID:              pgvalue.MustUUIDValue(project.id).String(),
-		Slug:            project.slug,
-		Name:            project.name,
-		DefaultRegionID: project.defaultRegionID,
-		IsDefault:       project.isDefault,
-		CreatedAt:       pgvalue.Time(project.createdAt),
-		UpdatedAt:       pgvalue.Time(project.updatedAt),
+		ID:              pgvalue.MustUUIDValue(project.ID).String(),
+		Slug:            project.Slug,
+		Name:            project.Name,
+		DefaultRegionID: project.DefaultRegionID,
+		IsDefault:       project.IsDefault,
+		CreatedAt:       pgvalue.Time(project.CreatedAt),
+		UpdatedAt:       pgvalue.Time(project.UpdatedAt),
 	}
 }
 
-func (s *Server) projectResponseWithEnvironments(ctx context.Context, project projectRecord) (api.ProjectSummary, error) {
+func projectResponseWithEnvironments(project db.Project, environments []db.Environment) api.ProjectSummary {
 	response := projectResponse(project)
-	environments, err := s.db.ListEnvironments(ctx, db.ListEnvironmentsParams{
-		OrgID:     project.orgID,
-		ProjectID: project.id,
-	})
-	if err != nil {
-		return api.ProjectSummary{}, errors.New("list environments")
-	}
 	response.Environments = make([]api.EnvironmentSummary, 0, len(environments))
 	for _, environment := range environments {
-		response.Environments = append(response.Environments, environmentResponse(environmentRecordFromDB(environment)))
+		response.Environments = append(response.Environments, environmentResponse(environment))
 	}
-	return response, nil
+	return response
 }
 
-func environmentResponse(environment environmentRecord) api.EnvironmentSummary {
+func environmentResponse(environment db.Environment) api.EnvironmentSummary {
 	return api.EnvironmentSummary{
-		ID:        pgvalue.MustUUIDValue(environment.id).String(),
-		ProjectID: pgvalue.MustUUIDValue(environment.projectID).String(),
-		Slug:      environment.slug,
-		Name:      environment.name,
-		ColorHex:  environment.colorHex,
-		IsDefault: environment.isDefault,
-		CreatedAt: pgvalue.Time(environment.createdAt),
-		UpdatedAt: pgvalue.Time(environment.updatedAt),
+		ID:        pgvalue.MustUUIDValue(environment.ID).String(),
+		ProjectID: pgvalue.MustUUIDValue(environment.ProjectID).String(),
+		Slug:      environment.Slug,
+		Name:      environment.Name,
+		ColorHex:  environment.ColorHex,
+		IsDefault: environment.IsDefault,
+		CreatedAt: pgvalue.Time(environment.CreatedAt),
+		UpdatedAt: pgvalue.Time(environment.UpdatedAt),
 	}
-}
-
-func projectRecordFromDB(project db.Project) projectRecord {
-	return projectRecord{
-		id:              project.ID,
-		orgID:           project.OrgID,
-		defaultRegionID: project.DefaultRegionID,
-		slug:            project.Slug,
-		name:            project.Name,
-		isDefault:       project.IsDefault,
-		createdAt:       project.CreatedAt,
-		updatedAt:       project.UpdatedAt,
-	}
-}
-
-func projectRecordFromCreated(project db.CreateProjectWithDefaultEnvironmentRow) projectRecord {
-	return projectRecord{
-		id:              project.ID,
-		orgID:           project.OrgID,
-		defaultRegionID: project.DefaultRegionID,
-		slug:            project.Slug,
-		name:            project.Name,
-		isDefault:       project.IsDefault,
-		createdAt:       project.CreatedAt,
-		updatedAt:       project.UpdatedAt,
-	}
-}
-
-func environmentRecordFromDB(environment db.Environment) environmentRecord {
-	return environmentRecord{
-		id:        environment.ID,
-		projectID: environment.ProjectID,
-		slug:      environment.Slug,
-		name:      environment.Name,
-		colorHex:  environment.ColorHex,
-		isDefault: environment.IsDefault,
-		createdAt: environment.CreatedAt,
-		updatedAt: environment.UpdatedAt,
-	}
-}
-
-func isUniqueViolation(err error) bool {
-	var pgErr *pgconn.PgError
-	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

@@ -66,7 +66,7 @@ func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 	created, err := s.db.CreateRegion(r.Context(), db.CreateRegionParams{
 		ID: request.ID, DisplayName: request.DisplayName, Location: request.Location,
 	})
-	if isUniqueViolation(err) {
+	if db.IsUniqueViolation(err) {
 		writeError(w, conflict(errors.New("region identity is already in use")))
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 			ID: pgvalue.UUID(uuid.NewV7()), TokenID: pgvalue.UUID(uuid.NewV7()), TokenHash: token.Hash,
 			RegionID: request.RegionID, Name: request.Name, Description: description,
 		})
-		if isUniqueViolation(err) {
+		if db.IsUniqueViolation(err) {
 			return conflict(errors.New("worker group conflicts with an existing active role or name"))
 		}
 		if err != nil {
@@ -373,7 +373,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 			WorkerPoolID: pgvalue.UUID(uuid.NewV7()), Name: request.Name,
 			WorkerGroupID: pgvalue.UUID(groupID), ExpectedGroupClaimVersion: request.ExpectedGroupClaimVersion,
 		})
-		if isUniqueViolation(err) {
+		if db.IsUniqueViolation(err) {
 			return conflict(errors.New("worker pool name is already in use"))
 		}
 		if isNoRows(err) {

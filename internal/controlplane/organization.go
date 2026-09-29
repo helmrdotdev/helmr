@@ -6,12 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
@@ -25,59 +24,22 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid organization request JSON: %w", err))
 		return
 	}
-	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
-	if err != nil {
-		writeError(w, badRequest(err))
+	initialSetup := s.selfHostedMode()
+	if initialSetup && !s.initialSetupTokenMatches(request.SetupToken) {
+		writeError(w, forbidden(errors.New("invalid setup token")))
 		return
 	}
-	var org db.Organization
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		if s.selfHostedMode() {
-			if !s.initialSetupTokenMatches(request.SetupToken) {
-				return forbidden(errors.New("invalid setup token"))
-			}
-			if err := work.q.LockOrganizationsForSelfHostedSetup(r.Context()); err != nil {
-				return errors.New("create organization")
-			}
-			organizationCount, err := work.q.CountOrganizations(r.Context())
-			if err != nil {
-				return errors.New("create organization")
-			}
-			if organizationCount > 0 {
-				return conflict(errors.New("organization already exists"))
-			}
-		}
-		org, err = work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
-			ID:   pgvalue.UUID(uuid.NewV7()),
-			Name: name,
-			Slug: slug,
-		})
-		if err != nil {
-			if isUniqueViolation(err) {
-				return badRequest(errors.New("organization slug is already in use"))
-			}
-			return errors.New("create organization")
-		}
-		if _, err := work.q.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
-			OrgID:       org.ID,
-			UserID:      pgvalue.UUID(actor.UserID),
-			Role:        db.OrgMemberRoleOwner,
-			DisplayName: pgtype.Text{},
-		}); err != nil {
-			return errors.New("create organization owner")
-		}
-		if s.selfHostedMode() {
-			if err := work.q.GrantUserAdmin(r.Context(), pgvalue.UUID(actor.UserID)); err != nil {
-				return errors.New("grant initial administrator")
-			}
-		}
-		return nil
+	created, err := org.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{
+		Slug:         request.Slug,
+		Name:         request.Name,
+		OwnerUserID:  actor.UserID,
+		InitialSetup: initialSetup,
 	})
 	if err != nil {
-		writeError(w, err)
+		writeError(w, orgError(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, organizationResponse(org))
+	writeJSON(w, http.StatusCreated, organizationResponse(created))
 }
 
 func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
@@ -110,11 +72,43 @@ func (s *Server) selfHostedMode() bool {
 	return s.deploymentMode != deploymentModeManagedCloud
 }
 
-func organizationResponse(org db.Organization) api.OrganizationSummary {
+func organizationResponse(organization db.Organization) api.OrganizationSummary {
 	return api.OrganizationSummary{
-		ID:        pgvalue.MustUUIDValue(org.ID).String(),
-		Slug:      org.Slug,
-		Name:      org.Name,
-		CreatedAt: pgvalue.Time(org.CreatedAt),
+		ID:        pgvalue.MustUUIDValue(organization.ID).String(),
+		Slug:      organization.Slug,
+		Name:      organization.Name,
+		CreatedAt: pgvalue.Time(organization.CreatedAt),
+	}
+}
+
+// orgError maps errors of the org owner to HTTP errors.
+func orgError(err error) error {
+	var input org.InputError
+	switch {
+	case errors.As(err, &input),
+		errors.Is(err, org.ErrOrganizationSlugInUse),
+		errors.Is(err, org.ErrProjectSlugInUse),
+		errors.Is(err, org.ErrEnvironmentSlugInUse),
+		errors.Is(err, org.ErrNoRegion),
+		errors.Is(err, org.ErrDefaultRegionNotFound):
+		return badRequest(err)
+	case errors.Is(err, org.ErrMemberManagementRequired),
+		errors.Is(err, org.ErrOwnerRoleRequired),
+		errors.Is(err, org.ErrLastActiveOwner),
+		errors.Is(err, org.ErrSelfMemberManagement),
+		errors.Is(err, org.ErrSelfMemberRemoval):
+		return forbidden(err)
+	case errors.Is(err, org.ErrProjectNotFound),
+		errors.Is(err, org.ErrEnvironmentNotFound),
+		errors.Is(err, org.ErrMemberNotFound),
+		errors.Is(err, org.ErrInvitationNotFound):
+		return notFound(err)
+	case errors.Is(err, org.ErrOrganizationExists),
+		errors.Is(err, org.ErrMemberRoleChanged),
+		errors.Is(err, org.ErrInvitationPending),
+		errors.Is(err, org.ErrInvitationActiveMember):
+		return conflict(err)
+	default:
+		return err
 	}
 }
