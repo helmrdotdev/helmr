@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/spf13/cobra"
 )
 
@@ -48,7 +49,7 @@ func computerCreateCommand() *cobra.Command {
 			if command.Flags().Changed("key") {
 				keyPointer = &key
 			}
-			var bindings []api.ComputerSecret
+			var bindings []secretbinding.Binding
 			if secretsFile != "" {
 				file, e := os.Open(secretsFile)
 				if e != nil {
@@ -68,7 +69,7 @@ func computerCreateCommand() *cobra.Command {
 					return errors.New("secrets-file must contain an array")
 				}
 				for _, binding := range bindings {
-					if e := api.ValidateComputerSecret(binding); e != nil {
+					if e := secretbinding.ValidateBinding(binding); e != nil {
 						return e
 					}
 				}

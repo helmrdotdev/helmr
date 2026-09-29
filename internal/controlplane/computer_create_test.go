@@ -5,37 +5,37 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestNormalizeComputerSecretPlacementsCanonicalizesAndRejectsConflicts(t *testing.T) {
-	placements, err := normalizeComputerSecretPlacements([]api.ComputerSecret{
-		{Name: "config", File: &api.SecretFile{Path: "/run/helmr-secrets/config.json"}},
-		{Name: "github", Env: &api.SecretEnv{Name: "GITHUB_TOKEN", Mode: "raw"}},
+	placements, err := normalizeComputerSecretPlacements([]secretbinding.Binding{
+		{Name: "config", File: &secretbinding.File{Path: "/run/helmr-secrets/config.json"}},
+		{Name: "github", Env: &secretbinding.Env{Name: "GITHUB_TOKEN", Mode: "raw"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(placements) != 2 ||
-		!reflect.DeepEqual(placements[0], computer.SecretPlacement{Name: "github", Kind: "env", Target: "GITHUB_TOKEN", Mode: "raw"}) ||
-		!reflect.DeepEqual(placements[1], computer.SecretPlacement{Name: "config", Kind: "file", Target: "/run/helmr-secrets/config.json", Mode: "raw"}) {
+		!reflect.DeepEqual(placements[0], secretbinding.Placement{Name: "github", Kind: "env", Target: "GITHUB_TOKEN", Mode: "raw"}) ||
+		!reflect.DeepEqual(placements[1], secretbinding.Placement{Name: "config", Kind: "file", Target: "/run/helmr-secrets/config.json", Mode: "raw"}) {
 		t.Fatalf("placements = %#v", placements)
 	}
 
-	for name, input := range map[string][]api.ComputerSecret{
+	for name, input := range map[string][]secretbinding.Binding{
 		"duplicate env": {
-			{Name: "first", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}},
-			{Name: "second", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}},
+			{Name: "first", Env: &secretbinding.Env{Name: "TOKEN", Mode: "raw"}},
+			{Name: "second", Env: &secretbinding.Env{Name: "TOKEN", Mode: "raw"}},
 		},
 		"nested file": {
-			{Name: "first", File: &api.SecretFile{Path: "/run/secrets"}},
-			{Name: "second", File: &api.SecretFile{Path: "/run/secrets/token"}},
+			{Name: "first", File: &secretbinding.File{Path: "/run/secrets"}},
+			{Name: "second", File: &secretbinding.File{Path: "/run/secrets/token"}},
 		},
 		"computer file": {
-			{Name: "first", File: &api.SecretFile{Path: "/workspace/token"}},
+			{Name: "first", File: &secretbinding.File{Path: "/workspace/token"}},
 		},
 		"reserved env": {
-			{Name: "first", Env: &api.SecretEnv{Name: "HELMR_RUN_ID", Mode: "raw"}},
+			{Name: "first", Env: &secretbinding.Env{Name: "HELMR_RUN_ID", Mode: "raw"}},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

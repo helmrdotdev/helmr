@@ -11,11 +11,12 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -45,7 +46,7 @@ type computerCreateRequest struct {
 	Declaration      computerDeclarationSelector
 	DeclaredID       string
 	Key              *string
-	Secrets          []api.ComputerSecret
+	Secrets          []secretbinding.Binding
 	IdempotencyKey   string
 	Authorize        func(context.Context, pgx.Tx) error
 }
@@ -155,10 +156,10 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 			claim = &acquired.Claim
 		}
 
-		var definition db.DeploymentDefinition
+		var sandboxDefinition db.DeploymentDefinition
 		switch request.Declaration.Kind {
 		case computerDeclarationPromoted:
-			definition, err = work.q.ResolveCurrentComputerDefinitionForCreate(
+			sandboxDefinition, err = work.q.ResolveCurrentComputerDefinitionForCreate(
 				ctx,
 				db.ResolveCurrentComputerDefinitionForCreateParams{
 					EnvironmentID:     pgvalue.UUID(request.EnvironmentID),
@@ -166,7 +167,7 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 				},
 			)
 		case computerDeclarationRunPinned:
-			definition, err = work.q.ResolveRunPinnedComputerDefinitionForCreate(
+			sandboxDefinition, err = work.q.ResolveRunPinnedComputerDefinitionForCreate(
 				ctx,
 				db.ResolveRunPinnedComputerDefinitionForCreateParams{
 					EnvironmentID:     pgvalue.UUID(request.EnvironmentID),
@@ -232,7 +233,7 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 					ProjectID:              pgvalue.UUID(request.ProjectID),
 					OrgID:                  pgvalue.UUID(request.OrgID),
 					EnvironmentID:          pgvalue.UUID(request.EnvironmentID),
-					DeploymentDefinitionID: definition.ID,
+					DeploymentDefinitionID: sandboxDefinition.ID,
 					SandboxDeclaredID:      request.DeclaredID,
 					ID:                     pgvalue.UUID(computerID),
 					InitialVersionID:       pgvalue.UUID(versionID),
@@ -300,7 +301,7 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 			break
 		}
 		for _, placement := range placements {
-			placeholder, err := computer.SecretPlaceholder(placement.Mode)
+			placeholder, err := secretbinding.Placeholder(placement.Mode)
 			if err != nil {
 				return err
 			}
@@ -324,14 +325,14 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 			value := createdKey.String
 			snapshotKey = &value
 		}
-		snapshotSecrets := make([]api.ComputerSecret, 0, len(placements))
+		snapshotSecrets := make([]secretbinding.Binding, 0, len(placements))
 		for _, placement := range placements {
-			item := api.ComputerSecret{Name: placement.Name}
+			item := secretbinding.Binding{Name: placement.Name}
 			switch placement.Kind {
 			case "env":
-				item.Env = &api.SecretEnv{Name: placement.Target, Mode: placement.Mode, AllowedOrigins: placement.AllowedOrigins}
+				item.Env = &secretbinding.Env{Name: placement.Target, Mode: placement.Mode, AllowedOrigins: placement.AllowedOrigins}
 			case "file":
-				item.File = &api.SecretFile{Path: placement.Target}
+				item.File = &secretbinding.File{Path: placement.Target}
 			default:
 				return fmt.Errorf("unsupported computer secret placement %q", placement.Kind)
 			}
@@ -341,8 +342,8 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 			Residency:      "cold",
 			ID:             computerID.String(),
 			Key:            snapshotKey,
-			SandboxID:      definition.DeclaredID,
-			DeploymentID:   pgvalue.UUIDString(definition.DeploymentID),
+			SandboxID:      sandboxDefinition.DeclaredID,
+			DeploymentID:   pgvalue.UUIDString(sandboxDefinition.DeploymentID),
 			Status:         status,
 			Secrets:        snapshotSecrets,
 			LastActivityAt: pgvalue.Time(createdLastActivityAt),
@@ -370,24 +371,13 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 	return result, err
 }
 
-func normalizeComputerSecretPlacements(input []api.ComputerSecret) ([]computer.SecretPlacement, error) {
-	placements := make([]computer.SecretPlacement, 0, len(input))
+func normalizeComputerSecretPlacements(input []secretbinding.Binding) ([]secretbinding.Placement, error) {
 	for _, value := range input {
-		if err := api.ValidateComputerSecret(value); err != nil {
+		if err := secretbinding.ValidateBinding(value); err != nil {
 			return nil, err
 		}
-		placement := computer.SecretPlacement{Name: value.Name}
-		switch {
-		case value.Env != nil:
-			placement.Kind = "env"
-			placement.Target, placement.Mode, placement.AllowedOrigins = value.Env.Name, value.Env.Mode, value.Env.AllowedOrigins
-		case value.File != nil:
-			placement.Kind = "file"
-			placement.Target, placement.Mode = value.File.Path, "raw"
-		}
-		placements = append(placements, placement)
 	}
-	return computer.NormalizeSecretPlacements(placements)
+	return secretbinding.Normalize(secretbinding.Placements(input))
 }
 
 func validateComputerKey(value *string) error {
@@ -413,7 +403,7 @@ func computerCreateResultFromReceipt(raw []byte) (computerCreateResult, error) {
 		return computerCreateResult{}, errComputerCreateReceipt
 	}
 	if ids.Validate(receipt.Computer.DeploymentID) != nil ||
-		api.ValidateSandboxDeclaredID(receipt.Computer.SandboxID) != nil ||
+		definition.ValidateSandboxDeclaredID(receipt.Computer.SandboxID) != nil ||
 		receipt.Computer.Status != api.ComputerStatusAvailable ||
 		receipt.Computer.LastActivityAt.IsZero() ||
 		receipt.Computer.CreatedAt.IsZero() ||

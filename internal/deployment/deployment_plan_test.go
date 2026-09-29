@@ -3,8 +3,8 @@ package deployment
 import (
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestDeploymentPlanFromProgramIndex(t *testing.T) {
@@ -37,7 +37,7 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 		Cron: "0 * * * *", Timezone: "UTC",
 		Computer: definition.ScheduleComputerManifest{
 			SandboxDeclaredID: "repo",
-			Secrets:           []api.ComputerSecret{{Name: "TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}}},
+			Secrets:           []secretbinding.Binding{{Name: "TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "raw"}}},
 		},
 	}
 	plan, err = DeploymentPlanFromProgramIndex(index)

@@ -22,14 +22,14 @@ func initializingComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcil
 	t.Helper()
 	config, err := json.Marshal(definition.ComputerConfig{
 		Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract,
-		Profile:   computer.SeedProfile,
+		Profile:   definition.ComputerSeedProfile,
 		Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024},
 		Image:     oci.RuntimeConfig{User: "1000", Env: []string{"HELLO=world"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec, err := definition.ParseComputerSpec(config, cas.Descriptor{Digest: dbtest.Digest("seed"), SizeBytes: 1024, MediaType: computer.SeedMediaType})
+	spec, err := definition.ParseComputerSpec(config, cas.Descriptor{Digest: dbtest.Digest("seed"), SizeBytes: 1024, MediaType: definition.ComputerSeedMediaType})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func initializingComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcil
 		ComputerDiskVersionStatus: pgvalue.Text("initializing"),
 		ComputerLogicalSizeBytes:  pgtype.Int8{Valid: true},
 		ComputerArchitecture:      "x86_64", ReservedGuestEphemeralDiskBytes: computer.SeedCapacity,
-		ComputerImageDigest: dbtest.Digest("seed"), ComputerImageSizeBytes: 1024, ComputerImageMediaType: computer.SeedMediaType,
+		ComputerImageDigest: dbtest.Digest("seed"), ComputerImageSizeBytes: 1024, ComputerImageMediaType: definition.ComputerSeedMediaType,
 		ComputerConfig: spec.Config, ComputerSpecDigest: spec.Digest[:],
 	}
 }

@@ -4,27 +4,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/sourceid"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
-var queueNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$`)
-
 func ValidateDefinitionID(id string) error {
-	if !sourceid.Valid(id) {
-		return fmt.Errorf("task_id %q must match %s", id, sourceid.Grammar)
-	}
-	return nil
-}
-
-func ValidateQueueName(name string) error {
-	if !queueNamePattern.MatchString(name) {
-		return fmt.Errorf("queue name %q must match %s", name, queueNamePattern.String())
+	if !definition.ValidDeclaredID(id) {
+		return fmt.Errorf("task_id %q must match %s", id, definition.DeclaredIDGrammar)
 	}
 	return nil
 }

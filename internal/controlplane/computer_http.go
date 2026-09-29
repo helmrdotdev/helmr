@@ -11,9 +11,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -29,7 +31,7 @@ type computerReference struct {
 
 func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 	declaredID := chi.URLParam(r, "sandboxID")
-	if err := api.ValidateSandboxDeclaredID(declaredID); err != nil {
+	if err := definition.ValidateSandboxDeclaredID(declaredID); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
 		return
 	}
@@ -220,14 +222,14 @@ func (s *Server) computerSnapshot(
 	if err != nil {
 		return api.ComputerSnapshot{}, err
 	}
-	secrets := make([]api.ComputerSecret, 0, len(bindings))
+	secrets := make([]secretbinding.Binding, 0, len(bindings))
 	for _, binding := range bindings {
-		item := api.ComputerSecret{Name: binding.SecretName}
+		item := secretbinding.Binding{Name: binding.SecretName}
 		switch binding.PlacementKind {
 		case "env":
-			item.Env = &api.SecretEnv{Name: binding.PlacementTarget, Mode: binding.Mode, AllowedOrigins: binding.AllowedOrigins}
+			item.Env = &secretbinding.Env{Name: binding.PlacementTarget, Mode: binding.Mode, AllowedOrigins: binding.AllowedOrigins}
 		case "file":
-			item.File = &api.SecretFile{Path: binding.PlacementTarget}
+			item.File = &secretbinding.File{Path: binding.PlacementTarget}
 		default:
 			return api.ComputerSnapshot{}, fmt.Errorf("unsupported computer secret placement %q", binding.PlacementKind)
 		}

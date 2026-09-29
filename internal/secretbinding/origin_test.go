@@ -1,4 +1,4 @@
-package origin
+package secretbinding
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestCanonicalSharedVectors(t *testing.T) {
+func TestCanonicalOriginSharedVectors(t *testing.T) {
 	data, err := os.ReadFile("testdata/origins.json")
 	if err != nil {
 		t.Fatal(err)
@@ -17,7 +17,7 @@ func TestCanonicalSharedVectors(t *testing.T) {
 	}
 	for _, v := range vectors {
 		t.Run(v.Input, func(t *testing.T) {
-			got, err := Canonical(v.Input)
+			got, err := CanonicalOrigin(v.Input)
 			if v.Canonical == "" {
 				if err == nil {
 					t.Fatalf("accepted %q", got)

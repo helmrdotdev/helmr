@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -378,10 +379,10 @@ func TestProtectedGuestIngressCeilingsBeforeReplay(t *testing.T) {
 		}
 	}
 	t.Run("create-new-raw", func(t *testing.T) {
-		invoke(t, f.server.workerCreateComputer, workerapi.CreateComputerRequest{Lease: fence, CorrelationID: uuid.NewV7().String(), SandboxDeclaredID: "test-computer", Secrets: []api.ComputerSecret{{Name: "token-a", Env: &api.SecretEnv{Name: "RAW", Mode: "raw"}}}, IdempotencyKey: "denied-create"})
+		invoke(t, f.server.workerCreateComputer, workerapi.CreateComputerRequest{Lease: fence, CorrelationID: uuid.NewV7().String(), SandboxDeclaredID: "test-computer", Secrets: []secretbinding.Binding{{Name: "token-a", Env: &secretbinding.Env{Name: "RAW", Mode: "raw"}}}, IdempotencyKey: "denied-create"})
 	})
 	t.Run("create-replayed-target", func(t *testing.T) {
-		bindings := []api.ComputerSecret{{Name: "token-a", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}
+		bindings := []secretbinding.Binding{{Name: "token-a", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}
 		placements, err := normalizeComputerSecretPlacements(bindings)
 		if err != nil {
 			t.Fatal(err)

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
@@ -25,8 +25,8 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 	frozen := testFrozenBuildTree(t, tree)
 
 	plan := imageSourcePlan(
-		&imagebuild.CopySourceFile{Path: "packages/app/main.js", Dst: "/app/main.js"},
-		&imagebuild.CopySourceDir{Path: "node_modules/tool", Dst: "/app/tool"},
+		&definition.ImageCopySourceFile{Path: "packages/app/main.js", Dst: "/app/main.js"},
+		&definition.ImageCopySourceDir{Path: "node_modules/tool", Dst: "/app/tool"},
 	)
 	selection, err := frozen.SelectImageSource(context.Background(), plan)
 	if err != nil {
@@ -36,13 +36,13 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPaths := []imagebuild.SourcePath{
-		{Path: "node_modules", Kind: imagebuild.SourcePathDirectory},
-		{Path: "node_modules/tool", Kind: imagebuild.SourcePathDirectory},
-		{Path: "node_modules/tool/index.js", Kind: imagebuild.SourcePathFile},
-		{Path: "packages", Kind: imagebuild.SourcePathDirectory},
-		{Path: "packages/app", Kind: imagebuild.SourcePathDirectory},
-		{Path: "packages/app/main.js", Kind: imagebuild.SourcePathFile},
+	wantPaths := []SourcePath{
+		{Path: "node_modules", Kind: SourcePathDirectory},
+		{Path: "node_modules/tool", Kind: SourcePathDirectory},
+		{Path: "node_modules/tool/index.js", Kind: SourcePathFile},
+		{Path: "packages", Kind: SourcePathDirectory},
+		{Path: "packages/app", Kind: SourcePathDirectory},
+		{Path: "packages/app/main.js", Kind: SourcePathFile},
 	}
 	if !reflect.DeepEqual(paths, wantPaths) {
 		t.Fatalf("selected paths = %#v, want %#v", paths, wantPaths)
@@ -61,7 +61,7 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	if descriptor.ArchiveEntries != len(wantPaths) ||
-		descriptor.PathSetDigest != imagebuild.PathSetDigest(wantPaths) {
+		descriptor.PathSetDigest != SourcePathSetDigest(wantPaths) {
 		t.Fatalf("source descriptor = %+v", descriptor)
 	}
 	first := writeSelectedSourceForTest(t, selection)
@@ -95,7 +95,7 @@ func TestBuildTreeImageSourceRootSelectionKeepsNodeModules(t *testing.T) {
 
 	selection, err := frozen.SelectImageSource(
 		context.Background(),
-		imageSourcePlan(nil, &imagebuild.CopySourceDir{Path: ".", Dst: "/app"}),
+		imageSourcePlan(nil, &definition.ImageCopySourceDir{Path: ".", Dst: "/app"}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -104,12 +104,12 @@ func TestBuildTreeImageSourceRootSelectionKeepsNodeModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []imagebuild.SourcePath{
-		{Path: "app.js", Kind: imagebuild.SourcePathFile},
-		{Path: "node_modules", Kind: imagebuild.SourcePathDirectory},
-		{Path: "node_modules/tool", Kind: imagebuild.SourcePathDirectory},
-		{Path: "node_modules/tool/current", Kind: imagebuild.SourcePathSymlink},
-		{Path: "node_modules/tool/index.js", Kind: imagebuild.SourcePathFile},
+	want := []SourcePath{
+		{Path: "app.js", Kind: SourcePathFile},
+		{Path: "node_modules", Kind: SourcePathDirectory},
+		{Path: "node_modules/tool", Kind: SourcePathDirectory},
+		{Path: "node_modules/tool/current", Kind: SourcePathSymlink},
+		{Path: "node_modules/tool/index.js", Kind: SourcePathFile},
 	}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("root selection = %#v, want %#v", paths, want)
@@ -124,15 +124,15 @@ func TestBuildTreeImageSourceRejectsReservedMissingAndWrongKindRoots(t *testing.
 
 	tests := []struct {
 		name string
-		file *imagebuild.CopySourceFile
-		dir  *imagebuild.CopySourceDir
+		file *definition.ImageCopySourceFile
+		dir  *definition.ImageCopySourceDir
 		want string
 	}{
-		{name: "reserved file", file: &imagebuild.CopySourceFile{Path: "helmr/config.json", Dst: "/x"}, want: "clean deployment-relative POSIX path"},
-		{name: "reserved directory", dir: &imagebuild.CopySourceDir{Path: "helmr", Dst: "/x"}, want: "clean deployment-relative POSIX path"},
-		{name: "missing file", file: &imagebuild.CopySourceFile{Path: "missing", Dst: "/x"}, want: "missing"},
-		{name: "file is directory", file: &imagebuild.CopySourceFile{Path: "directory", Dst: "/x"}, want: "want \"regular\""},
-		{name: "directory is file", dir: &imagebuild.CopySourceDir{Path: "file.txt", Dst: "/x"}, want: "want \"directory\""},
+		{name: "reserved file", file: &definition.ImageCopySourceFile{Path: "helmr/config.json", Dst: "/x"}, want: "clean deployment-relative POSIX path"},
+		{name: "reserved directory", dir: &definition.ImageCopySourceDir{Path: "helmr", Dst: "/x"}, want: "clean deployment-relative POSIX path"},
+		{name: "missing file", file: &definition.ImageCopySourceFile{Path: "missing", Dst: "/x"}, want: "missing"},
+		{name: "file is directory", file: &definition.ImageCopySourceFile{Path: "directory", Dst: "/x"}, want: "want \"regular\""},
+		{name: "directory is file", dir: &definition.ImageCopySourceDir{Path: "file.txt", Dst: "/x"}, want: "want \"directory\""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,21 +208,21 @@ func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *BuildTree {
 }
 
 func imageSourcePlan(
-	file *imagebuild.CopySourceFile,
-	directory *imagebuild.CopySourceDir,
-) imagebuild.Build {
-	steps := []imagebuild.Step{{From: &imagebuild.From{Ref: "alpine:3.23"}}}
+	file *definition.ImageCopySourceFile,
+	directory *definition.ImageCopySourceDir,
+) definition.ImageBuild {
+	steps := []definition.ImageStep{{From: &definition.ImageFrom{Ref: "alpine:3.23"}}}
 	if file != nil {
-		steps = append(steps, imagebuild.Step{CopySourceFile: file})
+		steps = append(steps, definition.ImageStep{CopySourceFile: file})
 	}
 	if directory != nil {
-		steps = append(steps, imagebuild.Step{CopySourceDir: directory})
+		steps = append(steps, definition.ImageStep{CopySourceDir: directory})
 	}
-	return imagebuild.Build{
+	return definition.ImageBuild{
 		Root: "base",
-		Images: []imagebuild.Spec{{
+		Images: []definition.ImageSpec{{
 			Key:      "base",
-			Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
+			Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
 			Steps:    steps,
 		}},
 	}

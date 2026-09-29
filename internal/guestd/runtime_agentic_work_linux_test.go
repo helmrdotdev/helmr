@@ -14,6 +14,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
@@ -35,7 +36,7 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 	if err := json.Unmarshal(raw, &seed); err != nil {
 		t.Fatal(err)
 	}
-	if seed.Profile != computer.SeedProfile {
+	if seed.Profile != definition.ComputerSeedProfile {
 		t.Fatalf("unexpected Computer seed profile %q", seed.Profile)
 	}
 	objects, err := cas.NewFile(filepath.Join(filepath.Dir(descriptor), "objects"))

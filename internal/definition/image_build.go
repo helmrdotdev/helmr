@@ -1,4 +1,4 @@
-package imagebuild
+package definition
 
 import (
 	"errors"
@@ -31,71 +31,71 @@ var (
 	imageUserPattern   = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$`)
 )
 
-type Build struct {
-	Root   string `json:"root"`
-	Images []Spec `json:"images"`
+type ImageBuild struct {
+	Root   string      `json:"root"`
+	Images []ImageSpec `json:"images"`
 }
 
-type Spec struct {
-	Key      string   `json:"key"`
-	Platform Platform `json:"platform"`
-	Steps    []Step   `json:"steps"`
+type ImageSpec struct {
+	Key      string        `json:"key"`
+	Platform ImagePlatform `json:"platform"`
+	Steps    []ImageStep   `json:"steps"`
 }
 
-type Platform struct {
+type ImagePlatform struct {
 	OS           string `json:"os"`
 	Architecture string `json:"architecture"`
 }
 
-type Step struct {
-	From           *From           `json:"from,omitempty"`
-	Run            *Run            `json:"run,omitempty"`
-	CopySourceFile *CopySourceFile `json:"copySourceFile,omitempty"`
-	CopySourceDir  *CopySourceDir  `json:"copySourceDir,omitempty"`
-	CopyFromImage  *CopyFromImage  `json:"copyFromImage,omitempty"`
-	Workdir        *Workdir        `json:"workdir,omitempty"`
-	User           *User           `json:"user,omitempty"`
-	Env            *Env            `json:"env,omitempty"`
+type ImageStep struct {
+	From           *ImageFrom           `json:"from,omitempty"`
+	Run            *ImageRun            `json:"run,omitempty"`
+	CopySourceFile *ImageCopySourceFile `json:"copySourceFile,omitempty"`
+	CopySourceDir  *ImageCopySourceDir  `json:"copySourceDir,omitempty"`
+	CopyFromImage  *ImageCopyFromImage  `json:"copyFromImage,omitempty"`
+	Workdir        *ImageWorkdir        `json:"workdir,omitempty"`
+	User           *ImageUser           `json:"user,omitempty"`
+	Env            *ImageEnv            `json:"env,omitempty"`
 }
 
-type From struct {
+type ImageFrom struct {
 	Ref string `json:"ref"`
 }
 
-type Run struct {
+type ImageRun struct {
 	Argv []string `json:"argv"`
 }
 
-type CopySourceFile struct {
+type ImageCopySourceFile struct {
 	Dst  string `json:"dst"`
 	Path string `json:"path"`
 }
 
-type CopySourceDir struct {
+type ImageCopySourceDir struct {
 	Dst  string `json:"dst"`
 	Path string `json:"path"`
 }
 
-type CopyFromImage struct {
+type ImageCopyFromImage struct {
 	Dst      string `json:"dst"`
 	ImageKey string `json:"imageKey"`
 	SrcPath  string `json:"srcPath"`
 }
 
-type Workdir struct {
+type ImageWorkdir struct {
 	Path string `json:"path"`
 }
 
-type User struct {
+type ImageUser struct {
 	Name string `json:"name"`
 }
 
-type Env struct {
+type ImageEnv struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 }
 
-func Validate(build Build, architecture string) error {
+func ValidateImageBuild(build ImageBuild, architecture string) error {
 	if !validImageArchitecture(architecture) {
 		return fmt.Errorf("image build architecture %q is unsupported", architecture)
 	}
@@ -144,7 +144,7 @@ func Validate(build Build, architecture string) error {
 			if stepIndex > 0 && step.From != nil {
 				return fmt.Errorf("image %q has more than one from step", image.Key)
 			}
-			addedEnvBytes, err := validateStep(step, image.Key, stepIndex)
+			addedEnvBytes, err := validateImageStep(step, image.Key, stepIndex)
 			if err != nil {
 				return err
 			}
@@ -198,7 +198,7 @@ func Validate(build Build, architecture string) error {
 	return nil
 }
 
-func StepCount(build Build) int {
+func ImageBuildStepCount(build ImageBuild) int {
 	total := 0
 	for _, image := range build.Images {
 		total += len(image.Steps)
@@ -206,7 +206,7 @@ func StepCount(build Build) int {
 	return total
 }
 
-func validateStep(step Step, imageKey string, index int) (int, error) {
+func validateImageStep(step ImageStep, imageKey string, index int) (int, error) {
 	count := 0
 	for _, present := range []bool{
 		step.From != nil,
@@ -232,12 +232,12 @@ func validateStep(step Step, imageKey string, index int) (int, error) {
 			return 0, err
 		}
 	case step.Run != nil:
-		if err := validateRun(*step.Run, label+" run"); err != nil {
+		if err := validateImageRun(*step.Run, label+" run"); err != nil {
 			return 0, err
 		}
 	case step.CopySourceFile != nil:
 		value := step.CopySourceFile
-		if err := validateImageAbsolutePath(value.Dst, label+" copySourceFile.dst"); err != nil {
+		if err := ValidateImageAbsolutePath(value.Dst, label+" copySourceFile.dst"); err != nil {
 			return 0, err
 		}
 		if err := validateImageSourcePath(value.Path, false, label+" copySourceFile.path"); err != nil {
@@ -245,7 +245,7 @@ func validateStep(step Step, imageKey string, index int) (int, error) {
 		}
 	case step.CopySourceDir != nil:
 		value := step.CopySourceDir
-		if err := validateImageAbsolutePath(value.Dst, label+" copySourceDir.dst"); err != nil {
+		if err := ValidateImageAbsolutePath(value.Dst, label+" copySourceDir.dst"); err != nil {
 			return 0, err
 		}
 		if err := validateImageSourcePath(value.Path, true, label+" copySourceDir.path"); err != nil {
@@ -253,13 +253,13 @@ func validateStep(step Step, imageKey string, index int) (int, error) {
 		}
 	case step.CopyFromImage != nil:
 		value := step.CopyFromImage
-		if err := validateImageAbsolutePath(value.Dst, label+" copyFromImage.dst"); err != nil {
+		if err := ValidateImageAbsolutePath(value.Dst, label+" copyFromImage.dst"); err != nil {
 			return 0, err
 		}
 		if err := validateImageIdentifier(value.ImageKey, label+" copyFromImage.imageKey"); err != nil {
 			return 0, err
 		}
-		if err := validateImageAbsolutePath(value.SrcPath, label+" copyFromImage.srcPath"); err != nil {
+		if err := ValidateImageAbsolutePath(value.SrcPath, label+" copyFromImage.srcPath"); err != nil {
 			return 0, err
 		}
 	case step.Workdir != nil:
@@ -286,7 +286,7 @@ func validateStep(step Step, imageKey string, index int) (int, error) {
 	return 0, nil
 }
 
-func validateRun(run Run, label string) error {
+func validateImageRun(run ImageRun, label string) error {
 	if run.Argv == nil {
 		return fmt.Errorf("%s argv must be an array", label)
 	}
@@ -321,7 +321,8 @@ func validateImageReference(value string, label string) error {
 	return nil
 }
 
-func validateImageAbsolutePath(value string, label string) error {
+// ValidateImageAbsolutePath accepts a clean absolute POSIX path inside an image.
+func ValidateImageAbsolutePath(value string, label string) error {
 	if !validImageString(value, maxImagePathBytes) ||
 		!path.IsAbs(value) ||
 		path.Clean(value) != value ||
@@ -387,13 +388,8 @@ func validImageArchitecture(value string) bool {
 	return value == "x86_64"
 }
 
-// ValidateRunArgv applies the exec-form RUN limits shared by every Helmr
+// ValidateImageRunArgv applies the exec-form RUN limits shared by every Helmr
 // image graph, including the build environment.
-func ValidateRunArgv(argv []string, label string) error {
-	return validateRun(Run{Argv: argv}, label)
-}
-
-// ValidateAbsolutePath accepts a clean absolute POSIX path inside an image.
-func ValidateAbsolutePath(value string, label string) error {
-	return validateImageAbsolutePath(value, label)
+func ValidateImageRunArgv(argv []string, label string) error {
+	return validateImageRun(ImageRun{Argv: argv}, label)
 }

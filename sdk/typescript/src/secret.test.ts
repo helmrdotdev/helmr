@@ -33,7 +33,7 @@ test("optional undefined binding members are absent; unknown members remain inva
  expect(() => encodeComputerSecrets([{secret:"token",env:{name:"TOKEN",mode:"raw",typo:undefined}} as never])).toThrow("unknown")
 })
 test("managed env names match server and guest", async () => {
- const vectors = await Bun.file(new URL("../../../internal/computer/testdata/secret-env-names.json",import.meta.url)).json()
+ const vectors = await Bun.file(new URL("../../../internal/secretbinding/testdata/secret-env-names.json",import.meta.url)).json()
  for (const vector of vectors) {
   const encode = () => encodeComputerSecrets([{secret:"token",env:{name:vector.name,mode:"raw"}}])
   if(vector.reserved) expect(encode).toThrow()

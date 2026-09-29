@@ -1,5 +1,5 @@
 package deployment
 
-import "github.com/helmrdotdev/helmr/internal/computer"
+import "github.com/helmrdotdev/helmr/internal/definition"
 
-const ComputerImageArtifactMediaType = computer.SeedMediaType
+const ComputerImageArtifactMediaType = definition.ComputerSeedMediaType

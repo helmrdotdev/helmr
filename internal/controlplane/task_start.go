@@ -310,7 +310,7 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 		return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 	}
 	if request.QueueName != "" {
-		if err := api.ValidateQueueName(request.QueueName); err != nil {
+		if err := definition.ValidateQueueName(request.QueueName); err != nil {
 			return normalizedTaskStart{}, fmt.Errorf("%w: %v", errTaskStartInvalid, err)
 		}
 	}

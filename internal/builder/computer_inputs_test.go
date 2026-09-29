@@ -7,14 +7,14 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/oci"
@@ -51,7 +51,7 @@ func TestReadComputerImageInputsDerivesFinalArtifactIdentity(t *testing.T) {
 	if len(images) != 1 || images[0].DeclaredID != "sandbox" ||
 		images[0].Artifact.Digest != digest ||
 		images[0].Artifact.MediaType != deployment.ComputerImageArtifactMediaType ||
-		images[0].Artifact.Profile != computer.SeedProfile || images[0].Artifact.Config.WorkingDir != "/workspace" ||
+		images[0].Artifact.Profile != definition.ComputerSeedProfile || images[0].Artifact.Config.WorkingDir != "/workspace" ||
 		images[0].Artifact.Architecture != definition.ArchitectureX8664 ||
 		len(objects) != 1 || objects[0].Digest != digest || objects[0].Path == imagePath {
 		t.Fatalf("images = %+v objects = %+v", images, objects)

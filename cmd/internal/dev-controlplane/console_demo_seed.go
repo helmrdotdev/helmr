@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/computer"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/jackc/pgx/v5"
@@ -115,12 +114,12 @@ UPDATE environments
 		return err
 	}
 	manifest := definition.SandboxManifest{
-		Image:     definition.SandboxImageManifest{Profile: computer.SeedProfile, ArtifactDigest: imageDigest, MediaType: computer.SeedMediaType},
+		Image:     definition.SandboxImageManifest{Profile: definition.ComputerSeedProfile, ArtifactDigest: imageDigest, MediaType: definition.ComputerSeedMediaType},
 		Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
 	}
 	spec, err := definition.CompileComputerSpec(manifest, definition.ComputerImage{
-		Profile: computer.SeedProfile, Architecture: definition.ArchitectureX8664,
-		Digest: imageDigest, MediaType: computer.SeedMediaType, SizeBytes: 1,
+		Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664,
+		Digest: imageDigest, MediaType: definition.ComputerSeedMediaType, SizeBytes: 1,
 	})
 	if err != nil {
 		return err

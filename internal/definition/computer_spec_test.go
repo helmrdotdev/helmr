@@ -6,14 +6,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
-
-	"github.com/helmrdotdev/helmr/internal/computer"
 )
 
 func computerSpecFixture() (SandboxManifest, ComputerImage) {
 	image := ComputerImage{
-		Profile: computer.SeedProfile, Architecture: ArchitectureX8664,
-		Digest: "sha256:" + strings.Repeat("a", 64), MediaType: computer.SeedMediaType, SizeBytes: 4096,
+		Profile: ComputerSeedProfile, Architecture: ArchitectureX8664,
+		Digest: "sha256:" + strings.Repeat("a", 64), MediaType: ComputerSeedMediaType, SizeBytes: 4096,
 	}
 	manifest := SandboxManifest{
 		Image:     SandboxImageManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},

@@ -364,7 +364,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 	}
 	if request.ManagedQueueName != "" {
-		if err := api.ValidateQueueName(request.ManagedQueueName); err != nil {
+		if err := definition.ValidateQueueName(request.ManagedQueueName); err != nil {
 			return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 		}
 	}

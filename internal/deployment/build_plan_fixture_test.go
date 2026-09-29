@@ -1,9 +1,8 @@
 package deployment
 
 import (
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func testBuildPlan() definition.BuildPlan {
@@ -25,7 +24,7 @@ func testBuildPlan() definition.BuildPlan {
 						Timezone: "UTC",
 						Computer: definition.ScheduleComputerManifest{
 							SandboxDeclaredID: "repo",
-							Secrets:           []api.ComputerSecret{},
+							Secrets:           []secretbinding.Binding{},
 						},
 					},
 				},
@@ -46,17 +45,17 @@ func testBuildPlan() definition.BuildPlan {
 				Kind:       definition.KindSandbox,
 				DeclaredID: "repo",
 				Sandbox: &definition.SandboxInputManifest{
-					ImageBuild: imagebuild.Build{
+					ImageBuild: definition.ImageBuild{
 						Root: "repo",
-						Images: []imagebuild.Spec{{
+						Images: []definition.ImageSpec{{
 							Key: "repo",
-							Platform: imagebuild.Platform{
+							Platform: definition.ImagePlatform{
 								OS:           "linux",
 								Architecture: "x86_64",
 							},
-							Steps: []imagebuild.Step{
-								{From: &imagebuild.From{Ref: "debian:bookworm-slim"}},
-								{CopySourceFile: &imagebuild.CopySourceFile{
+							Steps: []definition.ImageStep{
+								{From: &definition.ImageFrom{Ref: "debian:bookworm-slim"}},
+								{CopySourceFile: &definition.ImageCopySourceFile{
 									Dst:  "/app/package.json",
 									Path: "package.json",
 								}},

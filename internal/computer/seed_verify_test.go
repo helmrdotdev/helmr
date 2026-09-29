@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/klauspost/compress/zstd"
 )
@@ -35,7 +36,7 @@ func TestVerifySeedWithoutDisk(t *testing.T) {
 	encoded.Write(compressed)
 	encoded.WriteByte(255)
 	content := encoded.Bytes()
-	artifact := SeedArtifact{Object: cas.Descriptor{Digest: sha256sum.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: SeedMediaType}, LogicalBytes: size}
+	artifact := SeedArtifact{Object: cas.Descriptor{Digest: sha256sum.DigestBytes(content), SizeBytes: int64(len(content)), MediaType: definition.ComputerSeedMediaType}, LogicalBytes: size}
 	if err := VerifySeed(t.Context(), bytes.NewReader(content), artifact, size); err != nil {
 		t.Fatal(err)
 	}

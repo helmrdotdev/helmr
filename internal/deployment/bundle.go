@@ -9,7 +9,6 @@ import (
 	"reflect"
 	"sort"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
@@ -300,7 +299,7 @@ func validateBundleComputerImages(bundle DeploymentBundle) error {
 		if err := validateBundleObject(object, fmt.Sprintf("computerImages[%d]", index)); err != nil {
 			return err
 		}
-		if artifact.Profile != computer.SeedProfile {
+		if artifact.Profile != definition.ComputerSeedProfile {
 			return fmt.Errorf("deployment disk profile %q is unsupported", artifact.Profile)
 		}
 		if artifact.MediaType != ComputerImageArtifactMediaType {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/filepack"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -67,7 +68,7 @@ func EncodeSeed(ctx context.Context, source, target string) (_ SeedArtifact, ret
 	if err := output.Close(); err != nil {
 		return SeedArtifact{}, err
 	}
-	return SeedArtifact{Object: cas.Descriptor{Digest: sha256sum.FormatDigest(hash.Sum(nil)), SizeBytes: limit - writer.remaining, MediaType: SeedMediaType}, LogicalBytes: info.Size()}, nil
+	return SeedArtifact{Object: cas.Descriptor{Digest: sha256sum.FormatDigest(hash.Sum(nil)), SizeBytes: limit - writer.remaining, MediaType: definition.ComputerSeedMediaType}, LogicalBytes: info.Size()}, nil
 }
 
 // Decode verifies exact capacity and descriptor before exposing an independent

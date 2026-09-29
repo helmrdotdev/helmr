@@ -11,10 +11,10 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,7 +22,7 @@ import (
 type scheduleReconciliation struct {
 	definition db.DeploymentDefinition
 	manifest   definition.ScheduleManifest
-	placements []computer.SecretPlacement
+	placements []secretbinding.Placement
 	nextFireAt time.Time
 	record     db.ReconcileSchedulesRow
 }

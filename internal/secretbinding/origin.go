@@ -1,5 +1,4 @@
-// Package origin defines the exact HTTPS origin vocabulary used by Secret bindings.
-package origin
+package secretbinding
 
 import (
 	"errors"
@@ -10,7 +9,8 @@ import (
 	"strings"
 )
 
-func Canonical(raw string) (string, error) {
+// CanonicalOrigin returns the exact HTTPS origin used by Secret bindings.
+func CanonicalOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil ||
 		u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawPath != "" ||
@@ -19,7 +19,7 @@ func Canonical(raw string) (string, error) {
 		return "", errors.New("secret origin must be an exact HTTPS origin without credentials, path, query or fragment")
 	}
 	host := strings.ToLower(u.Hostname())
-	if !ValidHostname(host) || host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if !ValidOriginHostname(host) || host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return "", errors.New("secret origin must use a DNS hostname, without wildcards or IP addresses")
 	}
 	port := u.Port()
@@ -38,7 +38,7 @@ func Canonical(raw string) (string, error) {
 	return "https://" + host, nil
 }
 
-func ValidHostname(host string) bool {
+func ValidOriginHostname(host string) bool {
 	if len(host) == 0 || len(host) > 253 {
 		return false
 	}

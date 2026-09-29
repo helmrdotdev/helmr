@@ -8,12 +8,9 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
-	"github.com/helmrdotdev/helmr/internal/sourceid"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 const (
@@ -70,7 +67,7 @@ type ActorManifest struct {
 }
 
 type SandboxInputManifest struct {
-	ImageBuild imagebuild.Build  `json:"imageBuild"`
+	ImageBuild ImageBuild        `json:"imageBuild"`
 	Resources  ResourcesManifest `json:"resources"`
 }
 
@@ -124,8 +121,8 @@ type ScheduleManifest struct {
 }
 
 type ScheduleComputerManifest struct {
-	SandboxDeclaredID string               `json:"sandboxId"`
-	Secrets           []api.ComputerSecret `json:"secrets"`
+	SandboxDeclaredID string                        `json:"sandboxId"`
+	Secrets           []secretbinding.Binding `json:"secrets"`
 }
 
 type ResourcesManifest struct {
@@ -266,7 +263,7 @@ func ValidateBuildPlan(plan BuildPlan) error {
 			return fmt.Errorf("build plan definitions are not in canonical order at position %d", index)
 		}
 		if definition.Sandbox != nil {
-			imageSteps += imagebuild.StepCount(definition.Sandbox.ImageBuild)
+			imageSteps += ImageBuildStepCount(definition.Sandbox.ImageBuild)
 			if imageSteps > maxBuildImageSteps {
 				return fmt.Errorf("build plan contains more than %d image steps", maxBuildImageSteps)
 			}
@@ -385,7 +382,7 @@ func (input Input) manifestCount() int {
 }
 
 func validateDefinitionInput(input Input, queues map[string]struct{}) error {
-	if !sourceid.Valid(input.DeclaredID) {
+	if !ValidDeclaredID(input.DeclaredID) {
 		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", input.DeclaredID)
 	}
 	if input.manifestCount() != 1 {
@@ -424,7 +421,7 @@ func validateDefinitionInput(input Input, queues map[string]struct{}) error {
 		if input.Sandbox == nil {
 			return errors.New("sandbox definition requires a sandbox manifest")
 		}
-		if err := imagebuild.Validate(
+		if err := ValidateImageBuild(
 			input.Sandbox.ImageBuild,
 			string(ArchitectureX8664),
 		); err != nil {
@@ -440,7 +437,7 @@ func validateDefinitionInput(input Input, queues map[string]struct{}) error {
 }
 
 func ValidateRunManifest(run RunManifest, queues map[string]struct{}) error {
-	if err := api.ValidateQueueName(run.Queue); err != nil {
+	if err := ValidateQueueName(run.Queue); err != nil {
 		return err
 	}
 	if _, ok := queues[run.Queue]; !ok {
@@ -472,32 +469,24 @@ func ValidateScheduleManifest(manifest ScheduleManifest) error {
 	if err := ValidateTimezone(manifest.Timezone); err != nil {
 		return err
 	}
-	if err := api.ValidateSandboxDeclaredID(manifest.Computer.SandboxDeclaredID); err != nil {
+	if err := ValidateSandboxDeclaredID(manifest.Computer.SandboxDeclaredID); err != nil {
 		return fmt.Errorf("schedule computer sandbox: %w", err)
 	}
 	if manifest.Computer.Secrets == nil {
 		return errors.New("schedule computer secrets must be an array")
 	}
-	if len(manifest.Computer.Secrets) > computer.MaxSecretPlacements {
+	if len(manifest.Computer.Secrets) > secretbinding.MaxBindings {
 		return fmt.Errorf(
 			"schedule computer cannot contain more than %d secret placements",
-			computer.MaxSecretPlacements,
+			secretbinding.MaxBindings,
 		)
 	}
-	placements := make([]computer.SecretPlacement, 0, len(manifest.Computer.Secrets))
 	for index, placement := range manifest.Computer.Secrets {
-		if err := api.ValidateComputerSecret(placement); err != nil {
+		if err := secretbinding.ValidateBinding(placement); err != nil {
 			return fmt.Errorf("schedule computer secret %d: %w", index, err)
 		}
-		item := computer.SecretPlacement{Name: placement.Name}
-		if placement.Env != nil {
-			item.Kind, item.Target, item.Mode, item.AllowedOrigins = "env", placement.Env.Name, placement.Env.Mode, placement.Env.AllowedOrigins
-		} else {
-			item.Kind, item.Target, item.Mode = "file", placement.File.Path, "raw"
-		}
-		placements = append(placements, item)
 	}
-	if _, err := computer.NormalizeSecretPlacements(placements); err != nil {
+	if _, err := secretbinding.Normalize(secretbinding.Placements(manifest.Computer.Secrets)); err != nil {
 		return fmt.Errorf("schedule computer secrets: %w", err)
 	}
 	return nil
@@ -514,7 +503,7 @@ func ValidateResourcesManifest(resources ResourcesManifest) error {
 }
 
 func ValidateQueueInput(queue QueueInput) error {
-	if err := api.ValidateQueueName(queue.Name); err != nil {
+	if err := ValidateQueueName(queue.Name); err != nil {
 		return err
 	}
 	if queue.ConcurrencyLimit != nil && !positiveSafeInteger(*queue.ConcurrencyLimit) {

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 type ScheduleAuthority struct{}
@@ -72,17 +72,7 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		value := *manifest.Run.TTLMs
 		queuedTTL = &value
 	}
-	secretPlacements := make([]computer.SecretPlacement, 0, len(manifest.Schedule.Computer.Secrets))
-	for _, placement := range manifest.Schedule.Computer.Secrets {
-		item := computer.SecretPlacement{Name: placement.Name}
-		if placement.Env != nil {
-			item.Kind, item.Target, item.Mode, item.AllowedOrigins = "env", placement.Env.Name, placement.Env.Mode, placement.Env.AllowedOrigins
-		} else {
-			item.Kind, item.Target, item.Mode = "file", placement.File.Path, "raw"
-		}
-		secretPlacements = append(secretPlacements, item)
-	}
-	secretPlacements, err = computer.NormalizeSecretPlacements(secretPlacements)
+	secretPlacements, err := secretbinding.Normalize(secretbinding.Placements(manifest.Schedule.Computer.Secrets))
 	if err != nil {
 		return ScheduledTaskAdmission{}, fmt.Errorf("normalize scheduled Computer Secrets: %w", err)
 	}

@@ -18,12 +18,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -596,11 +596,11 @@ func prepareDeploymentPromotionScaleFixture(
 ) (int, int) {
 	t.Helper()
 	const scheduleCount = 9_999
-	placements := make([]api.ComputerSecret, computer.MaxSecretPlacements)
+	placements := make([]secretbinding.Binding, secretbinding.MaxBindings)
 	queries := db.New(fixture.pool)
 	for index := range placements {
 		name := fmt.Sprintf("SECRET_%02d", index)
-		placements[index] = api.ComputerSecret{Name: name, Env: &api.SecretEnv{Name: name, Mode: "raw"}}
+		placements[index] = secretbinding.Binding{Name: name, Env: &secretbinding.Env{Name: name, Mode: "raw"}}
 		secretID, versionID := uuid.NewV7(), uuid.NewV7()
 		if _, err := queries.CreateSecret(t.Context(), db.CreateSecretParams{
 			ID: pgvalue.UUID(secretID), EnvironmentID: pgvalue.UUID(fixture.environmentID),

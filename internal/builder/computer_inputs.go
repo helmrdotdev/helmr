@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 const maxComputerInputDocumentBytes = 1 << 20
@@ -78,7 +78,7 @@ func readComputerImageInputs(
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		if !sourceid.Valid(input.DeclaredID) || !filepath.IsAbs(input.Path) || filepath.Clean(input.Path) != input.Path {
+		if !definition.ValidDeclaredID(input.DeclaredID) || !filepath.IsAbs(input.Path) || filepath.Clean(input.Path) != input.Path {
 			return nil, nil, fmt.Errorf("computer image input %d is invalid", index)
 		}
 		if index > 0 && inputs[index-1].DeclaredID >= input.DeclaredID {

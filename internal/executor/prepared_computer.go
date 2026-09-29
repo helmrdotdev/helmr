@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -38,7 +39,7 @@ func validateComputerPreparationSource(target workerapi.RuntimeReconcileTarget) 
 		return errors.New("computer capacity does not match runtime reservation")
 	}
 	if source.Seed != nil {
-		if source.Seed.Profile != computer.SeedProfile || target.Source.Restore != nil {
+		if source.Seed.Profile != definition.ComputerSeedProfile || target.Source.Restore != nil {
 			return errors.New("invalid initializing computer source")
 		}
 		return (computer.SeedArtifact{Object: computerObject(source.Seed.Object), LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes)

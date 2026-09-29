@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -112,7 +111,7 @@ func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
 	image := deployment.BundleComputerImage{
 		DeclaredID: "first",
 		Artifact: deployment.BundleComputerImageArtifact{
-			Profile:      computer.SeedProfile,
+			Profile:      definition.ComputerSeedProfile,
 			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
 			MediaType: deployment.ComputerImageArtifactMediaType,

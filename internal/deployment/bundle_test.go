@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -246,7 +245,7 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	computerImage := BundleComputerImage{
 		DeclaredID: "repo",
 		Artifact: BundleComputerImageArtifact{
-			Profile:      computer.SeedProfile,
+			Profile:      definition.ComputerSeedProfile,
 			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("d", 64),
 			MediaType:    ComputerImageArtifactMediaType,

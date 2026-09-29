@@ -1,4 +1,4 @@
-package imagebuild
+package deployment
 
 import (
 	"encoding/json"
@@ -34,7 +34,7 @@ const (
 	SourcePathSymlink   SourcePathKind = "symlink"
 )
 
-func PathSetDigest(paths []SourcePath) string {
+func SourcePathSetDigest(paths []SourcePath) string {
 	raw, err := json.Marshal(paths)
 	if err != nil {
 		panic(err)

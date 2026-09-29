@@ -9,12 +9,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -558,7 +558,7 @@ func (fixedAuthority) ResolveScheduledTask(
 		MaxActiveDurationMS: 300000,
 		RetryPolicy:         []byte(`{"enabled":false}`),
 		SandboxDeclaredID:   "scheduler",
-		SecretPlacements: []computer.SecretPlacement{{
+		SecretPlacements: []secretbinding.Placement{{
 			Name: "API_TOKEN", Kind: "env", Target: "API_TOKEN", Mode: "raw",
 		}},
 	}, nil

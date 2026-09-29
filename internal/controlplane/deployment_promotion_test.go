@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestReconcileSchedulesPinsPerFireComputerAuthority(t *testing.T) {
@@ -304,9 +305,9 @@ func (s *promotionScheduleStore) ArchiveOmittedSchedules(
 func TestScheduleAndDirectComputerOriginCapacity(t *testing.T) {
 	for _, variant := range []string{"distinct", "repeated", "ports", "dedup"} {
 		t.Run(variant, func(t *testing.T) {
-			var bindings []api.ComputerSecret
+			var bindings []secretbinding.Binding
 			for i := 0; i < 16; i++ {
-				env := &api.SecretEnv{Name: fmt.Sprintf("TOKEN_%d", i), Mode: "protected"}
+				env := &secretbinding.Env{Name: fmt.Sprintf("TOKEN_%d", i), Mode: "protected"}
 				for j := 0; j < 16; j++ {
 					value := fmt.Sprintf("https://h%d.example.com", i*16+j)
 					switch variant {
@@ -319,11 +320,11 @@ func TestScheduleAndDirectComputerOriginCapacity(t *testing.T) {
 					}
 					env.AllowedOrigins = append(env.AllowedOrigins, value)
 				}
-				bindings = append(bindings, api.ComputerSecret{Name: "token", Env: env})
+				bindings = append(bindings, secretbinding.Binding{Name: "token", Env: env})
 			}
 			for _, extra := range []bool{false, true} {
 				if extra {
-					bindings = append(bindings, api.ComputerSecret{Name: "token", Env: &api.SecretEnv{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
+					bindings = append(bindings, secretbinding.Binding{Name: "token", Env: &secretbinding.Env{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
 				}
 				_, directErr := normalizeComputerSecretPlacements(bindings)
 				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, definition.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Computer: definition.ScheduleComputerManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())

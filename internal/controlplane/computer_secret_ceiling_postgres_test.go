@@ -4,10 +4,10 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestGuestSecretCeilingRejectsRawAndWiderExistingTargets(t *testing.T) {
@@ -18,17 +18,17 @@ func TestGuestSecretCeilingRejectsRawAndWiderExistingTargets(t *testing.T) {
 	if err := authorizeComputerSecretTarget(t.Context(), q, source, target); !errors.Is(err, errComputerSecretUnavailable) {
 		t.Fatalf("protected -> raw target=%v", err)
 	}
-	protected := api.ComputerSecret{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://api.example.com"}}}
-	if err := authorizeComputerSecretCreate(t.Context(), q, source, pgvalue.UUID(fixture.environmentID), []api.ComputerSecret{protected}); err != nil {
+	protected := secretbinding.Binding{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://api.example.com"}}}
+	if err := authorizeComputerSecretCreate(t.Context(), q, source, pgvalue.UUID(fixture.environmentID), []secretbinding.Binding{protected}); err != nil {
 		t.Fatal(err)
 	}
-	for _, binding := range []api.ComputerSecret{
-		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}},
-		{Name: "API_TOKEN", File: &api.SecretFile{Path: "/run/secrets/key"}},
-		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://other.example.com"}}},
-		{Name: "other-token", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://api.example.com"}}},
+	for _, binding := range []secretbinding.Binding{
+		{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "raw"}},
+		{Name: "API_TOKEN", File: &secretbinding.File{Path: "/run/secrets/key"}},
+		{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://other.example.com"}}},
+		{Name: "other-token", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://api.example.com"}}},
 	} {
-		if err := authorizeComputerSecretCreate(t.Context(), q, source, pgvalue.UUID(fixture.environmentID), []api.ComputerSecret{binding}); !errors.Is(err, errComputerSecretUnavailable) {
+		if err := authorizeComputerSecretCreate(t.Context(), q, source, pgvalue.UUID(fixture.environmentID), []secretbinding.Binding{binding}); !errors.Is(err, errComputerSecretUnavailable) {
 			t.Fatalf("create escalation=%v", err)
 		}
 	}
@@ -42,7 +42,7 @@ func TestGuestSecretCeilingRejectsRawAndWiderExistingTargets(t *testing.T) {
 	}
 	// Trusted authors may deliberately add raw authority at a distinct target.
 	dbtest.MustExec(t, t.Context(), fixture.pool, `INSERT INTO computer_secrets(computer_id,environment_id,secret_id,placement_kind,placement_target,mode) SELECT computer_id,environment_id,secret_id,'env','RAW_TOKEN','raw' FROM computer_secrets WHERE computer_id=$1`, source)
-	if err := authorizeComputerSecretCreate(t.Context(), q, source, pgvalue.UUID(fixture.environmentID), []api.ComputerSecret{{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}}}); err != nil {
+	if err := authorizeComputerSecretCreate(t.Context(), q, source, pgvalue.UUID(fixture.environmentID), []secretbinding.Binding{{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "raw"}}}); err != nil {
 		t.Fatal(err)
 	}
 }

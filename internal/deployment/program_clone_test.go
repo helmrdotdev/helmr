@@ -3,8 +3,8 @@ package deployment
 import (
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
@@ -13,7 +13,7 @@ func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
 	limit := int64(2)
 	run := definition.RunManifest{TTLMs: &ttl, Retry: definition.RetryManifest{MaxAttempts: &attempts, Backoff: &definition.RetryBackoff{}}}
 	index := ProgramIndex{Declarations: []ProgramIndexDeclaration{
-		{Task: &definition.TaskManifest{Run: run, Schedule: &definition.ScheduleManifest{Computer: definition.ScheduleComputerManifest{Secrets: []api.ComputerSecret{{Name: "original"}}}}}, Locator: &ProgramLocator{ExportName: "original"}},
+		{Task: &definition.TaskManifest{Run: run, Schedule: &definition.ScheduleManifest{Computer: definition.ScheduleComputerManifest{Secrets: []secretbinding.Binding{{Name: "original"}}}}}, Locator: &ProgramLocator{ExportName: "original"}},
 		{Actor: &definition.ActorManifest{Run: run}},
 		{Sandbox: &definition.SandboxManifest{}},
 	}, Queues: []definition.QueueInput{{Name: "original", ConcurrencyLimit: &limit}}}

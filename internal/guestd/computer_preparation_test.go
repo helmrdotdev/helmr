@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"google.golang.org/protobuf/proto"
 )
@@ -47,7 +47,7 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := &computerv0.ComputerArtifact{
-		Digest: "sha256:seed", MediaType: computer.SeedMediaType,
+		Digest: "sha256:seed", MediaType: definition.ComputerSeedMediaType,
 		Encoding: "oci-tar", SizeBytes: 79_664_879,
 	}
 	prepared, _, err := restorePreparedComputerRuntime(strings.NewReader("no image stream"), &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,

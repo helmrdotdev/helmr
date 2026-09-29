@@ -2,16 +2,14 @@ package computer
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/oci"
 	"math"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
-const SeedProfile = "linux-amd64-ext4-v1"
 const SeedCapacity = int64(32 << 30)
-
-const SeedMediaType = "application/vnd.helmr.computer.seed.v0+filepack"
 
 // SeedArtifact is a client-built deployment disk, never a committed Computer
 // version. Admission binds its exact descriptor and config to a deployment.
@@ -28,7 +26,7 @@ func (a SeedArtifact) Validate(capacity int64) error {
 	if err != nil {
 		return err
 	}
-	if a.Object.MediaType != SeedMediaType || a.Object.SizeBytes > limit || a.LogicalBytes != capacity {
+	if a.Object.MediaType != definition.ComputerSeedMediaType || a.Object.SizeBytes > limit || a.LogicalBytes != capacity {
 		return errors.New("computer seed exceeds capacity or has an invalid format")
 	}
 	return nil

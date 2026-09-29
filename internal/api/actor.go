@@ -11,9 +11,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 var (
@@ -71,8 +71,8 @@ type StartActorResponse struct {
 }
 
 func ValidateActorDeclaredID(id string) error {
-	if !sourceid.Valid(id) {
-		return fmt.Errorf("actor declared ID %q must match %s", id, sourceid.Grammar)
+	if !definition.ValidDeclaredID(id) {
+		return fmt.Errorf("actor declared ID %q must match %s", id, definition.DeclaredIDGrammar)
 	}
 	return nil
 }
@@ -136,7 +136,7 @@ func validateActorStartOptions(
 		return nil
 	}
 	if run.Queue != "" {
-		if err := ValidateQueueName(run.Queue); err != nil {
+		if err := definition.ValidateQueueName(run.Queue); err != nil {
 			return err
 		}
 	}

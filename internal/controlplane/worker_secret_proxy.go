@@ -8,9 +8,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/origin"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -35,7 +35,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		return
 	}
 	if resolve {
-		canonical, e := origin.Canonical(request.Origin)
+		canonical, e := secretbinding.CanonicalOrigin(request.Origin)
 		if e != nil || canonical != request.Origin || len(request.Placeholders) == 0 || len(request.Placeholders) > 64 {
 			writeError(w, badRequest(errors.New("invalid Secret transport selection")))
 			return

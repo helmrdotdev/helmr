@@ -1,4 +1,7 @@
-package computer
+// Package secretbinding defines Secret bindings, which declare how a Computer
+// uses a Secret, their normalized environment and file placements, and the
+// exact HTTPS origin vocabulary used by protected bindings.
+package secretbinding
 
 import (
 	"crypto/rand"
@@ -11,15 +14,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/origin"
 	"github.com/helmrdotdev/helmr/internal/secretname"
 )
 
-const MaxSecretPlacements = 64
+const MaxBindings = 64
 
-var secretEnvPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var envPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-type SecretPlacement struct {
+type Placement struct {
 	Name           string   `json:"name"`
 	Kind           string   `json:"kind"`
 	Target         string   `json:"target"`
@@ -27,11 +29,11 @@ type SecretPlacement struct {
 	AllowedOrigins []string `json:"allowed_origins,omitempty"`
 }
 
-func NormalizeSecretPlacements(input []SecretPlacement) ([]SecretPlacement, error) {
-	if len(input) > MaxSecretPlacements {
-		return nil, fmt.Errorf("at most %d computer secret placements are allowed", MaxSecretPlacements)
+func Normalize(input []Placement) ([]Placement, error) {
+	if len(input) > MaxBindings {
+		return nil, fmt.Errorf("at most %d computer secret placements are allowed", MaxBindings)
 	}
-	placements := append([]SecretPlacement(nil), input...)
+	placements := append([]Placement(nil), input...)
 	envTargets := make(map[string]struct{}, len(placements))
 	fileTargets := make([]string, 0, len(placements))
 	originCount := 0
@@ -42,7 +44,7 @@ func NormalizeSecretPlacements(input []SecretPlacement) ([]SecretPlacement, erro
 		}
 		switch placement.Kind {
 		case "env":
-			if !secretEnvPattern.MatchString(placement.Target) || ReservedSecretEnv(placement.Target) {
+			if !envPattern.MatchString(placement.Target) || ReservedEnv(placement.Target) {
 				return nil, fmt.Errorf("invalid or reserved computer secret environment target %q", placement.Target)
 			}
 			if _, exists := envTargets[placement.Target]; exists {
@@ -58,7 +60,7 @@ func NormalizeSecretPlacements(input []SecretPlacement) ([]SecretPlacement, erro
 				}
 				placement.AllowedOrigins = slices.Clone(placement.AllowedOrigins)
 				for i, value := range placement.AllowedOrigins {
-					canonical, err := origin.Canonical(value)
+					canonical, err := CanonicalOrigin(value)
 					if err != nil {
 						return nil, err
 					}
@@ -77,7 +79,7 @@ func NormalizeSecretPlacements(input []SecretPlacement) ([]SecretPlacement, erro
 			if placement.Mode != "raw" || len(placement.AllowedOrigins) != 0 {
 				return nil, fmt.Errorf("secret files are raw only")
 			}
-			if err := validateSecretFileTarget(placement.Target); err != nil {
+			if err := validateFileTarget(placement.Target); err != nil {
 				return nil, err
 			}
 			fileTargets = append(fileTargets, placement.Target)
@@ -107,7 +109,7 @@ func NormalizeSecretPlacements(input []SecretPlacement) ([]SecretPlacement, erro
 	return placements, nil
 }
 
-func validateSecretFileTarget(value string) error {
+func validateFileTarget(value string) error {
 	if !utf8.ValidString(value) || len(value) > 4096 || strings.IndexByte(value, 0) >= 0 {
 		return fmt.Errorf("invalid computer secret file target %q", value)
 	}
@@ -122,7 +124,7 @@ func validateSecretFileTarget(value string) error {
 	return nil
 }
 
-func ReservedSecretEnv(name string) bool {
+func ReservedEnv(name string) bool {
 	if strings.HasPrefix(name, "HELMR_") || strings.HasPrefix(name, "LD_") {
 		return true
 	}
@@ -137,7 +139,7 @@ func ReservedSecretEnv(name string) bool {
 	return false
 }
 
-func SecretPlaceholder(mode string) (string, error) {
+func Placeholder(mode string) (string, error) {
 	if mode != "protected" {
 		return "", nil
 	}
@@ -146,44 +148,4 @@ func SecretPlaceholder(mode string) (string, error) {
 		return "", err
 	}
 	return "hlmr_protected_" + hex.EncodeToString(value[:]), nil
-}
-
-// SecretAuthority describes effective use of one stable scoped Secret ID.
-type SecretAuthority struct {
-	ID      string
-	Mode    string
-	Origins []string
-}
-
-func AllowsSecretAuthority(source, target []SecretAuthority) bool {
-	for _, wanted := range target {
-		allowed := false
-		origins := map[string]bool{}
-		for _, grant := range source {
-			if grant.ID != wanted.ID {
-				continue
-			}
-			if grant.Mode == "raw" {
-				allowed = true
-				break
-			}
-			if grant.Mode == "protected" {
-				for _, o := range grant.Origins {
-					origins[o] = true
-				}
-			}
-		}
-		if allowed {
-			continue
-		}
-		if wanted.Mode != "protected" || len(wanted.Origins) == 0 {
-			return false
-		}
-		for _, o := range wanted.Origins {
-			if !origins[o] {
-				return false
-			}
-		}
-	}
-	return true
 }
