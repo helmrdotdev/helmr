@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
-	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -54,7 +54,7 @@ func TestPublishedComputerSourceLocalRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer candidate.Close()
-	publisher, err := executor.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, runtimeID, 1)
+	publisher, err := computerhost.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, runtimeID, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

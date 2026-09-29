@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -137,7 +138,7 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}}
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &CaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &computerhost.CaptureRuns{}}
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -274,7 +275,7 @@ func TestHotWaitKeepsNextOutcomeWhileResumeAcknowledgementIsPending(t *testing.T
 	defer guest.Close()
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &CaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &computerhost.CaptureRuns{}}
 	resumeStarted := make(chan struct{})
 	ack := make(chan struct{})
 	done := make(chan error, 1)

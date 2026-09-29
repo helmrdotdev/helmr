@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -144,7 +145,7 @@ func (task *guestRunLeaseTask) runHotWait(ctx context.Context, request WaitReque
 	if task.captures == nil {
 		return errors.New("Computer capture registry is required for hot waits")
 	}
-	var captureRequests <-chan *MemberPause
+	var captureRequests <-chan *computerhost.MemberPause
 	{
 		task.mu.Lock()
 		lease := task.lease

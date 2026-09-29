@@ -50,7 +50,7 @@ func (s *Server) workerComputerRestorePlan(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, workerapi.ComputerRestorePlanResponse{Plan: plan})
 }
 
-// The materializer owns this physical channel. Refresh its writer under the same
+// The Computer server owns this physical channel. Refresh its writer under the same
 // authority locks before projecting the committed, still-unstarted member set.
 func loadComputerRestorePlan(ctx context.Context, tx pgx.Tx, worker workerActor, request workerapi.ComputerRestorePlanRequest, key disk.FencingKey) (*workerapi.ComputerRestorePlan, error) {
 	i, err := renewComputerInstance(ctx, tx, worker, workerapi.ComputerInstanceRenewRequest{EnvironmentID: request.EnvironmentID, ComputerInstanceID: request.ComputerInstanceID, WriterGeneration: request.WriterGeneration})

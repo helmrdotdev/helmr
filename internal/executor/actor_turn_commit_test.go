@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"io"
 	"net"
@@ -121,7 +122,7 @@ func TestTurnSettlementFailureStopsComputer(t *testing.T) {
 			session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: host}, releaseErr: releaseErr}
 			task := &guestRunLeaseTask{program: freshProgram{channel: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 			err := task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
-			var stopErr *SourceReleaseError
+			var stopErr *computerhost.SourceReleaseError
 			if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || session.releases != 1 {
 				t.Fatalf("err=%v releases=%d", err, session.releases)
 			}
@@ -129,56 +130,6 @@ func TestTurnSettlementFailureStopsComputer(t *testing.T) {
 				t.Fatalf("lost commit cause: %v", err)
 			}
 		})
-	}
-}
-
-type turnReleaseMachine struct {
-	fakeGuestSession
-	closes   int
-	closeErr error
-}
-
-func (s *turnReleaseMachine) Close(context.Context) error {
-	s.closes++
-	return s.closeErr
-}
-
-func TestTurnSettlementFailureReleasesMountedComputerThroughBoundSource(t *testing.T) {
-	claim := testFreshProgramClaim(t)
-	host, guest := net.Pipe()
-	defer host.Close()
-	defer guest.Close()
-	commitErr, releaseErr := &httpclient.Error{StatusCode: http.StatusConflict}, errors.New("physical stop failed")
-	machine := &turnReleaseMachine{fakeGuestSession: fakeGuestSession{stream: host}, closeErr: releaseErr}
-	registry := NewMounts()
-	mount := testComputerMount(claim.Lease)
-	mount.GuestdChannelToken = "channel-1"
-	unregister, err := mountComputer(t.Context(), registry, nil, machine, mount)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer unregister()
-	opened, err := registry.OpenChannel(t.Context(), claim.Lease.ComputerInstanceID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}, commitErr: commitErr}
-	task := &guestRunLeaseTask{program: freshProgram{channel: opened.Channel, releaseSource: opened.ReleaseSource, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
-	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
-	var stopErr *SourceReleaseError
-	if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || !errors.Is(err, commitErr) {
-		t.Fatalf("err=%v", err)
-	}
-	if machine.closes != 1 {
-		t.Fatalf("physical closes = %d, want 1", machine.closes)
-	}
-	if released, err := mountReleaseResult(t.Context(), registry, claim.Lease.ComputerInstanceID); !released || !errors.Is(err, releaseErr) {
-		t.Fatalf("checkpoint release result = %t, %v", released, err)
-	}
-	// The mount retains its release result; a later release neither stops the
-	// machine again nor reports a different outcome.
-	if err := opened.ReleaseSource(t.Context()); !errors.Is(err, releaseErr) || machine.closes != 1 {
-		t.Fatalf("retained release = %v, physical closes = %d", err, machine.closes)
 	}
 }
 

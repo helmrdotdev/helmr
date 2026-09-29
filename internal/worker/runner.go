@@ -15,21 +15,21 @@ import (
 type ControlPlaneClient interface {
 	DiscoverRunLeases(ctx context.Context) (workerapi.RunLeaseDiscoveryResponse, error)
 	ClaimComputerInstance(ctx context.Context) (workerapi.ComputerInstanceClaimResponse, error)
-	workerapi.ComputerMaterializerControlPlaneClient
+	workerapi.ComputerServerControlPlaneClient
 }
 
 type RunLeaseExecutor interface {
 	ExecuteRunLease(context.Context, workerapi.RunLeaseWork) error
 }
 
-type Materializer interface {
-	RunComputerMount(ctx context.Context, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) error
+type ComputerServer interface {
+	Serve(ctx context.Context, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error
 }
 
 type Runner struct {
 	client           ControlPlaneClient
 	runLeaseExecutor RunLeaseExecutor
-	materializer     Materializer
+	computerServer   ComputerServer
 	capabilities     workerapi.Capabilities
 	reservations     *reservation.Ledger
 	pollEvery        time.Duration
@@ -59,20 +59,20 @@ func WithReservations(reservations *reservation.Ledger) Option {
 	}
 }
 
-func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, materializer Materializer, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, computerServer ComputerServer, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}
 	if executor == nil {
 		return nil, errors.New("worker executor is required")
 	}
-	if materializer == nil {
-		return nil, errors.New("worker materializer is required")
+	if computerServer == nil {
+		return nil, errors.New("worker Computer server is required")
 	}
 	runner := &Runner{
 		client:           client,
 		runLeaseExecutor: executor,
-		materializer:     materializer,
+		computerServer:   computerServer,
 		capabilities:     capabilities,
 		pollEvery:        2 * time.Second,
 		renewEvery:       10 * time.Second,

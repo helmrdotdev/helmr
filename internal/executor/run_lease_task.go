@@ -11,6 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -120,7 +121,7 @@ type RunLeaseTaskRunner interface {
 
 type guestRunLeaseTask struct {
 	resumeWait   *programv0.ResumeAttach
-	captures     *CaptureRuns
+	captures     *computerhost.CaptureRuns
 	stopMu       sync.Mutex
 	stopDeadline time.Time
 	program      freshProgram
@@ -668,7 +669,7 @@ func retryComputerAuthorityTransport(
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, ErrControlTransport) {
+		if !errors.Is(err, computerhost.ErrControlTransport) {
 			return err
 		}
 		timer := time.NewTimer(delay)

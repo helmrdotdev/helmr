@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -31,14 +32,14 @@ const (
 // Run's channel, asks the physical owner to fail a mount, and renews the
 // Computer authority installed in the guest.
 type MountRegistry interface {
-	OpenChannel(context.Context, string) (MountChannel, error)
+	OpenChannel(context.Context, string) (computerhost.MountChannel, error)
 	RequestFailure(context.Context, string) error
 	RenewComputerAuthority(context.Context, *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error)
 }
 
 type ProgramRunner struct {
 	ControlPlane     ControlPlane
-	ComputerCaptures *CaptureRuns
+	ComputerCaptures *computerhost.CaptureRuns
 	CAS              cas.Store
 	Mounts           MountRegistry
 	Log              *slog.Logger

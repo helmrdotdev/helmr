@@ -16,8 +16,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
-	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/executor"
@@ -46,7 +46,7 @@ func run(log *slog.Logger) error {
 	if err := validateWorkerMemoryMiB(cfg.WorkerCapacityMemoryMiB, physicalMemoryMiB); err != nil {
 		return err
 	}
-	checkpointEncryptor, err := checkpoint.New(cfg.CheckpointKey)
+	checkpointEncryptor, err := computerhost.NewCheckpointEncryptor(cfg.CheckpointKey)
 	if err != nil {
 		return fmt.Errorf("configure checkpoint encryption: %w", err)
 	}
@@ -216,36 +216,36 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
-	computerMounts := executor.NewMounts()
-	computerCaptures := &executor.CaptureRuns{}
-	preparedRuntimePool := executor.NewPreparedRuntimePool(runtimeBackend, store, runtimeCapacity.preparedPoolSize, log)
-	closePreparedRuntime := retryableWorkerCloser{close: preparedRuntimePool.Close}
+	computerMounts := computerhost.NewMounts()
+	computerCaptures := &computerhost.CaptureRuns{}
+	preparedMachines := computerhost.NewPreparedMachines(runtimeBackend, store, runtimeCapacity.preparedMachineCount, log)
+	closePreparedMachine := retryableWorkerCloser{close: preparedMachines.Close}
 	defer func() {
-		if err := closePreparedRuntime.Close(context.Background()); err != nil {
-			log.Warn("prepared runtime pool close failed", "error", err)
+		if err := closePreparedMachine.Close(context.Background()); err != nil {
+			log.Warn("prepared machines close failed", "error", err)
 		}
 	}()
-	preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
-	preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
-	preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
-	preparedRuntimePool.CheckpointEncryptor = checkpointEncryptor
-	preparedRuntimePool.ComputerCaptures = computerCaptures
-	preparedRuntimePool.Checkpoints = controlPlaneClient
-	preparedRuntimePool.ComputerObjects = store
-	preparedRuntimePool.ComputerPreparation = controlPlaneClient
-	preparedRuntimePool.ComputerRanges = store
-	preparedRuntimePool.ComputerDevices = cfg.ComputerDevices
-	preparedRuntimePool.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)
-	preparedRuntimePool.ComputerHelper, err = os.Executable()
+	preparedMachines.TempDir = filepath.Join(workDir, "tmp")
+	preparedMachines.ArtifactCacheDir = artifactCacheDir
+	preparedMachines.ArtifactCacheMaxBytes = artifactCacheMaxBytes
+	preparedMachines.CheckpointEncryptor = checkpointEncryptor
+	preparedMachines.ComputerCaptures = computerCaptures
+	preparedMachines.Checkpoints = controlPlaneClient
+	preparedMachines.ComputerObjects = store
+	preparedMachines.ComputerPreparation = controlPlaneClient
+	preparedMachines.ComputerRanges = store
+	preparedMachines.ComputerDevices = cfg.ComputerDevices
+	preparedMachines.ComputerStagingBytes = cfg.ComputerStagingMiB * (1 << 20)
+	preparedMachines.ComputerHelper, err = os.Executable()
 	if err != nil {
 		return err
 	}
-	preparedRuntimePool.ComputerInstances = controlPlaneClient
-	preparedRuntimePool.Reservations = hostReservations
-	preparedRuntimePool.PlatformStore = platformStore
-	preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
-	preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
-	log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
+	preparedMachines.ComputerInstances = controlPlaneClient
+	preparedMachines.Reservations = hostReservations
+	preparedMachines.PlatformStore = platformStore
+	preparedMachines.RuntimeArchitecture = runtimeArchitecture
+	preparedMachines.VerifierCgroupRoot = verifierCgroupRoot
+	log.Info("prepared machines enabled", "count", runtimeCapacity.preparedMachineCount)
 	runLeaseTasks, err := executor.NewProgramRunner(executor.ProgramRunner{
 		ControlPlane: executor.ControlPlane{
 			Leases:        controlPlaneClient,
@@ -265,7 +265,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run lease tasks: %w", err)
 	}
-	computerMaterializer, err := executor.NewComputerMaterializer(executor.ComputerMaterializer{
+	computerServer, err := computerhost.NewServer(computerhost.Server{
 		RestoreControl:        controlPlaneClient,
 		ComputerSaves:         controlPlaneClient,
 		ComputerSaveEvery:     cfg.ComputerSaveEvery,
@@ -276,10 +276,10 @@ func run(log *slog.Logger) error {
 		ArtifactCacheDir:      artifactCacheDir,
 		ArtifactCacheMaxBytes: artifactCacheMaxBytes,
 		Log:                   log,
-		RuntimePool:           preparedRuntimePool,
+		Machines:              preparedMachines,
 	})
 	if err != nil {
-		return fmt.Errorf("configure computer materializer: %w", err)
+		return fmt.Errorf("configure computer server: %w", err)
 	}
 	runner, err := worker.NewRunner(
 		controlPlaneClient,
@@ -287,7 +287,7 @@ func run(log *slog.Logger) error {
 			RunLeases:     controlPlaneClient,
 			RunLeaseTasks: runLeaseTasks,
 		},
-		computerMaterializer,
+		computerServer,
 		workerCapabilities,
 		worker.WithReservations(hostReservations),
 		worker.WithPollEvery(cfg.PollEvery),
@@ -305,7 +305,7 @@ func run(log *slog.Logger) error {
 		worker.ConsumerSpec{Name: "computer", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "computer", ContinueDuringDrain: true, BypassAdmissionDuringDrain: true, Consumer: worker.NewComputerConsumer(runner)},
 	)
 	background := []worker.BackgroundSpec{{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
-		return preparedRuntimePool.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
+		return preparedMachines.ReconcileDesiredRuntimes(runCtx, controlPlaneClient)
 	}}}
 	hardAdmission, err := worker.NewHardAdmission(worker.HardAdmissionConfig{
 		Probe: worker.SystemHostHealthProbe{
@@ -356,8 +356,8 @@ func run(log *slog.Logger) error {
 			return evidence, nil
 		},
 		FinalizeDrain: func(finalizeCtx context.Context) (worker.RecoveryEvidence, error) {
-			if err := closePreparedRuntime.Close(finalizeCtx); err != nil {
-				return worker.RecoveryEvidence{}, fmt.Errorf("close prepared runtime pool: %w", err)
+			if err := closePreparedMachine.Close(finalizeCtx); err != nil {
+				return worker.RecoveryEvidence{}, fmt.Errorf("close prepared machines: %w", err)
 			}
 			first, err := worker.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath, networkReclaimer.Reclaim)
 			if err != nil {
@@ -377,7 +377,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker supervisor: %w", err)
 	}
-	preparedRuntimePool.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
+	preparedMachines.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
 	log.Info("Helmr worker listening", "controlplane_url", cfg.ControlPlaneURL, "worker_host_id", workerCredential.WorkerHostID)
 	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
@@ -386,14 +386,14 @@ func run(log *slog.Logger) error {
 }
 
 type workerRuntimeCapacity struct {
-	preparedPoolSize int
-	hostStartLimit   int
+	preparedMachineCount int
+	hostStartLimit       int
 }
 
 func deriveWorkerRuntimeCapacity(executionSlots int32) workerRuntimeCapacity {
 	return workerRuntimeCapacity{
-		preparedPoolSize: int(executionSlots),
-		hostStartLimit:   int(executionSlots),
+		preparedMachineCount: int(executionSlots),
+		hostStartLimit:       int(executionSlots),
 	}
 }
 

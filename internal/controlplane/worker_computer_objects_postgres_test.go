@@ -13,8 +13,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/disk"
-	"github.com/helmrdotdev/helmr/internal/executor"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -177,7 +177,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer generation.Close()
-	publication, err := executor.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, request.ComputerInstanceID, request.DesiredVersion)
+	publication, err := computerhost.NewInitialGenerationPublisher(client, initialTestObjectPublisher{remote}, request.ComputerInstanceID, request.DesiredVersion)
 	if err != nil {
 		t.Fatal(err)
 	}
