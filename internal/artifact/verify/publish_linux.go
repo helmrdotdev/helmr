@@ -30,7 +30,7 @@ func PublishPlatformRuntime(
 		returnErr = errors.Join(returnErr, source.Close())
 	}()
 
-	runtimeSnapshot, err := snapshot.NewRuntime(ctx, "", descriptor, source)
+	runtimeSnapshot, err := snapshot.CopyRuntime(ctx, "", descriptor, source)
 	if err != nil {
 		return err
 	}
@@ -58,10 +58,5 @@ func PublishPlatformRuntime(
 	if err != nil {
 		return fmt.Errorf("verify platform Runtime: %w", err)
 	}
-	if index.Architecture != descriptor.Architecture ||
-		index.RuntimeContract != descriptor.RuntimeContract {
-		return errors.New("verified Platform Runtime does not match its descriptor")
-	}
-
-	return runtimeSnapshot.Publish(ctx, store)
+	return runtimeSnapshot.PublishVerified(ctx, store, index)
 }

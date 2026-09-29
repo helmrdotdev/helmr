@@ -60,7 +60,7 @@ func ParseProgramCompilerResult(raw []byte) (ProgramCompilerResult, error) {
 			err,
 		)
 	}
-	if err := ensureEOF(decoder, "program compiler result"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "program compiler result"); err != nil {
 		return ProgramCompilerResult{}, err
 	}
 	if err := validateProgramCompilerResult(result); err != nil {

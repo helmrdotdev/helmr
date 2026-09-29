@@ -76,8 +76,9 @@ func (tree *BuildTree) MaterializeApplication(
 			return "", nil, fmt.Errorf("build source path %q has unsupported type", entry.Path)
 		}
 	}
-	for index := len(tree.inspected.Entries()) - 1; index >= 0; index-- {
-		entry := tree.inspected.Entries()[index]
+	entries := tree.inspected.Entries()
+	for index := len(entries) - 1; index >= 0; index-- {
+		entry := entries[index]
 		if entry.Path == "." ||
 			applicationViewReserved(entry.Path) ||
 			entry.Kind == artifact.EntrySymlink {

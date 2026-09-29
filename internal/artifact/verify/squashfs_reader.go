@@ -188,33 +188,23 @@ func (reader *squashFSArtifactReader) readEntries(ctx context.Context) error {
 }
 
 func artifactLogicalLimit(role artifact.Role) (int64, error) {
-	switch role {
-	case artifact.RoleProgram:
-		return artifact.MaxProgramLogicalBytes, nil
-	case artifact.RoleRuntime:
-		return artifact.MaxRuntimeLogicalBytes, nil
-	case artifact.RoleBuildTree:
-		return artifact.MaxBuildTreeLogicalBytes, nil
-	default:
+	limit, ok := role.LogicalLimit()
+	if !ok {
 		return 0, &artifactInfrastructureError{
 			cause: fmt.Errorf("artifact role = %d", role),
 		}
 	}
+	return limit, nil
 }
 
 func artifactPhysicalLimit(role artifact.Role) (int64, error) {
-	switch role {
-	case artifact.RoleProgram:
-		return artifact.MaxProgramPhysicalBytes, nil
-	case artifact.RoleRuntime:
-		return artifact.MaxRuntimePhysicalBytes, nil
-	case artifact.RoleBuildTree:
-		return artifact.MaxBuildTreePhysicalBytes, nil
-	default:
+	limit, ok := role.PhysicalLimit()
+	if !ok {
 		return 0, &artifactInfrastructureError{
 			cause: fmt.Errorf("artifact role = %d", role),
 		}
 	}
+	return limit, nil
 }
 
 func projectSquashFSFilesystem(facts squashFSFacts) artifact.Filesystem {

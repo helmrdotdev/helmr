@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"slices"
 	"strings"
@@ -110,7 +109,7 @@ func ParseProgramOutput(raw []byte) (ProgramOutput, error) {
 	if err := decoder.Decode(&output); err != nil {
 		return ProgramOutput{}, fmt.Errorf("decode program output: %w", err)
 	}
-	if err := ensureEOF(decoder, "program output"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "program output"); err != nil {
 		return ProgramOutput{}, err
 	}
 	if err := ValidateProgramOutput(output); err != nil {
@@ -236,7 +235,7 @@ func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
 	if err := decoder.Decode(&index); err != nil {
 		return ProgramIndex{}, fmt.Errorf("decode program index: %w", err)
 	}
-	if err := ensureEOF(decoder, "program index"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "program index"); err != nil {
 		return ProgramIndex{}, err
 	}
 	if err := ValidateProgramIndex(index); err != nil {
@@ -402,14 +401,4 @@ func domainDigest(domain string, canonical []byte) [sha256.Size]byte {
 	var digest [sha256.Size]byte
 	copy(digest[:], hash.Sum(nil))
 	return digest
-}
-
-func ensureEOF(decoder *json.Decoder, label string) error {
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%s contains trailing data", label)
-		}
-		return fmt.Errorf("decode %s trailing data: %w", label, err)
-	}
-	return nil
 }

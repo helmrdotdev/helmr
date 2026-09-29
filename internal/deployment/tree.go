@@ -54,16 +54,11 @@ func writeTreeArchive(
 		nameBytes:    1,
 		archiveBytes: 2 * tarBlockBytes,
 	}
-	switch role {
-	case artifact.RoleProgram:
-		state.logicalLimit = artifact.MaxProgramLogicalBytes
-	case artifact.RoleBuildTree:
-		state.logicalLimit = artifact.MaxBuildTreeLogicalBytes
-	case artifact.RoleRuntime:
-		state.logicalLimit = artifact.MaxRuntimeLogicalBytes
-	default:
+	logicalLimit, ok := role.LogicalLimit()
+	if !ok {
 		return fmt.Errorf("program archive artifact role = %d", role)
 	}
+	state.logicalLimit = logicalLimit
 	for entry, sourceErr := range entries {
 		if sourceErr != nil {
 			return fmt.Errorf("read program archive entry %d: %w", state.count, sourceErr)

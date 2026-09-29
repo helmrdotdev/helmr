@@ -309,6 +309,7 @@ func TestArtifactSnapshotRejectsSharedDirectory(t *testing.T) {
 		directory,
 		artifact.RoleProgram,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		false,
 		func(file *os.File) error {
 			_, err := file.Write([]byte("content"))
 			return err
@@ -350,6 +351,7 @@ func TestProduceArtifactSnapshotSealsDirectOutput(t *testing.T) {
 		directory,
 		artifact.RoleProgram,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		false,
 		func(file *os.File) error {
 			_, err := file.Write(content)
 			return err
@@ -389,6 +391,7 @@ func TestProduceArtifactSnapshotCleansFailedOutput(t *testing.T) {
 		directory,
 		artifact.RoleProgram,
 		Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		false,
 		func(file *os.File) error {
 			if _, err := file.Write([]byte("partial")); err != nil {
 				return err

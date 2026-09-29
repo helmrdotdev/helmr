@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
@@ -339,5 +340,5 @@ func decodeClosedDefinition(raw []byte, value any) error {
 	if err := decoder.Decode(value); err != nil {
 		return err
 	}
-	return ensureEOF(decoder, "definition input")
+	return jsoncanon.RequireEOF(decoder, "definition input")
 }

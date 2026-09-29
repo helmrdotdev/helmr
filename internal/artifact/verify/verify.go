@@ -35,7 +35,6 @@ func verifyProgramArtifact(ctx context.Context, input artifactInput) (*verifiedP
 		ctx,
 		input.Reader,
 		artifact.RoleProgram,
-		artifact.MaxProgramLogicalBytes,
 		input.SizeBytes,
 	)
 	if err != nil {
@@ -58,20 +57,12 @@ func validateArtifactDescriptor(
 	input artifactInput,
 	role artifact.Role,
 ) error {
-	var label, mediaType string
-	var maxPhysicalBytes int64
-	switch role {
-	case artifact.RoleProgram:
-		label = "program"
-		mediaType = artifact.ProgramArtifactMediaType
-		maxPhysicalBytes = artifact.MaxProgramPhysicalBytes
-	case artifact.RoleRuntime:
-		label = "runtime"
-		mediaType = artifact.RuntimeArtifactMediaType
-		maxPhysicalBytes = artifact.MaxRuntimePhysicalBytes
-	default:
+	if role != artifact.RoleProgram && role != artifact.RoleRuntime {
 		return fmt.Errorf("artifact role = %d", role)
 	}
+	label, _ := role.Label()
+	mediaType, _ := role.MediaType()
+	maxPhysicalBytes, _ := role.PhysicalLimit()
 	if !sha256sum.ValidDigest(input.Digest) {
 		return fmt.Errorf("%s artifact digest is not a lowercase SHA-256 digest", label)
 	}

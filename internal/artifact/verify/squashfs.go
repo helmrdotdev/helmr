@@ -60,7 +60,7 @@ type artifactInfrastructureError struct {
 	cause error
 }
 
-func SquashFSPhysical(
+func squashFSPhysical(
 	ctx context.Context,
 	source io.ReaderAt,
 	physicalSize int64,

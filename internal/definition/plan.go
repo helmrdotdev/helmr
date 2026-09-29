@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
@@ -90,7 +89,7 @@ func ParseSandboxManifest(manifestVersion int32, raw []byte) (SandboxManifest, e
 	if err := decoder.Decode(&manifest); err != nil {
 		return SandboxManifest{}, fmt.Errorf("decode sandbox manifest: %w", err)
 	}
-	if err := ensureEOF(decoder, "sandbox manifest"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "sandbox manifest"); err != nil {
 		return SandboxManifest{}, err
 	}
 	return manifest, nil
@@ -121,7 +120,7 @@ type ScheduleManifest struct {
 }
 
 type ScheduleComputerManifest struct {
-	SandboxDeclaredID string                        `json:"sandboxId"`
+	SandboxDeclaredID string                  `json:"sandboxId"`
 	Secrets           []secretbinding.Binding `json:"secrets"`
 }
 
@@ -188,7 +187,7 @@ func ParseBuildPlan(raw []byte) (BuildPlan, error) {
 	if err := decoder.Decode(&plan); err != nil {
 		return BuildPlan{}, fmt.Errorf("decode build plan: %w", err)
 	}
-	if err := ensureEOF(decoder, "build plan"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "build plan"); err != nil {
 		return BuildPlan{}, err
 	}
 	if err := ValidateBuildPlan(plan); err != nil {
@@ -364,7 +363,7 @@ func decodeClosedDefinition(raw []byte, value any) error {
 	if err := decoder.Decode(value); err != nil {
 		return err
 	}
-	return ensureEOF(decoder, "definition input")
+	return jsoncanon.RequireEOF(decoder, "definition input")
 }
 
 func (input Input) manifestCount() int {
@@ -559,14 +558,4 @@ func domainDigest(domain string, canonical []byte) [sha256.Size]byte {
 	var digest [sha256.Size]byte
 	copy(digest[:], hash.Sum(nil))
 	return digest
-}
-
-func ensureEOF(decoder *json.Decoder, label string) error {
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%s contains trailing data", label)
-		}
-		return fmt.Errorf("decode %s trailing data: %w", label, err)
-	}
-	return nil
 }

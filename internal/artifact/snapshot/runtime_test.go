@@ -15,7 +15,7 @@ func TestRuntimeDescriptorDomainIsIndependentFromArtifactAdmission(t *testing.T)
 	if err := artifact.ValidateRuntimeDescriptor(descriptor); err != nil {
 		t.Fatalf("descriptor scalar domain rejected physical oversize: %v", err)
 	}
-	if _, err := NewRuntime(
+	if _, err := CopyRuntime(
 		context.Background(),
 		t.TempDir(),
 		descriptor,

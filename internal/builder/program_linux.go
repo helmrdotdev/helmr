@@ -164,7 +164,7 @@ func BuildPreparedProgram(
 	if err := copyPayload(filepath.Join(input.PreparedDirectory, "payload"), payload); err != nil {
 		return ProgramResult{}, err
 	}
-	actual, err := artifact.ProgramPayloadDigest(ctx, payload)
+	actual, err := deployment.ProgramPayloadDigest(ctx, payload)
 	if err != nil {
 		return ProgramResult{}, err
 	}
@@ -244,7 +244,7 @@ func analyzePayload(
 	work string,
 	compilerOutput string,
 ) (artifact.BuildConfig, deployment.VerificationResult, error) {
-	inputDigest, err := artifact.ProgramPayloadDigest(ctx, input.ProjectDirectory)
+	inputDigest, err := deployment.ProgramPayloadDigest(ctx, input.ProjectDirectory)
 	if err != nil {
 		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
 	}
@@ -291,7 +291,7 @@ func analyzePayload(
 	if err != nil {
 		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
 	}
-	after, err := artifact.ProgramPayloadDigest(ctx, input.ProjectDirectory)
+	after, err := deployment.ProgramPayloadDigest(ctx, input.ProjectDirectory)
 	if err != nil {
 		return artifact.BuildConfig{}, deployment.VerificationResult{}, err
 	}

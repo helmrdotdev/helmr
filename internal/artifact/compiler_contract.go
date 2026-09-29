@@ -53,7 +53,7 @@ func ParseCompilerInputs(raw []byte) (CompilerInputs, error) {
 	if err := decoder.Decode(&inputs); err != nil {
 		return CompilerInputs{}, fmt.Errorf("decode compiler inputs: %w", err)
 	}
-	if err := ensureEOF(decoder, "compiler inputs"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "compiler inputs"); err != nil {
 		return CompilerInputs{}, err
 	}
 	if err := ValidateCompilerInputs(inputs); err != nil {

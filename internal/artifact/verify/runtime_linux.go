@@ -18,7 +18,6 @@ func verifyRuntimeArtifact(
 		ctx,
 		input.Reader,
 		artifact.RoleRuntime,
-		artifact.MaxRuntimeLogicalBytes,
 		input.SizeBytes,
 	)
 	if err != nil {

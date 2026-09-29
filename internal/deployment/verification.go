@@ -101,7 +101,7 @@ func ParseVerificationResult(raw []byte) (VerificationResult, error) {
 	if err := decoder.Decode(&result); err != nil {
 		return VerificationResult{}, fmt.Errorf("decode verification result: %w", err)
 	}
-	if err := ensureEOF(decoder, "verification result"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "verification result"); err != nil {
 		return VerificationResult{}, err
 	}
 	if err := ValidateVerificationResult(result); err != nil {
@@ -254,7 +254,7 @@ func decodeClosedVerificationResult(raw []byte, value any) error {
 	if err := decoder.Decode(value); err != nil {
 		return err
 	}
-	return ensureEOF(decoder, "verification result")
+	return jsoncanon.RequireEOF(decoder, "verification result")
 }
 
 func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
@@ -430,14 +430,4 @@ func cloneProgramDeclarations(
 		)
 	}
 	return cloned
-}
-
-func ensureEOF(decoder *json.Decoder, label string) error {
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%s contains trailing data", label)
-		}
-		return fmt.Errorf("decode %s trailing data: %w", label, err)
-	}
-	return nil
 }

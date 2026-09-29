@@ -32,7 +32,6 @@ func TestSquashFSArtifactReaderInspectsAndOpensExactImage(t *testing.T) {
 		context.Background(),
 		reader,
 		artifact.RoleProgram,
-		artifact.MaxProgramLogicalBytes,
 		int64(len(image)),
 	)
 	if err != nil {
@@ -187,7 +186,6 @@ func TestSquashFSArtifactReaderLeavesHeaderPolicyToPureVerifier(t *testing.T) {
 				context.Background(),
 				reader,
 				artifact.RoleProgram,
-				artifact.MaxProgramLogicalBytes,
 				int64(len(image)),
 			); err == nil {
 				t.Fatal("pure verifier accepted mutated header")
@@ -229,7 +227,6 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 				context.Background(),
 				reader,
 				artifact.RoleProgram,
-				artifact.MaxProgramLogicalBytes,
 				int64(len(image)),
 			); err == nil {
 				t.Fatal("pure verifier accepted invalid tail facts")
@@ -251,7 +248,6 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 		context.Background(),
 		reader,
 		artifact.RoleProgram,
-		artifact.MaxProgramLogicalBytes,
 		int64(len(image)),
 	); err == nil {
 		t.Fatal("pure verifier accepted a nonzero ID table")
@@ -265,12 +261,12 @@ func TestVerifySquashFSPhysical(t *testing.T) {
 	t.Parallel()
 
 	exact, _ := squashFSTestArtifactImage(t, 0)
-	if err := SquashFSPhysical(
+	if err := squashFSPhysical(
 		context.Background(),
 		bytes.NewReader(exact),
 		int64(len(exact)),
 	); err != nil {
-		t.Fatalf("SquashFSPhysical() error = %v", err)
+		t.Fatalf("squashFSPhysical() error = %v", err)
 	}
 
 	tests := map[string][]byte{
@@ -289,12 +285,12 @@ func TestVerifySquashFSPhysical(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			if err := SquashFSPhysical(
+			if err := squashFSPhysical(
 				context.Background(),
 				bytes.NewReader(image),
 				int64(len(image)),
 			); err == nil {
-				t.Fatal("SquashFSPhysical() accepted invalid image")
+				t.Fatal("squashFSPhysical() accepted invalid image")
 			}
 		})
 	}
@@ -330,9 +326,6 @@ func TestProjectSquashFSEntriesRetainsKnownForbiddenForms(t *testing.T) {
 		}
 		if len(entries) != 1 || entries[0].Form != inode.Form {
 			t.Fatalf("entries = %#v", entries)
-		}
-		if err := artifact.ValidateEntry(entries[0], artifact.RoleProgram); err == nil {
-			t.Fatalf("inode form %d reached pure verifier and was accepted", inode.Form)
 		}
 	}
 }

@@ -16,7 +16,7 @@ type Runtime struct {
 	content    *Artifact
 }
 
-func NewRuntime(
+func CopyRuntime(
 	ctx context.Context,
 	directory string,
 	descriptor artifact.RuntimeDescriptor,
@@ -76,10 +76,21 @@ func (snapshot *Runtime) LinkInto(
 	return snapshot.content.LinkInto(directory, name, uid, gid)
 }
 
-// Publish stores the snapshot bytes under the descriptor it was taken for.
-func (snapshot *Runtime) Publish(ctx context.Context, store cas.ImmutableStore) error {
+// PublishVerified stores the snapshot bytes under the descriptor it was taken
+// for. It publishes only after in-process verification produced verified for
+// this snapshot, and rejects a verified index that does not match the
+// descriptor. The only caller is verify.PublishPlatformRuntime.
+func (snapshot *Runtime) PublishVerified(
+	ctx context.Context,
+	store cas.ImmutableStore,
+	verified artifact.RuntimeIndex,
+) error {
 	if snapshot == nil || snapshot.content == nil {
 		return errors.New("runtime artifact snapshot is closed")
+	}
+	if verified.Architecture != snapshot.descriptor.Architecture ||
+		verified.RuntimeContract != snapshot.descriptor.RuntimeContract {
+		return errors.New("verified Platform Runtime does not match its descriptor")
 	}
 	if err := validateArtifactSnapshotPlatform(snapshot.content); err != nil {
 		return err

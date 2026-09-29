@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/bundle"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 // The opt-in fixture is the actual preparation graph's exported result, with no
@@ -42,7 +43,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := artifact.ProgramPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
+	before, err := deployment.ProgramPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		}
 		previousDescriptor, previousObject = descriptor, object
 	}
-	after, err := artifact.ProgramPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
+	after, err := deployment.ProgramPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
 	if err != nil {
 		t.Fatal(err)
 	}

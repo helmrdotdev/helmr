@@ -35,7 +35,6 @@ func inspectBuildTree(
 		ctx,
 		reader,
 		artifact.RoleBuildTree,
-		artifact.MaxBuildTreeLogicalBytes,
 		physicalSize,
 	)
 	if err != nil {
@@ -84,6 +83,7 @@ func IngestBuildTreeArchive(
 		directory,
 		artifact.RoleBuildTree,
 		snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		false,
 		func(destination *os.File) error {
 			return encodeSquashFS(ctx, encoder, reader, destination)
 		},

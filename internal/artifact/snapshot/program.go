@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-func ProgramObject(
+func ReadProgram(
 	ctx context.Context,
 	store cas.Reader,
 	directory string,

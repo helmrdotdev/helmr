@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"sort"
 
@@ -27,9 +26,9 @@ const (
 
 	MaxBytes          = 16 << 20
 	MaxComputerImages = 256
-	MaxObjects        = 257
-	MaxObjectBytes    = int64(4 << 30)
-	MaxTotalBytes     = int64(4 << 30)
+	maxObjects        = 257
+	maxObjectBytes    = int64(4 << 30)
+	maxTotalBytes     = int64(4 << 30)
 )
 
 type Manifest struct {
@@ -60,7 +59,7 @@ func (admission Admission) Admit(bundle Manifest) error {
 	if err := admission.Validate(); err != nil {
 		return err
 	}
-	if err := Validate(bundle); err != nil {
+	if err := validate(bundle); err != nil {
 		return err
 	}
 	if bundle.Platform.Architecture != admission.Runtime.Architecture ||
@@ -136,10 +135,10 @@ func Parse(raw []byte) (Manifest, error) {
 	if err := decoder.Decode(&bundle); err != nil {
 		return Manifest{}, fmt.Errorf("decode deployment bundle: %w", err)
 	}
-	if err := ensureEOF(decoder, "deployment bundle"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "deployment bundle"); err != nil {
 		return Manifest{}, err
 	}
-	if err := Validate(bundle); err != nil {
+	if err := validate(bundle); err != nil {
 		return Manifest{}, err
 	}
 	complete, err := Canonical(bundle)
@@ -155,7 +154,7 @@ func Parse(raw []byte) (Manifest, error) {
 }
 
 func Canonical(bundle Manifest) ([]byte, error) {
-	if err := Validate(bundle); err != nil {
+	if err := validate(bundle); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(bundle)
@@ -183,7 +182,7 @@ func Digest(raw []byte) (string, error) {
 	return sha256sum.FormatDigest(digest[:]), nil
 }
 
-func Validate(bundle Manifest) error {
+func validate(bundle Manifest) error {
 	if bundle.Contract != Contract {
 		return fmt.Errorf(
 			"deployment bundle contract = %q, want %q",
@@ -205,7 +204,7 @@ func Validate(bundle Manifest) error {
 			definition.ArchitectureX8664,
 		)
 	}
-	if err := ValidatePlan(bundle.Plan); err != nil {
+	if err := validatePlan(bundle.Plan); err != nil {
 		return fmt.Errorf("deployment bundle plan: %w", err)
 	}
 	if err := validateBundleRuntime(bundle.Runtime); err != nil {
@@ -323,10 +322,10 @@ func validateBundleObjectClosure(bundle Manifest) error {
 	if bundle.Objects == nil {
 		return errors.New("deployment bundle objects must be an array")
 	}
-	if len(bundle.Objects) > MaxObjects {
+	if len(bundle.Objects) > maxObjects {
 		return fmt.Errorf(
 			"deployment bundle has more than %d objects",
-			MaxObjects,
+			maxObjects,
 		)
 	}
 	expected := make(map[string]Object, 1+len(bundle.ComputerImages))
@@ -372,10 +371,10 @@ func validateBundleObjectClosure(bundle Manifest) error {
 		if !exists || reference != object {
 			return fmt.Errorf("deployment bundle object %q is missing, extra, or conflicts with its reference", object.Digest)
 		}
-		if object.SizeBytes > MaxTotalBytes-total {
+		if object.SizeBytes > maxTotalBytes-total {
 			return fmt.Errorf(
 				"deployment bundle object closure exceeds %d bytes",
-				MaxTotalBytes,
+				maxTotalBytes,
 			)
 		}
 		total += object.SizeBytes
@@ -387,11 +386,11 @@ func validateBundleObject(object Object, name string) error {
 	if !sha256sum.ValidDigest(object.Digest) {
 		return fmt.Errorf("deployment bundle %s digest is not a lowercase SHA-256 digest", name)
 	}
-	if object.SizeBytes < 1 || object.SizeBytes > MaxObjectBytes {
+	if object.SizeBytes < 1 || object.SizeBytes > maxObjectBytes {
 		return fmt.Errorf(
 			"deployment bundle %s sizeBytes is outside [1,%d]",
 			name,
-			MaxObjectBytes,
+			maxObjectBytes,
 		)
 	}
 	if object.MediaType != artifact.ProgramArtifactMediaType &&
@@ -406,14 +405,4 @@ func SortObjects(objects []Object) {
 	sort.Slice(objects, func(left, right int) bool {
 		return objects[left].Digest < objects[right].Digest
 	})
-}
-
-func ensureEOF(decoder *json.Decoder, label string) error {
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%s contains trailing data", label)
-		}
-		return fmt.Errorf("decode %s trailing data: %w", label, err)
-	}
-	return nil
 }

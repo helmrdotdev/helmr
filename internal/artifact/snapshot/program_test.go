@@ -27,7 +27,7 @@ func TestSnapshotProgramBindsDescriptorAndDriveSource(t *testing.T) {
 	store := programObjectStore{objects: map[string]programObject{
 		program.Digest: {descriptor: program, body: body},
 	}}
-	snapshot, err := ProgramObject(
+	snapshot, err := ReadProgram(
 		context.Background(),
 		store,
 		t.TempDir(),

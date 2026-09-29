@@ -30,7 +30,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 		},
 		body: body,
 	}
-	snapshot, err := RuntimeObject(
+	snapshot, err := ReadRuntime(
 		context.Background(),
 		store,
 		t.TempDir(),
@@ -44,7 +44,7 @@ func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 	}
 
 	store.body = []byte("divergent bytes")
-	if _, err := RuntimeObject(
+	if _, err := ReadRuntime(
 		context.Background(),
 		store,
 		t.TempDir(),
@@ -71,7 +71,7 @@ func TestSnapshotRuntimeObjectRejectsDivergentMetadata(t *testing.T) {
 				MediaType: descriptor.MediaType,
 			}
 			mutate(&object)
-			_, err := RuntimeObject(
+			_, err := ReadRuntime(
 				context.Background(),
 				runtimeObjectStore{object: object, body: body},
 				t.TempDir(),
@@ -85,7 +85,7 @@ func TestSnapshotRuntimeObjectRejectsDivergentMetadata(t *testing.T) {
 }
 
 func TestSnapshotRuntimeObjectRequiresStore(t *testing.T) {
-	if _, err := RuntimeObject(
+	if _, err := ReadRuntime(
 		context.Background(),
 		nil,
 		t.TempDir(),

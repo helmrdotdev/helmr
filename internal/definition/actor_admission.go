@@ -45,7 +45,7 @@ func ResolveActorRunAdmission(
 	if err := decoder.Decode(&manifest); err != nil {
 		return ActorRunAdmission{}, fmt.Errorf("decode actor manifest: %w", err)
 	}
-	if err := ensureEOF(decoder, "actor manifest"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "actor manifest"); err != nil {
 		return ActorRunAdmission{}, err
 	}
 	completeRaw, err := json.Marshal(manifest)

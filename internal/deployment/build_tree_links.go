@@ -1,4 +1,4 @@
-package artifact
+package deployment
 
 import (
 	"errors"
@@ -6,15 +6,19 @@ import (
 	"path"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
-func ValidateBuildTreeLinks(tree *Tree) error {
-	for _, entry := range tree.Entries() {
-		if entry.Kind != EntrySymlink {
+func validateBuildTreeLinks(
+	entries []artifact.Entry,
+	lookup func(string) (artifact.Entry, bool),
+) error {
+	for _, entry := range entries {
+		if entry.Kind != artifact.EntrySymlink {
 			continue
 		}
-		if err := validateBuildTreeLink(tree, entry.Path, entry.LinkTarget); err != nil {
+		if err := validateBuildTreeLink(lookup, entry.Path, entry.LinkTarget); err != nil {
 			return fmt.Errorf("build tree link %q: %w", entry.Path, err)
 		}
 	}
@@ -22,7 +26,7 @@ func ValidateBuildTreeLinks(tree *Tree) error {
 }
 
 func validateBuildTreeLink(
-	tree *Tree,
+	lookup func(string) (artifact.Entry, bool),
 	link string,
 	target string,
 ) error {
@@ -46,14 +50,14 @@ func validateBuildTreeLink(
 			continue
 		}
 		candidate := strings.Join(append(resolved, component), "/")
-		if err := safepath.ValidateTreePath(candidate, ProgramMountPath, "/workspace/project", "/workspace/program"); err != nil {
+		if err := safepath.ValidateTreePath(candidate, artifact.ProgramMountPath, "/workspace/project", "/workspace/program"); err != nil {
 			return err
 		}
-		entry, exists := tree.Lookup(candidate)
+		entry, exists := lookup(candidate)
 		if !exists {
 			return nil
 		}
-		if entry.Kind == EntrySymlink {
+		if entry.Kind == artifact.EntrySymlink {
 			hops++
 			if hops > safepath.TreeLinkHops {
 				return fmt.Errorf("target exceeds %d symbolic-link hops", safepath.TreeLinkHops)
@@ -61,7 +65,7 @@ func validateBuildTreeLink(
 			pending = append(strings.Split(entry.LinkTarget, "/"), pending...)
 			continue
 		}
-		if entry.Kind != EntryDirectory && len(pending) != 0 {
+		if entry.Kind != artifact.EntryDirectory && len(pending) != 0 {
 			return nil
 		}
 		resolved = append(resolved, component)

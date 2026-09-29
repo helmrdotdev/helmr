@@ -50,7 +50,7 @@ func ParseDeclarationLocator(raw []byte) (DeclarationLocator, error) {
 	if err := decoder.Decode(&locator); err != nil {
 		return DeclarationLocator{}, fmt.Errorf("decode declaration locator: %w", err)
 	}
-	if err := ensureEOF(decoder, "declaration locator"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "declaration locator"); err != nil {
 		return DeclarationLocator{}, err
 	}
 	if err := ValidateDeclarationLocator(locator); err != nil {

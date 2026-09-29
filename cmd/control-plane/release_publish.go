@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +49,7 @@ func publishPlatformRelease(ctx context.Context, store cas.ImmutableStore, direc
 	if err := decoder.Decode(&manifest); err != nil {
 		return err
 	}
-	if err := ensureEOF(decoder, "Platform release manifest"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "Platform release manifest"); err != nil {
 		return err
 	}
 	if manifest.FormatVersion != 0 {
@@ -68,14 +66,4 @@ func publishPlatformRelease(ctx context.Context, store cas.ImmutableStore, direc
 		return errors.New("platform release Runtime object does not match its descriptor")
 	}
 	return verify.PublishPlatformRuntime(ctx, store, path, descriptor)
-}
-
-func ensureEOF(decoder *json.Decoder, label string) error {
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%s contains trailing data", label)
-		}
-		return fmt.Errorf("decode %s trailing data: %w", label, err)
-	}
-	return nil
 }

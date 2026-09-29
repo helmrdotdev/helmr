@@ -85,7 +85,7 @@ func validateInspectedBuildTree(
 			"build tree root path \"node_modules\" is not a directory",
 		)
 	}
-	if err := artifact.ValidateBuildTreeLinks(tree); err != nil {
+	if err := validateBuildTreeLinks(tree.Entries(), tree.Lookup); err != nil {
 		return err
 	}
 	return nil

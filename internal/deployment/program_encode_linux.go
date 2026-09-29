@@ -53,6 +53,7 @@ func encodeProgramTree(
 		leaseDirectory,
 		role,
 		snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()},
+		true,
 		func(destination *os.File) error {
 			reader, writer := io.Pipe()
 			writeResult := make(chan error, 1)
@@ -70,7 +71,6 @@ func encodeProgramTree(
 	if err != nil {
 		return nil, err
 	}
-	content.RemoveDirectoryOnClose()
 	removeLease = false
 	return content, nil
 }

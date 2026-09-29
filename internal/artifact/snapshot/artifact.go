@@ -12,6 +12,7 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -63,28 +64,13 @@ func (snapshot *Program) Close() error {
 }
 
 func artifactSnapshotSpecForRole(role artifact.Role) (artifactSnapshotSpec, error) {
-	switch role {
-	case artifact.RoleProgram:
-		return artifactSnapshotSpec{
-			label:     "program",
-			mediaType: artifact.ProgramArtifactMediaType,
-			maxBytes:  artifact.MaxProgramPhysicalBytes,
-		}, nil
-	case artifact.RoleRuntime:
-		return artifactSnapshotSpec{
-			label:     "runtime",
-			mediaType: artifact.RuntimeArtifactMediaType,
-			maxBytes:  artifact.MaxRuntimePhysicalBytes,
-		}, nil
-	case artifact.RoleBuildTree:
-		return artifactSnapshotSpec{
-			label:     "build tree",
-			mediaType: buildTreeSnapshotMediaType,
-			maxBytes:  artifact.MaxBuildTreePhysicalBytes,
-		}, nil
-	default:
+	label, labelOK := role.Label()
+	mediaType, mediaTypeOK := role.MediaType()
+	maxBytes, maxBytesOK := role.PhysicalLimit()
+	if !labelOK || !mediaTypeOK || !maxBytesOK {
 		return artifactSnapshotSpec{}, fmt.Errorf("artifact snapshot role = %d", role)
 	}
+	return artifactSnapshotSpec{label: label, mediaType: mediaType, maxBytes: maxBytes}, nil
 }
 
 func validateArtifactSnapshotSpec(spec artifactSnapshotSpec) error {
@@ -133,8 +119,12 @@ func validateArtifactSnapshotDescriptor(
 
 // Descriptor returns the digest, size and media type the snapshot was sealed
 // for.
-func (snapshot *Artifact) Descriptor() artifact.ProgramDescriptor {
-	return artifact.ProgramDescriptor(snapshot.descriptor)
+func (snapshot *Artifact) Descriptor() cas.Descriptor {
+	return cas.Descriptor{
+		Digest:    snapshot.descriptor.Digest,
+		SizeBytes: snapshot.descriptor.SizeBytes,
+		MediaType: snapshot.descriptor.MediaType,
+	}
 }
 
 func (snapshot *Artifact) VerifierFile() (*os.File, error) {
@@ -246,7 +236,3 @@ func (reader *artifactSnapshotReader) Read(buffer []byte) (int, error) {
 	}
 	return count, nil
 }
-
-// buildTreeSnapshotMediaType is an in-process snapshot discriminator. It is
-// never published, persisted, or used as Program identity.
-const buildTreeSnapshotMediaType = "application/vnd.helmr.internal-build-tree.v0+squashfs"

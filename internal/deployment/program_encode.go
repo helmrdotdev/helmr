@@ -147,9 +147,14 @@ func EncodeProgram(
 		}
 	}()
 
+	descriptor := content.Descriptor()
 	output := artifact.ProgramOutput{
-		Artifact: content.Descriptor(),
-		Index:    index,
+		Artifact: artifact.ProgramDescriptor{
+			Digest:    descriptor.Digest,
+			SizeBytes: descriptor.SizeBytes,
+			MediaType: descriptor.MediaType,
+		},
+		Index: index,
 	}
 	if err := artifact.ValidateProgramOutput(output); err != nil {
 		return nil, err
@@ -192,8 +197,9 @@ func programTreeEntries(
 	tree *artifact.Tree,
 	generated map[string][]byte,
 ) iter.Seq2[treeEntry, error] {
-	sources := make([]programTreeSource, 0, len(tree.Entries())+len(generated)+2)
-	for _, entry := range tree.Entries() {
+	entries := tree.Entries()
+	sources := make([]programTreeSource, 0, len(entries)+len(generated)+2)
+	for _, entry := range entries {
 		if entry.Path == "." || entry.Path == "helmr/compiler-result.json" {
 			continue
 		}

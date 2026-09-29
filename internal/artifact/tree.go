@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"path"
+	"slices"
 
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
@@ -67,6 +68,66 @@ const (
 	RoleBuildTree
 )
 
+// buildTreeMediaType is an in-process snapshot discriminator. It is never
+// published, persisted, or used as Program identity.
+const buildTreeMediaType = "application/vnd.helmr.internal-build-tree.v0+squashfs"
+
+// Label names the role in diagnostics.
+func (role Role) Label() (string, bool) {
+	switch role {
+	case RoleProgram:
+		return "program", true
+	case RoleRuntime:
+		return "runtime", true
+	case RoleBuildTree:
+		return "build tree", true
+	default:
+		return "", false
+	}
+}
+
+// MediaType returns the media type of artifacts with the role.
+func (role Role) MediaType() (string, bool) {
+	switch role {
+	case RoleProgram:
+		return ProgramArtifactMediaType, true
+	case RoleRuntime:
+		return RuntimeArtifactMediaType, true
+	case RoleBuildTree:
+		return buildTreeMediaType, true
+	default:
+		return "", false
+	}
+}
+
+// LogicalLimit bounds the aggregate regular-file bytes of the role.
+func (role Role) LogicalLimit() (int64, bool) {
+	switch role {
+	case RoleProgram:
+		return MaxProgramLogicalBytes, true
+	case RoleRuntime:
+		return MaxRuntimeLogicalBytes, true
+	case RoleBuildTree:
+		return MaxBuildTreeLogicalBytes, true
+	default:
+		return 0, false
+	}
+}
+
+// PhysicalLimit bounds the SquashFS image bytes of the role.
+func (role Role) PhysicalLimit() (int64, bool) {
+	switch role {
+	case RoleProgram:
+		return MaxProgramPhysicalBytes, true
+	case RoleRuntime:
+		return MaxRuntimePhysicalBytes, true
+	case RoleBuildTree:
+		return MaxBuildTreePhysicalBytes, true
+	default:
+		return 0, false
+	}
+}
+
 // opener opens regular files by their artifact-relative path.
 type opener interface {
 	Open(context.Context, string) (io.ReadCloser, error)
@@ -105,10 +166,9 @@ func (tree *Tree) Role() Role {
 	return tree.role
 }
 
-// Entries returns the inspected entries in enumeration order. Callers must
-// not modify the returned slice.
+// Entries returns a copy of the inspected entries in enumeration order.
 func (tree *Tree) Entries() []Entry {
-	return tree.ordered
+	return slices.Clone(tree.ordered)
 }
 
 // Lookup returns the inspected entry at path.
@@ -122,7 +182,9 @@ func (tree *Tree) Open(ctx context.Context, path string) (io.ReadCloser, error) 
 	return tree.reader.Open(ctx, path)
 }
 
-func chargeNameBytes(total int64, entry Entry) (int64, error) {
+// ChargeNameBytes adds the raw path and symbolic-link-target bytes of entry to
+// total and rejects aggregates beyond MaxNameBytes.
+func ChargeNameBytes(total int64, entry Entry) (int64, error) {
 	if total < 0 {
 		return 0, fmt.Errorf("aggregate raw path and symbolic-link-target bytes are negative")
 	}
@@ -227,9 +289,12 @@ func Inspect(
 	ctx context.Context,
 	reader Reader,
 	role Role,
-	maxLogicalBytes int64,
 	physicalSize int64,
 ) (*Tree, error) {
+	maxLogicalBytes, ok := role.LogicalLimit()
+	if !ok {
+		return nil, fmt.Errorf("artifact role = %d", role)
+	}
 	filesystem := reader.Filesystem()
 	if err := ValidateFilesystem(filesystem, physicalSize, false); err != nil {
 		return nil, err
@@ -254,11 +319,11 @@ func Inspect(
 	var logicalBytes int64
 	var nameBytes int64
 	for position, entry := range entries {
-		nameBytes, err = chargeNameBytes(nameBytes, entry)
+		nameBytes, err = ChargeNameBytes(nameBytes, entry)
 		if err != nil {
 			return nil, fmt.Errorf("entry %d: %w", position, err)
 		}
-		if err := ValidateEntry(entry, role); err != nil {
+		if err := validateEntry(entry, role); err != nil {
 			return nil, fmt.Errorf("entry %d %q: %w", position, entry.Path, err)
 		}
 		if entry.InodeNumber > filesystem.InodeCount {
@@ -366,7 +431,7 @@ func ValidateFilesystem(
 	return nil
 }
 
-func ValidateEntry(entry Entry, role Role) error {
+func validateEntry(entry Entry, role Role) error {
 	if entry.UIDIndex != 0 || entry.GIDIndex != 0 ||
 		entry.UID != 0 || entry.GID != 0 ||
 		entry.ModTimeUnix != 0 || entry.XattrIndex != SquashFSInvalidXattr {

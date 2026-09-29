@@ -48,7 +48,7 @@ func ParseBuildConfig(raw []byte) (BuildConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return BuildConfig{}, fmt.Errorf("decode config result: %w", err)
 	}
-	if err := ensureEOF(decoder, "config result"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "config result"); err != nil {
 		return BuildConfig{}, err
 	}
 	if err := ValidateBuildConfig(config); err != nil {

@@ -88,24 +88,27 @@ func snapshotArtifact(
 	return snapshot, nil
 }
 
+// Produce seals the artifact that produce writes into a new file under
+// directory. When ownDirectory is true the snapshot takes ownership of
+// directory, and Close removes it after the snapshot itself.
 func Produce(
 	ctx context.Context,
 	directory string,
 	role artifact.Role,
 	owner Owner,
+	ownDirectory bool,
 	produce func(*os.File) error,
 ) (*Artifact, error) {
 	spec, err := artifactSnapshotSpecForRole(role)
 	if err != nil {
 		return nil, err
 	}
-	return produceArtifactSnapshotWithSpec(ctx, directory, spec, owner, produce)
-}
-
-// RemoveDirectoryOnClose transfers ownership of the directory that holds the
-// snapshot, so Close removes it after the snapshot itself.
-func (snapshot *Artifact) RemoveDirectoryOnClose() {
-	snapshot.platform.removeDirectory = true
+	snapshot, err := produceArtifactSnapshotWithSpec(ctx, directory, spec, owner, produce)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.platform.removeDirectory = ownDirectory
+	return snapshot, nil
 }
 
 func produceArtifactSnapshotWithSpec(

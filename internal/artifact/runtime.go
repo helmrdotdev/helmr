@@ -276,7 +276,7 @@ func parseRuntimeDocument(raw []byte, name string, destination any) error {
 	if err := decoder.Decode(destination); err != nil {
 		return fmt.Errorf("decode %s: %w", name, err)
 	}
-	return ensureEOF(decoder, name)
+	return jsoncanon.RequireEOF(decoder, name)
 }
 
 func canonicalRuntimeDocument(value any, name string) ([]byte, error) {

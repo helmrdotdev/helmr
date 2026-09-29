@@ -15,7 +15,6 @@ func TestRuntimeTopologyAcceptsClosedLayout(t *testing.T) {
 		context.Background(),
 		memory,
 		artifact.RoleRuntime,
-		artifact.MaxRuntimeLogicalBytes,
 		descriptor.SizeBytes,
 	)
 	if err != nil {
@@ -131,7 +130,6 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 				context.Background(),
 				memory,
 				artifact.RoleRuntime,
-				artifact.MaxRuntimeLogicalBytes,
 				descriptor.SizeBytes,
 			)
 			if err == nil {

@@ -968,7 +968,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       program.Runtime.SizeBytes,
 	}
-	runtimeSnapshot, err := snapshot.RuntimeObject(
+	runtimeSnapshot, err := snapshot.ReadRuntime(
 		ctx,
 		p.PlatformStore,
 		tempDir,
@@ -1012,7 +1012,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 	programDescriptor := artifact.ProgramDescriptor{
 		Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
 	}
-	programSnapshot, err := snapshot.ProgramObject(
+	programSnapshot, err := snapshot.ReadProgram(
 		ctx,
 		p.CAS,
 		tempDir,

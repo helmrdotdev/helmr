@@ -85,7 +85,6 @@ func inspectMemoryBuildTree(
 		context.Background(),
 		tree,
 		artifact.RoleBuildTree,
-		artifact.MaxBuildTreeLogicalBytes,
 		artifact.SquashFSPhysicalAlign,
 	)
 	if err != nil {

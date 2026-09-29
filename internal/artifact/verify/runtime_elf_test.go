@@ -626,7 +626,6 @@ func inspectRuntimeELFArtifact(t *testing.T, memory *memoryArtifact) *artifact.T
 		context.Background(),
 		memory,
 		artifact.RoleRuntime,
-		artifact.MaxRuntimeLogicalBytes,
 		artifact.SquashFSPhysicalAlign,
 	)
 	if err != nil {

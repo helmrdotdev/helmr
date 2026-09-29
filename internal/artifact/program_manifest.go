@@ -50,7 +50,7 @@ func ParseProgramManifest(raw []byte) (ProgramManifest, error) {
 	if err := decoder.Decode(&manifest); err != nil {
 		return ProgramManifest{}, fmt.Errorf("decode program manifest: %w", err)
 	}
-	if err := ensureEOF(decoder, "program manifest"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "program manifest"); err != nil {
 		return ProgramManifest{}, err
 	}
 	if err := validateProgramManifest(manifest); err != nil {

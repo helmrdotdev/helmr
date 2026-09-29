@@ -198,7 +198,7 @@ func TestDeploymentBundleAdmissionRequiresExactRuntimeRelease(t *testing.T) {
 	changed := bundle
 	changed.Runtime.Artifact.Digest = "sha256:" + strings.Repeat("2", 64)
 	changed.Program.Index.RuntimeDigest = changed.Runtime.Artifact.Digest
-	if err := Validate(changed); err != nil {
+	if err := validate(changed); err != nil {
 		t.Fatalf("ValidateDeploymentBundle: %v", err)
 	}
 	if err := admission.Admit(changed); err == nil ||
@@ -339,7 +339,7 @@ func TestDeploymentBundleBindsDiskProfileAndConfig(t *testing.T) {
 			case "legacy-format":
 				bundle.ComputerImages[0].Artifact.MediaType = "application/vnd.helmr.computer-image.v0.oci-tar"
 			}
-			if err := Validate(bundle); err == nil {
+			if err := validate(bundle); err == nil {
 				t.Fatal("mismatched disk contract accepted")
 			}
 		})

@@ -30,13 +30,13 @@ func PlanFromProgramIndex(index artifact.ProgramIndex) (Plan, error) {
 		Definitions:   cloned.Declarations,
 		Queues:        cloned.Queues,
 	}
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
 }
 
-func ValidatePlan(plan Plan) error {
+func validatePlan(plan Plan) error {
 	if plan.FormatVersion != definition.DeploymentPlanFormatVersion {
 		return fmt.Errorf(
 			"deployment plan formatVersion = %d, want %d",
@@ -92,7 +92,7 @@ func ValidatePlan(plan Plan) error {
 }
 
 func validateProgramIndexDeployment(index artifact.ProgramIndex, plan Plan) error {
-	if err := ValidatePlan(plan); err != nil {
+	if err := validatePlan(plan); err != nil {
 		return err
 	}
 	if len(index.Queues) != len(plan.Queues) || len(index.Declarations) != len(plan.Definitions) {

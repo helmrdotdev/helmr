@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -38,7 +37,7 @@ func parseProgramVerification(raw []byte) (programVerification, error) {
 	if err := decoder.Decode(&verified); err != nil {
 		return programVerification{}, fmt.Errorf("decode program verification: %w", err)
 	}
-	if err := ensureEOF(decoder, "program verification"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "program verification"); err != nil {
 		return programVerification{}, err
 	}
 	if err := validateProgramVerification(verified); err != nil {
@@ -88,16 +87,6 @@ func validateProgramVerification(verified programVerification) error {
 	}
 	if err := artifact.ValidateProgramIndex(verified.Index); err != nil {
 		return fmt.Errorf("program verification index: %w", err)
-	}
-	return nil
-}
-
-func ensureEOF(decoder *json.Decoder, label string) error {
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("%s contains trailing data", label)
-		}
-		return fmt.Errorf("decode %s trailing data: %w", label, err)
 	}
 	return nil
 }

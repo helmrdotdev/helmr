@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 )
 
-func RuntimeObject(
+func ReadRuntime(
 	ctx context.Context,
 	store cas.Reader,
 	directory string,
@@ -34,7 +34,7 @@ func RuntimeObject(
 	if err != nil {
 		return nil, fmt.Errorf("open runtime object: %w", err)
 	}
-	snapshot, snapshotErr := NewRuntime(ctx, directory, descriptor, body)
+	snapshot, snapshotErr := CopyRuntime(ctx, directory, descriptor, body)
 	closeErr := body.Close()
 	if snapshotErr != nil {
 		return nil, snapshotErr

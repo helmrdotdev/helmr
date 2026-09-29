@@ -18,7 +18,7 @@ func TestProgramLinkHopBoundary(t *testing.T) {
 			}
 			tree.addLink(fmt.Sprintf("link-%02d", i), target)
 		}
-		inspected, err := artifact.Inspect(t.Context(), tree, artifact.RoleProgram, artifact.MaxProgramLogicalBytes, artifact.SquashFSPhysicalAlign)
+		inspected, err := artifact.Inspect(t.Context(), tree, artifact.RoleProgram, artifact.SquashFSPhysicalAlign)
 		if err != nil {
 			t.Fatal(err)
 		}

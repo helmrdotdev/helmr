@@ -27,7 +27,7 @@ func TestVerifyProgramAcceptsOneSnapshotBeforeCgroupSetup(t *testing.T) {
 	store := programObjectStore{objects: map[string]programObject{
 		program.Digest: {descriptor: program, body: body},
 	}}
-	programSnapshot, err := snapshot.ProgramObject(
+	programSnapshot, err := snapshot.ReadProgram(
 		context.Background(),
 		store,
 		t.TempDir(),
