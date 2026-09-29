@@ -18,7 +18,7 @@ func TestPhysicalCloseReportsCleanupOnlyAfterSuccessfulClose(t *testing.T) {
 			}
 			session := newInstanceMount(raw)
 			client := &computerMaterializerTestClient{}
-			err := (ComputerMaterializer{}).stopControlledComputerMount(t.Context(), session, workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", RuntimeEpoch: 1, DesiredVersion: 2, ObservedVersion: 1}, client)
+			err := (ComputerMaterializer{}).stopControlledComputerMount(t.Context(), session, nil, workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", RuntimeEpoch: 1, DesiredVersion: 2, ObservedVersion: 1}, client)
 			if fail {
 				if !errors.Is(err, raw.closeErr) || client.stops != 0 || len(client.failures) != 1 {
 					t.Fatalf("err=%v stop=%d failure=%d", err, client.stops, len(client.failures))
@@ -47,14 +47,15 @@ func TestPhysicalCloseRetainsResourcesWithoutProofWhenDeviceCleanupFails(t *test
 	mount.ObservedVersion = 1
 	raw := &computerMaterializerTestSession{}
 	pool := computerPreparedRuntimePool(t, mount, raw)
-	if _, _, ok := pool.Checkout(t.Context(), mount); !ok {
+	checkout, _, ok := pool.Checkout(t.Context(), mount)
+	if !ok {
 		t.Fatal("checkout failed")
 	}
 	ref := preparedRuntimeRef{id: mount.ComputerInstanceID, epoch: mount.RuntimeEpoch}
 	device := &failingCloseComputerDevice{err: errors.New("device cleanup failed")}
 	pool.computerDevices = map[preparedRuntimeRef]vm.ComputerDevice{ref: device}
 	client := &computerMaterializerTestClient{}
-	err := (ComputerMaterializer{RuntimePool: pool}).stopControlledComputerMount(t.Context(), raw, mount, client)
+	err := (ComputerMaterializer{RuntimePool: pool}).stopControlledComputerMount(t.Context(), raw, checkout, mount, client)
 	if !errors.Is(err, device.err) || client.stops != 0 {
 		t.Fatalf("err=%v stops=%d", err, client.stops)
 	}

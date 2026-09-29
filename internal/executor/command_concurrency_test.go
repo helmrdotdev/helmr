@@ -151,7 +151,7 @@ func TestCommandsProgressWhilePeerStreamIsBlocked(t *testing.T) {
 			client := &parallelCommandClient{commands: commands, finish: cancel, completionStarted: completionStarted, firstOpened: physical.firstOpened, releaseFirst: name == "release"}
 			m := ComputerMaterializer{PollEvery: time.Millisecond}
 			renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour)
-			err := m.serveComputerMount(ctx, renewal, newInstanceMount(physical), mount, client, nil)
+			err := m.serveComputerMount(ctx, renewal, newInstanceMount(physical), nil, mount, client, nil)
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("serve: %v", err)
 			}

@@ -307,7 +307,7 @@ func TestStopRuntimeTargetDefersToCheckedOutComputerRuntime(t *testing.T) {
 	if len(client.closed) != 0 {
 		t.Fatalf("checked-out runtime was closed by the pool reconciler: %+v", client.closed)
 	}
-	if err := pool.ReleaseCheckout(target.ID, target.WorkerEpoch); err != nil {
+	if err := pool.releaseCheckout(preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.StopRuntimeTarget(context.Background(), client, target); err == nil {
@@ -539,13 +539,14 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 		target: target, exit: newPreparedRuntimeSignal(), ready: ready,
 	}}
 
-	if _, _, ok := pool.Checkout(context.Background(), mount); !ok {
+	checkout, _, ok := pool.Checkout(context.Background(), mount)
+	if !ok {
 		t.Fatal("reserved runtime was not checked out")
 	}
 	if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 		t.Fatalf("reservations after checkout = %d, want 1", got)
 	}
-	if err := pool.ReleaseCheckout(target.ID, target.WorkerEpoch); err != nil {
+	if err := checkout.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(pool.Reservations.Snapshot().Reservations); got != 0 {
