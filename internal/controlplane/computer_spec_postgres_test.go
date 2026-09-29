@@ -9,10 +9,10 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -20,7 +20,7 @@ import (
 
 func TestComputerSpecPostgresReusedAcrossProgramDeployments(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
-	image := deployment.BundleComputerImageArtifact{
+	image := bundle.ComputerImageArtifact{
 		Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664,
 		Digest: "sha256:" + strings.Repeat("d", 64), SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType,
 	}

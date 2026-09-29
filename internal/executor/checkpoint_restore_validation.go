@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"strings"
 )
 
 func validateRestoreIdentity(
@@ -19,7 +20,7 @@ func validateRestoreIdentity(
 	if runtimeInfo.Backend != "firecracker" {
 		return fmt.Errorf("restore checkpoint recovery_point.runtime.backend %q is not supported", runtimeInfo.Backend)
 	}
-	if err := deployment.ValidateRuntimeArchitecture(workerArchitecture); err != nil {
+	if err := artifact.ValidateRuntimeArchitecture(workerArchitecture); err != nil {
 		return fmt.Errorf("validate worker runtime architecture: %w", err)
 	}
 	if runtimeInfo.Arch != string(workerArchitecture) {

@@ -15,12 +15,13 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -447,14 +448,14 @@ func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t 
 		}
 		digest := "sha256:" + strings.Repeat("d", 64)
 		if _, err := queries.UpsertCasObject(t.Context(), db.UpsertCasObjectParams{
-			OrgID: pgvalue.UUID(fixture.orgID), Digest: digest, SizeBytes: 1, MediaType: deployment.ComputerImageArtifactMediaType,
+			OrgID: pgvalue.UUID(fixture.orgID), Digest: digest, SizeBytes: 1, MediaType: bundle.ComputerImageMediaType,
 		}); err != nil {
 			t.Fatal(err)
 		}
 		artifact, err := queries.CreateArtifact(t.Context(), db.CreateArtifactParams{
 			ID: pgvalue.UUID(uuid.NewV7()), OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
 			EnvironmentID: otherEnvironmentID, Digest: digest, Kind: db.ArtifactKindComputerImage,
-			SizeBytes: 1, MediaType: deployment.ComputerImageArtifactMediaType,
+			SizeBytes: 1, MediaType: bundle.ComputerImageMediaType,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -700,18 +701,18 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 	}
 	program := cas.Descriptor{
 		Digest:    "sha256:" + string(bytes.Repeat([]byte{'b'}, 64)),
-		SizeBytes: 4096, MediaType: deployment.ProgramArtifactMediaType,
+		SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
 	}
 	prepared := finalizedDeploymentBundle{
 		root: cas.Descriptor{
 			Digest:    "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)),
-			SizeBytes: 512, MediaType: deployment.DeploymentBundleMediaType,
+			SizeBytes: 512, MediaType: bundle.MediaType,
 		},
-		bundle: deployment.DeploymentBundle{
-			Runtime: deployment.DeploymentBundleRuntime{Artifact: deployment.BundleObject{
+		bundle: bundle.Manifest{
+			Runtime: bundle.Runtime{Artifact: bundle.Object{
 				Digest: "sha256:" + string(bytes.Repeat([]byte{'c'}, 64)),
 			}},
-			Program: deployment.ProgramOutput{Artifact: deployment.ProgramDescriptor{
+			Program: artifact.ProgramOutput{Artifact: artifact.ProgramDescriptor{
 				Digest: program.Digest, SizeBytes: program.SizeBytes, MediaType: program.MediaType,
 			}},
 		},

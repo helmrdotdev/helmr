@@ -8,6 +8,8 @@ import (
 	"io"
 	"maps"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
 func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
@@ -34,7 +36,7 @@ func TestProgramTreeEntriesEncodeOneFrozenTree(t *testing.T) {
 
 	program := writeProgramTreeFixture(
 		t,
-		programArtifact,
+		artifact.RoleProgram,
 		programTreeEntries(
 			context.Background(),
 			inspected,
@@ -73,7 +75,7 @@ func TestProgramTreeEntriesCreateEmptyNodeModules(t *testing.T) {
 	}
 	program := writeProgramTreeFixture(
 		t,
-		programArtifact,
+		artifact.RoleProgram,
 		programTreeEntries(
 			context.Background(),
 			inspected,
@@ -88,7 +90,7 @@ func TestProgramTreeEntriesCreateEmptyNodeModules(t *testing.T) {
 
 func writeProgramTreeFixture(
 	t *testing.T,
-	role artifactRole,
+	role artifact.Role,
 	entries func(func(treeEntry, error) bool),
 	allowEmpty bool,
 ) map[string]string {

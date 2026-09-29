@@ -6,8 +6,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -45,7 +45,7 @@ func TestInstanceSourceDiscoveryUsesExactDisk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := platform.Put(t.Context(), deployment.RuntimeArtifactMediaType, strings.NewReader("managed runtime"))
+	runtime, err := platform.Put(t.Context(), artifact.RuntimeArtifactMediaType, strings.NewReader("managed runtime"))
 	if err != nil {
 		t.Fatal(err)
 	}

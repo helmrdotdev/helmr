@@ -10,16 +10,19 @@ import (
 	"iter"
 	"os"
 	"path/filepath"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
 )
 
 func encodeProgramTree(
 	ctx context.Context,
 	directory string,
 	encoder string,
-	role artifactRole,
+	role artifact.Role,
 	entries iter.Seq2[treeEntry, error],
 	allowEmpty bool,
-) (_ *artifactSnapshot, returnErr error) {
+) (_ *snapshot.Artifact, returnErr error) {
 	if directory == "" ||
 		!filepath.IsAbs(directory) ||
 		filepath.Clean(directory) != directory {
@@ -45,11 +48,11 @@ func encodeProgramTree(
 		}
 	}()
 
-	snapshot, err := produceArtifactSnapshot(
+	content, err := snapshot.Produce(
 		ctx,
 		leaseDirectory,
 		role,
-		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
+		snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(destination *os.File) error {
 			reader, writer := io.Pipe()
 			writeResult := make(chan error, 1)
@@ -67,7 +70,7 @@ func encodeProgramTree(
 	if err != nil {
 		return nil, err
 	}
-	snapshot.platform.removeDirectory = true
+	content.RemoveDirectoryOnClose()
 	removeLease = false
-	return snapshot, nil
+	return content, nil
 }

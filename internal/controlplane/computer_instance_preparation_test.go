@@ -5,10 +5,10 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -32,7 +32,7 @@ func TestComputerPreparationPinsProgram(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := store.Put(t.Context(), deployment.RuntimeArtifactMediaType, strings.NewReader("runtime"))
+	runtime, err := store.Put(t.Context(), artifact.RuntimeArtifactMediaType, strings.NewReader("runtime"))
 	if err != nil {
 		t.Fatal(err)
 	}

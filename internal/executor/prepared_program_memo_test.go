@@ -11,19 +11,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 	pool := &PreparedRuntimePool{}
-	descriptor := deployment.ProgramDescriptor{Digest: "sha256:one", SizeBytes: 42, MediaType: deployment.ProgramArtifactMediaType}
+	descriptor := artifact.ProgramDescriptor{Digest: "sha256:one", SizeBytes: 42, MediaType: artifact.ProgramArtifactMediaType}
 	limit := int64(3)
-	index := deployment.ProgramIndex{Queues: []definition.QueueInput{{Name: "queue", ConcurrencyLimit: &limit}}, Declarations: []deployment.ProgramIndexDeclaration{{Locator: &deployment.ProgramLocator{ExportName: "original"}}}}
+	index := artifact.ProgramIndex{Queues: []definition.QueueInput{{Name: "queue", ConcurrencyLimit: &limit}}, Declarations: []artifact.ProgramIndexDeclaration{{Locator: &artifact.ProgramLocator{ExportName: "original"}}}}
 	calls := 0
-	verify := func() (deployment.ProgramIndex, error) { calls++; return index, nil }
+	verify := func() (artifact.ProgramIndex, error) { calls++; return index, nil }
 	first, err := pool.verifyProgram(t.Context(), descriptor, verify)
 	if err != nil {
 		t.Fatal(err)
@@ -37,11 +37,11 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 	hit.Declarations[0].Locator.ExportName = "changed hit"
 	*hit.Queues[0].ConcurrencyLimit = 10
 	again, err := pool.verifyProgram(t.Context(), descriptor, verify)
-	if err != nil || !reflect.DeepEqual(again.Declarations[0].Locator, &deployment.ProgramLocator{ExportName: "original"}) || *again.Queues[0].ConcurrencyLimit != 3 {
+	if err != nil || !reflect.DeepEqual(again.Declarations[0].Locator, &artifact.ProgramLocator{ExportName: "original"}) || *again.Queues[0].ConcurrencyLimit != 3 {
 		t.Fatal("returned hit aliases memo", err)
 	}
 	// Reflect over every actual descriptor field so future key fields need coverage.
-	for i := 0; i < reflect.TypeFor[deployment.ProgramDescriptor]().NumField(); i++ {
+	for i := 0; i < reflect.TypeFor[artifact.ProgramDescriptor]().NumField(); i++ {
 		changed := descriptor
 		field := reflect.ValueOf(&changed).Elem().Field(i)
 		switch field.Kind() {
@@ -64,35 +64,35 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 
 func TestPreparedProgramMemoPublishesOnlySuccess(t *testing.T) {
 	pool := &PreparedRuntimePool{}
-	descriptor := deployment.ProgramDescriptor{Digest: "original"}
-	good := deployment.ProgramIndex{RuntimeContract: "original"}
-	if _, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) { return good, nil }); err != nil {
+	descriptor := artifact.ProgramDescriptor{Digest: "original"}
+	good := artifact.ProgramIndex{RuntimeContract: "original"}
+	if _, err := pool.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { return good, nil }); err != nil {
 		t.Fatal(err)
 	}
 	for _, failure := range []error{errors.New("verification failed"), context.Canceled, context.DeadlineExceeded} {
 		for range 2 {
-			_, err := pool.verifyProgram(t.Context(), deployment.ProgramDescriptor{Digest: "failed"}, func() (deployment.ProgramIndex, error) { return good, failure })
+			_, err := pool.verifyProgram(t.Context(), artifact.ProgramDescriptor{Digest: "failed"}, func() (artifact.ProgramIndex, error) { return good, failure })
 			if !errors.Is(err, failure) {
 				t.Fatalf("failure cached or lost: %v", err)
 			}
 		}
 	}
 	ctx, cancel := context.WithCancel(t.Context())
-	_, err := pool.verifyProgram(ctx, deployment.ProgramDescriptor{Digest: "cancel-after-success"}, func() (deployment.ProgramIndex, error) { cancel(); return good, nil })
+	_, err := pool.verifyProgram(ctx, artifact.ProgramDescriptor{Digest: "cancel-after-success"}, func() (artifact.ProgramIndex, error) { cancel(); return good, nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	_, err = pool.verifyProgram(ctx, descriptor, func() (deployment.ProgramIndex, error) { t.Fatal("canceled hit verified"); return good, nil })
+	_, err = pool.verifyProgram(ctx, descriptor, func() (artifact.ProgramIndex, error) { t.Fatal("canceled hit verified"); return good, nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	got, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) { t.Fatal("failed miss replaced success"); return good, nil })
+	got, err := pool.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { t.Fatal("failed miss replaced success"); return good, nil })
 	if err != nil || got.RuntimeContract != "original" {
 		t.Fatal(got, err)
 	}
 	calls := 0
 	for range 2 {
-		_, err = pool.verifyProgram(t.Context(), deployment.ProgramDescriptor{Digest: "cancel-after-success"}, func() (deployment.ProgramIndex, error) { calls++; return good, nil })
+		_, err = pool.verifyProgram(t.Context(), artifact.ProgramDescriptor{Digest: "cancel-after-success"}, func() (artifact.ProgramIndex, error) { calls++; return good, nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,13 +108,13 @@ func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
 	entered := make(chan struct{}, n)
 	release := make(chan struct{})
 	var wg sync.WaitGroup
-	descriptor := deployment.ProgramDescriptor{Digest: "same"}
+	descriptor := artifact.ProgramDescriptor{Digest: "same"}
 	for range n {
 		wg.Go(func() {
-			got, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) {
+			got, err := pool.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) {
 				entered <- struct{}{}
 				<-release
-				return deployment.ProgramIndex{Queues: []definition.QueueInput{{Name: "original"}}}, nil
+				return artifact.ProgramIndex{Queues: []definition.QueueInput{{Name: "original"}}}, nil
 			})
 			if err != nil {
 				t.Error(err)
@@ -138,9 +138,9 @@ func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
 	wg.Wait()
 	for range n {
 		wg.Go(func() {
-			got, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) {
+			got, err := pool.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) {
 				t.Error("missing published result")
-				return deployment.ProgramIndex{}, nil
+				return artifact.ProgramIndex{}, nil
 			})
 			if err != nil || len(got.Queues) != 1 || got.Queues[0].Name != "original" {
 				t.Error("corrupted memo", err)
@@ -157,10 +157,10 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 		t.Skip("artifact snapshots require Linux")
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
-	index := deployment.ProgramIndex{
+	index := artifact.ProgramIndex{
 		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: digest,
-		Declarations: []deployment.ProgramIndexDeclaration{{
+		Declarations: []artifact.ProgramIndexDeclaration{{
 			Kind:       definition.KindTask,
 			DeclaredID: "task",
 			Task: &definition.TaskManifest{
@@ -171,10 +171,10 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 					Retry:         definition.RetryManifest{Enabled: false},
 				},
 			},
-			Locator: &deployment.ProgramLocator{
+			Locator: &artifact.ProgramLocator{
 				ExportName: "task",
 				ModulePath: "helmr/app/entry-0.mjs",
-				Slot:       deployment.DeclarationSlotHandler,
+				Slot:       artifact.DeclarationSlotHandler,
 			},
 		}},
 		Queues: []definition.QueueInput{{
@@ -185,19 +185,19 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	}
 
 	store := &fakeCAS{objects: map[string][]byte{}}
-	runtimeObject := store.put(deployment.RuntimeArtifactMediaType, []byte("runtime"))
-	programObject := store.put(deployment.ProgramArtifactMediaType, []byte("program"))
+	runtimeObject := store.put(artifact.RuntimeArtifactMediaType, []byte("runtime"))
+	programObject := store.put(artifact.ProgramArtifactMediaType, []byte("program"))
 	index.RuntimeDigest = runtimeObject.Digest
-	canonical, err := deployment.CanonicalProgramIndex(index)
+	canonical, err := artifact.CanonicalProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeDescriptor := deployment.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: deployment.RuntimeDescriptorFormatVersion}
-	descriptor := deployment.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
-	pool := &PreparedRuntimePool{CAS: store, PlatformStore: store, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[deployment.RuntimeDescriptor]deployment.RuntimeIndex{runtimeDescriptor: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}}
+	runtimeDescriptor := artifact.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: artifact.RuntimeDescriptorFormatVersion}
+	descriptor := artifact.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
+	pool := &PreparedRuntimePool{CAS: store, PlatformStore: store, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[artifact.RuntimeDescriptor]artifact.RuntimeIndex{runtimeDescriptor: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}}
 	// Inject only the isolated verifier result; exercise real snapshots and the
 	// production prepareProgram authority path on every hit.
-	if _, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) { return index, nil }); err != nil {
+	if _, err := pool.verifyProgram(t.Context(), descriptor, func() (artifact.ProgramIndex, error) { return index, nil }); err != nil {
 		t.Fatal(err)
 	}
 	target := workerapi.RuntimeReconcileTarget{ID: "memo-test", Source: workerapi.RuntimeSource{ComputerArchitecture: string(definition.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
@@ -227,7 +227,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	}
 	// Both artifacts have valid independent verification receipts, but a Program
 	// may only launch with the exact Runtime selected when it was built.
-	otherRuntime := store.put(deployment.RuntimeArtifactMediaType, []byte("another runtime"))
+	otherRuntime := store.put(artifact.RuntimeArtifactMediaType, []byte("another runtime"))
 	otherDescriptor := runtimeDescriptor
 	otherDescriptor.Digest = otherRuntime.Digest
 	otherDescriptor.SizeBytes = otherRuntime.SizeBytes
@@ -244,7 +244,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	target.Source.ComputerArchitecture = "aarch64"
 	run("computer architecture")
 	target.Source.ComputerArchitecture = string(definition.ArchitectureX8664)
-	for _, bad := range []deployment.ProgramIndex{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
+	for _, bad := range []artifact.ProgramIndex{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
 		pool.mu.Lock()
 		pool.programIndex = &bad
 		pool.mu.Unlock()

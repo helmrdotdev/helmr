@@ -10,8 +10,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/client"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/spf13/cobra"
 )
 
@@ -73,7 +73,7 @@ func deployCommand() *cobra.Command {
 					return err
 				}
 			}
-			bundle, err := deployment.ReadDeploymentBundleDirectory(bundlePath)
+			directory, err := bundle.ReadDirectory(bundlePath)
 			if err != nil {
 				return fmt.Errorf("read deployment bundle: %w", err)
 			}
@@ -81,7 +81,7 @@ func deployCommand() *cobra.Command {
 				return err
 			}
 			if err := uploadDeploymentBundleObjects(
-				cmd.Context(), controlPlane, bundle, scope, reporter,
+				cmd.Context(), controlPlane, directory, scope, reporter,
 			); err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func deployCommand() *cobra.Command {
 			}
 			created, err := controlPlane.FinalizeDeploymentBundle(cmd.Context(), api.FinalizeDeploymentBundleRequest{
 				IdempotencyKey: idempotencyKey,
-				BundleDigest:   bundle.Digest,
+				BundleDigest:   directory.Digest,
 			}, scope, reporter.DeploymentObjectVerified)
 			if err != nil {
 				return err
@@ -129,11 +129,11 @@ func deployCommand() *cobra.Command {
 func uploadDeploymentBundleObjects(
 	ctx context.Context,
 	controlPlane *client.Client,
-	bundle deployment.DeploymentBundleDirectory,
+	directory bundle.Directory,
 	scope client.EnvironmentScopeOptions,
 	reporter deployReporter,
 ) error {
-	uploads, err := planDeploymentBundleObjectUploads(ctx, controlPlane, bundle, scope)
+	uploads, err := planDeploymentBundleObjectUploads(ctx, controlPlane, directory, scope)
 	if err != nil {
 		return err
 	}
@@ -142,7 +142,7 @@ func uploadDeploymentBundleObjects(
 	completedUploads := 0
 	for len(uploads) > 0 {
 		upload := uploads[0]
-		path := bundle.Objects[upload.Digest]
+		path := directory.Objects[upload.Digest]
 		index := completedUploads + 1
 		if err := reporter.DeploymentObjectUploadStarted(upload.Digest, index, totalUploads); err != nil {
 			return err
@@ -173,7 +173,7 @@ func uploadDeploymentBundleObjects(
 		if err := reporter.Step("Reconciling deployment upload"); err != nil {
 			return errors.Join(originalErr, err)
 		}
-		replanned, planErr := planDeploymentBundleObjectUploads(ctx, controlPlane, bundle, scope)
+		replanned, planErr := planDeploymentBundleObjectUploads(ctx, controlPlane, directory, scope)
 		if planErr != nil {
 			return errors.Join(originalErr, fmt.Errorf("reconcile deployment upload: %w", planErr))
 		}
@@ -194,14 +194,14 @@ func uploadDeploymentBundleObjects(
 func planDeploymentBundleObjectUploads(
 	ctx context.Context,
 	controlPlane *client.Client,
-	bundle deployment.DeploymentBundleDirectory,
+	directory bundle.Directory,
 	scope client.EnvironmentScopeOptions,
 ) ([]api.DeploymentBundleUpload, error) {
-	plan, err := controlPlane.PlanDeploymentBundleUploads(ctx, bundle.BundleJSON, scope)
+	plan, err := controlPlane.PlanDeploymentBundleUploads(ctx, directory.BundleJSON, scope)
 	if err != nil {
 		return nil, err
 	}
-	if plan.BundleDigest != bundle.Digest {
+	if plan.BundleDigest != directory.Digest {
 		return nil, errors.New("deployment upload plan returned a different bundle digest")
 	}
 	seen := make(map[string]struct{}, len(plan.Uploads))
@@ -210,7 +210,7 @@ func planDeploymentBundleObjectUploads(
 			return nil, errors.New("deployment upload plan contains a duplicate object")
 		}
 		seen[upload.Digest] = struct{}{}
-		if _, ok := bundle.Objects[upload.Digest]; !ok {
+		if _, ok := directory.Objects[upload.Digest]; !ok {
 			return nil, errors.New("deployment upload plan requested an object outside the bundle")
 		}
 	}

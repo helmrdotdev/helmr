@@ -5,10 +5,11 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -51,7 +52,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		pool,
 		ids,
 		"deployment_program",
-		deployment.ProgramArtifactMediaType,
+		artifact.ProgramArtifactMediaType,
 		"program",
 	)
 	ids.computerImageArtifactID = seedPostgresArtifact(
@@ -60,7 +61,7 @@ func seedPostgres(t *testing.T, ctx context.Context, pool *pgxpool.Pool) postgre
 		pool,
 		ids,
 		"computer_image",
-		deployment.ComputerImageArtifactMediaType,
+		bundle.ComputerImageMediaType,
 		"computer-image",
 	)
 	dbtest.MustExec(t, ctx, pool, `

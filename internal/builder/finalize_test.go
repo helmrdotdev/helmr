@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -31,7 +32,7 @@ func TestFinalizeBundleWritesExactAtomicDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if finalized.Digest == "" || finalized.Bundle.Contract != deployment.DeploymentBundleContract {
+	if finalized.Digest == "" || finalized.Bundle.Contract != bundle.Contract {
 		t.Fatalf("finalized = %+v", finalized)
 	}
 	entries, err := os.ReadDir(output)
@@ -56,7 +57,7 @@ func TestFinalizeBundleWritesExactAtomicDirectory(t *testing.T) {
 	if string(got) != string(programBytes) {
 		t.Fatalf("program bytes = %q", got)
 	}
-	if _, err := deployment.ReadDeploymentBundleDirectory(output); err != nil {
+	if _, err := bundle.ReadDirectory(output); err != nil {
 		t.Fatal(err)
 	}
 	partials, err := filepath.Glob(filepath.Join(filepath.Dir(output), ".deployment-bundle.partial-*"))
@@ -92,11 +93,11 @@ func TestVerifyFinalObjectRejectsStructurallyInvalidComputerImage(t *testing.T) 
 	err := verifyFinalObject(
 		context.Background(),
 		path,
-		deployment.BundleObject{
+		bundle.Object{
 			Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 18,
-			MediaType: deployment.ComputerImageArtifactMediaType,
+			MediaType: bundle.ComputerImageMediaType,
 		},
-		deployment.ProgramOutput{},
+		artifact.ProgramOutput{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "verify finalized computer image object") {
 		t.Fatalf("verifyFinalObject error = %v", err)
@@ -104,22 +105,22 @@ func TestVerifyFinalObjectRejectsStructurallyInvalidComputerImage(t *testing.T) 
 }
 
 func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
-	program := deployment.ProgramDescriptor{
+	program := artifact.ProgramDescriptor{
 		Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 10,
-		MediaType: deployment.ProgramArtifactMediaType,
+		MediaType: artifact.ProgramArtifactMediaType,
 	}
-	image := deployment.BundleComputerImage{
+	image := bundle.ComputerImage{
 		DeclaredID: "first",
-		Artifact: deployment.BundleComputerImageArtifact{
+		Artifact: bundle.ComputerImageArtifact{
 			Profile:      definition.ComputerSeedProfile,
 			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
-			MediaType: deployment.ComputerImageArtifactMediaType,
+			MediaType: bundle.ComputerImageMediaType,
 		},
 	}
 	shared := image
 	shared.DeclaredID = "second"
-	objects, err := referencedBundleObjects(program, []deployment.BundleComputerImage{image, shared})
+	objects, err := referencedBundleObjects(program, []bundle.ComputerImage{image, shared})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +131,7 @@ func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
 	shared.Artifact.SizeBytes++
 	if _, err := referencedBundleObjects(
 		program,
-		[]deployment.BundleComputerImage{image, shared},
+		[]bundle.ComputerImage{image, shared},
 	); err == nil || !strings.Contains(err.Error(), "conflicting reference metadata") {
 		t.Fatalf("referencedBundleObjects error = %v", err)
 	}
@@ -167,7 +168,7 @@ func TestFinalizeBundlePublishesExactlyOneConcurrentWriter(t *testing.T) {
 	if succeeded != 1 || rejected != 1 {
 		t.Fatalf("concurrent results: succeeded=%d rejected=%d", succeeded, rejected)
 	}
-	if _, err := deployment.ReadDeploymentBundleDirectory(output); err != nil {
+	if _, err := bundle.ReadDirectory(output); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -274,10 +275,10 @@ func TestFinalizeBundleRejectsExistingOutput(t *testing.T) {
 func testBundleInput(programPath string, programBytes []byte) BundleInput {
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
 	programDigest := sha256sum.DigestBytes(programBytes)
-	index := deployment.ProgramIndex{
+	index := artifact.ProgramIndex{
 		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-		Declarations: []deployment.ProgramIndexDeclaration{{
+		Declarations: []artifact.ProgramIndexDeclaration{{
 			Kind:       definition.KindTask,
 			DeclaredID: "hello",
 			Task: &definition.TaskManifest{
@@ -287,10 +288,10 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 					Retry: definition.RetryManifest{Enabled: false},
 				},
 			},
-			Locator: &deployment.ProgramLocator{
+			Locator: &artifact.ProgramLocator{
 				ExportName: "hello",
 				ModulePath: "helmr/app/entry-0.mjs",
-				Slot:       deployment.DeclarationSlotHandler,
+				Slot:       artifact.DeclarationSlotHandler,
 			},
 		}},
 		Queues:          []definition.QueueInput{{Name: "tasks"}},
@@ -298,20 +299,20 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 		RuntimeDigest:   runtimeDigest,
 	}
 	return BundleInput{
-		Runtime: deployment.RuntimeDescriptor{
+		Runtime: artifact.RuntimeDescriptor{
 			Architecture: definition.ArchitectureX8664,
-			Digest:       runtimeDigest, FormatVersion: deployment.RuntimeDescriptorFormatVersion,
-			MediaType:       deployment.RuntimeArtifactMediaType,
+			Digest:       runtimeDigest, FormatVersion: artifact.RuntimeDescriptorFormatVersion,
+			MediaType:       artifact.RuntimeArtifactMediaType,
 			RuntimeContract: definition.RuntimeContract, SizeBytes: 4096,
 		},
-		Program: deployment.ProgramOutput{
-			Artifact: deployment.ProgramDescriptor{
+		Program: artifact.ProgramOutput{
+			Artifact: artifact.ProgramDescriptor{
 				Digest: programDigest, SizeBytes: int64(len(programBytes)),
-				MediaType: deployment.ProgramArtifactMediaType,
+				MediaType: artifact.ProgramArtifactMediaType,
 			},
 			Index: index,
 		},
-		ComputerImages: []deployment.BundleComputerImage{},
+		ComputerImages: []bundle.ComputerImage{},
 		Objects:        []ObjectSource{{Digest: programDigest, Path: programPath}},
 	}
 }
@@ -319,8 +320,8 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 func writeVerifiedProgramFixture(
 	t *testing.T,
 	root string,
-	images ...deployment.BundleComputerImage,
-) (string, []byte, deployment.ProgramIndex) {
+	images ...bundle.ComputerImage,
+) (string, []byte, artifact.ProgramIndex) {
 	t.Helper()
 	encoder := os.Getenv("HELMR_SQUASHFS_ENCODER")
 	if encoder == "" {
@@ -330,10 +331,10 @@ func writeVerifiedProgramFixture(
 	sourcePath := "helmr/app/entry-0.mjs"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
-	index := deployment.ProgramIndex{
+	index := artifact.ProgramIndex{
 		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: sha256sum.DigestBytes(configRaw),
-		Declarations: []deployment.ProgramIndexDeclaration{{
+		Declarations: []artifact.ProgramIndexDeclaration{{
 			Kind: definition.KindTask, DeclaredID: "hello",
 			Task: &definition.TaskManifest{
 				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
@@ -342,25 +343,25 @@ func writeVerifiedProgramFixture(
 					Retry: definition.RetryManifest{Enabled: false},
 				},
 			},
-			Locator: &deployment.ProgramLocator{
+			Locator: &artifact.ProgramLocator{
 				ExportName: "build", ModulePath: sourcePath,
-				Slot: deployment.DeclarationSlotHandler,
+				Slot: artifact.DeclarationSlotHandler,
 			},
 		}},
 		Queues:          []definition.QueueInput{{Name: "tasks"}},
 		RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest,
 	}
 	for _, image := range images {
-		index.Declarations = append(index.Declarations, deployment.ProgramIndexDeclaration{Kind: definition.KindSandbox, DeclaredID: image.DeclaredID, Sandbox: &definition.SandboxManifest{Image: definition.SandboxImageManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}}})
+		index.Declarations = append(index.Declarations, artifact.ProgramIndexDeclaration{Kind: definition.KindSandbox, DeclaredID: image.DeclaredID, Sandbox: &definition.SandboxManifest{Image: definition.SandboxImageManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}}})
 	}
 	sort.Slice(index.Declarations, func(i, j int) bool { return index.Declarations[i].Kind < index.Declarations[j].Kind })
-	indexRaw, err := deployment.CanonicalProgramIndex(index)
+	indexRaw, err := artifact.CanonicalProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := deployment.ProgramManifest{
-		FormatVersion: deployment.ProgramManifestFormatVersion,
-		Config: deployment.ProgramPathDigest{
+	manifest := artifact.ProgramManifest{
+		FormatVersion: artifact.ProgramManifestFormatVersion,
+		Config: artifact.ProgramPathDigest{
 			Digest: sha256sum.DigestBytes(configRaw), Path: "helmr/config.json",
 		},
 		ProgramIndexDigest: sha256sum.DigestBytes(indexRaw),
@@ -391,7 +392,7 @@ func writeVerifiedProgramFixture(
 			t.Fatal(err)
 		}
 	}
-	inputDigest, err := deployment.ProgramPayloadDigest(t.Context(), inputRoot)
+	inputDigest, err := artifact.ProgramPayloadDigest(t.Context(), inputRoot)
 	if err != nil {
 		t.Fatal(err)
 	}

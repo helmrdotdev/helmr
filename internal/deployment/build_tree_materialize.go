@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
 func (tree *BuildTree) MaterializeApplication(
@@ -46,7 +48,7 @@ func (tree *BuildTree) MaterializeApplication(
 			returnErr = errors.Join(returnErr, remove())
 		}
 	}()
-	for _, entry := range tree.inspected.ordered {
+	for _, entry := range tree.inspected.Entries() {
 		if err := ctx.Err(); err != nil {
 			return "", nil, err
 		}
@@ -58,15 +60,15 @@ func (tree *BuildTree) MaterializeApplication(
 		}
 		target := filepath.Join(root, filepath.FromSlash(entry.Path))
 		switch entry.Kind {
-		case artifactEntryDirectory:
+		case artifact.EntryDirectory:
 			if err := os.Mkdir(target, 0o700); err != nil {
 				return "", nil, fmt.Errorf("create build source directory %q: %w", entry.Path, err)
 			}
-		case artifactEntryRegular:
+		case artifact.EntryRegular:
 			if err := materializeBuildFile(ctx, tree, entry, target); err != nil {
 				return "", nil, err
 			}
-		case artifactEntrySymlink:
+		case artifact.EntrySymlink:
 			if err := os.Symlink(entry.LinkTarget, target); err != nil {
 				return "", nil, fmt.Errorf("create build source link %q: %w", entry.Path, err)
 			}
@@ -74,15 +76,15 @@ func (tree *BuildTree) MaterializeApplication(
 			return "", nil, fmt.Errorf("build source path %q has unsupported type", entry.Path)
 		}
 	}
-	for index := len(tree.inspected.ordered) - 1; index >= 0; index-- {
-		entry := tree.inspected.ordered[index]
+	for index := len(tree.inspected.Entries()) - 1; index >= 0; index-- {
+		entry := tree.inspected.Entries()[index]
 		if entry.Path == "." ||
 			applicationViewReserved(entry.Path) ||
-			entry.Kind == artifactEntrySymlink {
+			entry.Kind == artifact.EntrySymlink {
 			continue
 		}
 		mode := os.FileMode(entry.Mode)
-		if entry.Kind == artifactEntryDirectory {
+		if entry.Kind == artifact.EntryDirectory {
 			mode = 0o555
 		} else {
 			mode &^= 0o222
@@ -108,10 +110,10 @@ func applicationViewReserved(name string) bool {
 func materializeBuildFile(
 	ctx context.Context,
 	tree *BuildTree,
-	entry artifactEntry,
+	entry artifact.Entry,
 	target string,
 ) (returnErr error) {
-	source, err := tree.inspected.reader.Open(ctx, entry.Path)
+	source, err := tree.inspected.Open(ctx, entry.Path)
 	if err != nil {
 		return fmt.Errorf("open frozen build path %q: %w", entry.Path, err)
 	}

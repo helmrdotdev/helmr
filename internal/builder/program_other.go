@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
@@ -16,9 +18,9 @@ type ProgramInput struct {
 	ConfigPath       string
 	BundlePath       string
 	ProgramCompiler  string
-	Compiler         deployment.CompilerInputs
-	Runtime          deployment.RuntimeDescriptor
-	RuntimeMetadata  deployment.RuntimeMetadata
+	Compiler         artifact.CompilerInputs
+	Runtime          artifact.RuntimeDescriptor
+	RuntimeMetadata  artifact.RuntimeMetadata
 }
 
 type PreparedProgramInput struct {
@@ -26,15 +28,15 @@ type PreparedProgramInput struct {
 	WorkDirectory     string
 	ProgramObjectPath string
 	SquashFSEncoder   string
-	Compiler          deployment.CompilerInputs
-	Runtime           deployment.RuntimeDescriptor
-	RuntimeMetadata   deployment.RuntimeMetadata
-	ComputerImages    []deployment.BundleComputerImage
+	Compiler          artifact.CompilerInputs
+	Runtime           artifact.RuntimeDescriptor
+	RuntimeMetadata   artifact.RuntimeMetadata
+	ComputerImages    []bundle.ComputerImage
 }
 
 type ProgramResult struct {
-	Program      deployment.ProgramOutput
-	Config       deployment.BuildConfig
+	Program      artifact.ProgramOutput
+	Config       artifact.BuildConfig
 	Verification deployment.VerificationResult
 	ObjectPath   string
 }

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 // TestManagedNodeAgenticWork runs representative tool work on a writable Computer
@@ -32,7 +32,7 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var seed deployment.BundleComputerImageArtifact
+	var seed bundle.ComputerImageArtifact
 	if err := json.Unmarshal(raw, &seed); err != nil {
 		t.Fatal(err)
 	}

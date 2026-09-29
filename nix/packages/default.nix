@@ -151,7 +151,7 @@ let
         export GOTOOLCHAIN=local
         export CGO_ENABLED=0
         HELMR_RUNTIME_RELEASE_DIR=${runtimeReleaseUnchecked} \
-          go test ./internal/deployment -run '^TestVerifyPinnedRuntimeRelease$'
+          go test ./internal/artifact/verify -run '^TestVerifyPinnedRuntimeRelease$'
         cd ..
         cp -a ${runtimeReleaseUnchecked} "$out"
       '';

@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"io"
 	"strings"
 	"sync"
@@ -12,10 +11,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/computer"
+
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -579,10 +580,10 @@ func TestPreparedRuntimeRejectsComputerArchitectureOutsideWorkerCertification(t 
 
 func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
-	index := deployment.ProgramIndex{
+	index := artifact.ProgramIndex{
 		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: digest,
-		Declarations: []deployment.ProgramIndexDeclaration{{
+		Declarations: []artifact.ProgramIndexDeclaration{{
 			Kind:       definition.KindTask,
 			DeclaredID: "task",
 			Task: &definition.TaskManifest{
@@ -593,10 +594,10 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 					Retry:         definition.RetryManifest{Enabled: false},
 				},
 			},
-			Locator: &deployment.ProgramLocator{
+			Locator: &artifact.ProgramLocator{
 				ExportName: "task",
 				ModulePath: "helmr/app/entry-0.mjs",
-				Slot:       deployment.DeclarationSlotHandler,
+				Slot:       artifact.DeclarationSlotHandler,
 			},
 		}},
 		Queues: []definition.QueueInput{{
@@ -605,7 +606,7 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 		RuntimeContract: definition.RuntimeContract,
 		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	}
-	canonical, err := deployment.CanonicalProgramIndex(index)
+	canonical, err := artifact.CanonicalProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)
 	}

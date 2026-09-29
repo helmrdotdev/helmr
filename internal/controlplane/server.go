@@ -19,11 +19,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -64,7 +64,7 @@ type Server struct {
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
-	bundleAdmission       *deployment.DeploymentBundleAdmission
+	bundleAdmission       *bundle.Admission
 	platformStore         cas.Reader
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
@@ -116,7 +116,7 @@ type ServerConfig struct {
 
 	Auth               auth.Authenticator
 	CAS                cas.Store
-	BundleAdmission    *deployment.DeploymentBundleAdmission
+	BundleAdmission    *bundle.Admission
 	PlatformStore      cas.Reader
 	Secrets            SecretManager
 	SecretDelivery     SecretDeliveryOpener
@@ -159,7 +159,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.Auth == nil {
 		return nil, errors.New("control plane authenticator is required")
 	}
-	var bundleAdmission *deployment.DeploymentBundleAdmission
+	var bundleAdmission *bundle.Admission
 	if cfg.BundleAdmission != nil {
 		admission := *cfg.BundleAdmission
 		if err := admission.Validate(); err != nil {

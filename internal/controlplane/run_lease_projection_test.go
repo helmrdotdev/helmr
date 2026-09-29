@@ -5,8 +5,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -145,7 +145,7 @@ func validDigest(fill byte) string {
 
 func validDigestBytes(t *testing.T, fill byte) []byte {
 	t.Helper()
-	value, err := deployment.RuntimeDigestBytes(validDigest(fill))
+	value, err := artifact.RuntimeDigestBytes(validDigest(fill))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,6 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
@@ -20,7 +23,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -97,9 +99,9 @@ type PreparedRuntimePool struct {
 	activity          int
 	activityWake      chan struct{}
 	closed            bool
-	verifiedRuntimes  map[deployment.RuntimeDescriptor]deployment.RuntimeIndex
-	programDescriptor deployment.ProgramDescriptor
-	programIndex      *deployment.ProgramIndex
+	verifiedRuntimes  map[artifact.RuntimeDescriptor]artifact.RuntimeIndex
+	programDescriptor artifact.ProgramDescriptor
+	programIndex      *artifact.ProgramIndex
 }
 
 type preparedRuntimeEntry struct {
@@ -317,7 +319,7 @@ func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, clie
 		if result.err == nil {
 			return nil
 		}
-		if diagnostic, ok := deployment.VerifierLocalDiagnostic(result.err); ok {
+		if diagnostic, ok := verify.LocalDiagnostic(result.err); ok {
 			p.logInfo("artifact verifier bootstrap failed", "diagnostic", diagnostic)
 		}
 		var fatal interface{ FatalWorker() bool }
@@ -958,15 +960,15 @@ func (p *PreparedRuntimePool) prepareProgram(
 	if p.PlatformStore == nil {
 		return nil, func() error { return nil }, errors.New("managed runtime delivery is not configured")
 	}
-	runtimeDescriptor := deployment.RuntimeDescriptor{
+	runtimeDescriptor := artifact.RuntimeDescriptor{
 		Architecture:    p.RuntimeArchitecture,
 		Digest:          program.Runtime.Digest,
-		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
+		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
 		MediaType:       program.Runtime.MediaType,
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       program.Runtime.SizeBytes,
 	}
-	runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
+	runtimeSnapshot, err := snapshot.RuntimeObject(
 		ctx,
 		p.PlatformStore,
 		tempDir,
@@ -977,8 +979,8 @@ func (p *PreparedRuntimePool) prepareProgram(
 	}
 	closeSnapshots := func() error { return runtimeSnapshot.Close() }
 	started := time.Now()
-	runtimeIndex, memoHit, err := p.verifyRuntime(runtimeDescriptor, func() (deployment.RuntimeIndex, error) {
-		return deployment.VerifyRuntimeArtifact(
+	runtimeIndex, memoHit, err := p.verifyRuntime(runtimeDescriptor, func() (artifact.RuntimeIndex, error) {
+		return verify.Runtime(
 			ctx,
 			p.VerifierCgroupRoot,
 			target.ID,
@@ -997,7 +999,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
-	expectedRuntimeIndex := deployment.RuntimeIndex{
+	expectedRuntimeIndex := artifact.RuntimeIndex{
 		Architecture:    runtimeDescriptor.Architecture,
 		RuntimeContract: runtimeDescriptor.RuntimeContract,
 	}
@@ -1007,10 +1009,10 @@ func (p *PreparedRuntimePool) prepareProgram(
 			closeSnapshots(),
 		)
 	}
-	programDescriptor := deployment.ProgramDescriptor{
+	programDescriptor := artifact.ProgramDescriptor{
 		Digest: program.Artifact.Digest, SizeBytes: program.Artifact.SizeBytes, MediaType: program.Artifact.MediaType,
 	}
-	programSnapshot, err := deployment.SnapshotProgram(
+	programSnapshot, err := snapshot.ProgramObject(
 		ctx,
 		p.CAS,
 		tempDir,
@@ -1022,8 +1024,8 @@ func (p *PreparedRuntimePool) prepareProgram(
 	closeSnapshots = func() error {
 		return errors.Join(runtimeSnapshot.Close(), programSnapshot.Close())
 	}
-	programIndex, err := p.verifyProgram(ctx, programDescriptor, func() (deployment.ProgramIndex, error) {
-		return deployment.VerifyProgram(ctx, p.VerifierCgroupRoot, target.ID, programSnapshot)
+	programIndex, err := p.verifyProgram(ctx, programDescriptor, func() (artifact.ProgramIndex, error) {
+		return verify.Program(ctx, p.VerifierCgroupRoot, target.ID, programSnapshot)
 	})
 	if err != nil {
 		return nil, func() error { return nil }, errors.Join(
@@ -1063,11 +1065,11 @@ func (p *PreparedRuntimePool) prepareProgram(
 // including memo hits.
 func (p *PreparedRuntimePool) verifyProgram(
 	ctx context.Context,
-	descriptor deployment.ProgramDescriptor,
-	verify func() (deployment.ProgramIndex, error),
-) (deployment.ProgramIndex, error) {
+	descriptor artifact.ProgramDescriptor,
+	verify func() (artifact.ProgramIndex, error),
+) (artifact.ProgramIndex, error) {
 	if err := ctx.Err(); err != nil {
-		return deployment.ProgramIndex{}, err
+		return artifact.ProgramIndex{}, err
 	}
 	p.mu.Lock()
 	cached := p.programIndex
@@ -1080,13 +1082,13 @@ func (p *PreparedRuntimePool) verifyProgram(
 	}
 	index, err := verify()
 	if err != nil {
-		return deployment.ProgramIndex{}, err
+		return artifact.ProgramIndex{}, err
 	}
 	owned := index.Clone()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if err := ctx.Err(); err != nil {
-		return deployment.ProgramIndex{}, err
+		return artifact.ProgramIndex{}, err
 	}
 	p.programDescriptor = descriptor
 	p.programIndex = &owned
@@ -1094,9 +1096,9 @@ func (p *PreparedRuntimePool) verifyProgram(
 }
 
 func (p *PreparedRuntimePool) verifyRuntime(
-	descriptor deployment.RuntimeDescriptor,
-	verify func() (deployment.RuntimeIndex, error),
-) (deployment.RuntimeIndex, bool, error) {
+	descriptor artifact.RuntimeDescriptor,
+	verify func() (artifact.RuntimeIndex, error),
+) (artifact.RuntimeIndex, bool, error) {
 	p.mu.Lock()
 	index, ok := p.verifiedRuntimes[descriptor]
 	p.mu.Unlock()
@@ -1105,12 +1107,12 @@ func (p *PreparedRuntimePool) verifyRuntime(
 	}
 	index, err := verify()
 	if err != nil {
-		return deployment.RuntimeIndex{}, false, err
+		return artifact.RuntimeIndex{}, false, err
 	}
 
 	p.mu.Lock()
 	if p.verifiedRuntimes == nil {
-		p.verifiedRuntimes = make(map[deployment.RuntimeDescriptor]deployment.RuntimeIndex)
+		p.verifiedRuntimes = make(map[artifact.RuntimeDescriptor]artifact.RuntimeIndex)
 	}
 	p.verifiedRuntimes[descriptor] = index
 	p.mu.Unlock()
@@ -1118,10 +1120,10 @@ func (p *PreparedRuntimePool) verifyRuntime(
 }
 
 func verifyProgramIndexDigest(
-	index deployment.ProgramIndex,
+	index artifact.ProgramIndex,
 	expectedDigest string,
 ) error {
-	indexBytes, err := deployment.CanonicalProgramIndex(index)
+	indexBytes, err := artifact.CanonicalProgramIndex(index)
 	if err != nil {
 		return fmt.Errorf("canonicalize verified program index: %w", err)
 	}

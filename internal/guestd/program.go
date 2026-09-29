@@ -21,7 +21,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -653,7 +653,7 @@ func managedProgramNodeFlags() ([]string, error) {
 	if readErr != nil || closeErr != nil {
 		return nil, errors.Join(readErr, closeErr)
 	}
-	metadata, err := deployment.ParseRuntimeMetadata(raw)
+	metadata, err := artifact.ParseRuntimeMetadata(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parse managed Runtime metadata: %w", err)
 	}

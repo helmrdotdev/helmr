@@ -17,8 +17,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -79,7 +79,7 @@ func TestComputerMaterializerRenewsWhileAwaitingPreparedRuntime(t *testing.T) {
 func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInstanceAssignment) {
 	t.Helper()
 	store := &fakeCAS{objects: map[string][]byte{}}
-	imageObject, err := store.Put(context.Background(), deployment.ComputerImageArtifactMediaType, strings.NewReader("oci image"))
+	imageObject, err := store.Put(context.Background(), bundle.ComputerImageMediaType, strings.NewReader("oci image"))
 	if err != nil {
 		t.Fatal(err)
 	}

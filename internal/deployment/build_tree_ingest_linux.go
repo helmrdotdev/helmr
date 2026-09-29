@@ -11,6 +11,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -18,21 +21,21 @@ func inspectBuildTree(
 	ctx context.Context,
 	source io.ReaderAt,
 	physicalSize int64,
-) (*inspectedArtifact, error) {
-	reader, err := newSquashFSArtifactReader(
+) (*artifact.Tree, error) {
+	reader, err := verify.NewSquashFSReader(
 		ctx,
 		source,
 		physicalSize,
-		buildTreeArtifact,
+		artifact.RoleBuildTree,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("open build tree: %w", err)
 	}
-	tree, err := inspectArtifact(
+	tree, err := artifact.Inspect(
 		ctx,
 		reader,
-		buildTreeArtifact,
-		maxBuildTreeLogicalBytes,
+		artifact.RoleBuildTree,
+		artifact.MaxBuildTreeLogicalBytes,
 		physicalSize,
 	)
 	if err != nil {
@@ -60,7 +63,7 @@ func IngestBuildTreeArchive(
 		filepath.Clean(directory) != directory {
 		return nil, errors.New("build tree ingestion directory must be an absolute clean path")
 	}
-	if !sha256DigestPattern.MatchString(archiveDigest) {
+	if !sha256sum.ValidDigest(archiveDigest) {
 		return nil, errors.New("build tree stream digest is not a lowercase SHA-256 digest")
 	}
 	if archiveSize < 1 || archiveSize > maxBuildTreeStreamBytes {
@@ -76,11 +79,11 @@ func IngestBuildTreeArchive(
 	limited := &io.LimitedReader{R: source, N: archiveSize}
 	digest := sha256.New()
 	reader := io.TeeReader(limited, digest)
-	snapshot, err := produceArtifactSnapshot(
+	content, err := snapshot.Produce(
 		ctx,
 		directory,
-		buildTreeArtifact,
-		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
+		artifact.RoleBuildTree,
+		snapshot.Owner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(destination *os.File) error {
 			return encodeSquashFS(ctx, encoder, reader, destination)
 		},
@@ -89,8 +92,8 @@ func IngestBuildTreeArchive(
 		return nil, fmt.Errorf("encode build tree stream: %w", err)
 	}
 	defer func() {
-		if snapshot != nil {
-			returnErr = errors.Join(returnErr, snapshot.Close())
+		if content != nil {
+			returnErr = errors.Join(returnErr, content.Close())
 		}
 	}()
 	if limited.N != 0 {
@@ -104,21 +107,21 @@ func IngestBuildTreeArchive(
 			archiveDigest,
 		)
 	}
-	file, err := snapshot.verifierFile()
+	file, err := content.VerifierFile()
 	if err != nil {
 		return nil, err
 	}
-	inspected, err := inspectBuildTree(ctx, file, snapshot.descriptor.SizeBytes)
+	inspected, err := inspectBuildTree(ctx, file, content.Descriptor().SizeBytes)
 	if err != nil {
 		return nil, err
 	}
-	tree, err := newBuildTree(snapshot, inspected, BuildTreeDescriptor{
+	tree, err := newBuildTree(content, inspected, BuildTreeDescriptor{
 		Digest:    archiveDigest,
 		SizeBytes: archiveSize,
 	})
 	if err != nil {
 		return nil, err
 	}
-	snapshot = nil
+	content = nil
 	return tree, nil
 }

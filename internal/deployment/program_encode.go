@@ -3,7 +3,6 @@ package deployment
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -12,14 +11,18 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 type EncodedProgram struct {
-	Output   ProgramOutput
-	artifact *artifactSnapshot
+	Output   artifact.ProgramOutput
+	artifact *snapshot.Artifact
 }
 
 func EncodeProgram(
@@ -30,8 +33,8 @@ func EncodeProgram(
 	verification VerificationResult,
 	configResultDigest string,
 	runtimeDigest string,
-	computerImages []BundleComputerImage,
-	compiler CompilerInputs,
+	computerImages []bundle.ComputerImage,
+	compiler artifact.CompilerInputs,
 	nodeVersion string,
 ) (_ *EncodedProgram, returnErr error) {
 	if ctx == nil {
@@ -40,10 +43,10 @@ func EncodeProgram(
 	if tree == nil || tree.content == nil || tree.inspected == nil {
 		return nil, errors.New("build tree is closed")
 	}
-	if !sha256DigestPattern.MatchString(configResultDigest) {
+	if !sha256sum.ValidDigest(configResultDigest) {
 		return nil, errors.New("program encoding config result digest is invalid")
 	}
-	if !sha256DigestPattern.MatchString(runtimeDigest) {
+	if !sha256sum.ValidDigest(runtimeDigest) {
 		return nil, errors.New("program encoding runtime digest is invalid")
 	}
 	if err := ValidateVerificationResult(verification); err != nil {
@@ -58,22 +61,22 @@ func EncodeProgram(
 	if err != nil {
 		return nil, err
 	}
-	if len(buildPlanProgramDeclarations(plan)) == 0 {
+	if len(artifact.BuildPlanProgramDeclarations(plan)) == 0 {
 		return nil, errors.New("program encoding requires a program-backed verification")
 	}
-	compilerResultRaw, err := tree.inspected.read(
+	compilerResultRaw, err := tree.inspected.Read(
 		ctx,
 		"helmr/compiler-result.json",
-		maxProgramFileSizeBytes,
+		artifact.MaxProgramFileSizeBytes,
 	)
 	if err != nil {
 		return nil, err
 	}
-	compilerResult, err := ParseProgramCompilerResult(compilerResultRaw)
+	compilerResult, err := artifact.ParseProgramCompilerResult(compilerResultRaw)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProgramCompilerAuthority(
+	if err := artifact.ValidateProgramCompilerAuthority(
 		compilerResult,
 		compiler,
 		nodeVersion,
@@ -85,37 +88,41 @@ func EncodeProgram(
 			"program compiler result config digest does not match evaluated config",
 		)
 	}
-	if err := verifyProgramCompilerFiles(ctx, tree.inspected, compilerResult); err != nil {
+	if err := artifact.VerifyProgramCompilerFiles(ctx, tree.inspected, compilerResult); err != nil {
 		return nil, err
 	}
-	locator, err := ParseDeclarationLocator(
+	locator, err := artifact.ParseDeclarationLocator(
 		[]byte(verification.Succeeded.Files[1].Content),
 	)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateProgramCompilerLocators(compilerResult, locator); err != nil {
+	if err := artifact.ValidateProgramCompilerLocators(compilerResult, locator); err != nil {
 		return nil, err
 	}
-	index, err := buildProgramIndex(
+	images := make(map[string]definition.ComputerImage, len(computerImages))
+	for _, image := range computerImages {
+		images[image.DeclaredID] = image.Artifact.ComputerImage()
+	}
+	index, err := artifact.BuildProgramIndex(
 		plan,
 		locator,
-		computerImages,
+		images,
 		configResultDigest,
 		runtimeDigest,
 	)
 	if err != nil {
 		return nil, err
 	}
-	indexRaw, err := CanonicalProgramIndex(index)
+	indexRaw, err := artifact.CanonicalProgramIndex(index)
 	if err != nil {
 		return nil, err
 	}
-	manifest := programManifestFromCompilerResult(
+	manifest := artifact.ProgramManifestFromCompilerResult(
 		compilerResult,
-		programIndexDigest(indexRaw),
+		artifact.ProgramIndexDigest(indexRaw),
 	)
-	manifestRaw, err := canonicalProgramManifest(manifest)
+	manifestRaw, err := artifact.CanonicalProgramManifest(manifest)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +130,11 @@ func EncodeProgram(
 		"helmr/program-manifest.json": manifestRaw,
 		"helmr/declarations.json":     indexRaw,
 	}
-	artifact, err := encodeProgramTree(
+	content, err := encodeProgramTree(
 		ctx,
 		directory,
 		encoder,
-		programArtifact,
+		artifact.RoleProgram,
 		programTreeEntries(ctx, tree.inspected, generated),
 		false,
 	)
@@ -135,126 +142,58 @@ func EncodeProgram(
 		return nil, fmt.Errorf("encode program: %w", err)
 	}
 	defer func() {
-		if artifact != nil {
-			returnErr = errors.Join(returnErr, artifact.Close())
+		if content != nil {
+			returnErr = errors.Join(returnErr, content.Close())
 		}
 	}()
 
-	output := ProgramOutput{
-		Artifact: ProgramDescriptor(artifact.descriptor),
+	output := artifact.ProgramOutput{
+		Artifact: content.Descriptor(),
 		Index:    index,
 	}
-	if err := ValidateProgramOutput(output); err != nil {
+	if err := artifact.ValidateProgramOutput(output); err != nil {
 		return nil, err
 	}
-	if err := verifyEncodedProgram(ctx, artifact, output); err != nil {
+	if err := verifyEncodedProgram(ctx, content, output); err != nil {
 		return nil, err
 	}
 
 	program := &EncodedProgram{
 		Output:   output,
-		artifact: artifact,
+		artifact: content,
 	}
-	artifact = nil
+	content = nil
 	return program, nil
 }
 
 func verifyEncodedProgram(
 	ctx context.Context,
-	artifact *artifactSnapshot,
-	output ProgramOutput,
+	content *snapshot.Artifact,
+	output artifact.ProgramOutput,
 ) error {
-	file, err := artifact.verifierFile()
+	file, err := content.VerifierFile()
 	if err != nil {
 		return err
 	}
-	if err := VerifyProgramOutputFile(ctx, file, output); err != nil {
+	if err := verify.ProgramOutputFile(ctx, file, output); err != nil {
 		return fmt.Errorf("verify encoded program: %w", err)
 	}
 	return nil
 }
 
-// VerifyProgramOutputFile proves that a finalized Program object has the exact
-// bytes and executable closure described by output. It is the shared admission
-// boundary for producer output; callers do not infer validity from a successful
-// build process or from producer metadata.
-func VerifyProgramOutputFile(
-	ctx context.Context,
-	file *os.File,
-	output ProgramOutput,
-) error {
-	if ctx == nil {
-		return errors.New("program verification context is nil")
-	}
-	if file == nil {
-		return errors.New("program verification file is nil")
-	}
-	if err := ValidateProgramOutput(output); err != nil {
-		return err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("inspect Program object: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Size() != output.Artifact.SizeBytes {
-		return errors.New("program object does not exact-match its descriptor")
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(
-		hash,
-		io.NewSectionReader(file, 0, output.Artifact.SizeBytes),
-	); err != nil {
-		return fmt.Errorf("hash Program object: %w", err)
-	}
-	actualDigest := sha256sum.FormatDigest(hash.Sum(nil))
-	if actualDigest != output.Artifact.Digest {
-		return errors.New("program object digest does not match its descriptor")
-	}
-	reader, err := newSquashFSArtifactReader(
-		ctx,
-		file,
-		output.Artifact.SizeBytes,
-		programArtifact,
-	)
-	if err != nil {
-		return fmt.Errorf("open Program object: %w", err)
-	}
-	verified, err := verifyProgramArtifact(ctx, artifactInput{
-		Digest:    output.Artifact.Digest,
-		SizeBytes: output.Artifact.SizeBytes,
-		MediaType: output.Artifact.MediaType,
-		Reader:    reader,
-	})
-	if err != nil {
-		return fmt.Errorf("verify Program object: %w", err)
-	}
-	verifiedIndex, err := CanonicalProgramIndex(verified.Index())
-	if err != nil {
-		return err
-	}
-	expectedIndex, err := CanonicalProgramIndex(output.Index)
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(verifiedIndex, expectedIndex) {
-		return errors.New("program object index does not match its descriptor")
-	}
-	return nil
-}
-
 type programTreeSource struct {
-	entry      artifactEntry
+	entry      artifact.Entry
 	sourcePath string
 	content    []byte
 }
 
 func programTreeEntries(
 	ctx context.Context,
-	tree *inspectedArtifact,
+	tree *artifact.Tree,
 	generated map[string][]byte,
 ) iter.Seq2[treeEntry, error] {
-	sources := make([]programTreeSource, 0, len(tree.ordered)+len(generated)+2)
-	for _, entry := range tree.ordered {
+	sources := make([]programTreeSource, 0, len(tree.Entries())+len(generated)+2)
+	for _, entry := range tree.Entries() {
 		if entry.Path == "." || entry.Path == "helmr/compiler-result.json" {
 			continue
 		}
@@ -267,18 +206,18 @@ func programTreeEntries(
 			sourcePath: sourcePath,
 		})
 	}
-	if _, exists := tree.entries["helmr"]; !exists {
-		sources = append(sources, programTreeSource{entry: artifactEntry{
+	if _, exists := tree.Lookup("helmr"); !exists {
+		sources = append(sources, programTreeSource{entry: artifact.Entry{
 			Path: "helmr",
-			Kind: artifactEntryDirectory,
+			Kind: artifact.EntryDirectory,
 			Mode: 0755,
 		}})
 	}
 	for name, content := range generated {
 		sources = append(sources, programTreeSource{
-			entry: artifactEntry{
+			entry: artifact.Entry{
 				Path:      name,
-				Kind:      artifactEntryRegular,
+				Kind:      artifact.EntryRegular,
 				Mode:      0644,
 				SizeBytes: int64(len(content)),
 			},
@@ -303,7 +242,7 @@ func programTreeEntries(
 				Mode:       source.entry.Mode,
 				LinkTarget: source.entry.LinkTarget,
 			}
-			if entry.Kind != artifactEntryRegular {
+			if entry.Kind != artifact.EntryRegular {
 				if !yield(entry, nil) {
 					return
 				}
@@ -317,7 +256,7 @@ func programTreeEntries(
 				}
 				continue
 			}
-			reader, err := tree.reader.Open(ctx, source.sourcePath)
+			reader, err := tree.Open(ctx, source.sourcePath)
 			if err != nil {
 				yield(treeEntry{}, fmt.Errorf(
 					"open frozen program path %q: %w",
@@ -347,12 +286,12 @@ func programTreeEntries(
 func (program *EncodedProgram) Publish(
 	ctx context.Context,
 	store cas.Store,
-) (ProgramOutput, error) {
+) (artifact.ProgramOutput, error) {
 	if program == nil || program.artifact == nil {
-		return ProgramOutput{}, errors.New("encoded program is closed")
+		return artifact.ProgramOutput{}, errors.New("encoded program is closed")
 	}
 	if store == nil {
-		return ProgramOutput{}, errors.New("program store is required")
+		return artifact.ProgramOutput{}, errors.New("program store is required")
 	}
 	if err := publishProgramArtifact(
 		ctx,
@@ -360,10 +299,10 @@ func (program *EncodedProgram) Publish(
 		program.artifact,
 		program.Output.Artifact,
 	); err != nil {
-		return ProgramOutput{}, fmt.Errorf("publish program: %w", err)
+		return artifact.ProgramOutput{}, fmt.Errorf("publish program: %w", err)
 	}
 	output := program.Output
-	output.Index = cloneProgramIndex(output.Index)
+	output.Index = output.Index.Clone()
 	return output, nil
 }
 
@@ -383,7 +322,7 @@ func (program *EncodedProgram) Materialize(
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return errors.New("program materialization path must be an absolute clean path")
 	}
-	reader, err := program.artifact.uploadReader(ctx)
+	reader, err := program.artifact.UploadReader(ctx)
 	if err != nil {
 		return err
 	}
@@ -423,7 +362,7 @@ func (program *EncodedProgram) Materialize(
 	if err != nil {
 		return fmt.Errorf("reopen Program object: %w", err)
 	}
-	verifyErr := VerifyProgramOutputFile(ctx, verified, program.Output)
+	verifyErr := verify.ProgramOutputFile(ctx, verified, program.Output)
 	closeErr := verified.Close()
 	if err := errors.Join(verifyErr, closeErr); err != nil {
 		return fmt.Errorf("verify materialized Program object: %w", err)
@@ -434,10 +373,10 @@ func (program *EncodedProgram) Materialize(
 func publishProgramArtifact(
 	ctx context.Context,
 	store cas.Store,
-	snapshot *artifactSnapshot,
-	expected ProgramDescriptor,
+	content *snapshot.Artifact,
+	expected artifact.ProgramDescriptor,
 ) error {
-	reader, err := snapshot.uploadReader(ctx)
+	reader, err := content.UploadReader(ctx)
 	if err != nil {
 		return err
 	}

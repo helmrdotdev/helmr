@@ -10,8 +10,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 const maxComputerInputDocumentBytes = 1 << 20
@@ -23,17 +23,17 @@ type computerImageInput struct {
 
 // ReadComputerImageInputs builds final-capacity disks inside the pinned Linux
 // builder. work is owned by the build invocation until bundle publication ends.
-func ReadComputerImageInputs(ctx context.Context, path, work, mkfs, config string) ([]deployment.BundleComputerImage, []ObjectSource, error) {
-	return readComputerImageInputs(ctx, path, func(source string) (deployment.BundleComputerImageArtifact, string, error) {
+func ReadComputerImageInputs(ctx context.Context, path, work, mkfs, config string) ([]bundle.ComputerImage, []ObjectSource, error) {
+	return readComputerImageInputs(ctx, path, func(source string) (bundle.ComputerImageArtifact, string, error) {
 		dir, err := os.MkdirTemp(work, "image-*")
 		if err != nil {
-			return deployment.BundleComputerImageArtifact{}, "", err
+			return bundle.ComputerImageArtifact{}, "", err
 		}
 		target := filepath.Join(dir, "disk.filepack")
 		artifact, err := buildComputerDisk(ctx, source, target, dir, mkfs, config)
 		if err != nil {
 			_ = os.RemoveAll(dir)
-			return deployment.BundleComputerImageArtifact{}, "", err
+			return bundle.ComputerImageArtifact{}, "", err
 		}
 		return artifact, target, nil
 	})
@@ -42,10 +42,10 @@ func ReadComputerImageInputs(ctx context.Context, path, work, mkfs, config strin
 func readComputerImageInputs(
 	ctx context.Context,
 	path string,
-	inspect func(string) (deployment.BundleComputerImageArtifact, string, error),
-) ([]deployment.BundleComputerImage, []ObjectSource, error) {
+	inspect func(string) (bundle.ComputerImageArtifact, string, error),
+) ([]bundle.ComputerImage, []ObjectSource, error) {
 	if path == "" {
-		return []deployment.BundleComputerImage{}, []ObjectSource{}, nil
+		return []bundle.ComputerImage{}, []ObjectSource{}, nil
 	}
 	if ctx == nil || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return nil, nil, errors.New("computer image input path is invalid")
@@ -66,13 +66,13 @@ func readComputerImageInputs(
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, nil, errors.New("computer image inputs contain trailing data")
 	}
-	if inputs == nil || len(inputs) > deployment.MaxDeploymentBundleComputerImages {
+	if inputs == nil || len(inputs) > bundle.MaxComputerImages {
 		return nil, nil, errors.New("computer image input count is invalid")
 	}
-	images := make([]deployment.BundleComputerImage, len(inputs))
+	images := make([]bundle.ComputerImage, len(inputs))
 	objects := make([]ObjectSource, 0, len(inputs))
 	objectDigests := make(map[string]struct{}, len(inputs))
-	artifactsByPath := make(map[string]deployment.BundleComputerImageArtifact, len(inputs))
+	artifactsByPath := make(map[string]bundle.ComputerImageArtifact, len(inputs))
 	pathsByInput := make(map[string]string, len(inputs))
 	for index, input := range inputs {
 		if err := ctx.Err(); err != nil {
@@ -94,7 +94,7 @@ func readComputerImageInputs(
 			}
 			artifactsByPath[input.Path] = artifact
 		}
-		images[index] = deployment.BundleComputerImage{DeclaredID: input.DeclaredID, Artifact: artifact}
+		images[index] = bundle.ComputerImage{DeclaredID: input.DeclaredID, Artifact: artifact}
 		if _, exists := objectDigests[artifact.Digest]; !exists {
 			objects = append(objects, ObjectSource{Digest: artifact.Digest, Path: pathsByInput[input.Path]})
 			objectDigests[artifact.Digest] = struct{}{}

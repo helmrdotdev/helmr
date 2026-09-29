@@ -200,9 +200,9 @@ in
   platform-release = helmrPackages.platformRelease;
   platform-release-publish-contract = vendoredGoCheck "platform-release-publish-contract-check" [ ] ''
     HELMR_PLATFORM_RELEASE_DIR=${helmrPackages.platformRelease} \
+      go test ./cmd/control-plane -run '^TestPublishPinnedPlatformRelease$'
     HELMR_RUNTIME_RELEASE_DIR=${helmrPackages.runtimeRelease} \
-      go test ./internal/deployment \
-        -run '^(TestPublishPinnedPlatformRelease|TestVerifyPinnedRuntimeRelease)$'
+      go test ./internal/artifact/verify -run '^TestVerifyPinnedRuntimeRelease$'
   '';
   program-archive-contract =
     vendoredGoCheck "program-archive-contract-check" [ helmrPackages.squashfsTools ]

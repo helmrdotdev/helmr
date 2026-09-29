@@ -10,6 +10,8 @@ import (
 	"io"
 	"iter"
 	"strconv"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
 const (
@@ -19,7 +21,7 @@ const (
 
 type treeEntry struct {
 	Path       string
-	Kind       artifactEntryKind
+	Kind       artifact.EntryKind
 	Mode       uint32
 	SizeBytes  int64
 	LinkTarget string
@@ -29,7 +31,7 @@ type treeEntry struct {
 func writeTreeArchive(
 	ctx context.Context,
 	destination io.Writer,
-	role artifactRole,
+	role artifact.Role,
 	entries iter.Seq2[treeEntry, error],
 	allowEmpty bool,
 ) error {
@@ -53,12 +55,12 @@ func writeTreeArchive(
 		archiveBytes: 2 * tarBlockBytes,
 	}
 	switch role {
-	case programArtifact:
-		state.logicalLimit = MaxProgramLogicalBytes
-	case buildTreeArtifact:
-		state.logicalLimit = maxBuildTreeLogicalBytes
-	case runtimeArtifact:
-		state.logicalLimit = maxRuntimeLogicalBytes
+	case artifact.RoleProgram:
+		state.logicalLimit = artifact.MaxProgramLogicalBytes
+	case artifact.RoleBuildTree:
+		state.logicalLimit = artifact.MaxBuildTreeLogicalBytes
+	case artifact.RoleRuntime:
+		state.logicalLimit = artifact.MaxRuntimeLogicalBytes
 	default:
 		return fmt.Errorf("program archive artifact role = %d", role)
 	}
@@ -77,7 +79,7 @@ func writeTreeArchive(
 		}
 	}
 	if state.count == 0 && !allowEmpty {
-		return fmt.Errorf("program archive entry count is outside [1,%d]", maxArtifactEntries-1)
+		return fmt.Errorf("program archive entry count is outside [1,%d]", artifact.MaxEntries-1)
 	}
 	var end [2 * tarBlockBytes]byte
 	if _, err := destination.Write(end[:]); err != nil {
@@ -94,7 +96,7 @@ func writeTreeEntry(
 	digest := sha256.Sum256([]byte(entry.Path))
 	suffix := hex.EncodeToString(digest[:])
 	pax := paxRecord("path", entry.Path)
-	if entry.Kind == artifactEntrySymlink {
+	if entry.Kind == artifact.EntrySymlink {
 		pax = append(pax, paxRecord("linkpath", entry.LinkTarget)...)
 	}
 	if err := writeTarMember(
@@ -110,13 +112,13 @@ func writeTreeEntry(
 
 	typeFlag := byte('0')
 	switch entry.Kind {
-	case artifactEntryDirectory:
+	case artifact.EntryDirectory:
 		typeFlag = '5'
-	case artifactEntrySymlink:
+	case artifact.EntrySymlink:
 		typeFlag = '2'
 	}
 	size := entry.SizeBytes
-	if entry.Kind != artifactEntryRegular {
+	if entry.Kind != artifact.EntryRegular {
 		size = 0
 	}
 	header, err := tarHeader("Entries/"+suffix, entry.Mode, size, typeFlag)
@@ -126,7 +128,7 @@ func writeTreeEntry(
 	if _, err := destination.Write(header[:]); err != nil {
 		return fmt.Errorf("write header: %w", err)
 	}
-	if entry.Kind != artifactEntryRegular {
+	if entry.Kind != artifact.EntryRegular {
 		return nil
 	}
 	if err := copyTreeContent(ctx, destination, entry.Content, entry.SizeBytes); err != nil {
@@ -150,11 +152,11 @@ type programArchiveState struct {
 
 func (state *programArchiveState) accept(
 	entry treeEntry,
-	role artifactRole,
+	role artifact.Role,
 	maxBytes int64,
 ) error {
-	if state.count >= maxArtifactEntries-1 {
-		return fmt.Errorf("program archive entry count exceeds %d", maxArtifactEntries-1)
+	if state.count >= artifact.MaxEntries-1 {
+		return fmt.Errorf("program archive entry count exceeds %d", artifact.MaxEntries-1)
 	}
 	if entry.Path == "." {
 		return fmt.Errorf("program archive entry %d explicitly represents the root", state.count)
@@ -171,13 +173,13 @@ func (state *programArchiveState) accept(
 	}
 
 	entryNameBytes := int64(len(entry.Path) + len(entry.LinkTarget))
-	if state.nameBytes > MaxArtifactNameBytes-entryNameBytes {
+	if state.nameBytes > artifact.MaxNameBytes-entryNameBytes {
 		return fmt.Errorf(
 			"program archive raw path and symbolic-link-target bytes exceed %d",
-			MaxArtifactNameBytes,
+			artifact.MaxNameBytes,
 		)
 	}
-	if entry.Kind == artifactEntryRegular {
+	if entry.Kind == artifact.EntryRegular {
 		if state.logicalBytes > state.logicalLimit-entry.SizeBytes {
 			return fmt.Errorf(
 				"program archive logical regular-file bytes exceed %d",
@@ -187,11 +189,11 @@ func (state *programArchiveState) accept(
 	}
 
 	paxBytes := int64(len(paxRecord("path", entry.Path)))
-	if entry.Kind == artifactEntrySymlink {
+	if entry.Kind == artifact.EntrySymlink {
 		paxBytes += int64(len(paxRecord("linkpath", entry.LinkTarget)))
 	}
 	increment := 2*tarBlockBytes + roundTarBytes(paxBytes)
-	if entry.Kind == artifactEntryRegular {
+	if entry.Kind == artifact.EntryRegular {
 		increment += roundTarBytes(entry.SizeBytes)
 	}
 	if state.archiveBytes > maxBytes-increment {
@@ -202,43 +204,43 @@ func (state *programArchiveState) accept(
 	state.count++
 	state.nameBytes += entryNameBytes
 	state.archiveBytes += increment
-	if entry.Kind == artifactEntryRegular {
+	if entry.Kind == artifact.EntryRegular {
 		state.logicalBytes += entry.SizeBytes
 	}
-	if entry.Kind == artifactEntryDirectory {
+	if entry.Kind == artifact.EntryDirectory {
 		state.directories[entry.Path] = struct{}{}
 	}
 	return nil
 }
 
-func validateTreeEntry(entry treeEntry, role artifactRole) error {
-	if err := validateArtifactPath(entry.Path, role); err != nil {
+func validateTreeEntry(entry treeEntry, role artifact.Role) error {
+	if err := artifact.ValidatePath(entry.Path, role); err != nil {
 		return err
 	}
 	if entry.SizeBytes < 0 {
 		return errors.New("logical size is negative")
 	}
 	switch entry.Kind {
-	case artifactEntryRegular:
+	case artifact.EntryRegular:
 		if entry.Mode != 0644 && entry.Mode != 0755 {
 			return fmt.Errorf("regular-file mode %#o is unsupported", entry.Mode)
 		}
-		if entry.SizeBytes > MaxArtifactFileSize {
-			return fmt.Errorf("regular file exceeds %d bytes", MaxArtifactFileSize)
+		if entry.SizeBytes > artifact.MaxFileSize {
+			return fmt.Errorf("regular file exceeds %d bytes", artifact.MaxFileSize)
 		}
 		if entry.LinkTarget != "" || entry.Content == nil {
 			return errors.New("regular-file content metadata is invalid")
 		}
-	case artifactEntryDirectory:
+	case artifact.EntryDirectory:
 		if entry.Mode != 0755 || entry.SizeBytes != 0 ||
 			entry.LinkTarget != "" || entry.Content != nil {
 			return errors.New("directory metadata is invalid")
 		}
-	case artifactEntrySymlink:
+	case artifact.EntrySymlink:
 		if entry.Mode != 0777 || entry.SizeBytes != 0 || entry.Content != nil {
 			return errors.New("symbolic-link metadata is invalid")
 		}
-		if err := validateSymlinkTarget(entry.LinkTarget); err != nil {
+		if err := artifact.ValidateLinkTarget(entry.LinkTarget); err != nil {
 			return err
 		}
 	default:
@@ -247,9 +249,9 @@ func validateTreeEntry(entry treeEntry, role artifactRole) error {
 	return nil
 }
 
-func programArchiveLimit(role artifactRole) (int64, error) {
+func programArchiveLimit(role artifact.Role) (int64, error) {
 	switch role {
-	case programArtifact, buildTreeArtifact, runtimeArtifact:
+	case artifact.RoleProgram, artifact.RoleBuildTree, artifact.RoleRuntime:
 		return maxProgramArchiveBytes, nil
 	default:
 		return 0, fmt.Errorf("program archive artifact role = %d", role)

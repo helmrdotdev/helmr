@@ -1,0 +1,81 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+)
+
+const platformReleaseManifestFile = "platform-release.json"
+
+type platformReleaseManifest struct {
+	FormatVersion int                        `json:"formatVersion"`
+	Runtime       artifact.RuntimeDescriptor `json:"runtime"`
+}
+
+// publishPlatformRelease publishes the Product-owned runtime closure required
+// by every deployment bundle. Build tools and package-manager policy are
+// producer concerns and are intentionally absent from this release contract.
+func publishPlatformRelease(ctx context.Context, store cas.ImmutableStore, directory string) error {
+	if ctx == nil {
+		return errors.New("platform release publish context is nil")
+	}
+	if store == nil {
+		return errors.New("platform artifact store is required")
+	}
+	if directory == "" || !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+		return errors.New("platform release directory must be canonical and absolute")
+	}
+	raw, err := os.ReadFile(filepath.Join(directory, platformReleaseManifestFile))
+	if err != nil {
+		return err
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil || !bytes.Equal(raw, canonical) {
+		return errors.New("platform release manifest is not canonical JSON")
+	}
+	var manifest platformReleaseManifest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return err
+	}
+	if err := ensureEOF(decoder, "Platform release manifest"); err != nil {
+		return err
+	}
+	if manifest.FormatVersion != 0 {
+		return errors.New("platform release manifest format is unsupported")
+	}
+	descriptor := manifest.Runtime
+	if err := artifact.ValidateRuntimeDescriptor(descriptor); err != nil {
+		return errors.New("platform release Runtime descriptor is invalid")
+	}
+	name := strings.TrimPrefix(descriptor.Digest, "sha256:")
+	path := filepath.Join(directory, "objects", "sha256", name)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != descriptor.SizeBytes {
+		return errors.New("platform release Runtime object does not match its descriptor")
+	}
+	return verify.PublishPlatformRuntime(ctx, store, path, descriptor)
+}
+
+func ensureEOF(decoder *json.Decoder, label string) error {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("%s contains trailing data", label)
+		}
+		return fmt.Errorf("decode %s trailing data: %w", label, err)
+	}
+	return nil
+}

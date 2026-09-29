@@ -19,8 +19,10 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -30,7 +32,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -98,12 +99,12 @@ func main() {
 		log.Error("read dev deployment Runtime descriptor", "error", err)
 		os.Exit(1)
 	}
-	runtimeDescriptor, err := deployment.ParseRuntimeDescriptor(runtimeRaw)
+	runtimeDescriptor, err := artifact.ParseRuntimeDescriptor(runtimeRaw)
 	if err != nil {
 		log.Error("parse dev deployment Runtime descriptor", "error", err)
 		os.Exit(1)
 	}
-	bundleAdmission := deployment.DeploymentBundleAdmission{Runtime: runtimeDescriptor}
+	bundleAdmission := bundle.Admission{Runtime: runtimeDescriptor}
 	pool.Close()
 	pool, err = pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {

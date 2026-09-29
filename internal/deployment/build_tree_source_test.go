@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
 func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
@@ -66,7 +68,7 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 	}
 	first := writeSelectedSourceForTest(t, selection)
 	second := writeSelectedSourceForTest(t, selection)
-	if !bytes.Equal(first, second) || digestBytes(first) != descriptor.ArchiveDigest ||
+	if !bytes.Equal(first, second) || sha256sum.DigestBytes(first) != descriptor.ArchiveDigest ||
 		int64(len(first)) != descriptor.ArchiveSizeBytes {
 		t.Fatalf("canonical archive descriptor = %+v", descriptor)
 	}
@@ -196,7 +198,7 @@ func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *BuildTree {
 		t.Fatal(err)
 	}
 	tree, err := newBuildTree(
-		&artifactSnapshot{},
+		&snapshot.Artifact{},
 		inspected,
 		BuildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096},
 	)
