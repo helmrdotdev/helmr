@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -71,11 +71,11 @@ func projectRuntimeProgram(
 		return workerapi.RuntimeProgram{}, fmt.Errorf("stat program managed runtime: %w", err)
 	}
 	if runtimeObject.Digest != runtimeDigest ||
-		runtimeObject.MediaType != deployment.RuntimeArtifactMediaType ||
+		runtimeObject.MediaType != artifact.RuntimeArtifactMediaType ||
 		runtimeObject.SizeBytes < 1 {
 		return workerapi.RuntimeProgram{}, errors.New("program managed runtime does not match its deployment pin")
 	}
-	artifact, err := projectCASObject(
+	object, err := projectCASObject(
 		authority.artifactDigest,
 		authority.artifactSizeBytes,
 		authority.artifactMediaType,
@@ -84,7 +84,7 @@ func projectRuntimeProgram(
 	if err != nil {
 		return workerapi.RuntimeProgram{}, err
 	}
-	indexDigest, err := deployment.RuntimeDigestString(authority.indexDigest)
+	indexDigest, err := artifact.RuntimeDigestString(authority.indexDigest)
 	if err != nil {
 		return workerapi.RuntimeProgram{}, fmt.Errorf("program index digest is invalid: %w", err)
 	}
@@ -98,7 +98,7 @@ func projectRuntimeProgram(
 			SizeBytes: runtimeObject.SizeBytes,
 			MediaType: runtimeObject.MediaType,
 		},
-		Artifact:    artifact,
+		Artifact:    object,
 		IndexDigest: indexDigest,
 	}, nil
 }

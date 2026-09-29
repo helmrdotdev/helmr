@@ -11,9 +11,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -26,9 +28,9 @@ type ObjectSource struct {
 // installation, package-manager selection, source layout, and builder
 // provenance are producer-local concerns and are deliberately absent.
 type BundleInput struct {
-	Runtime        deployment.RuntimeDescriptor
-	Program        deployment.ProgramOutput
-	ComputerImages []deployment.BundleComputerImage
+	Runtime        artifact.RuntimeDescriptor
+	Program        artifact.ProgramOutput
+	ComputerImages []bundle.ComputerImage
 	Objects        []ObjectSource
 }
 
@@ -39,46 +41,46 @@ func FinalizeBundle(
 	ctx context.Context,
 	outputDirectory string,
 	input BundleInput,
-) (_ deployment.DeploymentBundleDirectory, returnErr error) {
+) (_ bundle.Directory, returnErr error) {
 	if ctx == nil {
-		return deployment.DeploymentBundleDirectory{}, errors.New("bundle finalization context is nil")
+		return bundle.Directory{}, errors.New("bundle finalization context is nil")
 	}
 	if err := ctx.Err(); err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	if strings.TrimSpace(outputDirectory) == "" {
-		return deployment.DeploymentBundleDirectory{}, errors.New("bundle output directory is required")
+		return bundle.Directory{}, errors.New("bundle output directory is required")
 	}
-	if err := deployment.ValidateRuntimeDescriptor(input.Runtime); err != nil {
-		return deployment.DeploymentBundleDirectory{}, fmt.Errorf("bundle Runtime: %w", err)
+	if err := artifact.ValidateRuntimeDescriptor(input.Runtime); err != nil {
+		return bundle.Directory{}, fmt.Errorf("bundle Runtime: %w", err)
 	}
-	if err := deployment.ValidateProgramOutput(input.Program); err != nil {
-		return deployment.DeploymentBundleDirectory{}, fmt.Errorf("bundle Program: %w", err)
+	if err := artifact.ValidateProgramOutput(input.Program); err != nil {
+		return bundle.Directory{}, fmt.Errorf("bundle Program: %w", err)
 	}
 
-	plan, err := deployment.DeploymentPlanFromProgramIndex(input.Program.Index)
+	plan, err := bundle.PlanFromProgramIndex(input.Program.Index)
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
-	computerImages := make([]deployment.BundleComputerImage, len(input.ComputerImages))
+	computerImages := make([]bundle.ComputerImage, len(input.ComputerImages))
 	copy(computerImages, input.ComputerImages)
 	sort.Slice(computerImages, func(left, right int) bool {
 		return computerImages[left].DeclaredID < computerImages[right].DeclaredID
 	})
 	objects, err := referencedBundleObjects(input.Program.Artifact, computerImages)
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
-	bundle := deployment.DeploymentBundle{
-		Contract: deployment.DeploymentBundleContract,
-		Platform: deployment.DeploymentBundlePlatform{
+	manifest := bundle.Manifest{
+		Contract: bundle.Contract,
+		Platform: bundle.Platform{
 			Architecture: input.Runtime.Architecture,
-			OS:           deployment.DeploymentBundleTargetOS,
+			OS:           bundle.TargetOS,
 		},
 		Plan: plan,
-		Runtime: deployment.DeploymentBundleRuntime{
+		Runtime: bundle.Runtime{
 			Contract: input.Runtime.RuntimeContract,
-			Artifact: deployment.BundleObject{
+			Artifact: bundle.Object{
 				Digest: input.Runtime.Digest, SizeBytes: input.Runtime.SizeBytes,
 				MediaType: input.Runtime.MediaType,
 			},
@@ -87,31 +89,31 @@ func FinalizeBundle(
 		ComputerImages: computerImages,
 		Objects:        objects,
 	}
-	bundleJSON, err := deployment.CanonicalDeploymentBundle(bundle)
+	bundleJSON, err := bundle.Canonical(manifest)
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 
 	sources, err := exactObjectSources(input.Objects, objects)
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	output, err := filepath.Abs(outputDirectory)
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	if _, err := os.Lstat(output); err == nil {
-		return deployment.DeploymentBundleDirectory{}, errors.New("bundle output directory already exists")
+		return bundle.Directory{}, errors.New("bundle output directory already exists")
 	} else if !os.IsNotExist(err) {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	parent := filepath.Dir(output)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	stage, err := os.MkdirTemp(parent, "."+filepath.Base(output)+".partial-")
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	defer func() {
 		if stage != "" {
@@ -120,7 +122,7 @@ func FinalizeBundle(
 	}()
 	objectsDirectory := filepath.Join(stage, "objects", "sha256")
 	if err := os.MkdirAll(objectsDirectory, 0o755); err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	for _, object := range objects {
 		destination := filepath.Join(
@@ -133,24 +135,24 @@ func FinalizeBundle(
 			destination,
 			object,
 		); err != nil {
-			return deployment.DeploymentBundleDirectory{}, err
+			return bundle.Directory{}, err
 		}
 		if err := verifyFinalObject(ctx, destination, object, input.Program); err != nil {
-			return deployment.DeploymentBundleDirectory{}, err
+			return bundle.Directory{}, err
 		}
 	}
 	if err := writeBundleManifest(filepath.Join(stage, "bundle.json"), bundleJSON); err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
-	staged, err := deployment.ReadDeploymentBundleDirectory(stage)
+	staged, err := bundle.ReadDirectory(stage)
 	if err != nil {
-		return deployment.DeploymentBundleDirectory{}, fmt.Errorf("verify finalized bundle: %w", err)
+		return bundle.Directory{}, fmt.Errorf("verify finalized bundle: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
-		return deployment.DeploymentBundleDirectory{}, err
+		return bundle.Directory{}, err
 	}
 	if err := publishBundleDirectory(stage, output); err != nil {
-		return deployment.DeploymentBundleDirectory{}, fmt.Errorf("publish finalized bundle: %w", err)
+		return bundle.Directory{}, fmt.Errorf("publish finalized bundle: %w", err)
 	}
 	stage = ""
 	for digest := range staged.Objects {
@@ -165,14 +167,14 @@ func FinalizeBundle(
 }
 
 func referencedBundleObjects(
-	program deployment.ProgramDescriptor,
-	computerImages []deployment.BundleComputerImage,
-) ([]deployment.BundleObject, error) {
-	objectsByDigest := make(map[string]deployment.BundleObject, 1+len(computerImages))
-	programObject := deployment.BundleObject(program)
+	program artifact.ProgramDescriptor,
+	computerImages []bundle.ComputerImage,
+) ([]bundle.Object, error) {
+	objectsByDigest := make(map[string]bundle.Object, 1+len(computerImages))
+	programObject := bundle.Object(program)
 	objectsByDigest[programObject.Digest] = programObject
 	for _, image := range computerImages {
-		object := deployment.BundleObject{
+		object := bundle.Object{
 			Digest: image.Artifact.Digest, SizeBytes: image.Artifact.SizeBytes,
 			MediaType: image.Artifact.MediaType,
 		}
@@ -187,11 +189,11 @@ func referencedBundleObjects(
 		}
 		objectsByDigest[object.Digest] = object
 	}
-	objects := make([]deployment.BundleObject, 0, len(objectsByDigest))
+	objects := make([]bundle.Object, 0, len(objectsByDigest))
 	for _, object := range objectsByDigest {
 		objects = append(objects, object)
 	}
-	deployment.SortDeploymentBundleObjects(objects)
+	bundle.SortObjects(objects)
 	return objects, nil
 }
 
@@ -206,7 +208,7 @@ func PublishBundleDirectory(sourceDirectory, outputDirectory string) error {
 			return fmt.Errorf("%s must be an absolute clean path", name)
 		}
 	}
-	if _, err := deployment.ReadDeploymentBundleDirectory(sourceDirectory); err != nil {
+	if _, err := bundle.ReadDirectory(sourceDirectory); err != nil {
 		return fmt.Errorf("validate BuildKit bundle output: %w", err)
 	}
 	if err := publishBundleDirectory(sourceDirectory, outputDirectory); err != nil {
@@ -218,8 +220,8 @@ func PublishBundleDirectory(sourceDirectory, outputDirectory string) error {
 func verifyFinalObject(
 	ctx context.Context,
 	path string,
-	object deployment.BundleObject,
-	program deployment.ProgramOutput,
+	object bundle.Object,
+	program artifact.ProgramOutput,
 ) error {
 	file, err := os.Open(path)
 	if err != nil {
@@ -227,14 +229,14 @@ func verifyFinalObject(
 	}
 	defer file.Close()
 	switch object.MediaType {
-	case deployment.ProgramArtifactMediaType:
+	case artifact.ProgramArtifactMediaType:
 		if object.Digest != program.Artifact.Digest {
 			return errors.New("finalized Program object does not match Program descriptor")
 		}
-		if err := deployment.VerifyProgramOutputFile(ctx, file, program); err != nil {
+		if err := verify.ProgramOutputFile(ctx, file, program); err != nil {
 			return fmt.Errorf("verify finalized Program object: %w", err)
 		}
-	case deployment.ComputerImageArtifactMediaType:
+	case bundle.ComputerImageMediaType:
 		artifact := computer.SeedArtifact{Object: cas.Descriptor{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}, LogicalBytes: computer.SeedCapacity}
 		if err := computer.VerifySeed(ctx, file, artifact, computer.SeedCapacity); err != nil {
 			return fmt.Errorf("verify finalized computer image object: %w", err)
@@ -276,7 +278,7 @@ func writeBundleManifest(path string, body []byte) error {
 
 func exactObjectSources(
 	sources []ObjectSource,
-	expected []deployment.BundleObject,
+	expected []bundle.Object,
 ) (map[string]string, error) {
 	byDigest := make(map[string]string, len(sources))
 	for _, source := range sources {
@@ -303,7 +305,7 @@ func copyExactObject(
 	ctx context.Context,
 	sourcePath string,
 	destinationPath string,
-	expected deployment.BundleObject,
+	expected bundle.Object,
 ) error {
 	before, err := os.Lstat(sourcePath)
 	if err != nil {

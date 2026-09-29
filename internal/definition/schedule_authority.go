@@ -113,7 +113,7 @@ func ParseTaskManifest(
 	if err := decoder.Decode(&manifest); err != nil {
 		return TaskManifest{}, fmt.Errorf("decode task manifest: %w", err)
 	}
-	if err := ensureEOF(decoder, "task manifest"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "task manifest"); err != nil {
 		return TaskManifest{}, err
 	}
 	completeRaw, err := json.Marshal(manifest)
@@ -144,7 +144,7 @@ func parseQueueConfig(raw []byte) (QueueConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return QueueConfig{}, fmt.Errorf("decode queue config: %w", err)
 	}
-	if err := ensureEOF(decoder, "queue config"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "queue config"); err != nil {
 		return QueueConfig{}, err
 	}
 	complete, err := CanonicalQueueConfig(config)

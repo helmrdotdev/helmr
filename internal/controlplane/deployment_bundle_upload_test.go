@@ -8,27 +8,28 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 )
 
 func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.T) {
-	raw, bundle := controlPlaneDeploymentBundle(t)
+	raw, manifest := controlPlaneDeploymentBundle(t)
 	orgID := pgvalue.UUID(uuid.NewV7())
 	store := &bundleUploadStoreFixture{
 		objects: map[string]cas.Object{
-			bundle.Runtime.Artifact.Digest: bundleCASObject(bundle.Runtime.Artifact),
-			bundle.Objects[0].Digest:       bundleCASObject(bundle.Objects[0]),
+			manifest.Runtime.Artifact.Digest: bundleCASObject(manifest.Runtime.Artifact),
+			manifest.Objects[0].Digest:       bundleCASObject(manifest.Objects[0]),
 		},
 	}
 	ownership := &bundleOwnershipFixture{rows: map[string]db.CasObject{}}
 
 	response, err := planDeploymentBundleUploads(
-		t.Context(), store, ownership, store, "0190-owner", orgID, raw, bundle,
+		t.Context(), store, ownership, store, "0190-owner", orgID, raw, manifest,
 	)
 	if err != nil {
 		t.Fatalf("planDeploymentBundleUploads: %v", err)
@@ -36,22 +37,22 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 	if response.BundleDigest == "" || len(response.Uploads) != 1 {
 		t.Fatalf("response = %+v", response)
 	}
-	if len(store.quarantined) != 1 || store.quarantined[0].MediaType != deployment.DeploymentBundleMediaType {
+	if len(store.quarantined) != 1 || store.quarantined[0].MediaType != bundle.MediaType {
 		t.Fatalf("quarantined = %+v", store.quarantined)
 	}
-	if store.presigned[0].Digest != bundle.Objects[0].Digest {
+	if store.presigned[0].Digest != manifest.Objects[0].Digest {
 		t.Fatalf("presigned = %+v", store.presigned)
 	}
 
 	store.quarantine = map[string]cas.Descriptor{
-		bundle.Objects[0].Digest: {
-			Digest: bundle.Objects[0].Digest, SizeBytes: bundle.Objects[0].SizeBytes,
-			MediaType: bundle.Objects[0].MediaType,
+		manifest.Objects[0].Digest: {
+			Digest: manifest.Objects[0].Digest, SizeBytes: manifest.Objects[0].SizeBytes,
+			MediaType: manifest.Objects[0].MediaType,
 		},
 	}
 	store.presigned = nil
 	response, err = planDeploymentBundleUploads(
-		t.Context(), store, ownership, store, "0190-owner", orgID, raw, bundle,
+		t.Context(), store, ownership, store, "0190-owner", orgID, raw, manifest,
 	)
 	if err != nil {
 		t.Fatalf("planDeploymentBundleUploads quarantine replay: %v", err)
@@ -60,13 +61,13 @@ func TestPlanDeploymentBundleUploadsRequiresOwnerProofBeforeSkipping(t *testing.
 		t.Fatalf("quarantine response = %+v, presigned = %+v", response, store.presigned)
 	}
 
-	ownership.rows[bundle.Objects[0].Digest] = db.CasObject{
-		OrgID: orgID, Digest: bundle.Objects[0].Digest,
-		SizeBytes: bundle.Objects[0].SizeBytes, MediaType: bundle.Objects[0].MediaType,
+	ownership.rows[manifest.Objects[0].Digest] = db.CasObject{
+		OrgID: orgID, Digest: manifest.Objects[0].Digest,
+		SizeBytes: manifest.Objects[0].SizeBytes, MediaType: manifest.Objects[0].MediaType,
 	}
 	store.presigned = nil
 	response, err = planDeploymentBundleUploads(
-		t.Context(), store, ownership, store, "0190-owner", orgID, raw, bundle,
+		t.Context(), store, ownership, store, "0190-owner", orgID, raw, manifest,
 	)
 	if err != nil {
 		t.Fatalf("planDeploymentBundleUploads owned replay: %v", err)
@@ -197,11 +198,11 @@ func (store *bundleOwnershipFixture) GetCasObject(
 	return row, nil
 }
 
-func bundleCASObject(object deployment.BundleObject) cas.Object {
+func bundleCASObject(object bundle.Object) cas.Object {
 	return cas.Object{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 }
 
-func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBundle) {
+func controlPlaneDeploymentBundle(t *testing.T) ([]byte, bundle.Manifest) {
 	t.Helper()
 	run := definition.RunManifest{
 		Queue: "default", MaxDurationMs: 5000,
@@ -210,56 +211,56 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 	task := definition.TaskManifest{
 		Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone}, Run: run,
 	}
-	declaration := deployment.ProgramIndexDeclaration{
+	declaration := artifact.ProgramIndexDeclaration{
 		Kind: definition.KindTask, DeclaredID: "hello", Task: &task,
-		Locator: &deployment.ProgramLocator{
+		Locator: &artifact.ProgramLocator{
 			ExportName: "hello",
 			ModulePath: "helmr/app/entry-0.mjs",
-			Slot:       deployment.DeclarationSlotHandler,
+			Slot:       artifact.DeclarationSlotHandler,
 		},
 	}
-	plan := deployment.DeploymentPlan{
+	plan := bundle.Plan{
 		FormatVersion: definition.DeploymentPlanFormatVersion,
-		Definitions:   []deployment.ProgramIndexDeclaration{declaration},
+		Definitions:   []artifact.ProgramIndexDeclaration{declaration},
 		Queues:        []definition.QueueInput{{Name: "default"}},
 	}
 	programDigest := "sha256:" + strings.Repeat("a", 64)
-	bundle := deployment.DeploymentBundle{
-		Contract: deployment.DeploymentBundleContract,
-		Platform: deployment.DeploymentBundlePlatform{
-			Architecture: definition.ArchitectureX8664, OS: deployment.DeploymentBundleTargetOS,
+	manifest := bundle.Manifest{
+		Contract: bundle.Contract,
+		Platform: bundle.Platform{
+			Architecture: definition.ArchitectureX8664, OS: bundle.TargetOS,
 		},
 		Plan: plan,
-		Runtime: deployment.DeploymentBundleRuntime{
+		Runtime: bundle.Runtime{
 			Contract: definition.RuntimeContract,
-			Artifact: deployment.BundleObject{
+			Artifact: bundle.Object{
 				Digest: "sha256:" + strings.Repeat("f", 64), SizeBytes: 4096,
-				MediaType: deployment.RuntimeArtifactMediaType,
+				MediaType: artifact.RuntimeArtifactMediaType,
 			},
 		},
-		Program: deployment.ProgramOutput{
-			Artifact: deployment.ProgramDescriptor{
-				Digest: programDigest, SizeBytes: 4096, MediaType: deployment.ProgramArtifactMediaType,
+		Program: artifact.ProgramOutput{
+			Artifact: artifact.ProgramDescriptor{
+				Digest: programDigest, SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
 			},
-			Index: deployment.ProgramIndex{
+			Index: artifact.ProgramIndex{
 				Architecture:       definition.ArchitectureX8664,
 				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-				Declarations:       []deployment.ProgramIndexDeclaration{declaration},
+				Declarations:       []artifact.ProgramIndexDeclaration{declaration},
 				Queues:             plan.Queues,
 				RuntimeContract:    definition.RuntimeContract,
 				RuntimeDigest:      "sha256:" + strings.Repeat("f", 64),
 			},
 		},
-		ComputerImages: []deployment.BundleComputerImage{},
-		Objects: []deployment.BundleObject{{
-			Digest: programDigest, SizeBytes: 4096, MediaType: deployment.ProgramArtifactMediaType,
+		ComputerImages: []bundle.ComputerImage{},
+		Objects: []bundle.Object{{
+			Digest: programDigest, SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
 		}},
 	}
-	raw, err := deployment.CanonicalDeploymentBundle(bundle)
+	raw, err := bundle.Canonical(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return raw, bundle
+	return raw, manifest
 }
 
 var _ deploymentBundleUploadStore = (*bundleUploadStoreFixture)(nil)

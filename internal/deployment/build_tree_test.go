@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
@@ -78,14 +79,13 @@ func TestBuildTreeRejectsLinkCyclePastBound(t *testing.T) {
 func inspectMemoryBuildTree(
 	t *testing.T,
 	tree *memoryArtifact,
-) (*inspectedArtifact, error) {
+) (*artifact.Tree, error) {
 	t.Helper()
-	inspected, err := inspectArtifact(
+	inspected, err := artifact.Inspect(
 		context.Background(),
 		tree,
-		buildTreeArtifact,
-		maxBuildTreeLogicalBytes,
-		squashFSPhysicalAlign,
+		artifact.RoleBuildTree,
+		artifact.SquashFSPhysicalAlign,
 	)
 	if err != nil {
 		return nil, err
@@ -96,7 +96,7 @@ func inspectMemoryBuildTree(
 	return inspected, nil
 }
 
-func TestBuildTreeAndProgramLinkHopBoundary(t *testing.T) {
+func TestBuildTreeLinkHopBoundary(t *testing.T) {
 	for _, count := range []int{40, 41} {
 		tree := newMemoryArtifact()
 		tree.addFile("file", []byte("content"), 0644)
@@ -110,15 +110,6 @@ func TestBuildTreeAndProgramLinkHopBoundary(t *testing.T) {
 		_, err := inspectMemoryBuildTree(t, tree)
 		if (err == nil) != (count == 40) {
 			t.Fatalf("%d links: %v", count, err)
-		}
-		inspected, err := inspectArtifact(t.Context(), tree, programArtifact, MaxProgramLogicalBytes, squashFSPhysicalAlign)
-		if err != nil {
-			t.Fatal(err)
-		}
-		verifier := programVerifier{artifact: inspected}
-		err = verifier.verifyLinks()
-		if (err == nil) != (count == 40) {
-			t.Fatalf("Program %d links: %v", count, err)
 		}
 	}
 }

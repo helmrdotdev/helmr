@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
@@ -19,7 +21,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -86,8 +87,8 @@ func run(log *slog.Logger) error {
 	if err := os.MkdirAll(verifierQualificationRoot, 0o700); err != nil {
 		return fmt.Errorf("create verifier qualification root: %w", err)
 	}
-	if err := deployment.QualifyArtifactVerifier(ctx, verifierCgroupRoot, verifierQualificationRoot); err != nil {
-		if diagnostic, ok := deployment.VerifierLocalDiagnostic(err); ok {
+	if err := verify.Qualify(ctx, verifierCgroupRoot, verifierQualificationRoot); err != nil {
+		if diagnostic, ok := verify.LocalDiagnostic(err); ok {
 			log.Error("deployment artifact verifier qualification failed", "diagnostic", diagnostic)
 		}
 		return fmt.Errorf("qualify deployment artifact verifier: %w", err)
@@ -150,7 +151,7 @@ func run(log *slog.Logger) error {
 	hostRuntimeEvidence := connector.HostRuntimeEvidence()
 	runtimeCapabilities := connector.RuntimeCapabilities()
 	runtimeArchitecture := definition.RuntimeArchitecture(runtimeCapabilities.Arch)
-	if err := deployment.ValidateRuntimeArchitecture(runtimeArchitecture); err != nil {
+	if err := artifact.ValidateRuntimeArchitecture(runtimeArchitecture); err != nil {
 		return fmt.Errorf("validate Firecracker runtime architecture: %w", err)
 	}
 	runtimeProfile, cpuShapes, cpuEnvironment, err := workerRuntimeProfile(

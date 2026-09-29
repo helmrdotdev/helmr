@@ -17,9 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws/arn"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/artifactgc"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
@@ -29,7 +31,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
@@ -134,11 +135,11 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("read deployment Runtime descriptor: %w", err)
 	}
-	runtimeDescriptor, err := deployment.ParseRuntimeDescriptor(runtimeRaw)
+	runtimeDescriptor, err := artifact.ParseRuntimeDescriptor(runtimeRaw)
 	if err != nil {
 		return fmt.Errorf("parse deployment Runtime descriptor: %w", err)
 	}
-	bundleAdmission := deployment.DeploymentBundleAdmission{Runtime: runtimeDescriptor}
+	bundleAdmission := bundle.Admission{Runtime: runtimeDescriptor}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)

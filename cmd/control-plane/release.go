@@ -8,7 +8,6 @@ import (
 	"io"
 
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func runReleaseCommand(ctx context.Context, args []string) error {
@@ -30,5 +29,5 @@ func runReleaseCommand(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("configure platform artifact store: %w", err)
 	}
-	return deployment.PublishPlatformRelease(ctx, store, input)
+	return publishPlatformRelease(ctx, store, input)
 }

@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 )
 
 func main() {
@@ -20,12 +20,12 @@ func main() {
 		fmt.Println("worker (build identity: signed release manifest and worker-host-artifacts.json)")
 		return
 	}
-	if handled, err := deployment.RunVerifierChild(os.Args); handled {
+	if handled, err := verify.RunChild(os.Args); handled {
 		if err != nil {
 			_, _ = fmt.Fprintln(
 				os.Stderr,
 				"artifact verifier bootstrap failed:",
-				deployment.VerifierChildLocalDiagnostic(err),
+				verify.ChildLocalDiagnostic(err),
 			)
 			os.Exit(1)
 		}

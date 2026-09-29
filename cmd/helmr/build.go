@@ -11,10 +11,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/buildcontext"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/hostconfig"
 	"github.com/spf13/cobra"
 )
@@ -142,7 +142,7 @@ func buildDeploymentBundleAt(
 	if err := os.Mkdir(configContext, 0o755); err != nil {
 		return err
 	}
-	discovery, err := deployment.CanonicalBuildConfig(resolved.Discovery)
+	discovery, err := artifact.CanonicalBuildConfig(resolved.Discovery)
 	if err != nil {
 		return err
 	}

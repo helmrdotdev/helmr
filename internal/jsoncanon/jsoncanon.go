@@ -171,3 +171,15 @@ func parseHex16(raw []byte, start int) (uint16, error) {
 	}
 	return uint16(value), nil
 }
+
+// RequireEOF reports an error unless decoder has no JSON value or other data
+// left after the value it decoded. label names the document in the error.
+func RequireEOF(decoder *json.Decoder, label string) error {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("%s contains trailing data", label)
+		}
+		return fmt.Errorf("decode %s trailing data: %w", label, err)
+	}
+	return nil
+}

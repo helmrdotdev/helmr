@@ -11,6 +11,8 @@ import (
 	"iter"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
 func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
@@ -20,7 +22,7 @@ func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
 	if err := writeTreeArchive(
 		context.Background(),
 		&first,
-		programArtifact,
+		artifact.RoleProgram,
 		treeEntrySequence(entries),
 		false,
 	); err != nil {
@@ -30,7 +32,7 @@ func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
 	if err := writeTreeArchive(
 		context.Background(),
 		&second,
-		programArtifact,
+		artifact.RoleProgram,
 		treeEntrySequence(programArchiveFixture()),
 		false,
 	); err != nil {
@@ -66,7 +68,7 @@ func TestProgramArchiveMatchesGoldenStream(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read entry %d content: %v", position, err)
 		}
-		if entry.Kind == artifactEntryRegular {
+		if entry.Kind == artifact.EntryRegular {
 			expected, err := io.ReadAll(entry.Content)
 			if err != nil {
 				t.Fatal(err)
@@ -87,10 +89,10 @@ func TestProgramArchiveRejectsInvalidTrees(t *testing.T) {
 	t.Parallel()
 	valid := func() []treeEntry {
 		return []treeEntry{
-			{Path: "dir", Kind: artifactEntryDirectory, Mode: 0755},
+			{Path: "dir", Kind: artifact.EntryDirectory, Mode: 0755},
 			{
 				Path:      "dir/file",
-				Kind:      artifactEntryRegular,
+				Kind:      artifact.EntryRegular,
 				Mode:      0644,
 				SizeBytes: 1,
 				Content:   strings.NewReader("x"),
@@ -126,7 +128,7 @@ func TestProgramArchiveRejectsInvalidTrees(t *testing.T) {
 		"absolute link": func(entries []treeEntry) []treeEntry {
 			entries[1] = treeEntry{
 				Path:       "dir/link",
-				Kind:       artifactEntrySymlink,
+				Kind:       artifact.EntrySymlink,
 				Mode:       0777,
 				LinkTarget: "/escape",
 			}
@@ -139,7 +141,7 @@ func TestProgramArchiveRejectsInvalidTrees(t *testing.T) {
 			if err := writeTreeArchive(
 				context.Background(),
 				&output,
-				programArtifact,
+				artifact.RoleProgram,
 				treeEntrySequence(mutate(valid())),
 				false,
 			); err == nil {
@@ -154,14 +156,14 @@ func TestProgramArchiveRejectsContentLengthMismatch(t *testing.T) {
 	tests := []treeEntry{
 		{
 			Path:      "short",
-			Kind:      artifactEntryRegular,
+			Kind:      artifact.EntryRegular,
 			Mode:      0644,
 			SizeBytes: 2,
 			Content:   strings.NewReader("x"),
 		},
 		{
 			Path:      "long",
-			Kind:      artifactEntryRegular,
+			Kind:      artifact.EntryRegular,
 			Mode:      0644,
 			SizeBytes: 1,
 			Content:   strings.NewReader("xx"),
@@ -173,7 +175,7 @@ func TestProgramArchiveRejectsContentLengthMismatch(t *testing.T) {
 			if err := writeTreeArchive(
 				context.Background(),
 				&output,
-				programArtifact,
+				artifact.RoleProgram,
 				treeEntrySequence([]treeEntry{entry}),
 				false,
 			); err == nil {
@@ -191,7 +193,7 @@ func TestProgramArchiveRejectsCancellation(t *testing.T) {
 	if err := writeTreeArchive(
 		ctx,
 		&output,
-		programArtifact,
+		artifact.RoleProgram,
 		treeEntrySequence(programArchiveFixture()),
 		false,
 	); err == nil {
@@ -203,13 +205,13 @@ func TestProgramArchiveStreamsEntriesAndPropagatesSourceFailure(t *testing.T) {
 	t.Parallel()
 	sourceErr := errors.New("source failed")
 	sequence := func(yield func(treeEntry, error) bool) {
-		if !yield(treeEntry{Path: "dir", Kind: artifactEntryDirectory, Mode: 0755}, nil) {
+		if !yield(treeEntry{Path: "dir", Kind: artifact.EntryDirectory, Mode: 0755}, nil) {
 			return
 		}
 		yield(treeEntry{}, sourceErr)
 	}
 	var output bytes.Buffer
-	err := writeTreeArchive(context.Background(), &output, programArtifact, sequence, false)
+	err := writeTreeArchive(context.Background(), &output, artifact.RoleProgram, sequence, false)
 	if !errors.Is(err, sourceErr) {
 		t.Fatalf("writeTreeArchive error = %v, want %v", err, sourceErr)
 	}
@@ -232,24 +234,24 @@ func TestPAXRecordLengthIncludesItsDigits(t *testing.T) {
 
 func programArchiveFixture() []treeEntry {
 	return []treeEntry{
-		{Path: "bin", Kind: artifactEntryDirectory, Mode: 0755},
+		{Path: "bin", Kind: artifact.EntryDirectory, Mode: 0755},
 		{
 			Path:      "bin/tool",
-			Kind:      artifactEntryRegular,
+			Kind:      artifact.EntryRegular,
 			Mode:      0755,
 			SizeBytes: int64(len("#!/usr/bin/env node\n")),
 			Content:   strings.NewReader("#!/usr/bin/env node\n"),
 		},
-		{Path: "empty", Kind: artifactEntryDirectory, Mode: 0755},
+		{Path: "empty", Kind: artifact.EntryDirectory, Mode: 0755},
 		{
 			Path:       "tool",
-			Kind:       artifactEntrySymlink,
+			Kind:       artifact.EntrySymlink,
 			Mode:       0777,
 			LinkTarget: "bin/tool",
 		},
 		{
 			Path:      "資料",
-			Kind:      artifactEntryRegular,
+			Kind:      artifact.EntryRegular,
 			Mode:      0644,
 			SizeBytes: 3,
 			Content:   strings.NewReader("abc"),
@@ -257,13 +259,13 @@ func programArchiveFixture() []treeEntry {
 	}
 }
 
-func treeEntryTarType(kind artifactEntryKind) byte {
+func treeEntryTarType(kind artifact.EntryKind) byte {
 	switch kind {
-	case artifactEntryRegular:
+	case artifact.EntryRegular:
 		return tar.TypeReg
-	case artifactEntryDirectory:
+	case artifact.EntryDirectory:
 		return tar.TypeDir
-	case artifactEntrySymlink:
+	case artifact.EntrySymlink:
 		return tar.TypeSymlink
 	default:
 		panic("unsupported test tree entry")

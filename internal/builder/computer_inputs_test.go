@@ -13,10 +13,10 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
@@ -50,7 +50,7 @@ func TestReadComputerImageInputsDerivesFinalArtifactIdentity(t *testing.T) {
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(packed))
 	if len(images) != 1 || images[0].DeclaredID != "sandbox" ||
 		images[0].Artifact.Digest != digest ||
-		images[0].Artifact.MediaType != deployment.ComputerImageArtifactMediaType ||
+		images[0].Artifact.MediaType != bundle.ComputerImageMediaType ||
 		images[0].Artifact.Profile != definition.ComputerSeedProfile || images[0].Artifact.Config.WorkingDir != "/workspace" ||
 		images[0].Artifact.Architecture != definition.ArchitectureX8664 ||
 		len(objects) != 1 || objects[0].Digest != digest || objects[0].Path == imagePath {
@@ -113,7 +113,7 @@ func TestReadComputerImageInputsAcceptsSharedPath(t *testing.T) {
 	}
 
 	inspectCount := 0
-	images, objects, err := readComputerImageInputs(context.Background(), documentPath, func(path string) (deployment.BundleComputerImageArtifact, string, error) {
+	images, objects, err := readComputerImageInputs(context.Background(), documentPath, func(path string) (bundle.ComputerImageArtifact, string, error) {
 		inspectCount++
 		target := filepath.Join(root, "disk.filepack")
 		artifact, err := buildComputerDisk(t.Context(), path, target, root, mkfs, config)

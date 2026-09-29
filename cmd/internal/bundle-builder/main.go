@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func main() {
@@ -51,7 +51,7 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("read Runtime descriptor: %w", err)
 	}
-	runtime, err := deployment.ParseRuntimeDescriptor(runtimeRaw)
+	runtime, err := artifact.ParseRuntimeDescriptor(runtimeRaw)
 	if err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("read Runtime metadata: %w", err)
 	}
-	metadata, err := deployment.ParseRuntimeMetadata(metadataRaw)
+	metadata, err := artifact.ParseRuntimeMetadata(metadataRaw)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("read compiler descriptor: %w", err)
 	}
-	compiler, err := deployment.ParseCompilerInputs(compilerRaw)
+	compiler, err := artifact.ParseCompilerInputs(compilerRaw)
 	if err != nil {
 		return err
 	}

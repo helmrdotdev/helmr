@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -39,8 +40,8 @@ type VerificationResult struct {
 }
 
 type VerificationSucceeded struct {
-	Declarations []ProgramDeclaration `json:"declarations"`
-	Files        []VerificationFile   `json:"files"`
+	Declarations []artifact.ProgramDeclaration `json:"declarations"`
+	Files        []VerificationFile            `json:"files"`
 }
 
 type VerificationFile struct {
@@ -100,7 +101,7 @@ func ParseVerificationResult(raw []byte) (VerificationResult, error) {
 	if err := decoder.Decode(&result); err != nil {
 		return VerificationResult{}, fmt.Errorf("decode verification result: %w", err)
 	}
-	if err := ensureEOF(decoder, "verification result"); err != nil {
+	if err := jsoncanon.RequireEOF(decoder, "verification result"); err != nil {
 		return VerificationResult{}, err
 	}
 	if err := ValidateVerificationResult(result); err != nil {
@@ -176,10 +177,10 @@ func (result VerificationResult) MarshalJSON() ([]byte, error) {
 			return nil, errors.New("succeeded verification result requires success data")
 		}
 		return json.Marshal(struct {
-			FormatVersion int                  `json:"formatVersion"`
-			Outcome       VerificationOutcome  `json:"outcome"`
-			Declarations  []ProgramDeclaration `json:"declarations"`
-			Files         []VerificationFile   `json:"files"`
+			FormatVersion int                           `json:"formatVersion"`
+			Outcome       VerificationOutcome           `json:"outcome"`
+			Declarations  []artifact.ProgramDeclaration `json:"declarations"`
+			Files         []VerificationFile            `json:"files"`
 		}{
 			FormatVersion: result.FormatVersion,
 			Outcome:       result.Outcome,
@@ -219,10 +220,10 @@ func (result *VerificationResult) UnmarshalJSON(raw []byte) error {
 	switch header.Outcome {
 	case VerificationOutcomeSucceeded:
 		var wire struct {
-			FormatVersion int                  `json:"formatVersion"`
-			Outcome       VerificationOutcome  `json:"outcome"`
-			Declarations  []ProgramDeclaration `json:"declarations"`
-			Files         []VerificationFile   `json:"files"`
+			FormatVersion int                           `json:"formatVersion"`
+			Outcome       VerificationOutcome           `json:"outcome"`
+			Declarations  []artifact.ProgramDeclaration `json:"declarations"`
+			Files         []VerificationFile            `json:"files"`
 		}
 		if err := decodeClosedVerificationResult(raw, &wire); err != nil {
 			return err
@@ -253,7 +254,7 @@ func decodeClosedVerificationResult(raw []byte, value any) error {
 	if err := decoder.Decode(value); err != nil {
 		return err
 	}
-	return ensureEOF(decoder, "verification result")
+	return jsoncanon.RequireEOF(decoder, "verification result")
 }
 
 func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
@@ -274,7 +275,7 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 	if err != nil {
 		return fmt.Errorf("verification result build plan: %w", err)
 	}
-	declarations := buildPlanProgramDeclarations(plan)
+	declarations := artifact.BuildPlanProgramDeclarations(plan)
 	if len(declarations) == 0 {
 		if len(succeeded.Files) != 1 {
 			return errors.New(
@@ -298,7 +299,7 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 			VerificationDeclarationsPath,
 		)
 	}
-	locator, err := ParseDeclarationLocator([]byte(succeeded.Files[1].Content))
+	locator, err := artifact.ParseDeclarationLocator([]byte(succeeded.Files[1].Content))
 	if err != nil {
 		return fmt.Errorf("verification result declaration locator: %w", err)
 	}
@@ -355,8 +356,8 @@ func cloneVerificationResult(result VerificationResult) VerificationResult {
 }
 
 func validateVerifiedDeclarations(
-	verified []ProgramDeclaration,
-	planned []ProgramDeclaration,
+	verified []artifact.ProgramDeclaration,
+	planned []artifact.ProgramDeclaration,
 ) error {
 	if verified == nil {
 		return errors.New("verification result declarations must be an array")
@@ -365,10 +366,10 @@ func validateVerifiedDeclarations(
 		return errors.New("verified declarations do not match the build plan")
 	}
 	for index, declaration := range verified {
-		if err := validateDeclaration(declaration); err != nil {
+		if err := artifact.ValidateDeclaration(declaration); err != nil {
 			return fmt.Errorf("verified declaration %d: %w", index, err)
 		}
-		if index > 0 && compareDeclarations(verified[index-1], declaration) >= 0 {
+		if index > 0 && artifact.CompareDeclarations(verified[index-1], declaration) >= 0 {
 			return fmt.Errorf(
 				"verified declarations are not in canonical order at position %d",
 				index,
@@ -386,7 +387,7 @@ func validateVerifiedDeclarations(
 
 func ValidateVerifiedProgram(
 	result VerificationResult,
-	index ProgramIndex,
+	index artifact.ProgramIndex,
 ) error {
 	if err := ValidateVerificationResult(result); err != nil {
 		return err
@@ -394,16 +395,16 @@ func ValidateVerifiedProgram(
 	if result.Outcome != VerificationOutcomeSucceeded {
 		return errors.New("program verification did not succeed")
 	}
-	if err := ValidateProgramIndex(index); err != nil {
+	if err := artifact.ValidateProgramIndex(index); err != nil {
 		return err
 	}
 	return validateVerifiedDeclarations(
 		result.Succeeded.Declarations,
-		programIndexExecutionDeclarations(index),
+		artifact.ProgramIndexExecutionDeclarations(index),
 	)
 }
 
-func sameProgramDeclaration(left, right ProgramDeclaration) bool {
+func sameProgramDeclaration(left, right artifact.ProgramDeclaration) bool {
 	if left.Kind != right.Kind ||
 		left.DeclaredID != right.DeclaredID ||
 		len(left.Slots) != len(right.Slots) {
@@ -418,13 +419,13 @@ func sameProgramDeclaration(left, right ProgramDeclaration) bool {
 }
 
 func cloneProgramDeclarations(
-	source []ProgramDeclaration,
-) []ProgramDeclaration {
-	cloned := make([]ProgramDeclaration, len(source))
+	source []artifact.ProgramDeclaration,
+) []artifact.ProgramDeclaration {
+	cloned := make([]artifact.ProgramDeclaration, len(source))
 	for index := range source {
 		cloned[index] = source[index]
 		cloned[index].Slots = append(
-			[]DeclarationSlot(nil),
+			[]artifact.DeclarationSlot(nil),
 			source[index].Slots...,
 		)
 	}

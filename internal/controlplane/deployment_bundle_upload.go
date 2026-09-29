@@ -13,9 +13,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,28 +57,28 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != deployment.DeploymentBundleMediaType || len(parameters) != 0 {
+	if err != nil || mediaType != bundle.MediaType || len(parameters) != 0 {
 		writeError(w, badRequest(errors.New("deployment bundle Content-Type is invalid")))
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, deployment.MaxDeploymentBundleBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(r.Body, bundle.MaxBytes+1))
 	if err != nil {
 		writeError(w, badRequest(errors.New("read deployment bundle")))
 		return
 	}
-	bundle, err := deployment.ParseDeploymentBundle(raw)
+	manifest, err := bundle.Parse(raw)
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid deployment bundle: %w", err)))
 		return
 	}
-	if err := s.bundleAdmission.Admit(bundle); err != nil {
+	if err := s.bundleAdmission.Admit(manifest); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 
 	response, err := planDeploymentBundleUploads(
 		r.Context(), uploads, s.db, s.platformStore,
-		strings.ToLower(actor.OrgID.String()), pgvalue.UUID(actor.OrgID), raw, bundle,
+		strings.ToLower(actor.OrgID.String()), pgvalue.UUID(actor.OrgID), raw, manifest,
 	)
 	if err != nil {
 		writeDeploymentError(w, s, err)
@@ -95,14 +95,14 @@ func planDeploymentBundleUploads(
 	owner string,
 	orgID pgtype.UUID,
 	raw []byte,
-	bundle deployment.DeploymentBundle,
+	manifest bundle.Manifest,
 ) (api.DeploymentBundleUploadPlanResponse, error) {
 	if uploads == nil || ownership == nil || platform == nil {
 		return api.DeploymentBundleUploadPlanResponse{}, errors.New("deployment bundle upload dependencies are incomplete")
 	}
 	runtimeExpected := cas.Descriptor{
-		Digest: bundle.Runtime.Artifact.Digest, SizeBytes: bundle.Runtime.Artifact.SizeBytes,
-		MediaType: bundle.Runtime.Artifact.MediaType,
+		Digest: manifest.Runtime.Artifact.Digest, SizeBytes: manifest.Runtime.Artifact.SizeBytes,
+		MediaType: manifest.Runtime.Artifact.MediaType,
 	}
 	runtimeObject, err := platform.Stat(ctx, runtimeExpected.Digest)
 	if err != nil {
@@ -112,12 +112,12 @@ func planDeploymentBundleUploads(
 		return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("supported Runtime object: %w", err)
 	}
 
-	bundleDigest, err := deployment.DeploymentBundleDigest(raw)
+	bundleDigest, err := bundle.Digest(raw)
 	if err != nil {
 		return api.DeploymentBundleUploadPlanResponse{}, err
 	}
 	root := cas.Descriptor{
-		Digest: bundleDigest, SizeBytes: int64(len(raw)), MediaType: deployment.DeploymentBundleMediaType,
+		Digest: bundleDigest, SizeBytes: int64(len(raw)), MediaType: bundle.MediaType,
 	}
 	if err := uploads.PutQuarantine(ctx, owner, root, bytes.NewReader(raw)); err != nil {
 		return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("quarantine deployment bundle root: %w", err)
@@ -128,9 +128,9 @@ func planDeploymentBundleUploads(
 
 	response := api.DeploymentBundleUploadPlanResponse{
 		BundleDigest: bundleDigest,
-		Uploads:      make([]api.DeploymentBundleUpload, 0, len(bundle.Objects)),
+		Uploads:      make([]api.DeploymentBundleUpload, 0, len(manifest.Objects)),
 	}
-	for _, object := range bundle.Objects {
+	for _, object := range manifest.Objects {
 		descriptor := cas.Descriptor{
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		}

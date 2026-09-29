@@ -6,26 +6,26 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func TestPreparedRuntimePoolMemoizesSuccessfulRuntimeVerification(t *testing.T) {
-	descriptor := deployment.RuntimeDescriptor{
+	descriptor := artifact.RuntimeDescriptor{
 		Architecture:    definition.ArchitectureX8664,
 		Digest:          "sha256:runtime",
-		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
-		MediaType:       deployment.RuntimeArtifactMediaType,
+		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
+		MediaType:       artifact.RuntimeArtifactMediaType,
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       42,
 	}
-	index := deployment.RuntimeIndex{
+	index := artifact.RuntimeIndex{
 		Architecture:    descriptor.Architecture,
 		RuntimeContract: descriptor.RuntimeContract,
 	}
 	pool := &PreparedRuntimePool{}
 	calls := 0
-	verify := func() (deployment.RuntimeIndex, error) {
+	verify := func() (artifact.RuntimeIndex, error) {
 		calls++
 		return index, nil
 	}
@@ -48,8 +48,8 @@ func TestPreparedRuntimePoolMemoizesSuccessfulRuntimeVerification(t *testing.T) 
 	canceled := descriptor
 	canceled.Digest = "sha256:canceled"
 	for range 2 {
-		if _, hit, err := pool.verifyRuntime(canceled, func() (deployment.RuntimeIndex, error) {
-			return deployment.RuntimeIndex{}, context.Canceled
+		if _, hit, err := pool.verifyRuntime(canceled, func() (artifact.RuntimeIndex, error) {
+			return artifact.RuntimeIndex{}, context.Canceled
 		}); err != context.Canceled || hit {
 			t.Fatalf("canceled verification = (hit %t, %v)", hit, err)
 		}
@@ -63,8 +63,8 @@ func TestPreparedRuntimePoolMemoizesSuccessfulRuntimeVerification(t *testing.T) 
 func TestPreparedRuntimePoolAllowsConcurrentRuntimeVerificationMisses(t *testing.T) {
 	const workers = 8
 	pool := &PreparedRuntimePool{}
-	descriptor := deployment.RuntimeDescriptor{Digest: "sha256:runtime"}
-	index := deployment.RuntimeIndex{RuntimeContract: definition.RuntimeContract}
+	descriptor := artifact.RuntimeDescriptor{Digest: "sha256:runtime"}
+	index := artifact.RuntimeIndex{RuntimeContract: definition.RuntimeContract}
 	entered := make(chan struct{}, workers)
 	release := make(chan struct{})
 	results := make(chan bool, workers)
@@ -73,7 +73,7 @@ func TestPreparedRuntimePoolAllowsConcurrentRuntimeVerificationMisses(t *testing
 
 	for range workers {
 		wg.Go(func() {
-			got, _, err := pool.verifyRuntime(descriptor, func() (deployment.RuntimeIndex, error) {
+			got, _, err := pool.verifyRuntime(descriptor, func() (artifact.RuntimeIndex, error) {
 				calls.Add(1)
 				entered <- struct{}{}
 				<-release

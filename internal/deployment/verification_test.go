@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -160,7 +161,7 @@ func TestVerificationResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 			change: func(result *VerificationResult) {
 				locator := testAnalysisDeclarationLocator()
 				locator.Declarations[0].DeclaredID = "different"
-				raw, err := CanonicalDeclarationLocator(locator)
+				raw, err := artifact.CanonicalDeclarationLocator(locator)
 				if err != nil {
 					panic(err)
 				}
@@ -242,7 +243,7 @@ func testComputerVerificationResult(t *testing.T) VerificationResult {
 		FormatVersion: VerificationResultFormatVersion,
 		Outcome:       VerificationOutcomeSucceeded,
 		Succeeded: &VerificationSucceeded{
-			Declarations: []ProgramDeclaration{},
+			Declarations: []artifact.ProgramDeclaration{},
 			Files: []VerificationFile{{
 				Path:    VerificationBuildPlanPath,
 				Content: string(raw),
@@ -258,7 +259,7 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	locatorRaw, err := CanonicalDeclarationLocator(
+	locatorRaw, err := artifact.CanonicalDeclarationLocator(
 		testAnalysisDeclarationLocator(),
 	)
 	if err != nil {
@@ -268,7 +269,7 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 		FormatVersion: VerificationResultFormatVersion,
 		Outcome:       VerificationOutcomeSucceeded,
 		Succeeded: &VerificationSucceeded{
-			Declarations: buildPlanProgramDeclarations(plan),
+			Declarations: artifact.BuildPlanProgramDeclarations(plan),
 			Files: []VerificationFile{
 				{Path: VerificationBuildPlanPath, Content: string(planRaw)},
 				{Path: VerificationDeclarationsPath, Content: string(locatorRaw)},
@@ -288,23 +289,23 @@ func testFailedVerificationResult() VerificationResult {
 	}
 }
 
-func testAnalysisDeclarationLocator() DeclarationLocator {
-	return DeclarationLocator{
-		FormatVersion: DeclarationLocatorFormatVersion,
-		Declarations: []LocatedDeclaration{
+func testAnalysisDeclarationLocator() artifact.DeclarationLocator {
+	return artifact.DeclarationLocator{
+		FormatVersion: artifact.DeclarationLocatorFormatVersion,
+		Declarations: []artifact.LocatedDeclaration{
 			{
-				Kind:       DeclarationKindTask,
+				Kind:       artifact.DeclarationKindTask,
 				DeclaredID: "build",
 				ModulePath: testModulePath("a"),
 				ExportName: "build",
-				Slot:       DeclarationSlotHandler,
+				Slot:       artifact.DeclarationSlotHandler,
 			},
 			{
-				Kind:       DeclarationKindActor,
+				Kind:       artifact.DeclarationKindActor,
 				DeclaredID: "chat",
 				ModulePath: testModulePath("b"),
 				ExportName: "chat",
-				Slot:       DeclarationSlotHandler,
+				Slot:       artifact.DeclarationSlotHandler,
 			},
 		},
 	}
@@ -330,4 +331,11 @@ func mutateVerificationResultJSON(
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func testModulePath(digit string) string {
+	if digit == "a" {
+		return "helmr/app/entry-0.mjs"
+	}
+	return "helmr/app/entry-1.mjs"
 }

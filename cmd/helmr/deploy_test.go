@@ -14,8 +14,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -42,7 +43,7 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 		requests = append(requests, r.Method+" "+r.URL.Path)
 		switch r.URL.Path {
 		case "/v1/deployment-bundles/upload-plan":
-			if r.Header.Get("Content-Type") != deployment.DeploymentBundleMediaType {
+			if r.Header.Get("Content-Type") != bundle.MediaType {
 				t.Fatalf("content type = %q", r.Header.Get("Content-Type"))
 			}
 			body, err := io.ReadAll(r.Body)
@@ -58,7 +59,7 @@ func TestDeployBundleUsesUploadFinalizePromoteFlow(t *testing.T) {
 					Digest: objectDigest, Method: http.MethodPut, URL: server.URL + "/upload",
 					Headers: map[string]string{
 						"Content-Length": "7",
-						"Content-Type":   deployment.ProgramArtifactMediaType,
+						"Content-Type":   artifact.ProgramArtifactMediaType,
 					},
 				}},
 			})
@@ -500,7 +501,7 @@ func deployTestUpload(serverURL string, objectDigest string) api.DeploymentBundl
 		Digest: objectDigest, Method: http.MethodPut, URL: serverURL + "/upload",
 		Headers: map[string]string{
 			"Content-Length": "7",
-			"Content-Type":   deployment.ProgramArtifactMediaType,
+			"Content-Type":   artifact.ProgramArtifactMediaType,
 		},
 	}
 }
@@ -562,46 +563,46 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 	program := []byte("program")
 	programDigest := sha256sum.DigestBytes(program)
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
-	declaration := deployment.ProgramIndexDeclaration{
+	declaration := artifact.ProgramIndexDeclaration{
 		Kind: definition.KindTask, DeclaredID: "hello",
 		Task: &definition.TaskManifest{
 			Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
 			Run: definition.RunManifest{Queue: "default", MaxDurationMs: 5000,
 				Retry: definition.RetryManifest{Enabled: false}},
 		},
-		Locator: &deployment.ProgramLocator{
+		Locator: &artifact.ProgramLocator{
 			ExportName: "hello", ModulePath: "helmr/app/entry-0.mjs",
-			Slot: deployment.DeclarationSlotHandler,
+			Slot: artifact.DeclarationSlotHandler,
 		},
 	}
 	queues := []definition.QueueInput{{Name: "default"}}
-	plan := deployment.DeploymentPlan{FormatVersion: definition.DeploymentPlanFormatVersion,
-		Definitions: []deployment.ProgramIndexDeclaration{declaration}, Queues: queues}
-	bundle := deployment.DeploymentBundle{
-		Contract: deployment.DeploymentBundleContract,
-		Platform: deployment.DeploymentBundlePlatform{Architecture: definition.ArchitectureX8664,
-			OS: deployment.DeploymentBundleTargetOS},
+	plan := bundle.Plan{FormatVersion: definition.DeploymentPlanFormatVersion,
+		Definitions: []artifact.ProgramIndexDeclaration{declaration}, Queues: queues}
+	manifest := bundle.Manifest{
+		Contract: bundle.Contract,
+		Platform: bundle.Platform{Architecture: definition.ArchitectureX8664,
+			OS: bundle.TargetOS},
 		Plan: plan,
-		Runtime: deployment.DeploymentBundleRuntime{Contract: definition.RuntimeContract,
-			Artifact: deployment.BundleObject{Digest: runtimeDigest, SizeBytes: 4096,
-				MediaType: deployment.RuntimeArtifactMediaType}},
-		Program: deployment.ProgramOutput{
-			Artifact: deployment.ProgramDescriptor{Digest: programDigest, SizeBytes: int64(len(program)),
-				MediaType: deployment.ProgramArtifactMediaType},
-			Index: deployment.ProgramIndex{Architecture: definition.ArchitectureX8664,
+		Runtime: bundle.Runtime{Contract: definition.RuntimeContract,
+			Artifact: bundle.Object{Digest: runtimeDigest, SizeBytes: 4096,
+				MediaType: artifact.RuntimeArtifactMediaType}},
+		Program: artifact.ProgramOutput{
+			Artifact: artifact.ProgramDescriptor{Digest: programDigest, SizeBytes: int64(len(program)),
+				MediaType: artifact.ProgramArtifactMediaType},
+			Index: artifact.ProgramIndex{Architecture: definition.ArchitectureX8664,
 				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
-				Declarations:       []deployment.ProgramIndexDeclaration{declaration}, Queues: queues,
+				Declarations:       []artifact.ProgramIndexDeclaration{declaration}, Queues: queues,
 				RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest},
 		},
-		ComputerImages: []deployment.BundleComputerImage{},
-		Objects: []deployment.BundleObject{{Digest: programDigest, SizeBytes: int64(len(program)),
-			MediaType: deployment.ProgramArtifactMediaType}},
+		ComputerImages: []bundle.ComputerImage{},
+		Objects: []bundle.Object{{Digest: programDigest, SizeBytes: int64(len(program)),
+			MediaType: artifact.ProgramArtifactMediaType}},
 	}
-	raw, err := deployment.CanonicalDeploymentBundle(bundle)
+	raw, err := bundle.Canonical(manifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest, err := deployment.DeploymentBundleDigest(raw)
+	digest, err := bundle.Digest(raw)
 	if err != nil {
 		t.Fatal(err)
 	}

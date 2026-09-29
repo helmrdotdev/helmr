@@ -25,25 +25,29 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 	}
 
 	for source, targets := range map[string][]string{
-		"api":             {"workerapi"},
-		"auth":            {"db", "token"},
-		"cas":             {"cas/s3"},
-		"client":          {"workerapi", "workerclient"},
-		"email":           {"email/resend"},
-		"frameio":         {"api", "db", "proto/program/v0", "wire"},
-		"httpclient":      {"controlplane", "db", "workerapi"},
-		"wire":            {"api", "controlplane", "db", "executor", "guestd", "computer"},
-		"deployment":      {"compute", "vm", "wire"},
-		"definition":      {"api", "compute", "computer", "controlplane", "db", "deployment", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
-		"guestd":          {"controlplane", "db", "executor", "vm"},
-		"computer":        {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
-		"controlplane":    {"eventstream", "executor", "firecracker", "guestd"},
-		"secret":          {"run"},
-		"secretbinding": {"api", "computer", "db", "definition", "deployment"},
-		"substrate":       {"controlplane", "db", "executor", "worker"},
-		"telemetry":       {"clickhouse"},
-		"workerapi":       {"controlplane", "db", "firecracker"},
-		"workerclient":    {"client"},
+		"api":               {"workerapi"},
+		"artifact":          {"artifact/snapshot", "artifact/verify", "builder", "bundle", "cas", "controlplane", "db", "deployment", "executor"},
+		"artifact/snapshot": {"artifact/verify", "builder", "bundle", "db", "deployment"},
+		"artifact/verify":   {"builder", "bundle", "controlplane", "db", "deployment"},
+		"auth":              {"db", "token"},
+		"bundle":            {"artifact/snapshot", "artifact/verify", "builder", "controlplane", "db", "deployment"},
+		"cas":               {"cas/s3"},
+		"client":            {"workerapi", "workerclient"},
+		"email":             {"email/resend"},
+		"frameio":           {"api", "db", "proto/program/v0", "wire"},
+		"httpclient":        {"controlplane", "db", "workerapi"},
+		"wire":              {"api", "controlplane", "db", "executor", "guestd", "computer"},
+		"deployment":        {"compute", "vm", "wire"},
+		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "computer", "controlplane", "db", "deployment", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
+		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "controlplane", "db", "executor", "vm"},
+		"computer":          {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
+		"controlplane":      {"eventstream", "executor", "firecracker", "guestd"},
+		"secret":            {"run"},
+		"secretbinding":     {"api", "computer", "db", "definition", "deployment"},
+		"substrate":         {"controlplane", "db", "executor", "worker"},
+		"telemetry":         {"clickhouse"},
+		"workerapi":         {"controlplane", "db", "firecracker"},
+		"workerclient":      {"client"},
 	} {
 		if _, ok := actual[source]; !ok {
 			t.Fatalf("dependency rule source package does not exist: %s", source)
@@ -63,7 +67,11 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 		"./cmd/helmr",
 		"./cmd/internal/bundle-builder",
 		"./cmd/worker",
+		"./internal/artifact",
+		"./internal/artifact/snapshot",
+		"./internal/artifact/verify",
 		"./internal/builder",
+		"./internal/bundle",
 		"./internal/capacity",
 		"./internal/definition",
 		"./internal/deployment",
@@ -80,6 +88,39 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 			}
 			for _, dependency := range strings.Fields(string(output)) {
 				if dependency == internalImportPrefix+"db" || dependency == internalImportPrefix+"pglock" || dependency == internalImportPrefix+"pgvalue" || strings.HasPrefix(dependency, "github.com/jackc/pgx/") {
+					t.Fatalf("%s must not depend on %s for %s", pkg, dependency, goos)
+				}
+			}
+		}
+	}
+}
+
+func TestContractPackagesDoNotReachArtifactResources(t *testing.T) {
+	root := repositoryRoot(t)
+	packages := []string{
+		"./internal/artifact",
+		"./internal/bundle",
+		"./internal/definition",
+		"./internal/secretbinding",
+	}
+	forbidden := []string{
+		internalImportPrefix + "artifact/snapshot",
+		internalImportPrefix + "artifact/verify",
+		internalImportPrefix + "builder",
+		internalImportPrefix + "db",
+		internalImportPrefix + "deployment",
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, pkg := range packages {
+			cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", pkg)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)
+			}
+			for _, dependency := range strings.Fields(string(output)) {
+				if slices.Contains(forbidden, dependency) {
 					t.Fatalf("%s must not depend on %s for %s", pkg, dependency, goos)
 				}
 			}

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -20,7 +21,7 @@ import (
 // same read-only tree and exact selected entries.
 type BuildTreeSource struct {
 	tree       *BuildTree
-	entries    []artifactEntry
+	entries    []artifact.Entry
 	paths      []SourcePath
 	descriptor SourceArchiveDescriptor
 }
@@ -80,7 +81,7 @@ func (tree *BuildTree) SelectImageSource(
 		descriptor.ArchiveSizeBytes > MaxSourceArchiveBytes {
 		return nil, errors.New("image source archive size is outside the v0 contract")
 	}
-	entryCopy := make([]artifactEntry, len(selected))
+	entryCopy := make([]artifact.Entry, len(selected))
 	copy(entryCopy, selected)
 	pathCopy := make([]SourcePath, len(paths))
 	copy(pathCopy, paths)
@@ -161,16 +162,16 @@ func imageSourceRoots(plan definition.ImageBuild) (map[string]struct{}, map[stri
 }
 
 func selectBuildTreeEntries(
-	tree *inspectedArtifact,
+	tree *artifact.Tree,
 	fileRoots map[string]struct{},
 	directoryRoots map[string]struct{},
-) ([]artifactEntry, error) {
-	selected := make(map[string]artifactEntry)
+) ([]artifact.Entry, error) {
+	selected := make(map[string]artifact.Entry)
 	for root := range fileRoots {
 		if buildTreeImageSourceReserved(root) {
 			return nil, fmt.Errorf("image source root %q is platform compiler output", root)
 		}
-		entry, err := tree.require(root, artifactEntryRegular)
+		entry, err := tree.Require(root, artifact.EntryRegular)
 		if err != nil {
 			return nil, fmt.Errorf("image source file: %w", err)
 		}
@@ -184,7 +185,7 @@ func selectBuildTreeEntries(
 			return nil, fmt.Errorf("image source root %q is platform compiler output", root)
 		}
 		if root != "." {
-			entry, err := tree.require(root, artifactEntryDirectory)
+			entry, err := tree.Require(root, artifact.EntryDirectory)
 			if err != nil {
 				return nil, fmt.Errorf("image source directory: %w", err)
 			}
@@ -193,7 +194,7 @@ func selectBuildTreeEntries(
 				return nil, err
 			}
 		}
-		for _, entry := range tree.ordered {
+		for _, entry := range tree.Entries() {
 			if entry.Path == "." || buildTreeImageSourceReserved(entry.Path) {
 				continue
 			}
@@ -203,26 +204,26 @@ func selectBuildTreeEntries(
 		}
 	}
 
-	entries := make([]artifactEntry, 0, len(selected))
+	entries := make([]artifact.Entry, 0, len(selected))
 	for _, entry := range selected {
 		entries = append(entries, entry)
 	}
-	slices.SortFunc(entries, func(left, right artifactEntry) int {
+	slices.SortFunc(entries, func(left, right artifact.Entry) int {
 		return strings.Compare(left.Path, right.Path)
 	})
 	return entries, nil
 }
 
 func selectBuildTreeAncestors(
-	tree *inspectedArtifact,
-	selected map[string]artifactEntry,
+	tree *artifact.Tree,
+	selected map[string]artifact.Entry,
 	name string,
 ) error {
 	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
 		if buildTreeImageSourceReserved(parent) {
 			return fmt.Errorf("image source path %q descends from platform compiler output", name)
 		}
-		entry, err := tree.require(parent, artifactEntryDirectory)
+		entry, err := tree.Require(parent, artifact.EntryDirectory)
 		if err != nil {
 			return fmt.Errorf("image source ancestor: %w", err)
 		}
@@ -235,13 +236,13 @@ func buildTreeImageSourceReserved(name string) bool {
 	return name == "helmr" || strings.HasPrefix(name, "helmr/")
 }
 
-func imageSourcePathKind(kind artifactEntryKind) (SourcePathKind, error) {
+func imageSourcePathKind(kind artifact.EntryKind) (SourcePathKind, error) {
 	switch kind {
-	case artifactEntryRegular:
+	case artifact.EntryRegular:
 		return SourcePathFile, nil
-	case artifactEntryDirectory:
+	case artifact.EntryDirectory:
 		return SourcePathDirectory, nil
-	case artifactEntrySymlink:
+	case artifact.EntrySymlink:
 		return SourcePathSymlink, nil
 	default:
 		return "", fmt.Errorf("image source artifact kind %q is unsupported", kind)
@@ -251,13 +252,13 @@ func imageSourcePathKind(kind artifactEntryKind) (SourcePathKind, error) {
 func writeSelectedBuildTreeArchive(
 	ctx context.Context,
 	destination io.Writer,
-	tree *inspectedArtifact,
-	selected []artifactEntry,
+	tree *artifact.Tree,
+	selected []artifact.Entry,
 ) error {
 	return writeTreeArchive(
 		ctx,
 		destination,
-		buildTreeArtifact,
+		artifact.RoleBuildTree,
 		selectedBuildTreeEntrySequence(ctx, tree, selected),
 		true,
 	)
@@ -265,8 +266,8 @@ func writeSelectedBuildTreeArchive(
 
 func selectedBuildTreeEntrySequence(
 	ctx context.Context,
-	tree *inspectedArtifact,
-	selected []artifactEntry,
+	tree *artifact.Tree,
+	selected []artifact.Entry,
 ) iter.Seq2[treeEntry, error] {
 	return func(yield func(treeEntry, error) bool) {
 		for _, entry := range selected {
@@ -280,9 +281,9 @@ func selectedBuildTreeEntrySequence(
 				Mode:       entry.Mode,
 				LinkTarget: entry.LinkTarget,
 			}
-			if entry.Kind == artifactEntryRegular {
+			if entry.Kind == artifact.EntryRegular {
 				projected.SizeBytes = entry.SizeBytes
-				content, err := tree.reader.Open(ctx, entry.Path)
+				content, err := tree.Open(ctx, entry.Path)
 				if err != nil {
 					yield(treeEntry{}, fmt.Errorf("open image source path %q: %w", entry.Path, err))
 					return

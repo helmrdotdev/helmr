@@ -10,11 +10,11 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 )
 
@@ -164,7 +164,7 @@ func validRunLeaseClaimResponse(
 			RuntimeArtifactDigest:    runtime.Digest,
 			ProgramArtifactDigest:    validDigest('a'),
 			ProgramArtifactSizeBytes: 100,
-			ProgramArtifactMediaType: deployment.ProgramArtifactMediaType,
+			ProgramArtifactMediaType: artifact.ProgramArtifactMediaType,
 			ProgramIndexDigest:       validDigestBytes(t, 'b'),
 		},
 		definition:  definition,
@@ -190,12 +190,12 @@ func deriveComputerCapabilityInput(
 	})
 }
 
-func claimResponseRuntimeDescriptor() deployment.RuntimeDescriptor {
-	return deployment.RuntimeDescriptor{
+func claimResponseRuntimeDescriptor() artifact.RuntimeDescriptor {
+	return artifact.RuntimeDescriptor{
 		Architecture:    definition.ArchitectureX8664,
 		Digest:          "sha256:" + strings.Repeat("9", 64),
-		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
-		MediaType:       deployment.RuntimeArtifactMediaType,
+		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
+		MediaType:       artifact.RuntimeArtifactMediaType,
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       4096,
 	}

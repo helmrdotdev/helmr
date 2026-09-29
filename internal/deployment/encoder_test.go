@@ -11,6 +11,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 )
 
 func TestProgramEncoderUsesFixedProcessContract(t *testing.T) {
@@ -112,7 +115,7 @@ func TestPinnedProgramEncoder(t *testing.T) {
 	if err := writeTreeArchive(
 		context.Background(),
 		&archive,
-		programArtifact,
+		artifact.RoleProgram,
 		treeEntrySequence(programArchiveFixture()),
 		false,
 	); err != nil {
@@ -129,11 +132,11 @@ func TestPinnedProgramEncoder(t *testing.T) {
 		t.Fatalf("pinned encoder digest = %s, want %s", got, wantDigest)
 	}
 
-	reader, err := newSquashFSArtifactReader(
+	reader, err := verify.NewSquashFSReader(
 		context.Background(),
 		bytes.NewReader(first),
 		int64(len(first)),
-		programArtifact,
+		artifact.RoleProgram,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +149,7 @@ func TestPinnedProgramEncoder(t *testing.T) {
 		t.Fatalf("SquashFS entry count = %d", len(entries))
 	}
 	if entries[0].Path != "." ||
-		entries[0].Kind != artifactEntryDirectory ||
+		entries[0].Kind != artifact.EntryDirectory ||
 		entries[0].Mode != 0755 {
 		t.Fatalf("SquashFS root = %#v", entries[0])
 	}

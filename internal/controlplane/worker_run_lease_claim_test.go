@@ -15,12 +15,12 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -140,7 +140,7 @@ func (s *claimHTTPPlatformStore) Stat(ctx context.Context, digest string) (cas.O
 	if s.fail {
 		return cas.Object{}, errors.New("projection unavailable")
 	}
-	return cas.Object{Digest: digest, SizeBytes: 4096, MediaType: deployment.RuntimeArtifactMediaType}, nil
+	return cas.Object{Digest: digest, SizeBytes: 4096, MediaType: artifact.RuntimeArtifactMediaType}, nil
 }
 func (*claimHTTPPlatformStore) Get(context.Context, string) (io.ReadCloser, error) {
 	return nil, errors.New("unexpected artifact read")

@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
@@ -28,15 +31,15 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		}
 		return raw
 	}
-	compiler, err := deployment.ParseCompilerInputs(read("/nix/helmr/compiler.descriptor.json"))
+	compiler, err := artifact.ParseCompilerInputs(read("/nix/helmr/compiler.descriptor.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := deployment.ParseRuntimeDescriptor(read("/opt/helmr/release/runtime.descriptor.json"))
+	runtime, err := artifact.ParseRuntimeDescriptor(read("/opt/helmr/release/runtime.descriptor.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, err := deployment.ParseRuntimeMetadata(read("/opt/helmr/runtime/helmr/runtime.json"))
+	metadata, err := artifact.ParseRuntimeMetadata(read("/opt/helmr/runtime/helmr/runtime.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +53,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		result, err := BuildPreparedProgram(t.Context(), PreparedProgramInput{
 			PreparedDirectory: prepared, WorkDirectory: work, ProgramObjectPath: filepath.Join(work, "program.squashfs"),
 			SquashFSEncoder: "/opt/helmr/bin/mksquashfs", Compiler: compiler, Runtime: runtime, RuntimeMetadata: metadata,
-			ComputerImages: []deployment.BundleComputerImage{},
+			ComputerImages: []bundle.ComputerImage{},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -59,7 +62,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := errors.Join(deployment.VerifyProgramOutputFile(t.Context(), file, result.Program), file.Close()); err != nil {
+		if err := errors.Join(verify.ProgramOutputFile(t.Context(), file, result.Program), file.Close()); err != nil {
 			t.Fatal(err)
 		}
 		descriptor, err := json.Marshal(result.Program)

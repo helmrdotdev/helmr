@@ -4,15 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/safepath"
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/snapshot"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
-
-// buildTreeSnapshotMediaType is an in-process snapshot discriminator. It is
-// never published, persisted, or used as Program identity.
-const buildTreeSnapshotMediaType = "application/vnd.helmr.internal-build-tree.v0+squashfs"
 
 const maxBuildTreeStreamBytes int64 = 11 << 30
 
@@ -23,8 +20,8 @@ const MaxBuildTreeStreamBytes = maxBuildTreeStreamBytes
 // BuildTree is the one lease-private, read-only post-lifecycle tree used by
 // analysis, Computer image construction, and Program encoding.
 type BuildTree struct {
-	content    *artifactSnapshot
-	inspected  *inspectedArtifact
+	content    *snapshot.Artifact
+	inspected  *artifact.Tree
 	descriptor BuildTreeDescriptor
 }
 
@@ -37,17 +34,17 @@ type BuildTreeDescriptor struct {
 }
 
 func newBuildTree(
-	content *artifactSnapshot,
-	inspected *inspectedArtifact,
+	content *snapshot.Artifact,
+	inspected *artifact.Tree,
 	descriptor BuildTreeDescriptor,
 ) (*BuildTree, error) {
 	if content == nil || inspected == nil {
 		return nil, errors.New("build tree snapshot is incomplete")
 	}
-	if inspected.role != buildTreeArtifact {
+	if inspected.Role() != artifact.RoleBuildTree {
 		return nil, errors.New("build tree snapshot has the wrong artifact role")
 	}
-	if !sha256DigestPattern.MatchString(descriptor.Digest) {
+	if !sha256sum.ValidDigest(descriptor.Digest) {
 		return nil, errors.New("build tree stream digest is not a lowercase SHA-256 digest")
 	}
 	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > maxBuildTreeStreamBytes {
@@ -72,23 +69,23 @@ func (tree *BuildTree) Descriptor() (BuildTreeDescriptor, error) {
 
 func validateInspectedBuildTree(
 	ctx context.Context,
-	tree *inspectedArtifact,
+	tree *artifact.Tree,
 ) error {
 	if tree == nil {
 		return errors.New("build tree inspection is nil")
 	}
-	if _, exists := tree.entries["helmr"]; exists {
+	if _, exists := tree.Lookup("helmr"); exists {
 		if err := validateCompilerBuildTree(ctx, tree); err != nil {
 			return err
 		}
 	}
-	if dependencies, exists := tree.entries["node_modules"]; exists &&
-		dependencies.Kind != artifactEntryDirectory {
+	if dependencies, exists := tree.Lookup("node_modules"); exists &&
+		dependencies.Kind != artifact.EntryDirectory {
 		return errors.New(
 			"build tree root path \"node_modules\" is not a directory",
 		)
 	}
-	if err := validateBuildTreeLinks(tree); err != nil {
+	if err := validateBuildTreeLinks(tree.Entries(), tree.Lookup); err != nil {
 		return err
 	}
 	return nil
@@ -96,10 +93,10 @@ func validateInspectedBuildTree(
 
 func validateCompilerBuildTree(
 	ctx context.Context,
-	tree *inspectedArtifact,
+	tree *artifact.Tree,
 ) error {
 	for _, required := range []string{"helmr"} {
-		if _, err := tree.require(required, artifactEntryDirectory); err != nil {
+		if _, err := tree.Require(required, artifact.EntryDirectory); err != nil {
 			return fmt.Errorf("compiler build tree: %w", err)
 		}
 	}
@@ -107,89 +104,29 @@ func validateCompilerBuildTree(
 		"helmr/compiler-result.json",
 		"helmr/config.json",
 	} {
-		if _, err := tree.require(required, artifactEntryRegular); err != nil {
+		if _, err := tree.Require(required, artifact.EntryRegular); err != nil {
 			return fmt.Errorf("compiler build tree: %w", err)
 		}
 	}
-	raw, err := tree.read(
+	raw, err := tree.Read(
 		ctx,
 		"helmr/compiler-result.json",
-		maxProgramFileSizeBytes,
+		artifact.MaxProgramFileSizeBytes,
 	)
 	if err != nil {
 		return fmt.Errorf("compiler build tree: %w", err)
 	}
-	result, err := ParseProgramCompilerResult(raw)
+	result, err := artifact.ParseProgramCompilerResult(raw)
 	if err != nil {
 		return fmt.Errorf("compiler build tree: %w", err)
 	}
-	for _, entry := range tree.ordered {
-		if strings.HasPrefix(entry.Path, "helmr/") && !isGeneratedProgramEntry(entry) && entry.Path != "helmr/compiler-result.json" && entry.Path != "helmr/config.json" {
+	for _, entry := range tree.Entries() {
+		if strings.HasPrefix(entry.Path, "helmr/") && !artifact.IsGeneratedProgramEntry(entry) && entry.Path != "helmr/compiler-result.json" && entry.Path != "helmr/config.json" {
 			return fmt.Errorf("compiler build tree contains unknown path %q", entry.Path)
 		}
 	}
-	if err := verifyProgramCompilerFiles(ctx, tree, result); err != nil {
+	if err := artifact.VerifyProgramCompilerFiles(ctx, tree, result); err != nil {
 		return fmt.Errorf("compiler build tree: %w", err)
-	}
-	return nil
-}
-
-func validateBuildTreeLinks(tree *inspectedArtifact) error {
-	for _, entry := range tree.ordered {
-		if entry.Kind != artifactEntrySymlink {
-			continue
-		}
-		if err := validateBuildTreeLink(tree, entry.Path, entry.LinkTarget); err != nil {
-			return fmt.Errorf("build tree link %q: %w", entry.Path, err)
-		}
-	}
-	return nil
-}
-
-func validateBuildTreeLink(
-	tree *inspectedArtifact,
-	link string,
-	target string,
-) error {
-	pending := append(
-		strings.Split(path.Dir(link), "/"),
-		strings.Split(target, "/")...,
-	)
-	resolved := make([]string, 0, len(pending))
-	hops := 1 // Include the link whose target is being validated.
-	for len(pending) != 0 {
-		component := pending[0]
-		pending = pending[1:]
-		switch component {
-		case "", ".":
-			continue
-		case "..":
-			if len(resolved) == 0 {
-				return errors.New("target escapes the frozen project tree")
-			}
-			resolved = resolved[:len(resolved)-1]
-			continue
-		}
-		candidate := strings.Join(append(resolved, component), "/")
-		if err := safepath.ValidateTreePath(candidate, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
-			return err
-		}
-		entry, exists := tree.entries[candidate]
-		if !exists {
-			return nil
-		}
-		if entry.Kind == artifactEntrySymlink {
-			hops++
-			if hops > safepath.TreeLinkHops {
-				return fmt.Errorf("target exceeds %d symbolic-link hops", safepath.TreeLinkHops)
-			}
-			pending = append(strings.Split(entry.LinkTarget, "/"), pending...)
-			continue
-		}
-		if entry.Kind != artifactEntryDirectory && len(pending) != 0 {
-			return nil
-		}
-		resolved = append(resolved, component)
 	}
 	return nil
 }

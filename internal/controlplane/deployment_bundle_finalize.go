@@ -16,12 +16,14 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/artifact"
+	"github.com/helmrdotdev/helmr/internal/artifact/verify"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -30,7 +32,7 @@ import (
 
 type finalizedDeploymentBundle struct {
 	root        cas.Descriptor
-	bundle      deployment.DeploymentBundle
+	bundle      bundle.Manifest
 	objects     []cas.Descriptor
 	definitions []finalizedDeploymentDefinition
 	queueConfig []byte
@@ -75,7 +77,7 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("deployment idempotency key is required")))
 		return
 	}
-	if _, err := deployment.RuntimeDigestBytes(request.BundleDigest); err != nil {
+	if _, err := artifact.RuntimeDigestBytes(request.BundleDigest); err != nil {
 		writeError(w, badRequest(errors.New("deployment bundle digest is invalid")))
 		return
 	}
@@ -393,60 +395,60 @@ func (s *Server) prepareFinalizedDeploymentBundle(
 	if err != nil {
 		return finalizedDeploymentBundle{}, fmt.Errorf("resolve deployment bundle root: %w", err)
 	}
-	if rootObject.MediaType != deployment.DeploymentBundleMediaType ||
-		rootObject.SizeBytes < 1 || rootObject.SizeBytes > deployment.MaxDeploymentBundleBytes {
+	if rootObject.MediaType != bundle.MediaType ||
+		rootObject.SizeBytes < 1 || rootObject.SizeBytes > bundle.MaxBytes {
 		return finalizedDeploymentBundle{}, errors.New("deployment bundle root descriptor is invalid")
 	}
 	rootReader, err := uploads.Get(ctx, bundleDigest)
 	if err != nil {
 		return finalizedDeploymentBundle{}, fmt.Errorf("read deployment bundle root: %w", err)
 	}
-	raw, readErr := io.ReadAll(io.LimitReader(rootReader, deployment.MaxDeploymentBundleBytes+1))
+	raw, readErr := io.ReadAll(io.LimitReader(rootReader, bundle.MaxBytes+1))
 	closeErr := rootReader.Close()
 	if readErr != nil || closeErr != nil {
 		return finalizedDeploymentBundle{}, errors.Join(readErr, closeErr)
 	}
-	actualDigest, err := deployment.DeploymentBundleDigest(raw)
+	actualDigest, err := bundle.Digest(raw)
 	if err != nil || actualDigest != bundleDigest || int64(len(raw)) != rootObject.SizeBytes {
 		return finalizedDeploymentBundle{}, errors.New("deployment bundle root bytes do not match the request")
 	}
-	bundle, err := deployment.ParseDeploymentBundle(raw)
+	manifest, err := bundle.Parse(raw)
 	if err != nil {
 		return finalizedDeploymentBundle{}, err
 	}
-	if err := s.bundleAdmission.Admit(bundle); err != nil {
+	if err := s.bundleAdmission.Admit(manifest); err != nil {
 		return finalizedDeploymentBundle{}, err
 	}
-	if err := requireSupportedRuntime(ctx, s.platformStore, bundle.Runtime.Artifact); err != nil {
+	if err := requireSupportedRuntime(ctx, s.platformStore, manifest.Runtime.Artifact); err != nil {
 		return finalizedDeploymentBundle{}, err
 	}
-	objects := make([]cas.Descriptor, 0, len(bundle.Objects))
-	for _, object := range bundle.Objects {
+	objects := make([]cas.Descriptor, 0, len(manifest.Objects))
+	for _, object := range manifest.Objects {
 		objects = append(objects, cas.Descriptor{
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		})
 	}
-	definitions, err := finalizedDeploymentDefinitions(bundle)
+	definitions, err := finalizedDeploymentDefinitions(manifest)
 	if err != nil {
 		return finalizedDeploymentBundle{}, err
 	}
-	queueConfig, err := canonicalDeploymentQueueConfig(bundle.Plan)
+	queueConfig, err := canonicalDeploymentQueueConfig(manifest.Plan)
 	if err != nil {
 		return finalizedDeploymentBundle{}, err
 	}
-	index, err := deployment.CanonicalProgramIndex(bundle.Program.Index)
+	index, err := artifact.CanonicalProgramIndex(manifest.Program.Index)
 	if err != nil {
 		return finalizedDeploymentBundle{}, err
 	}
 	indexDigest := sha256.Sum256(index)
 	return finalizedDeploymentBundle{
 		root:   cas.Descriptor{Digest: bundleDigest, SizeBytes: rootObject.SizeBytes, MediaType: rootObject.MediaType},
-		bundle: bundle, objects: objects, definitions: definitions,
+		bundle: manifest, objects: objects, definitions: definitions,
 		queueConfig: queueConfig, indexDigest: indexDigest[:],
 	}, nil
 }
 
-func requireSupportedRuntime(ctx context.Context, store cas.Reader, runtime deployment.BundleObject) error {
+func requireSupportedRuntime(ctx context.Context, store cas.Reader, runtime bundle.Object) error {
 	object, err := store.Stat(ctx, runtime.Digest)
 	if err != nil {
 		return fmt.Errorf("resolve supported Runtime object: %w", err)
@@ -531,7 +533,7 @@ func (s *Server) requireFinalizedDeploymentObject(
 func (s *Server) verifyFinalizedDeploymentObject(
 	ctx context.Context,
 	store cas.Reader,
-	bundle deployment.DeploymentBundle,
+	manifest bundle.Manifest,
 	object cas.Descriptor,
 ) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -550,9 +552,9 @@ func (s *Server) verifyFinalizedDeploymentObject(
 	}
 	recorded := &deploymentObjectReader{source: reader}
 	switch object.MediaType {
-	case deployment.ProgramArtifactMediaType:
-		err = verifyStoredProgram(ctx, recorded, bundle.Program)
-	case deployment.ComputerImageArtifactMediaType:
+	case artifact.ProgramArtifactMediaType:
+		err = verifyStoredProgram(ctx, recorded, manifest.Program)
+	case bundle.ComputerImageMediaType:
 		err = computer.VerifySeed(ctx, recorded, computer.SeedArtifact{Object: object, LogicalBytes: computer.SeedCapacity}, computer.SeedCapacity)
 
 	default:
@@ -592,7 +594,7 @@ func (r *deploymentObjectReader) Read(buffer []byte) (int, error) {
 	return count, err
 }
 
-func verifyStoredProgram(ctx context.Context, source io.Reader, program deployment.ProgramOutput) error {
+func verifyStoredProgram(ctx context.Context, source io.Reader, program artifact.ProgramOutput) error {
 	file, err := os.CreateTemp("", "helmr-program-verification-*")
 	if err != nil {
 		return err
@@ -601,7 +603,7 @@ func verifyStoredProgram(ctx context.Context, source io.Reader, program deployme
 	written, copyErr := io.Copy(file, io.LimitReader(source, program.Artifact.SizeBytes+1))
 	var verifyErr error
 	if copyErr == nil && written == program.Artifact.SizeBytes {
-		verifyErr = deployment.VerifyProgramOutputFile(ctx, file, program)
+		verifyErr = verify.ProgramOutputFile(ctx, file, program)
 	}
 	cleanupErr := errors.Join(file.Close(), os.Remove(name))
 	if copyErr != nil || cleanupErr != nil {
@@ -619,13 +621,13 @@ func verifyStoredProgram(ctx context.Context, source io.Reader, program deployme
 	return nil
 }
 
-func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]finalizedDeploymentDefinition, error) {
-	images := make(map[string]deployment.BundleComputerImageArtifact, len(bundle.ComputerImages))
-	for _, image := range bundle.ComputerImages {
+func finalizedDeploymentDefinitions(deploymentBundle bundle.Manifest) ([]finalizedDeploymentDefinition, error) {
+	images := make(map[string]bundle.ComputerImageArtifact, len(deploymentBundle.ComputerImages))
+	for _, image := range deploymentBundle.ComputerImages {
 		images[image.DeclaredID] = image.Artifact
 	}
-	definitions := make([]finalizedDeploymentDefinition, 0, len(bundle.Plan.Definitions))
-	for _, declaration := range bundle.Plan.Definitions {
+	definitions := make([]finalizedDeploymentDefinition, 0, len(deploymentBundle.Plan.Definitions))
+	for _, declaration := range deploymentBundle.Plan.Definitions {
 		var manifest any
 		var computerSpec *definition.ComputerSpec
 		switch declaration.Kind {
@@ -663,7 +665,7 @@ func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]final
 	return definitions, nil
 }
 
-func canonicalDeploymentQueueConfig(plan deployment.DeploymentPlan) ([]byte, error) {
+func canonicalDeploymentQueueConfig(plan bundle.Plan) ([]byte, error) {
 	queues := make([]definition.QueueInput, len(plan.Queues))
 	for index, queue := range plan.Queues {
 		queues[index] = queue
@@ -696,10 +698,10 @@ func createFinalizedDeployment(
 	artifacts := make(map[string]db.Artifact, len(prepared.objects))
 	for _, descriptor := range prepared.objects {
 		kind := db.ArtifactKindComputerImage
-		if descriptor.MediaType == deployment.ProgramArtifactMediaType {
+		if descriptor.MediaType == artifact.ProgramArtifactMediaType {
 			kind = db.ArtifactKindDeploymentProgram
 		}
-		artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
+		row, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 			ID: pgvalue.UUID(uuid.NewV7()), OrgID: orgID, ProjectID: projectID,
 			EnvironmentID: environmentID, Digest: descriptor.Digest, Kind: kind,
 			SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
@@ -707,7 +709,7 @@ func createFinalizedDeployment(
 		if err != nil {
 			return db.Deployment{}, fmt.Errorf("register deployment artifact: %w", err)
 		}
-		artifacts[descriptor.Digest] = artifact
+		artifacts[descriptor.Digest] = row
 	}
 	programArtifact := artifacts[prepared.bundle.Program.Artifact.Digest]
 	deploymentID := uuid.NewV7()

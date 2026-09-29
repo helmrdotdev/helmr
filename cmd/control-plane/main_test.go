@@ -17,6 +17,7 @@ import (
 	"uuid"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
@@ -25,7 +26,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
@@ -264,11 +264,11 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	databaseURL := newSmokeDatabase(t, ctx)
 	redisServer := miniredis.RunT(t)
 	addr := freeSmokeAddr(t)
-	runtimeDescriptor, err := deployment.CanonicalRuntimeDescriptor(deployment.RuntimeDescriptor{
+	runtimeDescriptor, err := artifact.CanonicalRuntimeDescriptor(artifact.RuntimeDescriptor{
 		Architecture:    definition.ArchitectureX8664,
 		Digest:          "sha256:" + strings.Repeat("a", 64),
-		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
-		MediaType:       deployment.RuntimeArtifactMediaType,
+		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
+		MediaType:       artifact.RuntimeArtifactMediaType,
 		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       4096,
 	})

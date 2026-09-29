@@ -17,10 +17,10 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -218,7 +218,7 @@ func TestFinishFinalizedDeploymentBundleStopsBeforeTransactionAfterDisconnect(t 
 	image := deploymentFinalizeDiskFixture(t)
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
 	descriptor := cas.Descriptor{
-		Digest: digest, SizeBytes: int64(len(image)), MediaType: deployment.ComputerImageArtifactMediaType,
+		Digest: digest, SizeBytes: int64(len(image)), MediaType: bundle.ComputerImageMediaType,
 	}
 	store := &deploymentFinalizeObjectStore{descriptor: descriptor, body: image}
 	server := &Server{db: deploymentFinalizePossessionStore{}, deploymentVerifierSlots: make(chan struct{}, 1)}
@@ -226,7 +226,7 @@ func TestFinishFinalizedDeploymentBundleStopsBeforeTransactionAfterDisconnect(t 
 		t.Context(), store, uuid.UUID{15: 1}, pgvalue.UUID(uuid.UUID{15: 2}), pgvalue.UUID(uuid.UUID{15: 3}),
 		finalizedDeploymentBundle{
 			root:    cas.Descriptor{Digest: "sha256:" + strings.Repeat("a", 64)},
-			bundle:  deployment.DeploymentBundle{},
+			bundle:  bundle.Manifest{},
 			objects: []cas.Descriptor{descriptor},
 		},
 		nil,
@@ -321,7 +321,7 @@ func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 
 func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
 	body := deploymentFinalizeDiskFixture(t)
-	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.ComputerImageArtifactMediaType}
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: bundle.ComputerImageMediaType}
 	server := &Server{deploymentVerifierSlots: make(chan struct{}, 1)}
 	for _, kind := range []string{"valid", "digest", "size", "truncated", "trailing"} {
 		t.Run(kind, func(t *testing.T) {
@@ -338,7 +338,7 @@ func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
 				data = append(data, 0)
 			}
 			store := &deploymentFinalizeObjectStore{descriptor: object, body: data}
-			err := server.verifyFinalizedDeploymentObject(t.Context(), store, deployment.DeploymentBundle{}, object)
+			err := server.verifyFinalizedDeploymentObject(t.Context(), store, bundle.Manifest{}, object)
 			if kind == "valid" {
 				if err != nil {
 					t.Fatal(err)
@@ -352,11 +352,11 @@ func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
 
 func TestVerifyFinalizedDeploymentDiskCancellationIsNotInvalid(t *testing.T) {
 	body := deploymentFinalizeDiskFixture(t)
-	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: deployment.ComputerImageArtifactMediaType}
+	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: bundle.ComputerImageMediaType}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	store := cancellingDeploymentStore{body: body, cancel: cancel}
-	err := (&Server{}).verifyFinalizedDeploymentObject(ctx, store, deployment.DeploymentBundle{}, descriptor)
+	err := (&Server{}).verifyFinalizedDeploymentObject(ctx, store, bundle.Manifest{}, descriptor)
 	if got := publicDeploymentFinalizeError(err).Code; got != "deployment_finalization_unavailable" {
 		t.Fatalf("public error code = %s", got)
 	}

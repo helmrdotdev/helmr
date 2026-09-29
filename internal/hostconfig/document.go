@@ -13,15 +13,15 @@ import (
 	"path"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 // Document is the resolved config. It is internal to one build: it is neither
 // deployed nor versioned, and it never contains secret values.
 type Document struct {
-	Discovery deployment.BuildConfig `json:"discovery"`
-	Build     Build                  `json:"build"`
+	Discovery artifact.BuildConfig `json:"discovery"`
+	Build     Build                `json:"build"`
 }
 
 type Build struct {
@@ -66,7 +66,7 @@ func parseDocument(raw []byte) (Document, error) {
 // Resolve validates the document against the captured project source, the only
 // tree build environment COPY steps may read.
 func (document *Document) Resolve(captured string) error {
-	if _, err := deployment.CanonicalBuildConfig(document.Discovery); err != nil {
+	if _, err := artifact.CanonicalBuildConfig(document.Discovery); err != nil {
 		return err
 	}
 	steps := document.Build.Builder.Steps
