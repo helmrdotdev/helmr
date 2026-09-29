@@ -75,7 +75,7 @@ func TestRunComputerMountRejectsUnvalidatedMaterializer(t *testing.T) {
 			_, mount := testComputerMountArtifacts(t)
 			client := &computerMaterializerTestClient{}
 			err := test.materializer.RunComputerMount(t.Context(), mount, client)
-			if err == nil || err.Error() != "configure computer materializer: "+test.want {
+			if err == nil || err.Error() != "computer materializer is misconfigured: "+test.want {
 				t.Fatalf("RunComputerMount() error = %v, want %q", err, test.want)
 			}
 			if len(client.renews) != 0 {

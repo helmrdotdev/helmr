@@ -91,7 +91,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 	// instead of when a later phase first needs the missing collaborator.
 	if err := m.validate(); err != nil {
 		_ = m.failComputerMount(client, mount, err)
-		return fmt.Errorf("configure computer materializer: %w", err)
+		return fmt.Errorf("computer materializer is misconfigured: %w", err)
 	}
 	totalStarted := time.Now()
 	m.logComputerMountPhase(mount, "computer mount started", "state", "starting")
