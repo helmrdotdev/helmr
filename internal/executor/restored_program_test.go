@@ -19,7 +19,7 @@ import (
 )
 
 type restoredProgramHarness struct {
-	borrowedParentSession
+	mountedMachine
 	RunLeaseControlPlane
 	SessionExecutionControlPlane
 	actor        bool
@@ -132,9 +132,9 @@ func testRestoredProgram(t *testing.T, kind string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	h := &restoredProgramHarness{actor: kind == "actor", err: make(chan error, 2)}
-	sessions := NewComputerMountSessions()
+	mounts := NewMounts()
 	mount := workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, RestoreCheckpointID: "checkpoint", DesiredVersion: 4, RuntimeEpoch: 1, VMPlatformID: "platform", GuestdChannelToken: "channel", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "private-disk"}}
-	unregister := sessions.RegisterComputerMountSession(mount, newManagedComputerMountSession(h), "channel")
+	unregister := mounts.Register(mount, newInstanceMount(h), "channel")
 	defer unregister()
 	claim := &workerapi.RunLeaseClaimResponse{Lease: workerapi.RunLeaseAssignment{ID: "lease", RunID: "run", AttemptNumber: 1, LeaseSequence: 2, ComputerInstanceID: "instance", ComputerID: "computer", WriterGeneration: 2, WorkerEpoch: 1, WorkerHostID: "worker", VMPlatformID: "platform", BaseComputerDiskVersionID: "disk", ExpiresAt: time.Now().Add(time.Minute)}, Computer: workerapi.ComputerAttachment{WriteCapability: "capability", Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "disk"}}, ProgramResume: &workerapi.ProgramResume{CheckpointID: "checkpoint", RunWaitID: "wait", EntrypointKind: kind}}
 	activation := &restorePlanHarness{restoreActivationHarness: &restoreActivationHarness{}, planCalls: 1, plan: &workerapi.ComputerRestorePlan{
@@ -149,7 +149,7 @@ func testRestoredProgram(t *testing.T, kind string) {
 	activation.mu.Lock()
 	h.installed = proto.Clone(activation.installation.Grants[0]).(*computerv0.ComputerRunAuthority)
 	activation.mu.Unlock()
-	task, err := (ProgramRunner{ControlPlane: testControlPlane(t, h), ComputerMounts: sessions, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{}}).StartRunLeaseTask(ctx, claim)
+	task, err := (ProgramRunner{ControlPlane: testControlPlane(t, h), Mounts: mounts, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{}}).StartRunLeaseTask(ctx, claim)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,7 +17,7 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 	requested *programv0.TurnSettleRequested,
 ) (retErr error) {
 	defer func() {
-		if retErr == nil || task.program.session == nil {
+		if retErr == nil || task.program.channel == nil {
 			return
 		}
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)

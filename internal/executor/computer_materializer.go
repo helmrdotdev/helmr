@@ -34,7 +34,7 @@ type ComputerMaterializer struct {
 	ComputerSaveEvery     time.Duration
 	CAS                   cas.Store
 	ComputerObjects       cas.ImmutableStore
-	Sessions              ComputerMountSessionRegistry
+	Mounts                MountRegistry
 	TempDir               string
 	Heartbeat             time.Duration
 	StartupTimeout        time.Duration
@@ -74,7 +74,7 @@ func (m ComputerMaterializer) validate() error {
 	if m.ComputerObjects == nil {
 		return errors.New("Computer object store is required")
 	}
-	if m.Sessions == nil {
+	if m.Mounts == nil {
 		return errors.New("computer mount session registry is required")
 	}
 	if m.RuntimePool == nil {
@@ -115,9 +115,9 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		_ = m.failComputerMount(client, renewal.authority(mount), err)
 		return fmt.Errorf("checkout computer mount runtime: %w", err)
 	}
-	session := newManagedComputerMountSession(rawSession)
+	instance := newInstanceMount(rawSession)
 	defer func() {
-		if closeErr := m.closeSession(session); closeErr != nil {
+		if closeErr := m.closeSession(instance); closeErr != nil {
 			failure := computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
 				err:  errors.New("computer mount runtime cleanup failed"),
@@ -142,7 +142,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		return errors.New("Computer Instance writer differs from prepared runtime")
 	}
 	phaseStarted = time.Now()
-	if err := m.registerComputerMountContext(startupCtx, session, mount, computerInstanceID); err != nil {
+	if err := m.registerComputerMountContext(startupCtx, instance, mount, computerInstanceID); err != nil {
 		m.logComputerMountPhase(mount, "computer mount guest registered", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", err.Error())
 		if renewalErr := renewal.stopAndWait(); renewalErr != nil {
 			err = renewalErr
@@ -152,16 +152,16 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 	}
 	m.logComputerMountPhase(mount, "computer mount guest registered", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	if mount.RestoreCheckpointID != "" {
-		if err := m.activateRestore(startupCtx, session, mount); err != nil {
+		if err := m.activateRestore(startupCtx, instance, mount); err != nil {
 			_ = m.failComputerMount(client, renewal.authority(mount), err)
 			return fmt.Errorf("activate restored Computer: %w", err)
 		}
 	}
-	if err := session.saves.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: writerGeneration}, mount.ComputerID); err != nil {
+	if err := instance.saves.bind(workerapi.ComputerSaveBeginRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: writerGeneration}, mount.ComputerID); err != nil {
 		return err
 	}
 	saveFailure := make(chan error, 1)
-	saveResults, err := session.saves.run(renewal.ctx, m.ComputerSaveEvery, m.ComputerSaves, m.ComputerObjects, func(ctx context.Context) (computerSaveCapture, error) {
+	saveResults, err := instance.saves.run(renewal.ctx, m.ComputerSaveEvery, m.ComputerSaves, m.ComputerObjects, func(ctx context.Context) (computerSaveCapture, error) {
 		return captureComputerSave(ctx, rawSession, mount.ComputerID)
 	}, func(err error) { saveFailure <- err; renewal.cancel() })
 	if err != nil {
@@ -170,7 +170,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), m.failureTimeout())
 		defer cancel()
-		_ = session.saves.Quiesce(cleanupCtx)
+		_ = instance.saves.Quiesce(cleanupCtx)
 		select {
 		case failure := <-saveFailure:
 			cause := computerMountFailure{code: "computer_preservation_failed", err: fmt.Errorf("computer preservation failed: %w", failure)}
@@ -183,17 +183,17 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		default:
 		}
 	}()
-	unregisterSession := m.Sessions.RegisterComputerMountSession(mount, session, m.channelToken(mount))
-	defer unregisterSession()
+	unregisterMount := m.Mounts.Register(mount, instance, m.channelToken(mount))
+	defer unregisterMount()
 
 	m.logComputerMountPhase(mount, "computer mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
-	return m.serveComputerMount(ctx, renewal, session, mount, client, saveResults)
+	return m.serveComputerMount(ctx, renewal, instance, mount, client, saveResults)
 }
 
 func (m ComputerMaterializer) serveComputerMount(
 	ctx context.Context,
 	renewal *computerMountRenewal,
-	session *managedComputerMountSession,
+	instance *instanceMount,
 	mount workerapi.ComputerInstanceAssignment,
 	client workerapi.ComputerMaterializerControlPlaneClient,
 	saveResults <-chan error,
@@ -210,7 +210,7 @@ func (m ComputerMaterializer) serveComputerMount(
 	commands.Add(1)
 	go func() {
 		defer commands.Done()
-		runCleanupResult <- m.reconcileComputerRuns(commandCtx, session, mount, client)
+		runCleanupResult <- m.reconcileComputerRuns(commandCtx, instance, mount, client)
 	}()
 	commandResults := make(chan commandResult)
 	activeCommands := make(map[string]struct{})
@@ -219,7 +219,7 @@ func (m ComputerMaterializer) serveComputerMount(
 	cancellationResults := make(chan commandResult)
 	sessionExited := make(chan error, 1)
 	go func() {
-		sessionExited <- session.Wait(renewal.ctx)
+		sessionExited <- instance.Wait(renewal.ctx)
 	}()
 	failAndReturn := func(cause error) error {
 		if ctx.Err() == nil {
@@ -245,7 +245,7 @@ func (m ComputerMaterializer) serveComputerMount(
 	poll := time.NewTimer(0)
 	defer poll.Stop()
 	checkpointReleased := func() error {
-		_, releaseErr := session.CheckpointReleaseResult(context.Background())
+		_, releaseErr := instance.CheckpointReleaseResult(context.Background())
 		_ = renewal.stopAndWait()
 		if releaseErr != nil {
 			failure := computerMountFailure{
@@ -267,7 +267,7 @@ func (m ComputerMaterializer) serveComputerMount(
 		case update := <-renewUpdates:
 			switch strings.TrimSpace(update.DesiredState) {
 			case "closed":
-				if err := m.stopControlledComputerMount(renewal.ctx, session, renewal.authority(mount), client); err != nil {
+				if err := m.stopControlledComputerMount(renewal.ctx, instance, renewal.authority(mount), client); err != nil {
 					return err
 				}
 				_ = renewal.stopAndWait()
@@ -279,13 +279,13 @@ func (m ComputerMaterializer) serveComputerMount(
 			if err != nil {
 				return failAndReturn(err)
 			}
-		case <-session.releaseForCheckpointDone:
+		case <-instance.releaseForCheckpointDone:
 			// Failed stop may leave Wait blocked forever. Report through the mount
 			// owner so runtime reconciliation retains and reclaims its checkout.
 			return checkpointReleased()
 		case err := <-sessionExited:
 			sessionExited = nil
-			if released, _ := session.CheckpointReleaseResult(context.Background()); released {
+			if released, _ := instance.CheckpointReleaseResult(context.Background()); released {
 				return checkpointReleased()
 			}
 			if renewal.ctx.Err() != nil {
@@ -301,12 +301,12 @@ func (m ComputerMaterializer) serveComputerMount(
 				code: "computer_mount_vm_exited",
 				err:  fmt.Errorf("computer mount VM exited: %w", err),
 			})
-		case request := <-session.failureRequests:
+		case request := <-instance.failureRequests:
 			failure := computerMountFailure{
 				code: "computer_mount_program_start_failed",
 				err:  errors.New("program process failed before start proof"),
 			}
-			closeErr := m.closeSession(session)
+			closeErr := m.closeSession(instance)
 			if closeErr != nil {
 				m.logComputerMountPhase(
 					mount,
@@ -323,9 +323,9 @@ func (m ComputerMaterializer) serveComputerMount(
 			request.result <- errors.Join(closeErr, reportErr)
 			return failure
 		case err := <-saveResults:
-			session.saves.mu.Lock()
-			stopped := session.saves.stopped
-			session.saves.mu.Unlock()
+			instance.saves.mu.Lock()
+			stopped := instance.saves.stopped
+			instance.saves.mu.Unlock()
 			if stopped {
 				saveResults = nil
 				continue
@@ -391,14 +391,14 @@ func (m ComputerMaterializer) serveComputerMount(
 					go func() {
 						defer commands.Done()
 						result := commandResult{id: id}
-						result.err = m.cancelComputerCommand(commandCtx, session, mount, *request)
+						result.err = m.cancelComputerCommand(commandCtx, instance, mount, *request)
 						results := cancellationResults
 						if !attached {
 							results = commandResults
 							if result.err == nil {
 								// Cancellation installed or found a replay record; this request cannot launch a process.
 								replay := workerapi.ComputerCommand{CommandID: id, ComputerID: request.ComputerID, ComputerInstanceID: request.ComputerInstanceID, WriterGeneration: request.WriterGeneration, RequestFingerprint: request.RequestFingerprint, ExpiresAt: request.ExpiresAt, Request: json.RawMessage(`{}`)}
-								completion, err := m.dispatchComputerBasicExec(commandCtx, session, mount, replay, client)
+								completion, err := m.dispatchComputerBasicExec(commandCtx, instance, mount, replay, client)
 								result.err = err
 								var protocolError *computerBasicExecProtocolError
 								result.fatal = errors.As(err, &protocolError)
@@ -434,9 +434,9 @@ func (m ComputerMaterializer) serveComputerMount(
 					defer commands.Done()
 					result := commandResult{id: commandID}
 					if claimed.Release != nil {
-						result.err = m.releaseComputerCommand(commandCtx, session, mount, *claimed.Release, client)
+						result.err = m.releaseComputerCommand(commandCtx, instance, mount, *claimed.Release, client)
 					} else {
-						completion, err := m.dispatchComputerBasicExec(commandCtx, session, mount, *claimed.Command, client)
+						completion, err := m.dispatchComputerBasicExec(commandCtx, instance, mount, *claimed.Command, client)
 						result.err = err
 						var protocolError *computerBasicExecProtocolError
 						result.fatal = errors.As(err, &protocolError)

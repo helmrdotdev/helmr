@@ -51,7 +51,7 @@ func TestComputerMaterializerRenewsWhileAwaitingPreparedRuntime(t *testing.T) {
 			if fail {
 				client.renewErrors = []error{errors.New("renew failed")}
 			}
-			materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
+			materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error, 1)
@@ -331,7 +331,7 @@ func TestComputerMountPhaseErrorUsesLatestGuestError(t *testing.T) {
 
 func TestComputerMaterializerFailsWhenPreparedRuntimeIsMissing(t *testing.T) {
 	store, computerMount := testComputerMountArtifacts(t)
-	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		RuntimePool: NewPreparedRuntimePool(nil, nil, 1, nil),
 	}
@@ -593,7 +593,7 @@ func TestComputerMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T) 
 		operation: discardReadWriteCloser{},
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, session)
-	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:            store,
 		TempDir:        t.TempDir(),
 		Heartbeat:      time.Hour,
@@ -631,7 +631,7 @@ func TestComputerMaterializerFailsComputerMountOnFatalHeartbeatError(t *testing.
 		operation: discardReadWriteCloser{},
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, session)
-	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   10 * time.Millisecond,
@@ -690,14 +690,14 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 				exit: newPreparedRuntimeSignal(), ready: ready,
 			}}
 			go acknowledgePreparedComputerMount(t, preparedServer, computerMount, key)
-			sessions := NewComputerMountSessions()
+			mounts := NewMounts()
 			client := &computerMaterializerTestClient{onReady: func() {
 				if preservationFailure {
 					_, pending := newSaveHostFixture(t, "capture")
 					closeFailure = pending.Wait(context.Background())
-					sessions.mu.RLock()
-					managed := sessions.sessions[computerMount.ComputerInstanceID].session
-					sessions.mu.RUnlock()
+					mounts.mu.RLock()
+					managed := mounts.mounts[computerMount.ComputerInstanceID].instance
+					mounts.mu.RUnlock()
 					managed.saves.mu.Lock()
 					managed.saves.pending = pending
 					managed.saves.mu.Unlock()
@@ -705,7 +705,7 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 				cancel()
 			}}
 			materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
-				Sessions:    sessions,
+				Mounts:      mounts,
 				CAS:         store,
 				TempDir:     t.TempDir(),
 				Heartbeat:   time.Hour,
@@ -769,7 +769,7 @@ func TestComputerMaterializerFailsComputerMountWhenSessionExits(t *testing.T) {
 		exit:      exit,
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, session)
-	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Mounts: NewMounts(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   time.Hour,
@@ -809,12 +809,12 @@ func TestComputerMaterializerOwnsProgramStartFailureCleanup(t *testing.T) {
 		operation: discardReadWriteCloser{},
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, rawSession)
-	sessions := NewComputerMountSessions()
+	mounts := NewMounts()
 	mounted := make(chan struct{})
 	client := &computerMaterializerTestClient{onReady: func() { close(mounted) }}
 	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
-		Sessions:    sessions,
+		Mounts:      mounts,
 		TempDir:     t.TempDir(),
 		Heartbeat:   time.Hour,
 		PollEvery:   time.Hour,
@@ -829,7 +829,7 @@ func TestComputerMaterializerOwnsProgramStartFailureCleanup(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Computer Mount did not become ready")
 	}
-	if err := sessions.FailComputerInstanceSession(ctx, computerMount.ComputerInstanceID); err != nil {
+	if err := mounts.RequestFailure(ctx, computerMount.ComputerInstanceID); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -878,12 +878,12 @@ func TestComputerMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFai
 		closeErr:  errors.New(rawCause),
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, rawSession)
-	sessions := NewComputerMountSessions()
+	mounts := NewMounts()
 	mounted := make(chan struct{})
 	client := &computerMaterializerTestClient{onReady: func() { close(mounted) }}
 	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
-		Sessions:    sessions,
+		Mounts:      mounts,
 		TempDir:     t.TempDir(),
 		Heartbeat:   time.Hour,
 		PollEvery:   time.Hour,
@@ -898,7 +898,7 @@ func TestComputerMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFai
 	case <-time.After(5 * time.Second):
 		t.Fatal("Computer Mount did not become ready")
 	}
-	if err := sessions.FailComputerInstanceSession(ctx, computerMount.ComputerInstanceID); err == nil ||
+	if err := mounts.RequestFailure(ctx, computerMount.ComputerInstanceID); err == nil ||
 		!strings.Contains(err.Error(), rawCause) {
 		t.Fatalf("failure request error = %v, want local cleanup cause", err)
 	}
@@ -1407,10 +1407,10 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	stopErr, reportErr := errors.New("VM stop unproved"), errors.New("failure acknowledgement lost")
 	raw := &computerMaterializerTestSession{streams: []io.ReadWriteCloser{conn}, operation: discardReadWriteCloser{}, closeErr: stopErr}
 	pool := computerPreparedRuntimePool(t, mount, raw)
-	sessions := NewComputerMountSessions()
+	mounts := NewMounts()
 	mounted := make(chan struct{})
 	client := &computerMaterializerTestClient{onReady: func() { close(mounted) }, failErrors: []error{reportErr}}
-	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Sessions: sessions, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Mounts: mounts, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
 	done := make(chan error, 1)
 	go func() { done <- materializer.RunComputerMount(ctx, mount, client) }()
 	select {
@@ -1418,11 +1418,11 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("mount not ready")
 	}
-	borrowed, err := sessions.OpenComputerInstanceSession(ctx, mount.ComputerInstanceID)
+	borrowed, err := mounts.OpenChannel(ctx, mount.ComputerInstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer borrowed.Session.Close(context.Background())
+	defer borrowed.Channel.Close(context.Background())
 	if err := borrowed.ReleaseSource(ctx); !errors.Is(err, stopErr) {
 		t.Fatalf("release: %v", err)
 	}
@@ -1521,7 +1521,7 @@ func TestCommandCompletionLeavesComputerServing(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()
 	physical := &computerMaterializerTestSession{operation: host}
-	managed := newManagedComputerMountSession(physical)
+	managed := newInstanceMount(physical)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	mount := workerapi.ComputerInstanceAssignment{OrgID: "org-1", ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 2, GuestdChannelToken: "token"}

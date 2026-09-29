@@ -38,7 +38,7 @@ type ProgramRunner struct {
 	ControlPlane     ControlPlane
 	ComputerCaptures *ComputerCaptureRuns
 	CAS              cas.Store
-	ComputerMounts   ComputerMountSessionRegistry
+	Mounts           MountRegistry
 	Log              *slog.Logger
 	TempDir          string
 }
@@ -62,7 +62,7 @@ func (r ProgramRunner) validate() error {
 	if r.ComputerCaptures == nil {
 		return errors.New("run lease task Computer capture registry is required")
 	}
-	if r.ComputerMounts == nil {
+	if r.Mounts == nil {
 		return errors.New("computer mount session registry is required")
 	}
 	return nil

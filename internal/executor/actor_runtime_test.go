@@ -249,7 +249,7 @@ func TestActorRuntimeRetryUsesRenewedAssignment(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
@@ -385,7 +385,7 @@ func runActorRuntimeContract(
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}

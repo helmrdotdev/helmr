@@ -103,7 +103,7 @@ func TestManagedMountSettlesSaveBeforePhysicalRelease(t *testing.T) {
 	if err := pending.Wait(t.Context()); err == nil {
 		t.Fatal("expected lost acknowledgement")
 	}
-	session := newManagedComputerMountSession(saveCutSession{fixture: f})
+	session := newInstanceMount(saveCutSession{fixture: f})
 	session.saves.pending = pending
 	session.saves.sequence = 1
 	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
@@ -122,7 +122,7 @@ func TestManagedMountReportsUnsettledSaveOnPhysicalRelease(t *testing.T) {
 	if err := pending.Wait(t.Context()); err == nil {
 		t.Fatal("expected capture failure")
 	}
-	session := newManagedComputerMountSession(saveCutSession{fixture: f})
+	session := newInstanceMount(saveCutSession{fixture: f})
 	session.saves.pending = pending
 	if err := session.ReleaseCheckpointSource(t.Context()); err == nil {
 		t.Fatal("unsettled save was not reported on physical release")
@@ -162,7 +162,7 @@ func TestManagedMountStopsAfterSaveSettlementDeadline(t *testing.T) {
 		close(f.joined)
 		return nil
 	}}
-	session := newManagedComputerMountSession(physical)
+	session := newInstanceMount(physical)
 	session.saves.pending = pending
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
@@ -179,7 +179,7 @@ func TestManagedMountStopsAfterSaveSettlementDeadline(t *testing.T) {
 
 func TestManagedMountRetriesPhysicalCloseJoinTimeout(t *testing.T) {
 	calls := 0
-	session := newManagedComputerMountSession(saveStopSession{stop: func(context.Context) error {
+	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
 		calls++
 		if calls == 1 {
 			return context.DeadlineExceeded

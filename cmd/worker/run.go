@@ -216,7 +216,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
-	computerMountSessions := executor.NewComputerMountSessions()
+	computerMounts := executor.NewMounts()
 	computerCaptures := &executor.ComputerCaptureRuns{}
 	preparedRuntimePool := executor.NewPreparedRuntimePool(runtimeBackend, store, runtimeCapacity.preparedPoolSize, log)
 	closePreparedRuntime := retryableWorkerCloser{close: preparedRuntimePool.Close}
@@ -258,7 +258,7 @@ func run(log *slog.Logger) error {
 		},
 		ComputerCaptures: computerCaptures,
 		CAS:              store,
-		ComputerMounts:   computerMountSessions,
+		Mounts:           computerMounts,
 		Log:              log,
 		TempDir:          filepath.Join(workDir, "tmp"),
 	})
@@ -271,7 +271,7 @@ func run(log *slog.Logger) error {
 		ComputerSaveEvery:     cfg.ComputerSaveEvery,
 		ComputerObjects:       store,
 		CAS:                   store,
-		Sessions:              computerMountSessions,
+		Mounts:                computerMounts,
 		TempDir:               filepath.Join(workDir, "tmp"),
 		ArtifactCacheDir:      artifactCacheDir,
 		ArtifactCacheMaxBytes: artifactCacheMaxBytes,

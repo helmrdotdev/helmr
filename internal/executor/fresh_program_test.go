@@ -33,12 +33,12 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	events := &testFreshProgramEventSink{}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	sessions := NewComputerMountSessions()
+	mounts := NewMounts()
 	mount := testComputerMount(claim.Lease)
 	mount.Target.BaseComputerDiskVersionID = "version-before-capture"
-	unregister := sessions.RegisterComputerMountSession(
+	unregister := mounts.Register(
 		mount,
-		newManagedComputerMountSession(fakeGuestSession{stream: host}),
+		newInstanceMount(fakeGuestSession{stream: host}),
 		"channel-1",
 	)
 	defer unregister()
@@ -52,7 +52,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		)
 	}()
 	program, err := (ProgramRunner{
-		ComputerMounts: sessions,
+		Mounts: mounts,
 	}).startNewProgram(
 		context.Background(),
 		&claim,
@@ -149,10 +149,10 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	sessions := NewComputerMountSessions()
-	unregister := sessions.RegisterComputerMountSession(
+	mounts := NewMounts()
+	unregister := mounts.Register(
 		testComputerMount(claim.Lease),
-		newManagedComputerMountSession(fakeGuestSession{stream: host}),
+		newInstanceMount(fakeGuestSession{stream: host}),
 		"channel-1",
 	)
 	defer unregister()
@@ -173,7 +173,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 		})
 	}()
 	_, err := (ProgramRunner{
-		ComputerMounts: sessions,
+		Mounts: mounts,
 	}).startNewProgram(
 		context.Background(),
 		&claim,
@@ -200,9 +200,9 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
-	sessions := NewComputerMountSessions()
-	unregister := sessions.RegisterComputerMountSession(
+	session := newInstanceMount(fakeGuestSession{stream: host})
+	mounts := NewMounts()
+	unregister := mounts.Register(
 		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
@@ -233,7 +233,7 @@ func TestStartFreshProgramFailsExactMountOnTypedStartFailure(t *testing.T) {
 		request.result <- nil
 	}()
 
-	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{Mounts: mounts}).startNewProgram(
 		context.Background(),
 		&claim,
 		controlPlane,
@@ -259,9 +259,9 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 	claim := testFreshProgramClaim(t)
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
-	sessions := NewComputerMountSessions()
-	unregister := sessions.RegisterComputerMountSession(
+	session := newInstanceMount(fakeGuestSession{stream: host})
+	mounts := NewMounts()
+	unregister := mounts.Register(
 		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
@@ -282,7 +282,7 @@ func TestStartFreshProgramRejectsNoncanonicalStartFailureDiagnosticWithoutFailin
 		})
 	}()
 
-	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{Mounts: mounts}).startNewProgram(
 		context.Background(),
 		&claim,
 		&testFreshProgramControlPlane{lease: claim.Lease},
@@ -302,9 +302,9 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 	claim := testFreshProgramClaim(t)
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
-	sessions := NewComputerMountSessions()
-	unregister := sessions.RegisterComputerMountSession(
+	session := newInstanceMount(fakeGuestSession{stream: host})
+	mounts := NewMounts()
+	unregister := mounts.Register(
 		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
@@ -322,7 +322,7 @@ func TestStartFreshProgramRejectsMismatchedStartFailureProofWithoutFailingMount(
 		})
 	}()
 
-	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{Mounts: mounts}).startNewProgram(
 		context.Background(),
 		&claim,
 		&testFreshProgramControlPlane{lease: claim.Lease},
@@ -343,16 +343,16 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	claim.Lease.StartDeadlineAt = time.Now().Add(50 * time.Millisecond).UTC()
 	guest, host := net.Pipe()
 	defer guest.Close()
-	sessions := NewComputerMountSessions()
-	unregister := sessions.RegisterComputerMountSession(
+	mounts := NewMounts()
+	unregister := mounts.Register(
 		testComputerMount(claim.Lease),
-		newManagedComputerMountSession(fakeGuestSession{stream: host}),
+		newInstanceMount(fakeGuestSession{stream: host}),
 		"channel-1",
 	)
 	defer unregister()
 	started := time.Now()
 	_, err := (ProgramRunner{
-		ComputerMounts: sessions,
+		Mounts: mounts,
 	}).startNewProgram(
 		context.Background(),
 		&claim,
@@ -442,7 +442,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 				}
 			}()
 			program := freshProgram{
-				session: fakeGuestSession{stream: host},
+				channel: fakeGuestSession{stream: host},
 				lease: workerapi.RunLeaseAssignment{
 					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
 				},
@@ -530,7 +530,7 @@ func TestFreshProgramDispatchesSessionSubmitForTaskAndActor(t *testing.T) {
 			}()
 			program := &freshProgram{
 				execution:  &programv0.SessionExecution{RunGeneration: 1},
-				session:    fakeGuestSession{stream: host},
+				channel:    fakeGuestSession{stream: host},
 				lease:      lease,
 				entrypoint: test.entrypoint,
 			}
@@ -585,7 +585,7 @@ func TestFreshProgramDispatchesTurnOutput(t *testing.T) {
 	}()
 	program := &freshProgram{
 		execution: &programv0.SessionExecution{RunGeneration: 1},
-		session:   fakeGuestSession{stream: host},
+		channel:   fakeGuestSession{stream: host},
 		lease:     lease,
 		entrypoint: &programv0.EntrypointIdentity{
 			Kind: &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}},
@@ -1040,9 +1040,9 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 	controlPlane := &testFreshProgramControlPlane{lease: claim.Lease}
 	guest, host := net.Pipe()
 	defer guest.Close()
-	session := newManagedComputerMountSession(fakeGuestSession{stream: host})
-	sessions := NewComputerMountSessions()
-	unregister := sessions.RegisterComputerMountSession(
+	session := newInstanceMount(fakeGuestSession{stream: host})
+	mounts := NewMounts()
+	unregister := mounts.Register(
 		testComputerMount(claim.Lease),
 		session,
 		"channel-1",
@@ -1073,7 +1073,7 @@ func TestStartFreshProgramSecretCollisionReachesCaller(t *testing.T) {
 		request.result <- nil
 	}()
 
-	_, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(
+	_, err := (ProgramRunner{Mounts: mounts}).startNewProgram(
 		context.Background(),
 		&claim,
 		controlPlane,
@@ -1102,20 +1102,20 @@ func TestFreshProgramWaitsForLocalMountRegistration(t *testing.T) {
 		events := &testFreshProgramEventSink{}
 		guest, host := net.Pipe()
 		defer guest.Close()
-		sessions := NewComputerMountSessions()
+		mounts := NewMounts()
 		mount := testComputerMount(claim.Lease)
 		guestResult := make(chan error, 1)
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			unregister := sessions.RegisterComputerMountSession(mount, newManagedComputerMountSession(fakeGuestSession{stream: host}), "channel-1")
+			unregister := mounts.Register(mount, newInstanceMount(fakeGuestSession{stream: host}), "channel-1")
 			defer unregister()
 			guestResult <- serveFreshProgramProtocol(guest, claim.Lease, mount, control)
 		}()
-		program, err := (ProgramRunner{ComputerMounts: sessions}).startNewProgram(t.Context(), &claim, control, events)
+		program, err := (ProgramRunner{Mounts: mounts}).startNewProgram(t.Context(), &claim, control, events)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer program.session.Close(context.Background())
+		defer program.channel.Close(context.Background())
 		outcome, _, err := program.awaitTaskCompletion(t.Context(), events, nil, nil, nil, nil)
 		if err != nil || outcome.GetSucceeded().GetOutputJson() != `{"ok":true}` {
 			t.Fatalf("completion=%v %v", outcome, err)
@@ -1137,7 +1137,7 @@ func TestFreshProgramMissingMountHonorsAdmissionDeadlineAndCancellation(t *testi
 				if cancelled {
 					go func() { time.Sleep(10 * time.Millisecond); cancel() }()
 				}
-				_, err := (ProgramRunner{ComputerMounts: NewComputerMountSessions()}).startNewProgram(ctx, &claim, &testFreshProgramControlPlane{lease: claim.Lease}, &testFreshProgramEventSink{})
+				_, err := (ProgramRunner{Mounts: NewMounts()}).startNewProgram(ctx, &claim, &testFreshProgramControlPlane{lease: claim.Lease}, &testFreshProgramEventSink{})
 				want := context.DeadlineExceeded
 				if cancelled {
 					want = context.Canceled

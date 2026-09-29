@@ -16,7 +16,7 @@ func TestPhysicalCloseReportsCleanupOnlyAfterSuccessfulClose(t *testing.T) {
 			if fail {
 				raw.closeErr = errors.New("physical exclusion not established")
 			}
-			session := newManagedComputerMountSession(raw)
+			session := newInstanceMount(raw)
 			client := &computerMaterializerTestClient{}
 			err := (ComputerMaterializer{}).stopControlledComputerMount(t.Context(), session, workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", RuntimeEpoch: 1, DesiredVersion: 2, ObservedVersion: 1}, client)
 			if fail {

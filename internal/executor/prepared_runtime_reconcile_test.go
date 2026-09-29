@@ -467,18 +467,18 @@ func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T)
 }
 
 func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
-	registry := NewComputerMountSessions()
-	unregister := registry.RegisterComputerMountSession(
+	registry := NewMounts()
+	unregister := registry.Register(
 		workerapi.ComputerInstanceAssignment{ComputerInstanceID: "unrelated-instance"},
-		newManagedComputerMountSession(&closeTrackingRuntimeSession{}),
+		newInstanceMount(&closeTrackingRuntimeSession{}),
 		"channel-token",
 	)
 	defer unregister()
-	borrowed, err := registry.OpenComputerInstanceSession(context.Background(), "unrelated-instance")
+	borrowed, err := registry.OpenChannel(context.Background(), "unrelated-instance")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer borrowed.Session.Close(context.Background())
+	defer borrowed.Channel.Close(context.Background())
 
 	pool := NewPreparedRuntimePool(&cleanupRuntimeBackend{}, unavailableRuntimeCAS{}, 1, nil)
 	client := &typedRuntimeClient{}
