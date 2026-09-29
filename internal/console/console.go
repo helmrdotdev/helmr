@@ -1,4 +1,4 @@
-//go:build !embed_console && !embed_web
+//go:build !embed_console
 
 package console
 
