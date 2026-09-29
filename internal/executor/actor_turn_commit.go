@@ -22,11 +22,11 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 		}
 		stopCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		var err error
-		if source, ok := task.program.session.(CheckpointSourceReleaser); ok {
-			err = source.ReleaseCheckpointSource(stopCtx)
-		} else {
-			err = task.program.session.Close(stopCtx)
+		// The borrowed Run stream cannot stop the machine; release the physical
+		// checkpoint source bound when the mount was opened.
+		err := errors.New("checkpoint source release is unavailable")
+		if task.program.releaseSource != nil {
+			err = task.program.releaseSource(stopCtx)
 		}
 		if err != nil {
 			retErr = errors.Join(retErr, &checkpointSourceReleaseError{err: err})

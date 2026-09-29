@@ -71,6 +71,7 @@ type freshProgram struct {
 	protocol         *programProtocol
 	execution        *programv0.SessionExecution
 	session          vm.Machine
+	releaseSource    func(context.Context) error
 	mount            workerapi.ComputerInstanceAssignment
 	lease            workerapi.RunLeaseAssignment
 	authority        *computerv0.ComputerRunAuthority
@@ -956,6 +957,7 @@ func (r ProgramRunner) startNewProgram(
 	retainAuthority = true
 	return freshProgram{
 		session:          opened.Session,
+		releaseSource:    opened.ReleaseSource,
 		execution:        execution,
 		mount:            opened.Mount,
 		lease:            state.lease,

@@ -229,7 +229,7 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
 		ComputerID: "computer-1", ComputerInstanceID: "runtime-1",
 		WriterGeneration: 4, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}, "channel-1")
+	}, newManagedComputerMountSession(&borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}), "channel-1")
 	authority := &computerv0.ComputerRunAuthority{
 		Fence: &computerv0.ComputerAuthorityFence{
 			ComputerInstanceId: "runtime-1", ComputerId: "computer-1", WriterGeneration: 4,

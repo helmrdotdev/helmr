@@ -76,13 +76,8 @@ type computerCheckpointer struct {
 }
 
 func (c *computerCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
-	var err error
-	if releaser, ok := c.session.(CheckpointSourceReleaser); ok {
-		err = releaser.ReleaseCheckpointSource(ctx)
-	} else {
-		err = c.session.Close(ctx)
-	}
-	if err != nil {
+	// The checkpoint source is released by closing the raw machine.
+	if err := c.session.Close(ctx); err != nil {
 		return err
 	}
 	return c.cleanupAfterSourceStopped()

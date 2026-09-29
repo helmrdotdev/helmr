@@ -38,7 +38,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	mount.Target.BaseComputerDiskVersionID = "version-before-capture"
 	unregister := sessions.RegisterComputerMountSession(
 		mount,
-		fakeGuestSession{stream: host},
+		newManagedComputerMountSession(fakeGuestSession{stream: host}),
 		"channel-1",
 	)
 	defer unregister()
@@ -152,7 +152,7 @@ func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	sessions := NewComputerMountSessions()
 	unregister := sessions.RegisterComputerMountSession(
 		testComputerMount(claim.Lease),
-		fakeGuestSession{stream: host},
+		newManagedComputerMountSession(fakeGuestSession{stream: host}),
 		"channel-1",
 	)
 	defer unregister()
@@ -346,7 +346,7 @@ func TestStartFreshProgramStopsBlockedAdmissionAtStartDeadline(t *testing.T) {
 	sessions := NewComputerMountSessions()
 	unregister := sessions.RegisterComputerMountSession(
 		testComputerMount(claim.Lease),
-		fakeGuestSession{stream: host},
+		newManagedComputerMountSession(fakeGuestSession{stream: host}),
 		"channel-1",
 	)
 	defer unregister()
@@ -1107,7 +1107,7 @@ func TestFreshProgramWaitsForLocalMountRegistration(t *testing.T) {
 		guestResult := make(chan error, 1)
 		go func() {
 			time.Sleep(10 * time.Millisecond)
-			unregister := sessions.RegisterComputerMountSession(mount, fakeGuestSession{stream: host}, "channel-1")
+			unregister := sessions.RegisterComputerMountSession(mount, newManagedComputerMountSession(fakeGuestSession{stream: host}), "channel-1")
 			defer unregister()
 			guestResult <- serveFreshProgramProtocol(guest, claim.Lease, mount, control)
 		}()

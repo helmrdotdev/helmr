@@ -15,22 +15,21 @@ import (
 
 var ErrComputerMountSessionNotFound = errors.New("computer mount session not found")
 
-type CheckpointSourceReleaser interface {
-	// ReleaseCheckpointSource releases the backing VM/computer mount session after the
-	// checkpoint control stream has already been detached by the checkpointer.
-	ReleaseCheckpointSource(context.Context) error
-}
-
 type ComputerMountSessionRegistry interface {
-	RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session vm.Machine, channelToken string) func()
+	RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session *managedComputerMountSession, channelToken string) func()
 	OpenComputerInstanceSession(context.Context, string) (ComputerMountSession, error)
 	FailComputerInstanceSession(context.Context, string) error
 	RenewComputerAuthority(context.Context, *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error)
 }
 
+// ComputerMountSession is one Run's view of a mounted Computer. Session carries
+// only the Run's borrowed stream; closing it never stops the machine.
+// ReleaseSource is bound to the physical mount and releases it as a checkpoint
+// source after the Run's control stream has detached.
 type ComputerMountSession struct {
 	Session        vm.Machine
 	ControlSession vm.Machine
+	ReleaseSource  func(context.Context) error
 	ChannelToken   string
 	Mount          workerapi.ComputerInstanceAssignment
 }
@@ -45,7 +44,7 @@ type ComputerMountSessions struct {
 }
 
 type computerMountSessionEntry struct {
-	session      vm.Machine
+	session      *managedComputerMountSession
 	channelToken string
 	mount        workerapi.ComputerInstanceAssignment
 }
@@ -54,7 +53,7 @@ func NewComputerMountSessions() *ComputerMountSessions {
 	return &ComputerMountSessions{sessions: map[string]computerMountSessionEntry{}}
 }
 
-func (s *ComputerMountSessions) RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session vm.Machine, channelToken string) func() {
+func (s *ComputerMountSessions) RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session *managedComputerMountSession, channelToken string) func() {
 	id := strings.TrimSpace(mount.ComputerInstanceID)
 	if id == "" || session == nil {
 		return func() {}
@@ -95,6 +94,7 @@ func (s *ComputerMountSessions) OpenComputerInstanceSession(ctx context.Context,
 	return ComputerMountSession{
 		Session:        newBorrowedRunSession(entry.session, stream),
 		ControlSession: entry.session,
+		ReleaseSource:  entry.session.ReleaseCheckpointSource,
 		ChannelToken:   entry.channelToken,
 		Mount:          entry.mount,
 	}, nil
@@ -111,11 +111,10 @@ func (s *ComputerMountSessions) FailComputerInstanceSession(
 	s.mu.RLock()
 	entry := s.sessions[id]
 	s.mu.RUnlock()
-	managed, ok := entry.session.(*managedComputerMountSession)
-	if !ok || managed == nil {
+	if entry.session == nil {
 		return fmt.Errorf("%w: %s", ErrComputerMountSessionNotFound, id)
 	}
-	return managed.requestFailure(ctx)
+	return entry.session.requestFailure(ctx)
 }
 
 func (s *ComputerMountSessions) RenewComputerAuthority(ctx context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
@@ -244,18 +243,6 @@ func (s *managedComputerMountSession) close(ctx context.Context) error {
 	return err
 }
 
-func (s *managedComputerMountSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
-	if err := s.saves.Quiesce(ctx); err != nil {
-		return vm.SnapshotArtifact{}, err
-	}
-
-	checkpointable, ok := s.session.(vm.CheckpointableMachine)
-	if !ok {
-		return vm.SnapshotArtifact{}, errors.New("computer mount session does not support checkpoint snapshots")
-	}
-	return checkpointable.CreateSnapshot(ctx, request)
-}
-
 func (s *managedComputerMountSession) ReleaseCheckpointSource(ctx context.Context) error {
 	s.mu.Lock()
 	if s.releaseForCheckpointStarted {
@@ -306,6 +293,9 @@ func (s *managedComputerMountSession) CheckpointReleaseResult(ctx context.Contex
 	return true, err
 }
 
+// borrowedRunSession is a Run's stream on a mounted Computer. It exposes only
+// that stream and the mount's lifetime; checkpoint and save operations belong to
+// the physical mount owner.
 type borrowedRunSession struct {
 	parent vm.Machine
 	stream vm.Stream
@@ -333,6 +323,7 @@ func (s *borrowedRunSession) Wait(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// Close closes only the borrowed stream. The mounted machine stays running.
 func (s *borrowedRunSession) Close(context.Context) error {
 	s.once.Do(func() {
 		if s.stream != nil {
@@ -340,71 +331,6 @@ func (s *borrowedRunSession) Close(context.Context) error {
 		}
 	})
 	return s.err
-}
-
-func (s *borrowedRunSession) ReleaseCheckpointSource(ctx context.Context) error {
-	if releaser, ok := s.parent.(CheckpointSourceReleaser); ok {
-		return releaser.ReleaseCheckpointSource(ctx)
-	}
-	return s.parent.Close(ctx)
-}
-
-func (s *borrowedRunSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
-	checkpointable, ok := s.parent.(vm.CheckpointableMachine)
-	if !ok {
-		return vm.SnapshotArtifact{}, errors.New("computer mount session does not support checkpoint snapshots")
-	}
-	artifact, err := checkpointable.CreateSnapshot(ctx, request)
-	if err != nil {
-		return vm.SnapshotArtifact{}, err
-	}
-	return artifact, nil
-}
-
-func (s *managedComputerMountSession) SnapshotLimits() (vm.SnapshotLimits, error) {
-	c, ok := s.session.(vm.CheckpointableMachine)
-	if !ok {
-		return vm.SnapshotLimits{}, errors.New("session does not support checkpoints")
-	}
-	return c.SnapshotLimits()
-}
-
-func (s *borrowedRunSession) SnapshotLimits() (vm.SnapshotLimits, error) {
-	c, ok := s.parent.(vm.CheckpointableMachine)
-	if !ok {
-		return vm.SnapshotLimits{}, errors.New("session does not support checkpoints")
-	}
-	return c.SnapshotLimits()
-}
-
-func (s *managedComputerMountSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
-	if err := s.saves.Quiesce(ctx); err != nil {
-		return nil, err
-	}
-
-	capture, ok := s.session.(vm.ComputerCaptureMachine)
-	if !ok {
-		return nil, errors.New("mounted session cannot capture a Computer")
-	}
-	return capture.PauseComputer(ctx)
-}
-func (s *borrowedRunSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot, error) {
-	capture, ok := s.parent.(vm.ComputerCaptureMachine)
-	if !ok {
-		return nil, errors.New("mounted session cannot capture a Computer")
-	}
-	return capture.PauseComputer(ctx)
-}
-
-func (s *managedComputerMountSession) QuiesceComputerSaves(ctx context.Context) error {
-	return s.saves.Quiesce(ctx)
-}
-func (s *borrowedRunSession) QuiesceComputerSaves(ctx context.Context) error {
-	owner, ok := s.parent.(interface{ QuiesceComputerSaves(context.Context) error })
-	if !ok {
-		return errors.New("physical mount save owner is missing")
-	}
-	return owner.QuiesceComputerSaves(ctx)
 }
 
 type computerSessionClose struct {

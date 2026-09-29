@@ -470,7 +470,7 @@ func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 	registry := NewComputerMountSessions()
 	unregister := registry.RegisterComputerMountSession(
 		workerapi.ComputerInstanceAssignment{ComputerInstanceID: "unrelated-instance"},
-		&closeTrackingRuntimeSession{},
+		newManagedComputerMountSession(&closeTrackingRuntimeSession{}),
 		"channel-token",
 	)
 	defer unregister()

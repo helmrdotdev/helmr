@@ -96,23 +96,44 @@ func waitForTestError(t *testing.T, result <-chan error, name string) error {
 	}
 }
 
-func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentComputerMount(t *testing.T) {
-	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
+func TestBorrowedRunSessionCloseLeavesMountedMachineRunning(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
-	session := newBorrowedRunSession(parent, testVMStream(runStream))
-
-	checkpointable, ok := session.(vm.CheckpointableMachine)
-	if !ok {
-		t.Fatal("borrowed run session is not checkpointable")
-	}
-	if _, err := checkpointable.CreateSnapshot(context.Background(), vm.SnapshotRequest{ID: "checkpoint"}); err != nil {
+	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: runStream}
+	registry := NewComputerMountSessions()
+	unregister := registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newManagedComputerMountSession(parent), "channel-1")
+	defer unregister()
+	opened, err := registry.OpenComputerInstanceSession(context.Background(), "runtime-1")
+	if err != nil {
 		t.Fatal(err)
 	}
-	releaser, ok := session.(CheckpointSourceReleaser)
-	if !ok {
-		t.Fatal("borrowed run session cannot release checkpoint source")
+	if _, ok := opened.Session.(vm.CheckpointableMachine); ok {
+		t.Fatal("borrowed run session advertises checkpoint capture")
 	}
-	if err := releaser.ReleaseCheckpointSource(context.Background()); err != nil {
+	for range 2 {
+		if err := opened.Session.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if parent.closeCount != 0 {
+		t.Fatalf("parent close count = %d, want 0", parent.closeCount)
+	}
+	if runStream.closeCount != 1 {
+		t.Fatalf("run stream close count = %d, want 1", runStream.closeCount)
+	}
+}
+
+func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *testing.T) {
+	runStream := &countingReadWriteCloser{}
+	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: runStream}
+	managed := newManagedComputerMountSession(parent)
+	registry := NewComputerMountSessions()
+	unregister := registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
+	defer unregister()
+	opened, err := registry.OpenComputerInstanceSession(context.Background(), "runtime-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.ReleaseSource(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if parent.closeCount != 1 {
@@ -120,6 +141,9 @@ func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentComputerMount(t *t
 	}
 	if runStream.closeCount != 0 {
 		t.Fatalf("run stream close count = %d, want 0", runStream.closeCount)
+	}
+	if released, err := managed.CheckpointReleaseResult(context.Background()); !released || err != nil {
+		t.Fatalf("checkpoint release result = %t, %v", released, err)
 	}
 }
 
@@ -135,7 +159,7 @@ func TestRenewComputerAuthorityUsesMountedSession(t *testing.T) {
 		ComputerInstanceID: "runtime-1",
 		WriterGeneration:   3,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, parent, "channel-1")
+	}, newManagedComputerMountSession(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
@@ -203,7 +227,7 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 		ComputerInstanceID: "runtime-1",
 		WriterGeneration:   4,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, parent, "channel-1")
+	}, newManagedComputerMountSession(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
@@ -249,8 +273,6 @@ type borrowedParentSession struct {
 	artifact   vm.SnapshotArtifact
 	closeCount int
 }
-
-func (s *borrowedParentSession) QuiesceComputerSaves(context.Context) error { return nil }
 
 func (s *borrowedParentSession) Stream() vm.Stream {
 	return testVMStream(s.stream)
@@ -339,7 +361,7 @@ func TestRenewComputerAuthorityRejectsDifferentPhysicalWriterBeforeOpeningStream
 		registry := NewComputerMountSessions()
 		registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
 			ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 3,
-		}, parent, "channel-1")
+		}, newManagedComputerMountSession(parent), "channel-1")
 		_, err := registry.RenewComputerAuthority(t.Context(), &computerv0.RenewComputerAuthorityRequest{
 			Previous: &computerv0.ComputerRunAuthority{ChannelToken: "channel-1", Fence: &computerv0.ComputerAuthorityFence{
 				ComputerId: "computer-1", ComputerInstanceId: "instance-1", WriterGeneration: generation,

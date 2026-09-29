@@ -696,7 +696,7 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 					_, pending := newSaveHostFixture(t, "capture")
 					closeFailure = pending.Wait(context.Background())
 					sessions.mu.RLock()
-					managed := sessions.sessions[computerMount.ComputerInstanceID].session.(*managedComputerMountSession)
+					managed := sessions.sessions[computerMount.ComputerInstanceID].session
 					sessions.mu.RUnlock()
 					managed.saves.mu.Lock()
 					managed.saves.pending = pending
@@ -1423,7 +1423,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer borrowed.Session.Close(context.Background())
-	if err := borrowed.Session.(CheckpointSourceReleaser).ReleaseCheckpointSource(ctx); !errors.Is(err, stopErr) {
+	if err := borrowed.ReleaseSource(ctx); !errors.Is(err, stopErr) {
 		t.Fatalf("release: %v", err)
 	}
 	select {
