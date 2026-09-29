@@ -100,7 +100,7 @@ type turnReleaseSession struct {
 	releaseErr error
 }
 
-func (s *turnReleaseSession) ReleaseCheckpointSource(context.Context) error {
+func (s *turnReleaseSession) release(context.Context) error {
 	s.releases++
 	_ = s.stream.Close()
 	return s.releaseErr
@@ -119,7 +119,7 @@ func TestTurnSettlementFailureStopsComputer(t *testing.T) {
 				cp.commitErr = commitErr
 			}
 			session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: host}, releaseErr: releaseErr}
-			task := &guestRunLeaseTask{program: freshProgram{session: session, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+			task := &guestRunLeaseTask{program: freshProgram{session: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 			err := task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
 			var stopErr *checkpointSourceReleaseError
 			if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || session.releases != 1 {
@@ -129,6 +129,47 @@ func TestTurnSettlementFailureStopsComputer(t *testing.T) {
 				t.Fatalf("lost commit cause: %v", err)
 			}
 		})
+	}
+}
+
+type turnReleaseMachine struct {
+	fakeGuestSession
+	closes   int
+	closeErr error
+}
+
+func (s *turnReleaseMachine) Close(context.Context) error {
+	s.closes++
+	return s.closeErr
+}
+
+func TestTurnSettlementFailureReleasesMountedComputerThroughBoundSource(t *testing.T) {
+	claim := testFreshProgramClaim(t)
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	commitErr, releaseErr := &httpclient.Error{StatusCode: http.StatusConflict}, errors.New("physical stop failed")
+	machine := &turnReleaseMachine{fakeGuestSession: fakeGuestSession{stream: host}, closeErr: releaseErr}
+	managed := newManagedComputerMountSession(machine)
+	registry := NewComputerMountSessions()
+	unregister := registry.RegisterComputerMountSession(testComputerMount(claim.Lease), managed, "channel-1")
+	defer unregister()
+	opened, err := registry.OpenComputerInstanceSession(t.Context(), claim.Lease.ComputerInstanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}, commitErr: commitErr}
+	task := &guestRunLeaseTask{program: freshProgram{session: opened.Session, releaseSource: opened.ReleaseSource, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
+	var stopErr *checkpointSourceReleaseError
+	if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || !errors.Is(err, commitErr) {
+		t.Fatalf("err=%v", err)
+	}
+	if machine.closes != 1 {
+		t.Fatalf("physical closes = %d, want 1", machine.closes)
+	}
+	if released, err := managed.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, releaseErr) {
+		t.Fatalf("checkpoint release result = %t, %v", released, err)
 	}
 }
 
@@ -150,7 +191,7 @@ func TestTurnSettlementCancellationUnblocksDecisionAndStopsComputer(t *testing.T
 	stream := &turnBlockedWrite{ReadWriteCloser: host, started: make(chan struct{})}
 	session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: stream}}
 	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}}
-	task := &guestRunLeaseTask{program: freshProgram{session: session, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+	task := &guestRunLeaseTask{program: freshProgram{session: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)

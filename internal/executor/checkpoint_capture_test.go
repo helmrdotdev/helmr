@@ -39,7 +39,7 @@ func newCaptureTest(t *testing.T) (computerCheckpointer, ComputerCheckpointReque
 	stream := checkpointFreezeStream(t, target)
 	session := &checkpointSession{stream: stream, artifact: checkpointArtifact(t)}
 	store := &captureStore{}
-	c := computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
+	c := computerCheckpointer{publication: testCheckpointPublication, session: session, releaseSource: session.Close, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}
 	request := ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }}
 	return c, request, session, store
 }

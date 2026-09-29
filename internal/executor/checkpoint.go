@@ -70,19 +70,19 @@ type computerCheckpointer struct {
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
 	session        vm.CheckpointableMachine
-	encryptor      *checkpoint.Encryptor
-	tempDir        string
-	computer       workerapi.CheckpointComputerBase
+	// releaseSource stops the physical checkpoint source. It is bound where the
+	// checkpointer is constructed, from the machine that owns the source.
+	releaseSource func(context.Context) error
+	encryptor     *checkpoint.Encryptor
+	tempDir       string
+	computer      workerapi.CheckpointComputerBase
 }
 
 func (c *computerCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
-	var err error
-	if releaser, ok := c.session.(CheckpointSourceReleaser); ok {
-		err = releaser.ReleaseCheckpointSource(ctx)
-	} else {
-		err = c.session.Close(ctx)
+	if c.releaseSource == nil {
+		return errors.New("checkpoint source release is unavailable")
 	}
-	if err != nil {
+	if err := c.releaseSource(ctx); err != nil {
 		return err
 	}
 	return c.cleanupAfterSourceStopped()

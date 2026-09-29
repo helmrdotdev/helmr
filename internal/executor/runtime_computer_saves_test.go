@@ -8,7 +8,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -95,13 +94,11 @@ type saveCutSession struct {
 	fixture *saveHostFixture
 }
 
-func (s saveCutSession) SnapshotLimits() (vm.SnapshotLimits, error) { return vm.SnapshotLimits{}, nil }
-func (s saveCutSession) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {
-	_ = s.fixture.step("terminal-cut")
-	return &vm.ComputerSnapshot{}, nil
+func (s saveCutSession) Close(context.Context) error {
+	return s.fixture.step("physical-close")
 }
 
-func TestManagedMountSettlesSaveBeforeTerminalCut(t *testing.T) {
+func TestManagedMountSettlesSaveBeforePhysicalRelease(t *testing.T) {
 	f, pending := newSaveHostFixture(t, "ack")
 	if err := pending.Wait(t.Context()); err == nil {
 		t.Fatal("expected lost acknowledgement")
@@ -109,32 +106,37 @@ func TestManagedMountSettlesSaveBeforeTerminalCut(t *testing.T) {
 	session := newManagedComputerMountSession(saveCutSession{fixture: f})
 	session.saves.pending = pending
 	session.saves.sequence = 1
-	borrowed := &borrowedRunSession{parent: session}
-	if _, err := borrowed.PauseComputer(t.Context()); err != nil {
+	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	n := len(f.steps)
-	if n < 2 || f.steps[n-2] != "release" || f.steps[n-1] != "terminal-cut" {
-		t.Fatalf("cut before settlement: %v", f.steps)
+	if n < 2 || f.steps[n-2] != "release" || f.steps[n-1] != "physical-close" {
+		t.Fatalf("physical release before settlement: %v", f.steps)
 	}
 }
 
-func TestManagedMountRefusesCutWhenSaveCannotSettle(t *testing.T) {
+func TestManagedMountReportsUnsettledSaveOnPhysicalRelease(t *testing.T) {
 	f, pending := newSaveHostFixture(t, "capture")
 	if err := pending.Wait(t.Context()); err == nil {
 		t.Fatal("expected capture failure")
 	}
 	session := newManagedComputerMountSession(saveCutSession{fixture: f})
 	session.saves.pending = pending
-	if _, err := session.PauseComputer(t.Context()); err == nil {
-		t.Fatal("cut despite uncertain source")
+	if err := session.ReleaseCheckpointSource(t.Context()); err == nil {
+		t.Fatal("released despite uncertain save")
 	}
+	closes := 0
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, step := range f.steps {
-		if step == "terminal-cut" {
-			t.Fatal("called physical cut")
+		if step == "physical-close" {
+			closes++
 		}
+	}
+	if closes != 1 {
+		t.Fatalf("physical closes = %d, want 1", closes)
 	}
 }
 

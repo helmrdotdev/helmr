@@ -160,11 +160,8 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 		return result, err
 	}
 	started := time.Now()
-	if owner, ok := c.session.(interface{ QuiesceComputerSaves(context.Context) error }); ok {
-		if err := owner.QuiesceComputerSaves(ctx); err != nil {
-			return result, err
-		}
-	}
+	// Capture intentionally does not quiesce Computer saves here; whether it
+	// must is a separate correctness question for the physical capture owner.
 	point, err := freezeComputerOnSession(ctx, c.session, request.Target)
 	if err != nil {
 		return result, err

@@ -296,3 +296,36 @@ func TestComputerCheckpointPoolRecoversUncertainReadyReceipt(t *testing.T) {
 		t.Fatal("fresh desired state did not reconcile excluded source")
 	}
 }
+
+type captureSourceWithMountOperations struct {
+	*checkpointSession
+	releases, quiesces int
+}
+
+func (s *captureSourceWithMountOperations) ReleaseCheckpointSource(context.Context) error {
+	s.releases++
+	return nil
+}
+
+func (s *captureSourceWithMountOperations) QuiesceComputerSaves(context.Context) error {
+	s.quiesces++
+	return nil
+}
+
+func TestComputerCheckpointPoolReleasesSourceThroughMachineClose(t *testing.T) {
+	target := checkpointCaptureTarget(0)
+	raw := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
+	session := &captureSourceWithMountOperations{checkpointSession: raw}
+	client := &checkpointReconcileClient{target: target}
+	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
+	p := &PreparedRuntimePool{ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
+	if err := p.captureRuntimeTarget(t.Context(), client, target); err != nil {
+		t.Fatal(err)
+	}
+	if raw.closeCount != 1 || session.releases != 0 || session.quiesces != 0 {
+		t.Fatalf("machine closes=%d mount releases=%d save quiesces=%d", raw.closeCount, session.releases, session.quiesces)
+	}
+	if client.ready != 1 || client.closed != 1 {
+		t.Fatalf("ready=%d closed=%d", client.ready, client.closed)
+	}
+}

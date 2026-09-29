@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"io"
 	"net"
@@ -18,7 +17,7 @@ type saveFailureRegistry struct {
 	t *testing.T
 }
 
-func (r saveFailureRegistry) RegisterComputerMountSession(m workerapi.ComputerInstanceAssignment, s vm.Machine, _ string) func() {
+func (r saveFailureRegistry) RegisterComputerMountSession(m workerapi.ComputerInstanceAssignment, s *managedComputerMountSession, _ string) func() {
 	return func() {}
 }
 func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
