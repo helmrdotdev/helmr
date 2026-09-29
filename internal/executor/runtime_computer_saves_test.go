@@ -125,7 +125,7 @@ func TestManagedMountReportsUnsettledSaveOnPhysicalRelease(t *testing.T) {
 	session := newManagedComputerMountSession(saveCutSession{fixture: f})
 	session.saves.pending = pending
 	if err := session.ReleaseCheckpointSource(t.Context()); err == nil {
-		t.Fatal("released despite uncertain save")
+		t.Fatal("unsettled save was not reported on physical release")
 	}
 	closes := 0
 	f.mu.Lock()

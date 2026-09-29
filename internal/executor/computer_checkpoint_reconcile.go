@@ -65,7 +65,7 @@ func (p *PreparedRuntimePool) captureRuntimeTarget(ctx context.Context, instance
 	if !ok {
 		return errors.New("Computer capture source cannot produce a checkpoint")
 	}
-	checkpointer := computerCheckpointer{session: session, releaseSource: session.Close, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(ComputerCheckpointRequest) disk.ContinuationPublication {
+	checkpointer := computerCheckpointer{session: session, reservations: p.Reservations, objects: p.ComputerObjects, encryptor: p.CheckpointEncryptor, tempDir: p.TempDir, computer: workerapi.CheckpointComputerBase{MountPath: "/workspace"}, publication: func(ComputerCheckpointRequest) disk.ContinuationPublication {
 		return checkpointComputerPublisher{client: p.Checkpoints, objects: p.ComputerObjects, request: workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: target.ID, WorkerEpoch: target.WorkerEpoch, DesiredVersion: target.DesiredVersion, CheckpointID: target.Capture.CheckpointID}}
 	}}
 	retainCleanup := func() {
