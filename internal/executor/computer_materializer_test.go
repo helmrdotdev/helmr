@@ -254,11 +254,11 @@ func TestComputerMaterializerChecksOutPreparedRuntime(t *testing.T) {
 		RuntimePool: pool,
 	}
 
-	session, computerInstanceID, err := materializer.materializeSession(context.Background(), &computerMount)
+	checkout, computerInstanceID, err := materializer.materializeSession(context.Background(), &computerMount)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if session != wantSession {
+	if session := checkout.Machine(); session != wantSession {
 		t.Fatalf("session = %T %p, want %T %p", session, session, wantSession, wantSession)
 	}
 	if computerInstanceID != computerMount.ComputerInstanceID {
@@ -273,7 +273,7 @@ func TestComputerMaterializerChecksOutPreparedRuntime(t *testing.T) {
 	if len(store.getCalls) != 0 {
 		t.Fatalf("prepared computer unexpectedly read CAS: %+v", store.getCalls)
 	}
-	if err := pool.ReleaseCheckout(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch); err != nil {
+	if err := checkout.Release(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -377,17 +377,17 @@ func TestComputerMaterializerPreparedComputerSkipsComputerCAS(t *testing.T) {
 		RuntimePool: pool,
 	}
 
-	gotSession, _, err := materializer.materializeSession(context.Background(), &mount)
+	checkout, _, err := materializer.materializeSession(context.Background(), &mount)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotSession != session {
+	if gotSession := checkout.Machine(); gotSession != session {
 		t.Fatalf("session = %v, want prepared session", gotSession)
 	}
 	if got := store.getCalls[mount.ComputerImage.Digest]; got != 0 {
 		t.Fatalf("computer image CAS gets = %d, want 0", got)
 	}
-	if err := pool.ReleaseCheckout(mount.ComputerInstanceID, mount.RuntimeEpoch); err != nil {
+	if err := checkout.Release(); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1484,7 +1484,7 @@ func TestPreparedComputerCheckoutRejectsChangedIdentityWithoutConsuming(t *testi
 			t.Fatal("changed Computer source accepted")
 		}
 	}
-	if got, _, ok := pool.Checkout(t.Context(), mount); !ok || got != session {
+	if got, _, ok := pool.Checkout(t.Context(), mount); !ok || got.Machine() != session {
 		t.Fatal("valid source was consumed by mismatch")
 	}
 }
@@ -1544,7 +1544,7 @@ func TestCommandCompletionLeavesComputerServing(t *testing.T) {
 	client.afterCompletion = func() { continued = true; cancel() }
 	m := ComputerMaterializer{PollEvery: time.Millisecond}
 	renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour)
-	err := m.serveComputerMount(ctx, renewal, managed, mount, client, nil)
+	err := m.serveComputerMount(ctx, renewal, managed, nil, mount, client, nil)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("serve exit=%v", err)
 	}

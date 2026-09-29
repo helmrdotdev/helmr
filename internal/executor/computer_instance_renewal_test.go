@@ -56,7 +56,7 @@ func TestInstanceCloseObservationStopsPhysicalSession(t *testing.T) {
 	request := workerapi.ComputerInstanceRenewRequest{EnvironmentID: "environment", ComputerInstanceID: "instance", WriterGeneration: 3}
 	renewal := m.startRenewalLoop(ctx, request, client, time.Millisecond)
 	raw := &computerMaterializerTestSession{exit: make(chan error)}
-	err := m.serveComputerMount(ctx, renewal, newInstanceMount(raw), workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 3, RuntimeEpoch: 7}, client, nil)
+	err := m.serveComputerMount(ctx, renewal, newInstanceMount(raw), nil, workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 3, RuntimeEpoch: 7}, client, nil)
 	if err != nil || raw.closeCount() != 1 || client.stops != 1 {
 		t.Fatalf("err=%v close=%d stops=%d", err, raw.closeCount(), client.stops)
 	}

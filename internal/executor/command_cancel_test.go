@@ -120,7 +120,7 @@ func TestCommandCancellationDrainsOutputBeforeCompletion(t *testing.T) {
 			client := &cancellationClient{command: command, grant: workerapi.ComputerCommandCancellation{CommandID: command.CommandID, ComputerID: command.ComputerID, ComputerInstanceID: command.ComputerInstanceID, WriterGeneration: command.WriterGeneration, RequestFingerprint: command.RequestFingerprint, ExpiresAt: command.ExpiresAt}, attached: mode == "attached", launchRead: session.launchRead, finish: cancel}
 			m := ComputerMaterializer{PollEvery: time.Millisecond, ClaimErrorBackoff: time.Millisecond}
 			renewal := m.startRenewalLoop(ctx, workerapi.ComputerInstanceRenewRequest{}, client, time.Hour)
-			err := m.serveComputerMount(ctx, renewal, newInstanceMount(session), mount, client, nil)
+			err := m.serveComputerMount(ctx, renewal, newInstanceMount(session), nil, mount, client, nil)
 			session.handlers.Wait()
 			if !errors.Is(err, context.Canceled) {
 				t.Fatal(err)

@@ -93,7 +93,6 @@ type PreparedRuntimePool struct {
 	entries           map[string][]preparedRuntimeEntry
 	filling           map[string]int
 	checkedOut        map[preparedRuntimeRef]struct{}
-	checkedOutRestore map[preparedRuntimeRef]string
 	ctx               context.Context
 	cancel            context.CancelFunc
 	activity          int
@@ -175,21 +174,22 @@ func (s *preparedRuntimeSignal) finished() (error, bool) {
 func NewPreparedRuntimePool(backend vm.Backend, store cas.Store, size int, log *slog.Logger) *PreparedRuntimePool {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PreparedRuntimePool{
-		Backend:           backend,
-		CAS:               store,
-		Size:              size,
-		Log:               log,
-		entries:           map[string][]preparedRuntimeEntry{},
-		filling:           map[string]int{},
-		checkedOut:        map[preparedRuntimeRef]struct{}{},
-		checkedOutRestore: map[preparedRuntimeRef]string{},
-		ctx:               ctx,
-		cancel:            cancel,
-		activityWake:      make(chan struct{}),
+		Backend:      backend,
+		CAS:          store,
+		Size:         size,
+		Log:          log,
+		entries:      map[string][]preparedRuntimeEntry{},
+		filling:      map[string]int{},
+		checkedOut:   map[preparedRuntimeRef]struct{}{},
+		ctx:          ctx,
+		cancel:       cancel,
+		activityWake: make(chan struct{}),
 	}
 }
 
-func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount workerapi.ComputerInstanceAssignment) (vm.Machine, string, bool) {
+// Checkout claims the prepared runtime reserved for mount. On success the
+// caller holds the returned checkout and must end it with Release or Relinquish.
+func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount workerapi.ComputerInstanceAssignment) (*runtimeCheckout, string, bool) {
 	if p == nil || p.Size <= 0 {
 		return nil, "", false
 	}
@@ -280,19 +280,23 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount workerapi.Comp
 		return nil, key, false
 	}
 	p.removeReadyEntryAtLocked(key, entries, index)
-	p.markRuntimeCheckedOutLocked(computerInstanceID, mount.RuntimeEpoch)
+	ref := preparedRuntimeRef{id: computerInstanceID, epoch: mount.RuntimeEpoch}
+	p.markRuntimeCheckedOutLocked(ref.id, ref.epoch)
 	if p.checkedOutEntries == nil {
 		p.checkedOutEntries = map[preparedRuntimeRef]preparedRuntimeEntry{}
 	}
-	p.checkedOutEntries[preparedRuntimeRef{id: computerInstanceID, epoch: mount.RuntimeEpoch}] = entry
+	p.checkedOutEntries[ref] = entry
+	checkout := &runtimeCheckout{
+		pool: p, ref: ref, machine: entry.session,
+		writerGeneration: entry.target.Source.WriterGeneration,
+	}
 	if entry.target.Source.Restore != nil {
-		p.checkedOutRestore[preparedRuntimeRef{id: computerInstanceID, epoch: mount.RuntimeEpoch}] =
-			strings.TrimSpace(entry.target.Source.Restore.CheckpointID)
+		checkout.restoreCheckpointID = strings.TrimSpace(entry.target.Source.Restore.CheckpointID)
 	}
 	available := p.readyCountLocked()
 	p.mu.Unlock()
 	p.logInfo("prepared runtime pool hit", "computer_instance_id", computerInstanceID, "available", available)
-	return entry.session, key, true
+	return checkout, key, true
 }
 
 func (p *PreparedRuntimePool) ReconcileDesiredRuntimes(ctx context.Context, client RuntimeReconcileClient) error {
@@ -1201,50 +1205,72 @@ func (p *PreparedRuntimePool) runtimeCheckedOut(computerInstanceID string, runti
 	return ok
 }
 
-func (p *PreparedRuntimePool) checkedOutWriterGeneration(instanceID string, epoch int64) int64 {
-	if p == nil {
-		return 0
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.checkedOutEntries[preparedRuntimeRef{id: instanceID, epoch: epoch}].target.Source.WriterGeneration
+// runtimeCheckout is a Computer materializer's exclusive claim on a prepared
+// runtime taken from the pool. While the claim is held, runtime reconciliation
+// (StopRuntimeTarget) leaves the runtime to its holder. The holder closes the
+// machine and then ends the claim with Release when the close succeeded, or with
+// Relinquish when it failed. The writer generation and restore provenance are
+// those the runtime was prepared with.
+type runtimeCheckout struct {
+	pool                *PreparedRuntimePool
+	ref                 preparedRuntimeRef
+	machine             vm.Machine
+	writerGeneration    int64
+	restoreCheckpointID string
 }
 
-func (p *PreparedRuntimePool) checkedOutRestoreCheckpoint(computerInstanceID string, runtimeEpoch int64) string {
-	if p == nil {
-		return ""
+// Machine returns the checked-out runtime's machine.
+func (c *runtimeCheckout) Machine() vm.Machine {
+	if c == nil {
+		return nil
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.checkedOutRestore[preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}]
+	return c.machine
 }
 
-// relinquishCheckout hands an exited materializer back to reconciliation without
-// releasing capacity or device ownership before physical cleanup is proved.
-func (p *PreparedRuntimePool) relinquishCheckout(computerInstanceID string, runtimeEpoch int64) {
+// Release returns the runtime's capacity reservations, preparation directories
+// and Computer device after its machine has been closed. The claim ends even when
+// a release step fails: the remaining resources stay recorded against the
+// runtime, and ending the claim is what lets runtime reconciliation clean them
+// up, since StopRuntimeTarget skips runtimes that are still checked out.
+// Releasing a claim that has already ended returns nil.
+func (c *runtimeCheckout) Release() error {
+	if c == nil {
+		return nil
+	}
+	return c.pool.releaseCheckout(c.ref)
+}
+
+// Relinquish ends the claim without releasing anything, for a runtime whose
+// machine could not be closed. Capacity and device ownership stay reserved until
+// runtime reconciliation proves physical cleanup.
+func (c *runtimeCheckout) Relinquish() {
+	if c == nil {
+		return
+	}
+	c.pool.relinquishCheckout(c.ref)
+}
+
+func (p *PreparedRuntimePool) relinquishCheckout(ref preparedRuntimeRef) {
 	if p == nil {
 		return
 	}
-	ref := preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.checkedOut, ref)
 	delete(p.checkedOutEntries, ref)
-	delete(p.checkedOutRestore, ref)
 }
 
-func (p *PreparedRuntimePool) ReleaseCheckout(computerInstanceID string, runtimeEpoch int64) error {
+func (p *PreparedRuntimePool) releaseCheckout(ref preparedRuntimeRef) error {
 	if p == nil {
 		return nil
 	}
-	ref := preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}
 	p.mu.Lock()
 	_, checkedOut := p.checkedOut[ref]
 	p.mu.Unlock()
 	if !checkedOut {
 		return nil
 	}
-	defer p.relinquishCheckout(ref.id, ref.epoch)
+	defer p.relinquishCheckout(ref)
 	if err := p.releaseRuntimeCapacity(ref.id, ref.epoch); err != nil {
 		return err
 	}
@@ -1571,7 +1597,6 @@ func (p *PreparedRuntimePool) releaseRuntimeAfterPhysicalCleanup(computerInstanc
 	delete(p.checkedOut, preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch})
 	delete(p.checkedOutEntries, preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch})
 	delete(p.captureCleanup, ref)
-	delete(p.checkedOutRestore, preparedRuntimeRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch})
 	p.mu.Unlock()
 	return nil
 }
