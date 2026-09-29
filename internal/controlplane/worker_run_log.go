@@ -9,11 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -23,18 +21,8 @@ import (
 
 func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RunLogAppendRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		if errors.Is(err, io.EOF) {
-			err = errors.New("request body is required")
-		}
-		writeError(w, badRequest(fmt.Errorf("invalid worker log request JSON: %w", err)))
-		return
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid worker log request JSON: trailing value")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker log request JSON: %w", err))
 		return
 	}
 	content, err := base64.StdEncoding.DecodeString(request.ContentBase64)
@@ -161,7 +149,7 @@ func runMetadataClaimScopeParams(
 }
 
 func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
-	canonical, err := jsoncanon.Transform(mustJSON(lease))
+	canonical, err := canonicalJSON(mustJSON(lease))
 	if err != nil {
 		return "", fmt.Errorf("canonicalize run lease fence: %w", err)
 	}
@@ -170,11 +158,11 @@ func runLeaseFenceFingerprint(lease workerapi.RunLeaseFence) (string, error) {
 }
 
 func equalJSON(left, right []byte) (bool, error) {
-	leftCanonical, err := jsoncanon.Transform(left)
+	leftCanonical, err := canonicalJSON(left)
 	if err != nil {
 		return false, fmt.Errorf("canonicalize stored run log payload: %w", err)
 	}
-	rightCanonical, err := jsoncanon.Transform(right)
+	rightCanonical, err := canonicalJSON(right)
 	if err != nil {
 		return false, fmt.Errorf("canonicalize run log payload: %w", err)
 	}

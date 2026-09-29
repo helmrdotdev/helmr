@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -17,8 +18,8 @@ import (
 
 func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CreateComputerRequest
-	if err := decodeWorkerActorRequest(r, &request, "computer create"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer create JSON: %w", err))
 		return
 	}
 	if err := validateWorkerComputerCorrelation(request.CorrelationID); err != nil {
@@ -84,8 +85,8 @@ func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerRetrieveComputer(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RetrieveComputerRequest
-	if err := decodeWorkerActorRequest(r, &request, "computer retrieve"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer retrieve JSON: %w", err))
 		return
 	}
 	if err := validateWorkerComputerRequest(request); err != nil {
@@ -116,8 +117,8 @@ func (s *Server) workerRetrieveComputer(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) workerListComputerMembers(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerMembersRequest
-	if err := decodeWorkerActorRequest(r, &request, "computer members"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer members JSON: %w", err))
 		return
 	}
 	if err := validateWorkerComputerRequest(request.RetrieveComputerRequest); err != nil {
@@ -154,8 +155,8 @@ func (s *Server) workerListComputerMembers(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) workerDeleteComputer(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.DeleteComputerRequest
-	if err := decodeWorkerActorRequest(r, &request, "computer delete"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer delete JSON: %w", err))
 		return
 	}
 	if err := validateWorkerComputerRequest(request.RetrieveComputerRequest); err != nil {

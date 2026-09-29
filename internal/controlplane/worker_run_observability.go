@@ -12,7 +12,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -38,8 +37,8 @@ type runMetadataMutation struct {
 
 func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.UpdateRunMetadataRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker run metadata request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker run metadata request JSON: %w", err))
 		return
 	}
 	operationID, err := parseCanonicalUUID("operation_id", request.OperationID)
@@ -198,8 +197,8 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.StructuredLogRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker structured log request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker structured log request JSON: %w", err))
 		return
 	}
 	if request.ObservedSeq > uint64(math.MaxInt64) {
@@ -229,7 +228,7 @@ func (s *Server) workerAppendStructuredLog(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(err))
 		return
 	}
-	content, err := jsoncanon.Transform(mustJSON(map[string]any{
+	content, err := canonicalJSON(mustJSON(map[string]any{
 		"level": request.Level, "message": request.Message,
 		"attributes": json.RawMessage(attributes),
 	}))
@@ -321,7 +320,7 @@ func normalizeRunMetadataMutation(
 		if len(request.Value) == 0 || len(request.Patch) != 0 || request.Amount != nil {
 			return runMetadataMutation{}, errors.New("set requires only key and value")
 		}
-		value, err := jsoncanon.Transform(request.Value)
+		value, err := canonicalJSON(request.Value)
 		if err != nil {
 			return runMetadataMutation{}, fmt.Errorf("set value is invalid: %w", err)
 		}
@@ -358,7 +357,7 @@ func normalizeRunMetadataMutation(
 	default:
 		return runMetadataMutation{}, errors.New("operation must be set, patch, or increment")
 	}
-	canonical, err := jsoncanon.Transform(mustJSON(map[string]any{
+	canonical, err := canonicalJSON(mustJSON(map[string]any{
 		"operation": mutation.operation, "key": mutation.key,
 		"value": mutation.value, "patch": mutation.patch, "amount": mutation.amount,
 	}))

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"uuid"
 
@@ -38,18 +37,8 @@ type parsedWorkerActorOutputAppend struct {
 
 func (s *Server) workerWriteTurnOutput(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WriteTurnOutputRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		if errors.Is(err, io.EOF) {
-			err = errors.New("request body is required")
-		}
-		writeError(w, badRequest(fmt.Errorf("invalid actor output append JSON: %w", err)))
-		return
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(errors.New("invalid actor output append JSON: trailing value")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid actor output append JSON: %w", err))
 		return
 	}
 	parsed, err := parseWorkerActorOutputAppend(request)

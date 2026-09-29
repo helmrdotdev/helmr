@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -149,8 +150,8 @@ func lockWorkerControlActors(ctx context.Context, q db.Querier, loc db.GetLiveRu
 
 func (s *Server) workerInterruptSessionTurn(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.InterruptSessionTurnRequest
-	if err := decodeWorkerActorRequest(r, &request, "Turn interrupt"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Turn interrupt JSON: %w", err))
 		return
 	}
 	sessionID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
@@ -184,8 +185,8 @@ func (s *Server) workerInterruptSessionTurn(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) workerResumeSession(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ResumeSessionRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session resume"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session resume JSON: %w", err))
 		return
 	}
 	sessionID, err := parseWorkerSessionReference(request.SessionReferenceRequest)

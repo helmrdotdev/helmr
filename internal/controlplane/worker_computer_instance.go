@@ -24,8 +24,8 @@ const workerRuntimeReconcileLimit int32 = 64
 
 func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RuntimeReconcileRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid runtime reconcile request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid runtime reconcile request JSON: %w", err))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -83,8 +83,8 @@ func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http
 
 func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Request, state string) {
 	var request workerapi.ComputerInstanceStateRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err))
 		return
 	}
 	id, err := ids.Parse(request.ID)

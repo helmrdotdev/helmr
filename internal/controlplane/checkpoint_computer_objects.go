@@ -26,8 +26,8 @@ func (s *Server) workerReuseCheckpointComputerObject(w http.ResponseWriter, r *h
 }
 func (s *Server) workerCheckpointComputerObject(w http.ResponseWriter, r *http.Request, operation string) {
 	var request workerapi.CheckpointComputerObjectRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	for name, value := range map[string]string{"computer_instance_id": request.ComputerInstanceID, "checkpoint_id": request.CheckpointID} {

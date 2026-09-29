@@ -49,8 +49,8 @@ func (s *Server) adminGetRegion(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminCreateRegion(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateAdminRegionRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid region request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid region request JSON: %w", err))
 		return
 	}
 	request.DisplayName = strings.TrimSpace(request.DisplayName)
@@ -89,8 +89,8 @@ func (s *Server) adminUpdateRegion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.UpdateAdminRegionRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid region request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid region request JSON: %w", err))
 		return
 	}
 	displayName, location := current.DisplayName, current.Location
@@ -154,8 +154,8 @@ func (s *Server) adminGetWorkerGroup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateAdminWorkerGroupRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker group request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker group request JSON: %w", err))
 		return
 	}
 	if err := region.ValidateID(request.RegionID); err != nil {
@@ -212,8 +212,8 @@ func (s *Server) adminUpdateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var request api.UpdateAdminWorkerGroupRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker group request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker group request JSON: %w", err))
 		return
 	}
 	row, err := s.db.UpdateWorkerGroupDescription(r.Context(), db.UpdateWorkerGroupDescriptionParams{
@@ -254,8 +254,8 @@ func (s *Server) adminTransitionWorkerGroup(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var request api.WorkerGroupLifecycleRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid lifecycle request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid lifecycle request JSON: %w", err))
 		return
 	}
 	if request.ExpectedClaimVersion <= 0 {
@@ -341,8 +341,8 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.CreateAdminWorkerPoolRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker pool request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker pool request JSON: %w", err))
 		return
 	}
 	if err := workerapi.ValidatePoolName(request.Name); err != nil {
@@ -397,8 +397,8 @@ func (s *Server) adminSwitchWorkerPoolPrimary(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var request api.SwitchAdminWorkerPoolPrimaryRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker pool primary request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker pool primary request JSON: %w", err))
 		return
 	}
 	if request.ExpectedGroupClaimVersion <= 0 {
@@ -441,8 +441,8 @@ func (s *Server) adminTransitionWorkerPool(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var request api.WorkerPoolLifecycleRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker pool lifecycle request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker pool lifecycle request JSON: %w", err))
 		return
 	}
 	if request.ExpectedPoolClaimVersion <= 0 {

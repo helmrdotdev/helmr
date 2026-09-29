@@ -143,8 +143,8 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		return
 	}
 	var request workergroup.ReconcilePrimaryPoolsRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid primary Pool selection JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid primary Pool selection JSON: %w", err))
 		return
 	}
 	if request.ExpectedGroupClaimVersion <= 0 {
@@ -216,8 +216,8 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workergroup.PlanRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid capacity plan JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid capacity plan JSON: %w", err))
 		return
 	}
 	response, err := workergroup.Plan(r.Context(), s.db, workerGroupID, request, time.Now())
@@ -304,8 +304,8 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var request workergroup.DrainWorkerHostRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker drain JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker drain JSON: %w", err))
 		return
 	}
 	if request.ExpectedEpoch <= 0 || request.ExpectedClaimVersion <= 0 {

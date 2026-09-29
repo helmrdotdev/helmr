@@ -69,7 +69,11 @@ type childTaskInvokeResult struct {
 
 func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.InvokeChildTaskRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
+	if err := decodeRequestJSON(r, &request); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
+			return
+		}
 		writeError(w, badRequest(codedError{code: "invalid_child_task_start", message: err.Error()}))
 		return
 	}

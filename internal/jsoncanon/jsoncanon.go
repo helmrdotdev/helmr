@@ -43,6 +43,11 @@ func validateJSON(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := validateValue(decoder); err != nil {
+		// The decoder reports end of input mid-value as io.EOF; only input
+		// without any value is empty, anything else is truncated.
+		if err == io.EOF && len(bytes.TrimSpace(raw)) != 0 {
+			err = io.ErrUnexpectedEOF
+		}
 		return fmt.Errorf("validate canonical JSON input: %w", err)
 	}
 	if _, err := decoder.Token(); err != io.EOF {

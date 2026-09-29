@@ -1,10 +1,8 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -13,10 +11,8 @@ import (
 
 func (s *Server) workerDiscoverRunLeases(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RunLeaseDiscoveryRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, badRequest(fmt.Errorf("invalid worker run lease discovery request JSON: %w", err)))
+	if err := decodeOptionalRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker run lease discovery request JSON: %w", err))
 		return
 	}
 

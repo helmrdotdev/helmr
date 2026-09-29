@@ -12,8 +12,8 @@ import (
 
 func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerRestoreAckRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	instance, err := parseCanonicalUUID("computer_instance_id", request.ComputerInstanceID)

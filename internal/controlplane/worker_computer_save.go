@@ -9,8 +9,8 @@ import (
 
 func (s *Server) workerBeginComputerSave(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerSaveBeginRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if err := validateComputerSaveRequest(request); err != nil {
@@ -27,8 +27,8 @@ func (s *Server) workerBeginComputerSave(w http.ResponseWriter, r *http.Request)
 
 func (s *Server) workerAbandonComputerSave(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerSaveBeginRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if err := validateComputerSaveRequest(request); err != nil {
@@ -45,8 +45,8 @@ func (s *Server) workerAbandonComputerSave(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) workerPublishComputerSave(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerSavePublicationRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if _, err := request.Root.Locator(request.Root.LogicalBytes); err != nil {
@@ -67,8 +67,8 @@ func (s *Server) workerPublishComputerSave(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) workerAdoptComputerSave(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerSavePublicationRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if _, err := request.Root.Locator(request.Root.LogicalBytes); err != nil {
@@ -98,8 +98,8 @@ func (s *Server) workerReuseComputerSaveObject(w http.ResponseWriter, r *http.Re
 }
 func (s *Server) workerComputerSaveObject(w http.ResponseWriter, r *http.Request, operation string) {
 	var request workerapi.ComputerSaveObjectRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if err := validateComputerSaveRequest(request.Save); err != nil {

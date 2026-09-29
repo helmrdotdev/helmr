@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -17,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
@@ -225,14 +223,14 @@ func (s *Server) sessionOperationTarget(r *http.Request, permission auth.Permiss
 
 // Fixed-envelope decoding rejects ambiguous JSON before an operation can claim a key.
 func decodeSessionCommand(r *http.Request, destination any) error {
-	raw, err := io.ReadAll(r.Body)
+	raw, err := readRequestBody(r)
 	if err != nil {
 		return err
 	}
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = []byte("{}")
 	}
-	raw, err = jsoncanon.Transform(raw)
+	raw, err = canonicalRequestJSON(raw)
 	if err != nil {
 		return err
 	}
@@ -249,15 +247,12 @@ func decodeSessionCommand(r *http.Request, destination any) error {
 			return err
 		}
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(destination)
+	return decodeClosedJSON(raw, destination)
 }
 
 func writeSessionRequestError(w http.ResponseWriter, err error) {
-	var size *http.MaxBytesError
-	if errors.As(err, &size) {
-		writeError(w, tooLarge(codedError{code: "invalid_request", message: "request exceeds the size limit"}))
+	if isRequestBodyTooLarge(err) {
+		writeError(w, err)
 		return
 	}
 	writeError(w, badRequest(codedError{code: "invalid_request", message: err.Error()}))
@@ -355,7 +350,7 @@ func (s *Server) readSessionEventsHTTP(w http.ResponseWriter, r *http.Request) {
 func parseSessionEventPageOptions(raw string) (int64, int32, error) {
 	values, err := url.ParseQuery(raw)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errors.New("query string is malformed")
 	}
 	after, limit := int64(0), int64(100)
 	for name, entries := range values {

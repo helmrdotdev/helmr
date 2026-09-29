@@ -36,13 +36,9 @@ func (s *Server) createComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.CreateComputerRequest
-	if err := decodeJSON(r, &request); err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, tooLarge(codedError{
-				code:    "computer_create_request_too_large",
-				message: "computer create request is too large",
-			}))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
 			return
 		}
 		writeError(w, badRequest(codedError{code: "invalid_computer_create", message: err.Error()}))
@@ -94,7 +90,11 @@ func (s *Server) deleteComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.DeleteComputerRequest
-	if err := decodeOptionalJSON(r.Body, &request); err != nil {
+	if err := decodeOptionalRequestJSON(r, &request); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
+			return
+		}
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))
 		return
 	}

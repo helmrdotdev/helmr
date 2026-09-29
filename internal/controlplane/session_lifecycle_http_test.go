@@ -56,6 +56,9 @@ func TestSessionEventCursorValidatesClosedQueryAndSafeIntegers(t *testing.T) {
 			t.Fatalf("accepted query %q", raw)
 		}
 	}
+	if _, _, err := parseSessionEventPageOptions("after=%zz"); err == nil || err.Error() != "query string is malformed" {
+		t.Fatalf("malformed query error = %v", err)
+	}
 	recorder := httptest.NewRecorder()
 	(&Server{}).writeSessionOperationError(recorder, &session.OperationError{Code: "cursor_expired", RetainedAfter: 17})
 	body := decodeHTTPError(t, recorder.Body.Bytes())

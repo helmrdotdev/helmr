@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -103,7 +104,11 @@ func validRunCleanupRequest(r workerapi.ComputerRunCleanupRequest) bool {
 }
 func (s *Server) workerGetComputerRunCleanup(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerRunCleanupRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil || !validRunCleanupRequest(request) {
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Run cleanup request: %w", err))
+		return
+	}
+	if !validRunCleanupRequest(request) {
 		writeError(w, badRequest(errors.New("invalid Run cleanup request")))
 		return
 	}
@@ -115,7 +120,11 @@ func (s *Server) workerGetComputerRunCleanup(w http.ResponseWriter, r *http.Requ
 }
 func (s *Server) workerReconcileComputerRun(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerRunReconcileRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil || !validRunCleanupRequest(request.ComputerRunCleanupRequest) || ids.Validate(request.RunID) != nil || ids.Validate(request.RunLeaseID) != nil || request.AttemptNumber == 0 {
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Run reconciliation request: %w", err))
+		return
+	}
+	if !validRunCleanupRequest(request.ComputerRunCleanupRequest) || ids.Validate(request.RunID) != nil || ids.Validate(request.RunLeaseID) != nil || request.AttemptNumber == 0 {
 		writeError(w, badRequest(errors.New("invalid Run reconciliation request")))
 		return
 	}

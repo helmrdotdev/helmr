@@ -230,9 +230,9 @@ func TestActorStartBodyLimitReturnsStableCode(t *testing.T) {
 			request.ContentLength = -1
 		}
 		recorder := httptest.NewRecorder()
-		limitActorStartBody(http.HandlerFunc(server.startActorHTTP)).ServeHTTP(recorder, request)
+		limitRequestBody(actorStartBodyLimit)(http.HandlerFunc(server.startActorHTTP)).ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusRequestEntityTooLarge ||
-			!strings.Contains(recorder.Body.String(), `"code":"actor_start_request_too_large"`) {
+			!strings.Contains(recorder.Body.String(), `"code":"request_too_large"`) {
 			t.Fatalf("chunked=%t status=%d body=%s", chunked, recorder.Code, recorder.Body.String())
 		}
 	}

@@ -108,9 +108,8 @@ func (s *Server) listComputerMembersHTTP(w http.ResponseWriter, r *http.Request)
 		case "cursor":
 			query.Cursor = values[0]
 		case "limit":
-			var limit int64
-			limit, err = strconv.ParseInt(values[0], 10, 32)
-			if err == nil && (limit < 1 || limit > int64(computerListMaxLimit)) {
+			limit, parseErr := strconv.ParseInt(values[0], 10, 32)
+			if parseErr != nil || limit < 1 || limit > int64(computerListMaxLimit) {
 				err = errors.New("limit must be an integer in [1,100]")
 			}
 			query.Limit = int32(limit)

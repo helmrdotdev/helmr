@@ -177,8 +177,8 @@ func decodeProjectListCursor(raw string) (projectListCursor, error) {
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateProjectRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
 	slug, name, err := normalizeProjectInput(request.Slug, request.Name)
@@ -261,8 +261,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.UpdateProjectRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid project request JSON: %w", err))
 		return
 	}
 	slug, name, err := normalizeProjectInput(request.Slug, request.Name)
@@ -299,8 +299,8 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.CreateEnvironmentRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid environment request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)
@@ -389,8 +389,8 @@ func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.UpdateEnvironmentRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid environment request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid environment request JSON: %w", err))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)

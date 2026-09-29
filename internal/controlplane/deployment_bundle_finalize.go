@@ -67,8 +67,8 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var request api.FinalizeDeploymentBundleRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid deployment bundle finalization request: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid deployment bundle finalization request: %w", err))
 		return
 	}
 	request.IdempotencyKey = strings.TrimSpace(request.IdempotencyKey)

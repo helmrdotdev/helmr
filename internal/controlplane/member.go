@@ -141,8 +141,8 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input api.CreateInvitationRequest
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid invitation request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &input); err != nil {
+		writeError(w, fmt.Errorf("invalid invitation request JSON: %w", err))
 		return
 	}
 	email, err := normalizeInviteEmail(input.Email)
@@ -288,8 +288,8 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input api.UpdateMemberRoleRequest
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid member role request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &input); err != nil {
+		writeError(w, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
 	newRole, err := normalizeMemberRole(input.Role)

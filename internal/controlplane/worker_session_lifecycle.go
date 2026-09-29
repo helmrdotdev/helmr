@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -91,8 +92,8 @@ func (s *Server) writeWorkerSessionCommand(w http.ResponseWriter, correlation st
 }
 func (s *Server) workerTurnMessagesReady(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.TurnExecutionRequest
-	if err := decodeWorkerActorRequest(r, &request, "Turn readiness"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Turn readiness JSON: %w", err))
 		return
 	}
 	err := s.inTx(r.Context(), func(work *txWork) error {
@@ -114,8 +115,8 @@ func (s *Server) workerTurnMessagesReady(w http.ResponseWriter, r *http.Request)
 }
 func (s *Server) workerBeginTurnSettlement(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.TurnExecutionRequest
-	if err := decodeWorkerActorRequest(r, &request, "Turn settlement"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Turn settlement JSON: %w", err))
 		return
 	}
 	err := s.inTx(r.Context(), func(work *txWork) error {
@@ -134,8 +135,8 @@ func (s *Server) workerBeginTurnSettlement(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) workerClaimTurnMessage(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ClaimTurnMessageRequest
-	if err := decodeWorkerActorRequest(r, &request, "message claim"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid message claim JSON: %w", err))
 		return
 	}
 	deliveryID, err := parseCanonicalUUID("delivery_id", request.DeliveryID)
@@ -171,8 +172,8 @@ func (s *Server) workerClaimTurnMessage(w http.ResponseWriter, r *http.Request) 
 }
 func (s *Server) workerCompleteTurnMessage(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CompleteTurnMessageRequest
-	if err := decodeWorkerActorRequest(r, &request, "message completion"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid message completion JSON: %w", err))
 		return
 	}
 	messageID, err := parseCanonicalUUID("message_id", request.MessageID)
@@ -201,8 +202,8 @@ func (s *Server) workerCompleteTurnMessage(w http.ResponseWriter, r *http.Reques
 }
 func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.SessionControlRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session control"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session control JSON: %w", err))
 		return
 	}
 	parsed, err := parseRunLeaseFence(request.Lease)
@@ -238,8 +239,8 @@ func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) workerWriteSessionOutput(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.WriteSessionOutputRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session output"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session output JSON: %w", err))
 		return
 	}
 	var event api.SessionEvent

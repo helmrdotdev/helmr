@@ -43,8 +43,8 @@ type browserAuthEnvelope struct {
 
 func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
 	var request api.GitHubAuthInviteStartRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid github invite request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid github invite request JSON: %w", err))
 		return
 	}
 	tokenHash, err := s.validateInvitationToken(r, request.Token)
@@ -57,8 +57,8 @@ func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 	var request api.GitHubAuthStartRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid github auth request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid github auth request JSON: %w", err))
 		return
 	}
 	s.writeGitHubAuthStart(w, r, browserAuthGitHubLogin, nil, validateRedirectAfter(request.Next))
@@ -112,8 +112,8 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.GitHubAuthFinishRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid auth callback JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid auth callback JSON: %w", err))
 		return
 	}
 	flow, err := s.decodeAuthFlow(r)

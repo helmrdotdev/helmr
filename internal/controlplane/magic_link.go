@@ -42,8 +42,8 @@ func magicLinkSubject(purpose db.MagicLinkPurpose) string {
 
 func (s *Server) magicLinkStart(w http.ResponseWriter, r *http.Request) {
 	var request api.MagicLinkStartRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid magic link request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid magic link request JSON: %w", err))
 		return
 	}
 	if request.Token != "" {
@@ -60,8 +60,8 @@ func (s *Server) magicLinkDeliveryConfigured() bool {
 
 func (s *Server) magicLinkInviteStartRoute(w http.ResponseWriter, r *http.Request) {
 	var request api.MagicLinkStartRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid invite magic link request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid invite magic link request JSON: %w", err))
 		return
 	}
 	s.magicLinkInviteStart(w, r, request)
@@ -318,8 +318,8 @@ func (s *Server) magicLinkFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.MagicLinkFinishRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid magic link finish JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid magic link finish JSON: %w", err))
 		return
 	}
 	tokenHash, err := auth.HashToken(s.authKeys.MagicLink, request.Token)

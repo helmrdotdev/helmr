@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -34,6 +35,19 @@ func TestTransformPreservesTrailingSyntaxError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "trailing data") {
 		t.Fatalf("error = %q, want trailing data context", err.Error())
+	}
+}
+
+func TestTransformReportsTruncatedInput(t *testing.T) {
+	for _, raw := range []string{`{"a"`, `{"a":`, `{"a":1,"b":`, `"abc`, `tru`} {
+		_, err := Transform([]byte(raw))
+		if !errors.Is(err, io.ErrUnexpectedEOF) {
+			t.Fatalf("Transform(%q) error = %v, want unexpected EOF", raw, err)
+		}
+	}
+	_, err := Transform([]byte("  \n"))
+	if !errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("Transform(whitespace) error = %v, want EOF", err)
 	}
 }
 
