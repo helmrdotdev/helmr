@@ -1,5 +1,5 @@
 {
-  "name": "@helmr/typescript-adapter",
+  "name": "@helmr/runtime",
   "private": true,
   "type": "module",
   "version": "0.1.0",
