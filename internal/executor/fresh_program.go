@@ -121,11 +121,7 @@ func (state *freshAdmissionState) ApplyRunMetadata(
 ) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	controlPlane, err := requireRunObservabilityControlPlane(state.controlPlane)
-	if err != nil {
-		return err
-	}
-	return updateRunMetadata(ctx, controlPlane, state.lease, request)
+	return state.events.ApplyRunMetadata(ctx, state.lease, request)
 }
 
 func (state *freshAdmissionState) RecordStructuredRunLog(
@@ -136,11 +132,7 @@ func (state *freshAdmissionState) RecordStructuredRunLog(
 ) error {
 	state.mu.Lock()
 	defer state.mu.Unlock()
-	controlPlane, err := requireRunObservabilityControlPlane(state.controlPlane)
-	if err != nil {
-		return err
-	}
-	return appendStructuredRunLog(ctx, controlPlane, state.lease, sequence, request)
+	return state.events.RecordStructuredRunLog(ctx, state.lease, sequence, request)
 }
 
 func (state *freshAdmissionState) expiresAt() time.Time {
@@ -664,16 +656,8 @@ func (r ProgramRunner) startNewProgram(
 		return freshProgram{}, errors.New("run lease claim is required")
 	}
 	defer clearFreshProgramDelivery(claim)
-	if controlPlane == nil {
-		return freshProgram{}, errors.New("fresh program control plane is required")
-	}
 	if events == nil {
 		return freshProgram{}, errors.New("fresh program event sink is required")
-	}
-	if r.ComputerMounts == nil {
-		return freshProgram{}, errors.New(
-			"computer mount session registry is required",
-		)
 	}
 	admission, err := validateNewProgramClaim(claim)
 	if err != nil {

@@ -35,11 +35,27 @@ const (
 )
 
 type ProgramRunner struct {
+	ControlPlane     ControlPlane
 	ComputerCaptures *ComputerCaptureRuns
 	CAS              cas.Store
 	ComputerMounts   ComputerMountSessionRegistry
 	Log              *slog.Logger
 	TempDir          string
+}
+
+// NewProgramRunner validates the runner's required collaborators so that
+// incomplete wiring is rejected before any run lease is claimed.
+func NewProgramRunner(runner ProgramRunner) (ProgramRunner, error) {
+	if err := runner.ControlPlane.Validate(); err != nil {
+		return ProgramRunner{}, err
+	}
+	if runner.CAS == nil || runner.ComputerCaptures == nil {
+		return ProgramRunner{}, errors.New("run lease task CAS and Computer capture registry are required")
+	}
+	if runner.ComputerMounts == nil {
+		return ProgramRunner{}, errors.New("computer mount session registry is required")
+	}
+	return runner, nil
 }
 
 func (r ProgramRunner) tempDir() string {

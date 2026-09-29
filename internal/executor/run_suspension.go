@@ -162,11 +162,7 @@ func (w ControlPlaneRunWaits) AddRunWait(ctx context.Context, request WaitReques
 
 func (request WaitRequest) currentLeaseAssignment() (workerapi.RunLeaseAssignment, error) {
 	if request.Leases != nil {
-		provider, ok := request.Leases.(workerapi.RunLeaseAssignmentProvider)
-		if !ok {
-			return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment provider is required for durable waits")
-		}
-		return provider.CurrentWorkerRunLeaseAssignment(), nil
+		return request.Leases.CurrentWorkerRunLeaseAssignment(), nil
 	}
 	if request.LeaseAssignment.ID == "" {
 		return workerapi.RunLeaseAssignment{}, errors.New("run lease assignment is required for durable waits")

@@ -254,12 +254,24 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
 		log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
 	}
-	runLeaseTasks := executor.ProgramRunner{
+	runLeaseTasks, err := executor.NewProgramRunner(executor.ProgramRunner{
+		ControlPlane: executor.ControlPlane{
+			Leases:        controlPlaneClient,
+			Waits:         controlPlaneClient,
+			Observability: controlPlaneClient,
+			Sessions:      controlPlaneClient,
+			Actors:        controlPlaneClient,
+			Computers:     controlPlaneClient,
+			Children:      controlPlaneClient,
+		},
 		ComputerCaptures: computerCaptures,
 		CAS:              store,
 		ComputerMounts:   computerMountSessions,
 		Log:              log,
 		TempDir:          filepath.Join(workDir, "tmp"),
+	})
+	if err != nil {
+		return fmt.Errorf("configure run lease tasks: %w", err)
 	}
 	runner, err := worker.NewRunner(
 		controlPlaneClient,

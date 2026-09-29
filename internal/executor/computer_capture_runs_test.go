@@ -356,7 +356,7 @@ func TestHotWaitQueuedCaptureJoinsExclusionWhenEventBranchWins(t *testing.T) {
 	lease.ComputerID, lease.WriterGeneration = target.Source.ComputerID, target.Source.WriterGeneration
 	registry := &ComputerCaptureRuns{}
 	logs := &blockedCaptureLogClient{entered: make(chan struct{})}
-	task := &guestRunLeaseTask{captures: registry, lease: lease, controlPlane: logs, program: freshProgram{session: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
+	task := &guestRunLeaseTask{captures: registry, lease: lease, controlPlane: testControlPlane(t, logs), program: freshProgram{session: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
 	defer task.Close()
 	opened, waited := make(chan struct{}), make(chan error, 1)
 	go func() {

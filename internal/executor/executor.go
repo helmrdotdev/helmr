@@ -26,7 +26,7 @@ type Executor struct {
 type WaitRequest struct {
 	Execution                     *programv0.SessionExecution
 	TurnID                        *string
-	Leases                        workerapi.RunLeaseProvider
+	Leases                        workerapi.RunLeaseAssignmentProvider
 	Lease                         workerapi.RunLease
 	LeaseAssignment               workerapi.RunLeaseAssignment
 	CorrelationID                 string

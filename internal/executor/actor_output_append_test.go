@@ -63,7 +63,7 @@ func TestHandleTurnOutputWritesCorrelatedDecision(t *testing.T) {
 	defer host.Close()
 	task := &guestRunLeaseTask{
 		program:      freshProgram{session: fakeGuestSession{stream: guest}, execution: execution.Session},
-		controlPlane: controlPlane,
+		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
 	result := make(chan error, 1)
@@ -123,7 +123,7 @@ func TestHandleTurnOutputRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	defer host.Close()
 	task := &guestRunLeaseTask{
 		program:      freshProgram{session: fakeGuestSession{stream: guest}, execution: execution.Session},
-		controlPlane: controlPlane,
+		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
 	go renewRunSourceReceiptAfterAttempt(task, firstAttempt)
@@ -161,7 +161,7 @@ func TestTurnOutputRejectsReceiptFromSuccessorGeneration(t *testing.T) {
 	cp := &actorOutputAppendControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, response: workerapi.WriteOutputResponse{
 		CorrelationID: execution.TurnId, Completed: &api.SessionEvent{ID: "output", SessionID: execution.Session.SessionId, TurnID: &execution.TurnId, Sequence: 1, Provenance: &api.SessionEventProvenance{RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunGeneration: execution.Session.RunGeneration + 1}},
 	}}
-	task := &guestRunLeaseTask{program: freshProgram{execution: execution.Session}, lease: lease, controlPlane: cp}
+	task := &guestRunLeaseTask{program: freshProgram{execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 	if err := task.handleTurnOutput(t.Context(), &programv0.TurnOutputWriteRequested{CorrelationId: execution.TurnId, Execution: execution, DataJson: "null", MessageDeliveryId: new("019c10d5-a6f7-7af1-8f5f-000000000119")}); err == nil {
 		t.Fatal("successor receipt was exposed")
 	}

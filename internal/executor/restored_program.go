@@ -13,10 +13,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerapi.RunLeaseClaimResponse, control RunLeaseControlPlane) (freshProgram, *programv0.ResumeAttach, error) {
+func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerapi.RunLeaseClaimResponse) (freshProgram, *programv0.ResumeAttach, error) {
 	resume := claim.ProgramResume
-	waits, ok := control.(RunWaitClient)
-	if !ok || r.ComputerMounts == nil || resume == nil || resume.CheckpointID == "" || resume.RunWaitID == "" || (resume.EntrypointKind != "actor" && resume.EntrypointKind != "task") || len(claim.ProgramStart) != 0 || !claim.Lease.ExpiresAt.After(time.Now()) {
+	if resume == nil || resume.CheckpointID == "" || resume.RunWaitID == "" || (resume.EntrypointKind != "actor" && resume.EntrypointKind != "task") || len(claim.ProgramStart) != 0 || !claim.Lease.ExpiresAt.After(time.Now()) {
 		return freshProgram{}, nil, errors.New("restored Program claim is incomplete or inconsistent")
 	}
 	attachCtx, cancel := context.WithDeadline(ctx, claim.Lease.ExpiresAt)
@@ -77,7 +76,7 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 		if !proto.Equal(ack, expected) {
 			return errors.New("restored Program acknowledgement differs from attachment")
 		}
-		if err := (ControlPlaneRunWaits{Client: waits}).AcknowledgeRestore(attemptCtx, RestoreAcknowledgement{Lease: claim.Lease, RunWaitID: attach.RunWaitId, CheckpointID: attach.CheckpointId}); err != nil {
+		if err := (ControlPlaneRunWaits{Client: r.ControlPlane.Waits}).AcknowledgeRestore(attemptCtx, RestoreAcknowledgement{Lease: claim.Lease, RunWaitID: attach.RunWaitId, CheckpointID: attach.CheckpointId}); err != nil {
 			return err
 		}
 		identity := &programv0.EntrypointIdentity{Kind: &programv0.EntrypointIdentity_Task{Task: &programv0.TaskEntrypoint{}}}
@@ -92,9 +91,6 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 }
 
 func (task *guestRunLeaseTask) continueRestoredWait(ctx context.Context, attach *programv0.ResumeAttach) error {
-	if task.waits == nil {
-		return errors.New("restored wait client is required")
-	}
 	request := WaitRequest{Execution: attach.Execution, TurnID: attach.TurnId, Leases: task, Computer: task.waitComputer, CorrelationID: attach.CorrelationId, RunWaitID: attach.RunWaitId, ResumeAttachID: attach.ResumeAttachId}
 	request.Resume = func(ctx context.Context, decision WaitResumeDecision) error {
 		if err := task.beforeWaitResume(ctx, decision); err != nil {
@@ -108,6 +104,6 @@ func (task *guestRunLeaseTask) continueRestoredWait(ctx context.Context, attach 
 	}
 	opened := workerapi.CreateRunWaitResponse{RunID: task.lease.RunID, RunWaitID: attach.RunWaitId, ResumeAttachID: attach.ResumeAttachId}
 	return task.runHotWait(ctx, request, func(ctx context.Context, request WaitRequest) error {
-		return task.waits.ContinueRunWait(ctx, request, opened)
+		return task.runWaits().ContinueRunWait(ctx, request, opened)
 	})
 }

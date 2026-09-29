@@ -19,10 +19,7 @@ func (task *guestRunLeaseTask) deliverSessionStop(ctx context.Context) (time.Tim
 	if !task.stopDeadline.IsZero() {
 		return task.stopDeadline, nil
 	}
-	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
-	if !ok {
-		return time.Time{}, errors.New("session control client is required")
-	}
+	cp := task.controlPlane.Sessions
 	correlation := uuid.NewV7().String()
 	var response workerapi.SessionControlResponse
 	var deadline time.Time

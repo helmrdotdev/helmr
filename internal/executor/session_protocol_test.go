@@ -67,7 +67,7 @@ func TestOwnSessionRejectionDeliversStopBeforeFailure(t *testing.T) {
 					return workerapi.WriteOutputResponse{CorrelationID: r.CorrelationID, Failed: failure}
 				},
 			}
-			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 			done := make(chan error, 1)
 			go func() {
 				switch operation {
@@ -115,7 +115,7 @@ func TestOwnSessionRejectionRequiresExactStopAuthority(t *testing.T) {
 	cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
 		return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID}
 	}}
-	task := &guestRunLeaseTask{program: freshProgram{execution: execution.Session}, lease: lease, controlPlane: cp}
+	task := &guestRunLeaseTask{program: freshProgram{execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 	err := task.writeOwnSessionResult(t.Context(), "unused", nil, &workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: "stopped"})
 	if err == nil || err.Error() != "stopped operation has no exact Session stop authority" {
 		t.Fatalf("unconfirmed stop: %v", err)
@@ -137,7 +137,7 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}}
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: cp, captures: &ComputerCaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &ComputerCaptureRuns{}}
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -199,7 +199,7 @@ func TestSessionStopPrecedesStoppedWaitAndKeepsFirstDeadline(t *testing.T) {
 				reads++
 				return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: &hold, TurnID: &execution.TurnId, Reason: &reason}
 			}}
-			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
+			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 			done := make(chan error, 1)
 			go func() {
 				done <- task.beforeWaitResume(t.Context(), WaitResumeDecision{Kind: kind, Data: json.RawMessage(`{"reason_code":"session_stopped"}`)})
@@ -253,7 +253,7 @@ func TestSessionStopBlockedWriteUsesCapturedLeaseDeadline(t *testing.T) {
 	cp := &sessionProtocolCP{testRunLeaseControlPlane: &testRunLeaseControlPlane{}, control: func(r workerapi.SessionControlRequest) workerapi.SessionControlResponse {
 		return workerapi.SessionControlResponse{CorrelationID: r.CorrelationID, HoldID: new("hold"), Reason: new("interrupt_requested")}
 	}}
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: cp}
+	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp)}
 	start := time.Now()
 	if _, err := task.deliverSessionStop(t.Context()); err == nil {
 		t.Fatal("blocked stop write succeeded")

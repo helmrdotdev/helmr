@@ -15,10 +15,7 @@ type SessionReferenceControlPlane interface {
 }
 
 func (task *guestRunLeaseTask) handleSessionReferenceCommand(ctx context.Context, event *programv0.RunEvent) error {
-	cp, ok := task.controlPlane.(SessionReferenceControlPlane)
-	if !ok {
-		return errors.New("session reference control plane is required")
-	}
+	cp := task.controlPlane.Sessions
 	var base workerapi.SessionReferenceRequest
 	var turn, hold, key string
 	switch v := event.Event.(type) {

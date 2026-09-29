@@ -165,7 +165,7 @@ func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T
 			metadataAttempted:        attempted,
 		}
 		task := &guestRunLeaseTask{
-			controlPlane: controlPlane,
+			controlPlane: testControlPlane(t, controlPlane),
 			lease:        testRunLeaseAssignment(time.Now().Add(time.Minute)),
 		}
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
@@ -200,7 +200,7 @@ func TestTaskControlObservabilityRetryKeepsStableFenceAcrossRenewal(t *testing.T
 			logAttempted:             attempted,
 		}
 		task := &guestRunLeaseTask{
-			controlPlane: controlPlane,
+			controlPlane: testControlPlane(t, controlPlane),
 			lease:        testRunLeaseAssignment(time.Now().Add(time.Minute)),
 		}
 		go renewRunSourceReceiptAfterAttempt(task, attempted)
@@ -235,7 +235,7 @@ func TestTaskControlObservabilityRejectsInvalidRequestBeforeControlPlane(t *test
 		testRunLeaseControlPlane: &testRunLeaseControlPlane{},
 	}
 	task := &guestRunLeaseTask{
-		controlPlane: controlPlane,
+		controlPlane: testControlPlane(t, controlPlane),
 		lease:        testRunLeaseAssignment(time.Now().Add(time.Minute)),
 	}
 	events := taskControlEvents{task: task}
@@ -281,6 +281,7 @@ func TestFreshAdmissionObservabilityRetriesTransientControlFailure(t *testing.T)
 	lease := testRunLeaseAssignment(time.Now().Add(time.Minute))
 	state := &freshAdmissionState{
 		controlPlane: controlPlane,
+		events:       runLeaseProgramEventSink{controlPlane: testControlPlane(t, controlPlane)},
 		lease:        lease,
 	}
 	err := state.ApplyRunMetadata(

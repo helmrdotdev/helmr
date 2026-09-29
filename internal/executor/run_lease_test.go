@@ -324,7 +324,7 @@ func TestGuestRunLeaseTaskFrozenCheckpointRenewsOnlyControlPlaneAuthority(t *tes
 	mounts := &rejectingRenewalMounts{}
 	task := &guestRunLeaseTask{
 		mounts:           mounts,
-		controlPlane:     &testRunLeaseControlPlane{trace: trace, renewed: testRunLeaseRenewResponse(renewed)},
+		controlPlane:     testControlPlane(t, &testRunLeaseControlPlane{trace: trace, renewed: testRunLeaseRenewResponse(renewed)}),
 		lease:            previous,
 		checkpointFrozen: true,
 	}
@@ -423,7 +423,6 @@ type testRunLeaseTaskRunner struct {
 func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 	_ context.Context,
 	claim *workerapi.RunLeaseClaimResponse,
-	_ RunLeaseControlPlane,
 ) (RunLeaseTask, error) {
 	runner.trace.add("start")
 	if task, ok := runner.task.(*testRunLeaseTask); ok && claim != nil {

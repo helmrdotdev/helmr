@@ -25,10 +25,7 @@ func (task *guestRunLeaseTask) handleTurnOutput(ctx context.Context, requested *
 	if request.MessageDeliveryID != nil && ids.Validate(*request.MessageDeliveryID) != nil {
 		return errors.New("output message delivery identity is invalid")
 	}
-	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
-	if !ok {
-		return errors.New("session output control plane is required")
-	}
+	cp := task.controlPlane.Sessions
 	var response workerapi.WriteOutputResponse
 	err = task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
 		request.Lease = lease.Fence()
@@ -52,10 +49,7 @@ func (task *guestRunLeaseTask) handleSessionOutput(ctx context.Context, requeste
 	if err := api.ValidateSessionDataRequest(api.SessionDataRequest{Data: request.Data, IdempotencyKey: request.IdempotencyKey}); err != nil {
 		return err
 	}
-	cp, ok := task.controlPlane.(SessionExecutionControlPlane)
-	if !ok {
-		return errors.New("session output control plane is required")
-	}
+	cp := task.controlPlane.Sessions
 	var response workerapi.WriteOutputResponse
 	err := task.callRunSourceRuntime(ctx, func(callCtx context.Context, lease workerapi.RunLeaseAssignment) error {
 		request.Lease = lease.Fence()

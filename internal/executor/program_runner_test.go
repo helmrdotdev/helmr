@@ -82,12 +82,12 @@ func TestHandleWaitReturnsExactWaitIdentity(t *testing.T) {
 	task := &guestRunLeaseTask{
 		program: freshProgram{session: fakeGuestSession{stream: guest}},
 		lease:   workerapi.RunLeaseAssignment{ID: "lease-1", RunID: "run-1"},
-		waits: &ControlPlaneRunWaits{Client: &fakeRunWaitClient{
+		controlPlane: testControlPlane(t, &fakeRunWaitClient{
 			created: workerapi.CreateRunWaitResponse{
 				RunID: "run-1", RunWaitID: runWaitID, ResumeAttachID: resumeAttachID,
 				ResolutionKind: "completed",
 			},
-		}},
+		}),
 	}
 	result := make(chan error, 1)
 	go func() {

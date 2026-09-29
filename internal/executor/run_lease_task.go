@@ -53,6 +53,40 @@ type ComputerRuntimeControlPlane interface {
 	DeleteRunComputer(context.Context, workerapi.DeleteComputerRequest) (workerapi.DeleteComputerResponse, error)
 }
 
+// ControlPlane is the complete set of Control Plane capabilities a run lease
+// task uses. Every capability is required and is validated before any run
+// lease is claimed.
+type ControlPlane struct {
+	Leases        RunLeaseControlPlane
+	Waits         RunWaitClient
+	Observability RunObservabilityControlPlane
+	Sessions      SessionControlPlane
+	Actors        ActorRuntimeControlPlane
+	Computers     ComputerRuntimeControlPlane
+	Children      ChildTaskControlPlane
+}
+
+// Validate reports the first missing Control Plane capability.
+func (c ControlPlane) Validate() error {
+	switch {
+	case c.Leases == nil:
+		return errors.New("run lease control plane is required")
+	case c.Waits == nil:
+		return errors.New("run wait control plane is required")
+	case c.Observability == nil:
+		return errors.New("run observability control plane is required")
+	case c.Sessions == nil:
+		return errors.New("session control plane is required")
+	case c.Actors == nil:
+		return errors.New("actor runtime control plane is required")
+	case c.Computers == nil:
+		return errors.New("computer runtime control plane is required")
+	case c.Children == nil:
+		return errors.New("child task control plane is required")
+	}
+	return nil
+}
+
 type RunLeaseTaskResult struct {
 	Outcome         workerapi.TaskOutcome
 	ActorOutcome    *workerapi.ActorOutcome
@@ -81,7 +115,7 @@ func (task *guestRunLeaseTask) Close() {
 }
 
 type RunLeaseTaskRunner interface {
-	StartRunLeaseTask(context.Context, *workerapi.RunLeaseClaimResponse, RunLeaseControlPlane) (RunLeaseTask, error)
+	StartRunLeaseTask(context.Context, *workerapi.RunLeaseClaimResponse) (RunLeaseTask, error)
 }
 
 type guestRunLeaseTask struct {
@@ -92,8 +126,7 @@ type guestRunLeaseTask struct {
 	program      freshProgram
 	mounts       ComputerMountSessionRegistry
 	store        cas.Store
-	controlPlane RunLeaseControlPlane
-	waits        *ControlPlaneRunWaits
+	controlPlane ControlPlane
 	waitComputer workerapi.Computer
 	orgID        string
 
@@ -136,11 +169,7 @@ func (task *guestRunLeaseTask) callRunSourceRuntime(
 func (r ProgramRunner) StartRunLeaseTask(
 	ctx context.Context,
 	claim *workerapi.RunLeaseClaimResponse,
-	controlPlane RunLeaseControlPlane,
 ) (RunLeaseTask, error) {
-	if r.CAS == nil || r.ComputerCaptures == nil {
-		return nil, errors.New("run lease task CAS and Computer capture registry are required")
-	}
 	target, err := runLeaseMountTarget(claim)
 	if err != nil {
 		return nil, err
@@ -152,9 +181,9 @@ func (r ProgramRunner) StartRunLeaseTask(
 	var program freshProgram
 	var resumedWait *programv0.ResumeAttach
 	if claim.ProgramResume != nil {
-		program, resumedWait, err = r.startRestoredProgram(ctx, claim, controlPlane)
+		program, resumedWait, err = r.startRestoredProgram(ctx, claim)
 	} else {
-		program, err = r.startNewProgram(ctx, claim, controlPlane, runLeaseProgramEventSink{controlPlane: controlPlane})
+		program, err = r.startNewProgram(ctx, claim, r.ControlPlane.Leases, runLeaseProgramEventSink{controlPlane: r.ControlPlane})
 	}
 	if err != nil {
 		return nil, err
@@ -167,7 +196,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 		program:      program,
 		mounts:       r.ComputerMounts,
 		store:        r.CAS,
-		controlPlane: controlPlane,
+		controlPlane: r.ControlPlane,
 		lease:        program.lease,
 		authority:    authority,
 		orgID:        program.mount.OrgID,
@@ -178,9 +207,6 @@ func (r ProgramRunner) StartRunLeaseTask(
 	}
 
 	task.program.protocol = newProgramProtocol(program.session.Stream())
-	if waitClient, ok := controlPlane.(RunWaitClient); ok {
-		task.waits = &ControlPlaneRunWaits{Client: waitClient}
-	}
 	return task, nil
 }
 
@@ -198,7 +224,7 @@ func waitComputerForRun(
 }
 
 type runLeaseProgramEventSink struct {
-	controlPlane RunLeaseControlPlane
+	controlPlane ControlPlane
 }
 
 func (sink runLeaseProgramEventSink) AppendRunLog(
@@ -208,7 +234,7 @@ func (sink runLeaseProgramEventSink) AppendRunLog(
 	sequence uint64,
 	content []byte,
 ) error {
-	return sink.controlPlane.AppendRunLog(ctx, lease, stream, sequence, content)
+	return sink.controlPlane.Leases.AppendRunLog(ctx, lease, stream, sequence, content)
 }
 
 func (sink runLeaseProgramEventSink) ApplyRunMetadata(
@@ -216,11 +242,7 @@ func (sink runLeaseProgramEventSink) ApplyRunMetadata(
 	lease workerapi.RunLeaseAssignment,
 	request *programv0.MetadataUpdated,
 ) error {
-	controlPlane, err := requireRunObservabilityControlPlane(sink.controlPlane)
-	if err != nil {
-		return err
-	}
-	return updateRunMetadata(ctx, controlPlane, lease, request)
+	return updateRunMetadata(ctx, sink.controlPlane.Observability, lease, request)
 }
 
 func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
@@ -229,11 +251,11 @@ func (sink runLeaseProgramEventSink) RecordStructuredRunLog(
 	sequence uint64,
 	request *programv0.StructuredLogRequested,
 ) error {
-	controlPlane, err := requireRunObservabilityControlPlane(sink.controlPlane)
-	if err != nil {
-		return err
-	}
-	return appendStructuredRunLog(ctx, controlPlane, lease, sequence, request)
+	return appendStructuredRunLog(ctx, sink.controlPlane.Observability, lease, sequence, request)
+}
+
+func (task *guestRunLeaseTask) runWaits() ControlPlaneRunWaits {
+	return ControlPlaneRunWaits{Client: task.controlPlane.Waits}
 }
 
 func (task *guestRunLeaseTask) CurrentWorkerRunLease() workerapi.RunLease {
@@ -263,9 +285,6 @@ func workerRunLeaseFromAssignment(orgID string, assignment workerapi.RunLeaseAss
 }
 
 func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.RunWaitRequested) error {
-	if task.waits == nil {
-		return errors.New("run lease task wait control plane is required")
-	}
 	if err := task.validateWaitScope(wait.GetExecution(), wait.TurnId); err != nil {
 		return err
 	}
@@ -296,7 +315,7 @@ func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *programv0.R
 		}
 		return nil
 	}
-	return task.runHotWait(ctx, runtimeWait, task.waits.Wait)
+	return task.runHotWait(ctx, runtimeWait, task.runWaits().Wait)
 }
 
 func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, event *programv0.RunEvent) error {
@@ -468,7 +487,7 @@ func (events taskControlEvents) AppendRunLog(
 		return err
 	}
 	defer cancel()
-	return events.task.controlPlane.AppendRunLog(logCtx, lease, stream, sequence, content)
+	return events.task.controlPlane.Leases.AppendRunLog(logCtx, lease, stream, sequence, content)
 }
 
 func (events taskControlEvents) ApplyRunMetadata(
@@ -476,10 +495,7 @@ func (events taskControlEvents) ApplyRunMetadata(
 	_ workerapi.RunLeaseAssignment,
 	request *programv0.MetadataUpdated,
 ) error {
-	controlPlane, err := requireRunObservabilityControlPlane(events.task.controlPlane)
-	if err != nil {
-		return err
-	}
+	controlPlane := events.task.controlPlane.Observability
 	controlRequest, err := workerRunMetadataRequest(request)
 	if err != nil {
 		return err
@@ -499,10 +515,7 @@ func (events taskControlEvents) RecordStructuredRunLog(
 	sequence uint64,
 	request *programv0.StructuredLogRequested,
 ) error {
-	controlPlane, err := requireRunObservabilityControlPlane(events.task.controlPlane)
-	if err != nil {
-		return err
-	}
+	controlPlane := events.task.controlPlane.Observability
 	controlRequest, err := workerStructuredLogRequest(request, sequence)
 	if err != nil {
 		return err
@@ -528,7 +541,7 @@ func (task *guestRunLeaseTask) RenewRunLease(
 	}
 	previous := task.lease
 	if task.checkpointFrozen {
-		renewed, err := renewControlPlaneRunLeaseAuthority(ctx, task.controlPlane, previous)
+		renewed, err := renewControlPlaneRunLeaseAuthority(ctx, task.controlPlane.Leases, previous)
 		if err != nil {
 			return RunLeaseTaskRenewal{}, err
 		}
@@ -537,7 +550,7 @@ func (task *guestRunLeaseTask) RenewRunLease(
 	}
 	renewed, fence, err := renewRunLeaseAuthority(
 		ctx,
-		task.controlPlane,
+		task.controlPlane.Leases,
 		task.mounts,
 		task.lease,
 		task.authority,

@@ -43,10 +43,7 @@ func (task *guestRunLeaseTask) handleActorRuntime(
 	ctx context.Context,
 	event *programv0.RunEvent,
 ) error {
-	controlPlane, ok := task.controlPlane.(ActorRuntimeControlPlane)
-	if !ok {
-		return errors.New("run lease task actor runtime control plane is required")
-	}
+	controlPlane := task.controlPlane.Actors
 
 	var correlationID string
 	var completed any
