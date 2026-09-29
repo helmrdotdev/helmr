@@ -83,7 +83,7 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 		if resume.EntrypointKind == "actor" {
 			identity.Kind = &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}}
 		}
-		program = freshProgram{session: opened.Channel, releaseSource: opened.ReleaseSource, mount: opened.Mount, lease: claim.Lease, authority: authority, execution: attach.Execution, entrypoint: identity}
+		program = freshProgram{channel: opened.Channel, releaseSource: opened.ReleaseSource, mount: opened.Mount, lease: claim.Lease, authority: authority, execution: attach.Execution, entrypoint: identity}
 		keep = true
 		return nil
 	})

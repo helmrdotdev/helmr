@@ -62,7 +62,7 @@ func TestHandleTurnOutputWritesCorrelatedDecision(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}, execution: execution.Session},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}, execution: execution.Session},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
@@ -122,7 +122,7 @@ func TestHandleTurnOutputRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}, execution: execution.Session},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}, execution: execution.Session},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}

@@ -213,7 +213,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 		),
 	}
 
-	task.program.protocol = newProgramProtocol(program.session.Stream())
+	task.program.protocol = newProgramProtocol(program.channel.Stream())
 	return task, nil
 }
 

@@ -56,7 +56,7 @@ func TestTurnSettlementNeedsNoCaptureOrFrontierChange(t *testing.T) {
 			defer guest.Close()
 			_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
 			cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}}
-			task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+			task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 			requested := &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: disposition}
 			if disposition == "completed" {
 				requested.ResultJson = new(`{"answer":42}`)
@@ -119,7 +119,7 @@ func TestTurnSettlementFailureStopsComputer(t *testing.T) {
 				cp.commitErr = commitErr
 			}
 			session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: host}, releaseErr: releaseErr}
-			task := &guestRunLeaseTask{program: freshProgram{session: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+			task := &guestRunLeaseTask{program: freshProgram{channel: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 			err := task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
 			var stopErr *checkpointSourceReleaseError
 			if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || session.releases != 1 {
@@ -159,7 +159,7 @@ func TestTurnSettlementFailureReleasesMountedComputerThroughBoundSource(t *testi
 		t.Fatal(err)
 	}
 	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}, commitErr: commitErr}
-	task := &guestRunLeaseTask{program: freshProgram{session: opened.Channel, releaseSource: opened.ReleaseSource, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+	task := &guestRunLeaseTask{program: freshProgram{channel: opened.Channel, releaseSource: opened.ReleaseSource, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
 	var stopErr *checkpointSourceReleaseError
 	if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || !errors.Is(err, commitErr) {
@@ -191,7 +191,7 @@ func TestTurnSettlementCancellationUnblocksDecisionAndStopsComputer(t *testing.T
 	stream := &turnBlockedWrite{ReadWriteCloser: host, started: make(chan struct{})}
 	session := &turnReleaseSession{fakeGuestSession: fakeGuestSession{stream: stream}}
 	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}}
-	task := &guestRunLeaseTask{program: freshProgram{session: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+	task := &guestRunLeaseTask{program: freshProgram{channel: session, releaseSource: session.release, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -230,7 +230,7 @@ func TestTurnSettlementAllowsConcurrentLeaseRenewal(t *testing.T) {
 	defer host.Close()
 	defer guest.Close()
 	_ = guest.SetDeadline(time.Now().Add(5 * time.Second))
-	task := &guestRunLeaseTask{program: freshProgram{session: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease, authority: freshComputerAuthority(&claim, "channel", testComputerMount(claim.Lease)), mounts: turnRenewalMounts{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease, authority: freshComputerAuthority(&claim, "channel", testComputerMount(claim.Lease)), mounts: turnRenewalMounts{}}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	done := make(chan error, 1)

@@ -29,8 +29,10 @@ type MountRegistry interface {
 // source after the Run's control stream has detached. GrantProgramResume is
 // likewise bound to the physical mount the channel was opened on.
 type MountChannel struct {
-	Channel            vm.Machine
-	ReleaseSource      func(context.Context) error
+	Channel vm.Machine
+	// ReleaseSource is always set by OpenChannel.
+	ReleaseSource func(context.Context) error
+	// GrantProgramResume is always set by OpenChannel.
 	GrantProgramResume func(context.Context, *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error)
 	ChannelToken       string
 	Mount              workerapi.ComputerInstanceAssignment
@@ -97,7 +99,7 @@ func (s *Mounts) OpenChannel(ctx context.Context, computerInstanceID string) (Mo
 		Channel:       newBorrowedChannel(entry.instance, stream),
 		ReleaseSource: entry.instance.ReleaseCheckpointSource,
 		GrantProgramResume: func(ctx context.Context, request *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
-			return grantProgramResumeOnSession(ctx, entry.instance, request)
+			return grantProgramResumeOnMachine(ctx, entry.instance, request)
 		},
 		ChannelToken: entry.channelToken,
 		Mount:        entry.mount,
@@ -139,7 +141,7 @@ func (s *Mounts) RenewComputerAuthority(ctx context.Context, request *computerv0
 	if err := validateComputerMountPhysicalAuthority(fence, entry.mount); err != nil {
 		return nil, err
 	}
-	return renewComputerAuthorityOnSession(ctx, entry.instance, request)
+	return renewComputerAuthorityOnMachine(ctx, entry.instance, request)
 }
 
 func validateComputerMountPhysicalAuthority(
@@ -167,9 +169,9 @@ type instanceMount struct {
 	failureRequests              chan mountFailureRequest
 }
 
-func newInstanceMount(session vm.Machine) *instanceMount {
+func newInstanceMount(machine vm.Machine) *instanceMount {
 	return &instanceMount{
-		machine:                  session,
+		machine:                  machine,
 		releaseForCheckpointDone: make(chan struct{}),
 		failureRequests:          make(chan mountFailureRequest, 1),
 	}

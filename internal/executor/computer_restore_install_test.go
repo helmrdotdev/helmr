@@ -16,7 +16,7 @@ import (
 )
 
 type restoreActivationHarness struct {
-	borrowedParentSession
+	mountedMachine
 	mu                              sync.Mutex
 	calls                           []string
 	failAck, alterAck, alterInstall bool

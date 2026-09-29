@@ -112,7 +112,7 @@ func (p *programProtocol) takePhysical(ctx context.Context, handle func(context.
 
 func (program *freshProgram) readEvent(ctx context.Context, event *programv0.RunEvent) error {
 	if program.protocol == nil {
-		return readProtoFrameBoundedContext(ctx, program.session, maxFreshOutcomeFrameBytes, event)
+		return readProtoFrameBoundedContext(ctx, program.channel, maxFreshOutcomeFrameBytes, event)
 	}
 	r, err := program.protocol.next(ctx)
 	if err != nil {
@@ -129,7 +129,7 @@ func (program *freshProgram) controlStream() io.ReadWriteCloser {
 	if program.protocol != nil {
 		return program.protocol
 	}
-	return program.session.Stream()
+	return program.channel.Stream()
 }
 func (task *guestRunLeaseTask) programStream() io.ReadWriteCloser {
 	return task.program.controlStream()

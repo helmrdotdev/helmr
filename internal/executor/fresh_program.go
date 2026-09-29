@@ -70,7 +70,7 @@ type freshProgramEventSink interface {
 type freshProgram struct {
 	protocol         *programProtocol
 	execution        *programv0.SessionExecution
-	session          vm.Machine
+	channel          vm.Machine
 	releaseSource    func(context.Context) error
 	mount            workerapi.ComputerInstanceAssignment
 	lease            workerapi.RunLeaseAssignment
@@ -207,10 +207,10 @@ func (program *freshProgram) awaitTaskCompletion(
 	invokeChildTask func(context.Context, *programv0.TaskChildInvokeRequested) error,
 	resourceRuntime ...func(context.Context, *programv0.RunEvent) error,
 ) (*programv0.TaskOutcome, *programv0.ProgramQuiesced, error) {
-	if program == nil || program.session == nil {
+	if program == nil || program.channel == nil {
 		return nil, nil, errors.New("fresh program session is required")
 	}
-	defer program.session.Close(context.Background())
+	defer program.channel.Close(context.Background())
 	if events == nil {
 		return nil, nil, errors.New("fresh program event sink is required")
 	}
@@ -376,10 +376,10 @@ func (program *freshProgram) awaitActorCompletion(
 	invokeChildTask func(context.Context, *programv0.TaskChildInvokeRequested) error,
 	resourceRuntime ...func(context.Context, *programv0.RunEvent) error,
 ) (*programv0.ActorOutcome, *programv0.ProgramQuiesced, error) {
-	if program == nil || program.session == nil {
+	if program == nil || program.channel == nil {
 		return nil, nil, errors.New("fresh program session is required")
 	}
-	defer program.session.Close(context.Background())
+	defer program.channel.Close(context.Background())
 	if events == nil {
 		return nil, nil, errors.New("fresh program event sink is required")
 	}
@@ -703,9 +703,9 @@ func (r ProgramRunner) startNewProgram(
 	if err != nil {
 		return freshProgram{}, err
 	}
-	keepSession := false
+	keepChannel := false
 	defer func() {
-		if !keepSession {
+		if !keepChannel {
 			_ = opened.Channel.Close(context.Background())
 		}
 	}()
@@ -953,10 +953,10 @@ func (r ProgramRunner) startNewProgram(
 	); err != nil {
 		return freshProgram{}, fmt.Errorf("write entrypoint release: %w", err)
 	}
-	keepSession = true
+	keepChannel = true
 	retainAuthority = true
 	return freshProgram{
-		session:          opened.Channel,
+		channel:          opened.Channel,
 		releaseSource:    opened.ReleaseSource,
 		execution:        execution,
 		mount:            opened.Mount,

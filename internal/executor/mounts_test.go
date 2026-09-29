@@ -18,9 +18,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestInstanceMountClosesPhysicalSessionOnce(t *testing.T) {
+func TestInstanceMountClosesPhysicalMachineOnce(t *testing.T) {
 	closeErr := errors.New("close failed")
-	physical := &blockingCloseSession{started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
+	physical := &blockingCloseMachine{started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
 	session := newInstanceMount(physical)
 
 	closeResult := make(chan error, 1)
@@ -50,7 +50,7 @@ func TestInstanceMountClosesPhysicalSessionOnce(t *testing.T) {
 }
 
 func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
-	physical := &blockingCloseSession{started: make(chan struct{}), release: make(chan struct{})}
+	physical := &blockingCloseMachine{started: make(chan struct{}), release: make(chan struct{})}
 	session := newInstanceMount(physical)
 
 	firstRelease := make(chan error, 1)
@@ -99,7 +99,7 @@ func waitForTestError(t *testing.T, result <-chan error, name string) error {
 
 func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
-	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: runStream}
+	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	registry := NewMounts()
 	unregister := registry.Register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newInstanceMount(parent), "channel-1")
 	defer unregister()
@@ -108,7 +108,7 @@ func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := opened.Channel.(vm.CheckpointableMachine); ok {
-		t.Fatal("borrowed run session advertises checkpoint capture")
+		t.Fatal("borrowed channel advertises checkpoint capture")
 	}
 	for range 2 {
 		if err := opened.Channel.Close(context.Background()); err != nil {
@@ -125,7 +125,7 @@ func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 
 func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
-	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: runStream}
+	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: runStream}
 	managed := newInstanceMount(parent)
 	registry := NewMounts()
 	unregister := registry.Register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
@@ -148,11 +148,11 @@ func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *tes
 	}
 }
 
-func TestRenewComputerAuthorityUsesMountedSession(t *testing.T) {
+func TestRenewComputerAuthorityUsesMountedMachine(t *testing.T) {
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
-	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
+	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewMounts()
 	registry.Register(workerapi.ComputerInstanceAssignment{
 
@@ -317,6 +317,7 @@ func testProgramResumeGrant() (*computerv0.GrantProgramResumeRequest, *programv0
 func serveProgramResumeGrant(guest net.Conn, request *computerv0.GrantProgramResumeRequest, attach *programv0.ResumeAttach) <-chan error {
 	result := make(chan error, 1)
 	go func() {
+		defer guest.Close()
 		header, bodyLength, err := wire.ReadStreamFrameHeader(guest)
 		if err != nil {
 			result <- err
@@ -385,7 +386,7 @@ func (c *closeCountingConn) Close() error {
 func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()
-	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
+	parent := &mountedMachine{stream: discardReadWriteCloser{}, openStream: host}
 	registry := NewMounts()
 	registry.Register(workerapi.ComputerInstanceAssignment{
 
@@ -433,35 +434,35 @@ func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T)
 	}
 }
 
-type borrowedParentSession struct {
+type mountedMachine struct {
 	stream     io.ReadWriteCloser
 	openStream io.ReadWriteCloser
 	artifact   vm.SnapshotArtifact
 	closeCount int
 }
 
-func (s *borrowedParentSession) Stream() vm.Stream {
+func (s *mountedMachine) Stream() vm.Stream {
 	return testVMStream(s.stream)
 }
 
-func (s *borrowedParentSession) OpenStream(context.Context) (vm.Stream, error) {
+func (s *mountedMachine) OpenStream(context.Context) (vm.Stream, error) {
 	if s.openStream != nil {
 		return testVMStream(s.openStream), nil
 	}
 	return testVMStream(&countingReadWriteCloser{}), nil
 }
 
-func (s *borrowedParentSession) Wait(ctx context.Context) error {
+func (s *mountedMachine) Wait(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
 
-func (s *borrowedParentSession) Close(context.Context) error {
+func (s *mountedMachine) Close(context.Context) error {
 	s.closeCount++
 	return nil
 }
 
-func (s *borrowedParentSession) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
+func (s *mountedMachine) CreateSnapshot(context.Context, vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
 	if s.artifact.VMState.Path != "" {
 		return s.artifact, nil
 	}
@@ -472,7 +473,7 @@ func (s *borrowedParentSession) CreateSnapshot(context.Context, vm.SnapshotReque
 	}, nil
 }
 
-func (s *borrowedParentSession) Resume(context.Context) error {
+func (s *mountedMachine) Resume(context.Context) error {
 	return nil
 }
 
@@ -480,25 +481,25 @@ type countingReadWriteCloser struct {
 	closeCount int
 }
 
-type blockingCloseSession struct {
+type blockingCloseMachine struct {
 	started    chan struct{}
 	release    chan struct{}
 	closeCount atomic.Int32
 	closeErr   error
 }
 
-func (s *blockingCloseSession) Stream() vm.Stream { return testVMStream(discardReadWriteCloser{}) }
+func (s *blockingCloseMachine) Stream() vm.Stream { return testVMStream(discardReadWriteCloser{}) }
 
-func (s *blockingCloseSession) OpenStream(context.Context) (vm.Stream, error) {
+func (s *blockingCloseMachine) OpenStream(context.Context) (vm.Stream, error) {
 	return testVMStream(discardReadWriteCloser{}), nil
 }
 
-func (s *blockingCloseSession) Wait(ctx context.Context) error {
+func (s *blockingCloseMachine) Wait(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
 
-func (s *blockingCloseSession) Close(context.Context) error {
+func (s *blockingCloseMachine) Close(context.Context) error {
 	if s.closeCount.Add(1) == 1 {
 		close(s.started)
 	}
@@ -513,11 +514,11 @@ func (s *countingReadWriteCloser) Close() error {
 	return nil
 }
 
-func (s *borrowedParentSession) SnapshotLimits() (vm.SnapshotLimits, error) {
+func (s *mountedMachine) SnapshotLimits() (vm.SnapshotLimits, error) {
 	return vm.SnapshotLimits{ComputerBytes: 4096, MemoryBytes: 4096, ScratchBytes: 4096, StateBytes: 10000000, ConfigBytes: 65536}, nil
 }
 
-func (s *borrowedParentSession) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {
+func (s *mountedMachine) PauseComputer(context.Context) (*vm.ComputerSnapshot, error) {
 	return s.artifact.Computer, nil
 }
 
@@ -541,7 +542,7 @@ func TestRenewComputerAuthorityRejectsDifferentPhysicalWriterBeforeOpeningStream
 }
 
 type renewalStreamProbe struct {
-	borrowedParentSession
+	mountedMachine
 	opened bool
 }
 

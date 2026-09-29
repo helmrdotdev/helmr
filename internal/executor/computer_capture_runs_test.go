@@ -29,7 +29,7 @@ func TestComputerCaptureJoinsTwoWaitsBeforePhysicalCapture(t *testing.T) {
 		lease.ID, lease.RunID, lease.AttemptNumber = member.RunLeaseID, member.RunID, member.AttemptNumber
 		lease.ComputerInstanceID, lease.WorkerEpoch = request.Target.ID, request.Target.WorkerEpoch
 		lease.ComputerID, lease.WriterGeneration = request.Target.Source.ComputerID, request.Target.Source.WriterGeneration
-		task := &guestRunLeaseTask{captures: registry, lease: lease, program: freshProgram{session: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
+		task := &guestRunLeaseTask{captures: registry, lease: lease, program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
 		t.Cleanup(task.Close)
 		wait := WaitRequest{RunWaitID: member.RunWaitID, ResumeAttachID: "attach-" + member.RunID, CorrelationID: "correlation-" + member.RunID}
 		opened, result := make(chan struct{}), make(chan error, 1)
@@ -274,7 +274,7 @@ func TestHotWaitCaptureFailureWaitsForPhysicalExclusion(t *testing.T) {
 			lease.ComputerInstanceID, lease.WorkerEpoch = target.ID, target.WorkerEpoch
 			lease.ComputerID, lease.WriterGeneration = target.Source.ComputerID, target.Source.WriterGeneration
 			registry := &ComputerCaptureRuns{}
-			task := &guestRunLeaseTask{captures: registry, lease: lease, program: freshProgram{session: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
+			task := &guestRunLeaseTask{captures: registry, lease: lease, program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
 			defer task.Close()
 			opened, waited := make(chan struct{}), make(chan error, 1)
 			go func() {
@@ -356,7 +356,7 @@ func TestHotWaitQueuedCaptureJoinsExclusionWhenEventBranchWins(t *testing.T) {
 	lease.ComputerID, lease.WriterGeneration = target.Source.ComputerID, target.Source.WriterGeneration
 	registry := &ComputerCaptureRuns{}
 	logs := &blockedCaptureLogClient{entered: make(chan struct{})}
-	task := &guestRunLeaseTask{captures: registry, lease: lease, controlPlane: testControlPlane(t, logs), program: freshProgram{session: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
+	task := &guestRunLeaseTask{captures: registry, lease: lease, controlPlane: testControlPlane(t, logs), program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: newProgramProtocol(host)}}
 	defer task.Close()
 	opened, waited := make(chan struct{}), make(chan error, 1)
 	go func() {

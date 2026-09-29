@@ -91,7 +91,7 @@ func TestHandleChildTaskInvokeDoesNotBlockRunLeaseRenewal(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		mounts:       mounts,
 		lease:        previous,
@@ -153,7 +153,7 @@ func TestHandleChildTaskInvokeWritesCorrelatedDecision(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
@@ -218,7 +218,7 @@ func TestHandleChildTaskCallRejectsCompletedResponseWithoutOpenedWait(t *testing
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
@@ -267,7 +267,7 @@ func TestHandleChildTaskInvokeRetryKeepsStableFenceAcrossRenewal(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
@@ -334,7 +334,7 @@ func TestHandleChildTaskCallContinuesOpenedWait(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, waitClient, controlPlane),
 		lease:        lease,
 	}
@@ -400,7 +400,7 @@ func TestHandleChildTaskInvokeReturnsSemanticFailureToRuntime(t *testing.T) {
 	defer guest.Close()
 	defer host.Close()
 	task := &guestRunLeaseTask{
-		program:      freshProgram{session: fakeGuestSession{stream: guest}},
+		program:      freshProgram{channel: fakeGuestSession{stream: guest}},
 		controlPlane: testControlPlane(t, controlPlane),
 		lease:        lease,
 	}
