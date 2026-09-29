@@ -140,6 +140,9 @@ func (*closeTrackingRuntimeSession) OpenStream(context.Context) (vm.Stream, erro
 	return nil, nil
 }
 func (*closeTrackingRuntimeSession) Wait(context.Context) error { return nil }
+func (*closeTrackingRuntimeSession) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	return nil, errTestLiveCapture
+}
 func (s *closeTrackingRuntimeSession) Close(context.Context) error {
 	s.closed++
 	return s.err
@@ -150,6 +153,9 @@ func (*blockingCloseRuntimeSession) OpenStream(context.Context) (vm.Stream, erro
 	return nil, nil
 }
 func (*blockingCloseRuntimeSession) Wait(context.Context) error { return nil }
+func (*blockingCloseRuntimeSession) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	return nil, errTestLiveCapture
+}
 func (s *blockingCloseRuntimeSession) Close(ctx context.Context) error {
 	s.once.Do(func() { close(s.started) })
 	select {
@@ -189,6 +195,9 @@ func (s *stuckPreparedRuntimeSession) Wait(context.Context) error {
 	return nil
 }
 func (*stuckPreparedRuntimeSession) Close(context.Context) error { return nil }
+func (*stuckPreparedRuntimeSession) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	return nil, errTestLiveCapture
+}
 
 func TestPreparedRuntimePoolCloseHonorsDeadlineWhileMonitorIsStuck(t *testing.T) {
 	session := &stuckPreparedRuntimeSession{waitStarted: make(chan struct{}), releaseWait: make(chan struct{})}

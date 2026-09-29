@@ -27,6 +27,10 @@ func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeReque
 	return nil, errors.New("test backend does not materialize machines")
 }
 
+// errTestLiveCapture is what test runtimes return when the pool admits them as
+// live-capture machines but a test never expects a Computer save to succeed.
+var errTestLiveCapture = errors.New("test runtime does not capture a live Computer")
+
 type fakeGuestSession struct {
 	stream io.ReadWriteCloser
 }

@@ -81,6 +81,12 @@ func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot,
 	return s.capturePausedComputer(ctx)
 }
 
+// The prepared runtime pool admits only machines that can capture a live
+// Computer for saves.
+var _ interface {
+	CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
+} = (*guestSession)(nil)
+
 // CaptureComputer briefly holds dispatch and resumes before returning the owned
 // disk cut. It captures no memory. Any error forbids further live captures and
 // requires the owner to stop the source, including an ambiguous resume reply.

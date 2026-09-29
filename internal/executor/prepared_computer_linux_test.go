@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"uuid"
@@ -20,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/reservation"
+	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -262,6 +264,78 @@ func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.
 	}
 	if err := pool.ReclaimFailedRuntimeTarget(t.Context(), client, target); err != nil {
 		t.Fatal(err)
+	}
+	if err := os.RemoveAll(pool.TempDir); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// uncapturableRuntimeSession is a runtime machine that cannot capture its live
+// Computer, which the pool must reject before admitting it.
+type uncapturableRuntimeSession struct {
+	closed atomic.Int32
+}
+
+func (*uncapturableRuntimeSession) Stream() vm.Stream { return nil }
+func (*uncapturableRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
+	return nil, errors.New("uncapturable runtime has no streams")
+}
+func (*uncapturableRuntimeSession) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (s *uncapturableRuntimeSession) Close(context.Context) error {
+	s.closed.Add(1)
+	return nil
+}
+
+type uncapturableMaterializingBackend struct {
+	unsupportedMachineStarts
+	session *uncapturableRuntimeSession
+}
+
+func (b *uncapturableMaterializingBackend) Materialize(context.Context, vm.MaterializeRequest) (vm.Machine, error) {
+	return b.session, nil
+}
+func (*uncapturableMaterializingBackend) Cleanup(context.Context, vm.Owner) error { return nil }
+
+func TestWarmRuntimeRejectsMachineWithoutLiveCapture(t *testing.T) {
+	store, mount := testComputerMountArtifacts(t)
+	connector := &uncapturableMaterializingBackend{session: &uncapturableRuntimeSession{}}
+	pool := NewPreparedRuntimePool(connector, store, 1, nil)
+	pool.TempDir = t.TempDir()
+	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
+	pool.Reservations = newPreparedRuntimeReservations(t, 1)
+	client := &typedRuntimeClient{}
+	pool.ComputerInstances = client
+	target := runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
+	items := []workerapi.RuntimeReconcileTarget{target}
+	configureComputerPreparationTest(t, pool, items)
+	target = items[0]
+	// Continue from the transport's published generation so preparation
+	// attaches the Computer device and reaches materialization.
+	source := *target.Source.Computer
+	source.Root = &pool.ComputerPreparation.(*computerPreparationTransport).root
+	target.Source.Computer = &source
+	if err := pool.warmRuntimeTarget(t.Context(), client, target, func() {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.failed) != 1 || client.failed[0].CleanupProof != nil ||
+		!strings.Contains(string(client.failed[0].Error), "runtime cannot capture a live Computer") {
+		t.Fatalf("failure reports=%+v", client.failed)
+	}
+	if got := connector.session.closed.Load(); got != 1 {
+		t.Fatalf("machine closes=%d, want 1", got)
+	}
+	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
+	if got := len(pool.Reservations.Snapshot().Reservations); got != 0 || computerDeviceTracked(pool, ref) {
+		t.Fatalf("reservations=%d device tracked=%t after rejection", got, computerDeviceTracked(pool, ref))
+	}
+	pool.mu.Lock()
+	ready := pool.readyCountLocked()
+	pool.mu.Unlock()
+	if ready != 0 {
+		t.Fatalf("ready runtimes=%d after rejection", ready)
 	}
 	if err := os.RemoveAll(pool.TempDir); err != nil {
 		t.Fatal(err)

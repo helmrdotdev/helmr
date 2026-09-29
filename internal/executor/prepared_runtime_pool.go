@@ -104,7 +104,7 @@ type PreparedRuntimePool struct {
 }
 
 type preparedRuntimeEntry struct {
-	session            vm.Machine
+	session            liveCaptureMachine
 	poolKey            string
 	computerInstanceID string
 	runtimeEpoch       int64
@@ -842,6 +842,10 @@ func (p *PreparedRuntimePool) prepareAndStore(
 			}
 		}
 	}()
+	live, ok := session.(liveCaptureMachine)
+	if !ok {
+		return failInstance(errors.New("runtime cannot capture a live Computer"))
+	}
 	if target.Source.Restore == nil {
 		if err := p.prepareGuestRuntime(ctx, session, key, target.Source.WriterGeneration, mount, "", mountedImageConfig); err != nil {
 			p.logInfo("prepared runtime pool guest prepare failed", "computer_instance_id", computerInstanceID, "error", err.Error())
@@ -849,7 +853,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		}
 	}
 	entry := preparedRuntimeEntry{
-		session:            session,
+		session:            live,
 		poolKey:            key,
 		computerInstanceID: computerInstanceID,
 		runtimeEpoch:       runtimeEpoch,
@@ -1214,13 +1218,14 @@ func (p *PreparedRuntimePool) runtimeCheckedOut(computerInstanceID string, runti
 type runtimeCheckout struct {
 	pool                *PreparedRuntimePool
 	ref                 preparedRuntimeRef
-	machine             vm.Machine
+	machine             liveCaptureMachine
 	writerGeneration    int64
 	restoreCheckpointID string
 }
 
-// Machine returns the checked-out runtime's machine.
-func (c *runtimeCheckout) Machine() vm.Machine {
+// Machine returns the checked-out runtime's machine, which the pool admitted
+// only once it could capture its live Computer.
+func (c *runtimeCheckout) Machine() liveCaptureMachine {
 	if c == nil {
 		return nil
 	}
