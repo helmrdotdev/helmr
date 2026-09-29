@@ -105,8 +105,8 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workerActor, 
 	if err != nil {
 		return err
 	}
-	if group.ClaimVersion != worker.GroupClaimVersion || host.ClaimVersion != worker.ClaimVersion {
-		return pgx.ErrNoRows
+	if err = worker.checkLockedClaims(host, group); err != nil {
+		return err
 	}
 	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
 	if err != nil {
@@ -176,7 +176,7 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workerActor, 
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.WorkerEpoch, WorkerClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion, ExpiresAt: i.WriterExpiresAt})
+	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.WorkerEpoch, ExpiresAt: i.WriterExpiresAt})
 	if err != nil {
 		return err
 	}

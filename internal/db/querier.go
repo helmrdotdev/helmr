@@ -62,8 +62,11 @@ type Querier interface {
 	CancelQueuedSessionTurn(ctx context.Context, arg CancelQueuedSessionTurnParams) (SessionTurn, error)
 	CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error)
 	// One primary statement snapshot captures both authorization and ciphertext.
+	// claims_current reports credential freshness on the same snapshot; it is not
+	// authority, and the caller answers a stale credential before using material.
 	CaptureProtectedSecretEnvelopes(ctx context.Context, arg CaptureProtectedSecretEnvelopesParams) ([]CaptureProtectedSecretEnvelopesRow, error)
 	// Computer CA creation is separate; preparation captures only existing material.
+	// claims_current has the same freshness-only meaning as in protected capture.
 	CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error)
 	// The data-modifying CTE always runs in the same statement. Certification does
 	// not depend on its inserted row count: every inherited key may already be direct.
@@ -92,8 +95,9 @@ type Querier interface {
 	ClearSessionDispatchHold(ctx context.Context, arg ClearSessionDispatchHoldParams) (Session, error)
 	CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error)
 	CloseRunActiveIntervalForFinalization(ctx context.Context, arg CloseRunActiveIntervalForFinalizationParams) (Run, error)
-	// The caller already holds the producer's worker, group, command and lease locks.
-	// Recheck token claims and wall-clock expiry immediately before committing logs.
+	// The caller already holds the producer's worker, group, command and lease locks
+	// and compared token claims under them. Recheck wall-clock expiry immediately
+	// before committing logs.
 	CommandLogProducerStillAuthorized(ctx context.Context, arg CommandLogProducerStillAuthorizedParams) (pgtype.Bool, error)
 	// One destination is committed before activation. The caller inserts the durable
 	// activation outbox record and all fresh Run grants in this same transaction.

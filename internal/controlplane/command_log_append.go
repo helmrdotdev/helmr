@@ -49,8 +49,8 @@ func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workerActor, reques
 	if err != nil {
 		return err
 	}
-	if group.ClaimVersion != worker.GroupClaimVersion || host.ClaimVersion != worker.ClaimVersion {
-		return pgx.ErrNoRows
+	if err = worker.checkLockedClaims(host, group); err != nil {
+		return err
 	}
 	if _, err = q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID}); err != nil {
 		return err
@@ -83,8 +83,7 @@ func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workerActor, reques
 	}
 	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{
 		WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch: worker.WorkerEpoch, WorkerClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
-		ExpiresAt: instance.WriterExpiresAt,
+		WorkerEpoch: worker.WorkerEpoch, ExpiresAt: instance.WriterExpiresAt,
 	})
 	if err != nil {
 		return err

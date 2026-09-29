@@ -37,6 +37,20 @@ type computerKeyMaterial struct {
 
 var errComputerKeyUnavailable = errors.New("computer key authority is unavailable")
 
+// checkLockedClaims compares the authenticated claim versions with the Worker
+// host and group rows that dispatch.LockComputerPreparation or
+// dispatch.LockComputerSourcePreparation locked.
+func (f computerKeyFence) checkLockedClaims(ctx context.Context, tx pgx.Tx) error {
+	var host, group int64
+	if err := tx.QueryRow(ctx, `SELECT w.claim_version,g.claim_version FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID).Scan(&host, &group); err != nil {
+		return err
+	}
+	if host != f.ClaimVersion || group != f.GroupClaimVersion {
+		return errStaleWorkerClaims
+	}
+	return nil
+}
+
 func newComputerKeyBroker(tx db.TxBeginner, wrapper ComputerKeyWrapper) (*computerKeyBroker, error) {
 	if tx == nil || wrapper == nil {
 		return nil, errors.New("computer key transactions and wrapping provider are required")
@@ -83,7 +97,13 @@ func (b *computerKeyBroker) initial(ctx context.Context, f computerKeyFence) (co
 	}
 	// A successful unwrap is not a delivery grant. Revocation, expiry, cancellation
 	// or a changed reservation during provider I/O must suppress the response.
+	// Only authority rejections become unavailability; stale claims and database
+	// failures keep their own classification.
 	current, currentScope, err := b.pinInitial(ctx, f, nil, "")
+	if err != nil && !errors.Is(err, errComputerKeyUnavailable) && !errors.Is(err, pgx.ErrNoRows) {
+		clear(plain)
+		return computerKeyMaterial{}, err
+	}
 	if err != nil || currentScope != scope || current.ID != row.ID || current.WrappingKeyID != row.WrappingKeyID || !bytes.Equal(current.WrappedKey, row.WrappedKey) || len(plain) != computerkey.Size {
 		clear(plain)
 		return computerKeyMaterial{}, errComputerKeyUnavailable
@@ -103,12 +123,8 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 		if err != nil {
 			return errComputerKeyUnavailable
 		}
-		var claims bool
-		err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4
- FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id
- WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
-		if err != nil || !claims {
-			return errComputerKeyUnavailable
+		if err = f.checkLockedClaims(ctx, tx); err != nil {
+			return err
 		}
 		scope, err := disk.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
 		if err != nil || (expectedScope != "" && expectedScope != scope) {

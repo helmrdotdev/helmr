@@ -65,6 +65,9 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 				ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 				Origin: request.Origin, Placeholders: request.Placeholders,
 			})
+			if err == nil && slices.ContainsFunc(captured, func(row db.CaptureProtectedSecretEnvelopesRow) bool { return !row.ClaimsCurrent }) {
+				err = errStaleWorkerClaims
+			}
 			if err == nil {
 				resolution.Values, err = s.secretProxy.OpenProtected(captured, request.Placeholders)
 			}
@@ -76,6 +79,9 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 			WorkerEpoch: worker.WorkerEpoch, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
 			ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 		})
+		if err == nil && !captured.ClaimsCurrent {
+			err = errStaleWorkerClaims
+		}
 		if err == nil && len(captured.Origins) != 0 {
 			hosts := []string{}
 			for _, o := range captured.Origins {
@@ -90,13 +96,16 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 			}
 			if err == nil {
 				preparation.Origins = captured.Origins
-				preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ProxyLeaf(secret.ProxyTrust{
-					EnvironmentID: pgvalue.MustUUIDValue(captured.EnvironmentID), ComputerID: pgvalue.MustUUIDValue(captured.ComputerID),
-					Certificate: captured.Certificate, NotAfter: captured.NotAfter.Time,
-					PrivateKeyNonce: captured.PrivateKeyNonce, PrivateKeyCiphertext: captured.PrivateKeyCiphertext,
-				}, hosts)
+				preparation.Certificate, preparation.PrivateKey, err = s.secretProxy.ProxyLeaf(captured, hosts)
 			}
 		}
+	}
+	// The store refuses stale captures too; both answer re-authentication.
+	if errors.Is(err, secret.ErrWorkerClaimsStale) {
+		err = errStaleWorkerClaims
+	}
+	if writeStaleWorkerClaims(w, err) {
+		return
 	}
 	if err != nil {
 		if errors.Is(err, secret.ErrProxyTrustExpired) {

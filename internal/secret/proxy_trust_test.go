@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
@@ -25,7 +28,7 @@ func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
 	if !root.NotAfter.Equal(created.AddDate(10, 0, 0).Truncate(time.Second)) {
 		t.Fatal("root lifetime differs")
 	}
-	certPEM, keyPEM, err := store.ProxyLeaf(root, []string{"api.github.com"})
+	certPEM, keyPEM, err := store.proxyLeaf(root, []string{"api.github.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +54,7 @@ func TestProxyTrustCustodyLifetimeAndScope(t *testing.T) {
 	}
 	other := root
 	other.ComputerID = uuid.NewV7()
-	if _, _, err := store.ProxyLeaf(other, []string{"api.github.com"}); err == nil {
+	if _, _, err := store.proxyLeaf(other, []string{"api.github.com"}); err == nil {
 		t.Fatal("cross-Computer signer decrypt succeeded")
 	}
 	if err := ValidateProxyTrust(root.Certificate, root.NotAfter, root.NotAfter); !errors.Is(err, ErrProxyTrustExpired) {
@@ -80,7 +83,7 @@ func TestProxyLeafIssuesMaximumAdmittedHosts(t *testing.T) {
 	for i := range hosts {
 		hosts[i] = fmt.Sprintf("h%d.example.com", i)
 	}
-	certificate, key, err := store.ProxyLeaf(root, hosts)
+	certificate, key, err := store.proxyLeaf(root, hosts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +99,7 @@ func TestProxyLeafIssuesMaximumAdmittedHosts(t *testing.T) {
 	if !slices.Equal(leaf.DNSNames, hosts) {
 		t.Fatal("issuer lost admitted hosts")
 	}
-	if _, _, err := store.ProxyLeaf(root, append(hosts, "extra.example.com")); err == nil {
+	if _, _, err := store.proxyLeaf(root, append(hosts, "extra.example.com")); err == nil {
 		t.Fatal("issuer exceeded validated capacity")
 	}
 }
@@ -110,5 +113,30 @@ func TestProxyTrustGenerationFailureReturnsNoMaterial(t *testing.T) {
 	var missing *Store
 	if _, err := missing.GenerateProxyTrust(uuid.NewV7(), uuid.NewV7(), time.Now()); !errors.Is(err, ErrDeliveryUnavailable) {
 		t.Fatalf("missing generator: %v", err)
+	}
+}
+
+func TestProxyMaterialRefusesStaleWorkerClaims(t *testing.T) {
+	store := &Store{encryption: testCipher(t)}
+	root, err := store.GenerateProxyTrust(uuid.NewV7(), uuid.NewV7(), time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured := db.CaptureSecretProxyPreparationRow{
+		EnvironmentID: pgvalue.UUID(root.EnvironmentID), ComputerID: pgvalue.UUID(root.ComputerID),
+		Certificate: root.Certificate, NotAfter: pgtype.Timestamptz{Time: root.NotAfter, Valid: true},
+		PrivateKeyNonce: root.PrivateKeyNonce, PrivateKeyCiphertext: root.PrivateKeyCiphertext, ClaimsCurrent: true,
+	}
+	if _, key, err := store.ProxyLeaf(captured, []string{"api.github.com"}); err != nil || len(key) == 0 {
+		t.Fatalf("current capture: %v", err)
+	}
+	captured.ClaimsCurrent = false
+	if certificate, key, err := store.ProxyLeaf(captured, []string{"api.github.com"}); !errors.Is(err, ErrWorkerClaimsStale) || certificate != nil || key != nil {
+		t.Fatalf("stale capture signed a leaf: %v", err)
+	}
+	selector := "hlmr_protected_" + strings.Repeat("a", 64)
+	rows := []db.CaptureProtectedSecretEnvelopesRow{{Placeholder: selector, ClaimsCurrent: false}}
+	if values, err := store.OpenProtected(rows, []string{selector}); !errors.Is(err, ErrWorkerClaimsStale) || values != nil {
+		t.Fatalf("stale capture opened material: %v", err)
 	}
 }

@@ -101,12 +101,8 @@ func recordInitialComputerObject(ctx context.Context, dbtx db.TxBeginner, fence 
 		if err != nil {
 			return err
 		}
-		var claims bool
-		if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
+		if err = fence.checkLockedClaims(ctx, tx); err != nil {
 			return err
-		}
-		if !claims {
-			return errors.New("object writer claims changed")
 		}
 		q := db.New(tx)
 		key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})

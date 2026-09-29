@@ -42,8 +42,8 @@ func renewComputerInstance(ctx context.Context, tx pgx.Tx, worker workerActor, r
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if group.ClaimVersion != worker.GroupClaimVersion || host.ClaimVersion != worker.ClaimVersion {
-		return db.ComputerInstance{}, errStaleWorkerClaims
+	if err = worker.checkLockedClaims(host, group); err != nil {
+		return db.ComputerInstance{}, err
 	}
 	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.WorkerEpoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
 		return db.ComputerInstance{}, pgx.ErrNoRows

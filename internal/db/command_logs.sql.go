@@ -12,32 +12,27 @@ import (
 )
 
 const commandLogProducerStillAuthorized = `-- name: CommandLogProducerStillAuthorized :one
-SELECT w.claim_version = $1::bigint
-   AND g.claim_version = $2::bigint
-   AND w.status IN ('active', 'draining')
+SELECT w.status IN ('active', 'draining')
    AND g.status IN ('active', 'paused', 'draining')
-   AND clock_timestamp() < $3::timestamptz AS authorized
+   AND clock_timestamp() < $1::timestamptz AS authorized
   FROM worker_hosts w JOIN worker_groups g ON g.id = w.worker_group_id
- WHERE w.id = $4
-   AND g.id = $5
-   AND w.current_epoch = $6::bigint
+ WHERE w.id = $2
+   AND g.id = $3
+   AND w.current_epoch = $4::bigint
 `
 
 type CommandLogProducerStillAuthorizedParams struct {
-	WorkerClaimVersion int64              `json:"worker_claim_version"`
-	GroupClaimVersion  int64              `json:"group_claim_version"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-	WorkerHostID       pgtype.UUID        `json:"worker_host_id"`
-	WorkerGroupID      pgtype.UUID        `json:"worker_group_id"`
-	WorkerEpoch        int64              `json:"worker_epoch"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	WorkerHostID  pgtype.UUID        `json:"worker_host_id"`
+	WorkerGroupID pgtype.UUID        `json:"worker_group_id"`
+	WorkerEpoch   int64              `json:"worker_epoch"`
 }
 
-// The caller already holds the producer's worker, group, command and lease locks.
-// Recheck token claims and wall-clock expiry immediately before committing logs.
+// The caller already holds the producer's worker, group, command and lease locks
+// and compared token claims under them. Recheck wall-clock expiry immediately
+// before committing logs.
 func (q *Queries) CommandLogProducerStillAuthorized(ctx context.Context, arg CommandLogProducerStillAuthorizedParams) (pgtype.Bool, error) {
 	row := q.db.QueryRow(ctx, commandLogProducerStillAuthorized,
-		arg.WorkerClaimVersion,
-		arg.GroupClaimVersion,
 		arg.ExpiresAt,
 		arg.WorkerHostID,
 		arg.WorkerGroupID,

@@ -67,12 +67,8 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 		if input.Root.LogicalBytes != owner.LogicalBytes {
 			return errors.New("initial root capacity differs from preparation")
 		}
-		var claims bool
-		if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
+		if err = fence.checkLockedClaims(ctx, tx); err != nil {
 			return err
-		}
-		if !claims {
-			return errors.New("publication worker claims changed")
 		}
 		q := db.New(tx)
 		object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, Digest: input.Root.Pack.Digest})

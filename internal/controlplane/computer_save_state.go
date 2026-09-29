@@ -78,8 +78,8 @@ func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workerActor, reque
 	if err != nil {
 		return result, err
 	}
-	if group.ClaimVersion != worker.GroupClaimVersion || host.ClaimVersion != worker.ClaimVersion {
-		return result, errStaleWorkerClaims
+	if err = worker.checkLockedClaims(host, group); err != nil {
+		return result, err
 	}
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: params.EnvironmentID, ID: locator.ComputerID})
 	if err != nil {
@@ -121,10 +121,9 @@ func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workerActor, reque
 	}
 	// Locks prevent credential changes, but elapsed time can still expire a writer.
 	var authorized bool
-	err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4
- AND w.current_epoch=$5 AND w.status IN ('active','draining')
- AND g.status IN ('active','paused','draining') AND clock_timestamp()<$6
- FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, params.WorkerHostID, params.WorkerGroupID, worker.ClaimVersion, worker.GroupClaimVersion, worker.WorkerEpoch, instance.WriterExpiresAt).Scan(&authorized)
+	err = tx.QueryRow(ctx, `SELECT w.current_epoch=$3 AND w.status IN ('active','draining')
+ AND g.status IN ('active','paused','draining') AND clock_timestamp()<$4
+ FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, params.WorkerHostID, params.WorkerGroupID, worker.WorkerEpoch, instance.WriterExpiresAt).Scan(&authorized)
 	if err != nil {
 		return result, err
 	}

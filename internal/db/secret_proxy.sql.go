@@ -14,14 +14,14 @@ import (
 const captureProtectedSecretEnvelopes = `-- name: CaptureProtectedSecretEnvelopes :many
 WITH authority AS (
  SELECT i.computer_id,i.environment_id,c.secret_ca_certificate AS certificate,
- c.secret_ca_not_after AS not_after,statement_timestamp()::timestamptz AS authorized_at
+ c.secret_ca_not_after AS not_after,statement_timestamp()::timestamptz AS authorized_at,
+ COALESCE(h.claim_version=$3 AND g.claim_version=$4,false)::boolean AS claims_current
  FROM computer_instances i
  JOIN computers c ON c.id=i.computer_id AND c.environment_id=i.environment_id AND c.writer_generation=i.writer_generation
  JOIN worker_hosts h ON h.id=i.worker_host_id AND h.worker_group_id=i.worker_group_id AND h.current_epoch=i.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
- WHERE i.id=$3 AND i.worker_host_id=$4
- AND i.worker_epoch=$5 AND i.worker_group_id=$6
- AND h.claim_version=$7 AND g.claim_version=$8
+ WHERE i.id=$5 AND i.worker_host_id=$6
+ AND i.worker_epoch=$7 AND i.worker_group_id=$8
  AND h.status IN ('active','draining') AND g.status IN ('active','draining')
  AND h.observed_at>=statement_timestamp()-interval '120 seconds'
  AND c.status='active' AND c.desired_state='active' AND c.deleted_at IS NULL
@@ -33,7 +33,7 @@ WITH authority AS (
                  AND command.writer_generation=i.writer_generation AND command.status IN ('starting','running')))
 )
 SELECT b.placeholder,a.environment_id,s.id AS secret_id,v.id AS version_id,v.version,v.nonce,v.ciphertext,
- a.certificate,a.not_after,a.authorized_at
+ a.certificate,a.not_after,a.authorized_at,a.claims_current
 FROM authority a JOIN computer_secrets b ON b.computer_id=a.computer_id AND b.environment_id=a.environment_id
 JOIN secrets s ON s.id=b.secret_id AND s.environment_id=a.environment_id AND s.status='active'
 JOIN secret_versions v ON v.secret_id=s.id AND v.id=s.current_version_id
@@ -44,12 +44,12 @@ WHERE b.placement_kind='env' AND b.mode='protected' AND b.placeholder=ANY($1::te
 type CaptureProtectedSecretEnvelopesParams struct {
 	Placeholders       []string    `json:"placeholders"`
 	Origin             string      `json:"origin"`
+	ClaimVersion       int64       `json:"claim_version"`
+	GroupClaimVersion  int64       `json:"group_claim_version"`
 	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
 	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
 	WorkerEpoch        int64       `json:"worker_epoch"`
 	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
-	ClaimVersion       int64       `json:"claim_version"`
-	GroupClaimVersion  int64       `json:"group_claim_version"`
 }
 
 type CaptureProtectedSecretEnvelopesRow struct {
@@ -63,19 +63,22 @@ type CaptureProtectedSecretEnvelopesRow struct {
 	Certificate   []byte             `json:"certificate"`
 	NotAfter      pgtype.Timestamptz `json:"not_after"`
 	AuthorizedAt  pgtype.Timestamptz `json:"authorized_at"`
+	ClaimsCurrent bool               `json:"claims_current"`
 }
 
 // One primary statement snapshot captures both authorization and ciphertext.
+// claims_current reports credential freshness on the same snapshot; it is not
+// authority, and the caller answers a stale credential before using material.
 func (q *Queries) CaptureProtectedSecretEnvelopes(ctx context.Context, arg CaptureProtectedSecretEnvelopesParams) ([]CaptureProtectedSecretEnvelopesRow, error) {
 	rows, err := q.db.Query(ctx, captureProtectedSecretEnvelopes,
 		arg.Placeholders,
 		arg.Origin,
+		arg.ClaimVersion,
+		arg.GroupClaimVersion,
 		arg.ComputerInstanceID,
 		arg.WorkerHostID,
 		arg.WorkerEpoch,
 		arg.WorkerGroupID,
-		arg.ClaimVersion,
-		arg.GroupClaimVersion,
 	)
 	if err != nil {
 		return nil, err
@@ -95,6 +98,7 @@ func (q *Queries) CaptureProtectedSecretEnvelopes(ctx context.Context, arg Captu
 			&i.Certificate,
 			&i.NotAfter,
 			&i.AuthorizedAt,
+			&i.ClaimsCurrent,
 		); err != nil {
 			return nil, err
 		}
@@ -109,14 +113,14 @@ func (q *Queries) CaptureProtectedSecretEnvelopes(ctx context.Context, arg Captu
 const captureSecretProxyPreparation = `-- name: CaptureSecretProxyPreparation :one
 WITH authority AS (
  SELECT i.computer_id,i.environment_id,c.secret_ca_certificate AS certificate,c.secret_ca_not_after AS not_after,
- c.secret_ca_private_key_nonce AS private_key_nonce,c.secret_ca_private_key_ciphertext AS private_key_ciphertext
+ c.secret_ca_private_key_nonce AS private_key_nonce,c.secret_ca_private_key_ciphertext AS private_key_ciphertext,
+ COALESCE(h.claim_version=$1 AND g.claim_version=$2,false)::boolean AS claims_current
  FROM computer_instances i
  JOIN computers c ON c.id=i.computer_id AND c.environment_id=i.environment_id AND c.writer_generation=i.writer_generation
  JOIN worker_hosts h ON h.id=i.worker_host_id AND h.worker_group_id=i.worker_group_id AND h.current_epoch=i.worker_epoch
  JOIN worker_groups g ON g.id=h.worker_group_id
- WHERE i.id=$1 AND i.worker_host_id=$2
- AND i.worker_epoch=$3 AND i.worker_group_id=$4
- AND h.claim_version=$5 AND g.claim_version=$6
+ WHERE i.id=$3 AND i.worker_host_id=$4
+ AND i.worker_epoch=$5 AND i.worker_group_id=$6
  AND h.status IN ('active','draining') AND g.status IN ('active','draining')
  AND h.observed_at>=statement_timestamp()-interval '120 seconds'
  AND c.status='active' AND c.desired_state='active' AND c.deleted_at IS NULL
@@ -124,7 +128,7 @@ WITH authority AS (
  AND ((i.observed_state='allocated' AND i.preparation_expires_at>statement_timestamp())
       OR (i.observed_state='ready' AND i.mount_state='mounted' AND i.guest_channel_token_expires_at>statement_timestamp()))
 )
-SELECT a.environment_id,a.computer_id,a.certificate,a.not_after,a.private_key_nonce,a.private_key_ciphertext,
+SELECT a.environment_id,a.computer_id,a.certificate,a.not_after,a.private_key_nonce,a.private_key_ciphertext,a.claims_current,
  ARRAY(SELECT DISTINCT unnest(b.allowed_origins) FROM computer_secrets b
         WHERE b.computer_id=a.computer_id AND b.environment_id=a.environment_id
          AND b.placement_kind='env' AND b.mode='protected')::text[] AS origins
@@ -132,12 +136,12 @@ FROM authority a
 `
 
 type CaptureSecretProxyPreparationParams struct {
+	ClaimVersion       int64       `json:"claim_version"`
+	GroupClaimVersion  int64       `json:"group_claim_version"`
 	ComputerInstanceID pgtype.UUID `json:"computer_instance_id"`
 	WorkerHostID       pgtype.UUID `json:"worker_host_id"`
 	WorkerEpoch        int64       `json:"worker_epoch"`
 	WorkerGroupID      pgtype.UUID `json:"worker_group_id"`
-	ClaimVersion       int64       `json:"claim_version"`
-	GroupClaimVersion  int64       `json:"group_claim_version"`
 }
 
 type CaptureSecretProxyPreparationRow struct {
@@ -147,18 +151,20 @@ type CaptureSecretProxyPreparationRow struct {
 	NotAfter             pgtype.Timestamptz `json:"not_after"`
 	PrivateKeyNonce      []byte             `json:"private_key_nonce"`
 	PrivateKeyCiphertext []byte             `json:"private_key_ciphertext"`
+	ClaimsCurrent        bool               `json:"claims_current"`
 	Origins              []string           `json:"origins"`
 }
 
 // Computer CA creation is separate; preparation captures only existing material.
+// claims_current has the same freshness-only meaning as in protected capture.
 func (q *Queries) CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error) {
 	row := q.db.QueryRow(ctx, captureSecretProxyPreparation,
+		arg.ClaimVersion,
+		arg.GroupClaimVersion,
 		arg.ComputerInstanceID,
 		arg.WorkerHostID,
 		arg.WorkerEpoch,
 		arg.WorkerGroupID,
-		arg.ClaimVersion,
-		arg.GroupClaimVersion,
 	)
 	var i CaptureSecretProxyPreparationRow
 	err := row.Scan(
@@ -168,6 +174,7 @@ func (q *Queries) CaptureSecretProxyPreparation(ctx context.Context, arg Capture
 		&i.NotAfter,
 		&i.PrivateKeyNonce,
 		&i.PrivateKeyCiphertext,
+		&i.ClaimsCurrent,
 		&i.Origins,
 	)
 	return i, err

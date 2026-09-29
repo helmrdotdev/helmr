@@ -61,7 +61,7 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 		}
 		stale := worker
 		stale.ClaimVersion++
-		if _, err := execute(r, stale); !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := execute(r, stale); !errors.Is(err, errStaleWorkerClaims) {
 			t.Fatalf("stale worker: %v", err)
 		}
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, r.ComputerInstanceID)
@@ -113,7 +113,7 @@ func TestCommandClaimSharesInstanceAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := execute(requests[0], worker); !errors.Is(err, pgx.ErrNoRows) {
+	if _, err := execute(requests[0], worker); !errors.Is(err, errStaleWorkerClaims) {
 		t.Fatalf("stale credential after drain: %v", err)
 	}
 	worker.ClaimVersion = drained.ClaimVersion

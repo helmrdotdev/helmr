@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -273,23 +274,59 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	b.wrapper = failing.ComputerKeyWrapper
 
 	observer := &observingKeyWrapper{ComputerKeyWrapper: b.wrapper}
-	revoked := false
+	bumped := false
 	observer.unwrap = func() {
-		if revoked {
+		if bumped {
 			return
 		}
-		revoked = true
+		bumped = true
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
 	}
 	b.wrapper = observer
-	if _, err = b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
-		t.Fatal("revoked worker received source keys", err)
+	if _, err = b.source(t.Context(), fence); !errors.Is(err, errStaleWorkerClaims) {
+		t.Fatal("worker with stale claims received source keys", err)
 	}
 	if !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
-		t.Fatal("revoked plaintext not cleared")
+		t.Fatal("stale-claims plaintext not cleared")
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.runtimeWorker())
 	b.wrapper = observer.ComputerKeyWrapper
+
+	// A database failure during final revalidation stays retryable unavailability.
+	f.server.computerKeys = b
+	faulted, restore := finalClaimReadFailure(b)
+	response := invokeComputerKeyHandler(t, f.server.workerComputerSource, fence, workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	restore()
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("final source claim read failure status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(faulted.returned) == 0 || !bytes.Equal(faulted.returned, make([]byte, len(faulted.returned))) {
+		t.Fatal("source plaintext not cleared after final claim read failure")
+	}
+
+	// A Group claim change between authentication and the source locks asks the
+	// Worker to re-authenticate; the replay receives the same source material.
+	expected, err := b.source(t.Context(), fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer expected.clear()
+	const sourcePath = "/worker/v1/run/computer-instances/computer-source"
+	race := newWorkerClaimsRace(t, f.Fixture, f.server, map[string]http.HandlerFunc{sourcePath: f.server.workerComputerSource}, map[string]func(context.Context) error{sourcePath: switchPrimaryPool(t, f.Fixture)})
+	replayed, err := race.client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	if err != nil {
+		t.Fatalf("source across primary pool switch: %v", err)
+	}
+	if replayed.VersionID != expected.VersionID || replayed.WriteKeyID != expected.WriteKeyID || len(replayed.Keys) != len(expected.Keys) {
+		t.Fatalf("replayed source differs: version=%s keys=%d", replayed.VersionID, len(replayed.Keys))
+	}
+	for i, k := range expected.Keys {
+		if replayed.Keys[i].ID != k.ID || !bytes.Equal(replayed.Keys[i].Key, k.Key) {
+			t.Fatalf("replayed source key %d differs", i)
+		}
+	}
+	replayed.Clear()
+	race.requireReplayed(t, sourcePath)
 	keys, err := q.ListInstanceComputerSourceKeys(t.Context(), f.runtime)
 	if err != nil || len(keys) != 2 || pgvalue.UUIDString(keys[0].ID) != key.ID {
 		t.Fatalf("runtime source keys: count=%d err=%v", len(keys), err)
