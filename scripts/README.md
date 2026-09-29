@@ -130,13 +130,15 @@ Run the application's typecheck/tests and a full program compilation with the
 matching compiler. Declaration discovery alone does not exercise dependency
 packaging. A local compile does not prove an image build or a deployed runtime.
 
-The package manager owns archive installation and integrity. Helmr retains the
-installed tree and automatically transforms reached TypeScript/JSX, including
-copied and linked packages, without package selectors or guessed source identity.
-Node-ready JavaScript keeps native exports, cache and asset locations. Use a
-target-platform install for native addons. See the
-[configuration reference](../packages/web/src/content/docs/reference/configuration.md#installed-dependencies-and-source-execution)
-for resolution precedence, source containment and image-layout requirements.
+The package manager owns archive installation and integrity. Helmr bundles the
+installed project into generated JavaScript before deployment. It ships that
+payload, explicitly selected `build.assets`, and installed `build.external`
+packages rather than the entire installed project. The runtime does not transform
+TypeScript/JSX or preserve arbitrary source-relative asset paths. Runtime externals
+currently require public-registry semver roots; local archives can be bundled but
+cannot be selected as external roots. See the
+[configuration reference](../packages/web/src/content/docs/reference/configuration.md#program-bundling-and-runtime-dependencies)
+for dependency eligibility and locating shipped assets with package imports.
 
 Keep `vendor/` in the captured project so the build can install these files.
-The archives also remain in the program source tree; account for their size.
+Installation archives are not shipped unless explicitly selected as assets.

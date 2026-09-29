@@ -77,7 +77,6 @@ func run(ctx context.Context, arguments []string) error {
 		ConfigPath:       cleanAbsolute(*configPath),
 		BundlePath:       cleanAbsolute(*bundlePath),
 		ProgramCompiler:  cleanAbsolute(*programCompiler),
-		SquashFSEncoder:  cleanAbsolute(*encoder),
 		Compiler:         compiler,
 		Runtime:          runtime,
 		RuntimeMetadata:  metadata,
@@ -92,8 +91,7 @@ func run(ctx context.Context, arguments []string) error {
 		return errors.New("exactly one of --prepare-output or --bundle-output is required")
 	}
 	if *prepareOutput != "" {
-		_, err := builder.PrepareProgram(ctx, compilerInput, cleanAbsolute(*prepareOutput))
-		return err
+		return builder.PrepareProgram(ctx, compilerInput, cleanAbsolute(*prepareOutput))
 	}
 	imageWork, err := os.MkdirTemp(cleanAbsolute(*work), "images-*")
 	if err != nil {

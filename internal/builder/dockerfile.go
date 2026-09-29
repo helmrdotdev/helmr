@@ -142,7 +142,7 @@ func PreparationDockerfile() ([]byte, error) {
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
 		"--node", "/opt/helmr/runtime/bin/node", "--config", resolvedConfigPath,
 		"--bundle-manifest", "/computer/bundle.json",
-		"--program-compiler", "/nix/helmr/program-compiler.mjs", "--encoder", "/opt/helmr/bin/mksquashfs",
+		"--program-compiler", "/nix/helmr/program-compiler.mjs",
 	})
 	if err != nil {
 		return nil, err
