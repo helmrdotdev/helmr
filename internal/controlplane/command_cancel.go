@@ -24,7 +24,7 @@ func cancelCommandInTx(ctx context.Context, work *txWork, scope db.GetCommandPar
 	if err != nil {
 		return receipt, err
 	}
-	claims, err := idempotency.TransactionForQueries(work.q)
+	claims, err := idempotency.TransactionFor(work.tx)
 	if err != nil {
 		return receipt, err
 	}

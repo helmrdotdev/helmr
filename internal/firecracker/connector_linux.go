@@ -1995,15 +1995,6 @@ func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
 }
 
-func (s *guestSession) RunNetworkStatus(
-	ctx context.Context,
-) (vm.RunNetworkStatus, error) {
-	return (&Connector{cfg: s.cfg}).readRunNetworkStatus(
-		ctx,
-		s.owner.ID,
-	)
-}
-
 func (s *guestSession) Wait(ctx context.Context) error {
 	if s.machineExit == nil {
 		return errors.New("the Firecracker session exit watcher is not configured")

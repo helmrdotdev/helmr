@@ -1,15 +1,12 @@
 package firecracker
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 const (
@@ -147,51 +144,6 @@ func canonicalIPv4PrefixSet(prefixes []netip.Prefix) []string {
 		encoded[index] = prefix.String()
 	}
 	return encoded
-}
-
-func parseRunNetworkStatus(raw []byte) (vm.RunNetworkStatus, error) {
-	counters, err := parseNetworkCounters(raw, "run")
-	if err != nil {
-		return vm.RunNetworkStatus{}, err
-	}
-	packets, ok := counters[runNetworkDeniedCounterName]
-	if !ok {
-		return vm.RunNetworkStatus{}, errors.New("run denied counter is missing")
-	}
-	return vm.RunNetworkStatus{DeniedPackets: packets}, nil
-}
-
-func parseNetworkCounters(raw []byte, label string) (map[string]uint64, error) {
-	var document struct {
-		Objects []struct {
-			Counter *struct {
-				Name    string `json:"name"`
-				Packets uint64 `json:"packets"`
-			} `json:"counter,omitempty"`
-		} `json:"nftables"`
-	}
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return nil, fmt.Errorf(
-			"decode %s network counters: %w",
-			label,
-			err,
-		)
-	}
-	counters := make(map[string]uint64)
-	for _, object := range document.Objects {
-		if object.Counter == nil {
-			continue
-		}
-		if _, exists := counters[object.Counter.Name]; exists {
-			return nil, fmt.Errorf(
-				"%s network counter %q is duplicated",
-				label,
-				object.Counter.Name,
-			)
-		}
-		counters[object.Counter.Name] = object.Counter.Packets
-	}
-	return counters, nil
 }
 
 func runNetworkPolicySet(name string, nftType string, cidrs []string) string {

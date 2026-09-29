@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 func TestDeploymentPlanFromProgramIndex(t *testing.T) {
@@ -28,9 +29,9 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 		t.Fatal("test Program index has no task")
 	}
 	index.Declarations[taskIndex].Task.Run.TTLMs = &ttl
-	index.Declarations[taskIndex].Task.Run.Retry = RetryManifest{
+	index.Declarations[taskIndex].Task.Run.Retry = retry.Manifest{
 		Enabled: true, MaxAttempts: &maxAttempts,
-		Backoff: &RetryBackoff{MinMs: 100, MaxMs: 1000, Factor: 2, Jitter: RetryJitterFull},
+		Backoff: &retry.Backoff{MinMs: 100, MaxMs: 1000, Factor: 2, Jitter: retry.JitterFull},
 	}
 	index.Declarations[taskIndex].Task.Schedule = &ScheduleManifest{
 		Cron: "0 * * * *", Timezone: "UTC",

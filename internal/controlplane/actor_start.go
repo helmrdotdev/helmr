@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -107,7 +108,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 	err = s.inTx(ctx, func(work *txWork) error {
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -316,7 +317,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 			if err != nil {
 				return err
 			}
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -389,7 +390,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		if err != nil {
 			return normalizedActorStart{}, fmt.Errorf("%w: retry must be unambiguous JSON", errActorStartInvalid)
 		}
-		if _, err := deployment.ParseRetryManifest(canonicalRetry); err != nil {
+		if _, err := retry.Parse(canonicalRetry); err != nil {
 			return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 		}
 		request.ManagedRetryPolicy = canonicalRetry

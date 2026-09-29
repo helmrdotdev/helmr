@@ -96,7 +96,7 @@ func strictWorkerEnrollmentBearer(values []string) ([]byte, error) {
 }
 
 func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil || !s.authKeys.Valid() || len(s.workerTokenSigningKey) == 0 {
+	if !s.authKeys.Valid() || len(s.workerTokenSigningKey) == 0 {
 		writeError(w, unavailable(errors.New("worker authentication is not configured")))
 		return
 	}
@@ -178,10 +178,6 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.ActivateRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -208,10 +204,6 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("worker recovery storage is not configured")))
-		return
-	}
 	var request workerapi.StartupRecoveryRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker startup recovery JSON: %w", err)))
@@ -296,10 +288,6 @@ func validateWorkerStartupRecovery(
 }
 
 func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("worker observation storage is not configured")))
-		return
-	}
 	var request workerapi.ObserveRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker observation JSON: %w", err)))
@@ -314,10 +302,6 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.DrainWorkerHost(r.Context(), db.DrainWorkerHostParams{
 		ID:                   pgvalue.UUID(worker.WorkerHostID),
@@ -406,10 +390,6 @@ func (s *Server) completeWorkerDrain(ctx context.Context, params db.CompleteWork
 }
 
 func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.FenceRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker fence request JSON: %w", err)))
@@ -439,10 +419,6 @@ func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	s.writeWorkerStatus(w, r, workerFromContext(r.Context()))
 }
 

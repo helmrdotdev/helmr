@@ -70,59 +70,57 @@ func (s *Server) workerCheckpointComputerObject(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, struct{}{})
 }
 func (s *Server) recordCheckpointComputerObject(ctx context.Context, worker workerActor, request workerapi.CheckpointComputerObjectRequest, uploaded *cas.Object, operation string) error {
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	q := db.New(tx)
-	actor := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.WorkerGroupID), HostID: pgvalue.UUID(worker.WorkerHostID), Epoch: worker.WorkerEpoch}
-	instance, checkpoint, err := dispatch.LockComputerCheckpointPublication(ctx, tx, actor, request)
-	if err != nil {
-		return err
-	}
-	publicationKey := computerPublicationKey("checkpoint", checkpoint.ID, checkpoint.ID)
-	keys, err := q.ListInstanceComputerSourceKeys(ctx, instance.ID)
-	if err != nil {
-		return err
-	}
-	allowed := make(map[string]bool, len(keys)+1)
-	for _, key := range keys {
-		allowed[pgvalue.UUIDString(key.ID)] = true
-	}
-	write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID})
-	if err != nil {
-		return err
-	}
-	if !instance.WriteKeyID.Valid || instance.WriteKeyID != write.ID {
-		return conflict(errors.New("runtime write key is not pinned"))
-	}
-	allowed[pgvalue.UUIDString(write.ID)] = true
-	owner := dispatch.ComputerPreparation{OrgID: instance.OrgID, ProjectID: instance.ProjectID, EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, LogicalBytes: instance.ReservedGuestEphemeralDiskBytes}
-	if operation == "verify" {
-		object, err := describeComputerObject(request.Inspection)
+	return s.inTx(ctx, func(work *txWork) error {
+		tx := work.tx
+		q := db.New(tx)
+		actor := dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.WorkerGroupID), HostID: pgvalue.UUID(worker.WorkerHostID), Epoch: worker.WorkerEpoch}
+		instance, checkpoint, err := dispatch.LockComputerCheckpointPublication(ctx, tx, actor, request)
 		if err != nil {
 			return err
 		}
-		row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, Digest: object.digest})
+		publicationKey := computerPublicationKey("checkpoint", checkpoint.ID, checkpoint.ID)
+		keys, err := q.ListInstanceComputerSourceKeys(ctx, instance.ID)
 		if err != nil {
 			return err
 		}
-		var stored blockformat.ObjectInspection
-		if err := json.Unmarshal(row.Inspection, &stored); err != nil {
+		allowed := make(map[string]bool, len(keys)+1)
+		for _, key := range keys {
+			allowed[pgvalue.UUIDString(key.ID)] = true
+		}
+		write, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID})
+		if err != nil {
 			return err
 		}
-		if !reflect.DeepEqual(stored, request.Inspection) {
-			return computerObjectConflict("object differs from registered inspection")
+		if !instance.WriteKeyID.Valid || instance.WriteKeyID != write.ID {
+			return conflict(errors.New("runtime write key is not pinned"))
 		}
-		if _, err := q.RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: instance.ID, PublicationKey: publicationKey, InstanceDesiredVersion: instance.DesiredVersion, Digest: object.digest}); err != nil {
+		allowed[pgvalue.UUIDString(write.ID)] = true
+		owner := dispatch.ComputerPreparation{OrgID: instance.OrgID, ProjectID: instance.ProjectID, EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, LogicalBytes: instance.ReservedGuestEphemeralDiskBytes}
+		if operation == "verify" {
+			object, err := describeComputerObject(request.Inspection)
+			if err != nil {
+				return err
+			}
+			row, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, Digest: object.digest})
+			if err != nil {
+				return err
+			}
+			var stored blockformat.ObjectInspection
+			if err := json.Unmarshal(row.Inspection, &stored); err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(stored, request.Inspection) {
+				return computerObjectConflict("object differs from registered inspection")
+			}
+			if _, err := q.RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: instance.ID, PublicationKey: publicationKey, InstanceDesiredVersion: instance.DesiredVersion, Digest: object.digest}); err != nil {
+				return err
+			}
+		} else if err = recordComputerObjectLocked(ctx, tx, owner, instance.ID, publicationKey, instance.DesiredVersion, request.Inspection, uploaded, operation == "reuse", allowed); err != nil {
 			return err
 		}
-	} else if err = recordComputerObjectLocked(ctx, tx, owner, instance.ID, publicationKey, instance.DesiredVersion, request.Inspection, uploaded, operation == "reuse", allowed); err != nil {
-		return err
-	}
-	if _, _, err = dispatch.LockComputerCheckpointPublication(ctx, tx, actor, request); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+		if _, _, err = dispatch.LockComputerCheckpointPublication(ctx, tx, actor, request); err != nil {
+			return err
+		}
+		return nil
+	})
 }

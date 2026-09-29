@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -89,7 +90,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 	err = s.inTx(ctx, func(work *txWork) error {
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -256,7 +257,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			if err != nil {
 				return err
 			}
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -327,14 +328,14 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 		return normalizedTaskStart{}, fmt.Errorf("%w: queued TTL is invalid", errTaskStartInvalid)
 	}
 	if len(request.RetryPolicy) > 0 {
-		retry, err := canonicalJSON(request.RetryPolicy)
+		retryPolicy, err := canonicalJSON(request.RetryPolicy)
 		if err != nil {
 			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid", errTaskStartInvalid)
 		}
-		if _, err := deployment.ParseRetryManifest(retry); err != nil {
+		if _, err := retry.Parse(retryPolicy); err != nil {
 			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid: %v", errTaskStartInvalid, err)
 		}
-		request.RetryPolicy = retry
+		request.RetryPolicy = retryPolicy
 	}
 	return normalizedTaskStart{
 		taskStartRequest: request,

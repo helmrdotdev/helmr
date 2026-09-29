@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -204,7 +205,7 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 	t.Helper()
 	run := deployment.RunManifest{
 		Queue: "default", MaxDurationMs: 5000,
-		Retry: deployment.RetryManifest{Enabled: false},
+		Retry: retry.Manifest{Enabled: false},
 	}
 	task := deployment.TaskManifest{
 		Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone}, Run: run,

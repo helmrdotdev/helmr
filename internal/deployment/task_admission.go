@@ -6,6 +6,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 type TaskRunAdmission struct {
@@ -69,11 +70,11 @@ func ResolveTaskRunAdmission(
 		manifest.Run.TTLMs = &value
 	}
 	if len(retryOverride) > 0 {
-		retry, err := ParseRetryManifest(retryOverride)
+		override, err := retry.Parse(retryOverride)
 		if err != nil {
 			return TaskRunAdmission{}, fmt.Errorf("parse task retry override: %w", err)
 		}
-		manifest.Run.Retry = retry
+		manifest.Run.Retry = override
 	}
 	if err := validate(manifest); err != nil {
 		return TaskRunAdmission{}, fmt.Errorf("validate task admission selection: %w", err)

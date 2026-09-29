@@ -170,7 +170,7 @@ func (s *Server) registerFinalizedDeploymentBundle(
 ) (api.DeploymentResponse, error) {
 	var response api.DeploymentResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		claims, err := idempotency.TransactionForQueries(work.q)
+		claims, err := idempotency.TransactionFor(work.tx)
 		if err != nil {
 			return err
 		}

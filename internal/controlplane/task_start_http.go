@@ -11,11 +11,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 const taskStartBodyLimit = int64(maxTaskPayloadBytes + maxRunMetadataBytes + 64<<10)
@@ -226,16 +226,16 @@ func taskStartPolicyFromAPI(request api.StartTaskRequest) (*int64, json.RawMessa
 		}
 		ttl = &value
 	}
-	retry, err := api.NormalizeStartActorRetry(request.Retry)
+	retryPolicy, err := api.NormalizeStartActorRetry(request.Retry)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(retry) > 0 {
-		if _, err := deployment.ParseRetryManifest(retry); err != nil {
+	if len(retryPolicy) > 0 {
+		if _, err := retry.Parse(retryPolicy); err != nil {
 			return nil, nil, fmt.Errorf("normalize retry: %w", err)
 		}
 	}
-	return ttl, retry, nil
+	return ttl, retryPolicy, nil
 }
 
 func (s *Server) writeTaskStartError(w http.ResponseWriter, err error) {

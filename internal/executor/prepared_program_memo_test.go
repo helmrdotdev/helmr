@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -167,7 +168,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 				Run: deployment.RunManifest{
 					Queue:         "task/task",
 					MaxDurationMs: 900000,
-					Retry:         deployment.RetryManifest{Enabled: false},
+					Retry:         retry.Manifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{

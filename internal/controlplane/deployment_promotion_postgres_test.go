@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -614,7 +615,7 @@ func prepareDeploymentPromotionScaleFixture(
 		Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindStandard},
 		Run: deployment.RunManifest{
 			Queue: "default", MaxDurationMs: 300_000,
-			Retry: deployment.RetryManifest{Enabled: false},
+			Retry: retry.Manifest{Enabled: false},
 		},
 		Schedule: &deployment.ScheduleManifest{
 			Cron: "0 9 * * *", Timezone: "UTC",

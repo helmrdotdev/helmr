@@ -95,41 +95,39 @@ func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence com
 	if uploaded != nil && (uploaded.Digest != object.digest || uploaded.SizeBytes != object.size || uploaded.MediaType != "application/octet-stream") {
 		return errors.New("uploaded object descriptor mismatch")
 	}
-	tx, err := dbtx.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	owner, err := dispatch.LockComputerPreparation(ctx, tx, fence.ComputerPreparationFence)
-	if err != nil {
-		return err
-	}
-	var claims bool
-	if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
-		return err
-	}
-	if !claims {
-		return errors.New("object writer claims changed")
-	}
-	q := db.New(tx)
-	key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})
-	if err != nil {
-		return err
-	}
-	var pinned bool
-	if err = tx.QueryRow(ctx, `SELECT write_key_id=$2 FROM computer_instances WHERE id=$1`, fence.RuntimeID, key.ID).Scan(&pinned); err != nil {
-		return err
-	}
-	if !pinned {
-		return errors.New("initial writer key is not pinned")
-	}
-	if err = recordComputerObjectLocked(ctx, tx, owner, fence.RuntimeID, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID), fence.DesiredVersion, inspection, uploaded, false, map[string]bool{pgvalue.UUIDString(key.ID): true}); err != nil {
-		return err
-	}
-	if err = owner.CheckDeadlines(ctx, tx); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
+	return inTxWith(ctx, dbtx, func(work *txWork) error {
+		tx := work.tx
+		owner, err := dispatch.LockComputerPreparation(ctx, tx, fence.ComputerPreparationFence)
+		if err != nil {
+			return err
+		}
+		var claims bool
+		if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
+			return err
+		}
+		if !claims {
+			return errors.New("object writer claims changed")
+		}
+		q := db.New(tx)
+		key, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID})
+		if err != nil {
+			return err
+		}
+		var pinned bool
+		if err = tx.QueryRow(ctx, `SELECT write_key_id=$2 FROM computer_instances WHERE id=$1`, fence.RuntimeID, key.ID).Scan(&pinned); err != nil {
+			return err
+		}
+		if !pinned {
+			return errors.New("initial writer key is not pinned")
+		}
+		if err = recordComputerObjectLocked(ctx, tx, owner, fence.RuntimeID, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID), fence.DesiredVersion, inspection, uploaded, false, map[string]bool{pgvalue.UUIDString(key.ID): true}); err != nil {
+			return err
+		}
+		if err = owner.CheckDeadlines(ctx, tx); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // The caller owns current preparation or checkpoint/finalization authority and

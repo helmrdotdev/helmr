@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -21,16 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-type currentDeploymentStore interface {
-	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
-}
-
-type deploymentStatusStore interface {
-	GetDeployment(context.Context, db.GetDeploymentParams) (db.Deployment, error)
-	GetDeploymentForOrg(context.Context, db.GetDeploymentForOrgParams) (db.Deployment, error)
-	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.ListScopedDeploymentsRow, error)
-}
-
 const (
 	deploymentListDefaultLimit = int32(50)
 	deploymentListMaxLimit     = int32(100)
@@ -44,11 +33,6 @@ type deploymentListCursor struct {
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
-	store, ok := s.db.(deploymentStatusStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, actor)
 	if err != nil {
@@ -78,7 +62,7 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		params.AfterCreatedAt = pgvalue.Timestamptz(cursor.CreatedAt)
 		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
 	}
-	rows, err := store.ListScopedDeployments(r.Context(), params)
+	rows, err := s.db.ListScopedDeployments(r.Context(), params)
 	if err != nil {
 		s.log.Error("list deployments failed", "error", err)
 		writeError(w, errors.New("list deployments"))
@@ -163,11 +147,6 @@ func decodeDeploymentListCursor(raw string) (deploymentListCursor, error) {
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
-	store, ok := s.db.(deploymentStatusStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -188,7 +167,7 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get deployment"))
 		return
 	}
-	record, err := store.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
+	record, err := s.db.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
 		OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(deploymentID),
 	})
 	if isNoRows(err) || (err == nil && (record.ProjectID != projectID || record.EnvironmentID != environmentID)) {
@@ -203,11 +182,6 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
-	store, ok := s.db.(currentDeploymentStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	scope, err := s.requestedRunListScope(r, actor)
 	if err != nil {
@@ -223,7 +197,7 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
-	record, err := store.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
+	record, err := s.db.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
 		OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
 	})
 	if isNoRows(err) {

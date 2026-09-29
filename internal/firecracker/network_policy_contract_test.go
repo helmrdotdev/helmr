@@ -93,31 +93,6 @@ func TestNetworkPolicyRendererRejectsIncompleteBinding(t *testing.T) {
 	}
 }
 
-func TestRunNetworkCounterContractRejectsMissingAndDuplicate(t *testing.T) {
-	status, err := parseRunNetworkStatus([]byte(`{
-		"nftables":[
-			{"counter":{"name":"run_denied","packets":7}}
-		]
-	}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status.DeniedPackets != 7 {
-		t.Fatalf("Run network status = %+v", status)
-	}
-	for _, raw := range []string{
-		`{"nftables":[]}`,
-		`{"nftables":[
-			{"counter":{"name":"run_denied","packets":1}},
-			{"counter":{"name":"run_denied","packets":2}}
-		]}`,
-	} {
-		if _, err := parseRunNetworkStatus([]byte(raw)); err == nil {
-			t.Fatalf("invalid Run counters were accepted: %s", raw)
-		}
-	}
-}
-
 func TestProtectedCapturePreservesIngressAndPortAuthority(t *testing.T) {
 	script, err := renderNetworkPolicy(networkPolicyInput{Tap: "tap0", Peer: "host0", Mark: 71, GuestIPv4: "192.168.127.2", TranslationIPv4: "100.96.0.2", BlockedIPv4CIDRs: []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, ResolverIPv4: "10.0.0.2", ProtectedPorts: []uint16{8443, 443, 8443}})
 	if err != nil {

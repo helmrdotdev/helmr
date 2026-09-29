@@ -15,6 +15,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -566,7 +567,7 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 		Task: &deployment.TaskManifest{
 			Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
 			Run: deployment.RunManifest{Queue: "default", MaxDurationMs: 5000,
-				Retry: deployment.RetryManifest{Enabled: false}},
+				Retry: retry.Manifest{Enabled: false}},
 		},
 		Locator: &deployment.ProgramLocator{
 			ExportName: "hello", ModulePath: "helmr/app/entry-0.mjs",

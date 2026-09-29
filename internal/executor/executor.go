@@ -23,14 +23,6 @@ type Executor struct {
 	RunLeaseTasks RunLeaseTaskRunner
 }
 
-type WaitHandler interface {
-	Wait(context.Context, WaitRequest) error
-}
-
-type RunWaitAppender interface {
-	AddRunWait(context.Context, WaitRequest) (workerapi.CreateRunWaitResponse, error)
-}
-
 type WaitRequest struct {
 	Execution                     *programv0.SessionExecution
 	TurnID                        *string

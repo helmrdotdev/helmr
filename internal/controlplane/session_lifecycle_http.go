@@ -210,9 +210,6 @@ func (s *Server) sessionOperationTarget(r *http.Request, permission auth.Permiss
 	if err != nil {
 		return session.Target{}, badRequest(codedError{code: "invalid_request", message: err.Error()})
 	}
-	if s.db == nil {
-		return session.Target{}, unavailable(codedError{code: "unavailable", message: "Session storage is unavailable"})
-	}
 	scope, environmentID, err := s.sessionReadScope(r, principal)
 	if err != nil {
 		if isInvalidEnvironmentScopeReference(err) {

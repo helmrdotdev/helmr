@@ -15,10 +15,6 @@ import (
 )
 
 func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.CreateComputerRequest
 	if err := decodeWorkerActorRequest(r, &request, "computer create"); err != nil {
 		writeError(w, badRequest(err))
@@ -86,10 +82,6 @@ func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerRetrieveComputer(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.RetrieveComputerRequest
 	if err := decodeWorkerActorRequest(r, &request, "computer retrieve"); err != nil {
 		writeError(w, badRequest(err))
@@ -122,10 +114,6 @@ func (s *Server) workerRetrieveComputer(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) workerListComputerMembers(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.ComputerMembersRequest
 	if err := decodeWorkerActorRequest(r, &request, "computer members"); err != nil {
 		writeError(w, badRequest(err))
@@ -164,10 +152,6 @@ func (s *Server) workerListComputerMembers(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) workerDeleteComputer(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.DeleteComputerRequest
 	if err := decodeWorkerActorRequest(r, &request, "computer delete"); err != nil {
 		writeError(w, badRequest(err))

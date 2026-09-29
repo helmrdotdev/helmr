@@ -101,12 +101,7 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeDeploymentError(w, s, err)
 		return
 	}
-	store, ok := s.db.(deploymentStatusStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
-	record, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
+	record, err := s.db.GetDeployment(r.Context(), db.GetDeploymentParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,

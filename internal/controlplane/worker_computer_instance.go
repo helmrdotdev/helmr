@@ -239,64 +239,59 @@ func (s *Server) fenceInvalidWorkerEpoch(
 	if s.tx == nil {
 		return errors.New("invalid Worker epoch transaction authority is unavailable")
 	}
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin invalid Worker epoch fence: %w", err)
-	}
-	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	queries := db.New(tx)
-	poolID, err := queries.GetWorkerHostPoolID(ctx, db.GetWorkerHostPoolIDParams{
-		WorkerHostID:  workerHostID,
-		WorkerGroupID: pgvalue.UUID(workerGroupID),
-		WorkerEpoch:   pgtype.Int8{Int64: workerEpoch, Valid: true},
-	})
-	if err != nil {
-		return fmt.Errorf("resolve invalid Worker epoch Pool: %w", err)
-	}
-	group, err := queries.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(workerGroupID))
-	if err != nil {
-		return fmt.Errorf("lock invalid Worker epoch Group: %w", err)
-	}
-	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused &&
-		group.Status != db.WorkerGroupStatusDraining {
-		return errors.New("invalid Worker epoch Group is inactive")
-	}
-	pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-		WorkerGroupID: pgvalue.UUID(workerGroupID),
-		WorkerPoolID:  poolID,
-	})
-	if err != nil {
-		return fmt.Errorf("lock invalid Worker epoch Pool: %w", err)
-	}
-	if pool.Status != "active" && pool.Status != "draining" {
-		return errors.New("invalid Worker epoch Pool is inactive")
-	}
-	worker, err := queries.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{
-		WorkerHostID:  workerHostID,
-		WorkerGroupID: pgvalue.UUID(workerGroupID),
-		WorkerPoolID:  poolID,
-		WorkerEpoch:   pgtype.Int8{Int64: workerEpoch, Valid: true},
-	})
-	if err != nil {
-		return fmt.Errorf("lock invalid Worker epoch: %w", err)
-	}
-	if worker.Status != db.WorkerHostStatusActive && worker.Status != db.WorkerHostStatusDraining {
-		return errors.New("invalid Worker epoch is inactive")
-	}
-	if worker.Status == db.WorkerHostStatusActive {
-		if _, err := queries.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
-			ID:                   workerHostID,
-			WorkerGroupID:        pgvalue.UUID(workerGroupID),
-			ExpectedEpoch:        pgtype.Int8{Int64: workerEpoch, Valid: true},
-			ExpectedClaimVersion: worker.ClaimVersion,
-		}); err != nil {
-			return fmt.Errorf("fence invalid Worker epoch: %w", err)
+	return s.inTx(ctx, func(work *txWork) error {
+		tx := work.tx
+		queries := db.New(tx)
+		poolID, err := queries.GetWorkerHostPoolID(ctx, db.GetWorkerHostPoolIDParams{
+			WorkerHostID:  workerHostID,
+			WorkerGroupID: pgvalue.UUID(workerGroupID),
+			WorkerEpoch:   pgtype.Int8{Int64: workerEpoch, Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("resolve invalid Worker epoch Pool: %w", err)
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit invalid Worker epoch fence: %w", err)
-	}
-	return nil
+		group, err := queries.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(workerGroupID))
+		if err != nil {
+			return fmt.Errorf("lock invalid Worker epoch Group: %w", err)
+		}
+		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused &&
+			group.Status != db.WorkerGroupStatusDraining {
+			return errors.New("invalid Worker epoch Group is inactive")
+		}
+		pool, err := queries.LockWorkerPool(ctx, db.LockWorkerPoolParams{
+			WorkerGroupID: pgvalue.UUID(workerGroupID),
+			WorkerPoolID:  poolID,
+		})
+		if err != nil {
+			return fmt.Errorf("lock invalid Worker epoch Pool: %w", err)
+		}
+		if pool.Status != "active" && pool.Status != "draining" {
+			return errors.New("invalid Worker epoch Pool is inactive")
+		}
+		worker, err := queries.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{
+			WorkerHostID:  workerHostID,
+			WorkerGroupID: pgvalue.UUID(workerGroupID),
+			WorkerPoolID:  poolID,
+			WorkerEpoch:   pgtype.Int8{Int64: workerEpoch, Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("lock invalid Worker epoch: %w", err)
+		}
+		if worker.Status != db.WorkerHostStatusActive && worker.Status != db.WorkerHostStatusDraining {
+			return errors.New("invalid Worker epoch is inactive")
+		}
+		if worker.Status == db.WorkerHostStatusActive {
+			if _, err := queries.DrainWorkerHost(ctx, db.DrainWorkerHostParams{
+				ID:                   workerHostID,
+				WorkerGroupID:        pgvalue.UUID(workerGroupID),
+				ExpectedEpoch:        pgtype.Int8{Int64: workerEpoch, Valid: true},
+				ExpectedClaimVersion: worker.ClaimVersion,
+			}); err != nil {
+				return fmt.Errorf("fence invalid Worker epoch: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 func validateRuntimeCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {

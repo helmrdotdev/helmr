@@ -83,7 +83,7 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		claims, err := idempotency.TransactionForQueries(work.q)
+		claims, err := idempotency.TransactionFor(work.tx)
 		if err != nil {
 			return err
 		}

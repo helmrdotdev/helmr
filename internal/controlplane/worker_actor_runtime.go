@@ -38,10 +38,6 @@ func decodeWorkerActorRequest(r *http.Request, destination any, label string) er
 }
 
 func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.StartActorRequest
 	if err := decodeWorkerActorRequest(r, &request, "actor start"); err != nil {
 		writeError(w, badRequest(err))
@@ -121,10 +117,6 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.SessionReferenceRequest
 	if err := decodeWorkerActorRequest(r, &request, "session status"); err != nil {
 		writeError(w, badRequest(err))

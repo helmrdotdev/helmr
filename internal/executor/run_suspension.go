@@ -192,8 +192,6 @@ func durationMilliseconds(value time.Duration) int64 {
 	return value.Milliseconds()
 }
 
-var _ WaitHandler = ControlPlaneRunWaits{}
-
 func executionGeneration(execution *programv0.SessionExecution) *int64 {
 	if execution == nil {
 		return nil

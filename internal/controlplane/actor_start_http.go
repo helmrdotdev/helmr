@@ -13,11 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 const actorStartBodyLimit = int64(
@@ -422,12 +422,12 @@ func actorStartRequestFromScope(
 		}
 		ttl = &value
 	}
-	retry, err := api.NormalizeStartActorRetry(run.Retry)
+	retryPolicy, err := api.NormalizeStartActorRetry(run.Retry)
 	if err != nil {
 		return actorStartRequest{}, err
 	}
-	if len(retry) > 0 {
-		if _, err := deployment.ParseRetryManifest(retry); err != nil {
+	if len(retryPolicy) > 0 {
+		if _, err := retry.Parse(retryPolicy); err != nil {
 			return actorStartRequest{}, fmt.Errorf("normalize run.retry: %w", err)
 		}
 	}
@@ -447,7 +447,7 @@ func actorStartRequestFromScope(
 		ManagedConcurrencyKey: run.ConcurrencyKey,
 		ManagedPriority:       run.Priority,
 		ManagedQueuedTTLMS:    ttl,
-		ManagedRetryPolicy:    retry,
+		ManagedRetryPolicy:    retryPolicy,
 		ManagedRunMetadata:    run.Metadata,
 		ManagedRunTags:        run.Tags,
 	}, nil

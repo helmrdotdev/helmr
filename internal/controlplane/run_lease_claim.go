@@ -25,32 +25,32 @@ type runLeaseClaimAuthority struct {
 }
 
 func (s *Server) claimRunLease(ctx context.Context, worker workerActor, leaseID pgtype.UUID, leaseSequence int64) (runLeaseClaimAuthority, []secret.DeliveryEnvelope, error) {
-	tx, err := s.tx.Begin(ctx)
-	if err != nil {
-		return runLeaseClaimAuthority{}, nil, err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
 	fence := run.ExecutionFence{LeaseID: leaseID, LeaseSequence: leaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}
-	var restored bool
-	if err = tx.QueryRow(ctx, `SELECT status='running' FROM run_leases WHERE id=$1`, leaseID).Scan(&restored); err != nil {
-		return runLeaseClaimAuthority{}, nil, staleRunLeaseClaim(err)
-	}
 	var claimed run.ExecutionAuthority
 	var resumeWait *db.RunWait
-	if restored {
-		var wait db.RunWait
-		claimed, wait, err = run.ClaimRestoredExecution(ctx, tx, fence)
-		resumeWait = &wait
-	} else {
-		claimed, err = run.ClaimExecution(ctx, tx, fence)
-	}
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return runLeaseClaimAuthority{}, nil, errStaleWorkerClaims
-	}
+	err := s.inTx(ctx, func(work *txWork) error {
+		tx := work.tx
+		var restored bool
+		if err := tx.QueryRow(ctx, `SELECT status='running' FROM run_leases WHERE id=$1`, leaseID).Scan(&restored); err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		var err error
+		if restored {
+			var wait db.RunWait
+			claimed, wait, err = run.ClaimRestoredExecution(ctx, tx, fence)
+			resumeWait = &wait
+		} else {
+			claimed, err = run.ClaimExecution(ctx, tx, fence)
+		}
+		if errors.Is(err, run.ErrExecutionWorkerClaims) {
+			return errStaleWorkerClaims
+		}
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		return nil
+	})
 	if err != nil {
-		return runLeaseClaimAuthority{}, nil, staleRunLeaseClaim(err)
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return runLeaseClaimAuthority{}, nil, err
 	}
 	return runLeaseClaimAuthority{resumeWait: resumeWait, actor: claimed.Session, run: claimed.Run, computer: claimed.Computer, attempt: claimed.Attempt, runtime: claimed.Instance, runLease: claimed.Lease}, claimed.Secrets, nil
