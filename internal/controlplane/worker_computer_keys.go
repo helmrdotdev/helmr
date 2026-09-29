@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -13,8 +14,8 @@ import (
 func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var request workerapi.InitialComputerKeyRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(errors.New("invalid initial computer key request")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid initial computer key request: %w", err))
 		return
 	}
 	runtimeID, err := ids.Parse(request.ComputerInstanceID)
@@ -46,8 +47,8 @@ func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request
 func (s *Server) workerComputerSource(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var request workerapi.ComputerSourceRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(errors.New("invalid computer source request")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer source request: %w", err))
 		return
 	}
 	runtimeID, err := ids.Parse(request.ComputerInstanceID)

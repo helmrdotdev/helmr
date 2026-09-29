@@ -20,8 +20,8 @@ import (
 
 func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerCommandClaimRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid computer exec claim JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer exec claim JSON: %w", err))
 		return
 	}
 	org, err := ids.Parse(request.OrgID)
@@ -190,8 +190,8 @@ func (s *Server) workerReconcileComputerCommand(w http.ResponseWriter, r *http.R
 }
 func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request, reconcile bool) {
 	var request workerapi.ComputerCommandCompleteRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if _, err := parseCommandCompletion(request); err != nil {

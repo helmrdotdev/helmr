@@ -30,10 +30,10 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, tooManyRequests(errors.New("worker enrollment rate limit exceeded")))
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	limitRequestBodySize(w, r, 64<<10)
 	var request workerapi.EnrollmentRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker enrollment JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker enrollment JSON: %w", err))
 		return
 	}
 	if request.ResourceID == "" || strings.TrimSpace(request.ResourceID) != request.ResourceID || len(request.ResourceID) > 512 {
@@ -100,8 +100,8 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request workerapi.TokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker token request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker token request JSON: %w", err))
 		return
 	}
 	if request.WorkerHostID == "" {
@@ -178,10 +178,8 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ActivateRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker activate request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker activate request JSON: %w", err))
 		return
 	}
 	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
@@ -204,8 +202,8 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.StartupRecoveryRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker startup recovery JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker startup recovery JSON: %w", err))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -288,8 +286,8 @@ func validateWorkerStartupRecovery(
 
 func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ObserveRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker observation JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker observation JSON: %w", err))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -319,10 +317,10 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	limitRequestBodySize(w, r, 16<<10)
 	var request workerapi.DrainCompletionRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker drain completion JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker drain completion JSON: %w", err))
 		return
 	}
 	worker := workerFromContext(r.Context())
@@ -390,8 +388,8 @@ func (s *Server) completeWorkerDrain(ctx context.Context, params db.CompleteWork
 
 func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.FenceRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker fence request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker fence request JSON: %w", err))
 		return
 	}
 	reasonCode := strings.TrimSpace(request.ReasonCode)

@@ -2,10 +2,8 @@ package controlplane
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"uuid"
@@ -21,26 +19,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func decodeWorkerActorRequest(r *http.Request, destination any, label string) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		if errors.Is(err, io.EOF) {
-			err = errors.New("request body is required")
-		}
-		return fmt.Errorf("invalid %s JSON: %w", label, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("invalid %s JSON: trailing value", label)
-	}
-	return nil
-}
-
 func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.StartActorRequest
-	if err := decodeWorkerActorRequest(r, &request, "actor start"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid actor start JSON: %w", err))
 		return
 	}
 	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
@@ -118,8 +100,8 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.SessionReferenceRequest
-	if err := decodeWorkerActorRequest(r, &request, "session status"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid session status JSON: %w", err))
 		return
 	}
 	sessionID, err := parseWorkerSessionReference(request)
@@ -165,8 +147,8 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CloseSessionRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session close"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session close JSON: %w", err))
 		return
 	}
 	targetID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
@@ -195,8 +177,8 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) workerCancelSession(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CancelSessionRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session cancel"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session cancel JSON: %w", err))
 		return
 	}
 	targetID, err := parseWorkerSessionReference(request.SessionReferenceRequest)
@@ -225,8 +207,8 @@ func (s *Server) workerCancelSession(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ReadSessionEventsRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session events"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session events JSON: %w", err))
 		return
 	}
 	targetID, err := parseWorkerSessionReference(request.SessionReferenceRequest)

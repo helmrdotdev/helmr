@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"uuid"
@@ -16,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
@@ -28,12 +26,8 @@ const actorStartBodyLimit = int64(
 func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 	request, err := decodeStartActorRequest(r)
 	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, tooLarge(codedError{
-				code:    "actor_start_request_too_large",
-				message: "actor start request is too large",
-			}))
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
 			return
 		}
 		var coder errorCoder
@@ -133,11 +127,11 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeStartActorRequest(r *http.Request) (api.StartActorRequest, error) {
-	raw, err := io.ReadAll(r.Body)
+	raw, err := readRequestBody(r)
 	if err != nil {
 		return api.StartActorRequest{}, err
 	}
-	canonical, err := jsoncanon.Transform(raw)
+	canonical, err := canonicalRequestJSON(raw)
 	if err != nil {
 		return api.StartActorRequest{}, err
 	}
@@ -145,13 +139,8 @@ func decodeStartActorRequest(r *http.Request) (api.StartActorRequest, error) {
 		return api.StartActorRequest{}, err
 	}
 	var request api.StartActorRequest
-	decoder := json.NewDecoder(bytes.NewReader(canonical))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeClosedJSON(canonical, &request); err != nil {
 		return api.StartActorRequest{}, err
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return api.StartActorRequest{}, errors.New("actor start request contains a trailing value")
 	}
 	return request, nil
 }
@@ -339,7 +328,7 @@ func rejectActorStartEmptyString(
 func decodeActorStartObject(raw []byte, label string) (map[string]json.RawMessage, error) {
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil, fmt.Errorf("%s must be an object: %w", label, err)
+		return nil, fmt.Errorf("%s must be an object", label)
 	}
 	if object == nil {
 		return nil, fmt.Errorf("%s must be an object", label)
@@ -505,11 +494,4 @@ func (s *Server) writeActorStartError(w http.ResponseWriter, err error) {
 			retryable: true,
 		}))
 	}
-}
-
-func limitActorStartBody(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, actorStartBodyLimit)
-		next.ServeHTTP(w, r)
-	})
 }

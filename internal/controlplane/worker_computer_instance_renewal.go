@@ -13,8 +13,8 @@ import (
 
 func (s *Server) workerRenewComputerInstance(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerInstanceRenewRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if ids.Validate(request.EnvironmentID) != nil || ids.Validate(request.ComputerInstanceID) != nil || request.WriterGeneration <= 0 {

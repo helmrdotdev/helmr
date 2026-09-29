@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"time"
 	"uuid"
 
@@ -60,8 +58,8 @@ func parseRequestedRunWaitIdentity(request workerapi.CreateRunWaitRequest) (requ
 
 func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CreateRunWaitRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker run wait JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker run wait JSON: %w", err))
 		return
 	}
 	identity, err := parseRequestedRunWaitIdentity(request)
@@ -196,8 +194,8 @@ func (s *Server) workerCreateTokenRunWait(
 
 func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RunWaitPollRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker run wait poll JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker run wait poll JSON: %w", err))
 		return
 	}
 	parsed, _, locators, err := s.loadRunWaitLeaseAuthority(r.Context(), request.Lease)
@@ -280,8 +278,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RunWaitResumeAckRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker run wait resume acknowledgement JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker run wait resume acknowledgement JSON: %w", err))
 		return
 	}
 	parsed, err := parseRunLeaseFence(request.Lease)
@@ -432,38 +430,6 @@ func tokenWaitDecision(state db.WaitStatus, result json.RawMessage, reason strin
 	default:
 		return "", nil, errors.New("run wait decision is not terminal")
 	}
-}
-
-func decodeClosedWorkerRequest(r *http.Request, destination any) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		if errors.Is(err, io.EOF) {
-			return errors.New("request body is required")
-		}
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("trailing JSON value")
-	}
-	return nil
-}
-
-func decodeClosedJSON(raw json.RawMessage, destination any) error {
-	if len(raw) == 0 {
-		return errors.New("value is required")
-	}
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("trailing JSON value")
-	}
-	return nil
 }
 
 func parseWorkerWaitTurn(id *string, generation *int64) (pgtype.UUID, pgtype.Int8, error) {

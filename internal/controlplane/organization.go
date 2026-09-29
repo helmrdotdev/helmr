@@ -21,8 +21,8 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.CreateOrganizationRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid organization request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid organization request JSON: %w", err))
 		return
 	}
 	slug, name, err := normalizeScopeCreateInput(request.Slug, request.Name)

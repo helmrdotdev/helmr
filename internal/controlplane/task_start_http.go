@@ -1,11 +1,9 @@
 package controlplane
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -14,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
@@ -23,11 +20,8 @@ const taskStartBodyLimit = int64(maxTaskPayloadBytes + maxRunMetadataBytes + 64<
 func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 	request, payloadPresent, err := decodeStartTaskRequest(r)
 	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, tooLarge(codedError{
-				code: "task_start_request_too_large", message: "task start request is too large",
-			}))
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
 			return
 		}
 		writeError(w, badRequest(codedError{code: "invalid_task_start", message: err.Error()}))
@@ -106,11 +100,11 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error) {
-	raw, err := io.ReadAll(r.Body)
+	raw, err := readRequestBody(r)
 	if err != nil {
 		return api.StartTaskRequest{}, false, err
 	}
-	canonical, err := jsoncanon.Transform(raw)
+	canonical, err := canonicalRequestJSON(raw)
 	if err != nil {
 		return api.StartTaskRequest{}, false, err
 	}
@@ -188,13 +182,8 @@ func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error)
 		}
 	}
 	var request api.StartTaskRequest
-	decoder := json.NewDecoder(bytes.NewReader(canonical))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeClosedJSON(canonical, &request); err != nil {
 		return api.StartTaskRequest{}, false, err
-	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
-		return api.StartTaskRequest{}, false, errors.New("task start request contains a trailing value")
 	}
 	_, payloadPresent := root["payload"]
 	return request, payloadPresent, nil

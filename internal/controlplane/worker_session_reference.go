@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -11,8 +12,8 @@ import (
 
 func (s *Server) workerGetSessionTurn(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.TurnReferenceRequest
-	if err := decodeWorkerActorRequest(r, &request, "Turn retrieve"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Turn retrieve JSON: %w", err))
 		return
 	}
 	sessionID, err := parseWorkerSessionReference(request.SessionReferenceRequest)

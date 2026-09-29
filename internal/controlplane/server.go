@@ -451,7 +451,8 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Get("/projects", s.listProjects)
 		r.Get("/projects/{projectRef}", s.getProject)
 		r.Get("/projects/{projectID}/environments/{environmentID}", s.getEnvironment)
-		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
+		r.With(limitRequestBody(bundle.MaxBytes)).
+			Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
 		r.Post("/projects/{projectID}/environments/{environmentID}/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments", s.listDeployments)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
@@ -505,7 +506,7 @@ func (s *Server) mountSessionRoutes(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return s.requireSessionWithErrorWriter(next, writeActorStartAuthError)
 		})
-		r.With(limitActorStartBody).
+		r.With(limitRequestBody(actorStartBodyLimit)).
 			Post("/projects/{projectID}/environments/{environmentID}/actors/{actorDeclaredID}/start", s.startActorHTTP)
 	})
 	r.Group(func(r chi.Router) {
@@ -543,7 +544,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
-		r.Post("/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
+		r.With(limitRequestBody(bundle.MaxBytes)).Post("/deployment-bundles/upload-plan", s.planDeploymentBundleUpload)
 		r.Post("/deployment-bundles/finalize", s.finalizeDeploymentBundle)
 		r.Post("/deployments/{deploymentID}/promote", s.promoteDeployment)
 		r.Get("/schedules", s.listSchedules)
@@ -585,7 +586,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return s.requireAPIKeyWithErrorWriter(next, writeActorStartAuthError)
 		})
-		r.With(limitActorStartBody).Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
+		r.With(limitRequestBody(actorStartBodyLimit)).Post("/actors/{actorDeclaredID}/start", s.startActorHTTP)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -753,34 +754,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func decodeJSON(r *http.Request, out any) error {
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(out); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("request body must contain a single JSON value")
-	}
-	return nil
-}
-
-func decodeOptionalJSON(r io.Reader, out any) error {
-	decoder := json.NewDecoder(r)
-	decoder.DisallowUnknownFields()
-	err := decoder.Decode(out)
-	if errors.Is(err, io.EOF) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("request body must contain a single JSON value")
-	}
-	return nil
-}
-
 func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
 	limit := defaultLimit
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
@@ -791,19 +764,6 @@ func optionalLimitQuery(r *http.Request, defaultLimit int32) (int32, error) {
 		limit = int32(parsed)
 	}
 	return limit, nil
-}
-
-func limitRequestBody(limit int64) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.ContentLength > limit {
-				writeError(w, tooLarge(errors.New("request body is too large")))
-				return
-			}
-			r.Body = http.MaxBytesReader(w, r.Body, limit)
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 func (s *Server) userAuthConfigured() error {

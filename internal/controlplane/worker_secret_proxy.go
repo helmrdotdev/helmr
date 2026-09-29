@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -25,8 +26,8 @@ func (s *Server) workerResolveSecretProxy(w http.ResponseWriter, r *http.Request
 // execution authority; a resumed guest can contact transport before that exists.
 func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resolve bool) {
 	var request workerapi.SecretProxyRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(errors.New("invalid Secret transport request")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Secret transport request: %w", err))
 		return
 	}
 	runtimeID, err := ids.Parse(request.ComputerInstanceID)

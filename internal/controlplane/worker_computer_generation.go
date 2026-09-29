@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -13,8 +14,8 @@ import (
 func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	var request workerapi.InitialComputerGenerationRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(errors.New("invalid computer generation request")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer generation request: %w", err))
 		return
 	}
 	id, err := ids.Parse(request.ComputerInstanceID)

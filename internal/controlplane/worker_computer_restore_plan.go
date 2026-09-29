@@ -13,8 +13,8 @@ import (
 
 func (s *Server) workerComputerRestorePlan(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ComputerRestorePlanRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	if _, err := parseCanonicalUUID("environment_id", request.EnvironmentID); err != nil {

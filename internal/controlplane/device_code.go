@@ -1,8 +1,8 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -86,8 +86,8 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 		return
 	}
 	var request api.DeviceAuthorizeRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, badRequest(errors.New("invalid device authorization JSON")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid device authorization JSON: %w", err))
 		return
 	}
 	code := auth.NormalizeUserCode(request.UserCode)
@@ -136,8 +136,8 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.DeviceTokenRequest
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeError(w, badRequest(errors.New("invalid device token JSON")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid device token JSON: %w", err))
 		return
 	}
 	hash, err := auth.HashToken(s.authKeys.DeviceCode, strings.TrimSpace(request.DeviceCode))

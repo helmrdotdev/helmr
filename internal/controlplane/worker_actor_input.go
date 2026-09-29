@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -86,8 +87,8 @@ func (s *Server) workerSendTurnMessage(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) workerAdmitSession(w http.ResponseWriter, r *http.Request, mode session.AdmissionMode) {
 	var request workerapi.SubmitSessionDataRequest
-	if err := decodeWorkerActorRequest(r, &request, "Session submission"); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid Session submission JSON: %w", err))
 		return
 	}
 	targetID, err := ids.Parse(request.SessionID)

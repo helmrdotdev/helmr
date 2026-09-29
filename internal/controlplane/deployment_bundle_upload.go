@@ -61,14 +61,9 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(errors.New("deployment bundle Content-Type is invalid")))
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, bundle.MaxBytes+1))
+	manifest, raw, err := parseRequestBody(r, bundle.Parse)
 	if err != nil {
-		writeError(w, badRequest(errors.New("read deployment bundle")))
-		return
-	}
-	manifest, err := bundle.Parse(raw)
-	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid deployment bundle: %w", err)))
+		writeError(w, fmt.Errorf("invalid deployment bundle: %w", err))
 		return
 	}
 	if err := s.bundleAdmission.Admit(manifest); err != nil {

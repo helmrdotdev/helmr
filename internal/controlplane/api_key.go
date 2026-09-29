@@ -126,8 +126,8 @@ func decodeAPIKeyListCursor(raw string) (apiKeyListCursor, error) {
 
 func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 	var input api.IssueAPIKeyRequest
-	if err := decodeJSON(r, &input); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid API key request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &input); err != nil {
+		writeError(w, fmt.Errorf("invalid API key request JSON: %w", err))
 		return
 	}
 	name := strings.TrimSpace(input.Name)

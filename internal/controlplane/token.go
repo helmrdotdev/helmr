@@ -86,8 +86,8 @@ type tokenCreateInput struct {
 
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	var request api.CreateTokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid token create JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid token create JSON: %w", err))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -206,8 +206,8 @@ func (s *Server) createExternalToken(
 
 func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CreateTokenRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker token create JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid worker token create JSON: %w", err))
 		return
 	}
 	parsed, err := parseRunLeaseFence(request.Lease)
@@ -605,8 +605,8 @@ func (s *Server) getToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
 	var request api.CompleteTokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid token completion JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid token completion JSON: %w", err))
 		return
 	}
 	if len(request.Result) == 0 {
@@ -639,8 +639,8 @@ func (s *Server) completeToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 	var request api.CancelTokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid token cancellation JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid token cancellation JSON: %w", err))
 		return
 	}
 	tokenRow, ok := s.authorizeToken(w, r, auth.PermissionTokensCancel)
@@ -667,8 +667,8 @@ func (s *Server) cancelToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Request) {
 	var request api.CompleteTokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid token callback JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid token callback JSON: %w", err))
 		return
 	}
 	if len(request.Result) == 0 {
@@ -715,8 +715,8 @@ func (s *Server) completeTokenWithCallback(w http.ResponseWriter, r *http.Reques
 func (s *Server) completeTokenWithBearer(w http.ResponseWriter, r *http.Request) {
 	s.writeTokenCORS(w)
 	var request api.CompleteTokenRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid token completion JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid token completion JSON: %w", err))
 		return
 	}
 	if len(request.Result) == 0 {

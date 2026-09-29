@@ -60,7 +60,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, badRequest(errors.New("query string is malformed")))
 		return
 	}
 	for key, values := range query {

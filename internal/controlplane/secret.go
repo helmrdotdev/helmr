@@ -42,8 +42,8 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request api.CreateSecretRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid secret create request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid secret create request JSON: %w", err))
 		return
 	}
 	request.Name = strings.TrimSpace(request.Name)
@@ -222,8 +222,8 @@ func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id uuid.UU
 		return
 	}
 	var request api.RotateSecretRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid secret rotate request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid secret rotate request JSON: %w", err))
 		return
 	}
 	idempotencyKey, err := requiredIdempotencyKey(request.IdempotencyKey)
@@ -281,8 +281,8 @@ func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id uuid.UU
 		return
 	}
 	var request api.RevokeSecretRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid secret revoke request JSON: %w", err)))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid secret revoke request JSON: %w", err))
 		return
 	}
 	idempotencyKey, err := requiredIdempotencyKey(request.IdempotencyKey)

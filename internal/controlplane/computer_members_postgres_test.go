@@ -64,8 +64,13 @@ func TestComputerMembersReadAuthoritativeRowsAndScopeCursor(t *testing.T) {
 	wrongEnvironment := principal
 	wrongEnvironment.EnvironmentID = uuid.NewV7().String()
 	read(f.computerIDs[0], "", wrongEnvironment, http.StatusNotFound)
-	for _, query := range []string{"?limit=0", "?limit=101", "?limit=1&limit=2", "?key=test", "?cursor=broken"} {
+	for _, query := range []string{"?limit=0", "?limit=101", "?limit=abc", "?limit=1&limit=2", "?key=test", "?cursor=broken"} {
 		read(f.computerIDs[0], query, principal, http.StatusBadRequest)
+	}
+	invalidLimit := httptest.NewRecorder()
+	f.server.listComputerMembersHTTP(invalidLimit, computerReadPostgresRequest("/v1/computers/"+f.computerIDs[0].String()+"/members?limit=abc", f.computerIDs[0].String(), principal))
+	if body := decodeHTTPError(t, invalidLimit.Body.Bytes()); body.Code != "invalid_computer_reference" || body.Message != "limit must be an integer in [1,100]" {
+		t.Fatalf("invalid limit error = %+v", body)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_commands SET status='failed',failure_reason='placement_failed',terminal_at=now(),terminal_reason_code='placement_failed' WHERE id=$1`, commandID)
 	last := read(f.computerIDs[0], "", principal, http.StatusOK)

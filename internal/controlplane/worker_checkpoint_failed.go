@@ -12,8 +12,8 @@ import (
 
 func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CheckpointFailedRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	for name, value := range map[string]string{"computer_instance_id": request.ComputerInstanceID, "checkpoint_id": request.CheckpointID} {

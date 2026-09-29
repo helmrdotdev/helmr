@@ -23,10 +23,9 @@ func (s *Server) executeComputerHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body api.ExecuteComputerRequest
-	if err := decodeJSON(r, &body); err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, tooLarge(codedError{code: "computer_command_request_too_large", message: errComputerCommandTooLarge.Error()}))
+	if err := decodeRequestJSON(r, &body); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeError(w, err)
 			return
 		}
 		writeError(w, badRequest(codedError{code: "invalid_computer_command", message: err.Error()}))

@@ -14,8 +14,8 @@ const workerCommandLogRequestBodyLimit = int64(1024 + (telemetry.MaxRunLogConten
 
 func (s *Server) workerAppendCommandLogs(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.CommandLogAppendRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	worker := workerFromContext(r.Context())

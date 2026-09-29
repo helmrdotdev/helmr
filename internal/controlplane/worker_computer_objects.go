@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -23,8 +24,8 @@ func (s *Server) workerCertifyInitialComputerObject(w http.ResponseWriter, r *ht
 func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Request, certify bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	var request workerapi.InitialComputerObjectRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(errors.New("invalid computer object request")))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, fmt.Errorf("invalid computer object request: %w", err))
 		return
 	}
 	id, err := ids.Parse(request.ComputerInstanceID)

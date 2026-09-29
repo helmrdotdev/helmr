@@ -13,8 +13,8 @@ import (
 
 func (s *Server) workerRegisterCheckpoint(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.RegisterCheckpointRequest
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	response, err := s.registerCheckpoint(r.Context(), workerFromContext(r.Context()), request)

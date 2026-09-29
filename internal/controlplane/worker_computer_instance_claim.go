@@ -14,8 +14,8 @@ import (
 
 func (s *Server) workerClaimComputerInstance(w http.ResponseWriter, r *http.Request) {
 	var request struct{}
-	if err := decodeClosedWorkerRequest(r, &request); err != nil {
-		writeError(w, badRequest(err))
+	if err := decodeRequestJSON(r, &request); err != nil {
+		writeError(w, err)
 		return
 	}
 	worker := workerFromContext(r.Context())
