@@ -1,0 +1,118 @@
+package computerhost
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/oci"
+	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
+)
+
+func preparedConfigImage(t *testing.T) []byte {
+	t.Helper()
+	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/workspace","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
+	marshal := func(v any) []byte {
+		b, e := json.Marshal(v)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return b
+	}
+	descriptor := func(b []byte, media string) oci.Descriptor {
+		return oci.Descriptor{Digest: sha256sum.DigestBytes(b), Size: int64(len(b)), MediaType: media}
+	}
+	manifest := marshal(oci.Manifest{Config: descriptor(config, "application/vnd.oci.image.config.v1+json")})
+	index := marshal(oci.Index{Manifests: []oci.Descriptor{descriptor(manifest, "application/vnd.oci.image.manifest.v1+json")}})
+	var result bytes.Buffer
+	tw := tar.NewWriter(&result)
+	for _, entry := range []struct {
+		name string
+		body []byte
+	}{
+		{"oci-layout", []byte(`{"imageLayoutVersion":"1.0.0"}`)}, {"index.json", index},
+		{"blobs/sha256/" + sha256sum.HexBytes(config), config}, {"blobs/sha256/" + sha256sum.HexBytes(manifest), manifest},
+	} {
+		if err := tw.WriteHeader(&tar.Header{Name: entry.name, Mode: 0600, Size: int64(len(entry.body))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(entry.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return result.Bytes()
+}
+
+func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
+	for _, mounted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "image", true: "mounted"}[mounted], func(t *testing.T) {
+			body := preparedConfigImage(t)
+			path := t.TempDir() + "/image.tar"
+			if err := os.WriteFile(path, body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerMountPath: "/workspace", ComputerImage: workerapi.CASObject{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body))}}
+			var config *computerv0.RuntimeImageConfig
+			if mounted {
+				var err error
+				config, err = readPreparedImageConfig(context.Background(), path, mount.ComputerImage)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path = "/does-not-exist"
+			}
+			var reply bytes.Buffer
+			if err := frameio.WriteProtoFrame(&reply, &computerv0.PrepareComputerRuntimeResponse{Status: "prepared", ComputerInstanceId: "runtime"}); err != nil {
+				t.Fatal(err)
+			}
+			stream := &scriptedGuestStream{read: bytes.NewReader(reply.Bytes())}
+			machines := &PreparedMachines{}
+			if err := machines.prepareGuestRuntime(context.Background(), fakeGuestSession{stream: stream}, "runtime", 2, mount, path, config); err != nil {
+				t.Fatal(err)
+			}
+			input := bytes.NewReader(stream.written.Bytes())
+			if _, _, err := wire.ReadStreamFrameHeader(input); err != nil {
+				t.Fatal(err)
+			}
+			var request computerv0.PrepareComputerRuntimeRequest
+			if err := frameio.ReadProtoFrame(input, &request); err != nil {
+				t.Fatal(err)
+			}
+			if request.GetComputerId() != mount.ComputerID || request.GetWriterGeneration() != 2 || request.GetComputerInstanceId() != "runtime" {
+				t.Fatal("prepared physical identity changed")
+			}
+			if !proto.Equal(request.GetMountedImageConfig(), config) {
+				t.Fatalf("config = %v", request.GetMountedImageConfig())
+			}
+			if mounted {
+				if input.Len() != 0 {
+					t.Fatalf("unexpected image transfer: %d bytes", input.Len())
+				}
+				return
+			}
+			header, size, err := wire.ReadStreamFrameHeader(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := io.ReadAll(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if header.Type != wire.StreamTypeRunImage || size != uint64(len(body)) || !bytes.Equal(got, body) {
+				t.Fatal("image frame changed")
+			}
+		})
+	}
+}

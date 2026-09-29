@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -14,8 +15,8 @@ func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 	complete := ProgramRunner{
 		ControlPlane:     testControlPlane(t),
 		CAS:              unusedCAS{},
-		ComputerCaptures: &CaptureRuns{},
-		Mounts:           NewMounts(),
+		ComputerCaptures: &computerhost.CaptureRuns{},
+		Mounts:           computerhost.NewMounts(),
 	}
 	if _, err := NewProgramRunner(complete); err != nil {
 		t.Fatalf("NewProgramRunner(complete) error = %v", err)
@@ -56,10 +57,10 @@ func TestStartRunLeaseTaskRejectsUnvalidatedRunner(t *testing.T) {
 		"zero value": {ProgramRunner{}, "run lease control plane is required"},
 		"missing capability": {ProgramRunner{
 			ControlPlane: withoutWaits, CAS: unusedCAS{},
-			ComputerCaptures: &CaptureRuns{}, Mounts: NewMounts(),
+			ComputerCaptures: &computerhost.CaptureRuns{}, Mounts: computerhost.NewMounts(),
 		}, "run wait control plane is required"},
 		"missing computer mounts": {ProgramRunner{
-			ControlPlane: complete, CAS: unusedCAS{}, ComputerCaptures: &CaptureRuns{},
+			ControlPlane: complete, CAS: unusedCAS{}, ComputerCaptures: &computerhost.CaptureRuns{},
 		}, "computer mount session registry is required"},
 	} {
 		t.Run(name, func(t *testing.T) {

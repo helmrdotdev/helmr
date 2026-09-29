@@ -81,7 +81,7 @@ func (s *guestSession) PauseComputer(ctx context.Context) (*vm.ComputerSnapshot,
 	return s.capturePausedComputer(ctx)
 }
 
-// The prepared runtime pool admits only machines that can capture a live
+// computerhost.PreparedMachines admits only machines that can capture a live
 // Computer for saves.
 var _ interface {
 	CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)

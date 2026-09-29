@@ -68,7 +68,7 @@ type ComputerRunReconcileRequest struct {
 	ComputerRunCleanup
 }
 
-type ComputerMaterializerControlPlaneClient interface {
+type ComputerServerControlPlaneClient interface {
 	GetComputerRunCleanup(context.Context, ComputerRunCleanupRequest) (ComputerRunCleanupResponse, error)
 	ReconcileComputerRun(context.Context, ComputerRunReconcileRequest) error
 	RenewComputerInstance(context.Context, ComputerInstanceRenewRequest) (ComputerInstanceRenewResponse, error)

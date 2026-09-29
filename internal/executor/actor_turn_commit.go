@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -29,7 +30,7 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 			err = task.program.releaseSource(stopCtx)
 		}
 		if err != nil {
-			retErr = errors.Join(retErr, &SourceReleaseError{Err: err})
+			retErr = errors.Join(retErr, &computerhost.SourceReleaseError{Err: err})
 		}
 	}()
 	if requested == nil || strings.TrimSpace(requested.GetCorrelationId()) == "" || requested.GetTargetInputSequence() <= 0 {

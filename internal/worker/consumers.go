@@ -191,6 +191,6 @@ func (c computerConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}
 	mount := *claimed.Assignment
 	return func(workCtx context.Context) error {
-		return r.materializer.RunComputerMount(workCtx, mount, r.client)
+		return r.computerServer.Serve(workCtx, mount, r.client)
 	}, true, nil
 }

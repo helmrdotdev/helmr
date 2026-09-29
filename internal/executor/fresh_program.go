@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -683,13 +684,13 @@ func (r ProgramRunner) startNewProgram(
 	// The prepared VM can be advertised before the independent mount consumer
 	// registers its local channel. Wait only for that channel, before admission
 	// writes can start a process, and retain the original admission deadline.
-	var opened MountChannel
+	var opened computerhost.MountChannel
 	for {
 		if err := admissionCtx.Err(); err != nil {
 			return freshProgram{}, err
 		}
 		opened, err = r.Mounts.OpenChannel(admissionCtx, claim.Lease.ComputerInstanceID)
-		if !errors.Is(err, ErrMountNotFound) {
+		if !errors.Is(err, computerhost.ErrMountNotFound) {
 			break
 		}
 		timer := time.NewTimer(runLeaseRetryEvery)

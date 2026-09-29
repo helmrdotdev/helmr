@@ -8,11 +8,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-type runnerTestMaterializer struct {
+type runnerTestComputerServer struct {
 	mounts []workerapi.ComputerInstanceAssignment
 }
 
-func (m *runnerTestMaterializer) RunComputerMount(_ context.Context, mount workerapi.ComputerInstanceAssignment, _ workerapi.ComputerMaterializerControlPlaneClient) error {
+func (m *runnerTestComputerServer) Serve(_ context.Context, mount workerapi.ComputerInstanceAssignment, _ workerapi.ComputerServerControlPlaneClient) error {
 	m.mounts = append(m.mounts, mount)
 	return nil
 }
@@ -38,23 +38,23 @@ func testRunnerReservations(t *testing.T) *reservation.Ledger {
 func TestNewRunnerRejectsMissingCollaborators(t *testing.T) {
 	client := &runConsumerTestClient{}
 	executor := &runConsumerTestExecutor{}
-	materializer := &runnerTestMaterializer{}
+	computerServer := &runnerTestComputerServer{}
 	reservations := WithReservations(testRunnerReservations(t))
-	if _, err := NewRunner(client, executor, materializer, workerapi.Capabilities{}, reservations); err != nil {
+	if _, err := NewRunner(client, executor, computerServer, workerapi.Capabilities{}, reservations); err != nil {
 		t.Fatalf("NewRunner(complete) error = %v", err)
 	}
 	for name, test := range map[string]struct {
-		client       ControlPlaneClient
-		executor     RunLeaseExecutor
-		materializer Materializer
-		want         string
+		client         ControlPlaneClient
+		executor       RunLeaseExecutor
+		computerServer ComputerServer
+		want           string
 	}{
-		"client":       {nil, executor, materializer, "worker client is required"},
-		"executor":     {client, nil, materializer, "worker executor is required"},
-		"materializer": {client, executor, nil, "worker materializer is required"},
+		"client":         {nil, executor, computerServer, "worker client is required"},
+		"executor":       {client, nil, computerServer, "worker executor is required"},
+		"computerServer": {client, executor, nil, "worker Computer server is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			runner, err := NewRunner(test.client, test.executor, test.materializer, workerapi.Capabilities{}, reservations)
+			runner, err := NewRunner(test.client, test.executor, test.computerServer, workerapi.Capabilities{}, reservations)
 			if runner != nil || err == nil || err.Error() != test.want {
 				t.Fatalf("NewRunner() = %v, %v, want error %q", runner, err, test.want)
 			}
@@ -62,11 +62,11 @@ func TestNewRunnerRejectsMissingCollaborators(t *testing.T) {
 	}
 }
 
-func TestComputerConsumerRunsClaimedMountOnMaterializer(t *testing.T) {
+func TestComputerConsumerServesClaimedMount(t *testing.T) {
 	assignment := &workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 1}
 	client := computerClaimTestClient{runConsumerTestClient: &runConsumerTestClient{}, assignment: assignment}
-	materializer := &runnerTestMaterializer{}
-	runner, err := NewRunner(client, &runConsumerTestExecutor{}, materializer, workerapi.Capabilities{}, WithReservations(testRunnerReservations(t)))
+	computerServer := &runnerTestComputerServer{}
+	runner, err := NewRunner(client, &runConsumerTestExecutor{}, computerServer, workerapi.Capabilities{}, WithReservations(testRunnerReservations(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestComputerConsumerRunsClaimedMountOnMaterializer(t *testing.T) {
 	if err := work(t.Context()); err != nil {
 		t.Fatalf("run claimed mount: %v", err)
 	}
-	if len(materializer.mounts) != 1 || materializer.mounts[0].ComputerInstanceID != "instance" {
-		t.Fatalf("materialized mounts = %+v, want the claimed instance", materializer.mounts)
+	if len(computerServer.mounts) != 1 || computerServer.mounts[0].ComputerInstanceID != "instance" {
+		t.Fatalf("served mounts = %+v, want the claimed instance", computerServer.mounts)
 	}
 }

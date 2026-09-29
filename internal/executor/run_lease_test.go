@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -566,7 +567,7 @@ func TestExecutorPreservesCheckpointReleaseFailureAfterDetachment(t *testing.T) 
 			releaseErr := errors.New("physical stop uncertain")
 			waitErr := ErrDetached
 			if failed {
-				waitErr = errors.Join(ErrDetached, &SourceReleaseError{Err: releaseErr})
+				waitErr = errors.Join(ErrDetached, &computerhost.SourceReleaseError{Err: releaseErr})
 			}
 			task := &testRunLeaseTask{trace: trace, waitErr: waitErr}
 			client := &testRunLeaseControlPlane{trace: trace, claim: workerapi.RunLeaseClaimResponse{Lease: lease}}

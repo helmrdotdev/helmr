@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/helmrdotdev/helmr/internal/computerhost"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -60,21 +61,21 @@ func (m *testMounts) lookup(id string) (*testMount, error) {
 	defer m.mu.Unlock()
 	mounted := m.mounts[id]
 	if mounted == nil {
-		return nil, fmt.Errorf("%w: %s", ErrMountNotFound, id)
+		return nil, fmt.Errorf("%w: %s", computerhost.ErrMountNotFound, id)
 	}
 	return mounted, nil
 }
 
-func (m *testMounts) OpenChannel(ctx context.Context, id string) (MountChannel, error) {
+func (m *testMounts) OpenChannel(ctx context.Context, id string) (computerhost.MountChannel, error) {
 	mounted, err := m.lookup(id)
 	if err != nil {
-		return MountChannel{}, err
+		return computerhost.MountChannel{}, err
 	}
 	stream, err := mounted.machine.OpenStream(ctx)
 	if err != nil {
-		return MountChannel{}, err
+		return computerhost.MountChannel{}, err
 	}
-	return MountChannel{
+	return computerhost.MountChannel{
 		Channel:       &testChannel{machine: mounted.machine, stream: stream},
 		ReleaseSource: mounted.release,
 		GrantProgramResume: func(context.Context, *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
