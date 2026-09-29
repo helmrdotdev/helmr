@@ -123,7 +123,7 @@ func TestStartupFailureUsesLatestInstanceObservation(t *testing.T) {
 	}()
 	session := &computerMaterializerTestSession{streams: []io.ReadWriteCloser{host}, closeErr: errors.New("cleanup failed")}
 	pool := computerPreparedRuntimePool(t, mount, session)
-	m := ComputerMaterializer{CAS: store, RuntimePool: pool, Heartbeat: time.Millisecond}
+	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, Sessions: NewComputerMountSessions(), CAS: store, RuntimePool: pool, Heartbeat: time.Millisecond}
 	err := m.RunComputerMount(ctx, mount, client)
 	<-done
 	if err == nil || len(client.failures) != 2 {

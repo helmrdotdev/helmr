@@ -37,7 +37,7 @@ func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 	raw := &computerMaterializerTestSession{streams: []io.ReadWriteCloser{pc}, operation: discardReadWriteCloser{}, exit: make(chan error)}
 	pool := computerPreparedRuntimePool(t, mount, raw)
 	client := &computerMaterializerTestClient{}
-	m := ComputerMaterializer{ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool, Sessions: saveFailureRegistry{t: t}}
+	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool, Sessions: saveFailureRegistry{t: t}}
 	err := m.RunComputerMount(ctx, mount, client)
 	if err == nil || !strings.Contains(err.Error(), "runtime cannot capture a live Computer") {
 		t.Fatalf("original failure lost: %v", err)

@@ -73,9 +73,6 @@ type ComputerRestoreControl interface {
 }
 
 func (m ComputerMaterializer) activateRestore(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment) error {
-	if m.RestoreControl == nil {
-		return errors.New("Computer restore control plane is required")
-	}
 	var plan *workerapi.ComputerRestorePlan
 	if err := retryRunLeaseRequest(ctx, func(ctx context.Context) error {
 		response, err := m.RestoreControl.GetComputerRestorePlan(ctx, workerapi.ComputerRestorePlanRequest{EnvironmentID: mount.EnvironmentID, ComputerInstanceID: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration})
