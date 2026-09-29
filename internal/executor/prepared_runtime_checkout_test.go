@@ -33,6 +33,9 @@ func (*barrierCloseMachine) Wait(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
+func (*barrierCloseMachine) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	return nil, errTestLiveCapture
+}
 
 func (m *barrierCloseMachine) Close(ctx context.Context) error {
 	m.mu.Lock()

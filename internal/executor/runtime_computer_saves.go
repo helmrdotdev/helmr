@@ -96,18 +96,17 @@ func (s *runtimeComputerSaves) Quiesce(ctx context.Context) error {
 	return pending.Quiesce(ctx)
 }
 
-// A live cut resumes before upload. The concrete retained capture must also
-// support durable local source adoption after the CP commits its receipt.
-type liveComputerCaptureMachine interface {
+// liveCaptureMachine is a runtime machine whose Computer can be cut live for a
+// save. The prepared runtime pool admits only such machines. A live cut resumes
+// before upload. The concrete retained capture must also support durable local
+// source adoption after the CP commits its receipt.
+type liveCaptureMachine interface {
+	vm.Machine
 	CaptureComputer(context.Context) (*vm.ComputerSnapshot, error)
 }
 
-func captureComputerSave(ctx context.Context, session vm.Machine, computerID string) (computerSaveCapture, error) {
-	source, ok := session.(liveComputerCaptureMachine)
-	if !ok {
-		return nil, errors.New("runtime cannot capture a live Computer")
-	}
-	snapshot, err := source.CaptureComputer(ctx)
+func captureComputerSave(ctx context.Context, session liveCaptureMachine, computerID string) (computerSaveCapture, error) {
+	snapshot, err := session.CaptureComputer(ctx)
 	if err != nil {
 		return nil, err
 	}

@@ -38,11 +38,15 @@ func TestPreservationFailureSurvivesRenewalCancellation(t *testing.T) {
 	client := &computerMaterializerTestClient{}
 	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{runtime: mount.ComputerInstanceID, computer: mount.ComputerID}, ComputerSaveEvery: time.Millisecond, ComputerObjects: &checkpointCAS{}, CAS: store, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool, Mounts: saveFailureRegistry{t: t}}
 	err := m.RunComputerMount(ctx, mount, client)
-	if err == nil || !strings.Contains(err.Error(), "runtime cannot capture a live Computer") {
+	if err == nil || !strings.Contains(err.Error(), errTestLiveCapture.Error()) {
 		t.Fatalf("original failure lost: %v", err)
 	}
-	if len(client.failures) != 1 || !strings.Contains(string(client.failures[0].Error), "computer_preservation_failed") || !strings.Contains(string(client.failures[0].Error), "runtime cannot capture a live Computer") {
+	if len(client.failures) != 1 || !strings.Contains(string(client.failures[0].Error), "computer_preservation_failed") || !strings.Contains(string(client.failures[0].Error), errTestLiveCapture.Error()) {
 		t.Fatalf("failure not reported: %+v", client.failures)
+	}
+	// The save loop captures through the machine the pool admitted.
+	if raw.captureCount() == 0 {
+		t.Fatalf("live captures=%d", raw.captureCount())
 	}
 	if raw.closeCount() != 1 {
 		t.Fatalf("runtime cleanup=%d", raw.closeCount())

@@ -194,6 +194,10 @@ func (s *checkpointSession) CreateSnapshot(_ context.Context, request vm.Snapsho
 	return s.artifact, nil
 }
 
+func (*checkpointSession) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	return nil, errTestLiveCapture
+}
+
 func (s *checkpointSession) Resume(context.Context) error {
 	s.resumeCount += 1
 	return nil

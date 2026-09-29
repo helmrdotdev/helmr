@@ -120,7 +120,7 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 	}
 }
 
-func computerPreparedRuntimePool(t *testing.T, mount workerapi.ComputerInstanceAssignment, session vm.Machine) *PreparedRuntimePool {
+func computerPreparedRuntimePool(t *testing.T, mount workerapi.ComputerInstanceAssignment, session liveCaptureMachine) *PreparedRuntimePool {
 	t.Helper()
 	target := runtimeReservationTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
 	target.Source.ComputerID = mount.ComputerID
@@ -1066,6 +1066,7 @@ type computerMaterializerTestSession struct {
 	exit      <-chan error
 	closeErr  error
 	closed    int
+	captures  int
 }
 
 func (s *computerMaterializerTestSession) Stream() vm.Stream {
@@ -1108,6 +1109,19 @@ func (s *computerMaterializerTestSession) Close(context.Context) error {
 		_ = stream.Close()
 	}
 	return closeErr
+}
+
+func (s *computerMaterializerTestSession) CaptureComputer(context.Context) (*vm.ComputerSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.captures++
+	return nil, errTestLiveCapture
+}
+
+func (s *computerMaterializerTestSession) captureCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.captures
 }
 
 func (s *computerMaterializerTestSession) closeCount() int {
