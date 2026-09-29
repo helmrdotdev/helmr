@@ -81,10 +81,6 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("region storage is not configured")))
-		return
-	}
 	regions, err := s.db.ListRegions(r.Context())
 	if err != nil {
 		writeError(w, errors.New("list regions"))

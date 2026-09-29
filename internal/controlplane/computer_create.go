@@ -127,7 +127,7 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 		}
 		var claim *db.IdempotencyClaim
 		if claimRequest != nil {
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -357,7 +357,7 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 			if err != nil {
 				return err
 			}
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}

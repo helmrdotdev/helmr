@@ -51,7 +51,7 @@ func (s *Server) deleteComputer(ctx context.Context, request computerDeleteReque
 			if err != nil {
 				return err
 			}
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -139,7 +139,7 @@ func (s *Server) deleteComputer(ctx context.Context, request computerDeleteReque
 			if err != nil {
 				return err
 			}
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}

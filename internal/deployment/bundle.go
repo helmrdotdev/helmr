@@ -207,7 +207,7 @@ func ValidateDeploymentBundle(bundle DeploymentBundle) error {
 		return errors.New("deployment bundle program Runtime digest does not match runtime")
 	}
 
-	if _, err := validateBundleComputerImages(bundle); err != nil {
+	if err := validateBundleComputerImages(bundle); err != nil {
 		return err
 	}
 	if err := validateProgramIndexDeployment(bundle.Program.Index, bundle.Plan); err != nil {
@@ -237,30 +237,29 @@ func validateBundleRuntime(runtime DeploymentBundleRuntime) error {
 	return nil
 }
 
-func validateBundleComputerImages(bundle DeploymentBundle) ([]ComputerImage, error) {
+func validateBundleComputerImages(bundle DeploymentBundle) error {
 	if bundle.ComputerImages == nil {
-		return nil, errors.New("deployment bundle computerImages must be an array")
+		return errors.New("deployment bundle computerImages must be an array")
 	}
 	if len(bundle.ComputerImages) > MaxDeploymentBundleComputerImages {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"deployment bundle has more than %d computer images",
 			MaxDeploymentBundleComputerImages,
 		)
 	}
 	sandboxes := deploymentPlanSandboxes(bundle.Plan)
 	if len(bundle.ComputerImages) != len(sandboxes) {
-		return nil, errors.New("deployment bundle computerImages do not match plan")
+		return errors.New("deployment bundle computerImages do not match plan")
 	}
-	images := make([]ComputerImage, 0, len(bundle.ComputerImages))
 	for index, image := range bundle.ComputerImages {
 		if index > 0 && image.DeclaredID <= bundle.ComputerImages[index-1].DeclaredID {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"deployment bundle computerImages are not in canonical declaredId order at position %d",
 				index,
 			)
 		}
 		if image.DeclaredID != sandboxes[index].DeclaredID {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"deployment bundle computerImages[%d] declaredId does not match plan",
 				index,
 			)
@@ -270,14 +269,14 @@ func validateBundleComputerImages(bundle DeploymentBundle) ([]ComputerImage, err
 			sandboxes[index].Sandbox.Image.MediaType != image.Artifact.MediaType ||
 			sandboxes[index].Sandbox.Image.Profile != image.Artifact.Profile ||
 			!reflect.DeepEqual(sandboxes[index].Sandbox.Image.Config, image.Artifact.Config) {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"deployment bundle computerImages[%d] artifact does not match plan",
 				index,
 			)
 		}
 		artifact := image.Artifact
 		if artifact.Architecture != bundle.Platform.Architecture {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"deployment bundle computerImages[%d] architecture does not match platform",
 				index,
 			)
@@ -286,31 +285,21 @@ func validateBundleComputerImages(bundle DeploymentBundle) ([]ComputerImage, err
 			Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
 		}
 		if err := validateBundleObject(object, fmt.Sprintf("computerImages[%d]", index)); err != nil {
-			return nil, err
+			return err
 		}
 		if artifact.Profile != computer.SeedProfile {
-			return nil, fmt.Errorf("deployment disk profile %q is unsupported", artifact.Profile)
+			return fmt.Errorf("deployment disk profile %q is unsupported", artifact.Profile)
 		}
 		if artifact.MediaType != ComputerImageArtifactMediaType {
-			return nil, fmt.Errorf(
+			return fmt.Errorf(
 				"deployment bundle computerImages[%d] mediaType = %q, want %q",
 				index,
 				artifact.MediaType,
 				ComputerImageArtifactMediaType,
 			)
 		}
-		images = append(images, ComputerImage{
-			DeclaredID: image.DeclaredID,
-			Artifact: ComputerImageArtifact{
-				Profile: artifact.Profile, Config: artifact.Config,
-				Architecture: artifact.Architecture,
-				Digest:       artifact.Digest,
-				MediaType:    artifact.MediaType,
-				SizeBytes:    artifact.SizeBytes,
-			},
-		})
 	}
-	return images, nil
+	return nil
 }
 
 func validateBundleObjectClosure(bundle DeploymentBundle) error {

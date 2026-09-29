@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
@@ -495,7 +496,7 @@ func testBuildPlan() BuildPlan {
 					Run: RunManifest{
 						Queue:         "task/build",
 						MaxDurationMs: 900000,
-						Retry:         RetryManifest{Enabled: false},
+						Retry:         retry.Manifest{Enabled: false},
 					},
 					Schedule: &ScheduleManifest{
 						Cron:     "0 9 * * *",
@@ -514,7 +515,7 @@ func testBuildPlan() BuildPlan {
 					Run: RunManifest{
 						Queue:         "actor/chat",
 						MaxDurationMs: 900000,
-						Retry:         RetryManifest{Enabled: false},
+						Retry:         retry.Manifest{Enabled: false},
 					},
 					IdleTimeoutMs: 30000,
 				},
@@ -554,15 +555,15 @@ func testBuildPlan() BuildPlan {
 	}
 }
 
-func validRetryManifest() RetryManifest {
-	return RetryManifest{
+func validRetryManifest() retry.Manifest {
+	return retry.Manifest{
 		Enabled:     true,
 		MaxAttempts: new(int64(3)),
-		Backoff: &RetryBackoff{
+		Backoff: &retry.Backoff{
 			MinMs:  1000,
 			MaxMs:  30000,
 			Factor: 2,
-			Jitter: RetryJitterFull,
+			Jitter: retry.JitterFull,
 		},
 	}
 }

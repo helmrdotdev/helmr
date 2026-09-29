@@ -68,10 +68,6 @@ func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if s.db == nil {
-		writeError(w, unavailable(codedError{code: "unavailable", message: "Session storage is unavailable"}))
-		return
-	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_session_query", message: err.Error()}))
@@ -171,10 +167,6 @@ func (s *Server) getSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	principal := actorFromContext(r.Context())
 	if err := authorizeSessionOperation(principal, auth.PermissionSessionsRead); err != nil {
 		writeError(w, err)
-		return
-	}
-	if s.db == nil {
-		writeError(w, unavailable(codedError{code: "unavailable", message: "Session storage is unavailable"}))
 		return
 	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)

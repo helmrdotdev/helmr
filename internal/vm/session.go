@@ -37,15 +37,6 @@ type Session interface {
 	Close(context.Context) error
 }
 
-type RunNetworkStatus struct {
-	DeniedPackets uint64
-}
-
-type RunNetworkSession interface {
-	Session
-	RunNetworkStatus(context.Context) (RunNetworkStatus, error)
-}
-
 type CheckpointableSession interface {
 	Session
 	SnapshotLimits() (SnapshotLimits, error)

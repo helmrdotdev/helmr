@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -284,7 +285,7 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
 				Run: deployment.RunManifest{
 					Queue: "tasks", MaxDurationMs: 5000,
-					Retry: deployment.RetryManifest{Enabled: false},
+					Retry: retry.Manifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{
@@ -339,7 +340,7 @@ func writeVerifiedProgramFixture(
 				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
 				Run: deployment.RunManifest{
 					Queue: "tasks", MaxDurationMs: 5000,
-					Retry: deployment.RetryManifest{Enabled: false},
+					Retry: retry.Manifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{

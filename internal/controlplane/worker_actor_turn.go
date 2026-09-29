@@ -11,10 +11,6 @@ import (
 )
 
 func (s *Server) workerCommitActorTurn(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.CommitActorTurnRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

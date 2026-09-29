@@ -11,10 +11,6 @@ import (
 )
 
 func (s *Server) workerBeginRunFinalization(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.BeginRunFinalizationRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

@@ -80,10 +80,6 @@ func (s *Server) createSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("secret storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
@@ -182,10 +178,6 @@ func (s *Server) getSecretByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("secret storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
@@ -225,7 +217,7 @@ func (s *Server) rotateSecretByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rotateSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
-	if s.secrets == nil || s.db == nil {
+	if s.secrets == nil {
 		writeError(w, unavailable(errors.New("secret store is not configured")))
 		return
 	}
@@ -284,7 +276,7 @@ func (s *Server) revokeSecretByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
-	if s.secrets == nil || s.db == nil {
+	if s.secrets == nil {
 		writeError(w, unavailable(errors.New("secret store is not configured")))
 		return
 	}

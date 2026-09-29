@@ -1375,25 +1375,6 @@ func normalizeNftDocument(value any, parent string) any {
 	}
 }
 
-func (c *Connector) readNetworkCounters(ctx context.Context, netnsName string, label string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "exec", netnsName, c.cfg.NFTPath, "-j", "list", "counters", "table", "inet", networkPolicyTableName)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("read %s network counters: %w: %s", label, err, strings.TrimSpace(stderr.String()))
-	}
-	return raw, nil
-}
-
-func (c *Connector) readRunNetworkStatus(ctx context.Context, netnsName string) (vm.RunNetworkStatus, error) {
-	raw, err := c.readNetworkCounters(ctx, netnsName, "run")
-	if err != nil {
-		return vm.RunNetworkStatus{}, err
-	}
-	return parseRunNetworkStatus(raw)
-}
-
 func hostIPv4Prefixes(excluded ...netip.Prefix) ([]netip.Prefix, error) {
 	addresses, err := netlink.AddrList(nil, netlink.FAMILY_V4)
 	if err != nil {

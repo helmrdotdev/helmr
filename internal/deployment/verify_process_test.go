@@ -7,6 +7,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 func TestVerifierResultRoundTrip(t *testing.T) {
@@ -256,7 +258,7 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 				Run: RunManifest{
 					Queue:         "task/verify",
 					MaxDurationMs: 900000,
-					Retry:         RetryManifest{Enabled: false},
+					Retry:         retry.Manifest{Enabled: false},
 				},
 			},
 			Locator: &ProgramLocator{

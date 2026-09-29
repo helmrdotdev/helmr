@@ -41,10 +41,6 @@ func protectedEnvironmentSlug(slug string) bool {
 }
 
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	if actor.Role == "" {
 		writeError(w, forbidden(errors.New("organization is required")))
@@ -92,10 +88,6 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
 	actor := actorFromContext(r.Context())
 	ref := strings.TrimSpace(chi.URLParam(r, "projectRef"))
 	projectID, idErr := ids.Parse(ref)
@@ -184,10 +176,6 @@ func decodeProjectListCursor(raw string) (projectListCursor, error) {
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
 	var request api.CreateProjectRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid project request JSON: %w", err)))
@@ -267,10 +255,6 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -309,10 +293,6 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("environment storage is not configured")))
-		return
-	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -370,10 +350,6 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("environment storage is not configured")))
-		return
-	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -402,10 +378,6 @@ func (s *Server) getEnvironment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("environment storage is not configured")))
-		return
-	}
 	projectID, err := parseUUIDParam(r, "projectID")
 	if err != nil {
 		writeError(w, badRequest(err))

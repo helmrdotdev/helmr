@@ -14,10 +14,6 @@ import (
 )
 
 func (s *Server) workerEnterRunEntrypoint(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.RunEntrypointRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

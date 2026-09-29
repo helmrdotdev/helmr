@@ -215,7 +215,7 @@ func (s *Server) admitComputerCommand(ctx context.Context, request computerComma
 		if !scoped {
 			return errComputerNotFound
 		}
-		claims, err := idempotency.TransactionForQueries(work.q)
+		claims, err := idempotency.TransactionFor(work.tx)
 		if err != nil {
 			return err
 		}

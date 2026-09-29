@@ -16,10 +16,6 @@ import (
 )
 
 func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.RunStartRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -70,19 +66,17 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) startRun(ctx context.Context, worker workerActor, leaseID pgtype.UUID, expected workerapi.RunLeaseFence) (workerapi.RunLeaseFence, error) {
-	tx, err := s.tx.Begin(ctx)
+	err := s.inTx(ctx, func(work *txWork) error {
+		_, err := run.StartExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+		if errors.Is(err, run.ErrExecutionWorkerClaims) {
+			return errStaleWorkerClaims
+		}
+		if err != nil {
+			return staleAuthority(staleAuthorityRunStart, "execution", staleRunLeaseClaim(err))
+		}
+		return nil
+	})
 	if err != nil {
-		return workerapi.RunLeaseFence{}, err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	_, err = run.StartExecution(ctx, tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return workerapi.RunLeaseFence{}, errStaleWorkerClaims
-	}
-	if err != nil {
-		return workerapi.RunLeaseFence{}, staleAuthority(staleAuthorityRunStart, "execution", staleRunLeaseClaim(err))
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return workerapi.RunLeaseFence{}, err
 	}
 	return expected, nil

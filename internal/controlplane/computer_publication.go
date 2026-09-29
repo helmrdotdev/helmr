@@ -55,87 +55,91 @@ func (s *Server) publishInitialComputerGeneration(ctx context.Context, fence com
 	if result, err := replay(); !errors.Is(err, pgx.ErrNoRows) {
 		return result, err
 	}
-	tx, err := s.tx.Begin(ctx)
+	var published computerPublicationResult
+	preparationLockFailed := false
+	err = s.inTx(ctx, func(work *txWork) error {
+		tx := work.tx
+		owner, err := dispatch.LockComputerPreparation(ctx, tx, fence.ComputerPreparationFence)
+		if err != nil {
+			preparationLockFailed = true
+			return err
+		}
+		if input.Root.LogicalBytes != owner.LogicalBytes {
+			return errors.New("initial root capacity differs from preparation")
+		}
+		var claims bool
+		if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
+			return err
+		}
+		if !claims {
+			return errors.New("publication worker claims changed")
+		}
+		q := db.New(tx)
+		object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, Digest: input.Root.Pack.Digest})
+		if err != nil {
+			return err
+		}
+		if !object.Certified.Bool {
+			return errors.New("initial root is not certified")
+		}
+		var evidence blockformat.ObjectInspection
+		if err = json.Unmarshal(object.Inspection, &evidence); err != nil {
+			return err
+		}
+		if evidence.Pack == nil {
+			return errors.New("initial root is not an inspected pack")
+		}
+		if err = evidence.Pack.CheckRoot(locator, owner.LogicalBytes); err != nil {
+			return err
+		}
+		var retained bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$4 AND instance_desired_version=$2 AND digest=$3)`, fence.RuntimeID, fence.DesiredVersion, input.Root.Pack.Digest, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID)).Scan(&retained); err != nil {
+			return err
+		}
+		if !retained {
+			return errors.New("initial root is not retained by publisher")
+		}
+		rawRoot, err := json.Marshal(input.Root)
+		if err != nil {
+			return err
+		}
+		rawConfig, err := json.Marshal(input.Config)
+		if err != nil {
+			return err
+		}
+		version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, VersionID: owner.VersionID, ComputerInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, Fingerprint: fingerprint[:], RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: owner.LogicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
+		if err != nil {
+			return err
+		}
+		// Publication and the preparing Runtime's source retention are one commit.
+		// Otherwise the next source/key request has no retained root, and the
+		// version could be reclaimed between publication and preparation.
+		pinned, err := q.PinInstanceComputerSource(ctx, db.PinInstanceComputerSourceParams{
+			ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID,
+			ComputerID: owner.ComputerID, VersionID: version.ID,
+		})
+		if err != nil {
+			return err
+		}
+		if pinned != 1 {
+			return errors.New("initial generation has no matching Runtime source reservation")
+		}
+		if err = owner.CheckDeadlines(ctx, tx); err != nil {
+			return err
+		}
+		published = computerPublicationResult{ComputerID: version.ComputerID, VersionID: version.ID}
+		return nil
+	})
 	if err != nil {
-		return empty, err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	owner, err := dispatch.LockComputerPreparation(ctx, tx, fence.ComputerPreparationFence)
-	if err != nil {
-		// A competing exact publisher may have committed while the locks waited.
-		_ = tx.Rollback(context.WithoutCancel(ctx))
-		if result, replayErr := replay(); !errors.Is(replayErr, pgx.ErrNoRows) {
-			return result, replayErr
+		if preparationLockFailed {
+			// A competing exact publisher may have committed while the locks waited.
+			if result, replayErr := replay(); !errors.Is(replayErr, pgx.ErrNoRows) {
+				return result, replayErr
+			}
 		}
 		return empty, err
 	}
-	if input.Root.LogicalBytes != owner.LogicalBytes {
-		return empty, errors.New("initial root capacity differs from preparation")
-	}
-	var claims bool
-	if err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, fence.WorkerID, fence.WorkerGroupID, fence.ClaimVersion, fence.GroupClaimVersion).Scan(&claims); err != nil {
-		return empty, err
-	}
-	if !claims {
-		return empty, errors.New("publication worker claims changed")
-	}
-	q := db.New(tx)
-	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, Digest: input.Root.Pack.Digest})
-	if err != nil {
-		return empty, err
-	}
-	if !object.Certified.Bool {
-		return empty, errors.New("initial root is not certified")
-	}
-	var evidence blockformat.ObjectInspection
-	if err = json.Unmarshal(object.Inspection, &evidence); err != nil {
-		return empty, err
-	}
-	if evidence.Pack == nil {
-		return empty, errors.New("initial root is not an inspected pack")
-	}
-	if err = evidence.Pack.CheckRoot(locator, owner.LogicalBytes); err != nil {
-		return empty, err
-	}
-	var retained bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$4 AND instance_desired_version=$2 AND digest=$3)`, fence.RuntimeID, fence.DesiredVersion, input.Root.Pack.Digest, computerPublicationKey("initial", fence.RuntimeID, fence.RuntimeID)).Scan(&retained); err != nil {
-		return empty, err
-	}
-	if !retained {
-		return empty, errors.New("initial root is not retained by publisher")
-	}
-	rawRoot, err := json.Marshal(input.Root)
-	if err != nil {
-		return empty, err
-	}
-	rawConfig, err := json.Marshal(input.Config)
-	if err != nil {
-		return empty, err
-	}
-	version, err := q.PublishInitialComputerDiskVersion(ctx, db.PublishInitialComputerDiskVersionParams{EnvironmentID: owner.EnvironmentID, ComputerID: owner.ComputerID, VersionID: owner.VersionID, ComputerInstanceID: fence.RuntimeID, DesiredVersion: pgtype.Int8{Int64: fence.DesiredVersion, Valid: true}, Fingerprint: fingerprint[:], RootPackDigest: pgvalue.Text(input.Root.Pack.Digest), LogicalBytes: owner.LogicalBytes, Locator: rawRoot, InitialConfig: rawConfig})
-	if err != nil {
-		return empty, err
-	}
-	// Publication and the preparing Runtime's source retention are one commit.
-	// Otherwise the next source/key request has no retained root, and the
-	// version could be reclaimed between publication and preparation.
-	pinned, err := q.PinInstanceComputerSource(ctx, db.PinInstanceComputerSourceParams{
-		ComputerInstanceID: fence.RuntimeID, EnvironmentID: owner.EnvironmentID,
-		ComputerID: owner.ComputerID, VersionID: version.ID,
-	})
-	if err != nil {
-		return empty, err
-	}
-	if pinned != 1 {
-		return empty, errors.New("initial generation has no matching Runtime source reservation")
-	}
-	if err = owner.CheckDeadlines(ctx, tx); err != nil {
-		return empty, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return empty, err
-	}
-	return computerPublicationResult{ComputerID: version.ComputerID, VersionID: version.ID}, nil
+	return published, nil
 }
 
 func (s *Server) writeComputerPublicationError(w http.ResponseWriter, err error) {

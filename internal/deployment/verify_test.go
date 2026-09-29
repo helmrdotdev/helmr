@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -251,7 +252,7 @@ func newTestProgram(t *testing.T) *testProgram {
 				Run: RunManifest{
 					Queue:         "task/build",
 					MaxDurationMs: 900000,
-					Retry:         RetryManifest{Enabled: false},
+					Retry:         retry.Manifest{Enabled: false},
 				},
 			},
 			Locator: &ProgramLocator{

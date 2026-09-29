@@ -807,9 +807,6 @@ func limitRequestBody(limit int64) func(http.Handler) http.Handler {
 }
 
 func (s *Server) userAuthConfigured() error {
-	if s.db == nil {
-		return errors.New("run storage is not configured")
-	}
 	if !s.authKeys.Valid() {
 		return errors.New("user authentication is not configured")
 	}

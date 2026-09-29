@@ -307,7 +307,7 @@ const (
 
 func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.db == nil || len(s.workerTokenSigningKey) == 0 {
+		if len(s.workerTokenSigningKey) == 0 {
 			writeError(w, unavailable(errors.New("worker authentication is not configured")))
 			return
 		}

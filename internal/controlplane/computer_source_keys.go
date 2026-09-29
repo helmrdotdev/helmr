@@ -59,50 +59,53 @@ func (b *computerKeyBroker) source(ctx context.Context, f computerKeyFence) (_ c
 }
 
 func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFence) (computerSourceKeys, []db.ComputerDataKey, error) {
-	tx, err := b.tx.Begin(ctx)
-	if err != nil {
-		return computerSourceKeys{}, nil, err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	authority, err := dispatch.LockComputerSourcePreparation(ctx, tx, f.ComputerPreparationFence)
-	if err != nil {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
-	var claims bool
-	err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
-	if err != nil || !claims {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
-	q := db.New(tx)
-	retained, root, keys, err := loadRuntimeComputerGeneration(ctx, q, f.RuntimeID)
-	if err != nil || retained.VersionID != authority.VersionID || root.LogicalBytes != authority.LogicalBytes {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
+	var source computerSourceKeys
+	var envelopes []db.ComputerDataKey
+	err := inTxWith(ctx, b.tx, func(work *txWork) error {
+		tx := work.tx
+		authority, err := dispatch.LockComputerSourcePreparation(ctx, tx, f.ComputerPreparationFence)
+		if err != nil {
+			return errComputerKeyUnavailable
+		}
+		var claims bool
+		err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
+		if err != nil || !claims {
+			return errComputerKeyUnavailable
+		}
+		q := db.New(tx)
+		retained, root, keys, err := loadRuntimeComputerGeneration(ctx, q, f.RuntimeID)
+		if err != nil || retained.VersionID != authority.VersionID || root.LogicalBytes != authority.LogicalBytes {
+			return errComputerKeyUnavailable
+		}
 
-	writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+		writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+		if err != nil {
+			return errComputerKeyUnavailable
+		}
+		n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
+		if err != nil || n != 1 {
+			return errComputerKeyUnavailable
+		}
+		found := false
+		for _, k := range keys {
+			found = found || k.ID == writeKey.ID
+		}
+		if !found {
+			keys = append(keys, writeKey)
+		}
+		scope, err := computer.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
+		if err != nil {
+			return errComputerKeyUnavailable
+		}
+		if err = authority.CheckDeadlines(ctx, tx); err != nil {
+			return errComputerKeyUnavailable
+		}
+		source = computerSourceKeys{VersionID: pgvalue.UUIDString(retained.VersionID), Scope: scope, Root: root, WriteKeyID: pgvalue.UUIDString(writeKey.ID)}
+		envelopes = keys
+		return nil
+	})
 	if err != nil {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
-	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, ComputerInstanceID: f.RuntimeID, EnvironmentID: authority.EnvironmentID, ComputerID: authority.ComputerID})
-	if err != nil || n != 1 {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
-	found := false
-	for _, k := range keys {
-		found = found || k.ID == writeKey.ID
-	}
-	if !found {
-		keys = append(keys, writeKey)
-	}
-	scope, err := computer.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
-	if err != nil {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
-	if err = authority.CheckDeadlines(ctx, tx); err != nil {
-		return computerSourceKeys{}, nil, errComputerKeyUnavailable
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return computerSourceKeys{}, nil, err
 	}
-	return computerSourceKeys{VersionID: pgvalue.UUIDString(retained.VersionID), Scope: scope, Root: root, WriteKeyID: pgvalue.UUIDString(writeKey.ID)}, keys, nil
+	return source, envelopes, nil
 }

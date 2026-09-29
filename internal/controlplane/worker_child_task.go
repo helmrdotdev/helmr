@@ -68,10 +68,6 @@ type childTaskInvokeResult struct {
 }
 
 func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.InvokeChildTaskRequest
 	if err := decodeClosedWorkerRequest(r, &request); err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_child_task_start", message: err.Error()}))
@@ -229,7 +225,7 @@ func (s *Server) invokeChildTask(
 		var replay *childTaskReceipt
 		var invocationFingerprint idempotency.TaskChildInvokeFingerprint
 		if input.Normalized.IdempotencyKey != "" {
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}
@@ -454,7 +450,7 @@ func (s *Server) invokeChildTask(
 			if err != nil {
 				return err
 			}
-			claims, err := idempotency.TransactionForQueries(work.q)
+			claims, err := idempotency.TransactionFor(work.tx)
 			if err != nil {
 				return err
 			}

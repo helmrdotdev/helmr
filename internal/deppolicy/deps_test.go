@@ -30,7 +30,6 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"cas":          {"cas/s3"},
 		"client":       {"workerapi", "workerclient"},
 		"email":        {"email/resend"},
-		"enrollment":   {"controlplane", "db"},
 		"frameio":      {"api", "db", "proto/program/v0", "wire"},
 		"httpclient":   {"controlplane", "db", "workerapi"},
 		"wire":         {"api", "controlplane", "db", "executor", "guestd", "computer"},
@@ -45,6 +44,9 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"workerapi":    {"controlplane", "db", "firecracker"},
 		"workerclient": {"client"},
 	} {
+		if _, ok := actual[source]; !ok {
+			t.Fatalf("dependency rule source package does not exist: %s", source)
+		}
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {
 				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)

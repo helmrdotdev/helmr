@@ -26,9 +26,6 @@ const (
 	SchemaKindNone     = SchemaKind("none")
 	SchemaKindStandard = SchemaKind("standard_schema")
 
-	RetryJitterNone = retry.JitterNone
-	RetryJitterFull = retry.JitterFull
-
 	maxBuildPlanBytes         = 16 << 20
 	maxBuildDefinitions       = 10000
 	maxBuildQueues            = 1000
@@ -42,7 +39,6 @@ const (
 
 type DefinitionKind string
 type SchemaKind string
-type RetryJitter = retry.Jitter
 
 type BuildPlan struct {
 	FormatVersion int               `json:"formatVersion"`
@@ -111,14 +107,11 @@ type SchemaManifest struct {
 }
 
 type RunManifest struct {
-	Queue         string        `json:"queue"`
-	MaxDurationMs int64         `json:"maxDurationMs"`
-	Retry         RetryManifest `json:"retry"`
-	TTLMs         *int64        `json:"ttlMs,omitempty"`
+	Queue         string         `json:"queue"`
+	MaxDurationMs int64          `json:"maxDurationMs"`
+	Retry         retry.Manifest `json:"retry"`
+	TTLMs         *int64         `json:"ttlMs,omitempty"`
 }
-
-type RetryManifest = retry.Manifest
-type RetryBackoff = retry.Backoff
 
 type ScheduleManifest struct {
 	Cron     string                   `json:"cron"`
@@ -459,15 +452,7 @@ func validateRunManifest(run RunManifest, queues map[string]struct{}) error {
 	if run.TTLMs != nil && (*run.TTLMs < 1 || *run.TTLMs > maxQueuedRunTTLMs) {
 		return fmt.Errorf("ttlMs must be in [1,%d]", maxQueuedRunTTLMs)
 	}
-	return validateRetryManifest(run.Retry)
-}
-
-func validateRetryManifest(manifest RetryManifest) error {
-	return retry.Validate(manifest)
-}
-
-func ParseRetryManifest(raw []byte) (RetryManifest, error) {
-	return retry.Parse(raw)
+	return retry.Validate(run.Retry)
 }
 
 func validateScheduleManifest(manifest ScheduleManifest) error {

@@ -294,10 +294,6 @@ func (s *Server) authorizeRunRequest(
 		}))
 		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
 	}
-	if s.db == nil {
-		s.writeRunReadAuthorityError(w)
-		return auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
-	}
 	return scope, projectID, environmentID, true
 }
 

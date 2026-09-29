@@ -11,17 +11,14 @@ import (
 )
 
 func enterRunEntrypoint(ctx context.Context, txb TxBeginner, worker workerActor, leaseID pgtype.UUID, request workerapi.RunEntrypointRequest) error {
-	tx, err := txb.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	err = run.EnterExecution(ctx, tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}, request.EntrypointKind, request.EntrypointDeclaredID)
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return errStaleWorkerClaims
-	}
-	if err != nil {
-		return staleRunLeaseClaim(err)
-	}
-	return tx.Commit(ctx)
+	return inTxWith(ctx, txb, func(work *txWork) error {
+		err := run.EnterExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: request.Lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}, request.EntrypointKind, request.EntrypointDeclaredID)
+		if errors.Is(err, run.ErrExecutionWorkerClaims) {
+			return errStaleWorkerClaims
+		}
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		return nil
+	})
 }

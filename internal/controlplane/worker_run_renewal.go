@@ -12,10 +12,6 @@ import (
 )
 
 func (s *Server) workerRenewRunLease(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
 	var request workerapi.RunLeaseRenewRequest
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()

@@ -37,18 +37,13 @@ type deploymentBundleOwnershipStore interface {
 }
 
 func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil || s.bundleAdmission == nil || s.platformStore == nil {
+	if s.bundleAdmission == nil || s.platformStore == nil {
 		writeError(w, unavailable(errors.New("deployment bundle admission is not configured")))
 		return
 	}
 	uploads, ok := s.cas.(deploymentBundleUploadStore)
 	if !ok {
 		writeError(w, unavailable(errors.New("deployment bundle upload storage is not configured")))
-		return
-	}
-	ownership, ok := s.db.(deploymentBundleOwnershipStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment bundle ownership storage is not configured")))
 		return
 	}
 	actor := actorFromContext(r.Context())
@@ -82,7 +77,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 	}
 
 	response, err := planDeploymentBundleUploads(
-		r.Context(), uploads, ownership, s.platformStore,
+		r.Context(), uploads, s.db, s.platformStore,
 		strings.ToLower(actor.OrgID.String()), pgvalue.UUID(actor.OrgID), raw, bundle,
 	)
 	if err != nil {

@@ -30,7 +30,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		return
 	}
 	runtimeID, err := ids.Parse(request.ComputerInstanceID)
-	if err != nil || s.secretProxy == nil || s.db == nil {
+	if err != nil || s.secretProxy == nil {
 		writeError(w, conflict(secret.ErrDeliveryUnavailable))
 		return
 	}

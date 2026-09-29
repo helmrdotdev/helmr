@@ -13,16 +13,13 @@ func (s *Server) beginComputerSave(ctx context.Context, worker workerActor, requ
 }
 
 func (s *Server) withComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest, operation computerSaveOperation, apply func(pgx.Tx, *db.Queries, db.ComputerInstance) error) (workerapi.ComputerSaveBeginResponse, error) {
-	tx, err := s.tx.Begin(ctx)
+	var result workerapi.ComputerSaveBeginResponse
+	err := s.inTx(ctx, func(work *txWork) error {
+		var err error
+		result, err = applyComputerSave(ctx, work.tx, worker, request, operation, apply)
+		return err
+	})
 	if err != nil {
-		return workerapi.ComputerSaveBeginResponse{}, err
-	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	result, err := applyComputerSave(ctx, tx, worker, request, operation, apply)
-	if err != nil {
-		return workerapi.ComputerSaveBeginResponse{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return workerapi.ComputerSaveBeginResponse{}, err
 	}
 	return result, nil

@@ -22,15 +22,6 @@ type deploymentEventAppender interface {
 }
 
 func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
-	store, ok := s.db.(deploymentStatusStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -61,7 +52,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get deployment events"))
 		return
 	}
-	deployment, err := store.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
+	deployment, err := s.db.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
 		OrgID: pgvalue.UUID(actor.OrgID),
 		ID:    pgvalue.UUID(deploymentID),
 	})

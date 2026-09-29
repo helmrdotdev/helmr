@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
 	ttl := int64(100)
 	attempts := int64(3)
 	limit := int64(2)
-	run := RunManifest{TTLMs: &ttl, Retry: RetryManifest{MaxAttempts: &attempts, Backoff: &RetryBackoff{}}}
+	run := RunManifest{TTLMs: &ttl, Retry: retry.Manifest{MaxAttempts: &attempts, Backoff: &retry.Backoff{}}}
 	index := ProgramIndex{Declarations: []ProgramIndexDeclaration{
 		{Task: &TaskManifest{Run: run, Schedule: &ScheduleManifest{Computer: ScheduleComputerManifest{Secrets: []api.ComputerSecret{{Name: "original"}}}}}, Locator: &ProgramLocator{ExportName: "original"}},
 		{Actor: &ActorManifest{Run: run}},
