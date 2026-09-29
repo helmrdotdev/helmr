@@ -12,6 +12,10 @@ import (
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 )
 
+// flushComputerDisk writes every dirty Guest page to disk before the freeze is
+// acknowledged. It is system-wide and not interruptible by the connection.
+var flushComputerDisk = func() { syscall.Sync() }
+
 // Member control owners freeze their cgroups and drain output. This connection
 // seals physical admission and acknowledges only the complete frozen set; it
 // never acknowledges a partial pause or independently resumes a member.
@@ -45,7 +49,7 @@ func handleComputerFreezeConnection(ctx context.Context, conn programConnection,
 			}
 			// Disk-only replacement discards Guest RAM, including dirty pages.
 			// Flush even when there are no Run members to perform a pause.
-			syscall.Sync()
+			flushComputerDisk()
 			if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
 				return err
 			}
