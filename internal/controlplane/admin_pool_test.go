@@ -134,13 +134,13 @@ func adminPoolFixture() (db.WorkerGroup, db.WorkerPool) {
 	groupID := pgvalue.UUID(uuid.NewV7())
 	poolID := pgvalue.UUID(uuid.NewV7())
 	return db.WorkerGroup{
-			ID: groupID, RegionID: "default", Name: "default", Status: db.WorkerGroupStatusActive,
-			ClaimVersion: 4,
-		}, db.WorkerPool{
-			ID: poolID, WorkerGroupID: groupID, Name: "run-next", Status: "active",
-			ClaimVersion: 4,
-			SealedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		}
+		ID: groupID, RegionID: "default", Name: "default", Status: db.WorkerGroupStatusActive,
+		ClaimVersion: 4,
+	}, db.WorkerPool{
+		ID: poolID, WorkerGroupID: groupID, Name: "run-next", Status: "active",
+		ClaimVersion: 4,
+		SealedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	}
 }
 
 func assertAdminPoolActions(t *testing.T, store *adminPoolStore, want ...string) {
