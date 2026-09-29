@@ -43,7 +43,7 @@ commands.
 Use the native runner for the affected implementation. These entrypoints cover
 different boundaries; none of them is a universal acceptance gate:
 
-- `nix develop -c go test ./internal/jsoncanon ./internal/deployment`: example
+- `nix develop -c go test ./internal/jsoncanon ./internal/builder`: example
   focused package checks. Use `scripts/ci-postgres.sh PATTERN PACKAGE...` for
   selected tests that need real PostgreSQL.
 - `nix develop -c python3 -m unittest discover -s dev/runtime`: host profile logic

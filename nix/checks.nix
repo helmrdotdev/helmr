@@ -195,7 +195,7 @@ in
     export HELMR_SUBSTRATE_MKE2FS_CONFIG=${helmrPackages.workerHost}/share/helmr/mke2fs.conf
     export HELMR_SUBSTRATE_E2FSCK=${lib.getBin pkgs.e2fsprogs}/bin/e2fsck
     export HELMR_SUBSTRATE_DEBUGFS=${lib.getBin pkgs.e2fsprogs}/bin/debugfs
-    go test ./internal/substrate -run '^TestDeterministicExt4Projection$' -count=1 -v
+    go test ./internal/builder -run '^TestDeterministicExt4Projection$' -count=1 -v
   '';
   platform-release = helmrPackages.platformRelease;
   platform-release-publish-contract = vendoredGoCheck "platform-release-publish-contract-check" [ ] ''
@@ -208,6 +208,6 @@ in
     vendoredGoCheck "program-archive-contract-check" [ helmrPackages.squashfsTools ]
       ''
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
-          go test ./internal/deployment -run '^TestPinnedProgramEncoder$'
+          go test ./internal/builder -run '^TestPinnedProgramEncoder$'
       '';
 }

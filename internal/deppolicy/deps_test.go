@@ -26,25 +26,24 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 
 	for source, targets := range map[string][]string{
 		"api":               {"workerapi"},
-		"artifact":          {"artifact/snapshot", "artifact/verify", "builder", "bundle", "cas", "controlplane", "db", "deployment", "executor"},
-		"artifact/snapshot": {"artifact/verify", "builder", "bundle", "db", "deployment"},
-		"artifact/verify":   {"builder", "bundle", "controlplane", "db", "deployment"},
+		"artifact":          {"artifact/snapshot", "artifact/verify", "builder", "bundle", "cas", "controlplane", "db", "executor"},
+		"artifact/snapshot": {"artifact/verify", "builder", "bundle", "db"},
+		"artifact/verify":   {"builder", "bundle", "controlplane", "db"},
 		"auth":              {"db", "token"},
-		"bundle":            {"artifact/snapshot", "artifact/verify", "builder", "controlplane", "db", "deployment"},
+		"builder":           {"compute", "controlplane", "db", "dispatch", "executor", "scheduler", "vm", "wire", "worker"},
+		"bundle":            {"artifact/snapshot", "artifact/verify", "builder", "controlplane", "db"},
 		"cas":               {"cas/s3"},
 		"client":            {"workerapi", "workerclient"},
 		"email":             {"email/resend"},
 		"frameio":           {"api", "db", "proto/program/v0", "wire"},
 		"httpclient":        {"controlplane", "db", "workerapi"},
 		"wire":              {"api", "controlplane", "db", "executor", "guestd", "computer"},
-		"deployment":        {"compute", "vm", "wire"},
-		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "computer", "controlplane", "db", "deployment", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
+		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "computer", "controlplane", "db", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
 		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "controlplane", "db", "executor", "vm"},
 		"computer":          {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
 		"controlplane":      {"eventstream", "executor", "firecracker", "guestd"},
 		"secret":            {"run"},
-		"secretbinding":     {"api", "computer", "db", "definition", "deployment"},
-		"substrate":         {"controlplane", "db", "executor", "worker"},
+		"secretbinding":     {"api", "computer", "db", "definition"},
 		"telemetry":         {"clickhouse"},
 		"workerapi":         {"controlplane", "db", "firecracker"},
 		"workerclient":      {"client"},
@@ -74,7 +73,6 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 		"./internal/bundle",
 		"./internal/capacity",
 		"./internal/definition",
-		"./internal/deployment",
 		"./internal/hostconfig",
 	}
 	for _, goos := range []string{"linux", "darwin"} {
@@ -108,7 +106,6 @@ func TestContractPackagesDoNotReachArtifactResources(t *testing.T) {
 		internalImportPrefix + "artifact/verify",
 		internalImportPrefix + "builder",
 		internalImportPrefix + "db",
-		internalImportPrefix + "deployment",
 	}
 	for _, goos := range []string{"linux", "darwin"} {
 		for _, pkg := range packages {

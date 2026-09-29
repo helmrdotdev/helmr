@@ -8,7 +8,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 type ProgramInput struct {
@@ -37,7 +36,7 @@ type PreparedProgramInput struct {
 type ProgramResult struct {
 	Program      artifact.ProgramOutput
 	Config       artifact.BuildConfig
-	Verification deployment.VerificationResult
+	Verification VerificationResult
 	ObjectPath   string
 }
 
