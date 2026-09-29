@@ -90,19 +90,6 @@ func TestWriteErrorIncludesCodeOwnedDetailsObject(t *testing.T) {
 	}
 }
 
-func TestWriteAuthErrorUsesHTTPErrorEnvelope(t *testing.T) {
-	rec := httptest.NewRecorder()
-
-	writeAuthError(rec, http.StatusBadRequest, errInvalidOrExpiredToken)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-	if got, want := rec.Body.String(), "{\"error\":{\"code\":\"invalid_token\",\"message\":\"token is invalid or expired\"}}\n"; got != want {
-		t.Fatalf("body = %q, want %q", got, want)
-	}
-}
-
 func TestWriteErrorHidesUnclassifiedServerError(t *testing.T) {
 	rec := httptest.NewRecorder()
 

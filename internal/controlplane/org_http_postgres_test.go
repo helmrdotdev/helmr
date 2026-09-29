@@ -5,30 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // These tests cover the HTTP contract of the project handlers; the durable
 // behavior behind them is tested in internal/org.
 
 func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
-	fixture := newOrgHTTPFixture(t)
-	queries := db.New(fixture.pool)
+	var store *projectHTTPCountingStore
+	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		store = &projectHTTPCountingStore{Querier: cfg.DB}
+		cfg.DB = store
+	})
+	queries := fixture.queries
 	if _, err := queries.CreateRegion(t.Context(), db.CreateRegionParams{ID: "project-http", DisplayName: "Project HTTP"}); err != nil {
 		t.Fatal(err)
 	}
@@ -74,10 +70,10 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 		t.Fatalf("second page = %+v", secondPage)
 	}
 
-	fixture.store.statements.Store(0)
+	store.statements.Store(0)
 	crossOrg := fixture.request(t, http.MethodGet, "/api/projects?limit=2&cursor="+page.NextCursor, otherOwnerToken, "")
-	if crossOrg.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 {
-		t.Fatalf("cross-org cursor = %d with %d project statements: %s", crossOrg.Code, fixture.store.statements.Load(), crossOrg.Body.String())
+	if crossOrg.Code != http.StatusBadRequest || store.statements.Load() != 0 {
+		t.Fatalf("cross-org cursor = %d with %d project statements: %s", crossOrg.Code, store.statements.Load(), crossOrg.Body.String())
 	}
 
 	detail := fixture.request(t, http.MethodGet, "/api/projects/project-0", ownerToken, "")
@@ -92,7 +88,7 @@ func TestProjectHTTPPostgresListAndDetailContract(t *testing.T) {
 }
 
 func TestCreateProjectHTTPPostgresReportsMissingRegion(t *testing.T) {
-	fixture := newOrgHTTPFixture(t)
+	fixture := newHTTPPostgresFixture(t)
 	_, ownerToken := fixture.organizationOwner(t, "missing-region")
 	recorder := fixture.request(t, http.MethodPost, "/api/projects", ownerToken, `{"slug":"project","name":"Project"}`)
 	var body api.HTTPErrorResponse
@@ -102,87 +98,6 @@ func TestCreateProjectHTTPPostgresReportsMissingRegion(t *testing.T) {
 	if recorder.Code != http.StatusBadRequest || body.Error.Code != "bad_request" || body.Error.Message != "no region configured" {
 		t.Fatalf("response = %d %+v", recorder.Code, body.Error)
 	}
-}
-
-// orgHTTPFixture serves the control plane built by NewServer over a test
-// database, authenticating requests with real organization sessions.
-type orgHTTPFixture struct {
-	pool       *pgxpool.Pool
-	store      *projectHTTPCountingStore
-	handler    http.Handler
-	sessionKey []byte
-}
-
-func newOrgHTTPFixture(t *testing.T) orgHTTPFixture {
-	t.Helper()
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
-	queries := db.New(database.Pool)
-	store := &projectHTTPCountingStore{Querier: queries}
-	cfg := completeServerConfig(t)
-	cfg.DB = store
-	cfg.TX = database.Pool
-	cfg.Auth = NewDBAuthenticator(queries)
-	cfg.PublicURL = &url.URL{Scheme: "https", Host: "console.example.test"}
-	keys, err := auth.NewKeys(cfg.AuthKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler, err := NewServer(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return orgHTTPFixture{pool: database.Pool, store: store, handler: handler, sessionKey: keys.Session}
-}
-
-// organizationOwner creates an organization with an owner and returns the
-// owner's session token for it.
-func (f orgHTTPFixture) organizationOwner(t *testing.T, slug string) (uuid.UUID, string) {
-	t.Helper()
-	orgID, userID := uuid.NewV7(), uuid.NewV7()
-	queries := db.New(f.pool)
-	if _, err := queries.CreateOrganization(t.Context(), db.CreateOrganizationParams{
-		ID: pgvalue.UUID(orgID), Name: slug, Slug: slug,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.pool.Exec(t.Context(), `INSERT INTO users (id, display_name) VALUES ($1, 'Owner')`, userID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.EnsureOrgMember(t.Context(), db.EnsureOrgMemberParams{
-		OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID), Role: db.OrgMemberRoleOwner,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	token, err := auth.GenerateOpaque(32)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tokenHash, err := auth.HashToken(f.sessionKey, token)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.CreateAuthSession(t.Context(), db.CreateAuthSessionParams{
-		ID: pgvalue.UUID(uuid.NewV7()), OrgID: pgvalue.UUID(orgID), UserID: pgvalue.UUID(userID),
-		TokenHash: tokenHash, ExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	return orgID, token
-}
-
-func (f orgHTTPFixture) request(t *testing.T, method string, path string, token string, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	request := httptest.NewRequest(method, path, strings.NewReader(body))
-	request.Header.Set("Authorization", "Bearer "+token)
-	if body != "" {
-		request.Header.Set("Content-Type", "application/json")
-	}
-	recorder := httptest.NewRecorder()
-	f.handler.ServeHTTP(recorder, request)
-	return recorder
 }
 
 type projectHTTPCountingStore struct {

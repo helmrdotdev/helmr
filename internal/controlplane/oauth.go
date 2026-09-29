@@ -4,22 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"golang.org/x/oauth2"
 )
 
 type githubOAuthProvider struct {
+	log           *slog.Logger
 	config        oauth2.Config
 	userURL       string
 	userEmailsURL string
 }
 
-func NewGitHubOAuthProvider(clientID string, clientSecret string, publicURL *url.URL) AuthProvider {
+func NewGitHubOAuthProvider(log *slog.Logger, clientID string, clientSecret string, publicURL *url.URL) AuthProvider {
 	redirect := publicURL.ResolveReference(&url.URL{Path: "/auth/github/callback"}).String()
 	return &githubOAuthProvider{
+		log: log,
 		config: oauth2.Config{
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
@@ -42,30 +46,28 @@ func (p *githubOAuthProvider) RedirectURL(state string, verifier string) string 
 	)
 }
 
-func (p *githubOAuthProvider) Resolve(ctx context.Context, code string, verifier string) (authIdentity, error) {
-	identity, _, err := p.ResolveWithToken(ctx, code, verifier)
-	return identity, err
-}
-
-func (p *githubOAuthProvider) ResolveWithToken(ctx context.Context, code string, verifier string) (authIdentity, *oauth2.Token, error) {
+// Resolve exchanges the authorization code and reads the GitHub user and the
+// addresses GitHub verified for it. A failed address lookup leaves the
+// identity without verified addresses.
+func (p *githubOAuthProvider) Resolve(ctx context.Context, code string, verifier string) (identity.ExternalIdentity, error) {
 	token, err := p.config.Exchange(ctx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return authIdentity{}, nil, fmt.Errorf("exchange github oauth code: %w", err)
+		return identity.ExternalIdentity{}, fmt.Errorf("exchange github oauth code: %w", err)
 	}
 	client := p.config.Client(ctx, token)
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, p.userURL, nil)
 	if err != nil {
-		return authIdentity{}, nil, err
+		return identity.ExternalIdentity{}, err
 	}
 	request.Header.Set("accept", "application/vnd.github+json")
 	request.Header.Set("user-agent", "helmr-controlplane")
 	response, err := client.Do(request)
 	if err != nil {
-		return authIdentity{}, nil, fmt.Errorf("fetch github user: %w", err)
+		return identity.ExternalIdentity{}, fmt.Errorf("fetch github user: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return authIdentity{}, nil, fmt.Errorf("github user endpoint returned %s", response.Status)
+		return identity.ExternalIdentity{}, fmt.Errorf("github user endpoint returned %s", response.Status)
 	}
 	var user struct {
 		ID        int64  `json:"id"`
@@ -74,28 +76,30 @@ func (p *githubOAuthProvider) ResolveWithToken(ctx context.Context, code string,
 		AvatarURL string `json:"avatar_url"`
 	}
 	if err := json.NewDecoder(response.Body).Decode(&user); err != nil {
-		return authIdentity{}, nil, fmt.Errorf("decode github user: %w", err)
+		return identity.ExternalIdentity{}, fmt.Errorf("decode github user: %w", err)
 	}
 	if user.ID == 0 || user.Login == "" {
-		return authIdentity{}, nil, fmt.Errorf("github user response is missing identity")
+		return identity.ExternalIdentity{}, fmt.Errorf("github user response is missing identity")
 	}
-	primaryEmail, verifiedEmails, emailErr := p.verifiedEmails(ctx, client)
-	email := user.Email
-	emailVerified := containsNormalizedEmail(verifiedEmails, email)
-	if primaryEmail != "" {
-		email = primaryEmail
-		emailVerified = true
+	primaryEmail, verifiedEmails, err := p.verifiedEmails(ctx, client)
+	if err != nil {
+		p.log.Warn("github verified email lookup failed", "error", err)
 	}
-	return authIdentity{
+	external := identity.ExternalIdentity{
 		Provider:        "github",
 		Subject:         strconv.FormatInt(user.ID, 10),
 		DisplayName:     user.Login,
 		ProfileImageURL: user.AvatarURL,
-		Email:           email,
-		EmailVerified:   emailVerified,
+		Email:           user.Email,
 		VerifiedEmails:  verifiedEmails,
-		EmailLookupErr:  errorString(emailErr),
-	}, token, nil
+	}
+	if primaryEmail != "" {
+		external.Email = primaryEmail
+		external.EmailVerified = true
+	} else {
+		external.EmailVerified = external.Verifies(user.Email)
+	}
+	return external, nil
 }
 
 func (p *githubOAuthProvider) verifiedEmails(ctx context.Context, client *http.Client) (string, []string, error) {
@@ -133,24 +137,4 @@ func (p *githubOAuthProvider) verifiedEmails(ctx context.Context, client *http.C
 		}
 	}
 	return primary, verified, nil
-}
-
-func containsNormalizedEmail(emails []string, target string) bool {
-	target = normalizeEmailAddress(target)
-	if target == "" {
-		return false
-	}
-	for _, email := range emails {
-		if normalizeEmailAddress(email) == target {
-			return true
-		}
-	}
-	return false
-}
-
-func errorString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }

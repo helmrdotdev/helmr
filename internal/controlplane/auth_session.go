@@ -7,63 +7,43 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/identity"
 )
-
-var uuidNil uuid.UUID
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	if actor.UserID == uuidNil {
+	if actor.UserID == uuid.Nil() {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
 		return
 	}
-	orgID := pgtype.UUID{}
-	if actor.OrgID != uuidNil {
-		orgID = pgvalue.UUID(actor.OrgID)
-	}
-	state, err := s.db.GetUserOnboardingState(r.Context(), db.GetUserOnboardingStateParams{
-		UserID: pgvalue.UUID(actor.UserID), OrgID: orgID,
-	})
+	account, err := identity.LoadAccount(r.Context(), s.db, actor)
 	if err != nil {
-		if isNoRows(err) {
-			writeError(w, unauthorized(errors.New("authentication is required")))
-			return
-		}
-		writeError(w, errors.New("load current user"))
+		writeError(w, identityError(err))
 		return
 	}
+	hasOrg := actor.OrgID != uuid.Nil()
 	response := api.MeResponse{
 		UserID:          actor.UserID.String(),
-		DisplayName:     state.DisplayName,
-		ProfileImageURL: state.ProfileImageURL.String,
+		DisplayName:     account.DisplayName,
+		ProfileImageURL: account.ProfileImageURL,
 		PublicURL:       s.publicURL.String(),
 		Admin:           actor.Admin,
 		Permissions:     []string{},
-		ProjectRequired: orgID.Valid && !state.HasProjects,
+		ProjectRequired: hasOrg && !account.HasProjects,
 	}
-	if orgID.Valid {
+	switch {
+	case hasOrg:
 		response.OrgID = actor.OrgID.String()
-		response.OrgName = state.OrgName.String
-		response.OrgSlug = state.OrgSlug.String
+		response.OrgName = account.OrgName
+		response.OrgSlug = account.OrgSlug
 		response.Role = string(actor.Role)
 		response.Permissions = sessionPermissions(actor.Role)
-	} else {
-		orgIDs, err := s.db.ListOrganizationIDs(r.Context(), 1)
-		if err != nil {
-			writeError(w, errors.New("load current organization"))
-			return
-		}
-		orgExists := len(orgIDs) > 0
-		if s.selfHostedMode() {
-			response.OrganizationRequired = !orgExists
-			response.AccessRequired = orgExists
-			response.SetupTokenRequired = !orgExists
-		} else {
-			response.OrganizationRequired = true
-		}
+	case s.selfHostedMode():
+		response.OrganizationRequired = !account.OrganizationExists
+		response.AccessRequired = account.OrganizationExists
+		response.SetupTokenRequired = !account.OrganizationExists
+	default:
+		response.OrganizationRequired = true
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -85,19 +65,19 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if cookie, err := r.Cookie(sessionCookieName(r)); err == nil {
-		s.revokeSessionToken(r, cookie.Value)
+		s.revokeLoginSession(r, cookie.Value)
 	}
 	if token, ok := bearerToken(r.Header.Get("authorization")); ok {
-		s.revokeSessionToken(r, token)
+		s.revokeLoginSession(r, token)
 	}
 	clearSessionCookie(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) revokeSessionToken(r *http.Request, raw string) {
-	tokenHash, err := auth.HashToken(s.authKeys.Session, raw)
-	if err != nil {
-		return
+// revokeLoginSession revokes a presented login session. Logout succeeds
+// whether or not revocation does, so a failure is only logged.
+func (s *Server) revokeLoginSession(r *http.Request, raw string) {
+	if err := identity.RevokeLoginSession(r.Context(), s.db, s.identity, raw); err != nil {
+		s.log.Warn("revoke login session failed", "error", err)
 	}
-	_, _ = s.db.RevokeAuthSessionByTokenHash(r.Context(), tokenHash)
 }

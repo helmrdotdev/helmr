@@ -12,7 +12,7 @@ func TestGitHubOAuthProviderUsesGitHubAuthCallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL)
 
 	redirectURL, err := url.Parse(provider.RedirectURL("state", "verifier"))
 	if err != nil {
@@ -59,30 +59,30 @@ func TestGitHubOAuthProviderFallsBackToPrimaryVerifiedEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
 
-	identity, _, err := provider.ResolveWithToken(t.Context(), "code", "verifier")
+	external, err := provider.Resolve(t.Context(), "code", "verifier")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.Email != "owner@example.test" {
-		t.Fatalf("email = %q", identity.Email)
+	if external.Email != "owner@example.test" {
+		t.Fatalf("email = %q", external.Email)
 	}
-	if !identity.EmailVerified {
+	if !external.EmailVerified {
 		t.Fatal("email was not marked verified")
 	}
-	if len(identity.VerifiedEmails) != 2 {
-		t.Fatalf("verified emails = %v", identity.VerifiedEmails)
+	if len(external.VerifiedEmails) != 2 {
+		t.Fatalf("verified emails = %v", external.VerifiedEmails)
 	}
-	if identity.ProfileImageURL != "https://avatars.githubusercontent.com/u/123?v=4" {
-		t.Fatalf("profile image URL = %q", identity.ProfileImageURL)
+	if external.ProfileImageURL != "https://avatars.githubusercontent.com/u/123?v=4" {
+		t.Fatalf("profile image URL = %q", external.ProfileImageURL)
 	}
 
-	if identity.DisplayName != "octocat" {
-		t.Fatalf("display name = %q", identity.DisplayName)
+	if external.DisplayName != "octocat" {
+		t.Fatalf("display name = %q", external.DisplayName)
 	}
 }
 
@@ -112,23 +112,20 @@ func TestGitHubOAuthProviderAllowsMissingPrivateEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
 
-	identity, _, err := provider.ResolveWithToken(t.Context(), "code", "verifier")
+	external, err := provider.Resolve(t.Context(), "code", "verifier")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.Email != "" {
-		t.Fatalf("email = %q", identity.Email)
+	if external.Email != "" {
+		t.Fatalf("email = %q", external.Email)
 	}
-	if identity.EmailVerified || len(identity.VerifiedEmails) != 0 {
-		t.Fatalf("verified email state = %v %v", identity.EmailVerified, identity.VerifiedEmails)
-	}
-	if identity.EmailLookupErr == "" {
-		t.Fatal("expected email lookup error")
+	if external.EmailVerified || len(external.VerifiedEmails) != 0 {
+		t.Fatalf("verified email state = %v %v", external.EmailVerified, external.VerifiedEmails)
 	}
 }
 
@@ -161,16 +158,16 @@ func TestGitHubOAuthProviderUsesPrimaryVerifiedEmailOverPublicEmail(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider := NewGitHubOAuthProvider("client-id", "client-secret", publicURL).(*githubOAuthProvider)
+	provider := NewGitHubOAuthProvider(discardTestLogger(), "client-id", "client-secret", publicURL).(*githubOAuthProvider)
 	provider.config.Endpoint.TokenURL = server.URL + "/token"
 	provider.userURL = server.URL + "/user"
 	provider.userEmailsURL = server.URL + "/user/emails"
 
-	identity, _, err := provider.ResolveWithToken(t.Context(), "code", "verifier")
+	external, err := provider.Resolve(t.Context(), "code", "verifier")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.Email != "owner@example.test" || !identity.EmailVerified {
-		t.Fatalf("email = %q verified=%v", identity.Email, identity.EmailVerified)
+	if external.Email != "owner@example.test" || !external.EmailVerified {
+		t.Fatalf("email = %q verified=%v", external.Email, external.EmailVerified)
 	}
 }

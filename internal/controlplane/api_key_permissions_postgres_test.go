@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,24 +11,20 @@ import (
 	"sort"
 	"sync/atomic"
 	"testing"
-	"time"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestAPIKeyPermissionsPostgres(t *testing.T) {
-	fixture := newAPIKeyPermissionPostgresFixture(t, 201)
+// TestAPIKeyHTTPPostgresContract covers the HTTP contract of the API key
+// handlers; the durable behavior behind them is tested in internal/identity.
+func TestAPIKeyHTTPPostgresContract(t *testing.T) {
+	fixture := newAPIKeyHTTPPostgresFixture(t, 201)
 
 	fixture.store.reset()
-	first := fixture.list(t, "")
+	first := fixture.list(t, "active", "")
 	if len(first.APIKeys) != apiKeyListLimit || first.NextCursor == "" {
 		t.Fatalf("first list items/cursor = %d/%t", len(first.APIKeys), first.NextCursor != "")
 	}
@@ -41,19 +36,14 @@ func TestAPIKeyPermissionsPostgres(t *testing.T) {
 		if item.Name == "other-org" {
 			t.Fatal("cross-organization API key appeared in target list")
 		}
-		itemWant := wantGrants
-		if item.Name == "replacement" {
-			itemWant = apiKeyPermissionGrantsFromPermissions(allAPIKeyInternalPermissions()[:1])
-		}
-		if !reflect.DeepEqual(item.Permissions, itemWant) {
-			t.Fatalf("list permissions for %q = %+v, want %+v", item.Name, item.Permissions, itemWant)
+		if !reflect.DeepEqual(item.Permissions, wantGrants) {
+			t.Fatalf("list permissions for %q = %+v, want %+v", item.Name, item.Permissions, wantGrants)
 		}
 	}
-
 	fixture.store.reset()
-	second := fixture.list(t, first.NextCursor)
-	if len(second.APIKeys) != 2 || second.NextCursor != "" || fixture.store.statements.Load() != 1 {
-		t.Fatalf("second list items/cursor/statements = %d/%t/%d, want 2/false/1", len(second.APIKeys), second.NextCursor != "", fixture.store.statements.Load())
+	second := fixture.list(t, "active", first.NextCursor)
+	if len(second.APIKeys) != 1 || second.NextCursor != "" || fixture.store.statements.Load() != 1 {
+		t.Fatalf("second list items/cursor/statements = %d/%t/%d, want 1/false/1", len(second.APIKeys), second.NextCursor != "", fixture.store.statements.Load())
 	}
 
 	cursor, err := decodeAPIKeyListCursor(first.NextCursor)
@@ -65,28 +55,26 @@ func TestAPIKeyPermissionsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture.store.reset()
-	if response := fixture.listRecorder(t, "active", crossScope); response.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 {
-		t.Fatalf("cross-scope cursor status/statements = %d/%d, want 400/0", response.Code, fixture.store.statements.Load())
-	}
-	fixture.store.reset()
-	if response := fixture.listRecorder(t, "active", "not-a-cursor"); response.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 {
-		t.Fatalf("malformed cursor status/statements = %d/%d, want 400/0", response.Code, fixture.store.statements.Load())
+	for _, query := range []string{"filter=active&cursor=" + crossScope, "filter=active&cursor=not-a-cursor", "filter=revoked&cursor=" + first.NextCursor, "filter=pending"} {
+		fixture.store.reset()
+		if response := fixture.listRecorder(t, query); response.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 {
+			t.Fatalf("%s status/statements = %d/%d, want 400/0", query, response.Code, fixture.store.statements.Load())
+		}
 	}
 
-	invalidPermissions := []struct {
+	for _, test := range []struct {
 		name   string
 		grants []api.APIKeyPermissionGrant
 	}{
 		{name: "empty"},
 		{name: "empty grant", grants: []api.APIKeyPermissionGrant{{}}},
 		{name: "unsupported", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{"unsupported"}}}},
-	}
-	for _, test := range invalidPermissions {
+		{name: "", grants: []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsRead}}}},
+	} {
 		fixture.store.reset()
 		response := fixture.issueRecorder(t, test.name, test.grants)
 		if response.Code != http.StatusBadRequest || fixture.store.statements.Load() != 0 {
-			t.Fatalf("%s permissions status/statements = %d/%d, want 400/0", test.name, response.Code, fixture.store.statements.Load())
+			t.Fatalf("%q status/statements = %d/%d, want 400/0", test.name, response.Code, fixture.store.statements.Load())
 		}
 	}
 
@@ -100,83 +88,23 @@ func TestAPIKeyPermissionsPostgres(t *testing.T) {
 	if err := json.Unmarshal(issuedRecorder.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(issued.Permissions, wantGrants) {
-		t.Fatalf("issued permissions = %+v, want %+v", issued.Permissions, wantGrants)
-	}
-	fixture.store.reset()
-	principal, err := (dbAuthenticator{db: fixture.store}).Authenticate(t.Context(), issued.RawKey)
-	if err != nil || fixture.store.statements.Load() != 1 || len(principal.Permissions) != len(allAPIKeyPermissionScopes()) {
-		t.Fatalf("authenticate error/statements/permissions = %v/%d/%d", err, fixture.store.statements.Load(), len(principal.Permissions))
-	}
-	var touchedAt *time.Time
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT last_used_at FROM api_keys WHERE id = $1`, issued.ID).Scan(&touchedAt); err != nil || touchedAt == nil {
-		t.Fatalf("authenticated last_used_at = %v, error = %v", touchedAt, err)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `UPDATE api_keys SET revoked_at = now() WHERE id = $1`, issued.ID); err != nil {
-		t.Fatal(err)
-	}
-	fixture.store.reset()
-	if _, err := (dbAuthenticator{db: fixture.store}).Authenticate(t.Context(), issued.RawKey); !errors.Is(err, auth.ErrUnauthenticated) || fixture.store.statements.Load() != 1 {
-		t.Fatalf("revoked authenticate error/statements = %v/%d", err, fixture.store.statements.Load())
-	}
-	var revokedTouchedAt *time.Time
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT last_used_at FROM api_keys WHERE id = $1`, issued.ID).Scan(&revokedTouchedAt); err != nil || revokedTouchedAt == nil || !revokedTouchedAt.Equal(*touchedAt) {
-		t.Fatalf("revoked last_used_at = %v, want %v, error = %v", revokedTouchedAt, touchedAt, err)
+	if !reflect.DeepEqual(issued.Permissions, wantGrants) || issued.RawKey == "" || issued.Status != api.APIKeyStatusActive ||
+		issued.ProjectID != fixture.projectID.String() || issued.EnvironmentID != fixture.environmentID.String() {
+		t.Fatalf("issued = %+v", issued.APIKeySummary)
 	}
 
-	fixture.store.reset()
-	expiredRecorder := fixture.issueRecorder(t, "expired", []api.APIKeyPermissionGrant{{Scopes: []api.APIKeyScope{api.APIKeyScopeRunsRead}}})
-	if expiredRecorder.Code != http.StatusCreated || fixture.store.statements.Load() != 1 {
-		t.Fatalf("expired issue status/statements = %d/%d: %s", expiredRecorder.Code, fixture.store.statements.Load(), expiredRecorder.Body.String())
+	path := fmt.Sprintf("/api/projects/%s/environments/%s/api-keys/", fixture.projectID, fixture.environmentID)
+	if response := fixture.request(t, http.MethodDelete, path+issued.ID, fixture.token, ""); response.Code != http.StatusNoContent {
+		t.Fatalf("revoke status = %d: %s", response.Code, response.Body.String())
 	}
-	var expired api.APIKeyIssued
-	if err := json.Unmarshal(expiredRecorder.Body.Bytes(), &expired); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.pool.Exec(t.Context(), `UPDATE api_keys SET expires_at = now() - interval '1 second' WHERE id = $1`, expired.ID); err != nil {
-		t.Fatal(err)
-	}
-	fixture.store.reset()
-	if _, err := (dbAuthenticator{db: fixture.store}).Authenticate(t.Context(), expired.RawKey); !errors.Is(err, auth.ErrUnauthenticated) || fixture.store.statements.Load() != 1 {
-		t.Fatalf("expired authenticate error/statements = %v/%d", err, fixture.store.statements.Load())
-	}
-	var expiredUntouched bool
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT last_used_at IS NULL FROM api_keys WHERE id = $1`, expired.ID).Scan(&expiredUntouched); err != nil || !expiredUntouched {
-		t.Fatalf("expired last_used_at untouched = %t, error = %v", expiredUntouched, err)
-	}
-
-	for _, status := range []struct {
-		filter string
-		name   string
-	}{
-		{filter: "revoked", name: "issued"},
-		{filter: "expired", name: "expired"},
-		{filter: "all", name: "issued"},
-		{filter: "all", name: "expired"},
-	} {
-		fixture.store.reset()
-		response := fixture.listWithFilter(t, status.filter, "")
-		if fixture.store.statements.Load() != 1 || !containsAPIKeyNamed(response.APIKeys, status.name) || containsAPIKeyNamed(response.APIKeys, "other-org") {
-			t.Fatalf("%s list statements/%q/other-org = %d/%t/%t", status.filter, status.name, fixture.store.statements.Load(), containsAPIKeyNamed(response.APIKeys, status.name), containsAPIKeyNamed(response.APIKeys, "other-org"))
+	for _, id := range []string{issued.ID, uuid.NewV7().String(), "not-an-id"} {
+		if response := fixture.request(t, http.MethodDelete, path+id, fixture.token, ""); response.Code != http.StatusNotFound {
+			t.Fatalf("revoke %s status = %d: %s", id, response.Code, response.Body.String())
 		}
 	}
-
-	fixture.store.reset()
-	replacementSuccess := fixture.issueRecorder(t, "replacement", []api.APIKeyPermissionGrant{{Scopes: allAPIKeyPermissionScopes()}})
-	if replacementSuccess.Code != http.StatusCreated || fixture.store.statements.Load() != 1 {
-		t.Fatalf("replacement success status/statements = %d/%d: %s", replacementSuccess.Code, fixture.store.statements.Load(), replacementSuccess.Body.String())
-	}
-	var activeReplacement api.APIKeyIssued
-	if err := json.Unmarshal(replacementSuccess.Body.Bytes(), &activeReplacement); err != nil {
-		t.Fatal(err)
-	}
-	activeReplacementID := uuid.MustParse(activeReplacement.ID)
-	var oldRevoked bool
-	if err := fixture.pool.QueryRow(t.Context(), `SELECT revoked_at IS NOT NULL FROM api_keys WHERE id = $1`, fixture.replacementID).Scan(&oldRevoked); err != nil {
-		t.Fatal(err)
-	}
-	if !oldRevoked || !reflect.DeepEqual(activeReplacement.Permissions, wantGrants) {
-		t.Fatalf("successful replacement old_revoked/permissions = %t/%+v", oldRevoked, activeReplacement.Permissions)
+	revoked := fixture.list(t, "revoked", "")
+	if len(revoked.APIKeys) != 1 || revoked.APIKeys[0].ID != issued.ID || revoked.APIKeys[0].Status != api.APIKeyStatusRevoked {
+		t.Fatalf("revoked list = %+v", revoked.APIKeys)
 	}
 
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -194,95 +122,72 @@ func TestAPIKeyPermissionsPostgres(t *testing.T) {
 	if _, err := fixture.pool.Exec(t.Context(), `CREATE TRIGGER reject_replacement_api_key BEFORE INSERT ON api_keys FOR EACH ROW EXECUTE FUNCTION reject_replacement_api_key()`); err != nil {
 		t.Fatal(err)
 	}
-	fixture.store.reset()
 	failure := fixture.issueRecorder(t, "replacement", []api.APIKeyPermissionGrant{{Scopes: allAPIKeyPermissionScopes()}})
-	if failure.Code != http.StatusInternalServerError || fixture.store.statements.Load() != 1 || bytes.Contains(failure.Body.Bytes(), []byte(`"raw_key"`)) {
-		t.Fatalf("replacement failure status/statements/body = %d/%d/%s", failure.Code, fixture.store.statements.Load(), failure.Body.String())
-	}
-	var activeID uuid.UUID
-	var activePermissions []string
-	if err := fixture.pool.QueryRow(t.Context(), `
-		SELECT id, permissions
-		  FROM api_keys
-		 WHERE org_id = $1 AND project_id = $2 AND environment_id = $3 AND name = 'replacement' AND revoked_at IS NULL
-	`, fixture.orgID, fixture.projectID, fixture.environmentID).Scan(&activeID, &activePermissions); err != nil {
-		t.Fatal(err)
-	}
-	if activeID != activeReplacementID || !reflect.DeepEqual(activePermissions, allAPIKeyInternalPermissions()) {
-		t.Fatalf("active replacement id/permissions = %s/%v", activeID, activePermissions)
+	if failure.Code != http.StatusInternalServerError || bytes.Contains(failure.Body.Bytes(), []byte(`"raw_key"`)) {
+		t.Fatalf("replacement failure status/body = %d/%s", failure.Code, failure.Body.String())
 	}
 }
 
-type apiKeyPermissionPostgresFixture struct {
-	pool          *pgxpool.Pool
-	store         *apiKeyPermissionCountingStore
-	server        *Server
-	orgID         uuid.UUID
+type apiKeyHTTPPostgresFixture struct {
+	httpPostgresFixture
+	store         *apiKeyCountingStore
+	token         string
 	projectID     uuid.UUID
 	environmentID uuid.UUID
-	userID        uuid.UUID
-	replacementID uuid.UUID
 }
 
-func newAPIKeyPermissionPostgresFixture(t *testing.T, keyCount int) apiKeyPermissionPostgresFixture {
+func newAPIKeyHTTPPostgresFixture(t *testing.T, keyCount int) apiKeyHTTPPostgresFixture {
 	t.Helper()
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
+	var store *apiKeyCountingStore
+	fixture := newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		store = &apiKeyCountingStore{Querier: cfg.DB}
+		cfg.DB = store
+	})
+	orgID, token := fixture.organizationOwner(t, "api-keys")
+	otherOrgID, _ := fixture.organizationOwner(t, "api-keys-other")
+	owner := func(orgID uuid.UUID) uuid.UUID {
+		t.Helper()
+		var userID uuid.UUID
+		if err := fixture.pool.QueryRow(t.Context(), `SELECT user_id FROM org_members WHERE org_id = $1`, orgID).Scan(&userID); err != nil {
+			t.Fatal(err)
+		}
+		return userID
 	}
-	orgID, projectID, environmentID, userID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	otherOrgID, otherProjectID, otherEnvironmentID, otherUserID := uuid.NewV7(), uuid.NewV7(), uuid.NewV7(), uuid.NewV7()
-	setup := []struct {
+	ownerID, otherOwnerID := owner(orgID), owner(otherOrgID)
+	projectID, environmentID := uuid.NewV7(), uuid.NewV7()
+	otherProjectID, otherEnvironmentID := uuid.NewV7(), uuid.NewV7()
+	for _, statement := range []struct {
 		query string
 		args  []any
 	}{
-		{query: `INSERT INTO regions (id, display_name) VALUES ('api-key-baseline', 'API key baseline')`},
-		{query: `INSERT INTO organizations (id, name, slug) VALUES ($1, 'API key baseline', $2)`, args: []any{orgID, "api-key-baseline-" + orgID.String()}},
-		{query: `INSERT INTO users (id, display_name, primary_email) VALUES ($1, 'API key baseline', $2)`, args: []any{userID, orgID.String() + "@example.test"}},
-		{query: `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, args: []any{orgID, userID}},
-		{query: `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-key-baseline', 'api-key-baseline', 'API key baseline', true)`, args: []any{projectID, orgID}},
-		{query: `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true)`, args: []any{environmentID, orgID, projectID}},
-		{query: `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other organization', $2)`, args: []any{otherOrgID, "other-org-" + otherOrgID.String()}},
-		{query: `INSERT INTO users (id, display_name, primary_email) VALUES ($1, 'Other organization', $2)`, args: []any{otherUserID, otherOrgID.String() + "@example.test"}},
-		{query: `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'owner')`, args: []any{otherOrgID, otherUserID}},
-		{query: `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-key-baseline', 'other', 'Other', true)`, args: []any{otherProjectID, otherOrgID}},
-		{query: `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true)`, args: []any{otherEnvironmentID, otherOrgID, otherProjectID}},
-	}
-	for _, statement := range setup {
-		if _, err := database.Pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
+		{query: `INSERT INTO regions (id, display_name) VALUES ('api-keys', 'API keys')`},
+		{query: `INSERT INTO projects (id, org_id, default_region_id, slug, name, is_default) VALUES ($1, $2, 'api-keys', 'api-keys', 'API keys', true), ($3, $4, 'api-keys', 'other', 'Other', true)`, args: []any{projectID, orgID, otherProjectID, otherOrgID}},
+		{query: `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex, is_default) VALUES ($1, $2, $3, 'production', 'Production', '#315FCE', true), ($4, $5, $6, 'production', 'Production', '#315FCE', true)`, args: []any{environmentID, orgID, projectID, otherEnvironmentID, otherOrgID, otherProjectID}},
+	} {
+		if _, err := fixture.pool.Exec(t.Context(), statement.query, statement.args...); err != nil {
 			t.Fatal(err)
 		}
 	}
 	permissions := allAPIKeyInternalPermissions()
 	keyRows := make([][]any, 0, keyCount+1)
 	for index := range keyCount {
-		keyID := uuid.NewV7()
-		keyRows = append(keyRows, []any{keyID, orgID, projectID, environmentID, userID, "owner", permissions, fmt.Sprintf("key-%03d", index), fmt.Sprintf("hlmr_%03d", index), []byte(fmt.Sprintf("hash-%03d", index))})
+		keyRows = append(keyRows, []any{uuid.NewV7(), orgID, projectID, environmentID, ownerID, "owner", permissions, fmt.Sprintf("key-%03d", index), fmt.Sprintf("hlmr_%03d", index), []byte(fmt.Sprintf("hash-%03d", index))})
 	}
-	replacementID := uuid.NewV7()
-	keyRows = append(keyRows, []any{replacementID, orgID, projectID, environmentID, userID, "owner", []string{permissions[0]}, "replacement", "hlmr_replacement", []byte("replacement-old-hash")})
-	keyRows = append(keyRows, []any{uuid.NewV7(), otherOrgID, otherProjectID, otherEnvironmentID, otherUserID, "owner", permissions, "other-org", "hlmr_other_org", []byte("other-org-hash")})
-	if _, err := database.Pool.CopyFrom(t.Context(), pgx.Identifier{"api_keys"},
+	keyRows = append(keyRows, []any{uuid.NewV7(), otherOrgID, otherProjectID, otherEnvironmentID, otherOwnerID, "owner", permissions, "other-org", "hlmr_other_org", []byte("other-org-hash")})
+	if _, err := fixture.pool.CopyFrom(t.Context(), pgx.Identifier{"api_keys"},
 		[]string{"id", "org_id", "project_id", "environment_id", "created_by_user_id", "role", "permissions", "name", "key_prefix", "token_hash"}, pgx.CopyFromRows(keyRows)); err != nil {
 		t.Fatal(err)
 	}
-	queries := db.New(database.Pool)
-	store := &apiKeyPermissionCountingStore{Querier: queries}
-	return apiKeyPermissionPostgresFixture{
-		pool: database.Pool, store: store, server: &Server{db: store},
-		orgID: orgID, projectID: projectID, environmentID: environmentID, userID: userID,
-		replacementID: replacementID,
+	return apiKeyHTTPPostgresFixture{httpPostgresFixture: fixture, store: store, token: token, projectID: projectID, environmentID: environmentID}
+}
+
+func (f apiKeyHTTPPostgresFixture) list(t *testing.T, filter string, cursor string) api.ListAPIKeysResponse {
+	t.Helper()
+	query := "filter=" + filter
+	if cursor != "" {
+		query += "&cursor=" + cursor
 	}
-}
-
-func (f apiKeyPermissionPostgresFixture) list(t *testing.T, cursor string) api.ListAPIKeysResponse {
-	t.Helper()
-	return f.listWithFilter(t, "active", cursor)
-}
-
-func (f apiKeyPermissionPostgresFixture) listWithFilter(t *testing.T, filter, cursor string) api.ListAPIKeysResponse {
-	t.Helper()
-	recorder := f.listRecorder(t, filter, cursor)
+	recorder := f.listRecorder(t, query)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("list status = %d: %s", recorder.Code, recorder.Body.String())
 	}
@@ -293,43 +198,18 @@ func (f apiKeyPermissionPostgresFixture) listWithFilter(t *testing.T, filter, cu
 	return response
 }
 
-func (f apiKeyPermissionPostgresFixture) listRecorder(t *testing.T, filter, cursor string) *httptest.ResponseRecorder {
+func (f apiKeyHTTPPostgresFixture) listRecorder(t *testing.T, query string) *httptest.ResponseRecorder {
 	t.Helper()
-	path := fmt.Sprintf("/api/projects/%s/environments/%s/api-keys?filter=%s", f.projectID, f.environmentID, filter)
-	if cursor != "" {
-		path += "&cursor=" + cursor
-	}
-	request := httptest.NewRequest(http.MethodGet, path, nil)
-	request = request.WithContext(context.WithValue(request.Context(), actorContextKey{}, auth.Actor{OrgID: f.orgID, UserID: f.userID, Kind: auth.ActorKindSession, Role: auth.RoleOwner}))
-	recorder := httptest.NewRecorder()
-	router := chi.NewRouter()
-	router.Get("/api/projects/{projectID}/environments/{environmentID}/api-keys", f.server.listAPIKeys)
-	router.ServeHTTP(recorder, request)
-	return recorder
+	return f.request(t, http.MethodGet, fmt.Sprintf("/api/projects/%s/environments/%s/api-keys?%s", f.projectID, f.environmentID, query), f.token, "")
 }
 
-func containsAPIKeyNamed(keys []api.APIKeySummary, name string) bool {
-	for _, key := range keys {
-		if key.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func (f apiKeyPermissionPostgresFixture) issueRecorder(t *testing.T, name string, grants []api.APIKeyPermissionGrant) *httptest.ResponseRecorder {
+func (f apiKeyHTTPPostgresFixture) issueRecorder(t *testing.T, name string, grants []api.APIKeyPermissionGrant) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(api.IssueAPIKeyRequest{Name: name, Permissions: grants})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/projects/%s/environments/%s/api-keys", f.projectID, f.environmentID), bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), actorContextKey{}, auth.Actor{OrgID: f.orgID, UserID: f.userID, Kind: auth.ActorKindSession, Role: auth.RoleOwner}))
-	recorder := httptest.NewRecorder()
-	router := chi.NewRouter()
-	router.Post("/api/projects/{projectID}/environments/{environmentID}/api-keys", f.server.issueAPIKey)
-	router.ServeHTTP(recorder, request)
-	return recorder
+	return f.request(t, http.MethodPost, fmt.Sprintf("/api/projects/%s/environments/%s/api-keys", f.projectID, f.environmentID), f.token, string(body))
 }
 
 func allAPIKeyPermissionScopes() []api.APIKeyScope {
@@ -356,28 +236,21 @@ func allAPIKeyInternalPermissions() []string {
 	return permissions
 }
 
-type apiKeyPermissionCountingStore struct {
+type apiKeyCountingStore struct {
 	db.Querier
 	statements atomic.Int64
 }
 
-func (s *apiKeyPermissionCountingStore) reset() {
+func (s *apiKeyCountingStore) reset() {
 	s.statements.Store(0)
 }
 
-func (s *apiKeyPermissionCountingStore) ListAPIKeys(ctx context.Context, arg db.ListAPIKeysParams) ([]db.ListAPIKeysRow, error) {
+func (s *apiKeyCountingStore) ListAPIKeys(ctx context.Context, arg db.ListAPIKeysParams) ([]db.ListAPIKeysRow, error) {
 	s.statements.Add(1)
 	return s.Querier.ListAPIKeys(ctx, arg)
 }
 
-func (s *apiKeyPermissionCountingStore) IssueAPIKey(ctx context.Context, arg db.IssueAPIKeyParams) (db.APIKey, error) {
+func (s *apiKeyCountingStore) IssueAPIKey(ctx context.Context, arg db.IssueAPIKeyParams) (db.APIKey, error) {
 	s.statements.Add(1)
 	return s.Querier.IssueAPIKey(ctx, arg)
 }
-
-func (s *apiKeyPermissionCountingStore) TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (db.TouchActiveAPIKeyByTokenHashRow, error) {
-	s.statements.Add(1)
-	return s.Querier.TouchActiveAPIKeyByTokenHash(ctx, tokenHash)
-}
-
-var _ db.Querier = (*apiKeyPermissionCountingStore)(nil)

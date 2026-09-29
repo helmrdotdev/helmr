@@ -340,3 +340,101 @@ func NormalizeEmail(value string) (string, error) {
 	}
 	return strings.ToLower(address.Address), nil
 }
+
+// PendingInvitation is an invitation that can still be accepted.
+type PendingInvitation struct {
+	ID           uuid.UUID
+	OrgID        uuid.UUID
+	InviteeEmail string
+	Role         db.OrgMemberRole
+}
+
+// PendingInvitationByTokenHash loads the pending invitation whose token hashes
+// to tokenHash. A missing, accepted, revoked or expired invitation is
+// ErrInvitationNotFound.
+func PendingInvitationByTokenHash(ctx context.Context, q db.Querier, tokenHash []byte) (PendingInvitation, error) {
+	row, err := q.GetActiveInvitation(ctx, tokenHash)
+	if isNoRows(err) {
+		return PendingInvitation{}, ErrInvitationNotFound
+	}
+	if err != nil {
+		return PendingInvitation{}, fmt.Errorf("load invitation: %w", err)
+	}
+	return pendingInvitationFromRow(row.ID, row.OrgID, row.InviteeEmail, row.Role)
+}
+
+// PendingInvitationByID loads a pending invitation by its ID. A missing,
+// accepted, revoked or expired invitation is ErrInvitationNotFound.
+func PendingInvitationByID(ctx context.Context, q db.Querier, id uuid.UUID) (PendingInvitation, error) {
+	row, err := q.GetActiveInvitationByID(ctx, pgvalue.UUID(id))
+	if isNoRows(err) {
+		return PendingInvitation{}, ErrInvitationNotFound
+	}
+	if err != nil {
+		return PendingInvitation{}, fmt.Errorf("load invitation: %w", err)
+	}
+	return pendingInvitationFromRow(row.ID, row.OrgID, row.InviteeEmail, row.Role)
+}
+
+func pendingInvitationFromRow(id pgtype.UUID, orgID pgtype.UUID, inviteeEmail string, role db.OrgMemberRole) (PendingInvitation, error) {
+	invitationID, err := pgvalue.UUIDValue(id)
+	if err != nil {
+		return PendingInvitation{}, fmt.Errorf("invitation id: %w", err)
+	}
+	invitationOrgID, err := pgvalue.UUIDValue(orgID)
+	if err != nil {
+		return PendingInvitation{}, fmt.Errorf("invitation org id: %w", err)
+	}
+	return PendingInvitation{ID: invitationID, OrgID: invitationOrgID, InviteeEmail: inviteeEmail, Role: role}, nil
+}
+
+// AcceptInvitation makes the user a member of the invitation's organization
+// with the invited role. It runs on the caller's transaction and requires one:
+// the accepted invitation references the membership written after it, which
+// the database checks at commit. It rejects a user who is already an active
+// member, marks the invitation accepted, writes the membership, re-enabling a
+// disabled one, and then revokes the user's existing login sessions. An
+// invitation accepted, revoked or expired since it was loaded is
+// ErrInvitationNotFound.
+//
+// Paths that write both a membership and login sessions lock org_members rows
+// before auth_sessions rows, as member removal does, so that acceptance and
+// removal of the same user cannot deadlock.
+func AcceptInvitation(ctx context.Context, q db.Querier, invitation PendingInvitation, userID uuid.UUID, displayName string) error {
+	existing, err := q.GetOrgMemberForManagement(ctx, db.GetOrgMemberForManagementParams{
+		OrgID:  pgvalue.UUID(invitation.OrgID),
+		UserID: pgvalue.UUID(userID),
+	})
+	if err != nil && !isNoRows(err) {
+		return fmt.Errorf("load member: %w", err)
+	}
+	if err == nil && !existing.DisabledAt.Valid {
+		if existing.UserDisabledAt.Valid {
+			return ErrUserDisabled
+		}
+		return ErrAlreadyMember
+	}
+	accepted, err := q.AcceptInvitation(ctx, db.AcceptInvitationParams{
+		OrgID:  pgvalue.UUID(invitation.OrgID),
+		ID:     pgvalue.UUID(invitation.ID),
+		UserID: pgvalue.UUID(userID),
+	})
+	if err != nil {
+		return fmt.Errorf("accept invitation: %w", err)
+	}
+	if accepted == 0 {
+		return ErrInvitationNotFound
+	}
+	if _, err := q.EnsureOrgMember(ctx, db.EnsureOrgMemberParams{
+		OrgID:       pgvalue.UUID(invitation.OrgID),
+		UserID:      pgvalue.UUID(userID),
+		Role:        invitation.Role,
+		DisplayName: pgtype.Text{String: displayName, Valid: displayName != ""},
+	}); err != nil {
+		return fmt.Errorf("add member: %w", err)
+	}
+	if _, err := q.RevokeAuthSessionsForUser(ctx, pgvalue.UUID(userID)); err != nil {
+		return fmt.Errorf("revoke login sessions: %w", err)
+	}
+	return nil
+}

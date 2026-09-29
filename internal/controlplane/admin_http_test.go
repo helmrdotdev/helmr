@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -114,7 +115,7 @@ func adminHTTPRouter(t *testing.T, queries db.Querier) http.Handler {
 		t.Fatal(err)
 	}
 	server := &Server{
-		db: queries, authKeys: keys, publicURL: publicURL,
+		db: queries, authKeys: keys, identity: identity.NewConfig(keys, identity.Lifetimes{}, nil), publicURL: publicURL,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	router := chi.NewRouter()

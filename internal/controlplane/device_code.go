@@ -1,18 +1,17 @@
 package controlplane
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/identity"
 )
 
 func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
@@ -20,67 +19,48 @@ func (s *Server) startDeviceCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, unavailable(err))
 		return
 	}
-	codes, err := auth.GenerateDeviceCodes()
+	authorization, err := identity.StartDeviceCode(r.Context(), s.db, s.identity)
 	if err != nil {
-		writeError(w, errors.New("generate device code"))
-		return
-	}
-	deviceHash, err := auth.HashToken(s.authKeys.DeviceCode, codes.DeviceCode)
-	if err != nil {
-		writeError(w, errors.New("hash device code"))
-		return
-	}
-	userHash, err := auth.HashToken(s.authKeys.DeviceCode, auth.NormalizeUserCode(codes.UserCode))
-	if err != nil {
-		writeError(w, errors.New("hash user code"))
-		return
-	}
-	ttl := s.effectiveDeviceCodeTTL()
-	pollEvery := s.effectiveDevicePollEvery()
-	_, err = s.db.CreateDeviceCode(r.Context(), db.CreateDeviceCodeParams{
-		ID:                  pgvalue.UUID(uuid.NewV7()),
-		UserCodeHash:        userHash,
-		DeviceCodeHash:      deviceHash,
-		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(ttl)),
-		PollIntervalSeconds: int32(pollEvery.Seconds()),
-	})
-	if err != nil {
-		writeError(w, errors.New("create device code"))
+		writeError(w, err)
 		return
 	}
 	verificationURI := s.publicURL.ResolveReference(&url.URL{Path: "/auth/device"}).String()
-	complete := s.publicURL.ResolveReference(&url.URL{Path: "/auth/device", RawQuery: "code=" + url.QueryEscape(codes.UserCode)}).String()
+	complete := s.publicURL.ResolveReference(&url.URL{Path: "/auth/device", RawQuery: "code=" + url.QueryEscape(authorization.UserCode)}).String()
 	writeJSON(w, http.StatusCreated, api.DeviceStartResponse{
-		DeviceCode:              codes.DeviceCode,
-		UserCode:                codes.UserCode,
+		DeviceCode:              authorization.DeviceCode,
+		UserCode:                authorization.UserCode,
 		VerificationURI:         verificationURI,
 		VerificationURIComplete: complete,
-		ExpiresInSeconds:        int64(ttl.Seconds()),
-		IntervalSeconds:         int64(pollEvery.Seconds()),
+		ExpiresInSeconds:        int64(authorization.ExpiresIn.Seconds()),
+		IntervalSeconds:         int64(authorization.PollInterval.Seconds()),
 	})
 }
 
 func (s *Server) deviceStatus(w http.ResponseWriter, r *http.Request) {
-	code := auth.NormalizeUserCode(r.URL.Query().Get("user_code"))
-	device, ok := s.lookupDeviceCodeByUserCode(w, r, code)
-	if !ok {
+	if err := s.userAuthConfigured(); err != nil {
+		writeError(w, unavailable(err))
+		return
+	}
+	state, err := identity.DeviceCodeStatus(r.Context(), s.db, s.identity, r.URL.Query().Get("user_code"))
+	if err != nil {
+		writeError(w, identityError(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{
-		Status:    deviceStatus(device),
-		ExpiresAt: pgvalue.Time(device.ExpiresAt).Format(time.RFC3339),
+		Status:    state.Status,
+		ExpiresAt: state.ExpiresAt.Format(time.RFC3339),
 	})
 }
 
 func (s *Server) approveDeviceCode(w http.ResponseWriter, r *http.Request) {
-	s.resolveDeviceCode(w, r, true)
+	s.decideDeviceCode(w, r, identity.ApproveDeviceCode)
 }
 
 func (s *Server) denyDeviceCode(w http.ResponseWriter, r *http.Request) {
-	s.resolveDeviceCode(w, r, false)
+	s.decideDeviceCode(w, r, identity.DenyDeviceCode)
 }
 
-func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, approve bool) {
+func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.Querier, cfg identity.Config, approver auth.Actor, consent identity.DeviceConsent, userCode string) (identity.DeviceCodeState, error)) {
 	if err := s.userAuthConfigured(); err != nil {
 		writeError(w, unavailable(err))
 		return
@@ -90,44 +70,13 @@ func (s *Server) resolveDeviceCode(w http.ResponseWriter, r *http.Request, appro
 		writeError(w, fmt.Errorf("invalid device authorization JSON: %w", err))
 		return
 	}
-	code := auth.NormalizeUserCode(request.UserCode)
-	hash, err := auth.HashToken(s.authKeys.DeviceCode, code)
+	consent := identity.DeviceConsent{UserID: request.UserID, OrgID: request.OrgID}
+	state, err := decide(r.Context(), s.db, s.identity, actorFromContext(r.Context()), consent, request.UserCode)
 	if err != nil {
-		writeError(w, badRequest(errors.New("invalid device code")))
+		writeError(w, identityError(err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	if actor.Role == "" {
-		writeError(w, forbidden(errors.New("organization is required")))
-		return
-	}
-	if request.UserID != actor.UserID.String() || request.OrgID != actor.OrgID.String() {
-		writeError(w, conflict(codedError{code: "device_identity_changed", message: "Your signed-in account or organization changed. Review the current account before approving."}))
-		return
-	}
-	var device db.DeviceCode
-	if approve {
-		device, err = s.db.ApproveDeviceCode(r.Context(), db.ApproveDeviceCodeParams{
-			OrgID:        pgvalue.UUID(actor.OrgID),
-			UserID:       pgvalue.UUID(actor.UserID),
-			UserCodeHash: hash,
-		})
-	} else {
-		device, err = s.db.DenyDeviceCode(r.Context(), db.DenyDeviceCodeParams{
-			OrgID:        pgvalue.UUID(actor.OrgID),
-			UserID:       pgvalue.UUID(actor.UserID),
-			UserCodeHash: hash,
-		})
-	}
-	if err != nil {
-		if isNoRows(err) {
-			writeError(w, notFound(errors.New("device code not found")))
-			return
-		}
-		writeError(w, errors.New("resolve device code"))
-		return
-	}
-	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{Status: deviceStatus(device)})
+	writeJSON(w, http.StatusOK, api.DeviceStatusResponse{Status: state.Status})
 }
 
 func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
@@ -140,85 +89,28 @@ func (s *Server) deviceToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid device token JSON: %w", err))
 		return
 	}
-	hash, err := auth.HashToken(s.authKeys.DeviceCode, strings.TrimSpace(request.DeviceCode))
-	if err != nil {
-		writeDeviceTokenError(w, "invalid_request")
-		return
-	}
-	device, err := s.db.GetDeviceCodeForPoll(r.Context(), hash)
-	if err != nil {
-		if isNoRows(err) {
-			writeDeviceTokenError(w, "invalid_request")
-			return
-		}
-		writeError(w, errors.New("poll device code"))
-		return
-	}
-	switch status := deviceStatus(device); status {
-	case "pending":
-		writeDeviceTokenError(w, "authorization_pending")
-	case "denied":
-		writeDeviceTokenError(w, "access_denied")
-	case "expired":
-		writeDeviceTokenError(w, "expired_token")
-	case "approved":
-		consumed, err := s.db.ConsumeDeviceCode(r.Context(), hash)
-		if err != nil {
-			if isNoRows(err) {
-				writeDeviceTokenError(w, "invalid_request")
-				return
-			}
-			writeError(w, errors.New("consume device code"))
-			return
-		}
-		token, err := s.issueSessionForOrg(r, s.db, consumed.DecidedByUserID, consumed.OrgID)
-		if err != nil {
-			writeError(w, errors.New("issue device session"))
-			return
-		}
+	rawSession, err := identity.ExchangeDeviceCode(r.Context(), s.db, s.identity, request.DeviceCode)
+	switch {
+	case err == nil:
 		writeJSON(w, http.StatusOK, api.DeviceTokenResponse{
-			AccessToken:      token,
+			AccessToken:      rawSession,
 			TokenType:        "bearer",
-			ExpiresInSeconds: int64(s.effectiveSessionTTL().Seconds()),
+			ExpiresInSeconds: int64(s.identity.Lifetimes().Session.Seconds()),
 		})
-	default:
+	case errors.Is(err, identity.ErrAuthorizationPending):
+		writeJSON(w, http.StatusAccepted, api.DeviceTokenResponse{Error: "authorization_pending"})
+	case errors.Is(err, identity.ErrDeviceAccessDenied):
+		writeDeviceTokenError(w, "access_denied")
+	case errors.Is(err, identity.ErrDeviceCodeExpired):
+		writeDeviceTokenError(w, "expired_token")
+	case errors.Is(err, identity.ErrInvalidDeviceCode):
 		writeDeviceTokenError(w, "invalid_request")
+	default:
+		writeError(w, err)
 	}
 }
 
-func (s *Server) lookupDeviceCodeByUserCode(w http.ResponseWriter, r *http.Request, code string) (db.DeviceCode, bool) {
-	if err := s.userAuthConfigured(); err != nil {
-		writeError(w, unavailable(err))
-		return db.DeviceCode{}, false
-	}
-	hash, err := auth.HashToken(s.authKeys.DeviceCode, code)
-	if err != nil {
-		writeError(w, badRequest(errors.New("invalid device code")))
-		return db.DeviceCode{}, false
-	}
-	device, err := s.db.GetDeviceCodeByUserCodeHash(r.Context(), hash)
-	if err != nil {
-		if isNoRows(err) {
-			writeError(w, notFound(errors.New("device code not found")))
-			return db.DeviceCode{}, false
-		}
-		writeError(w, errors.New("load device code"))
-		return db.DeviceCode{}, false
-	}
-	return device, true
-}
-
-func deviceStatus(device db.DeviceCode) string {
-	if device.Status == db.DeviceCodeStatusPending && time.Now().After(pgvalue.Time(device.ExpiresAt)) {
-		return "expired"
-	}
-	return string(device.Status)
-}
-
+// writeDeviceTokenError writes a device access token error response.
 func writeDeviceTokenError(w http.ResponseWriter, code string) {
-	status := http.StatusBadRequest
-	if code == "authorization_pending" {
-		status = http.StatusAccepted
-	}
-	writeJSON(w, status, api.DeviceTokenResponse{Error: code})
+	writeJSON(w, http.StatusBadRequest, api.DeviceTokenResponse{Error: code})
 }

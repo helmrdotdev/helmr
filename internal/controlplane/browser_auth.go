@@ -10,13 +10,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/identity"
+	"github.com/helmrdotdev/helmr/internal/org"
 )
 
 const authFlowTTL = 10 * time.Minute
@@ -47,9 +45,9 @@ func (s *Server) githubInviteStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid github invite request JSON: %w", err))
 		return
 	}
-	tokenHash, err := s.validateInvitationToken(r, request.Token)
+	_, tokenHash, err := s.resolveInvitation(r, request.Token)
 	if err != nil {
-		writeAuthError(w, authStartStatus(err), err)
+		writeError(w, identityError(err))
 		return
 	}
 	s.writeGitHubAuthStart(w, r, browserAuthGitHubInvite, tokenHash, "")
@@ -138,197 +136,43 @@ func (s *Server) githubFinish(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("authorization code is required")))
 		return
 	}
-	identity, err := s.authProvider.Resolve(r.Context(), request.Code, flow.Verifier)
+	external, err := s.authProvider.Resolve(r.Context(), request.Code, flow.Verifier)
 	if err != nil {
 		s.log.Warn("auth callback failed", "error", err)
 		writeError(w, badRequest(errors.New("auth callback failed")))
 		return
 	}
-	rawSession, err := s.completeBrowserAuth(r, flow, identity)
+	rawSession, err := s.completeBrowserAuth(r, flow, external)
 	if err != nil {
-		writeAuthError(w, callbackStatus(err), err)
+		writeError(w, identityError(err))
 		return
 	}
-	setSessionCookie(w, r, rawSession, s.effectiveSessionTTL())
+	setSessionCookie(w, r, rawSession, s.identity.Lifetimes().Session)
 	writeJSON(w, http.StatusOK, api.GitHubAuthFinishResponse{RedirectAfter: validateRedirectAfter(flow.RedirectAfter)})
 }
 
-func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, identity authIdentity) (string, error) {
+func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, external identity.ExternalIdentity) (string, error) {
 	switch flow.Kind {
 	case browserAuthGitHubInvite:
-		return s.completeInviteAuth(r, flow, identity)
+		tokenHash, err := decodeFlowTokenHash(flow)
+		if err != nil {
+			return "", err
+		}
+		return identity.SignInWithInvitation(r.Context(), s.tx, s.identity, tokenHash, external)
 	case browserAuthGitHubLogin:
-		return s.completeLoginAuth(r, identity)
+		return identity.SignIn(r.Context(), s.db, s.identity, external)
 	default:
 		return "", errors.New("unknown auth flow")
 	}
 }
 
-func (s *Server) completeInviteAuth(r *http.Request, flow browserAuthFlow, identity authIdentity) (string, error) {
-	var rawSession string
-	err := s.inTx(r.Context(), func(work *txWork) error {
-		queries := work.q
-		tokenHash, err := decodeFlowTokenHash(flow)
-		if err != nil {
-			return err
-		}
-		invite, err := queries.GetActiveInvitation(r.Context(), tokenHash)
-		if err != nil {
-			if isNoRows(err) {
-				return errInvalidOrExpiredToken
-			}
-			return err
-		}
-		if !identityMatchesInvitationEmail(identity, invite.InviteeEmail) {
-			return errWrongAccount
-		}
-		user, err := s.upsertAuthIdentity(r, queries, identity)
-		if err != nil {
-			return err
-		}
-		if user.DisabledAt.Valid {
-			return errDisabledMember
-		}
-		existingMember, err := queries.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
-			OrgID:  invite.OrgID,
-			UserID: user.ID,
-		})
-		if err != nil && !isNoRows(err) {
-			return err
-		}
-		if err == nil && !existingMember.DisabledAt.Valid {
-			if existingMember.UserDisabledAt.Valid {
-				return errDisabledMember
-			}
-			return errAlreadyMember
-		}
-		if rows, err := queries.AcceptInvitation(r.Context(), db.AcceptInvitationParams{
-			OrgID:  invite.OrgID,
-			ID:     invite.ID,
-			UserID: user.ID,
-		}); err != nil {
-			return err
-		} else if rows == 0 {
-			return errInvalidOrExpiredToken
-		}
-		if _, err := queries.RevokeAuthSessionsForUser(r.Context(), user.ID); err != nil {
-			return err
-		}
-		if _, err := queries.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
-			OrgID:       invite.OrgID,
-			UserID:      user.ID,
-			Role:        invite.Role,
-			DisplayName: pgtype.Text{String: identity.DisplayName, Valid: identity.DisplayName != ""},
-		}); err != nil {
-			return err
-		}
-		rawSession, err = s.issueSessionForOrg(r, queries, user.ID, invite.OrgID)
-		return err
-	})
-	if err != nil {
-		return "", err
-	}
-	return rawSession, nil
-}
-
-func (s *Server) completeLoginAuth(r *http.Request, identity authIdentity) (string, error) {
-	user, err := s.upsertAuthIdentity(r, s.db, identity)
-	if err != nil {
-		return "", err
-	}
-	if user.DisabledAt.Valid {
-		return "", errDisabledMember
-	}
-	return s.issueSession(r, s.db, user.ID)
-}
-
-func (s *Server) upsertAuthIdentity(r *http.Request, queries db.Querier, identity authIdentity) (db.UpsertAuthIdentityRow, error) {
-	email := pgtype.Text{}
-	if identity.Email != "" {
-		email = pgtype.Text{String: identity.Email, Valid: true}
-	}
-	return queries.UpsertAuthIdentity(r.Context(), db.UpsertAuthIdentityParams{
-		UserID:           pgvalue.UUID(uuid.NewV7()),
-		IdentityID:       pgvalue.UUID(uuid.NewV7()),
-		IdentityProvider: identity.Provider,
-		IdentitySubject:  identity.Subject,
-		DisplayName:      identity.DisplayName,
-		ProfileImageURL:  pgtype.Text{String: identity.ProfileImageURL, Valid: identity.ProfileImageURL != ""},
-		Email:            email,
-		EmailVerified:    identity.EmailVerified,
-		Admin:            s.initialAdmin(identity.Email, identity.EmailVerified),
-	})
-}
-
-func (s *Server) initialAdmin(email string, verified bool) bool {
-	if !verified {
-		return false
-	}
-	_, ok := s.adminEmails[normalizeEmailAddress(email)]
-	return ok
-}
-
-func (s *Server) issueSession(r *http.Request, queries db.Querier, userID pgtype.UUID) (string, error) {
-	return s.issueSessionForOrg(r, queries, userID, pgtype.UUID{})
-}
-
-func (s *Server) issueSessionForOrg(r *http.Request, queries db.Querier, userID pgtype.UUID, orgID pgtype.UUID) (string, error) {
-	raw, err := auth.GenerateOpaque(32)
-	if err != nil {
-		return "", err
-	}
-	hash, err := auth.HashToken(s.authKeys.Session, raw)
-	if err != nil {
-		return "", err
-	}
-	_, err = queries.CreateAuthSession(r.Context(), db.CreateAuthSessionParams{
-		ID:        pgvalue.UUID(uuid.NewV7()),
-		OrgID:     orgID,
-		UserID:    userID,
-		TokenHash: hash,
-		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(s.effectiveSessionTTL())),
-	})
-	if err != nil {
-		return "", err
-	}
-	return raw, nil
-}
-
-func (s *Server) validateInvitationToken(r *http.Request, raw string) ([]byte, error) {
+// resolveInvitation resolves a raw invitation token for starting an
+// invitation sign-in.
+func (s *Server) resolveInvitation(r *http.Request, rawToken string) (org.PendingInvitation, []byte, error) {
 	if err := s.userAuthConfigured(); err != nil {
-		return nil, err
+		return org.PendingInvitation{}, nil, err
 	}
-	tokenHash, err := auth.HashToken(s.authKeys.Invitation, raw)
-	if err != nil {
-		return nil, errors.New("invalid invite token")
-	}
-	if _, err := s.db.GetActiveInvitation(r.Context(), tokenHash); err != nil {
-		if isNoRows(err) {
-			return nil, errInvalidOrExpiredToken
-		}
-		return nil, err
-	}
-	return tokenHash, nil
-}
-
-func normalizeEmailAddress(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
-}
-
-func identityMatchesInvitationEmail(identity authIdentity, inviteeEmail string) bool {
-	inviteeEmail = normalizeEmailAddress(inviteeEmail)
-	if inviteeEmail == "" {
-		return false
-	}
-	if identity.EmailVerified && normalizeEmailAddress(identity.Email) == inviteeEmail {
-		return true
-	}
-	for _, email := range identity.VerifiedEmails {
-		if normalizeEmailAddress(email) == inviteeEmail {
-			return true
-		}
-	}
-	return false
+	return identity.ResolveInvitation(r.Context(), s.db, s.identity, rawToken)
 }
 
 func decodeFlowTokenHash(flow browserAuthFlow) ([]byte, error) {
@@ -427,64 +271,33 @@ func clearAuthFlowCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, authFlowCookie(r, "", -1))
 }
 
-func authStartStatus(err error) int {
+// identityError maps errors of the identity owner to HTTP errors. Sign-in
+// failures carry a code the console distinguishes.
+func identityError(err error) error {
+	var input identity.InputError
 	switch {
-	case errors.Is(err, errInvalidOrExpiredToken):
-		return http.StatusBadRequest
+	case errors.As(err, &input),
+		errors.Is(err, identity.ErrInvalidDeviceCode):
+		return badRequest(err)
+	case errors.Is(err, identity.ErrInvalidToken):
+		return badRequest(codedError{code: "invalid_token", message: err.Error()})
+	case errors.Is(err, identity.ErrWrongAccount):
+		return badRequest(codedError{code: "wrong_account", message: err.Error()})
+	case errors.Is(err, identity.ErrAlreadyMember):
+		return conflict(codedError{code: "already_member", message: err.Error()})
+	case errors.Is(err, identity.ErrInactiveMember):
+		return conflict(codedError{code: "disabled_member", message: err.Error()})
+	case errors.Is(err, identity.ErrUserNotFound):
+		return unauthorized(errors.New("authentication is required"))
+	case errors.Is(err, identity.ErrOrganizationRequired),
+		errors.Is(err, identity.ErrAPIKeyManagementRequired):
+		return forbidden(err)
+	case errors.Is(err, identity.ErrDeviceCodeNotFound),
+		errors.Is(err, identity.ErrAPIKeyNotFound):
+		return notFound(err)
+	case errors.Is(err, identity.ErrDeviceApproverChanged):
+		return conflict(codedError{code: "device_identity_changed", message: "Your signed-in account or organization changed. Review the current account before approving."})
 	default:
-		return http.StatusInternalServerError
+		return err
 	}
 }
-
-func callbackStatus(err error) int {
-	switch {
-	case errors.Is(err, errInvalidOrExpiredToken), errors.Is(err, errWrongAccount):
-		return http.StatusBadRequest
-	case errors.Is(err, errUnknownAccount):
-		return http.StatusUnauthorized
-	case errors.Is(err, errAlreadyMember), errors.Is(err, errDisabledMember):
-		return http.StatusConflict
-	case errors.Is(err, auth.ErrUnauthenticated):
-		return http.StatusUnauthorized
-	case errors.Is(err, errOwnerAccessRequired):
-		return http.StatusForbidden
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
-func writeAuthError(w http.ResponseWriter, status int, err error) {
-	if kind := authErrorKind(err); kind != "" {
-		writeErrorStatus(w, status, codedError{code: kind, message: err.Error()})
-		return
-	}
-	writeErrorStatus(w, status, err)
-}
-
-func authErrorKind(err error) string {
-	switch {
-	case errors.Is(err, errInvalidOrExpiredToken):
-		return "invalid_token"
-	case errors.Is(err, errWrongAccount):
-		return "wrong_account"
-	case errors.Is(err, errUnknownAccount):
-		return "no_account"
-	case errors.Is(err, errAlreadyMember):
-		return "already_member"
-	case errors.Is(err, errDisabledMember):
-		return "disabled_member"
-	case errors.Is(err, auth.ErrUnauthenticated):
-		return "unauthenticated"
-	default:
-		return ""
-	}
-}
-
-var (
-	errInvalidOrExpiredToken = errors.New("token is invalid or expired")
-	errWrongAccount          = errors.New("verified email does not match invitation")
-	errUnknownAccount        = errors.New("no account exists for this identity")
-	errAlreadyMember         = errors.New("identity is already a member of this organization")
-	errDisabledMember        = errors.New("membership is no longer active")
-	errOwnerAccessRequired   = errors.New("owner access is required")
-)
