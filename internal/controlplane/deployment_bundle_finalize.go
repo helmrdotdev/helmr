@@ -61,11 +61,6 @@ type deploymentFinalizeResult struct {
 }
 
 func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request) {
-	uploads, ok := s.cas.(cas.UploadStore)
-	if !ok || s.bundleAdmission == nil || s.platformStore == nil {
-		writeError(w, unavailable(errors.New("deployment bundle finalization is not configured")))
-		return
-	}
 	var request api.FinalizeDeploymentBundleRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid deployment bundle finalization request: %w", err))
@@ -92,7 +87,7 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		return
 	}
 	prepared, err := s.prepareFinalizedDeploymentBundle(
-		r.Context(), uploads, request.BundleDigest,
+		r.Context(), s.cas, request.BundleDigest,
 	)
 	if err != nil {
 		writeDeploymentError(w, s, badRequest(err))
@@ -108,7 +103,7 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.streamFinalizedDeploymentBundle(
-		w, r, uploads, actor.OrgID, projectID, environmentID, prepared, idempotencyRequest,
+		w, r, s.cas, actor.OrgID, projectID, environmentID, prepared, idempotencyRequest,
 	)
 }
 

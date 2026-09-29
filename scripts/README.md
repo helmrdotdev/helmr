@@ -32,10 +32,14 @@ remain available without forcing every source edit through their setup costs.
 
 `nix run .#dev` (or `make dev`) runs the Vite console with hot reload and a
 managed Postgres, Redis, ClickHouse, and synthetic runtime descriptor when
-external URLs are not set. State lives under `$ROOT/.helmr-dev` (override
+external URLs are not set. Object storage is S3, as in production: set
+`CAS_URI` and `PLATFORM_STORE_URI` to distinct `s3://bucket[/prefix]` stores
+reachable with your native AWS configuration (append `?endpoint=URL` for an
+S3-compatible service). State lives under `$ROOT/.helmr-dev` (override
 `HELMR_DEV_DIR`) with short-path Unix sockets in `$TMPDIR/helmr-<state-hash>`.
-Owned data persists by default; `make dev-reset` clears owned Postgres, ClickHouse,
-and CAS only when the stack is stopped and no owned services are still running.
+Owned data persists by default; `make dev-reset` clears owned Postgres and
+ClickHouse only when the stack is stopped and no owned services are still running.
+It never deletes S3 objects.
 
 If startup or reset reports an existing `.stack.lock`, stop the stack (or any
 orphaned owned Postgres/Redis/ClickHouse under that state directory), then remove

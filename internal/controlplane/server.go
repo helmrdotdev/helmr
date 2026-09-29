@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/token"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -61,10 +62,11 @@ type Server struct {
 	deploymentMode        string
 	db                    db.Querier
 	tx                    db.TxBeginner
+	tokenWaits            *token.WaitReconciler
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
-	cas                   cas.Store
-	bundleAdmission       *bundle.Admission
+	cas                   cas.UploadStore
+	bundleAdmission       bundle.Admission
 	platformStore         cas.Reader
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
@@ -111,12 +113,12 @@ type ServerConfig struct {
 	DeploymentMode string
 
 	DB          db.Querier
-	TX          db.TxBeginner
+	TX          db.TxDB
 	ReadinessDB db.DBTX
 
 	Auth               auth.Authenticator
-	CAS                cas.Store
-	BundleAdmission    *bundle.Admission
+	CAS                cas.UploadStore
+	BundleAdmission    bundle.Admission
 	PlatformStore      cas.Reader
 	Secrets            SecretManager
 	SecretDelivery     SecretDeliveryOpener
@@ -159,13 +161,14 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.Auth == nil {
 		return nil, errors.New("control plane authenticator is required")
 	}
-	var bundleAdmission *bundle.Admission
-	if cfg.BundleAdmission != nil {
-		admission := *cfg.BundleAdmission
-		if err := admission.Validate(); err != nil {
-			return nil, err
-		}
-		bundleAdmission = &admission
+	if cfg.CAS == nil {
+		return nil, errors.New("control plane CAS is required")
+	}
+	if cfg.PlatformStore == nil {
+		return nil, errors.New("platform artifact store is required")
+	}
+	if err := cfg.BundleAdmission.Validate(); err != nil {
+		return nil, err
 	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
@@ -228,16 +231,21 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	tokenWaits, err := token.NewWaitReconciler(cfg.TX)
+	if err != nil {
+		return nil, err
+	}
 	server := &Server{
 		computerKeys:          computerKeys,
 		log:                   log,
 		deploymentMode:        deploymentMode,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
+		tokenWaits:            tokenWaits,
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
-		bundleAdmission:       bundleAdmission,
+		bundleAdmission:       cfg.BundleAdmission,
 		platformStore:         cfg.PlatformStore,
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,

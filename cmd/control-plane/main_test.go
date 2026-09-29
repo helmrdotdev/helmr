@@ -19,6 +19,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/bundle"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -47,8 +49,11 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		ComputerKeys:          computerKeys,
 		Log:                   log,
 		DB:                    store,
-		TX:                    panicTxBeginner{},
+		TX:                    panicDatabase{},
 		Auth:                  controlplane.NewDBAuthenticator(store),
+		CAS:                   unusedUploadStore{},
+		BundleAdmission:       bundle.Admission{Runtime: smokeRuntimeDescriptor()},
+		PlatformStore:         unusedUploadStore{},
 		SecretDelivery:        controlplanetestSecretDeliveryOpener{},
 		ComputerFencingKey:    controlplanetestComputerFencingKey(),
 		TokenCredentialKey:    controlplanetestTokenCredentialKey(),
@@ -264,14 +269,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	databaseURL := newSmokeDatabase(t, ctx)
 	redisServer := miniredis.RunT(t)
 	addr := freeSmokeAddr(t)
-	runtimeDescriptor, err := artifact.CanonicalRuntimeDescriptor(artifact.RuntimeDescriptor{
-		Architecture:    definition.ArchitectureX8664,
-		Digest:          "sha256:" + strings.Repeat("a", 64),
-		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
-		MediaType:       artifact.RuntimeArtifactMediaType,
-		RuntimeContract: definition.RuntimeContract,
-		SizeBytes:       4096,
-	})
+	runtimeDescriptor, err := artifact.CanonicalRuntimeDescriptor(smokeRuntimeDescriptor())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,10 +359,25 @@ func (r controlplanetestTelemetryReader) ListCommandLogChunks(context.Context, t
 	return telemetry.CommandLogChunkPage{}, nil
 }
 
-type panicTxBeginner struct{}
+type panicDatabase struct{ db.DBTX }
 
-func (panicTxBeginner) Begin(context.Context) (pgx.Tx, error) {
+func (panicDatabase) Begin(context.Context) (pgx.Tx, error) {
 	panic("unexpected transaction")
+}
+
+// unusedUploadStore satisfies the server's required CAS for requests that never
+// touch object storage; any call panics through the nil embedded store.
+type unusedUploadStore struct{ cas.UploadStore }
+
+func smokeRuntimeDescriptor() artifact.RuntimeDescriptor {
+	return artifact.RuntimeDescriptor{
+		Architecture:    definition.ArchitectureX8664,
+		Digest:          "sha256:" + strings.Repeat("a", 64),
+		FormatVersion:   artifact.RuntimeDescriptorFormatVersion,
+		MediaType:       artifact.RuntimeArtifactMediaType,
+		RuntimeContract: definition.RuntimeContract,
+		SizeBytes:       4096,
+	}
 }
 
 func newSmokeDatabase(t *testing.T, ctx context.Context) string {

@@ -63,9 +63,6 @@ func projectRuntimeProgram(
 	if _, err := cas.ObjectKey("", runtimeDigest); err != nil {
 		return workerapi.RuntimeProgram{}, fmt.Errorf("decode program managed runtime digest: %w", err)
 	}
-	if platformStore == nil {
-		return workerapi.RuntimeProgram{}, errors.New("platform artifact store is not configured")
-	}
 	runtimeObject, err := platformStore.Stat(ctx, runtimeDigest)
 	if err != nil {
 		return workerapi.RuntimeProgram{}, fmt.Errorf("stat program managed runtime: %w", err)

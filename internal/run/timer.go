@@ -10,16 +10,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type timerWaitReconcileDB interface {
-	db.DBTX
-	db.TxBeginner
-}
-
 type TimerWaitReconciler struct {
-	db timerWaitReconcileDB
+	db db.TxDB
 }
 
-func NewTimerWaitReconciler(database timerWaitReconcileDB) (*TimerWaitReconciler, error) {
+func NewTimerWaitReconciler(database db.TxDB) (*TimerWaitReconciler, error) {
 	if database == nil {
 		return nil, errors.New("timer wait reconciliation database is required")
 	}

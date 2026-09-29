@@ -17,11 +17,6 @@ var ErrWaitAuthority = errors.New("token wait reconciliation authority is incons
 
 const maxWaitBatch = int32(1000)
 
-type WaitDB interface {
-	db.DBTX
-	db.TxBeginner
-}
-
 type WaitBatch struct {
 	Examined int
 	Resolved int
@@ -56,11 +51,11 @@ type WaitRegistrationResult struct {
 }
 
 type WaitReconciler struct {
-	db      WaitDB
+	db      db.TxDB
 	queries *db.Queries
 }
 
-func NewWaitReconciler(database WaitDB) (*WaitReconciler, error) {
+func NewWaitReconciler(database db.TxDB) (*WaitReconciler, error) {
 	if database == nil {
 		return nil, errors.New("token wait reconciliation database is required")
 	}

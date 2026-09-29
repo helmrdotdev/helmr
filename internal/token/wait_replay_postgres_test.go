@@ -18,13 +18,13 @@ import (
 // Pause only the first replay result, after PostgreSQL has completed its read.
 // All queries and transactions still use the real database.
 type replayReadBarrier struct {
-	WaitDB
+	db.TxDB
 	read   chan error
 	resume chan struct{}
 }
 
 func (b *replayReadBarrier) Begin(ctx context.Context) (pgx.Tx, error) {
-	tx, err := b.WaitDB.Begin(ctx)
+	tx, err := b.TxDB.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func TestTokenWaitRegistrationReplayConcurrentCommit(t *testing.T) {
 			if err := fixture.pool.QueryRow(ctx, "SELECT revision FROM runs WHERE id=$1", work.runID).Scan(&initialVersion); err != nil {
 				t.Fatal(err)
 			}
-			barrier := &replayReadBarrier{WaitDB: fixture.pool, read: make(chan error, 1), resume: make(chan struct{})}
+			barrier := &replayReadBarrier{TxDB: fixture.pool, read: make(chan error, 1), resume: make(chan struct{})}
 			second, err := NewWaitReconciler(barrier)
 			if err != nil {
 				t.Fatal(err)

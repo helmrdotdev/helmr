@@ -4,7 +4,6 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -49,10 +48,7 @@ func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
 	if _, err := q.ChargeComputerPreparation(t.Context(), db.ChargeComputerPreparationParams{ComputerID: c.ID, InstanceID: instance.ID}); err != nil {
 		t.Fatal(err)
 	}
-	store, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := newTestUploadStore(t)
 	return initialPublicationFixture{Fixture: f, runtime: instance.ID, server: &Server{db: db.New(f.Pool), tx: f.Pool, cas: store},
 		worker: workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1}, logicalBytes: diskBytes}
 }

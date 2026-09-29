@@ -17,19 +17,14 @@ const (
 	queuedChildExpiryLimit    = int32(100)
 )
 
-type queuedChildExpiryDB interface {
-	db.DBTX
-	db.TxBeginner
-}
-
 type QueuedChildExpiryWorker struct {
 	log      *slog.Logger
-	db       queuedChildExpiryDB
+	db       db.TxDB
 	interval time.Duration
 	limit    int32
 }
 
-func NewQueuedChildExpiryWorker(log *slog.Logger, database queuedChildExpiryDB) (*QueuedChildExpiryWorker, error) {
+func NewQueuedChildExpiryWorker(log *slog.Logger, database db.TxDB) (*QueuedChildExpiryWorker, error) {
 	if database == nil {
 		return nil, errors.New("queued child expiry database is required")
 	}

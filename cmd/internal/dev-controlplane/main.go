@@ -23,7 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bootstrap"
 	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/cas"
+	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
@@ -89,9 +89,14 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	casStore, err := cas.NewFile(cfg.casDir)
+	casStore, err := cass3.New(ctx, cfg.casURI)
 	if err != nil {
-		log.Error("configure dev CAS", "error", err)
+		log.Error("configure CAS", "error", err)
+		os.Exit(1)
+	}
+	platformStore, err := cass3.NewImmutable(ctx, cfg.platformStoreURI)
+	if err != nil {
+		log.Error("configure platform artifact store", "error", err)
 		os.Exit(1)
 	}
 	runtimeRaw, err := os.ReadFile(cfg.deploymentRuntimeDescriptorPath)
@@ -198,8 +203,8 @@ func main() {
 		ReadinessDB:           pool,
 		Auth:                  controlplane.NewDBAuthenticator(queries),
 		CAS:                   casStore,
-		BundleAdmission:       &bundleAdmission,
-		PlatformStore:         casStore,
+		BundleAdmission:       bundleAdmission,
+		PlatformStore:         platformStore,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,
 		SecretProxy:           secretStore,
@@ -254,7 +259,8 @@ type devConfig struct {
 	clickHouseUser                  string
 	clickHousePassword              string
 	redisURL                        string
-	casDir                          string
+	casURI                          string
+	platformStoreURI                string
 	deploymentRuntimeDescriptorPath string
 	publicURL                       string
 	authKey                         []byte
@@ -281,7 +287,8 @@ func loadConfig() (devConfig, error) {
 		clickHouseUser:                  textEnv("CLICKHOUSE_USER", ""),
 		clickHousePassword:              secretEnv("CLICKHOUSE_PASSWORD", ""),
 		redisURL:                        textEnv("REDIS_URL", defaultRedisURL),
-		casDir:                          textEnv("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		casURI:                          textEnv("CAS_URI", ""),
+		platformStoreURI:                textEnv("PLATFORM_STORE_URI", ""),
 		deploymentRuntimeDescriptorPath: textEnv("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH", ""),
 		publicURL:                       textEnv("PUBLIC_URL", defaultPublicURL),
 		setupToken:                      secretEnv("SETUP_TOKEN", defaultSetupToken),
@@ -308,6 +315,15 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("DATABASE_URL is required")
+	}
+	if cfg.casURI == "" {
+		return cfg, errors.New("CAS_URI is required")
+	}
+	if cfg.platformStoreURI == "" {
+		return cfg, errors.New("PLATFORM_STORE_URI is required")
+	}
+	if err := cass3.ValidateDistinctS3Stores(cfg.casURI, cfg.platformStoreURI); err != nil {
+		return cfg, err
 	}
 	if cfg.deploymentRuntimeDescriptorPath == "" {
 		return cfg, errors.New("DEPLOYMENT_RUNTIME_DESCRIPTOR_PATH is required")

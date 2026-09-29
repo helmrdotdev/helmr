@@ -97,5 +97,6 @@ to add ongoing input and output with an Actor.
 ## Local development note
 
 In the Helmr repository, `make dev` starts a local database, control plane, and
-web UI. It does not provide worker capacity. A remotely executed Task still
-needs an active worker.
+web UI. It uses the S3 object stores named by `CAS_URI` and `PLATFORM_STORE_URI`
+and does not provide worker capacity. A remotely executed Task still needs an
+active worker.

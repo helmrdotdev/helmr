@@ -221,7 +221,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		ReadinessDB:           pool,
 		Auth:                  controlplane.NewDBAuthenticator(queries),
 		CAS:                   casStore,
-		BundleAdmission:       &bundleAdmission,
+		BundleAdmission:       bundleAdmission,
 		PlatformStore:         platformStore,
 		Secrets:               secretStore,
 		SecretDelivery:        secretStore,

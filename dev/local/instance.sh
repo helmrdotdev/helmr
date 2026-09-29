@@ -16,11 +16,10 @@ helmr_dev_init() {
   tmp_base="${tmp_base%/}"
   HELMR_DEV_RUNTIME_DIR="${tmp_base}/helmr-${HELMR_DEV_STATE_HASH}"
 
-  HELMR_DEV_CAS_DIR="${HELMR_DEV_DIR}/cas"
   HELMR_DEV_LOCK_DIR="${HELMR_DEV_DIR}/.stack.lock"
   HELMR_DEV_LOCK_OWNED=0
 
-  mkdir -p "${HELMR_DEV_DIR}" "${HELMR_DEV_RUNTIME_DIR}" "${HELMR_DEV_CAS_DIR}"
+  mkdir -p "${HELMR_DEV_DIR}" "${HELMR_DEV_RUNTIME_DIR}"
 
   local port_seed
   port_seed="$(printf '%s' "${HELMR_DEV_STATE_HASH}" | shasum -a 256 | awk '{print substr($1,1,4)}')"
@@ -267,7 +266,6 @@ helmr_dev_start_clickhouse() {
 helmr_dev_export_urls() {
   export PUBLIC_URL="${PUBLIC_URL:-"http://${HELMR_DEV_CONSOLE_HOST}:${HELMR_DEV_CONSOLE_PORT}"}"
   export HELMR_DEV_CONSOLE_PORT="${HELMR_DEV_CONSOLE_PORT}"
-  export HELMR_DEV_CAS_DIR="${HELMR_DEV_CAS_DIR}"
   export BOOTSTRAP_ENABLED="${BOOTSTRAP_ENABLED:-1}"
   export BOOTSTRAP_REGION_ID="${BOOTSTRAP_REGION_ID:-local}"
   export BOOTSTRAP_REGION_DISPLAY_NAME="${BOOTSTRAP_REGION_DISPLAY_NAME:-Local}"
@@ -390,7 +388,7 @@ helmr_dev_reset_owned_storage() {
   if helmr_dev_owned_services_running; then
     return 1
   fi
-  rm -rf "${HELMR_DEV_DIR}/postgres" "${HELMR_DEV_DIR}/clickhouse" "${HELMR_DEV_CAS_DIR}"
+  rm -rf "${HELMR_DEV_DIR}/postgres" "${HELMR_DEV_DIR}/clickhouse"
   helmr_dev_release_lock
   trap - RETURN
 }

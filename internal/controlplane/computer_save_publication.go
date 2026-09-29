@@ -77,9 +77,6 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 		if err = apply("verify"); err != nil {
 			return err
 		}
-		if s.cas == nil {
-			return errors.New("computer storage unavailable")
-		}
 		stored, err := s.cas.Stat(ctx, descriptor.digest)
 		if err != nil {
 			return err

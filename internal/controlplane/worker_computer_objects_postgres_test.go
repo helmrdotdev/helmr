@@ -30,14 +30,14 @@ import (
 )
 
 type objectStatObserver struct {
-	cas.Store
+	cas.UploadStore
 	after func()
 	calls int
 }
 
 func (s *objectStatObserver) Stat(ctx context.Context, digest string) (cas.Object, error) {
 	s.calls++
-	o, e := s.Store.Stat(ctx, digest)
+	o, e := s.UploadStore.Stat(ctx, digest)
 	if s.after != nil {
 		s.after()
 	}
@@ -57,11 +57,8 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	f.server.computerKeys = broker
 	f.server.workerTokenSigningKey = signingKey
 	f.server.log = slog.New(slog.NewTextHandler(io.Discard, nil))
-	remote, err := cas.NewFile(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	observed := &objectStatObserver{Store: remote}
+	remote := newTestUploadStore(t)
+	observed := &objectStatObserver{UploadStore: remote}
 	f.server.cas = observed
 	router := chi.NewRouter()
 	f.server.mountWorkerRoutes(router)
@@ -250,7 +247,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 
 }
 
-type initialTestObjectPublisher struct{ store *cas.File }
+type initialTestObjectPublisher struct{ store cas.Store }
 
 func (p initialTestObjectPublisher) Publish(ctx context.Context, d cas.Descriptor, file *os.File) (cas.Object, error) {
 	if err := cas.VerifyDescriptorFile(ctx, d, file); err != nil {

@@ -12,11 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type database interface {
-	db.DBTX
-	db.TxBeginner
-}
-
 type ComputerCommandCandidate struct {
 	OrgID            pgtype.UUID
 	CommandID        pgtype.UUID
@@ -36,14 +31,14 @@ type RunFinalization struct {
 type RunFinalizer func(context.Context, pgx.Tx, RunFinalization) error
 
 type RevocationReconciler struct {
-	db            database
+	db            db.TxDB
 	queries       *db.Queries
 	execRecoverer ComputerCommandRecoverer
 	runFinalizer  RunFinalizer
 }
 
 func NewRevocationReconciler(
-	database database,
+	database db.TxDB,
 	execRecoverer ComputerCommandRecoverer,
 	runFinalizer RunFinalizer,
 ) (*RevocationReconciler, error) {

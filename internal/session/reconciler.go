@@ -12,16 +12,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type actorInputReconcileDB interface {
-	db.DBTX
-	db.TxBeginner
-}
-
 type Reconciler struct {
-	db actorInputReconcileDB
+	db db.TxDB
 }
 
-func NewReconciler(database actorInputReconcileDB) (*Reconciler, error) {
+func NewReconciler(database db.TxDB) (*Reconciler, error) {
 	if database == nil {
 		return nil, errors.New("actor reconciliation database is required")
 	}

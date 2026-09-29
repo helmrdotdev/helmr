@@ -17,6 +17,12 @@ for name in "${required_commands[@]}"; do
     exit 1
   fi
 done
+for name in CAS_URI PLATFORM_STORE_URI; do
+  if [ -z "${!name:-}" ]; then
+    echo "${name} is required for the dev console stack: set distinct s3:// buckets (see scripts/README.md)" >&2
+    exit 1
+  fi
+done
 
 helmr_dev_acquire_lock
 
@@ -78,6 +84,8 @@ Helmr dev console stack is running.
   Backend:  ${HELMR_DEV_BACKEND_URL}
   Postgres: $([ "${HELMR_DEV_OWNED_POSTGRES}" = "1" ] && echo "${HELMR_DEV_PGDATA}" || echo "external")
   ClickHouse: $([ -n "${HELMR_DEV_CLICKHOUSE_PID}" ] && echo "${HELMR_DEV_DIR}/clickhouse" || echo "external")
+  CAS:      ${CAS_URI}
+  Platform: ${PLATFORM_STORE_URI}
   Login:    ${PUBLIC_URL}/dev/login
 
 Ports (override with HELMR_DEV_* env vars):
