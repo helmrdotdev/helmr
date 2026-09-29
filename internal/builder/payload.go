@@ -12,10 +12,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
-// ProgramPayloadDigest freezes the identity of every payload file before
+// programPayloadDigest freezes the identity of every payload file before
 // any customer code executes. Its inventory uses the canonical archive modes;
 // admission uses the same hash function over the inspected archive inventory.
-func ProgramPayloadDigest(ctx context.Context, root string) (string, error) {
+func programPayloadDigest(ctx context.Context, root string) (string, error) {
 	if ctx == nil {
 		return "", errors.New("program input digest context is nil")
 	}

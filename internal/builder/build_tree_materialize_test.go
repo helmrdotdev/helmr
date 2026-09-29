@@ -29,7 +29,7 @@ func TestMaterializeApplicationExcludesOnlyRootManagerNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tree := &BuildTree{
+	tree := &buildTree{
 		content:   &snapshot.Artifact{},
 		inspected: inspected,
 	}

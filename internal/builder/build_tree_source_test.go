@@ -30,7 +30,7 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 		&definition.ImageCopySourceFile{Path: "packages/app/main.js", Dst: "/app/main.js"},
 		&definition.ImageCopySourceDir{Path: "node_modules/tool", Dst: "/app/tool"},
 	)
-	selection, err := frozen.SelectImageSource(context.Background(), plan)
+	selection, err := frozen.selectImageSource(context.Background(), plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,13 +38,13 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPaths := []SourcePath{
-		{Path: "node_modules", Kind: SourcePathDirectory},
-		{Path: "node_modules/tool", Kind: SourcePathDirectory},
-		{Path: "node_modules/tool/index.js", Kind: SourcePathFile},
-		{Path: "packages", Kind: SourcePathDirectory},
-		{Path: "packages/app", Kind: SourcePathDirectory},
-		{Path: "packages/app/main.js", Kind: SourcePathFile},
+	wantPaths := []sourceArchivePath{
+		{Path: "node_modules", Kind: sourcePathDirectory},
+		{Path: "node_modules/tool", Kind: sourcePathDirectory},
+		{Path: "node_modules/tool/index.js", Kind: sourcePathFile},
+		{Path: "packages", Kind: sourcePathDirectory},
+		{Path: "packages/app", Kind: sourcePathDirectory},
+		{Path: "packages/app/main.js", Kind: sourcePathFile},
 	}
 	if !reflect.DeepEqual(paths, wantPaths) {
 		t.Fatalf("selected paths = %#v, want %#v", paths, wantPaths)
@@ -63,7 +63,7 @@ func TestBuildTreeImageSourceIsCanonicalAndExact(t *testing.T) {
 		t.Fatal(err)
 	}
 	if descriptor.ArchiveEntries != len(wantPaths) ||
-		descriptor.PathSetDigest != SourcePathSetDigest(wantPaths) {
+		descriptor.PathSetDigest != sourcePathSetDigest(wantPaths) {
 		t.Fatalf("source descriptor = %+v", descriptor)
 	}
 	first := writeSelectedSourceForTest(t, selection)
@@ -95,7 +95,7 @@ func TestBuildTreeImageSourceRootSelectionKeepsNodeModules(t *testing.T) {
 	tree.addFile("node_modules/tool/index.js", []byte("dependency\n"), 0o644)
 	frozen := testFrozenBuildTree(t, tree)
 
-	selection, err := frozen.SelectImageSource(
+	selection, err := frozen.selectImageSource(
 		context.Background(),
 		imageSourcePlan(nil, &definition.ImageCopySourceDir{Path: ".", Dst: "/app"}),
 	)
@@ -106,12 +106,12 @@ func TestBuildTreeImageSourceRootSelectionKeepsNodeModules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []SourcePath{
-		{Path: "app.js", Kind: SourcePathFile},
-		{Path: "node_modules", Kind: SourcePathDirectory},
-		{Path: "node_modules/tool", Kind: SourcePathDirectory},
-		{Path: "node_modules/tool/current", Kind: SourcePathSymlink},
-		{Path: "node_modules/tool/index.js", Kind: SourcePathFile},
+	want := []sourceArchivePath{
+		{Path: "app.js", Kind: sourcePathFile},
+		{Path: "node_modules", Kind: sourcePathDirectory},
+		{Path: "node_modules/tool", Kind: sourcePathDirectory},
+		{Path: "node_modules/tool/current", Kind: sourcePathSymlink},
+		{Path: "node_modules/tool/index.js", Kind: sourcePathFile},
 	}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("root selection = %#v, want %#v", paths, want)
@@ -138,7 +138,7 @@ func TestBuildTreeImageSourceRejectsReservedMissingAndWrongKindRoots(t *testing.
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := frozen.SelectImageSource(
+			_, err := frozen.selectImageSource(
 				context.Background(),
 				imageSourcePlan(test.file, test.dir),
 			)
@@ -153,7 +153,7 @@ func TestBuildTreeImageSourceSupportsEmptySelection(t *testing.T) {
 	tree := newMemoryArtifact()
 	tree.addFile("app.js", []byte("app\n"), 0o644)
 	frozen := testFrozenBuildTree(t, tree)
-	selection, err := frozen.SelectImageSource(context.Background(), imageSourcePlan(nil, nil))
+	selection, err := frozen.selectImageSource(context.Background(), imageSourcePlan(nil, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,19 +179,19 @@ func TestBuildTreeDescriptorPreservesVerifiedStreamIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := BuildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096}
+	want := buildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096}
 	if descriptor != want {
-		t.Fatalf("BuildTree descriptor = %+v, want %+v", descriptor, want)
+		t.Fatalf("buildTree descriptor = %+v, want %+v", descriptor, want)
 	}
 	if err := frozen.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := frozen.Descriptor(); err == nil {
-		t.Fatal("closed BuildTree returned a descriptor")
+		t.Fatal("closed buildTree returned a descriptor")
 	}
 }
 
-func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *BuildTree {
+func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *buildTree {
 	t.Helper()
 	inspected, err := inspectMemoryBuildTree(t, memory)
 	if err != nil {
@@ -200,7 +200,7 @@ func testFrozenBuildTree(t *testing.T, memory *memoryArtifact) *BuildTree {
 	tree, err := newBuildTree(
 		&snapshot.Artifact{},
 		inspected,
-		BuildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096},
+		buildTreeDescriptor{Digest: testDigest("build-tree-stream"), SizeBytes: 4096},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +230,7 @@ func imageSourcePlan(
 	}
 }
 
-func writeSelectedSourceForTest(t *testing.T, source *BuildTreeSource) []byte {
+func writeSelectedSourceForTest(t *testing.T, source *buildTreeSource) []byte {
 	t.Helper()
 	var encoded bytes.Buffer
 	if err := source.WriteTo(context.Background(), &encoded); err != nil {

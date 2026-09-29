@@ -14,7 +14,7 @@ import (
 
 const dockerfileFrontend = "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
 
-func ValidateBuilderImage(builderImage string) error {
+func validateBuilderImage(builderImage string) error {
 	named, err := reference.ParseNormalizedNamed(builderImage)
 	if err != nil || named.String() != builderImage {
 		return errors.New("builder image must be a canonical fully qualified reference")
@@ -28,7 +28,7 @@ func ValidateBuilderImage(builderImage string) error {
 // BuilderContext is the BuildKit named context every graph resolves
 // helmr-builder through, so each stage starts from the exact pinned image.
 func BuilderContext(builderImage string) (string, error) {
-	if err := ValidateBuilderImage(builderImage); err != nil {
+	if err := validateBuilderImage(builderImage); err != nil {
 		return "", err
 	}
 	return "docker-image://" + builderImage, nil

@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/artifact"
 )
 
-func (tree *BuildTree) MaterializeApplication(
+func (tree *buildTree) MaterializeApplication(
 	ctx context.Context,
 	directory string,
 ) (_ string, cleanup func() error, returnErr error) {
@@ -110,7 +110,7 @@ func applicationViewReserved(name string) bool {
 
 func materializeBuildFile(
 	ctx context.Context,
-	tree *BuildTree,
+	tree *buildTree,
 	entry artifact.Entry,
 	target string,
 ) (returnErr error) {

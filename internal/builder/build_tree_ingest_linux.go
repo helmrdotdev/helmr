@@ -46,14 +46,14 @@ func inspectBuildTree(
 	return tree, nil
 }
 
-func IngestBuildTreeArchive(
+func ingestBuildTreeArchive(
 	ctx context.Context,
 	directory string,
 	encoder string,
 	archiveDigest string,
 	archiveSize int64,
 	source io.Reader,
-) (_ *BuildTree, returnErr error) {
+) (_ *buildTree, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("build tree ingestion context is nil")
 	}
@@ -115,7 +115,7 @@ func IngestBuildTreeArchive(
 	if err != nil {
 		return nil, err
 	}
-	tree, err := newBuildTree(content, inspected, BuildTreeDescriptor{
+	tree, err := newBuildTree(content, inspected, buildTreeDescriptor{
 		Digest:    archiveDigest,
 		SizeBytes: archiveSize,
 	})

@@ -23,17 +23,17 @@ func TestVerificationResultCanonicalRoundTrip(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			raw, err := CanonicalVerificationResult(test.result)
+			raw, err := canonicalVerificationResult(test.result)
 			if err != nil {
-				t.Fatalf("CanonicalVerificationResult: %v", err)
+				t.Fatalf("canonicalVerificationResult: %v", err)
 			}
-			parsed, err := ParseVerificationResult(raw)
+			parsed, err := parseVerificationResult(raw)
 			if err != nil {
-				t.Fatalf("ParseVerificationResult: %v", err)
+				t.Fatalf("parseVerificationResult: %v", err)
 			}
-			recoded, err := CanonicalVerificationResult(parsed)
+			recoded, err := canonicalVerificationResult(parsed)
 			if err != nil {
-				t.Fatalf("CanonicalVerificationResult(parsed): %v", err)
+				t.Fatalf("canonicalVerificationResult(parsed): %v", err)
 			}
 			if string(recoded) != string(raw) {
 				t.Fatalf("canonical bytes changed:\n%s\n%s", raw, recoded)
@@ -43,7 +43,7 @@ func TestVerificationResultCanonicalRoundTrip(t *testing.T) {
 }
 
 func TestReadVerificationResultFrameRequiresExactlyOneFrame(t *testing.T) {
-	raw, err := CanonicalVerificationResult(testProgramVerificationResult(t))
+	raw, err := canonicalVerificationResult(testProgramVerificationResult(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +51,9 @@ func TestReadVerificationResultFrameRequiresExactlyOneFrame(t *testing.T) {
 	if err := frameio.WriteMessageFrame(&frame, raw); err != nil {
 		t.Fatal(err)
 	}
-	result, err := ReadVerificationResultFrame(&frame)
+	result, err := readVerificationResultFrame(&frame)
 	if err != nil {
-		t.Fatalf("ReadVerificationResultFrame: %v", err)
+		t.Fatalf("readVerificationResultFrame: %v", err)
 	}
 	if result.Outcome != VerificationOutcomeSucceeded {
 		t.Fatalf("outcome = %q", result.Outcome)
@@ -64,14 +64,14 @@ func TestReadVerificationResultFrameRequiresExactlyOneFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	frame.WriteByte(0)
-	if _, err := ReadVerificationResultFrame(&frame); err == nil ||
+	if _, err := readVerificationResultFrame(&frame); err == nil ||
 		!strings.Contains(err.Error(), "trailing data") {
 		t.Fatalf("trailing frame error = %v", err)
 	}
 }
 
 func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
-	valid, err := CanonicalVerificationResult(testProgramVerificationResult(t))
+	valid, err := canonicalVerificationResult(testProgramVerificationResult(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 			name: "duplicate file",
 			mutate: func(root map[string]any) {
 				files := root["files"].([]any)
-				files[1].(map[string]any)["path"] = VerificationBuildPlanPath
+				files[1].(map[string]any)["path"] = verificationBuildPlanPath
 			},
 			wantErr: "files[1].path",
 		},
@@ -121,14 +121,14 @@ func TestParseVerificationResultRejectsOpenOrNoncanonicalShape(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			raw := mutateVerificationResultJSON(t, valid, test.mutate)
-			_, err := ParseVerificationResult(raw)
+			_, err := parseVerificationResult(raw)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
 			}
 		})
 	}
 
-	if _, err := ParseVerificationResult(append([]byte(" "), valid...)); err == nil ||
+	if _, err := parseVerificationResult(append([]byte(" "), valid...)); err == nil ||
 		!strings.Contains(err.Error(), "canonical") {
 		t.Fatalf("noncanonical error = %v", err)
 	}
@@ -181,7 +181,7 @@ func TestVerificationResultVerifiesGeneratedFilesAgainstPlan(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result := testProgramVerificationResult(t)
 			test.change(&result)
-			err := ValidateVerificationResult(result)
+			err := validateVerificationResult(result)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
 			}
@@ -222,7 +222,7 @@ func TestVerificationFailureContract(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result := testFailedVerificationResult()
 			test.change(&result)
-			err := ValidateVerificationResult(result)
+			err := validateVerificationResult(result)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
 			}
@@ -240,12 +240,12 @@ func testComputerVerificationResult(t *testing.T) VerificationResult {
 		t.Fatal(err)
 	}
 	return VerificationResult{
-		FormatVersion: VerificationResultFormatVersion,
+		FormatVersion: verificationResultFormatVersion,
 		Outcome:       VerificationOutcomeSucceeded,
 		Succeeded: &VerificationSucceeded{
 			Declarations: []artifact.ProgramDeclaration{},
 			Files: []VerificationFile{{
-				Path:    VerificationBuildPlanPath,
+				Path:    verificationBuildPlanPath,
 				Content: string(raw),
 			}},
 		},
@@ -266,13 +266,13 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 		t.Fatal(err)
 	}
 	return VerificationResult{
-		FormatVersion: VerificationResultFormatVersion,
+		FormatVersion: verificationResultFormatVersion,
 		Outcome:       VerificationOutcomeSucceeded,
 		Succeeded: &VerificationSucceeded{
 			Declarations: artifact.BuildPlanProgramDeclarations(plan),
 			Files: []VerificationFile{
-				{Path: VerificationBuildPlanPath, Content: string(planRaw)},
-				{Path: VerificationDeclarationsPath, Content: string(locatorRaw)},
+				{Path: verificationBuildPlanPath, Content: string(planRaw)},
+				{Path: verificationDeclarationsPath, Content: string(locatorRaw)},
 			},
 		},
 	}
@@ -280,10 +280,10 @@ func testProgramVerificationResult(t *testing.T) VerificationResult {
 
 func testFailedVerificationResult() VerificationResult {
 	return VerificationResult{
-		FormatVersion: VerificationResultFormatVersion,
+		FormatVersion: verificationResultFormatVersion,
 		Outcome:       VerificationOutcomeFailed,
 		Failed: &VerificationFailed{Error: VerificationError{
-			Reason:  VerificationFailureReason,
+			Reason:  verificationFailureReason,
 			Message: "declaration verification failed",
 		}},
 	}

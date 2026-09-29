@@ -16,23 +16,23 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-// BuildTreeSource is a sealed selection over one verified BuildTree. Its
+// buildTreeSource is a sealed selection over one verified buildTree. Its
 // exported facts are copies; archive bytes can only be emitted again from the
 // same read-only tree and exact selected entries.
-type BuildTreeSource struct {
-	tree       *BuildTree
+type buildTreeSource struct {
+	tree       *buildTree
 	entries    []artifact.Entry
-	paths      []SourcePath
-	descriptor SourceArchiveDescriptor
+	paths      []sourceArchivePath
+	descriptor sourceArchiveDescriptor
 }
 
-// SelectImageSource expands every source-copy root in plan against the exact
-// verified post-lifecycle BuildTree and computes the canonical archive facts
+// selectImageSource expands every source-copy root in plan against the exact
+// verified post-lifecycle buildTree and computes the canonical archive facts
 // required before a local producer accepts the source tree.
-func (tree *BuildTree) SelectImageSource(
+func (tree *buildTree) selectImageSource(
 	ctx context.Context,
 	plan definition.ImageBuild,
-) (*BuildTreeSource, error) {
+) (*buildTreeSource, error) {
 	if ctx == nil {
 		return nil, errors.New("image source selection context is nil")
 	}
@@ -51,19 +51,19 @@ func (tree *BuildTree) SelectImageSource(
 	if err != nil {
 		return nil, err
 	}
-	if len(selected) > MaxSourceArchiveEntries {
+	if len(selected) > maxSourceArchiveEntries {
 		return nil, fmt.Errorf(
 			"image source archive entry count exceeds %d",
-			MaxSourceArchiveEntries,
+			maxSourceArchiveEntries,
 		)
 	}
-	paths := make([]SourcePath, len(selected))
+	paths := make([]sourceArchivePath, len(selected))
 	for index, entry := range selected {
 		kind, err := imageSourcePathKind(entry.Kind)
 		if err != nil {
 			return nil, err
 		}
-		paths[index] = SourcePath{Path: entry.Path, Kind: kind}
+		paths[index] = sourceArchivePath{Path: entry.Path, Kind: kind}
 	}
 
 	digest := sha256.New()
@@ -71,21 +71,21 @@ func (tree *BuildTree) SelectImageSource(
 	if err := writeSelectedBuildTreeArchive(ctx, counter, tree.inspected, selected); err != nil {
 		return nil, err
 	}
-	descriptor := SourceArchiveDescriptor{
+	descriptor := sourceArchiveDescriptor{
 		ArchiveDigest:    sha256sum.FormatDigest(digest.Sum(nil)),
 		ArchiveSizeBytes: counter.written,
 		ArchiveEntries:   len(selected),
-		PathSetDigest:    SourcePathSetDigest(paths),
+		PathSetDigest:    sourcePathSetDigest(paths),
 	}
 	if descriptor.ArchiveSizeBytes < 1 ||
-		descriptor.ArchiveSizeBytes > MaxSourceArchiveBytes {
+		descriptor.ArchiveSizeBytes > maxSourceArchiveBytes {
 		return nil, errors.New("image source archive size is outside the v0 contract")
 	}
 	entryCopy := make([]artifact.Entry, len(selected))
 	copy(entryCopy, selected)
-	pathCopy := make([]SourcePath, len(paths))
+	pathCopy := make([]sourceArchivePath, len(paths))
 	copy(pathCopy, paths)
-	return &BuildTreeSource{
+	return &buildTreeSource{
 		tree:       tree,
 		entries:    entryCopy,
 		paths:      pathCopy,
@@ -93,18 +93,18 @@ func (tree *BuildTree) SelectImageSource(
 	}, nil
 }
 
-func (source *BuildTreeSource) Descriptor() (SourceArchiveDescriptor, error) {
+func (source *buildTreeSource) Descriptor() (sourceArchiveDescriptor, error) {
 	if source == nil || source.tree == nil || len(source.entries) != len(source.paths) {
-		return SourceArchiveDescriptor{}, errors.New("image source selection is invalid")
+		return sourceArchiveDescriptor{}, errors.New("image source selection is invalid")
 	}
 	return source.descriptor, nil
 }
 
-func (source *BuildTreeSource) Paths() ([]SourcePath, error) {
+func (source *buildTreeSource) Paths() ([]sourceArchivePath, error) {
 	if source == nil || source.tree == nil || len(source.entries) != len(source.paths) {
 		return nil, errors.New("image source selection is invalid")
 	}
-	paths := make([]SourcePath, len(source.paths))
+	paths := make([]sourceArchivePath, len(source.paths))
 	copy(paths, source.paths)
 	return paths, nil
 }
@@ -112,7 +112,7 @@ func (source *BuildTreeSource) Paths() ([]SourcePath, error) {
 // WriteTo emits the exact archive measured during selection. It recomputes and
 // verifies the complete descriptor so a closed or changed source cannot be
 // sent under previously admitted facts.
-func (source *BuildTreeSource) WriteTo(
+func (source *buildTreeSource) WriteTo(
 	ctx context.Context,
 	destination io.Writer,
 ) error {
@@ -236,14 +236,14 @@ func buildTreeImageSourceReserved(name string) bool {
 	return name == "helmr" || strings.HasPrefix(name, "helmr/")
 }
 
-func imageSourcePathKind(kind artifact.EntryKind) (SourcePathKind, error) {
+func imageSourcePathKind(kind artifact.EntryKind) (sourcePathKind, error) {
 	switch kind {
 	case artifact.EntryRegular:
-		return SourcePathFile, nil
+		return sourcePathFile, nil
 	case artifact.EntryDirectory:
-		return SourcePathDirectory, nil
+		return sourcePathDirectory, nil
 	case artifact.EntrySymlink:
-		return SourcePathSymlink, nil
+		return sourcePathSymlink, nil
 	default:
 		return "", fmt.Errorf("image source artifact kind %q is unsupported", kind)
 	}

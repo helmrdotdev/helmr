@@ -37,7 +37,7 @@ func TestBuildCapacitySizedSeed(t *testing.T) {
 	var first computer.SeedArtifact
 	for iteration := range 2 {
 		target := filepath.Join(t.TempDir(), "disk.filepack")
-		seed, err := BuildSeed(t.Context(), image, target, dir, mkfs, config, capacity)
+		seed, err := buildSeed(t.Context(), image, target, dir, mkfs, config, capacity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -58,7 +58,7 @@ func TestBuildCapacitySizedSeed(t *testing.T) {
 		} else if seed.Artifact != first {
 			t.Fatal("repeated build changed artifact")
 		}
-		if _, err := BuildSeed(t.Context(), image, target, dir, mkfs, config, capacity); err == nil {
+		if _, err := buildSeed(t.Context(), image, target, dir, mkfs, config, capacity); err == nil {
 			t.Fatal("existing artifact overwritten")
 		}
 	}

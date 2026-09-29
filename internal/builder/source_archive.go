@@ -7,34 +7,34 @@ import (
 )
 
 const (
-	MaxSourceArchiveBytes   = int64(11 << 30)
-	MaxSourceArchiveEntries = 100000
+	maxSourceArchiveBytes   = int64(11 << 30)
+	maxSourceArchiveEntries = 100000
 )
 
-// SourceArchiveDescriptor describes the exact installed-tree source projection
+// sourceArchiveDescriptor describes the exact installed-tree source projection
 // used by the local bundle producer when it constructs a Computer image.
 // It is producer-local metadata and never becomes Control Plane build authority.
-type SourceArchiveDescriptor struct {
+type sourceArchiveDescriptor struct {
 	ArchiveDigest    string
 	ArchiveSizeBytes int64
 	ArchiveEntries   int
 	PathSetDigest    string
 }
 
-type SourcePath struct {
+type sourceArchivePath struct {
 	Path string         `json:"path"`
-	Kind SourcePathKind `json:"kind"`
+	Kind sourcePathKind `json:"kind"`
 }
 
-type SourcePathKind string
+type sourcePathKind string
 
 const (
-	SourcePathFile      SourcePathKind = "file"
-	SourcePathDirectory SourcePathKind = "directory"
-	SourcePathSymlink   SourcePathKind = "symlink"
+	sourcePathFile      sourcePathKind = "file"
+	sourcePathDirectory sourcePathKind = "directory"
+	sourcePathSymlink   sourcePathKind = "symlink"
 )
 
-func SourcePathSetDigest(paths []SourcePath) string {
+func sourcePathSetDigest(paths []sourceArchivePath) string {
 	raw, err := json.Marshal(paths)
 	if err != nil {
 		panic(err)

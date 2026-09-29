@@ -13,7 +13,7 @@ func TestVerificationResultZeroFormatVersionRequiresExplicitCanonicalField(t *te
 		value any
 		parse func([]byte) error
 	}{
-		{"verification", testProgramVerificationResult(t), func(raw []byte) error { _, err := ParseVerificationResult(raw); return err }},
+		{"verification", testProgramVerificationResult(t), func(raw []byte) error { _, err := parseVerificationResult(raw); return err }},
 	}
 	for _, item := range cases {
 		t.Run(item.name, func(t *testing.T) {

@@ -14,10 +14,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
-// BuildSeed runs in the client/CI builder with pinned filesystem tools. It emits
+// buildSeed runs in the client/CI builder with pinned filesystem tools. It emits
 // only a capacity-sized packed disk; temporary raw and expanded files are removed
 // before return. The caller publishes the returned config with the artifact.
-func BuildSeed(ctx context.Context, image, target, scratch, mkfs, config string, capacity int64) (computer.Seed, error) {
+func buildSeed(ctx context.Context, image, target, scratch, mkfs, config string, capacity int64) (computer.Seed, error) {
 	if capacity <= 0 || capacity%4096 != 0 {
 		return computer.Seed{}, errors.New("invalid seed capacity")
 	}

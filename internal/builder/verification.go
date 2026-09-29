@@ -16,15 +16,15 @@ import (
 )
 
 const (
-	VerificationResultFormatVersion = 0
+	verificationResultFormatVersion = 0
 
 	VerificationOutcomeSucceeded = VerificationOutcome("succeeded")
 	VerificationOutcomeFailed    = VerificationOutcome("failed")
 
-	VerificationFailureReason = "verification_failed"
+	verificationFailureReason = "verification_failed"
 
-	VerificationBuildPlanPath    = "helmr/build-plan.json"
-	VerificationDeclarationsPath = "helmr/analysis-locators.json"
+	verificationBuildPlanPath    = "helmr/build-plan.json"
+	verificationDeclarationsPath = "helmr/analysis-locators.json"
 
 	maxVerificationResultBytes         = 70 << 20
 	maxVerificationFailureMessageBytes = 16 << 10
@@ -40,9 +40,16 @@ type VerificationResult struct {
 }
 
 // BuildPlan returns the build plan document of a succeeded verification
-// result, which is always its first file (VerificationBuildPlanPath).
+// result, which is always its first file (verificationBuildPlanPath).
 func (result VerificationResult) BuildPlan() []byte {
 	return []byte(result.Succeeded.Files[0].Content)
+}
+
+// Declarations returns the declaration locator document of a program-backed
+// succeeded verification result, which is always its second file
+// (verificationDeclarationsPath).
+func (result VerificationResult) Declarations() []byte {
+	return []byte(result.Succeeded.Files[1].Content)
 }
 
 type VerificationSucceeded struct {
@@ -64,7 +71,7 @@ type VerificationError struct {
 	Message string `json:"message"`
 }
 
-func ReadVerificationResultFrame(reader io.Reader) (VerificationResult, error) {
+func readVerificationResultFrame(reader io.Reader) (VerificationResult, error) {
 	raw, err := frameio.ReadMessageFrameBounded(reader, maxVerificationResultBytes)
 	if err != nil {
 		return VerificationResult{}, fmt.Errorf("read verification result frame: %w", err)
@@ -81,10 +88,10 @@ func ReadVerificationResultFrame(reader io.Reader) (VerificationResult, error) {
 			err,
 		)
 	}
-	return ParseVerificationResult(raw)
+	return parseVerificationResult(raw)
 }
 
-func ParseVerificationResult(raw []byte) (VerificationResult, error) {
+func parseVerificationResult(raw []byte) (VerificationResult, error) {
 	if len(raw) == 0 || len(raw) > maxVerificationResultBytes {
 		return VerificationResult{}, fmt.Errorf(
 			"verification result size is outside [1,%d]",
@@ -110,10 +117,10 @@ func ParseVerificationResult(raw []byte) (VerificationResult, error) {
 	if err := jsoncanon.RequireEOF(decoder, "verification result"); err != nil {
 		return VerificationResult{}, err
 	}
-	if err := ValidateVerificationResult(result); err != nil {
+	if err := validateVerificationResult(result); err != nil {
 		return VerificationResult{}, err
 	}
-	complete, err := CanonicalVerificationResult(result)
+	complete, err := canonicalVerificationResult(result)
 	if err != nil {
 		return VerificationResult{}, err
 	}
@@ -125,8 +132,8 @@ func ParseVerificationResult(raw []byte) (VerificationResult, error) {
 	return cloneVerificationResult(result), nil
 }
 
-func CanonicalVerificationResult(result VerificationResult) ([]byte, error) {
-	if err := ValidateVerificationResult(result); err != nil {
+func canonicalVerificationResult(result VerificationResult) ([]byte, error) {
+	if err := validateVerificationResult(result); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(result)
@@ -146,12 +153,12 @@ func CanonicalVerificationResult(result VerificationResult) ([]byte, error) {
 	return canonical, nil
 }
 
-func ValidateVerificationResult(result VerificationResult) error {
-	if result.FormatVersion != VerificationResultFormatVersion {
+func validateVerificationResult(result VerificationResult) error {
+	if result.FormatVersion != verificationResultFormatVersion {
 		return fmt.Errorf(
 			"verification result formatVersion = %d, want %d",
 			result.FormatVersion,
-			VerificationResultFormatVersion,
+			verificationResultFormatVersion,
 		)
 	}
 	if (result.Succeeded == nil) == (result.Failed == nil) {
@@ -270,11 +277,11 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 	if len(succeeded.Files) != 1 && len(succeeded.Files) != 2 {
 		return errors.New("verification result files must contain exactly one or two entries")
 	}
-	if succeeded.Files[0].Path != VerificationBuildPlanPath {
+	if succeeded.Files[0].Path != verificationBuildPlanPath {
 		return fmt.Errorf(
 			"verification result files[0].path = %q, want %q",
 			succeeded.Files[0].Path,
-			VerificationBuildPlanPath,
+			verificationBuildPlanPath,
 		)
 	}
 	plan, err := definition.ParseBuildPlan([]byte(succeeded.Files[0].Content))
@@ -298,11 +305,11 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 			"program-backed verification result must contain all generated program files",
 		)
 	}
-	if succeeded.Files[1].Path != VerificationDeclarationsPath {
+	if succeeded.Files[1].Path != verificationDeclarationsPath {
 		return fmt.Errorf(
 			"verification result files[1].path = %q, want %q",
 			succeeded.Files[1].Path,
-			VerificationDeclarationsPath,
+			verificationDeclarationsPath,
 		)
 	}
 	locator, err := artifact.ParseDeclarationLocator([]byte(succeeded.Files[1].Content))
@@ -328,7 +335,7 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 }
 
 func validateVerificationFailed(failed VerificationFailed) error {
-	if failed.Error.Reason != VerificationFailureReason {
+	if failed.Error.Reason != verificationFailureReason {
 		return fmt.Errorf(
 			"verification failure reason %q is unsupported",
 			failed.Error.Reason,
@@ -391,11 +398,11 @@ func validateVerifiedDeclarations(
 	return nil
 }
 
-func ValidateVerifiedProgram(
+func validateVerifiedProgram(
 	result VerificationResult,
 	index artifact.ProgramIndex,
 ) error {
-	if err := ValidateVerificationResult(result); err != nil {
+	if err := validateVerificationResult(result); err != nil {
 		return err
 	}
 	if result.Outcome != VerificationOutcomeSucceeded {

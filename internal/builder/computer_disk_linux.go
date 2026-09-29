@@ -11,7 +11,7 @@ import (
 )
 
 func buildComputerDisk(ctx context.Context, source, target, scratch, mkfs, config string) (bundle.ComputerImageArtifact, error) {
-	seed, err := BuildSeed(ctx, source, target, scratch, mkfs, config, computer.SeedCapacity)
+	seed, err := buildSeed(ctx, source, target, scratch, mkfs, config, computer.SeedCapacity)
 	if err != nil {
 		return bundle.ComputerImageArtifact{}, err
 	}

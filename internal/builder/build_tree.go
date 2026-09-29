@@ -15,18 +15,18 @@ import (
 // tree before it is encoded and deeply verified as a Program artifact.
 const maxBuildTreeStreamBytes int64 = 11 << 30
 
-// BuildTree is the one lease-private, read-only post-lifecycle tree used by
+// buildTree is the one lease-private, read-only post-lifecycle tree used by
 // analysis, Computer image construction, and Program encoding.
-type BuildTree struct {
+type buildTree struct {
 	content    *snapshot.Artifact
 	inspected  *artifact.Tree
-	descriptor BuildTreeDescriptor
+	descriptor buildTreeDescriptor
 }
 
-// BuildTreeDescriptor identifies the exact post-lifecycle stream accepted
+// buildTreeDescriptor identifies the exact post-lifecycle stream accepted
 // from the Build guest. It describes that verified stream, not the internal
 // SquashFS snapshot used to retain it on the Worker.
-type BuildTreeDescriptor struct {
+type buildTreeDescriptor struct {
 	Digest    string
 	SizeBytes int64
 }
@@ -34,8 +34,8 @@ type BuildTreeDescriptor struct {
 func newBuildTree(
 	content *snapshot.Artifact,
 	inspected *artifact.Tree,
-	descriptor BuildTreeDescriptor,
-) (*BuildTree, error) {
+	descriptor buildTreeDescriptor,
+) (*buildTree, error) {
 	if content == nil || inspected == nil {
 		return nil, errors.New("build tree snapshot is incomplete")
 	}
@@ -51,16 +51,16 @@ func newBuildTree(
 			maxBuildTreeStreamBytes,
 		)
 	}
-	return &BuildTree{
+	return &buildTree{
 		content:    content,
 		inspected:  inspected,
 		descriptor: descriptor,
 	}, nil
 }
 
-func (tree *BuildTree) Descriptor() (BuildTreeDescriptor, error) {
+func (tree *buildTree) Descriptor() (buildTreeDescriptor, error) {
 	if tree == nil || tree.content == nil || tree.inspected == nil {
-		return BuildTreeDescriptor{}, errors.New("build tree is closed")
+		return buildTreeDescriptor{}, errors.New("build tree is closed")
 	}
 	return tree.descriptor, nil
 }
@@ -129,7 +129,7 @@ func validateCompilerBuildTree(
 	return nil
 }
 
-func (tree *BuildTree) Close() error {
+func (tree *buildTree) Close() error {
 	if tree == nil || tree.content == nil {
 		return nil
 	}

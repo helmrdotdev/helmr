@@ -103,7 +103,7 @@ func PrepareProgram(
 	if err != nil {
 		return err
 	}
-	verificationRaw, err := CanonicalVerificationResult(verification)
+	verificationRaw, err := canonicalVerificationResult(verification)
 	if err != nil {
 		return err
 	}
@@ -163,7 +163,7 @@ func BuildPreparedProgram(
 	if err := copyPayload(filepath.Join(input.PreparedDirectory, "payload"), payload); err != nil {
 		return ProgramResult{}, err
 	}
-	actual, err := ProgramPayloadDigest(ctx, payload)
+	actual, err := programPayloadDigest(ctx, payload)
 	if err != nil {
 		return ProgramResult{}, err
 	}
@@ -189,7 +189,7 @@ func BuildPreparedProgram(
 	if err != nil {
 		return ProgramResult{}, fmt.Errorf("open installed Program tree: %w", err)
 	}
-	tree, ingestErr := IngestBuildTreeArchive(
+	tree, ingestErr := ingestBuildTreeArchive(
 		ctx,
 		work,
 		input.SquashFSEncoder,
@@ -207,7 +207,7 @@ func BuildPreparedProgram(
 	if err != nil {
 		return ProgramResult{}, err
 	}
-	program, err := EncodeProgram(
+	program, err := encodeProgram(
 		ctx,
 		input.WorkDirectory,
 		input.SquashFSEncoder,
@@ -223,7 +223,7 @@ func BuildPreparedProgram(
 		return ProgramResult{}, err
 	}
 	defer func() { returnErr = errors.Join(returnErr, program.Close()) }()
-	if err := ValidateVerifiedProgram(verification, program.Output.Index); err != nil {
+	if err := validateVerifiedProgram(verification, program.Output.Index); err != nil {
 		return ProgramResult{}, err
 	}
 	if err := program.Materialize(ctx, input.ProgramObjectPath); err != nil {
@@ -243,7 +243,7 @@ func analyzePayload(
 	work string,
 	compilerOutput string,
 ) (artifact.BuildConfig, VerificationResult, error) {
-	inputDigest, err := ProgramPayloadDigest(ctx, input.ProjectDirectory)
+	inputDigest, err := programPayloadDigest(ctx, input.ProjectDirectory)
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
@@ -274,7 +274,7 @@ func analyzePayload(
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("compile Helmr Program: %w", err)
 	}
-	verification, err := ReadVerificationResultFrame(bytes.NewReader(verificationFrame))
+	verification, err := readVerificationResultFrame(bytes.NewReader(verificationFrame))
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
@@ -290,7 +290,7 @@ func analyzePayload(
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
-	after, err := ProgramPayloadDigest(ctx, input.ProjectDirectory)
+	after, err := programPayloadDigest(ctx, input.ProjectDirectory)
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, err
 	}
@@ -412,7 +412,7 @@ func readPreparedProgram(directory string) (artifact.BuildConfig, VerificationRe
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, fmt.Errorf("read prepared verification: %w", err)
 	}
-	verification, err := ParseVerificationResult(verificationRaw)
+	verification, err := parseVerificationResult(verificationRaw)
 	if err != nil {
 		return artifact.BuildConfig{}, VerificationResult{}, err
 	}

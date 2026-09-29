@@ -42,7 +42,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	before, err := ProgramPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
+	before, err := programPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestPreparedProgramFinalization(t *testing.T) {
 		}
 		previousDescriptor, previousObject = descriptor, object
 	}
-	after, err := ProgramPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
+	after, err := programPayloadDigest(t.Context(), filepath.Join(prepared, "payload"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -21,7 +21,7 @@ func TestPayloadAcceptsLargeDormantInstalledBinary(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ProgramPayloadDigest(t.Context(), root); err != nil {
+	if _, err := programPayloadDigest(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -31,7 +31,7 @@ func TestPayloadRejectsInvalidLinkBytesBeforeHash(t *testing.T) {
 	if err := os.Symlink(string([]byte{0xff}), filepath.Join(root, "bad-link")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ProgramPayloadDigest(t.Context(), root); err == nil {
+	if _, err := programPayloadDigest(t.Context(), root); err == nil {
 		t.Fatal("accepted invalid link bytes")
 	}
 }
@@ -54,7 +54,7 @@ func TestPayloadDirectoryAndArtifactHaveOneIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	memory.addLink("link", "unused.txt")
-	directoryDigest, err := ProgramPayloadDigest(t.Context(), root)
+	directoryDigest, err := programPayloadDigest(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}

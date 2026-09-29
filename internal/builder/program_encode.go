@@ -20,23 +20,23 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-type EncodedProgram struct {
+type encodedProgram struct {
 	Output   artifact.ProgramOutput
 	artifact *snapshot.Artifact
 }
 
-func EncodeProgram(
+func encodeProgram(
 	ctx context.Context,
 	directory string,
 	encoder string,
-	tree *BuildTree,
+	tree *buildTree,
 	verification VerificationResult,
 	configResultDigest string,
 	runtimeDigest string,
 	computerImages []bundle.ComputerImage,
 	compiler artifact.CompilerInputs,
 	nodeVersion string,
-) (_ *EncodedProgram, returnErr error) {
+) (_ *encodedProgram, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("program encoding context is nil")
 	}
@@ -49,7 +49,7 @@ func EncodeProgram(
 	if !sha256sum.ValidDigest(runtimeDigest) {
 		return nil, errors.New("program encoding runtime digest is invalid")
 	}
-	if err := ValidateVerificationResult(verification); err != nil {
+	if err := validateVerificationResult(verification); err != nil {
 		return nil, err
 	}
 	if verification.Outcome != VerificationOutcomeSucceeded {
@@ -89,9 +89,7 @@ func EncodeProgram(
 	if err := artifact.VerifyProgramCompilerFiles(ctx, tree.inspected, compilerResult); err != nil {
 		return nil, err
 	}
-	locator, err := artifact.ParseDeclarationLocator(
-		[]byte(verification.Succeeded.Files[1].Content),
-	)
+	locator, err := artifact.ParseDeclarationLocator(verification.Declarations())
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +159,7 @@ func EncodeProgram(
 		return nil, err
 	}
 
-	program := &EncodedProgram{
+	program := &encodedProgram{
 		Output:   output,
 		artifact: content,
 	}
@@ -287,7 +285,7 @@ func programTreeEntries(
 	}
 }
 
-func (program *EncodedProgram) Publish(
+func (program *encodedProgram) Publish(
 	ctx context.Context,
 	store cas.Store,
 ) (artifact.ProgramOutput, error) {
@@ -313,7 +311,7 @@ func (program *EncodedProgram) Publish(
 // Materialize writes the exact verified Program object to a new local file.
 // It is the producer-side counterpart to Publish: local/CI builders retain the
 // object for bundle finalization instead of publishing it to a service CAS.
-func (program *EncodedProgram) Materialize(
+func (program *encodedProgram) Materialize(
 	ctx context.Context,
 	path string,
 ) (returnErr error) {
@@ -396,7 +394,7 @@ func publishProgramArtifact(
 	return nil
 }
 
-func (program *EncodedProgram) Close() error {
+func (program *encodedProgram) Close() error {
 	if program == nil {
 		return nil
 	}

@@ -392,7 +392,7 @@ func writeVerifiedProgramFixture(
 			t.Fatal(err)
 		}
 	}
-	inputDigest, err := ProgramPayloadDigest(t.Context(), inputRoot)
+	inputDigest, err := programPayloadDigest(t.Context(), inputRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
