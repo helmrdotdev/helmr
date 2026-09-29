@@ -8,7 +8,7 @@ import (
 
 func TestWaitComputerForRunUsesCurrentClaimFrontier(t *testing.T) {
 	mount := workerapi.ComputerInstanceAssignment{
-		ComputerID: "computer-1", ComputerMountPath: "/computer",
+		ComputerID: "computer-1", ComputerMountPath: "/workspace",
 		WriterGeneration: 4,
 		Target: workerapi.ComputerMountTarget{
 			BaseComputerDiskVersionID: "version-before-capture",

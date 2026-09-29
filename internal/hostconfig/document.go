@@ -44,7 +44,7 @@ type Step struct {
 
 // reservedDestinations are trees Helmr owns inside the build environment. The
 // check is a diagnostic for copy destinations; run steps are not inspected.
-var reservedDestinations = []string{"/opt/helmr", "/nix", "/computer"}
+var reservedDestinations = []string{"/opt/helmr", "/nix", "/workspace"}
 
 func parseDocument(raw []byte) (Document, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))

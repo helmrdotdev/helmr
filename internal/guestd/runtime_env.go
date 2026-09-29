@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	defaultRuntimeWorkdir = "/computer"
+	defaultRuntimeWorkdir = "/workspace"
 	defaultRuntimePath    = "/usr/local/bin:/usr/bin:/bin"
 )
 

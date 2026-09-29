@@ -34,7 +34,7 @@ const computer = await client.sandboxes.createComputer(
 
 const command = await computer.exec({
   command: ["git", "status", "--short"],
-  cwd: "/computer",
+  cwd: "/workspace",
   timeout: "5m",
   idempotencyKey: "computer:status:1",
 })
@@ -53,6 +53,7 @@ or a child Task for work on another Computer.
 Exec runs the supplied command inside the mounted Computer and may mutate its
 filesystem. It is a command-execution capability, not a read-only file API.
 
-Computer state and the image root are distinct. Use relative paths for files
-that should live in the mounted Computer. Secret values never belong in exec
+Computer state and the image root are distinct. The durable working directory is
+`/workspace` inside the Computer. Commands default to this directory, and an
+explicit Command `cwd` must be within it. Secret values never belong in exec
 arguments, environment overrides, or task payload.

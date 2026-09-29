@@ -15,13 +15,13 @@ func restoreSetFixture(t *testing.T) (*computerOperationRegistry, *waitingRunReg
 	delete(r.entries, "mounted")
 	r.entries[entry.computerInstanceID] = entry
 	entry.baseComputerDiskVersionID = "source-version"
-	entry.computerMount = "/computer"
+	entry.computerMount = "/workspace"
 	entry.channelToken = "source-token"
 	r.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: identity.ComputerId, ComputerInstanceId: identity.SourceComputerInstanceId, WriterGeneration: 3, CheckpointId: identity.CheckpointId, DesiredVersion: 2, MembershipRevision: 2}
 	for _, m := range identity.Runs {
 		r.captureRequest.Runs = append(r.captureRequest.Runs, &computerv0.ComputerCaptureRun{RunId: m.RunId, AttemptNumber: m.AttemptNumber, RunWaitId: m.RunWaitId, RunLeaseId: m.RunLeaseId})
 	}
-	request := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "destination-token"}, MountPath: "/computer", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "destination-version"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
+	request := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "destination-token"}, MountPath: "/workspace", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "destination-version"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
 	return r, w, entry, request
 }
 
@@ -107,13 +107,13 @@ func TestRestoreMaterializationHandlerRebindsSetWithoutReleasingPrograms(t *test
 func TestPreparedOnlyRestoreTransfersFilesystemOwnershipOnce(t *testing.T) {
 	r, w, identity := frozenComputerFixture(t, 0)
 	prepared := r.preparedRuntime
-	prepared.computerMount = "/computer"
+	prepared.computerMount = "/workspace"
 	prepared.computerRoot = t.TempDir()
 	prepared.imageRoot = "retained-image"
 	cleaned := 0
 	prepared.cleanup = func() { cleaned++ }
 	r.captureRequest = &computerv0.FreezeComputerRequest{ComputerId: identity.ComputerId, ComputerInstanceId: identity.SourceComputerInstanceId, WriterGeneration: 3, CheckpointId: identity.CheckpointId, DesiredVersion: 1}
-	q := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "new-token"}, MountPath: "/computer", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "restored-base"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
+	q := &computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerId: identity.ComputerId, ComputerInstanceId: "destination", WriterGeneration: 4, ChannelToken: "new-token"}, MountPath: "/workspace", Target: &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: "restored-base"}, RestoredCheckpointId: identity.CheckpointId, UsePreparedRuntime: true}
 	invalid := proto.Clone(q).(*computerv0.MaterializeComputerRequest)
 	invalid.Envelope.WriterGeneration = 3
 	if _, err := r.materializeRestoredComputerMount(invalid, w); err == nil {

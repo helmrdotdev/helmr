@@ -39,7 +39,7 @@ import { z } from "zod"
 
 const runtime = image("hello")
   .from("debian:bookworm-slim")
-  .workdir("/computer")
+  .workdir("/workspace")
 
 export const helloSandbox = sandbox({ id: "hello" })
   .image(runtime)

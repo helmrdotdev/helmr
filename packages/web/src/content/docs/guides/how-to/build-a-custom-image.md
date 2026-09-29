@@ -22,7 +22,7 @@ const runtime = image("reviewer")
     "/usr/local/bin/review-helper",
   )
   .run(["chmod", "+x", "/usr/local/bin/review-helper"])
-  .workdir("/computer")
+  .workdir("/workspace")
 
 export const reviewerSandbox = sandbox({ id: "reviewer" })
   .image(runtime)

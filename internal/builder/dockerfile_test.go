@@ -101,11 +101,11 @@ func TestPreparationSeparatesCompilerInstallAndAnalysis(t *testing.T) {
 		t.Fatal("bundling input boundary is not restricted and read-only")
 	}
 	analyzed := strings.Join(stageNamed(t, stages, "analyzed").instructions, "\n")
-	if strings.Contains(analyzed, "from=helmr_installed") || !strings.Contains(analyzed, "/computer/output/payload/") || !strings.Contains(analyzed, "--network=none "+canonicalToolMounts) {
+	if strings.Contains(analyzed, "from=helmr_installed") || !strings.Contains(analyzed, "/workspace/output/payload/") || !strings.Contains(analyzed, "--network=none "+canonicalToolMounts) {
 		t.Fatal("analysis must receive only payload and canonical tools")
 	}
 	installed := strings.Join(stageNamed(t, stages, "runtime-installed").instructions, "\n")
-	if !strings.Contains(installed, "--install-runtime") || !strings.Contains(installed, "rm -rf /computer/project") {
+	if !strings.Contains(installed, "--install-runtime") || !strings.Contains(installed, "rm -rf /workspace/project") {
 		t.Fatal("runtime install must be fresh")
 	}
 }
@@ -121,9 +121,9 @@ func TestInstallIsTheOnlyStageWithNetworkSecretsAndProjectSource(t *testing.T) {
 	installed := stageNamed(t, stages, "installed")
 	want := []string{
 		"USER 0:0",
-		"ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache",
-		`RUN ["/bin/bash","-euo","pipefail","-c","rm -rf /computer/project /computer/home /computer/output /computer/tmp /computer/work && install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work"]`,
-		"WORKDIR /computer/project",
+		"ENV HOME=/workspace/home TMPDIR=/workspace/tmp XDG_CACHE_HOME=/workspace/home/cache",
+		`RUN ["/bin/bash","-euo","pipefail","-c","rm -rf /workspace/project /workspace/home /workspace/output /workspace/tmp /workspace/work && install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work"]`,
+		"WORKDIR /workspace/project",
 		"COPY --chown=65532:65532 . .",
 		"USER 65532:65532",
 		`RUN --mount=type=secret,id=NPM_TOKEN,uid=65532,gid=65532,mode=0400,required=true ["corepack","yarn@8.0.0","install","--immutable"]`,
@@ -133,7 +133,7 @@ func TestInstallIsTheOnlyStageWithNetworkSecretsAndProjectSource(t *testing.T) {
 	}
 	tree := stageNamed(t, stages, "installed-tree")
 	if tree.base != "scratch" || len(tree.instructions) != 1 ||
-		tree.instructions[0] != "COPY --from=installed --chown=65532:65532 /computer/project/ /computer/project/" {
+		tree.instructions[0] != "COPY --from=installed --chown=65532:65532 /workspace/project/ /workspace/project/" {
 		t.Fatalf("exported tree = %+v", tree)
 	}
 	for _, forbidden := range []string{"docker.sock", "--privileged", "security.insecure", "--network=host", "--mount=type=ssh"} {
@@ -168,14 +168,14 @@ func TestFinalizerNeverSeesTheEnvironmentOrExecutesTenantStages(t *testing.T) {
 		t.Fatalf("finalizer has %d inputs, want prepared output and images", copies)
 	}
 	last := finalized.instructions[len(finalized.instructions)-1]
-	if !strings.HasPrefix(last, `RUN --network=none ["/opt/helmr/bin/bundle-builder","--prepared","/computer/prepared"`) {
+	if !strings.HasPrefix(last, `RUN --network=none ["/opt/helmr/bin/bundle-builder","--prepared","/workspace/prepared"`) {
 		t.Fatalf("finalizer run = %s", last)
 	}
 	if strings.Contains(last, "--node") || strings.Contains(last, "--config") {
 		t.Fatalf("finalizer can execute or configure modules: %s", last)
 	}
 	bundle := stageNamed(t, stages, "bundle")
-	if bundle.base != "scratch" || len(bundle.instructions) != 1 || bundle.instructions[0] != "COPY --from=finalized /computer/output/bundle/ /" {
+	if bundle.base != "scratch" || len(bundle.instructions) != 1 || bundle.instructions[0] != "COPY --from=finalized /workspace/output/bundle/ /" {
 		t.Fatalf("bundle export = %+v", bundle)
 	}
 }

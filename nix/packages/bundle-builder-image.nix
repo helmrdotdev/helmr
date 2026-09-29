@@ -37,7 +37,7 @@ let
     cp -a "$TMPDIR/npm-node/lib/node_modules/npm" "$out/opt/helmr/npm"
     grep -q '"version": "11.19.0"' "$out/opt/helmr/npm/package.json"
     ln -s ${squashfsTools}/bin/mksquashfs "$out/opt/helmr/bin/mksquashfs"
-    ln -s /computer/project "$out/opt/helmr/program"
+    ln -s /workspace/project "$out/opt/helmr/program"
   '';
   # The user-facing toolchain is the unmodified official release, running on
   # the Debian base like any other program there.
@@ -78,15 +78,15 @@ dockerTools.buildLayeredImage {
     Env = [
       "COREPACK_DEFAULT_TO_LATEST=0"
       "COREPACK_ENABLE_DOWNLOAD_PROMPT=0"
-      "HOME=/computer/home"
+      "HOME=/workspace/home"
       "LANG=C.UTF-8"
       "LC_ALL=C.UTF-8"
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-      "TMPDIR=/computer/tmp"
+      "TMPDIR=/workspace/tmp"
       "TZ=UTC"
-      "XDG_CACHE_HOME=/computer/home/cache"
+      "XDG_CACHE_HOME=/workspace/home/cache"
     ];
-    WorkingDir = "/computer/project";
+    WorkingDir = "/workspace/project";
   };
 
   meta = {

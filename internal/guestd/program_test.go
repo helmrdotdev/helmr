@@ -2025,7 +2025,7 @@ func TestValidateProgramSecretsRequiresCanonicalNonConflictingPlacements(t *test
 			secrets: []*programv0.ProgramSecret{
 				{
 					Placement: &programv0.ProgramSecret_File{
-						File: "/computer/token",
+						File: "/workspace/token",
 					},
 					Value: []byte("value"),
 				},

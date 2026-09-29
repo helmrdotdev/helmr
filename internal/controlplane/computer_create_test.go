@@ -32,7 +32,7 @@ func TestNormalizeComputerSecretPlacementsCanonicalizesAndRejectsConflicts(t *te
 			{Name: "second", File: &api.SecretFile{Path: "/run/secrets/token"}},
 		},
 		"computer file": {
-			{Name: "first", File: &api.SecretFile{Path: "/computer/token"}},
+			{Name: "first", File: &api.SecretFile{Path: "/workspace/token"}},
 		},
 		"reserved env": {
 			{Name: "first", Env: &api.SecretEnv{Name: "HELMR_RUN_ID", Mode: "raw"}},

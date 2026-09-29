@@ -41,7 +41,7 @@ func TestBuildCapacitySizedSeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if seed.Config.User != "agent" || seed.Config.WorkingDir != "/computer" {
+		if seed.Config.User != "agent" || seed.Config.WorkingDir != "/workspace" {
 			t.Fatal("authored runtime config lost")
 		}
 		input, err := os.Open(target)

@@ -13,7 +13,7 @@ import (
 )
 
 func TestInspectMetadataOrderAndConcurrentOwnership(t *testing.T) {
-	config := []byte(`{"config":{"Env":["A=one","B=two"],"WorkingDir":"/computer","User":"1000","Entrypoint":["/bin/sh"],"Cmd":["-c","echo ready"]}}`)
+	config := []byte(`{"config":{"Env":["A=one","B=two"],"WorkingDir":"/workspace","User":"1000","Entrypoint":["/bin/sh"],"Cmd":["-c","echo ready"]}}`)
 	want, err := DecodeConfig(config)
 	if err != nil {
 		t.Fatal(err)

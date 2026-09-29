@@ -3940,7 +3940,7 @@ function encodeComputerSecrets(inputs) {
     const file = computerObject(value["file"], "Computer Secret file");
     exactBindingKeys(file, ["path"]);
     const path2 = file["path"];
-    if (typeof path2 !== "string" || path2.length > 4096 || !path2.startsWith("/") || path2 === "/" || path2.includes("\0") || path2.split("/").slice(1).some((part) => part === "" || part === "." || part === "..") || ["/computer", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"].some((root) => path2 === root || path2.startsWith(root + "/"))) throw new Error("Invalid or reserved Secret file path");
+    if (typeof path2 !== "string" || path2.length > 4096 || !path2.startsWith("/") || path2 === "/" || path2.includes("\0") || path2.split("/").slice(1).some((part) => part === "" || part === "." || part === "..") || ["/workspace", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"].some((root) => path2 === root || path2.startsWith(root + "/"))) throw new Error("Invalid or reserved Secret file path");
     files.push(path2);
     return Object.freeze({ secret: input.secret, file: Object.freeze({ path: path2 }) });
   });

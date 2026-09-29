@@ -64,7 +64,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
         "exit 7",
       ].join("; "),
     ],
-    cwd: "/computer",
+    cwd: "/workspace",
     env: { SMOKE_MARKER: marker },
     stdin: new TextEncoder().encode(stdin),
     timeout: "2m",
@@ -134,7 +134,7 @@ await verify("computer-command", async ({ client, marker, objects, cleanup }) =>
   const postTaskExec = await collectCommand(await byKey.exec(
     {
       command: ["cat", markerPath],
-      cwd: "/computer",
+      cwd: "/workspace",
       idempotencyKey: `computer:verify-task:${marker}`,
     },
     {

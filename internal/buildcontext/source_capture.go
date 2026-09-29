@@ -401,7 +401,7 @@ func validateSourcePath(name string) error {
 	if name == "." {
 		return errors.New("invalid source entry name")
 	}
-	return safepath.ValidateTreePath(name, "/computer/project", "/computer/program", "/opt/helmr/program")
+	return safepath.ValidateTreePath(name, "/workspace/project", "/workspace/program", "/opt/helmr/program")
 }
 
 func validateSourceEntry(name string, info os.FileInfo, linkname string) error {
@@ -416,7 +416,7 @@ func validateSourceEntry(name string, info os.FileInfo, linkname string) error {
 		if resolved == ".." || strings.HasPrefix(resolved, "../") || path.IsAbs(resolved) {
 			return fmt.Errorf("build source symlink %q escapes the project root", name)
 		}
-		return safepath.ValidateTreePath(resolved, "/computer/project", "/computer/program", "/opt/helmr/program")
+		return safepath.ValidateTreePath(resolved, "/workspace/project", "/workspace/program", "/opt/helmr/program")
 	default:
 		return fmt.Errorf("build source entry %q has unsupported type %s", name, info.Mode().Type())
 	}

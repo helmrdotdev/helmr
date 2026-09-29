@@ -354,7 +354,7 @@ func buildComputerImages(
 		}
 		computerInputs[index] = map[string]string{
 			"declaredId": computer.DeclaredID,
-			"path":       "/computer/images/" + filename,
+			"path":       "/workspace/images/" + filename,
 		}
 	}
 	return computerInputs, nil

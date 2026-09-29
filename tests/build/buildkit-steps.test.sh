@@ -16,7 +16,7 @@ cat >"$tmp/build.log" <<'LOG'
 #5 0.412 preparing
 #5 DONE 1.2s
 #0 building with "helmr-test" instance using docker-container driver
-#5 [installed 1/4] WORKDIR /computer/project
+#5 [installed 1/4] WORKDIR /workspace/project
 #5 CACHED
 #9 [installed 4/4] RUN ["npm","ci"]
 #9 CACHED

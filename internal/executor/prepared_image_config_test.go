@@ -20,7 +20,7 @@ import (
 
 func preparedConfigImage(t *testing.T) []byte {
 	t.Helper()
-	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/computer","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
+	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/workspace","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
 	marshal := func(v any) []byte {
 		b, e := json.Marshal(v)
 		if e != nil {
@@ -63,7 +63,7 @@ func TestPrepareGuestRuntimeTransfersConfigOrImage(t *testing.T) {
 			if err := os.WriteFile(path, body, 0600); err != nil {
 				t.Fatal(err)
 			}
-			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerMountPath: "/computer", ComputerImage: workerapi.CASObject{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body))}}
+			mount := workerapi.ComputerInstanceAssignment{ComputerID: "computer", ComputerMountPath: "/workspace", ComputerImage: workerapi.CASObject{Digest: sha256sum.DigestBytes(body), SizeBytes: int64(len(body))}}
 			var config *computerv0.RuntimeImageConfig
 			if mounted {
 				var err error

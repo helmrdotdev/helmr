@@ -189,7 +189,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 				}
 			}()
 			start := time.Now()
-			session, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/computer", Resources: compute.ResourceVector{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
+			session, err := runtime.Materialize(t.Context(), vm.MaterializeRequest{ID: id, OwnerKind: owner.Kind, Binding: vm.WorkloadBinding{WorkerEpoch: 1, OwnerID: id, Generation: 1, ComputerInstanceID: id, VMPlatformID: identity.ID}, RootfsDigest: connector.artifacts.Rootfs.Digest, ComputerMountPath: "/workspace", Resources: compute.ResourceVector{MilliCPU: cfg.VCPUCount * 1000, MemoryMiB: cfg.MemoryMiB, DiskMiB: cfg.ScratchDiskMiB, Slots: 1}, VMVCPUCount: int32(cfg.VCPUCount), CPUConfigDigest: cpu, Topology: vm.RuntimeTopology{Computer: &vm.RuntimeComputer{ComputerID: uuid.NewV7().String(), VersionID: uuid.NewV7().String(), SizeBytes: capacity, Device: device}}})
 			if err != nil {
 				t.Fatal(err)
 			}

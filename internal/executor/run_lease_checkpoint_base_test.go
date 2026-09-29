@@ -10,7 +10,7 @@ func TestCheckpointBaseUsesPreparedComputer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if base.MountPath != "/computer" {
+	if base.MountPath != "/workspace" {
 		t.Fatalf("base=%+v", base)
 	}
 	if _, err := checkpointComputerBase(workerapi.ComputerMountTarget{}); err == nil {

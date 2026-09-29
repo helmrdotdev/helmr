@@ -110,12 +110,12 @@ func normalizeComputerCommand(request computerCommandRequest) (normalizedCompute
 
 	cwd := request.Cwd
 	if cwd == "" {
-		cwd = "/computer"
+		cwd = "/workspace"
 	}
 	if !utf8.ValidString(cwd) || len(cwd) > 4096 || strings.IndexByte(cwd, 0) >= 0 ||
 		!strings.HasPrefix(cwd, "/") || path.Clean(cwd) != cwd ||
-		(cwd != "/computer" && !strings.HasPrefix(cwd, "/computer/")) {
-		return normalizedComputerCommand{}, fmt.Errorf("%w: cwd must be a canonical absolute path beneath /computer", errComputerCommandInvalid)
+		(cwd != "/workspace" && !strings.HasPrefix(cwd, "/workspace/")) {
+		return normalizedComputerCommand{}, fmt.Errorf("%w: cwd must be a canonical absolute path beneath /workspace", errComputerCommandInvalid)
 	}
 
 	if len(request.Env) > computerCommandEnvMaxCount {

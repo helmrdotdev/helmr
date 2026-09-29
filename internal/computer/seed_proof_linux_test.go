@@ -72,7 +72,7 @@ func TestComputerSeedProof(t *testing.T) {
 	if err := seeds.Decode(t.Context(), seedSource.Artifact, disk, 128<<20); err != nil {
 		t.Fatal(err)
 	}
-	if seedSource.Config.User != "1000:1000" || seedSource.Config.WorkingDir != "/computer" || len(seedSource.Config.Env) != 3 {
+	if seedSource.Config.User != "1000:1000" || seedSource.Config.WorkingDir != "/workspace" || len(seedSource.Config.Env) != 3 {
 		t.Fatal("lost seed configuration")
 	}
 	computerProofCommand(t, "e2fsck", "-fn", disk)
@@ -188,7 +188,7 @@ func publishTestSeed(t *testing.T, objects cas.Store, source, staging string, co
 
 func seedConfigImage(t *testing.T) []byte {
 	t.Helper()
-	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/computer","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
+	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/workspace","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
 	marshal := func(v any) []byte {
 		b, e := json.Marshal(v)
 		if e != nil {

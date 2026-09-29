@@ -56,7 +56,7 @@ func generationPublicationFixture(t *testing.T) (initialPublicationFixture, comp
 	if err = recordInitialComputerObject(t.Context(), f.Pool, fence, evidence, &uploaded); err != nil {
 		t.Fatal(err)
 	}
-	return f, fence, initialComputerPublication{Root: root, Config: oci.RuntimeConfig{User: "root", WorkingDir: "/computer"}}
+	return f, fence, initialComputerPublication{Root: root, Config: oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"}}
 }
 
 func TestInitialGenerationPublicationReplay(t *testing.T) {

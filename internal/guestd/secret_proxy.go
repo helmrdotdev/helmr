@@ -31,7 +31,7 @@ func reservedSecretEnv(name string) bool {
 }
 
 // This file contains public trust only. Private signer and leaf keys never cross
-// the worker/guest protocol. The image root is ephemeral, outside /computer.
+// the worker/guest protocol. The image root is ephemeral, outside /workspace.
 func stageProtectedEnv(imageRoot string, selectors map[string]string, ca []byte, env *[]string) error {
 	if len(selectors) == 0 {
 		if len(ca) != 0 {

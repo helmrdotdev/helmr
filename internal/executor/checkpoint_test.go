@@ -93,7 +93,7 @@ func TestComputerCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T)
 	if len(manifest.RuntimeState.MemoryArtifacts) != 1 || manifest.RuntimeState.MemoryArtifacts[0].Digest != memoryPut.object.Digest {
 		t.Fatalf("memory artifacts = %+v puts=%+v", manifest.RuntimeState.MemoryArtifacts, store.puts)
 	}
-	if manifest.ComputerState.Base.MountPath != "/computer" {
+	if manifest.ComputerState.Base.MountPath != "/workspace" {
 		t.Fatalf("computer base = %+v", manifest.ComputerState.Base)
 	}
 	if string(manifest.RuntimeState.Config) != `{"runtime":{"backend":"firecracker"}}` {
@@ -131,7 +131,7 @@ func newCheckpointStream(t *testing.T, closeErr error, messages ...proto.Message
 func testCheckpointComputerBase() workerapi.CheckpointComputerBase {
 	return workerapi.CheckpointComputerBase{
 
-		MountPath: "/computer",
+		MountPath: "/workspace",
 	}
 }
 

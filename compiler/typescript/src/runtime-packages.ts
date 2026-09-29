@@ -41,18 +41,18 @@ export async function assembleRuntime(options: { bundle: string; installed: stri
 // Recipe environment variables must not silently change npm's install contract.
 export async function installRuntimePackages() {
   const env: NodeJS.ProcessEnv = {
-    HOME: "/computer/home", TMPDIR: "/computer/tmp", LANG: "C.UTF-8",
+    HOME: "/workspace/home", TMPDIR: "/workspace/tmp", LANG: "C.UTF-8",
     PATH: "/opt/helmr/runtime/bin:/usr/local/bin:/usr/bin:/bin",
   }
   for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "PKG_CONFIG_PATH"]) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
-  const userConfig = "/computer/home/runtime-user.npmrc"
-  const globalConfig = "/computer/home/runtime-global.npmrc"
+  const userConfig = "/workspace/home/runtime-user.npmrc"
+  const globalConfig = "/workspace/home/runtime-global.npmrc"
   await writeFile(userConfig, "")
   await writeFile(globalConfig, "")
   await new Promise<void>((resolve, reject) => {
-    const child = spawn(process.execPath, ["/opt/helmr/npm/bin/npm-cli.js", "install", "--no-audit", "--no-fund", "--omit=dev", "--package-lock=true", "--prefer-online", "--registry=https://registry.npmjs.org/", `--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`, "--cache=/computer/npm-cache"], { env, stdio: "inherit" })
+    const child = spawn(process.execPath, ["/opt/helmr/npm/bin/npm-cli.js", "install", "--no-audit", "--no-fund", "--omit=dev", "--package-lock=true", "--prefer-online", "--registry=https://registry.npmjs.org/", `--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`, "--cache=/workspace/npm-cache"], { env, stdio: "inherit" })
     child.once("error", reject)
     child.once("exit", code => code === 0 ? resolve() : reject(new Error(`runtime package installation failed (${code})`)))
   })

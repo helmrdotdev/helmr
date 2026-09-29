@@ -60,10 +60,10 @@ func TestBuildComputerImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 	if len(requests) != 2 {
 		t.Fatalf("BuildKit requests = %d, want 2", len(requests))
 	}
-	firstPath := "/computer/images/computer-000.oci.tar"
+	firstPath := "/workspace/images/computer-000.oci.tar"
 	if len(inputs) != 3 ||
 		inputs[0]["declaredId"] != "first" || inputs[0]["path"] != firstPath ||
-		inputs[1]["declaredId"] != "middle" || inputs[1]["path"] != "/computer/images/computer-001.oci.tar" ||
+		inputs[1]["declaredId"] != "middle" || inputs[1]["path"] != "/workspace/images/computer-001.oci.tar" ||
 		inputs[2]["declaredId"] != "third" || inputs[2]["path"] != firstPath {
 		t.Fatalf("computer inputs = %+v", inputs)
 	}

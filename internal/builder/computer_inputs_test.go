@@ -50,7 +50,7 @@ func TestReadComputerImageInputsDerivesFinalArtifactIdentity(t *testing.T) {
 	if len(images) != 1 || images[0].DeclaredID != "sandbox" ||
 		images[0].Artifact.Digest != digest ||
 		images[0].Artifact.MediaType != deployment.ComputerImageArtifactMediaType ||
-		images[0].Artifact.Profile != computer.SeedProfile || images[0].Artifact.Config.WorkingDir != "/computer" ||
+		images[0].Artifact.Profile != computer.SeedProfile || images[0].Artifact.Config.WorkingDir != "/workspace" ||
 		images[0].Artifact.Architecture != deployment.ArchitectureX8664 ||
 		len(objects) != 1 || objects[0].Digest != digest || objects[0].Path == imagePath {
 		t.Fatalf("images = %+v objects = %+v", images, objects)
@@ -129,7 +129,7 @@ func TestReadComputerImageInputsAcceptsSharedPath(t *testing.T) {
 func computerOCIFixture(t *testing.T) []byte {
 	t.Helper()
 	layer := tarFixture(t, "hello.txt", []byte("hello"))
-	config := []byte(`{"Config":{"WorkingDir":"/computer"}}`)
+	config := []byte(`{"Config":{"WorkingDir":"/workspace"}}`)
 	configDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(config))
 	layerDigest := fmt.Sprintf("sha256:%x", sha256.Sum256(layer))
 	manifest, _ := json.Marshal(oci.Manifest{

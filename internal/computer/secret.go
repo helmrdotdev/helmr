@@ -114,7 +114,7 @@ func validateSecretFileTarget(value string) error {
 	if !strings.HasPrefix(value, "/") || path.Clean(value) != value || value == "/" {
 		return fmt.Errorf("computer secret file target %q must be a canonical absolute path", value)
 	}
-	for _, reserved := range []string{"/computer", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"} {
+	for _, reserved := range []string{"/workspace", "/var/lib/helmr", "/dev", "/opt/helmr", "/proc", "/sys", "/.helmr-old-root", "/run/helmr"} {
 		if value == reserved || strings.HasPrefix(value, reserved+"/") {
 			return fmt.Errorf("computer secret file target %q overlaps a reserved runtime path", value)
 		}

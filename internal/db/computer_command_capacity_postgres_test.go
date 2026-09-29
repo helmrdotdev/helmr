@@ -140,7 +140,7 @@ func addCapacityCommand(t *testing.T, f runtest.Fixture, computerID uuid.UUID) {
 	t.Helper()
 	claimID, commandID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,receipt_expires_at) VALUES($1,$2,'computer.command.create',$3,$4,now(),now()+interval '30 days')`, claimID, f.EnvironmentID, dbtest.Hash(commandID.String()), dbtest.Hash("command"))
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,cwd,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,$4,ARRAY['true'],'/computer','{}','',300000,'api_key','fixture')`, commandID, f.EnvironmentID, computerID, claimID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,cwd,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id) VALUES($1,$2,$3,$4,ARRAY['true'],'/workspace','{}','',300000,'api_key','fixture')`, commandID, f.EnvironmentID, computerID, claimID)
 }
 
 func reclaimCapacityInstance(t *testing.T, f runtest.Fixture, instanceID uuid.UUID) {

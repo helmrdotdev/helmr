@@ -143,7 +143,7 @@ func testComputerBasicExecRequest(
 			ComputerInstanceId: "instance-1", ComputerId: "computer-1", ChannelToken: "channel-token",
 			WriterGeneration: 1, OperationExpiresAtUnixNano: time.Now().Add(time.Minute).UnixNano(),
 		},
-		RequestJson: `{"command":["true"],"cwd":"/computer","env":{},"timeout_ms":1000}`,
+		RequestJson: `{"command":["true"],"cwd":"/workspace","env":{},"timeout_ms":1000}`,
 	}
 }
 

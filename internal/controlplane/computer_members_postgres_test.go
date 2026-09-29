@@ -26,7 +26,7 @@ func TestComputerMembersReadAuthoritativeRowsAndScopeCursor(t *testing.T) {
 		claimID, f.environmentID, dbtest.Hash(commandID.String()), commandID.String())
 	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO computer_commands
  (id,environment_id,computer_id,argv,cwd,env,stdin,timeout_ms,claim_id,created_by_subject_type,created_by_subject_id)
- SELECT $1,environment_id,id,ARRAY['true'],'/computer','{}'::jsonb,''::bytea,300000,$3,'user','test'
+ SELECT $1,environment_id,id,ARRAY['true'],'/workspace','{}'::jsonb,''::bytea,300000,$3,'user','test'
  FROM computers WHERE id=$2`, commandID, f.computerIDs[0], claimID)
 	principal := auth.Actor{
 		OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,

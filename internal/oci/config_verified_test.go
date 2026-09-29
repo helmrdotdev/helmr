@@ -26,7 +26,7 @@ func TestReadVerifiedConfigVerifiesFullImageAndPreservesSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := RuntimeConfig{Env: []string{"A=one", "A=two", "EMPTY="}, WorkingDir: "/computer", User: "1000:1000", Entrypoint: []string{"/bin/sh", "-c"}, Cmd: []string{"echo hello"}}
+	want := RuntimeConfig{Env: []string{"A=one", "A=two", "EMPTY="}, WorkingDir: "/workspace", User: "1000:1000", Entrypoint: []string{"/bin/sh", "-c"}, Cmd: []string{"echo hello"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("config = %v", got)
 	}
@@ -75,7 +75,7 @@ func TestReadVerifiedConfigVerifiesFullImageAndPreservesSettings(t *testing.T) {
 
 func verifiedConfigImage(t *testing.T) []byte {
 	t.Helper()
-	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/computer","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
+	config := []byte(`{"config":{"Env":["A=one","A=two","EMPTY="],"WorkingDir":"/workspace","User":"1000:1000","Entrypoint":["/bin/sh","-c"],"Cmd":["echo hello"]}}`)
 	marshal := func(v any) []byte {
 		b, e := json.Marshal(v)
 		if e != nil {

@@ -49,7 +49,7 @@ func (s *Server) workerClaimComputerInstance(w http.ResponseWriter, r *http.Requ
 				GuestdChannelToken:  token, GuestdChannelTokenHash: hex.EncodeToString(i.GuestChannelTokenHash), ExpiresAt: i.WriterExpiresAt.Time,
 				VMPlatformID: i.VMPlatformID, RootfsDigest: source.RootfsDigest, VMRuntimeContract: source.Contract,
 				ComputerImage:     workerapi.CASObject{Digest: source.SeedDigest, SizeBytes: source.SeedSizeBytes, MediaType: source.SeedMediaType},
-				ComputerMountPath: "/computer", RequestedMilliCPU: i.ReservedCPUMillis, RequestedMemoryMiB: i.ReservedMemoryBytes / 1048576,
+				ComputerMountPath: "/workspace", RequestedMilliCPU: i.ReservedCPUMillis, RequestedMemoryMiB: i.ReservedMemoryBytes / 1048576,
 				RequestedDiskMiB: i.ReservedGuestEphemeralDiskBytes / 1048576, RequestedExecutionSlots: i.ReservedExecutionSlots,
 			}
 			return nil

@@ -72,7 +72,7 @@ func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
 	disk := manifest.RuntimeState.Computer
-	if disk == nil || disk.ComputerID != point.ComputerID || disk.LogicalBytes != instance.ReservedGuestEphemeralDiskBytes || disk.Root.Validate(disk.LogicalBytes) != nil || manifest.ComputerState.Base.MountPath != "/computer" {
+	if disk == nil || disk.ComputerID != point.ComputerID || disk.LogicalBytes != instance.ReservedGuestEphemeralDiskBytes || disk.Root.Validate(disk.LogicalBytes) != nil || manifest.ComputerState.Base.MountPath != "/workspace" {
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
 	byRun := make(map[string]workerapi.CheckpointRun, len(point.Runs))
