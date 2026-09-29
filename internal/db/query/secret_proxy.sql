@@ -12,7 +12,7 @@ WITH authority AS (
  JOIN worker_groups g ON g.id=h.worker_group_id
  WHERE i.id=sqlc.arg(computer_instance_id) AND i.worker_host_id=sqlc.arg(worker_host_id)
  AND i.worker_epoch=sqlc.arg(worker_epoch) AND i.worker_group_id=sqlc.arg(worker_group_id)
- AND h.status IN ('active','draining') AND g.status IN ('active','draining')
+ AND h.status IN ('active','draining') AND g.status IN ('active','paused','draining')
  AND h.observed_at>=statement_timestamp()-interval '120 seconds'
  AND c.status='active' AND c.desired_state='active' AND c.deleted_at IS NULL
  AND i.desired_state='ready' AND i.reclaimed_at IS NULL AND i.writer_expires_at>statement_timestamp()
@@ -33,6 +33,9 @@ WHERE b.placement_kind='env' AND b.mode='protected' AND b.placeholder=ANY(sqlc.a
 -- name: CaptureSecretProxyPreparation :one
 -- Computer CA creation is separate; preparation captures only existing material.
 -- claims_current has the same freshness-only meaning as in protected capture.
+-- An allocated Instance is still being admitted and needs admitting supply
+-- (active Group, Pool and Host without Run or VM pauses); a ready Instance
+-- continues on paused or draining supply.
 WITH authority AS (
  SELECT i.computer_id,i.environment_id,c.secret_ca_certificate AS certificate,c.secret_ca_not_after AS not_after,
  c.secret_ca_private_key_nonce AS private_key_nonce,c.secret_ca_private_key_ciphertext AS private_key_ciphertext,
@@ -43,11 +46,13 @@ WITH authority AS (
  JOIN worker_groups g ON g.id=h.worker_group_id
  WHERE i.id=sqlc.arg(computer_instance_id) AND i.worker_host_id=sqlc.arg(worker_host_id)
  AND i.worker_epoch=sqlc.arg(worker_epoch) AND i.worker_group_id=sqlc.arg(worker_group_id)
- AND h.status IN ('active','draining') AND g.status IN ('active','draining')
+ AND h.status IN ('active','draining') AND g.status IN ('active','paused','draining')
  AND h.observed_at>=statement_timestamp()-interval '120 seconds'
  AND c.status='active' AND c.desired_state='active' AND c.deleted_at IS NULL
  AND i.desired_state='ready' AND i.reclaimed_at IS NULL AND i.writer_expires_at>statement_timestamp()
- AND ((i.observed_state='allocated' AND i.preparation_expires_at>statement_timestamp())
+ AND ((i.observed_state='allocated' AND i.preparation_expires_at>statement_timestamp() AND h.status='active' AND g.status='active'
+       AND h.run_paused_reason IS NULL AND h.vm_paused_reason IS NULL
+       AND EXISTS(SELECT 1 FROM worker_pools p WHERE p.id=h.worker_pool_id AND p.status='active'))
       OR (i.observed_state='ready' AND i.mount_state='mounted' AND i.guest_channel_token_expires_at>statement_timestamp()))
 )
 SELECT a.environment_id,a.computer_id,a.certificate,a.not_after,a.private_key_nonce,a.private_key_ciphertext,a.claims_current,

@@ -366,8 +366,8 @@ func (q *Queries) GetCheckpointReadyReplay(ctx context.Context, arg GetCheckpoin
 }
 
 const getComputerCaptureWorkerFresh = `-- name: GetComputerCaptureWorkerFresh :one
-SELECT (observed_at>=clock_timestamp()-$1::bigint*interval '1 second'
- AND ($2::timestamptz IS NULL OR $2>clock_timestamp()))::boolean AS fresh
+SELECT COALESCE(observed_at>=clock_timestamp()-$1::bigint*interval '1 second'
+ AND ($2::timestamptz IS NULL OR $2>clock_timestamp()),false)::boolean AS fresh
  FROM worker_hosts WHERE id=$3
 `
 
@@ -377,7 +377,11 @@ type GetComputerCaptureWorkerFreshParams struct {
 	ID                     pgtype.UUID        `json:"id"`
 }
 
-// Caller holds every capture lock; wall-clock deadlines are evaluated afterwards.
+// Post-lock time check only. The caller (dispatch.BeginComputerCapture) must
+// already hold the Worker Group, Worker Host, Computer, Instance and resident
+// owner locks and have validated Group/Host status and epoch. Run and VM pauses
+// do not apply: capture continues resident work. A host that was never
+// observed is not fresh.
 func (q *Queries) GetComputerCaptureWorkerFresh(ctx context.Context, arg GetComputerCaptureWorkerFreshParams) (bool, error) {
 	row := q.db.QueryRow(ctx, getComputerCaptureWorkerFresh, arg.WorkerFreshnessSeconds, arg.ExpiresAt, arg.ID)
 	var fresh bool
@@ -404,7 +408,7 @@ WHERE instance.id=$1 AND instance.environment_id=$2
  AND instance.writer_generation=computer.writer_generation AND instance.writer_expires_at>clock_timestamp()
  AND computer.status='active' AND computer.desired_state='active'
  AND checkpoint.status='creating' AND (checkpoint.expires_at IS NULL OR checkpoint.expires_at>clock_timestamp())
- AND worker.status IN ('active','draining') AND worker_group.status IN ('active','draining')
+ AND worker.status IN ('active','draining') AND worker_group.status IN ('active','paused','draining')
  AND worker.observed_at>=clock_timestamp()-$7::bigint*interval '1 second'
 `
 

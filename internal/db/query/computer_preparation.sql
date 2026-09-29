@@ -69,12 +69,14 @@ WHERE c.environment_id=sqlc.arg(environment_id) AND c.id=sqlc.arg(computer_id)
  AND (cp.resume_computer_instance_id IS NULL OR cp.resume_computer_instance_id=i.id)
  AND (i.desired_state='closed' OR i.observed_state IN ('failed','lost','closed') OR i.reclaimed_at IS NOT NULL);
 
--- Caller holds the preparation locks and rechecks after object writes, before
--- commit. Preparation and writer deadlines and Worker liveness use wall-clock time.
+-- Post-lock check for an allocated Instance, repeated after object writes and
+-- before commit. The caller (dispatch.lockComputerPreparation) must already
+-- hold the admission-mode Worker Group, Pool and Host fence (which pins active
+-- supply, the epoch, a present observation and no Run or VM pause) and the
+-- Computer and Instance locks.
 -- name: GetComputerPreparationDeadlinesValid :one
 SELECT (i.preparation_expires_at>clock_timestamp() AND i.writer_expires_at>clock_timestamp()
  AND i.desired_state='ready' AND i.desired_version=sqlc.arg(desired_version) AND i.reclaimed_at IS NULL
  AND i.writer_generation=sqlc.arg(writer_generation) AND i.observed_state='allocated'
- AND w.status='active' AND w.current_epoch=i.worker_epoch
  AND w.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second')::boolean AS valid
  FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=sqlc.arg(id);

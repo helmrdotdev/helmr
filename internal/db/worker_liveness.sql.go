@@ -91,22 +91,17 @@ func (q *Queries) ListStaleWorkerFenceCandidates(ctx context.Context, arg ListSt
 }
 
 const lockRunEligibleWorkerHost = `-- name: LockRunEligibleWorkerHost :one
-SELECT worker_hosts.id
+SELECT (worker_hosts.status = 'active' AND worker_hosts.run_paused_reason IS NULL
+        AND worker_hosts.vm_paused_reason IS NULL)::boolean AS admitting
   FROM worker_hosts
-  JOIN worker_groups
-    ON worker_groups.id = worker_hosts.worker_group_id
-  JOIN worker_pools
-    ON worker_pools.id = worker_hosts.worker_pool_id
-   AND worker_pools.worker_group_id = worker_hosts.worker_group_id
   LEFT JOIN vm_platforms
     ON vm_platforms.id = worker_hosts.vm_platform_id
  WHERE worker_hosts.id = $1
    AND worker_hosts.worker_group_id = $2
    AND worker_hosts.current_epoch = $3::bigint
-   AND (worker_hosts.status = 'active' OR ($4::boolean AND worker_hosts.status='draining'))
-   AND worker_pools.status = 'active'
+   AND (worker_hosts.status = 'active' OR ($4::boolean AND worker_hosts.status = 'draining'))
    AND worker_hosts.observed_at >= clock_timestamp() - $5::bigint * interval '1 second'
-   AND worker_hosts.run_paused_reason IS NULL
+   AND ($4::boolean OR worker_hosts.run_paused_reason IS NULL)
    AND vm_platforms.arch = $6
    AND vm_platforms.contract = $7
  FOR UPDATE OF worker_hosts
@@ -116,27 +111,32 @@ type LockRunEligibleWorkerHostParams struct {
 	ID                     pgtype.UUID `json:"id"`
 	WorkerGroupID          pgtype.UUID `json:"worker_group_id"`
 	WorkerEpoch            int64       `json:"worker_epoch"`
-	AllowDraining          bool        `json:"allow_draining"`
+	Continuation           bool        `json:"continuation"`
 	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
 	RunArchitecture        string      `json:"run_architecture"`
 	Contract               string      `json:"contract"`
 }
 
-// Caller holds the Worker Group and pool locks. Observation freshness and the
-// Run pause are rechecked while the Worker Host row is locked.
-func (q *Queries) LockRunEligibleWorkerHost(ctx context.Context, arg LockRunEligibleWorkerHostParams) (pgtype.UUID, error) {
+// Worker Host fence for placement and Computer preparation. The caller
+// (dispatch.lockWorkerFence) must already hold the Worker Group and Pool share
+// locks and have validated their status. This query locks the Worker Host and
+// checks epoch, observation freshness and platform. Admission also requires an
+// active host without a Run pause; continuation of admitted work accepts a
+// draining host and ignores pauses. admitting reports whether the locked host
+// could admit new work, including the VM pause.
+func (q *Queries) LockRunEligibleWorkerHost(ctx context.Context, arg LockRunEligibleWorkerHostParams) (bool, error) {
 	row := q.db.QueryRow(ctx, lockRunEligibleWorkerHost,
 		arg.ID,
 		arg.WorkerGroupID,
 		arg.WorkerEpoch,
-		arg.AllowDraining,
+		arg.Continuation,
 		arg.WorkerFreshnessSeconds,
 		arg.RunArchitecture,
 		arg.Contract,
 	)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+	var admitting bool
+	err := row.Scan(&admitting)
+	return admitting, err
 }
 
 const recheckAndFenceStaleWorkerHost = `-- name: RecheckAndFenceStaleWorkerHost :one

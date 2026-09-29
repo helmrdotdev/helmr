@@ -89,7 +89,7 @@ func lockComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) 
 	if !p.worker.WorkerEpoch.Valid || !p.worker.VMPlatformID.Valid {
 		return p, ErrCapacityUnavailable
 	}
-	if err := lockWorkerFence(ctx, tx, workerFence{GroupID: p.worker.WorkerGroupID, RegionID: p.computer.RegionID, WorkerHostID: p.worker.WorkerHostID, WorkerEpoch: p.worker.WorkerEpoch.Int64, RunArchitecture: runtimeArchitecture, RequirePrimary: !p.instance.ID.Valid && !p.checkpoint.Valid}); err != nil {
+	if _, err := lockWorkerFence(ctx, tx, workerFence{GroupID: p.worker.WorkerGroupID, RegionID: p.computer.RegionID, WorkerHostID: p.worker.WorkerHostID, WorkerEpoch: p.worker.WorkerEpoch.Int64, RunArchitecture: runtimeArchitecture, RequirePrimary: !p.instance.ID.Valid && !p.checkpoint.Valid}); err != nil {
 		return p, err
 	}
 	c, err := db.New(tx).LockComputer(ctx, db.LockComputerParams{EnvironmentID: p.computer.EnvironmentID, ID: p.computer.ID})

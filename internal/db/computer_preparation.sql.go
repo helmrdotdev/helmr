@@ -159,7 +159,6 @@ const getComputerPreparationDeadlinesValid = `-- name: GetComputerPreparationDea
 SELECT (i.preparation_expires_at>clock_timestamp() AND i.writer_expires_at>clock_timestamp()
  AND i.desired_state='ready' AND i.desired_version=$1 AND i.reclaimed_at IS NULL
  AND i.writer_generation=$2 AND i.observed_state='allocated'
- AND w.status='active' AND w.current_epoch=i.worker_epoch
  AND w.observed_at>=clock_timestamp()-$3::bigint*interval '1 second')::boolean AS valid
  FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$4
 `
@@ -171,8 +170,11 @@ type GetComputerPreparationDeadlinesValidParams struct {
 	ID                     pgtype.UUID `json:"id"`
 }
 
-// Caller holds the preparation locks and rechecks after object writes, before
-// commit. Preparation and writer deadlines and Worker liveness use wall-clock time.
+// Post-lock check for an allocated Instance, repeated after object writes and
+// before commit. The caller (dispatch.lockComputerPreparation) must already
+// hold the admission-mode Worker Group, Pool and Host fence (which pins active
+// supply, the epoch, a present observation and no Run or VM pause) and the
+// Computer and Instance locks.
 func (q *Queries) GetComputerPreparationDeadlinesValid(ctx context.Context, arg GetComputerPreparationDeadlinesValidParams) (bool, error) {
 	row := q.db.QueryRow(ctx, getComputerPreparationDeadlinesValid,
 		arg.DesiredVersion,

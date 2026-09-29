@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -195,5 +196,108 @@ func TestExecutionWorkerReadinessGatesOnlyClaimAndStart(t *testing.T) {
 				t.Fatalf("live member on unready Worker=%v", err)
 			}
 		})
+	}
+}
+
+// A paused Worker Group stops admission only. Runs already started on it keep
+// renewing and acting after the Worker refreshes its claims; new claims fail.
+func TestPausedWorkerGroupKeepsStartedExecution(t *testing.T) {
+	f, work, fence := executionClaimFixture(t)
+	inTx := func(fn func(pgx.Tx) error) error {
+		tx, err := f.Pool.Begin(t.Context())
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback(context.Background())
+		if err = fn(tx); err != nil {
+			return err
+		}
+		return tx.Commit(t.Context())
+	}
+	if _, err := claimExecutionTest(t, f, fence, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := inTx(func(tx pgx.Tx) error { _, err := StartExecution(t.Context(), tx, fence); return err }); err != nil {
+		t.Fatal(err)
+	}
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '1 millisecond',expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, work.LeaseID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='paused',claim_version=claim_version+1 WHERE id=$1`, fence.WorkerGroupID)
+	live := func(tx pgx.Tx) error { _, err := LockLiveExecution(t.Context(), tx, fence); return err }
+	if err := inTx(live); !errors.Is(err, ErrExecutionWorkerClaims) {
+		t.Fatalf("stale Group claims=%v", err)
+	}
+	if err := f.Pool.QueryRow(t.Context(), `SELECT claim_version FROM worker_groups WHERE id=$1`, fence.WorkerGroupID).Scan(&fence.GroupClaimVersion); err != nil {
+		t.Fatal(err)
+	}
+	var expiry time.Time
+	if err := f.Pool.QueryRow(t.Context(), `SELECT expires_at FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&expiry); err != nil {
+		t.Fatal(err)
+	}
+	if err := inTx(func(tx pgx.Tx) error { _, err := RenewExecution(t.Context(), tx, fence, expiry); return err }); err != nil {
+		t.Fatalf("renewal on paused Group=%v", err)
+	}
+	if err := inTx(live); err != nil {
+		t.Fatalf("live member on paused Group=%v", err)
+	}
+	if err := inTx(func(tx pgx.Tx) error { _, err := StartExecution(t.Context(), tx, fence); return err }); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("start on paused Group=%v", err)
+	}
+	next := f.AddRunLease(t, "assigned", time.Now())
+	claim := fence
+	claim.LeaseID, claim.LeaseSequence = pgvalue.UUID(next.LeaseID), 1
+	if _, err := claimExecutionTest(t, f, claim, true); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("claim on paused Group=%v", err)
+	}
+}
+
+func TestRunLeaseExecutionLiveRejectsUnobservedWorker(t *testing.T) {
+	f, work, _ := executionClaimFixture(t)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=NULL WHERE id=$1`, f.WorkerID)
+	live, err := db.New(f.Pool).GetRunLeaseExecutionLive(t.Context(), db.GetRunLeaseExecutionLiveParams{ID: pgvalue.UUID(work.LeaseID), WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
+	if err != nil || live {
+		t.Fatalf("unobserved Worker live=%v err=%v", live, err)
+	}
+}
+
+// Draining lets already dispatched leases finish claim and start; a paused
+// Group holds them.
+func TestAssignedLeaseClaimAndStartFollowGroupLifecycle(t *testing.T) {
+	for _, test := range []struct {
+		status string
+		allow  bool
+	}{{"draining", true}, {"paused", false}} {
+		for _, stage := range []string{"claim", "start"} {
+			t.Run(test.status+"/"+stage, func(t *testing.T) {
+				f, _, fence := executionClaimFixture(t)
+				setStatus := func() {
+					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status=$2,primary_pool_id=CASE WHEN $2='draining' THEN NULL ELSE primary_pool_id END,claim_version=claim_version+1 WHERE id=$1`, fence.WorkerGroupID, test.status)
+					if err := f.Pool.QueryRow(t.Context(), `SELECT claim_version FROM worker_groups WHERE id=$1`, fence.WorkerGroupID).Scan(&fence.GroupClaimVersion); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if stage == "claim" {
+					setStatus()
+				}
+				_, err := claimExecutionTest(t, f, fence, true)
+				if stage == "start" {
+					if err != nil {
+						t.Fatal(err)
+					}
+					setStatus()
+					tx, e := f.Pool.Begin(t.Context())
+					if e != nil {
+						t.Fatal(e)
+					}
+					defer tx.Rollback(context.Background())
+					_, err = StartExecution(t.Context(), tx, fence)
+				}
+				if test.allow && err != nil {
+					t.Fatalf("%s on %s Group: %v", stage, test.status, err)
+				}
+				if !test.allow && !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("%s on %s Group: %v", stage, test.status, err)
+				}
+			})
+		}
 	}
 }

@@ -67,6 +67,9 @@ type Querier interface {
 	CaptureProtectedSecretEnvelopes(ctx context.Context, arg CaptureProtectedSecretEnvelopesParams) ([]CaptureProtectedSecretEnvelopesRow, error)
 	// Computer CA creation is separate; preparation captures only existing material.
 	// claims_current has the same freshness-only meaning as in protected capture.
+	// An allocated Instance is still being admitted and needs admitting supply
+	// (active Group, Pool and Host without Run or VM pauses); a ready Instance
+	// continues on paused or draining supply.
 	CaptureSecretProxyPreparation(ctx context.Context, arg CaptureSecretProxyPreparationParams) (CaptureSecretProxyPreparationRow, error)
 	// The data-modifying CTE always runs in the same statement. Certification does
 	// not depend on its inserted row count: every inherited key may already be direct.
@@ -232,7 +235,11 @@ type Querier interface {
 	// as a permanent gap or skipped by a reconnect cursor.
 	GetCommandLogFrontier(ctx context.Context, arg GetCommandLogFrontierParams) (GetCommandLogFrontierRow, error)
 	GetComputer(ctx context.Context, arg GetComputerParams) (GetComputerRow, error)
-	// Caller holds every capture lock; wall-clock deadlines are evaluated afterwards.
+	// Post-lock time check only. The caller (dispatch.BeginComputerCapture) must
+	// already hold the Worker Group, Worker Host, Computer, Instance and resident
+	// owner locks and have validated Group/Host status and epoch. Run and VM pauses
+	// do not apply: capture continues resident work. A host that was never
+	// observed is not fresh.
 	GetComputerCaptureWorkerFresh(ctx context.Context, arg GetComputerCaptureWorkerFreshParams) (bool, error)
 	GetComputerCommandByClaim(ctx context.Context, arg GetComputerCommandByClaimParams) (ComputerCommand, error)
 	GetComputerCommandTarget(ctx context.Context, arg GetComputerCommandTargetParams) (GetComputerCommandTargetRow, error)
@@ -246,11 +253,17 @@ type Querier interface {
 	// Discovery for a frozen restore is keyed by its destination, not a member Run.
 	// Activation still requires the locked one-shot commit and its durable outbox.
 	GetComputerInstanceRestoreCheckpoint(ctx context.Context, arg GetComputerInstanceRestoreCheckpointParams) (GetComputerInstanceRestoreCheckpointRow, error)
-	// Ready-Instance writer liveness for preparation readiness checks.
+	// Post-lock time check for a ready Instance's readiness or restore receipt.
+	// The caller (dispatch.lockComputerPreparation) must already hold the Worker
+	// Group, Pool and Host fence (which pins supply status for the chosen mode, the
+	// epoch and a present observation) and the Computer and Instance locks.
 	GetComputerInstanceWriterLive(ctx context.Context, arg GetComputerInstanceWriterLiveParams) (bool, error)
 	GetComputerListItemByKey(ctx context.Context, arg GetComputerListItemByKeyParams) (GetComputerListItemByKeyRow, error)
-	// Caller holds the preparation locks and rechecks after object writes, before
-	// commit. Preparation and writer deadlines and Worker liveness use wall-clock time.
+	// Post-lock check for an allocated Instance, repeated after object writes and
+	// before commit. The caller (dispatch.lockComputerPreparation) must already
+	// hold the admission-mode Worker Group, Pool and Host fence (which pins active
+	// supply, the epoch, a present observation and no Run or VM pause) and the
+	// Computer and Instance locks.
 	GetComputerPreparationDeadlinesValid(ctx context.Context, arg GetComputerPreparationDeadlinesValidParams) (bool, error)
 	// The Computer and its live instance are locked before this read. A deployment
 	// must declare the same immutable spec; open or unreconciled program members pin
@@ -290,7 +303,12 @@ type Querier interface {
 	GetRunExecutionLeaseLossAuthority(ctx context.Context, arg GetRunExecutionLeaseLossAuthorityParams) (GetRunExecutionLeaseLossAuthorityRow, error)
 	GetRunFinalizationTime(ctx context.Context) (pgtype.Timestamptz, error)
 	GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error)
-	// Caller holds every execution authority lock; time is evaluated afterwards.
+	// Post-lock time check only. The caller (run.lockExecution) must already hold
+	// the Worker Group, Worker Host, Computer, Instance and lease locks and have
+	// validated Group/Host status, claim versions, epoch, Instance writer generation
+	// and the lease binding. Claim and start pass skip_worker_readiness=false so
+	// observation freshness and the Run pause gate admission; continuing
+	// operations skip them. A host that was never observed is not live.
 	GetRunLeaseExecutionLive(ctx context.Context, arg GetRunLeaseExecutionLiveParams) (bool, error)
 	GetRunLeaseRenewalTime(ctx context.Context) (pgtype.Timestamptz, error)
 	GetRunLeaseSecretDeliveryLocators(ctx context.Context, arg GetRunLeaseSecretDeliveryLocatorsParams) (GetRunLeaseSecretDeliveryLocatorsRow, error)
@@ -503,9 +521,14 @@ type Querier interface {
 	LockQueuedRunExpiry(ctx context.Context, id pgtype.UUID) (LockQueuedRunExpiryRow, error)
 	LockQueuedSessionTurns(ctx context.Context, arg LockQueuedSessionTurnsParams) ([]SessionTurn, error)
 	LockReadyComputerCheckpoint(ctx context.Context, arg LockReadyComputerCheckpointParams) (ComputerCheckpoint, error)
-	// Caller holds the Worker Group and pool locks. Observation freshness and the
-	// Run pause are rechecked while the Worker Host row is locked.
-	LockRunEligibleWorkerHost(ctx context.Context, arg LockRunEligibleWorkerHostParams) (pgtype.UUID, error)
+	// Worker Host fence for placement and Computer preparation. The caller
+	// (dispatch.lockWorkerFence) must already hold the Worker Group and Pool share
+	// locks and have validated their status. This query locks the Worker Host and
+	// checks epoch, observation freshness and platform. Admission also requires an
+	// active host without a Run pause; continuation of admitted work accepts a
+	// draining host and ignores pauses. admitting reports whether the locked host
+	// could admit new work, including the VM pause.
+	LockRunEligibleWorkerHost(ctx context.Context, arg LockRunEligibleWorkerHostParams) (bool, error)
 	LockRunFinalizationParentRun(ctx context.Context, arg LockRunFinalizationParentRunParams) (Run, error)
 	LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseClaimActorParams) (Session, error)
 	LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error)

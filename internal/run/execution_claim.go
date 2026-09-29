@@ -73,7 +73,7 @@ func lockExecution(ctx context.Context, tx pgx.Tx, request ExecutionFence, opera
 			return ExecutionAuthority{}, err
 		}
 	}
-	if err := lockExecutionWorker(ctx, q, request, loc.RegionID); err != nil {
+	if err := lockExecutionWorker(ctx, q, request, loc.RegionID, operation == executionClaim || operation == executionStart); err != nil {
 		return ExecutionAuthority{}, err
 	}
 	lineage, err := cancellationLineage(ctx, tx, pgvalue.MustUUIDValue(loc.RunID))
@@ -194,7 +194,12 @@ func ClaimExecution(ctx context.Context, tx pgx.Tx, request ExecutionFence) (Exe
 	return result, err
 }
 
-func lockExecutionWorker(ctx context.Context, q *db.Queries, request ExecutionFence, region string) error {
+// lockExecutionWorker locks and validates the Worker Group and Host under the
+// Worker supply lifecycle rule documented at dispatch.workerFence: claim and
+// start (admission) accept an active or draining Group, so already dispatched
+// leases finish, but reject a paused Group; operations continuing an already
+// started Run also accept a paused Group.
+func lockExecutionWorker(ctx context.Context, q *db.Queries, request ExecutionFence, region string, admission bool) error {
 	group, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: request.WorkerGroupID, RegionID: region})
 	if err != nil {
 		return err
@@ -202,7 +207,7 @@ func lockExecutionWorker(ctx context.Context, q *db.Queries, request ExecutionFe
 	if group.ClaimVersion != request.GroupClaimVersion {
 		return ErrExecutionWorkerClaims
 	}
-	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusDraining {
+	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusDraining && (admission || group.Status != db.WorkerGroupStatusPaused) {
 		return pgx.ErrNoRows
 	}
 	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: request.WorkerHostID, WorkerGroupID: request.WorkerGroupID})

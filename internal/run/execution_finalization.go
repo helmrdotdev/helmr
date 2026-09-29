@@ -97,7 +97,7 @@ func LockFinalizingExecution(ctx context.Context, tx pgx.Tx, fence ExecutionFenc
 	if err != nil {
 		return ExecutionAuthority{}, OwnedFinalization{}, err
 	}
-	graph, err := LockOwnedFinalizationWithInstanceFence(ctx, tx, OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(loc.RunID)}, func() error { return lockExecutionWorker(ctx, q, fence, loc.RegionID) })
+	graph, err := LockOwnedFinalizationWithInstanceFence(ctx, tx, OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(loc.RunID)}, func() error { return lockExecutionWorker(ctx, q, fence, loc.RegionID, false) })
 	if err != nil {
 		return ExecutionAuthority{}, OwnedFinalization{}, err
 	}

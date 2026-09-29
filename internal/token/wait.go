@@ -137,8 +137,8 @@ func (r *WaitReconciler) RegisterWait(
 		ID: pgvalue.UUID(request.WorkerGroupID), RegionID: locators.RegionID,
 	})
 	if err != nil ||
-		(workerGroup.Status != db.WorkerGroupStatusActive && workerGroup.Status != db.WorkerGroupStatusDraining) {
-		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock active worker group", err)
+		(workerGroup.Status != db.WorkerGroupStatusActive && workerGroup.Status != db.WorkerGroupStatusPaused && workerGroup.Status != db.WorkerGroupStatusDraining) {
+		return WaitRegistrationResult{}, tokenWaitAuthorityError("lock worker group", err)
 	}
 	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
 		ID: pgtype.UUID{Bytes: request.WorkerHostID, Valid: true}, WorkerGroupID: pgvalue.UUID(request.WorkerGroupID),

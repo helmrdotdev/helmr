@@ -22,6 +22,9 @@ type ComputerPreparation struct {
 	OrgID, ProjectID, EnvironmentID, ComputerID, VersionID pgtype.UUID
 	WriterGeneration, LogicalBytes                         int64
 	instance                                               db.ComputerInstance
+	// admitting reports whether the locked supply could admit new work. Receipt
+	// callers require it before a first restore activation.
+	admitting bool
 }
 
 func LockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence) (ComputerPreparation, error) {
@@ -47,30 +50,40 @@ const (
 	preparationRestoreReceipt
 )
 
-// Draining can follow a successful activation whose reply was lost. This mode
-// permits receipt inspection; restore callers still require a committed checkpoint
-// and never create new activation authority for a draining Instance.
+// Draining or pause can follow a successful activation whose reply was lost.
+// This mode permits receipt inspection on non-admitting supply; restore callers
+// still require a committed checkpoint and create new activation authority only
+// on admitting supply.
 func lockComputerRestoreObservation(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence) (ComputerPreparation, error) {
 	return lockComputerPreparation(ctx, tx, fence, preparationRestoreReceipt)
 }
 
+// lockComputerPreparation fences allocated Instances as admission: active
+// supply without Run or VM pauses. Receipts and readiness of an Instance that is
+// already ready continue admitted work: they accept paused or draining supply
+// and ignore pauses, but a restoring Instance still needs admitting supply
+// unless a receipt caller only inspects an already committed activation.
 func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence, observation preparationObservation) (ComputerPreparation, error) {
 	initial := observation == preparationInitial
 	readiness := observation == preparationReady || observation == preparationRestoreReceipt
 	receipt := observation == preparationRestoreReceipt
 
 	var environmentID, computerID pgtype.UUID
-	var region string
-	err := tx.QueryRow(ctx, `SELECT environment_id,computer_id,region_id FROM computer_instances
- WHERE id=$1 AND worker_host_id=$2 AND worker_group_id=$3 AND worker_epoch=$4`, fence.RuntimeID, fence.WorkerID, fence.WorkerGroupID, fence.WorkerEpoch).Scan(&environmentID, &computerID, &region)
+	var region, observed string
+	err := tx.QueryRow(ctx, `SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances
+ WHERE id=$1 AND worker_host_id=$2 AND worker_group_id=$3 AND worker_epoch=$4`, fence.RuntimeID, fence.WorkerID, fence.WorkerGroupID, fence.WorkerEpoch).Scan(&environmentID, &computerID, &region, &observed)
 	if err != nil {
 		return ComputerPreparation{}, err
 	}
-	if err = lockWorkerFence(ctx, tx, workerFence{GroupID: fence.WorkerGroupID, RegionID: region, WorkerHostID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch, RunArchitecture: runtimeArchitecture, AllowDraining: receipt}); err != nil {
+	// The unlocked observation only selects the fence mode; the locked Instance
+	// must still match it before the continuation exception applies.
+	continuation := receipt || (readiness && observed == "ready")
+	admitting, err := lockWorkerFence(ctx, tx, workerFence{GroupID: fence.WorkerGroupID, RegionID: region, WorkerHostID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch, RunArchitecture: runtimeArchitecture, Continuation: continuation})
+	if err != nil {
 		return ComputerPreparation{}, err
 	}
-	if err = checkLockedWorkerRuntimeAdmission(ctx, tx, fence.WorkerID, fence.WorkerEpoch); err != nil {
-		return ComputerPreparation{}, err
+	if !continuation && !admitting {
+		return ComputerPreparation{}, pgx.ErrNoRows
 	}
 	q := db.New(tx)
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: environmentID, ID: computerID})
@@ -83,8 +96,10 @@ func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 	}
 	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
 		i.ID != fence.RuntimeID || i.WorkerHostID != fence.WorkerID || i.WorkerGroupID != fence.WorkerGroupID || i.WorkerEpoch != fence.WorkerEpoch ||
-		i.WriterGeneration != c.WriterGeneration || i.DesiredState != "ready" || i.DesiredVersion != fence.DesiredVersion || (i.ObservedState != "allocated" && !(readiness && i.ObservedState == "ready")) ||
-		(i.AdmissionState != "open" && i.AdmissionState != "restoring" && !(receipt && i.AdmissionState == "draining")) {
+		i.WriterGeneration != c.WriterGeneration || i.DesiredState != "ready" || i.DesiredVersion != fence.DesiredVersion ||
+		(i.ObservedState != "ready" && (continuation || i.ObservedState != "allocated")) || (i.ObservedState == "ready" && !readiness) ||
+		(i.AdmissionState != "open" && i.AdmissionState != "restoring" && !(continuation && i.AdmissionState == "draining")) ||
+		(!receipt && !admitting && i.AdmissionState == "restoring") {
 		return ComputerPreparation{}, pgx.ErrNoRows
 	}
 	version := i.SourceDiskVersionID
@@ -104,9 +119,9 @@ func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 	if err != nil {
 		return ComputerPreparation{}, err
 	}
-	p := ComputerPreparation{OrgID: i.OrgID, ProjectID: i.ProjectID, EnvironmentID: environmentID, ComputerID: computerID, VersionID: root, WriterGeneration: i.WriterGeneration, LogicalBytes: i.ReservedGuestEphemeralDiskBytes, instance: i}
-	if readiness && i.ObservedState == "ready" {
-		writerLive, err := q.GetComputerInstanceWriterLive(ctx, db.GetComputerInstanceWriterLiveParams{ID: i.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, AllowDraining: receipt && i.AdmissionState == "draining"})
+	p := ComputerPreparation{OrgID: i.OrgID, ProjectID: i.ProjectID, EnvironmentID: environmentID, ComputerID: computerID, VersionID: root, WriterGeneration: i.WriterGeneration, LogicalBytes: i.ReservedGuestEphemeralDiskBytes, instance: i, admitting: admitting}
+	if i.ObservedState == "ready" {
+		writerLive, err := q.GetComputerInstanceWriterLive(ctx, db.GetComputerInstanceWriterLiveParams{ID: i.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 		if err != nil {
 			return ComputerPreparation{}, err
 		}

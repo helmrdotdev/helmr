@@ -894,7 +894,7 @@ WHERE l.id=$1 AND l.lease_sequence=$2
  AND l.finalization_operation_id IS NULL AND r.status IN ('running','waiting')
  AND a.entrypoint_entered_at IS NOT NULL AND a.terminal_at IS NULL
  AND s.run_generation=$6 AND s.status IN ('open','closing')
- AND wi.status IN ('active','draining') AND wg.status IN ('active','draining')
+ AND wi.status IN ('active','draining') AND wg.status IN ('active','paused','draining')
  AND rt.computer_id=l.computer_id AND rt.writer_generation=l.writer_generation
  AND rt.worker_host_id=l.worker_host_id AND rt.worker_epoch=l.worker_epoch
  AND rt.writer_expires_at>clock_timestamp() AND rt.mount_state='mounted'

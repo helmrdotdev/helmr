@@ -468,24 +468,29 @@ func TestTokenWaitRegistrationReplaySurvivesParkedCompletion(t *testing.T) {
 	}
 }
 
-func TestTokenWaitRegistrationAllowsDrainingInFlightWorker(t *testing.T) {
-	ctx := context.Background()
-	fixture := newRunLeaseClaimFixture(t, ctx)
-	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
-	startTaskCompletionWork(t, ctx, fixture, work)
-	tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
-	request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
-	dbtest.MustExec(t, ctx, fixture.pool, `UPDATE worker_groups SET status = 'draining' WHERE id = $1`, request.WorkerGroupID)
-	dbtest.MustExec(t, ctx, fixture.pool, `
-		UPDATE worker_hosts SET status = 'draining', draining_at = transaction_timestamp() WHERE id = $1
-	`, request.WorkerHostID)
-	reconciler, err := NewWaitReconciler(fixture.pool)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registered, err := reconciler.RegisterWait(ctx, request)
-	if err != nil || registered.WaitID != request.WaitID || registered.ConditionStatus != db.WaitStatusPending {
-		t.Fatalf("draining worker registration = %+v, %v", registered, err)
+// Draining and paused Groups stop admission only; started Runs still wait.
+func TestTokenWaitRegistrationAllowsInFlightWorkerOnNonAdmittingGroup(t *testing.T) {
+	for _, status := range []string{"draining", "paused"} {
+		t.Run(status, func(t *testing.T) {
+			ctx := context.Background()
+			fixture := newRunLeaseClaimFixture(t, ctx)
+			work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+			startTaskCompletionWork(t, ctx, fixture, work)
+			tokenID := createTokenTerminalTestToken(t, ctx, fixture, time.Now().Add(time.Hour))
+			request := tokenWaitRegistrationRequest(t, ctx, fixture, work, tokenID, uuid.NewV7())
+			dbtest.MustExec(t, ctx, fixture.pool, `UPDATE worker_groups SET status = $2 WHERE id = $1`, request.WorkerGroupID, status)
+			dbtest.MustExec(t, ctx, fixture.pool, `
+				UPDATE worker_hosts SET status = 'draining', draining_at = transaction_timestamp() WHERE id = $1
+			`, request.WorkerHostID)
+			reconciler, err := NewWaitReconciler(fixture.pool)
+			if err != nil {
+				t.Fatal(err)
+			}
+			registered, err := reconciler.RegisterWait(ctx, request)
+			if err != nil || registered.WaitID != request.WaitID || registered.ConditionStatus != db.WaitStatusPending {
+				t.Fatalf("%s Group registration = %+v, %v", status, registered, err)
+			}
+		})
 	}
 }
 
