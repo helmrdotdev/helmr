@@ -23,14 +23,14 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 	var program freshProgram
 	var attached *programv0.ResumeAttach
 	err := retryRunLeaseRequest(attachCtx, func(attemptCtx context.Context) error {
-		opened, err := r.ComputerMounts.OpenComputerInstanceSession(attemptCtx, claim.Lease.ComputerInstanceID)
+		opened, err := r.Mounts.OpenChannel(attemptCtx, claim.Lease.ComputerInstanceID)
 		if err != nil {
 			return err
 		}
 		keep := false
 		defer func() {
 			if !keep {
-				_ = opened.Session.Close(context.Background())
+				_ = opened.Channel.Close(context.Background())
 			}
 		}()
 		if err := validateNewProgramMount(claim.Lease, opened.Mount); err != nil {
@@ -41,7 +41,7 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 		}
 		authority := freshComputerAuthority(claim, opened.ChannelToken, opened.Mount)
 		authority.Fence.BaseComputerDiskVersionId = claim.Lease.BaseComputerDiskVersionID
-		attach, err := grantProgramResumeOnSession(attemptCtx, opened.ControlSession, &computerv0.GrantProgramResumeRequest{Authority: authority, RunWaitId: resume.RunWaitID, CheckpointId: resume.CheckpointID})
+		attach, err := opened.GrantProgramResume(attemptCtx, &computerv0.GrantProgramResumeRequest{Authority: authority, RunWaitId: resume.RunWaitID, CheckpointId: resume.CheckpointID})
 		if err != nil {
 			return err
 		}
@@ -57,18 +57,18 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 			return errors.New("restored attachment changed during retry")
 		}
 		attached = attach
-		stop := context.AfterFunc(attemptCtx, func() { _ = opened.Session.Close(context.Background()) })
+		stop := context.AfterFunc(attemptCtx, func() { _ = opened.Channel.Close(context.Background()) })
 		defer stop()
-		if err := frameio.WriteProtoFrame(opened.Session.Stream(), attach); err != nil {
+		if err := frameio.WriteProtoFrame(opened.Channel.Stream(), attach); err != nil {
 			return err
 		}
 		// Reconnect the retained wait without resolving its logical condition. The
 		// durable acknowledgement below makes its current condition pollable again.
 		decision := &programv0.ResumeDecision{Kind: "waiting", RequireConsumedAck: true, RunWaitId: attach.RunWaitId, CorrelationId: attach.CorrelationId, CheckpointId: attach.CheckpointId, ResumeAttachId: attach.ResumeAttachId, ResumeRequestVersion: attach.ResumeRequestVersion, RunLeaseId: attach.RunLeaseId}
-		if err := frameio.WriteProtoFrame(opened.Session.Stream(), decision); err != nil {
+		if err := frameio.WriteProtoFrame(opened.Channel.Stream(), decision); err != nil {
 			return err
 		}
-		ack, err := readResumeAck(attemptCtx, opened.Session)
+		ack, err := readResumeAck(attemptCtx, opened.Channel)
 		if err != nil {
 			return err
 		}
@@ -83,7 +83,7 @@ func (r ProgramRunner) startRestoredProgram(ctx context.Context, claim *workerap
 		if resume.EntrypointKind == "actor" {
 			identity.Kind = &programv0.EntrypointIdentity_Actor{Actor: &programv0.ActorEntrypoint{}}
 		}
-		program = freshProgram{session: opened.Session, releaseSource: opened.ReleaseSource, mount: opened.Mount, lease: claim.Lease, authority: authority, execution: attach.Execution, entrypoint: identity}
+		program = freshProgram{session: opened.Channel, releaseSource: opened.ReleaseSource, mount: opened.Mount, lease: claim.Lease, authority: authority, execution: attach.Execution, entrypoint: identity}
 		keep = true
 		return nil
 	})

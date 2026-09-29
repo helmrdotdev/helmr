@@ -9,98 +9,102 @@ import (
 	"time"
 
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-var ErrComputerMountSessionNotFound = errors.New("computer mount session not found")
+var ErrMountNotFound = errors.New("computer mount session not found")
 
-type ComputerMountSessionRegistry interface {
-	RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session *managedComputerMountSession, channelToken string) func()
-	OpenComputerInstanceSession(context.Context, string) (ComputerMountSession, error)
-	FailComputerInstanceSession(context.Context, string) error
+type MountRegistry interface {
+	Register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelToken string) func()
+	OpenChannel(context.Context, string) (MountChannel, error)
+	RequestFailure(context.Context, string) error
 	RenewComputerAuthority(context.Context, *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error)
 }
 
-// ComputerMountSession is one Run's view of a mounted Computer. Session carries
+// MountChannel is one Run's view of a mounted Computer. Channel carries
 // only the Run's borrowed stream; closing it never stops the machine.
 // ReleaseSource is bound to the physical mount and releases it as a checkpoint
-// source after the Run's control stream has detached.
-type ComputerMountSession struct {
-	Session        vm.Machine
-	ControlSession vm.Machine
-	ReleaseSource  func(context.Context) error
-	ChannelToken   string
-	Mount          workerapi.ComputerInstanceAssignment
+// source after the Run's control stream has detached. GrantProgramResume is
+// likewise bound to the physical mount the channel was opened on.
+type MountChannel struct {
+	Channel            vm.Machine
+	ReleaseSource      func(context.Context) error
+	GrantProgramResume func(context.Context, *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error)
+	ChannelToken       string
+	Mount              workerapi.ComputerInstanceAssignment
 }
 
-type computerMountFailureRequest struct {
+type mountFailureRequest struct {
 	result chan error
 }
 
-type ComputerMountSessions struct {
-	mu       sync.RWMutex
-	sessions map[string]computerMountSessionEntry
+type Mounts struct {
+	mu     sync.RWMutex
+	mounts map[string]mountEntry
 }
 
-type computerMountSessionEntry struct {
-	session      *managedComputerMountSession
+type mountEntry struct {
+	instance     *instanceMount
 	channelToken string
 	mount        workerapi.ComputerInstanceAssignment
 }
 
-func NewComputerMountSessions() *ComputerMountSessions {
-	return &ComputerMountSessions{sessions: map[string]computerMountSessionEntry{}}
+func NewMounts() *Mounts {
+	return &Mounts{mounts: map[string]mountEntry{}}
 }
 
-func (s *ComputerMountSessions) RegisterComputerMountSession(mount workerapi.ComputerInstanceAssignment, session *managedComputerMountSession, channelToken string) func() {
+func (s *Mounts) Register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelToken string) func() {
 	id := strings.TrimSpace(mount.ComputerInstanceID)
-	if id == "" || session == nil {
+	if id == "" || instance == nil {
 		return func() {}
 	}
 	s.mu.Lock()
-	if s.sessions == nil {
-		s.sessions = map[string]computerMountSessionEntry{}
+	if s.mounts == nil {
+		s.mounts = map[string]mountEntry{}
 	}
-	s.sessions[id] = computerMountSessionEntry{session: session, channelToken: strings.TrimSpace(channelToken), mount: mount}
+	s.mounts[id] = mountEntry{instance: instance, channelToken: strings.TrimSpace(channelToken), mount: mount}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
-		if current := s.sessions[id]; current.session == session {
-			delete(s.sessions, id)
+		if current := s.mounts[id]; current.instance == instance {
+			delete(s.mounts, id)
 		}
 		s.mu.Unlock()
 	}
 }
 
-func (s *ComputerMountSessions) OpenComputerInstanceSession(ctx context.Context, computerInstanceID string) (ComputerMountSession, error) {
+func (s *Mounts) OpenChannel(ctx context.Context, computerInstanceID string) (MountChannel, error) {
 	id := strings.TrimSpace(computerInstanceID)
 	if id == "" {
-		return ComputerMountSession{}, errors.New("computer mount id is required")
+		return MountChannel{}, errors.New("computer mount id is required")
 	}
 	s.mu.RLock()
-	entry := s.sessions[id]
+	entry := s.mounts[id]
 	s.mu.RUnlock()
-	if entry.session == nil {
-		return ComputerMountSession{}, fmt.Errorf("%w: %s", ErrComputerMountSessionNotFound, id)
+	if entry.instance == nil {
+		return MountChannel{}, fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
 	if entry.channelToken == "" {
-		return ComputerMountSession{}, fmt.Errorf("computer mount session %s missing channel token", id)
+		return MountChannel{}, fmt.Errorf("computer mount session %s missing channel token", id)
 	}
-	stream, err := entry.session.OpenStream(ctx)
+	stream, err := entry.instance.OpenStream(ctx)
 	if err != nil {
-		return ComputerMountSession{}, fmt.Errorf("open computer mount stream %s: %w", id, err)
+		return MountChannel{}, fmt.Errorf("open computer mount stream %s: %w", id, err)
 	}
-	return ComputerMountSession{
-		Session:        newBorrowedRunSession(entry.session, stream),
-		ControlSession: entry.session,
-		ReleaseSource:  entry.session.ReleaseCheckpointSource,
-		ChannelToken:   entry.channelToken,
-		Mount:          entry.mount,
+	return MountChannel{
+		Channel:       newBorrowedChannel(entry.instance, stream),
+		ReleaseSource: entry.instance.ReleaseCheckpointSource,
+		GrantProgramResume: func(ctx context.Context, request *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
+			return grantProgramResumeOnSession(ctx, entry.instance, request)
+		},
+		ChannelToken: entry.channelToken,
+		Mount:        entry.mount,
 	}, nil
 }
 
-func (s *ComputerMountSessions) FailComputerInstanceSession(
+func (s *Mounts) RequestFailure(
 	ctx context.Context,
 	computerInstanceID string,
 ) error {
@@ -109,25 +113,25 @@ func (s *ComputerMountSessions) FailComputerInstanceSession(
 		return errors.New("computer mount failure identity is required")
 	}
 	s.mu.RLock()
-	entry := s.sessions[id]
+	entry := s.mounts[id]
 	s.mu.RUnlock()
-	if entry.session == nil {
-		return fmt.Errorf("%w: %s", ErrComputerMountSessionNotFound, id)
+	if entry.instance == nil {
+		return fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
-	return entry.session.requestFailure(ctx)
+	return entry.instance.requestFailure(ctx)
 }
 
-func (s *ComputerMountSessions) RenewComputerAuthority(ctx context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
+func (s *Mounts) RenewComputerAuthority(ctx context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
 	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
 		return nil, errors.New("previous computer authority is required")
 	}
 	fence := request.GetPrevious().GetFence()
 	id := strings.TrimSpace(fence.GetComputerInstanceId())
 	s.mu.RLock()
-	entry := s.sessions[id]
+	entry := s.mounts[id]
 	s.mu.RUnlock()
-	if entry.session == nil {
-		return nil, fmt.Errorf("%w: %s", ErrComputerMountSessionNotFound, id)
+	if entry.instance == nil {
+		return nil, fmt.Errorf("%w: %s", ErrMountNotFound, id)
 	}
 	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
 		return nil, errors.New("computer authority channel token does not match the mount session")
@@ -135,7 +139,7 @@ func (s *ComputerMountSessions) RenewComputerAuthority(ctx context.Context, requ
 	if err := validateComputerMountPhysicalAuthority(fence, entry.mount); err != nil {
 		return nil, err
 	}
-	return renewComputerAuthorityOnSession(ctx, entry.session, request)
+	return renewComputerAuthorityOnSession(ctx, entry.instance, request)
 }
 
 func validateComputerMountPhysicalAuthority(
@@ -151,28 +155,28 @@ func validateComputerMountPhysicalAuthority(
 	return nil
 }
 
-type managedComputerMountSession struct {
+type instanceMount struct {
 	saves                        runtimeComputerSaves
-	session                      vm.Machine
+	machine                      vm.Machine
 	mu                           sync.RWMutex
-	closeAttempt                 *computerSessionClose
+	closeAttempt                 *instanceMountClose
 	releaseForCheckpointStarted  bool
 	releaseForCheckpointFinished bool
 	releaseForCheckpointErr      error
 	releaseForCheckpointDone     chan struct{}
-	failureRequests              chan computerMountFailureRequest
+	failureRequests              chan mountFailureRequest
 }
 
-func newManagedComputerMountSession(session vm.Machine) *managedComputerMountSession {
-	return &managedComputerMountSession{
-		session:                  session,
+func newInstanceMount(session vm.Machine) *instanceMount {
+	return &instanceMount{
+		machine:                  session,
 		releaseForCheckpointDone: make(chan struct{}),
-		failureRequests:          make(chan computerMountFailureRequest, 1),
+		failureRequests:          make(chan mountFailureRequest, 1),
 	}
 }
 
-func (s *managedComputerMountSession) requestFailure(ctx context.Context) error {
-	request := computerMountFailureRequest{result: make(chan error, 1)}
+func (s *instanceMount) requestFailure(ctx context.Context) error {
+	request := mountFailureRequest{result: make(chan error, 1)}
 	select {
 	case s.failureRequests <- request:
 	case <-ctx.Done():
@@ -186,23 +190,23 @@ func (s *managedComputerMountSession) requestFailure(ctx context.Context) error 
 	}
 }
 
-func (s *managedComputerMountSession) Stream() vm.Stream {
-	return s.session.Stream()
+func (s *instanceMount) Stream() vm.Stream {
+	return s.machine.Stream()
 }
 
-func (s *managedComputerMountSession) OpenStream(ctx context.Context) (vm.Stream, error) {
-	return s.session.OpenStream(ctx)
+func (s *instanceMount) OpenStream(ctx context.Context) (vm.Stream, error) {
+	return s.machine.OpenStream(ctx)
 }
 
-func (s *managedComputerMountSession) Wait(ctx context.Context) error {
-	return s.session.Wait(ctx)
+func (s *instanceMount) Wait(ctx context.Context) error {
+	return s.machine.Wait(ctx)
 }
 
-func (s *managedComputerMountSession) Close(ctx context.Context) error {
+func (s *instanceMount) Close(ctx context.Context) error {
 	return s.close(ctx)
 }
 
-func (s *managedComputerMountSession) close(ctx context.Context) error {
+func (s *instanceMount) close(ctx context.Context) error {
 	// A failed handoff still requires physical exclusion. Keep its error visible
 	// so callers cannot mistake cleanup for a successfully settled save.
 	saveErr := s.saves.Quiesce(ctx)
@@ -217,7 +221,7 @@ func (s *managedComputerMountSession) close(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
-	attempt := &computerSessionClose{done: make(chan struct{})}
+	attempt := &instanceMountClose{done: make(chan struct{})}
 	s.closeAttempt = attempt
 	s.mu.Unlock()
 
@@ -229,7 +233,7 @@ func (s *managedComputerMountSession) close(ctx context.Context) error {
 		stopCtx, cancelStop = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	}
 	defer cancelStop()
-	stopErr := s.session.Close(stopCtx)
+	stopErr := s.machine.Close(stopCtx)
 	err := errors.Join(saveErr, stopErr)
 	s.mu.Lock()
 	attempt.err = err
@@ -243,7 +247,7 @@ func (s *managedComputerMountSession) close(ctx context.Context) error {
 	return err
 }
 
-func (s *managedComputerMountSession) ReleaseCheckpointSource(ctx context.Context) error {
+func (s *instanceMount) ReleaseCheckpointSource(ctx context.Context) error {
 	s.mu.Lock()
 	if s.releaseForCheckpointStarted {
 		done := s.releaseForCheckpointDone
@@ -270,7 +274,7 @@ func (s *managedComputerMountSession) ReleaseCheckpointSource(ctx context.Contex
 	return err
 }
 
-func (s *managedComputerMountSession) CheckpointReleaseResult(ctx context.Context) (bool, error) {
+func (s *instanceMount) CheckpointReleaseResult(ctx context.Context) (bool, error) {
 	s.mu.RLock()
 	started := s.releaseForCheckpointStarted
 	finished := s.releaseForCheckpointFinished
@@ -293,29 +297,29 @@ func (s *managedComputerMountSession) CheckpointReleaseResult(ctx context.Contex
 	return true, err
 }
 
-// borrowedRunSession is a Run's stream on a mounted Computer. It exposes only
+// borrowedChannel is a Run's stream on a mounted Computer. It exposes only
 // that stream and the mount's lifetime; checkpoint and save operations belong to
 // the physical mount owner.
-type borrowedRunSession struct {
+type borrowedChannel struct {
 	parent vm.Machine
 	stream vm.Stream
 	once   sync.Once
 	err    error
 }
 
-func newBorrowedRunSession(parent vm.Machine, stream vm.Stream) vm.Machine {
-	return &borrowedRunSession{parent: parent, stream: stream}
+func newBorrowedChannel(parent vm.Machine, stream vm.Stream) vm.Machine {
+	return &borrowedChannel{parent: parent, stream: stream}
 }
 
-func (s *borrowedRunSession) Stream() vm.Stream {
+func (s *borrowedChannel) Stream() vm.Stream {
 	return s.stream
 }
 
-func (s *borrowedRunSession) OpenStream(context.Context) (vm.Stream, error) {
+func (s *borrowedChannel) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, errors.New("borrowed run session does not support opening nested streams")
 }
 
-func (s *borrowedRunSession) Wait(ctx context.Context) error {
+func (s *borrowedChannel) Wait(ctx context.Context) error {
 	if s.parent != nil {
 		return s.parent.Wait(ctx)
 	}
@@ -324,7 +328,7 @@ func (s *borrowedRunSession) Wait(ctx context.Context) error {
 }
 
 // Close closes only the borrowed stream. The mounted machine stays running.
-func (s *borrowedRunSession) Close(context.Context) error {
+func (s *borrowedChannel) Close(context.Context) error {
 	s.once.Do(func() {
 		if s.stream != nil {
 			s.err = s.stream.Close()
@@ -333,7 +337,7 @@ func (s *borrowedRunSession) Close(context.Context) error {
 	return s.err
 }
 
-type computerSessionClose struct {
+type instanceMountClose struct {
 	done chan struct{}
 	err  error
 }

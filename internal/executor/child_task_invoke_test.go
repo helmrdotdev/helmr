@@ -50,7 +50,7 @@ func (controlPlane *childTaskControlPlane) InvokeChildTask(
 }
 
 type acceptingChildTaskRenewalMounts struct {
-	ComputerMountSessionRegistry
+	MountRegistry
 	calls int
 }
 

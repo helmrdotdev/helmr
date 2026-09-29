@@ -124,7 +124,7 @@ type guestRunLeaseTask struct {
 	stopMu       sync.Mutex
 	stopDeadline time.Time
 	program      freshProgram
-	mounts       ComputerMountSessionRegistry
+	mounts       MountRegistry
 	store        cas.Store
 	controlPlane ControlPlane
 	waitComputer workerapi.Computer
@@ -201,7 +201,7 @@ func (r ProgramRunner) StartRunLeaseTask(
 		resumeWait:   resumedWait,
 		captures:     r.ComputerCaptures,
 		program:      program,
-		mounts:       r.ComputerMounts,
+		mounts:       r.Mounts,
 		store:        r.CAS,
 		controlPlane: r.ControlPlane,
 		lease:        program.lease,
@@ -583,7 +583,7 @@ func renewRunLeaseAuthority(
 	controlPlane interface {
 		RenewRunLease(context.Context, workerapi.RunLeaseAssignment) (workerapi.RunLeaseRenewResponse, error)
 	},
-	mounts ComputerMountSessionRegistry,
+	mounts MountRegistry,
 	previous workerapi.RunLeaseAssignment,
 	authority *computerv0.ComputerRunAuthority,
 ) (workerapi.RunLeaseAssignment, *computerv0.ComputerAuthorityFence, error) {

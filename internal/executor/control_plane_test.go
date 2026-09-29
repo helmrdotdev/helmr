@@ -15,7 +15,7 @@ func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 		ControlPlane:     testControlPlane(t),
 		CAS:              &checkpointCAS{},
 		ComputerCaptures: &ComputerCaptureRuns{},
-		ComputerMounts:   NewComputerMountSessions(),
+		Mounts:           NewMounts(),
 	}
 	if _, err := NewProgramRunner(complete); err != nil {
 		t.Fatalf("NewProgramRunner(complete) error = %v", err)
@@ -33,7 +33,7 @@ func TestNewProgramRunnerRejectsIncompleteWiring(t *testing.T) {
 		"children":        {func(r *ProgramRunner) { r.ControlPlane.Children = nil }, "child task control plane is required"},
 		"cas":             {func(r *ProgramRunner) { r.CAS = nil }, "run lease task CAS is required"},
 		"captures":        {func(r *ProgramRunner) { r.ComputerCaptures = nil }, "run lease task Computer capture registry is required"},
-		"computer mounts": {func(r *ProgramRunner) { r.ComputerMounts = nil }, "computer mount session registry is required"},
+		"computer mounts": {func(r *ProgramRunner) { r.Mounts = nil }, "computer mount session registry is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			runner := complete
@@ -56,7 +56,7 @@ func TestStartRunLeaseTaskRejectsUnvalidatedRunner(t *testing.T) {
 		"zero value": {ProgramRunner{}, "run lease control plane is required"},
 		"missing capability": {ProgramRunner{
 			ControlPlane: withoutWaits, CAS: &checkpointCAS{},
-			ComputerCaptures: &ComputerCaptureRuns{}, ComputerMounts: NewComputerMountSessions(),
+			ComputerCaptures: &ComputerCaptureRuns{}, Mounts: NewMounts(),
 		}, "run wait control plane is required"},
 		"missing computer mounts": {ProgramRunner{
 			ControlPlane: complete, CAS: &checkpointCAS{}, ComputerCaptures: &ComputerCaptureRuns{},

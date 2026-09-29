@@ -34,7 +34,7 @@ type ComputerMaterializer struct {
 	ComputerSaveEvery     time.Duration
 	CAS                   cas.Store
 	ComputerObjects       cas.ImmutableStore
-	Sessions              ComputerMountSessionRegistry
+	Mounts                MountRegistry
 	TempDir               string
 	Heartbeat             time.Duration
 	StartupTimeout        time.Duration
@@ -74,7 +74,7 @@ func (m ComputerMaterializer) validate() error {
 	if m.ComputerObjects == nil {
 		return errors.New("Computer object store is required")
 	}
-	if m.Sessions == nil {
+	if m.Mounts == nil {
 		return errors.New("computer mount session registry is required")
 	}
 	if m.RuntimePool == nil {
@@ -115,7 +115,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		_ = m.failComputerMount(client, renewal.authority(mount), err)
 		return fmt.Errorf("checkout computer mount runtime: %w", err)
 	}
-	session := newManagedComputerMountSession(rawSession)
+	session := newInstanceMount(rawSession)
 	defer func() {
 		if closeErr := m.closeSession(session); closeErr != nil {
 			failure := computerMountFailure{
@@ -183,7 +183,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		default:
 		}
 	}()
-	unregisterSession := m.Sessions.RegisterComputerMountSession(mount, session, m.channelToken(mount))
+	unregisterSession := m.Mounts.Register(mount, session, m.channelToken(mount))
 	defer unregisterSession()
 
 	m.logComputerMountPhase(mount, "computer mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
@@ -193,7 +193,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 func (m ComputerMaterializer) serveComputerMount(
 	ctx context.Context,
 	renewal *computerMountRenewal,
-	session *managedComputerMountSession,
+	session *instanceMount,
 	mount workerapi.ComputerInstanceAssignment,
 	client workerapi.ComputerMaterializerControlPlaneClient,
 	saveResults <-chan error,

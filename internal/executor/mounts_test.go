@@ -11,16 +11,17 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
+	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"google.golang.org/protobuf/proto"
 )
 
-func TestManagedComputerMountSessionClosesPhysicalSessionOnce(t *testing.T) {
+func TestInstanceMountClosesPhysicalSessionOnce(t *testing.T) {
 	closeErr := errors.New("close failed")
 	physical := &blockingCloseSession{started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
-	session := newManagedComputerMountSession(physical)
+	session := newInstanceMount(physical)
 
 	closeResult := make(chan error, 1)
 	go func() { closeResult <- session.Close(context.Background()) }()
@@ -48,9 +49,9 @@ func TestManagedComputerMountSessionClosesPhysicalSessionOnce(t *testing.T) {
 	}
 }
 
-func TestManagedComputerMountSessionDuplicateReleaseObservesContext(t *testing.T) {
+func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
 	physical := &blockingCloseSession{started: make(chan struct{}), release: make(chan struct{})}
-	session := newManagedComputerMountSession(physical)
+	session := newInstanceMount(physical)
 
 	firstRelease := make(chan error, 1)
 	go func() { firstRelease <- session.ReleaseCheckpointSource(context.Background()) }()
@@ -96,21 +97,21 @@ func waitForTestError(t *testing.T, result <-chan error, name string) error {
 	}
 }
 
-func TestBorrowedRunSessionCloseLeavesMountedMachineRunning(t *testing.T) {
+func TestBorrowedChannelCloseLeavesMountedMachineRunning(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: runStream}
-	registry := NewComputerMountSessions()
-	unregister := registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newManagedComputerMountSession(parent), "channel-1")
+	registry := NewMounts()
+	unregister := registry.Register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, newInstanceMount(parent), "channel-1")
 	defer unregister()
-	opened, err := registry.OpenComputerInstanceSession(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := opened.Session.(vm.CheckpointableMachine); ok {
+	if _, ok := opened.Channel.(vm.CheckpointableMachine); ok {
 		t.Fatal("borrowed run session advertises checkpoint capture")
 	}
 	for range 2 {
-		if err := opened.Session.Close(context.Background()); err != nil {
+		if err := opened.Channel.Close(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -125,11 +126,11 @@ func TestBorrowedRunSessionCloseLeavesMountedMachineRunning(t *testing.T) {
 func TestOpenedComputerMountReleasesPhysicalSourceWithoutClosingRunStream(t *testing.T) {
 	runStream := &countingReadWriteCloser{}
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: runStream}
-	managed := newManagedComputerMountSession(parent)
-	registry := NewComputerMountSessions()
-	unregister := registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
+	managed := newInstanceMount(parent)
+	registry := NewMounts()
+	unregister := registry.Register(workerapi.ComputerInstanceAssignment{ComputerInstanceID: "runtime-1"}, managed, "channel-1")
 	defer unregister()
-	opened, err := registry.OpenComputerInstanceSession(context.Background(), "runtime-1")
+	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,14 +153,14 @@ func TestRenewComputerAuthorityUsesMountedSession(t *testing.T) {
 	defer host.Close()
 	defer guest.Close()
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
-	registry := NewComputerMountSessions()
-	registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
+	registry := NewMounts()
+	registry.Register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
 		ComputerInstanceID: "runtime-1",
 		WriterGeneration:   3,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, newManagedComputerMountSession(parent), "channel-1")
+	}, newInstanceMount(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
@@ -216,18 +217,183 @@ func TestRenewComputerAuthorityUsesMountedSession(t *testing.T) {
 	}
 }
 
+func TestMountChannelGrantProgramResumeUsesOpenedMount(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	grantStream := &closeCountingConn{Conn: host}
+	machine := &queuedStreamMachine{streams: []io.ReadWriteCloser{&countingReadWriteCloser{}, grantStream}}
+	registry := NewMounts()
+	unregister := registry.Register(testGrantMount(), newInstanceMount(machine), "channel-1")
+	defer unregister()
+	opened, err := registry.OpenChannel(context.Background(), "runtime-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, want := testProgramResumeGrant()
+	serverResult := serveProgramResumeGrant(guest, request, want)
+	attach, err := opened.GrantProgramResume(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(attach, want) {
+		t.Fatalf("resume attach = %+v, want %+v", attach, want)
+	}
+	if got := grantStream.closes.Load(); got != 1 {
+		t.Fatalf("grant stream close count = %d, want 1", got)
+	}
+	if machine.closeCount != 0 {
+		t.Fatalf("machine close count = %d, want 0", machine.closeCount)
+	}
+}
+
+func TestMountChannelGrantProgramResumeKeepsOpenedMountAfterReregistration(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	opened := &queuedStreamMachine{streams: []io.ReadWriteCloser{&countingReadWriteCloser{}, host}}
+	replacement := &queuedStreamMachine{}
+	registry := NewMounts()
+	unregister := registry.Register(testGrantMount(), newInstanceMount(opened), "channel-1")
+	channel, err := registry.OpenChannel(context.Background(), "runtime-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unregister()
+	defer registry.Register(testGrantMount(), newInstanceMount(replacement), "channel-2")()
+	request, want := testProgramResumeGrant()
+	serverResult := serveProgramResumeGrant(guest, request, want)
+	attach, err := channel.GrantProgramResume(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(attach, want) {
+		t.Fatalf("resume attach = %+v, want %+v", attach, want)
+	}
+	if opened.opens != 2 || replacement.opens != 0 {
+		t.Fatalf("stream opens: opened mount = %d, replacement mount = %d; want 2, 0", opened.opens, replacement.opens)
+	}
+}
+
+func testGrantMount() workerapi.ComputerInstanceAssignment {
+	return workerapi.ComputerInstanceAssignment{ComputerID: "computer-1", ComputerInstanceID: "runtime-1", WriterGeneration: 3}
+}
+
+func testProgramResumeGrant() (*computerv0.GrantProgramResumeRequest, *programv0.ResumeAttach) {
+	fence := &computerv0.ComputerAuthorityFence{
+		ComputerInstanceId: "runtime-1",
+		ComputerId:         "computer-1",
+		WriterGeneration:   3,
+		RunId:              "run-1",
+		AttemptNumber:      2,
+		RunLeaseId:         "lease-1",
+	}
+	request := &computerv0.GrantProgramResumeRequest{
+		Authority:    &computerv0.ComputerRunAuthority{Fence: fence, ChannelToken: "channel-1"},
+		RunWaitId:    "wait-1",
+		CheckpointId: "checkpoint-1",
+	}
+	attach := &programv0.ResumeAttach{
+		RunId:                "run-1",
+		AttemptNumber:        2,
+		RunLeaseId:           "lease-1",
+		RunWaitId:            "wait-1",
+		CheckpointId:         "checkpoint-1",
+		ResumeRequestVersion: 1,
+		ResumeAttachId:       "attach-1",
+		CorrelationId:        "correlation-1",
+	}
+	return request, attach
+}
+
+// serveProgramResumeGrant plays the guest side of one resume grant stream and
+// checks that the host sent the expected header and request.
+func serveProgramResumeGrant(guest net.Conn, request *computerv0.GrantProgramResumeRequest, attach *programv0.ResumeAttach) <-chan error {
+	result := make(chan error, 1)
+	go func() {
+		header, bodyLength, err := wire.ReadStreamFrameHeader(guest)
+		if err != nil {
+			result <- err
+			return
+		}
+		if header.Type != wire.StreamTypeProgramResumeGrant ||
+			header.RunID != "run-1" ||
+			header.ComputerID != "computer-1" ||
+			header.ComputerInstanceID != "runtime-1" || bodyLength != 0 {
+			result <- errors.New("unexpected program resume grant header")
+			return
+		}
+		var received computerv0.GrantProgramResumeRequest
+		if err := frameio.ReadProtoFrame(guest, &received); err != nil {
+			result <- err
+			return
+		}
+		if !proto.Equal(&received, request) {
+			result <- errors.New("unexpected program resume grant request")
+			return
+		}
+		result <- frameio.WriteProtoFrame(guest, &computerv0.GrantProgramResumeResponse{Fence: request.GetAuthority().GetFence(), Attach: attach})
+	}()
+	return result
+}
+
+// queuedStreamMachine hands out its streams in order, one per OpenStream.
+type queuedStreamMachine struct {
+	streams    []io.ReadWriteCloser
+	opens      int
+	closeCount int
+}
+
+func (m *queuedStreamMachine) Stream() vm.Stream { return testVMStream(discardReadWriteCloser{}) }
+
+func (m *queuedStreamMachine) OpenStream(context.Context) (vm.Stream, error) {
+	if m.opens >= len(m.streams) {
+		m.opens++
+		return nil, errors.New("no stream available")
+	}
+	stream := m.streams[m.opens]
+	m.opens++
+	return testVMStream(stream), nil
+}
+
+func (m *queuedStreamMachine) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (m *queuedStreamMachine) Close(context.Context) error {
+	m.closeCount++
+	return nil
+}
+
+type closeCountingConn struct {
+	net.Conn
+	closes atomic.Int32
+}
+
+func (c *closeCountingConn) Close() error {
+	c.closes.Add(1)
+	return c.Conn.Close()
+}
+
 func TestRenewComputerAuthorityCancellationPreservesMountedSession(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
-	registry := NewComputerMountSessions()
-	registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
+	registry := NewMounts()
+	registry.Register(workerapi.ComputerInstanceAssignment{
 
 		ComputerID:         "computer-1",
 		ComputerInstanceID: "runtime-1",
 		WriterGeneration:   4,
 		Target:             workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, newManagedComputerMountSession(parent), "channel-1")
+	}, newInstanceMount(parent), "channel-1")
 	request := &computerv0.RenewComputerAuthorityRequest{
 		Previous: &computerv0.ComputerRunAuthority{
 			Fence: &computerv0.ComputerAuthorityFence{
@@ -358,10 +524,10 @@ func (s *borrowedParentSession) PauseComputer(context.Context) (*vm.ComputerSnap
 func TestRenewComputerAuthorityRejectsDifferentPhysicalWriterBeforeOpeningStream(t *testing.T) {
 	for _, generation := range []int64{0, 2, 4} {
 		parent := &renewalStreamProbe{}
-		registry := NewComputerMountSessions()
-		registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
+		registry := NewMounts()
+		registry.Register(workerapi.ComputerInstanceAssignment{
 			ComputerID: "computer-1", ComputerInstanceID: "instance-1", WriterGeneration: 3,
-		}, newManagedComputerMountSession(parent), "channel-1")
+		}, newInstanceMount(parent), "channel-1")
 		_, err := registry.RenewComputerAuthority(t.Context(), &computerv0.RenewComputerAuthorityRequest{
 			Previous: &computerv0.ComputerRunAuthority{ChannelToken: "channel-1", Fence: &computerv0.ComputerAuthorityFence{
 				ComputerId: "computer-1", ComputerInstanceId: "instance-1", WriterGeneration: generation,

@@ -56,7 +56,7 @@ func TestInstanceCloseObservationStopsPhysicalSession(t *testing.T) {
 	request := workerapi.ComputerInstanceRenewRequest{EnvironmentID: "environment", ComputerInstanceID: "instance", WriterGeneration: 3}
 	renewal := m.startRenewalLoop(ctx, request, client, time.Millisecond)
 	raw := &computerMaterializerTestSession{exit: make(chan error)}
-	err := m.serveComputerMount(ctx, renewal, newManagedComputerMountSession(raw), workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 3, RuntimeEpoch: 7}, client, nil)
+	err := m.serveComputerMount(ctx, renewal, newInstanceMount(raw), workerapi.ComputerInstanceAssignment{ComputerInstanceID: "instance", WriterGeneration: 3, RuntimeEpoch: 7}, client, nil)
 	if err != nil || raw.closeCount() != 1 || client.stops != 1 {
 		t.Fatalf("err=%v close=%d stops=%d", err, raw.closeCount(), client.stops)
 	}
@@ -123,7 +123,7 @@ func TestStartupFailureUsesLatestInstanceObservation(t *testing.T) {
 	}()
 	session := &computerMaterializerTestSession{streams: []io.ReadWriteCloser{host}, closeErr: errors.New("cleanup failed")}
 	pool := computerPreparedRuntimePool(t, mount, session)
-	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, Sessions: NewComputerMountSessions(), CAS: store, RuntimePool: pool, Heartbeat: time.Millisecond}
+	m := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, Mounts: NewMounts(), CAS: store, RuntimePool: pool, Heartbeat: time.Millisecond}
 	err := m.RunComputerMount(ctx, mount, client)
 	<-done
 	if err == nil || len(client.failures) != 2 {

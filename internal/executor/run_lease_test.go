@@ -225,11 +225,11 @@ func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t
 	host, guest := net.Pipe()
 	defer host.Close()
 	defer guest.Close()
-	registry := NewComputerMountSessions()
-	registry.RegisterComputerMountSession(workerapi.ComputerInstanceAssignment{
+	registry := NewMounts()
+	registry.Register(workerapi.ComputerInstanceAssignment{
 		ComputerID: "computer-1", ComputerInstanceID: "runtime-1",
 		WriterGeneration: 4, Target: workerapi.ComputerMountTarget{BaseComputerDiskVersionID: "version-1"},
-	}, newManagedComputerMountSession(&borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}), "channel-1")
+	}, newInstanceMount(&borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}), "channel-1")
 	authority := &computerv0.ComputerRunAuthority{
 		Fence: &computerv0.ComputerAuthorityFence{
 			ComputerInstanceId: "runtime-1", ComputerId: "computer-1", WriterGeneration: 4,
@@ -387,7 +387,7 @@ func (controlPlane staticRenewalControlPlane) RenewRunLease(
 }
 
 type rejectingRenewalMounts struct {
-	ComputerMountSessionRegistry
+	MountRegistry
 	calls int
 }
 

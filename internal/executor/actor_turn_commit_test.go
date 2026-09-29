@@ -150,16 +150,16 @@ func TestTurnSettlementFailureReleasesMountedComputerThroughBoundSource(t *testi
 	defer guest.Close()
 	commitErr, releaseErr := &httpclient.Error{StatusCode: http.StatusConflict}, errors.New("physical stop failed")
 	machine := &turnReleaseMachine{fakeGuestSession: fakeGuestSession{stream: host}, closeErr: releaseErr}
-	managed := newManagedComputerMountSession(machine)
-	registry := NewComputerMountSessions()
-	unregister := registry.RegisterComputerMountSession(testComputerMount(claim.Lease), managed, "channel-1")
+	managed := newInstanceMount(machine)
+	registry := NewMounts()
+	unregister := registry.Register(testComputerMount(claim.Lease), managed, "channel-1")
 	defer unregister()
-	opened, err := registry.OpenComputerInstanceSession(t.Context(), claim.Lease.ComputerInstanceID)
+	opened, err := registry.OpenChannel(t.Context(), claim.Lease.ComputerInstanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cp := &actorTurnCommitControlPlane{testRunLeaseControlPlane: &testRunLeaseControlPlane{trace: &runLeaseTrace{}}, commitErr: commitErr}
-	task := &guestRunLeaseTask{program: freshProgram{session: opened.Session, releaseSource: opened.ReleaseSource, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
+	task := &guestRunLeaseTask{program: freshProgram{session: opened.Channel, releaseSource: opened.ReleaseSource, execution: testTurnExecution(claim.Lease).Session}, controlPlane: testControlPlane(t, cp), lease: claim.Lease}
 	err = task.handleTurnSettle(t.Context(), &programv0.TurnSettleRequested{Execution: testTurnExecution(claim.Lease), CorrelationId: "019c10d5-a6f7-7af1-8f5f-000000000099", TargetInputSequence: 1, Disposition: "completed"})
 	var stopErr *checkpointSourceReleaseError
 	if !errors.As(err, &stopErr) || !errors.Is(err, releaseErr) || !errors.Is(err, commitErr) {
@@ -214,7 +214,7 @@ func TestTurnSettlementCancellationUnblocksDecisionAndStopsComputer(t *testing.T
 	}
 }
 
-type turnRenewalMounts struct{ ComputerMountSessionRegistry }
+type turnRenewalMounts struct{ MountRegistry }
 
 func (turnRenewalMounts) RenewComputerAuthority(_ context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
 	fence := proto.Clone(request.GetPrevious().GetFence()).(*computerv0.ComputerAuthorityFence)

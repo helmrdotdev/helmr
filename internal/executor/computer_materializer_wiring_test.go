@@ -29,7 +29,7 @@ func completeTestComputerMaterializer() ComputerMaterializer {
 		ComputerSaveEvery: time.Hour,
 		CAS:               &fakeCAS{objects: map[string][]byte{}},
 		ComputerObjects:   &checkpointCAS{},
-		Sessions:          NewComputerMountSessions(),
+		Mounts:            NewMounts(),
 		RuntimePool:       NewPreparedRuntimePool(nil, nil, 1, nil),
 	}
 }
@@ -48,7 +48,7 @@ func TestNewComputerMaterializerRejectsIncompleteWiring(t *testing.T) {
 		"save interval":    {func(m *ComputerMaterializer) { m.ComputerSaveEvery = 0 }, "Computer save interval must be positive"},
 		"cas":              {func(m *ComputerMaterializer) { m.CAS = nil }, "computer materializer CAS is required"},
 		"computer objects": {func(m *ComputerMaterializer) { m.ComputerObjects = nil }, "Computer object store is required"},
-		"sessions":         {func(m *ComputerMaterializer) { m.Sessions = nil }, "computer mount session registry is required"},
+		"sessions":         {func(m *ComputerMaterializer) { m.Mounts = nil }, "computer mount session registry is required"},
 		"runtime pool":     {func(m *ComputerMaterializer) { m.RuntimePool = nil }, "computer prepared runtime pool is required"},
 	} {
 		t.Run(name, func(t *testing.T) {

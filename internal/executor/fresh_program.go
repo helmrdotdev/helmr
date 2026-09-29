@@ -87,7 +87,7 @@ type freshAdmissionState struct {
 	mu           sync.Mutex
 	lease        workerapi.RunLeaseAssignment
 	authority    *computerv0.ComputerRunAuthority
-	mounts       ComputerMountSessionRegistry
+	mounts       MountRegistry
 	controlPlane FreshProgramControlPlane
 	events       freshProgramEventSink
 }
@@ -683,13 +683,13 @@ func (r ProgramRunner) startNewProgram(
 	// The prepared VM can be advertised before the independent mount consumer
 	// registers its local channel. Wait only for that channel, before admission
 	// writes can start a process, and retain the original admission deadline.
-	var opened ComputerMountSession
+	var opened MountChannel
 	for {
 		if err := admissionCtx.Err(); err != nil {
 			return freshProgram{}, err
 		}
-		opened, err = r.ComputerMounts.OpenComputerInstanceSession(admissionCtx, claim.Lease.ComputerInstanceID)
-		if !errors.Is(err, ErrComputerMountSessionNotFound) {
+		opened, err = r.Mounts.OpenChannel(admissionCtx, claim.Lease.ComputerInstanceID)
+		if !errors.Is(err, ErrMountNotFound) {
 			break
 		}
 		timer := time.NewTimer(runLeaseRetryEvery)
@@ -706,10 +706,10 @@ func (r ProgramRunner) startNewProgram(
 	keepSession := false
 	defer func() {
 		if !keepSession {
-			_ = opened.Session.Close(context.Background())
+			_ = opened.Channel.Close(context.Background())
 		}
 	}()
-	if opened.Session.Stream() == nil {
+	if opened.Channel.Stream() == nil {
 		return freshProgram{}, errors.New("computer mount stream is required")
 	}
 	if err := validateNewProgramMount(
@@ -720,7 +720,7 @@ func (r ProgramRunner) startNewProgram(
 	}
 	if err := writeFreshProgramContext(
 		admissionCtx,
-		opened.Session,
+		opened.Channel,
 		func(stream vm.Stream) error {
 			return writeFreshProgramAdmission(
 				stream,
@@ -736,7 +736,7 @@ func (r ProgramRunner) startNewProgram(
 	var event programv0.RunEvent
 	if err := readProtoFrameBoundedContext(
 		admissionCtx,
-		opened.Session,
+		opened.Channel,
 		maxFreshProofFrameBytes,
 		&event,
 	); err != nil {
@@ -792,7 +792,7 @@ func (r ProgramRunner) startNewProgram(
 		if diagnostic == wire.SecretEnvCollisionDiagnostic {
 			failure = fmt.Errorf("program process failed before start proof: %s", diagnostic)
 		}
-		if err := r.ComputerMounts.FailComputerInstanceSession(
+		if err := r.Mounts.RequestFailure(
 			failureCtx,
 			claim.Lease.ComputerInstanceID,
 		); err != nil {
@@ -831,7 +831,7 @@ func (r ProgramRunner) startNewProgram(
 	state := &freshAdmissionState{
 		lease:        claim.Lease,
 		authority:    freshComputerAuthority(claim, opened.ChannelToken, opened.Mount),
-		mounts:       r.ComputerMounts,
+		mounts:       r.Mounts,
 		controlPlane: controlPlane,
 		events:       events,
 	}
@@ -860,7 +860,7 @@ func (r ProgramRunner) startNewProgram(
 	defer cancelStartRelease()
 	if err := writeFreshProgramContext(
 		startReleaseCtx,
-		opened.Session,
+		opened.Channel,
 		func(stream vm.Stream) error {
 			return frameio.WriteProtoFrame(
 				stream,
@@ -883,7 +883,7 @@ func (r ProgramRunner) startNewProgram(
 	go func() {
 		ready, readErr := readFreshEntrypointReady(
 			entrypointCtx,
-			opened.Session,
+			opened.Channel,
 			state.lease,
 			state,
 			&observedEventSeq,
@@ -933,7 +933,7 @@ func (r ProgramRunner) startNewProgram(
 	}
 	if err := writeFreshProgramContext(
 		entrypointAckCtx,
-		opened.Session,
+		opened.Channel,
 		func(stream vm.Stream) error {
 			return frameio.WriteProtoFrame(
 				stream,
@@ -956,7 +956,7 @@ func (r ProgramRunner) startNewProgram(
 	keepSession = true
 	retainAuthority = true
 	return freshProgram{
-		session:          opened.Session,
+		session:          opened.Channel,
 		releaseSource:    opened.ReleaseSource,
 		execution:        execution,
 		mount:            opened.Mount,
