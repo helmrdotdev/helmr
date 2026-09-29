@@ -79,7 +79,7 @@ func TestComputerCheckpointPoolIdleSource(t *testing.T) {
 				client.readyError = &httpclient.Error{StatusCode: 409, Message: "readiness rejected"}
 			}
 			ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
-			p := &PreparedRuntimePool{ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
+			p := &PreparedRuntimePool{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 			client.onReady = func() {
 				if session.closeCount != 0 {
 					t.Fatal("source excluded before ready receipt")
@@ -159,7 +159,7 @@ func TestComputerCheckpointPoolRetriesExclusionAndStagingCleanup(t *testing.T) {
 				client.registerError = &httpclient.Error{StatusCode: 409, Message: "registration rejected"}
 			}
 			ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
-			p := &PreparedRuntimePool{ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
+			p := &PreparedRuntimePool{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 			if err := p.captureRuntimeTarget(t.Context(), client, target); err == nil {
 				t.Fatal("failed exclusion reported success")
 			}
@@ -195,7 +195,7 @@ func TestComputerCheckpointPoolJoinsMembersAndPauseFailure(t *testing.T) {
 			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: checkpointArtifact(t)}
 			client := &checkpointReconcileClient{target: target}
 			ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
-			registry := &ComputerCaptureRuns{}
+			registry := &CaptureRuns{}
 			p := &PreparedRuntimePool{ComputerCaptures: registry, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 			done := make(chan error, 2)
 			for index, member := range target.Capture.Runs {
@@ -242,7 +242,7 @@ func TestComputerCheckpointPoolKeepsPollingDuringCapture(t *testing.T) {
 		return ctx.Err()
 	}}
 	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
-	p := &PreparedRuntimePool{Size: 2, ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: checkpoints, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
+	p := &PreparedRuntimePool{Size: 2, ComputerCaptures: &CaptureRuns{}, Checkpoints: checkpoints, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 	client := &batchRuntimeClient{response: workerapi.RuntimeReconcileResponse{Items: []workerapi.RuntimeReconcileTarget{target}}, polled: make(chan struct{}, 8)}
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
@@ -276,7 +276,7 @@ func TestComputerCheckpointPoolRecoversUncertainReadyReceipt(t *testing.T) {
 	client := &checkpointReconcileClient{target: target, onReady: cancel, readyError: context.Canceled, failedError: &httpclient.Error{StatusCode: 409, Message: "checkpoint already ready"}}
 	connector := &countingRuntimeBackend{}
 	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
-	p := &PreparedRuntimePool{Backend: connector, ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
+	p := &PreparedRuntimePool{Backend: connector, ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 	if err := p.captureRuntimeTarget(ctx, client, target); err == nil {
 		t.Fatal("lost receipt reported success")
 	}
@@ -318,7 +318,7 @@ func TestComputerCheckpointPoolReleasesSourceThroughMachineClose(t *testing.T) {
 	session := &captureSourceWithMountOperations{checkpointSession: raw}
 	client := &checkpointReconcileClient{target: target}
 	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
-	p := &PreparedRuntimePool{ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
+	p := &PreparedRuntimePool{ComputerCaptures: &CaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 	if err := p.captureRuntimeTarget(t.Context(), client, target); err != nil {
 		t.Fatal(err)
 	}

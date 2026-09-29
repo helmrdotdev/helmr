@@ -30,6 +30,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -63,7 +64,7 @@ type runtimeReconcileResult struct {
 
 type PreparedRuntimePool struct {
 	captureCleanup        map[preparedRuntimeRef]*computerCheckpointer
-	ComputerCaptures      *ComputerCaptureRuns
+	ComputerCaptures      *CaptureRuns
 	Checkpoints           ComputerCheckpointClient
 	checkedOutEntries     map[preparedRuntimeRef]preparedRuntimeEntry
 	Backend               vm.Backend
@@ -1693,4 +1694,50 @@ func (p *PreparedRuntimePool) logInfo(message string, attrs ...any) {
 		return
 	}
 	p.Log.Info(message, attrs...)
+}
+
+type runtimePhaseCollector struct {
+	mu     sync.Mutex
+	phases []vm.RuntimePhase
+}
+
+func (c *runtimePhaseCollector) Record(phase vm.RuntimePhase) {
+	if c == nil || strings.TrimSpace(phase.Name) == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.phases = append(c.phases, phase)
+}
+
+func (c *runtimePhaseCollector) Snapshot() []workerapi.CheckpointPhase {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	result := make([]workerapi.CheckpointPhase, 0, len(c.phases))
+	for _, phase := range c.phases {
+		result = append(result, workerCheckpointPhase(phase))
+	}
+	return result
+}
+
+func readProtoFrameFromReaderContext(
+	ctx context.Context,
+	session vm.Machine,
+	reader io.Reader,
+	message proto.Message,
+) error {
+	result := make(chan error, 1)
+	go func() {
+		result <- frameio.ReadProtoFrame(reader, message)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		_ = session.Close(context.Background())
+		return ctx.Err()
+	}
 }

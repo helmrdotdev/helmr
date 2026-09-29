@@ -137,7 +137,7 @@ func TestHotWaitServesTurnCommandsAndKeepsFollowingEvent(t *testing.T) {
 	}}
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &ComputerCaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol, execution: execution.Session}, lease: lease, controlPlane: testControlPlane(t, cp), captures: &CaptureRuns{}}
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
@@ -274,7 +274,7 @@ func TestHotWaitKeepsNextOutcomeWhileResumeAcknowledgementIsPending(t *testing.T
 	defer guest.Close()
 	protocol := newProgramProtocol(host)
 	defer protocol.Close()
-	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &ComputerCaptureRuns{}}
+	task := &guestRunLeaseTask{program: freshProgram{channel: fakeGuestSession{stream: host}, protocol: protocol}, lease: testFreshProgramClaim(t).Lease, captures: &CaptureRuns{}}
 	resumeStarted := make(chan struct{})
 	ack := make(chan struct{})
 	done := make(chan error, 1)

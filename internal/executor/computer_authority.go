@@ -12,7 +12,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var errComputerControlTransport = errors.New("computer control transport")
+// ErrControlTransport marks a failed guest control exchange, as distinct from
+// a guest refusal. Renewal callers retry only transport failures.
+var ErrControlTransport = errors.New("computer control transport")
 
 func (g guestControl) renewAuthority(ctx context.Context, request *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error) {
 	if g.machine == nil {
@@ -56,13 +58,13 @@ func (g guestControl) renewAuthority(ctx context.Context, request *computerv0.Re
 func computerAuthorityRenewalTransportError(step guestControlStep, err error) error {
 	switch step {
 	case guestControlOpen:
-		return fmt.Errorf("%w: open computer authority renewal stream: %w", errComputerControlTransport, err)
+		return fmt.Errorf("%w: open computer authority renewal stream: %w", ErrControlTransport, err)
 	case guestControlWriteHeader:
-		return fmt.Errorf("%w: write computer authority renewal header: %w", errComputerControlTransport, err)
+		return fmt.Errorf("%w: write computer authority renewal header: %w", ErrControlTransport, err)
 	case guestControlWriteRequest:
-		return fmt.Errorf("%w: write computer authority renewal request: %w", errComputerControlTransport, err)
+		return fmt.Errorf("%w: write computer authority renewal request: %w", ErrControlTransport, err)
 	default:
-		return fmt.Errorf("%w: read computer authority renewal response: %w", errComputerControlTransport, err)
+		return fmt.Errorf("%w: read computer authority renewal response: %w", ErrControlTransport, err)
 	}
 }
 

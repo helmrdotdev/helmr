@@ -477,7 +477,7 @@ func TestWarmRuntimeTargetHonorsHardAdmissionBeforeMaterialization(t *testing.T)
 
 func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 	registry := NewMounts()
-	unregister := registry.Register(
+	unregister := registry.register(
 		workerapi.ComputerInstanceAssignment{ComputerInstanceID: "unrelated-instance"},
 		newInstanceMount(&closeTrackingRuntimeSession{}),
 		"channel-token",

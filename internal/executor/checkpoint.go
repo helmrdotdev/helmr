@@ -52,21 +52,22 @@ func materializeCheckpointObject(ctx context.Context, store cas.Reader, encrypto
 	return file.Name(), nil
 }
 
-// checkpointSourceReleaseError keeps physical cleanup uncertainty distinct from
-// a checkpoint failure that the Control Plane has already acknowledged.
-type checkpointSourceReleaseError struct {
-	err error
+// SourceReleaseError keeps physical cleanup uncertainty distinct from a
+// checkpoint failure that the Control Plane has already acknowledged. Callers
+// construct and match it by pointer.
+type SourceReleaseError struct {
+	Err error
 }
 
-func (e *checkpointSourceReleaseError) Error() string {
-	return "release checkpoint source: " + e.err.Error()
+func (e *SourceReleaseError) Error() string {
+	return "release checkpoint source: " + e.Err.Error()
 }
 
-func (e *checkpointSourceReleaseError) Unwrap() error { return e.err }
+func (e *SourceReleaseError) Unwrap() error { return e.Err }
 
 type computerCheckpointer struct {
 	pendingCleanup func() error
-	publication    func(ComputerCheckpointRequest) disk.ContinuationPublication
+	publication    func(computerCheckpointRequest) disk.ContinuationPublication
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
 	session        vm.CheckpointableMachine

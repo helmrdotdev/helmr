@@ -16,13 +16,6 @@ import (
 
 var ErrMountNotFound = errors.New("computer mount session not found")
 
-type MountRegistry interface {
-	Register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelToken string) func()
-	OpenChannel(context.Context, string) (MountChannel, error)
-	RequestFailure(context.Context, string) error
-	RenewComputerAuthority(context.Context, *computerv0.RenewComputerAuthorityRequest) (*computerv0.ComputerAuthorityFence, error)
-}
-
 // MountChannel is one Run's view of a mounted Computer. Channel carries
 // only the Run's borrowed stream; closing it never stops the machine.
 // ReleaseSource is bound to the physical mount and releases it as a checkpoint
@@ -57,7 +50,7 @@ func NewMounts() *Mounts {
 	return &Mounts{mounts: map[string]mountEntry{}}
 }
 
-func (s *Mounts) Register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelToken string) func() {
+func (s *Mounts) register(mount workerapi.ComputerInstanceAssignment, instance *instanceMount, channelToken string) func() {
 	id := strings.TrimSpace(mount.ComputerInstanceID)
 	if id == "" || instance == nil {
 		return func() {}

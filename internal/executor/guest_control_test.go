@@ -224,7 +224,7 @@ func TestComputerAuthorityRenewalMarksEveryExchangeFailureAsTransport(t *testing
 			stream := &guestControlFailingStream{writeLimit: test.writeLimit}
 			machine := &guestControlTestMachine{stream: testVMStream(stream), openErr: test.openErr}
 			fenceOut, err := guestControl{machine: machine}.renewAuthority(t.Context(), request)
-			if fenceOut != nil || !errors.Is(err, errComputerControlTransport) || err.Error() != test.want {
+			if fenceOut != nil || !errors.Is(err, ErrControlTransport) || err.Error() != test.want {
 				t.Fatalf("renewal = %v, %v; want %q", fenceOut, err, test.want)
 			}
 		})

@@ -37,7 +37,7 @@ func TestComputerCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T)
 		encryptor: encryptor,
 		tempDir:   t.TempDir(),
 		computer:  testCheckpointComputerBase(),
-	}).CreateCheckpoint(context.Background(), ComputerCheckpointRequest{
+	}).CreateCheckpoint(context.Background(), computerCheckpointRequest{
 		Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }, Target: target,
 	})
 	if err != nil {
@@ -394,7 +394,7 @@ func (c *checkpointCAS) Publish(ctx context.Context, d cas.Descriptor, file *os.
 	return c.put(d.MediaType, data)
 }
 
-func testCheckpointPublication(ComputerCheckpointRequest) disk.ContinuationPublication {
+func testCheckpointPublication(computerCheckpointRequest) disk.ContinuationPublication {
 	return nil
 }
 
@@ -460,8 +460,8 @@ func TestComputerCheckpointerPreservesCaptureAndReleaseErrors(t *testing.T) {
 	stream := checkpointFreezeStream(t, target)
 	captureErr, releaseErr := errors.New("snapshot failed"), errors.New("stop failed")
 	session := &checkpointSession{stream: stream, snapshotErr: captureErr, closeErr: releaseErr}
-	_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: &checkpointCAS{}, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }})
-	var cleanup *checkpointSourceReleaseError
+	_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: &checkpointCAS{}, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), computerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error { return nil }})
+	var cleanup *SourceReleaseError
 	if !errors.Is(err, captureErr) || !errors.Is(err, releaseErr) || !errors.As(err, &cleanup) {
 		t.Fatalf("lost failure: %v", err)
 	}
@@ -488,7 +488,7 @@ func TestComputerCheckpointerRejectsMismatchedSnapshotBeforePublication(t *testi
 			}
 			session := &checkpointSession{stream: checkpointFreezeStream(t, target), artifact: artifact}
 			store := &checkpointCAS{}
-			_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error {
+			_, err := (&computerCheckpointer{publication: testCheckpointPublication, session: session, objects: store, reservations: testCheckpointReservations(t), encryptor: testCheckpointEncryptor(t), tempDir: t.TempDir()}).CreateCheckpoint(t.Context(), computerCheckpointRequest{Target: target, Register: func(context.Context, workerapi.CheckpointManifest) error {
 				t.Fatal("registered changed snapshot")
 				return nil
 			}})
@@ -500,14 +500,14 @@ func TestComputerCheckpointerRejectsMismatchedSnapshotBeforePublication(t *testi
 }
 func TestComputerCheckpointerInvalidIntentDoesNotCloseUnrelatedSource(t *testing.T) {
 	session := &checkpointSession{}
-	_, err := (&computerCheckpointer{session: session}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{})
+	_, err := (&computerCheckpointer{session: session}).CreateCheckpoint(t.Context(), computerCheckpointRequest{})
 	if err == nil || session.closeCount != 0 {
 		t.Fatalf("err=%v closes=%d", err, session.closeCount)
 	}
 }
 func TestComputerCheckpointerConfigurationFailureClosesSource(t *testing.T) {
 	session := &checkpointSession{stream: checkpointFreezeStream(t, checkpointCaptureTarget(0))}
-	_, err := (&computerCheckpointer{session: session}).CreateCheckpoint(t.Context(), ComputerCheckpointRequest{Target: checkpointCaptureTarget(0)})
+	_, err := (&computerCheckpointer{session: session}).CreateCheckpoint(t.Context(), computerCheckpointRequest{Target: checkpointCaptureTarget(0)})
 	if err == nil || session.closeCount != 1 {
 		t.Fatalf("err=%v closes=%d", err, session.closeCount)
 	}

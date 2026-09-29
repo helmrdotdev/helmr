@@ -21,6 +21,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
+// computerCheckpointRequest belongs to the physical Instance owner. Member
+// pausing is coordinated before the guest returns the whole-Computer proof.
+type computerCheckpointRequest struct {
+	Target   workerapi.RuntimeReconcileTarget
+	Register func(context.Context, workerapi.CheckpointManifest) error
+}
+
+type checkpointResult struct {
+	Manifest workerapi.CheckpointManifest
+}
+
 type checkpointStagingLimits struct {
 	total   int64
 	memory  int64
@@ -61,7 +72,7 @@ func checkpointStagingSize(shape vm.SnapshotLimits, cipher *checkpoint.Encryptor
 	return limits, nil
 }
 
-func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request ComputerCheckpointRequest) (result CheckpointResult, retErr error) {
+func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request computerCheckpointRequest) (result checkpointResult, retErr error) {
 	if c.session == nil {
 		return result, errors.New("checkpoint source session is required")
 	}
@@ -125,7 +136,7 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request Com
 				}
 				return cleanup
 			}
-			retErr = errors.Join(retErr, &checkpointSourceReleaseError{err: err})
+			retErr = errors.Join(retErr, &SourceReleaseError{Err: err})
 		}
 	}()
 
@@ -365,4 +376,11 @@ func (c computerCheckpointer) checkpointManifest(point workerapi.CheckpointRecov
 			Base: c.computer,
 		},
 	}
+}
+
+func durationMilliseconds(value time.Duration) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return value.Milliseconds()
 }

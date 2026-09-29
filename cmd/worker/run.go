@@ -52,7 +52,7 @@ func run(log *slog.Logger) error {
 	}
 	workDir := cfg.WorkDir
 	if workDir == "" {
-		workDir = executor.DefaultWorkDir()
+		workDir = defaultWorkDir()
 	}
 	networkConfig := firecracker.Config{
 		JailerUID:               cfg.JailerUID,
@@ -217,7 +217,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure worker capacity: %w", err)
 	}
 	computerMounts := executor.NewMounts()
-	computerCaptures := &executor.ComputerCaptureRuns{}
+	computerCaptures := &executor.CaptureRuns{}
 	preparedRuntimePool := executor.NewPreparedRuntimePool(runtimeBackend, store, runtimeCapacity.preparedPoolSize, log)
 	closePreparedRuntime := retryableWorkerCloser{close: preparedRuntimePool.Close}
 	defer func() {

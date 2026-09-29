@@ -99,7 +99,7 @@ require_text 'helmr-worker-enrollment-token' \
 require_text '/var/log/helmr-worker-drain.log' \
   "${root}/infra/aws/modules/worker/templates/user-data.sh.tftpl" "Worker drain-log path changed"
 require_text 'filepath.Join(os.TempDir(), "helmr-worker")' \
-  "${root}/internal/executor/executor.go" "Worker temporary state path changed"
+  "${root}/cmd/worker/main.go" "Worker temporary state path changed"
 require_text 'filepath.Join(os.TempDir(), "helmr-worker", "vms", "guest")' \
   "${root}/internal/firecracker/config.go" "Firecracker temporary state path changed"
 require_text 'WORKER_IMAGE_NAME="${WORKER_IMAGE_NAME:-helmr-worker-image}"' \

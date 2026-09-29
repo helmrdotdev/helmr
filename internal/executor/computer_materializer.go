@@ -34,7 +34,7 @@ type ComputerMaterializer struct {
 	ComputerSaveEvery     time.Duration
 	CAS                   cas.Store
 	ComputerObjects       cas.ImmutableStore
-	Mounts                MountRegistry
+	Mounts                *Mounts
 	TempDir               string
 	Heartbeat             time.Duration
 	StartupTimeout        time.Duration
@@ -184,7 +184,7 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		default:
 		}
 	}()
-	unregisterMount := m.Mounts.Register(mount, instance, m.channelToken(mount))
+	unregisterMount := m.Mounts.register(mount, instance, m.channelToken(mount))
 	defer unregisterMount()
 
 	m.logComputerMountPhase(mount, "computer mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
@@ -1193,6 +1193,10 @@ func (m ComputerMaterializer) registerComputerMount(ctx context.Context, session
 	return nil
 }
 
+func computerMountTargetProto(target workerapi.ComputerMountTarget) *computerv0.ComputerMountTarget {
+	return &computerv0.ComputerMountTarget{BaseComputerDiskVersionId: target.BaseComputerDiskVersionID}
+}
+
 func computerMountPhaseError(phases []*computerv0.ComputerMountPhase) string {
 	for i := len(phases) - 1; i >= 0; i-- {
 		phase := phases[i]
@@ -1249,7 +1253,7 @@ func (m ComputerMaterializer) stopControlledComputerMount(ctx context.Context, s
 		DesiredVersion: mount.DesiredVersion, ExpectedObservedVersion: mount.ObservedVersion,
 		CleanupProof: &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC()},
 	}
-	if err := retryRunLeaseRequest(stopCtx, func(ctx context.Context) error { _, err := client.MarkComputerInstanceClosed(ctx, request); return err }); err != nil {
+	if err := retryControlRequest(stopCtx, func(ctx context.Context) error { _, err := client.MarkComputerInstanceClosed(ctx, request); return err }); err != nil {
 		return fmt.Errorf("stop computer mount: %w", err)
 	}
 	return nil

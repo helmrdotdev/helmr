@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"time"
 
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
@@ -13,10 +11,6 @@ import (
 )
 
 var ErrDetached = errors.New("runtime detached after checkpoint")
-
-func DefaultWorkDir() string {
-	return filepath.Join(os.TempDir(), "helmr-worker")
-}
 
 type Executor struct {
 	// RunLeases serves lease claim and finalization only. Calls made on behalf
@@ -49,15 +43,4 @@ type WaitRequest struct {
 type WaitResumeDecision struct {
 	Kind string
 	Data json.RawMessage
-}
-
-// ComputerCheckpointRequest belongs to the physical Instance owner. Member
-// pausing is coordinated before the guest returns the whole-Computer proof.
-type ComputerCheckpointRequest struct {
-	Target   workerapi.RuntimeReconcileTarget
-	Register func(context.Context, workerapi.CheckpointManifest) error
-}
-
-type CheckpointResult struct {
-	Manifest workerapi.CheckpointManifest
 }

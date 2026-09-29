@@ -29,7 +29,7 @@ func (task *guestRunLeaseTask) handleTurnSettle(
 			err = task.program.releaseSource(stopCtx)
 		}
 		if err != nil {
-			retErr = errors.Join(retErr, &checkpointSourceReleaseError{err: err})
+			retErr = errors.Join(retErr, &SourceReleaseError{Err: err})
 		}
 	}()
 	if requested == nil || strings.TrimSpace(requested.GetCorrelationId()) == "" || requested.GetTargetInputSequence() <= 0 {
