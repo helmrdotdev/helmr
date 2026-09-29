@@ -1,4 +1,4 @@
-package schedule
+package scheduler
 
 import (
 	"crypto/sha256"
@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -536,23 +537,23 @@ func (fixedAuthority) ResolveScheduledTask(
 	manifest []byte,
 	manifestDigest []byte,
 	queueConfig []byte,
-) (TaskRun, error) {
+) (schedule.TaskRun, error) {
 	var value struct {
 		Payload struct {
 			Kind string `json:"kind"`
 		} `json:"payload"`
 	}
 	if err := json.Unmarshal(manifest, &value); err != nil {
-		return TaskRun{}, err
+		return schedule.TaskRun{}, err
 	}
 	if manifestVersion != 0 ||
 		declaredID != "daily-report" ||
 		value.Payload.Kind != "standard_schema" ||
 		len(manifestDigest) != sha256.Size ||
 		len(queueConfig) == 0 {
-		return TaskRun{}, errors.New("scheduled task authority is invalid")
+		return schedule.TaskRun{}, errors.New("scheduled task authority is invalid")
 	}
-	return TaskRun{
+	return schedule.TaskRun{
 		QueueName:           "default",
 		MaxActiveDurationMS: 300000,
 		RetryPolicy:         []byte(`{"enabled":false}`),

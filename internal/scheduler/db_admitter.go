@@ -1,4 +1,4 @@
-package schedule
+package scheduler
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -23,17 +24,7 @@ type TxBeginner interface {
 }
 
 type Authority interface {
-	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (TaskRun, error)
-}
-
-type TaskRun struct {
-	QueueName             string
-	QueueConcurrencyLimit *int64
-	QueuedTTLMS           *int64
-	MaxActiveDurationMS   int64
-	RetryPolicy           []byte
-	SandboxDeclaredID     string
-	SecretPlacements      []computer.SecretPlacement
+	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (schedule.TaskRun, error)
 }
 
 type DBAdmitter struct {

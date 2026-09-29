@@ -90,7 +90,7 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/dispatch \
 	./internal/idempotency \
 	./internal/run \
-	./internal/schedule \
+	./internal/scheduler \
 	./internal/secret \
 	./internal/pglock \
 	./internal/token \

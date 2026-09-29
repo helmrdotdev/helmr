@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -47,6 +48,35 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		for _, target := range targets {
 			if slices.Contains(actual[source], target) {
 				t.Fatalf("internal package import is forbidden: %s must not import %s", source, target)
+			}
+		}
+	}
+}
+
+func TestLightProgramsDoNotReachDatabase(t *testing.T) {
+	root := repositoryRoot(t)
+	packages := []string{
+		"./cmd/guestd",
+		"./cmd/helmr",
+		"./cmd/internal/bundle-builder",
+		"./internal/builder",
+		"./internal/deployment",
+		"./internal/hostconfig",
+		"./internal/schedule",
+	}
+	for _, goos := range []string{"linux", "darwin"} {
+		for _, pkg := range packages {
+			cmd := exec.Command("go", "list", "-buildvcs=false", "-deps", pkg)
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)
+			}
+			for _, dependency := range strings.Fields(string(output)) {
+				if dependency == internalImportPrefix+"db" || strings.HasPrefix(dependency, "github.com/jackc/pgx/") {
+					t.Fatalf("%s must not depend on %s for %s", pkg, dependency, goos)
+				}
 			}
 		}
 	}
