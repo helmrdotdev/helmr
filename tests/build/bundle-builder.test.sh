@@ -544,6 +544,10 @@ test -f "$tmp/program/mixed/asset.txt"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/builder.test" ./internal/builder
 docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
 grep -E '^--- PASS: TestPreparedProgramFinalization ' "$tmp/finalization.log"
+if grep -E '^\s*--- (SKIP|FAIL)' "$tmp/finalization.log"; then
+  echo "prepared Program finalization test did not run every case" >&2
+  exit 1
+fi
 bun build "$repo_root/runtime/typescript/src/native-runtime.test.ts" --target=node --format=esm --outfile "$tmp/native-runtime.test.mjs"
 docker run --rm --platform linux/amd64 --workdir /workspace -v "$tmp/program:/opt/helmr/program:ro" -v "$tmp/native-runtime.test.mjs:/probe.mjs:ro" -e HELMR_NATIVE_RUNTIME_TEST=1 --entrypoint /opt/helmr/runtime/bin/node bundle-builder:0 --test /probe.mjs | tee "$tmp/native-runtime.log"
 grep -E '# pass 4|ℹ pass 4' "$tmp/native-runtime.log"

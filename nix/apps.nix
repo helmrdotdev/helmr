@@ -42,15 +42,14 @@ let
           actionlint
           scripts/security-checks.sh
         '';
-    ci-fast-go =
-      app "ci-fast-go" "compile commands and run Go unit tests" toolsets.ciGoConsole
-        ''
-          export HELMR_SKIP_POSTGRES_TESTS=1
-          bun install --frozen-lockfile --ignore-scripts
-          make console-build
-          go build -tags embed_console ./cmd/...
-          go test -tags embed_console ./...
-        '';
+    ci-fast-go = app "ci-fast-go" "compile commands and run Go unit tests" toolsets.ciGoConsole ''
+      export HELMR_SKIP_POSTGRES_TESTS=1
+      bun install --frozen-lockfile --ignore-scripts
+      make console-build
+      go build -tags embed_console ./cmd/...
+      go test -tags embed_console ./...
+      bash tests/build/go-test-selection.test.sh
+    '';
     ci-fast-typescript =
       app "ci-fast-typescript" "check TypeScript types and unit tests" toolsets.ciTypescript
         ''
@@ -155,7 +154,7 @@ let
           fi
           FIRECRACKER_PATH="$(command -v firecracker)"
           export FIRECRACKER_PATH
-          go test ./internal/firecracker -run '^TestPackagedFirecrackerProbeOutputIsAccepted$' -count=1
+          bash scripts/test-go-selection.sh '^TestPackagedFirecrackerProbeOutputIsAccepted$' ./internal/firecracker
         '';
     ci-linux-lint =
       app "ci-linux-lint" "run Linux-targeted Go static analysis for CI"
