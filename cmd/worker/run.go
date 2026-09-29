@@ -255,13 +255,11 @@ func run(log *slog.Logger) error {
 		log.Info("prepared runtime pool enabled", "pool_size", runtimeCapacity.preparedPoolSize)
 	}
 	runLeaseTasks := executor.ProgramRunner{
-		ComputerCaptures:  computerCaptures,
-		CheckpointObjects: store, Reservations: hostReservations,
-		CAS:                 store,
-		CheckpointEncryptor: checkpointEncryptor,
-		ComputerMounts:      computerMountSessions,
-		Log:                 log,
-		TempDir:             filepath.Join(workDir, "tmp"),
+		ComputerCaptures: computerCaptures,
+		CAS:              store,
+		ComputerMounts:   computerMountSessions,
+		Log:              log,
+		TempDir:          filepath.Join(workDir, "tmp"),
 	}
 	runner, err := worker.NewRunner(
 		controlPlaneClient,

@@ -35,10 +35,6 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	if err != nil {
 		return nil, err
 	}
-	restoring, ok := p.Backend.(vm.RestoringBackend)
-	if !ok {
-		return nil, errors.New("connector does not support checkpoint restore")
-	}
 	if p.CAS == nil || p.CheckpointEncryptor == nil {
 		return nil, errors.New("prepared runtime restore CAS and encryption are required")
 	}
@@ -70,7 +66,6 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 			retErr = errors.Join(retErr, cleanupErr)
 		}
 	}()
-	runner := ProgramRunner{CAS: p.CAS, CheckpointEncryptor: p.CheckpointEncryptor, TempDir: p.TempDir}
 	runtimeState := checkpoint.RuntimeState
 	paths := make([]string, 4)
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -86,7 +81,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 	}
 	for _, artifact := range artifacts {
 		group.Go(func() error {
-			path, err := runner.materializeCheckpointObject(groupCtx, artifact.value, artifact.suffix, directory)
+			path, err := materializeCheckpointObject(groupCtx, p.CAS, p.CheckpointEncryptor, artifact.value, artifact.suffix, directory)
 			if err != nil {
 				return err
 			}
@@ -102,7 +97,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		return nil, fmt.Errorf("read restored runtime manifest: %w", err)
 	}
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
-	session, err := restoring.Restore(ctx, vm.RestoreRequest{
+	session, err := p.Backend.Restore(ctx, vm.RestoreRequest{
 		ID: restore.CheckpointID, ComputerInstanceID: target.ID, OwnerKind: vm.OwnerRuntime,
 		Resources: compute.ResourceVector{MilliCPU: int64(target.Source.ReservedCPUMillis), MemoryMiB: int64(target.Source.ReservedMemoryMiB), DiskMiB: target.Source.ReservedDiskMiB, Slots: target.Source.ReservedExecutionSlots},
 		Binding:   runtimeTargetWorkloadBinding(target),

@@ -66,7 +66,7 @@ type PreparedRuntimePool struct {
 	ComputerCaptures      *ComputerCaptureRuns
 	Checkpoints           ComputerCheckpointClient
 	checkedOutEntries     map[preparedRuntimeRef]preparedRuntimeEntry
-	Backend               vm.Cleaner
+	Backend               vm.Backend
 	CAS                   cas.Store
 	ComputerObjects       cas.ImmutableStore
 	ComputerPreparation   ComputerPreparationClient
@@ -172,7 +172,7 @@ func (s *preparedRuntimeSignal) finished() (error, bool) {
 	}
 }
 
-func NewPreparedRuntimePool(backend vm.Cleaner, store cas.Store, size int, log *slog.Logger) *PreparedRuntimePool {
+func NewPreparedRuntimePool(backend vm.Backend, store cas.Store, size int, log *slog.Logger) *PreparedRuntimePool {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PreparedRuntimePool{
 		Backend:           backend,
@@ -806,11 +806,7 @@ func (p *PreparedRuntimePool) prepareAndStore(
 		phaseLogMessage = "prepared restored runtime phase"
 		session, materializeErr = p.restorePreparedRuntime(ctx, target, topology, readOnlyDrives, phases.Record)
 	} else {
-		materializing, ok := p.Backend.(vm.MaterializingBackend)
-		if !ok {
-			return failInstance(errors.New("connector does not support mount"))
-		}
-		session, materializeErr = materializing.Materialize(ctx, vm.MaterializeRequest{
+		session, materializeErr = p.Backend.Materialize(ctx, vm.MaterializeRequest{
 			ID: computerInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
 			Binding:           runtimeTargetWorkloadBinding(target),
 			ComputerMountPath: mount.ComputerMountPath, BaseComputerDiskVersionID: mount.Target.BaseComputerDiskVersionID,

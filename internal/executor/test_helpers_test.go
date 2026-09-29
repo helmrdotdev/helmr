@@ -15,6 +15,18 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
+// unsupportedMachineStarts provides failing Restore and Materialize defaults so
+// test backends satisfy vm.Backend; a fake may override either method.
+type unsupportedMachineStarts struct{}
+
+func (unsupportedMachineStarts) Restore(context.Context, vm.RestoreRequest) (vm.Machine, error) {
+	return nil, errors.New("test backend does not restore machines")
+}
+
+func (unsupportedMachineStarts) Materialize(context.Context, vm.MaterializeRequest) (vm.Machine, error) {
+	return nil, errors.New("test backend does not materialize machines")
+}
+
 type fakeGuestSession struct {
 	stream io.ReadWriteCloser
 }
