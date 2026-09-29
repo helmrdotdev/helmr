@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -119,5 +120,28 @@ func TestBrowserAuthReturnDestinationValidation(t *testing.T) {
 	const destination = "/auth/device?code=ABCD-EFGH#confirm"
 	if got := validateRedirectAfter(destination); got != destination {
 		t.Fatalf("lost destination %q", got)
+	}
+}
+
+func TestInvitationStartRejectsEmptyToken(t *testing.T) {
+	cfg := completeServerConfig(t)
+	cfg.PublicURL = &url.URL{Scheme: "https", Host: "helmr.example.test"}
+	cfg.AuthProvider = continuationAuthProvider{}
+	cfg.MagicLinkDebugURLs = true
+	cfg.MagicLinkDelivery = NewMagicLinkDelivery(discardTestLogger(), time.Second)
+	handler, err := NewServer(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/auth/github/invite/start", "/api/auth/magic-link/invite/start"} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "https://helmr.example.test"+path, bytes.NewReader([]byte(`{"token":""}`))))
+		var body api.HTTPErrorResponse
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if recorder.Code != http.StatusBadRequest || body.Error.Code != "invalid_token" {
+			t.Fatalf("%s response = %d %+v, want 400 invalid_token", path, recorder.Code, body.Error)
+		}
 	}
 }

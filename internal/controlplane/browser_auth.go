@@ -160,7 +160,7 @@ func (s *Server) completeBrowserAuth(r *http.Request, flow browserAuthFlow, exte
 		}
 		return identity.SignInWithInvitation(r.Context(), s.tx, s.identity, tokenHash, external)
 	case browserAuthGitHubLogin:
-		return identity.SignIn(r.Context(), s.db, s.identity, external)
+		return identity.SignIn(r.Context(), s.tx, s.identity, external)
 	default:
 		return "", errors.New("unknown auth flow")
 	}

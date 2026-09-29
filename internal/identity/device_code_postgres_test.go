@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"uuid"
 
@@ -22,7 +23,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	if err != nil || started.ExpiresIn != fixture.cfg.Lifetimes().DeviceCode || started.PollInterval != fixture.cfg.Lifetimes().DevicePollInterval {
 		t.Fatalf("started = %+v, err = %v", started, err)
 	}
-	if _, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrAuthorizationPending) {
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrAuthorizationPending) {
 		t.Fatalf("pending exchange error = %v", err)
 	}
 	state, err := DeviceCodeStatus(ctx, fixture.queries, fixture.cfg, " "+started.UserCode[:4]+" "+started.UserCode[5:]+" ")
@@ -52,7 +53,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 		t.Fatalf("decided code denial error = %v", err)
 	}
 
-	raw, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, " "+started.DeviceCode+" ")
+	raw, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, " "+started.DeviceCode+" ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,13 +61,13 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	if err != nil || principal.UserID != userID || principal.OrgID != orgID || principal.Role != auth.RoleDeveloper {
 		t.Fatalf("device principal = %+v, err = %v", principal, err)
 	}
-	if _, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
 		t.Fatalf("consumed exchange error = %v", err)
 	}
-	if _, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, "unknown"); !errors.Is(err, ErrInvalidDeviceCode) {
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, "unknown"); !errors.Is(err, ErrInvalidDeviceCode) {
 		t.Fatalf("unknown exchange error = %v", err)
 	}
-	if _, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, ""); !errors.Is(err, ErrInvalidDeviceCode) {
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, ""); !errors.Is(err, ErrInvalidDeviceCode) {
 		t.Fatalf("empty exchange error = %v", err)
 	}
 }
@@ -87,7 +88,7 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	if state, err := DenyDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, denied.UserCode); err != nil || state.Status != "denied" {
 		t.Fatalf("denial = %+v, err = %v", state, err)
 	}
-	if _, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, denied.DeviceCode); !errors.Is(err, ErrDeviceAccessDenied) {
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, denied.DeviceCode); !errors.Is(err, ErrDeviceAccessDenied) {
 		t.Fatalf("denied exchange error = %v", err)
 	}
 
@@ -103,7 +104,7 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	if state, err := DeviceCodeStatus(ctx, fixture.queries, fixture.cfg, expired.UserCode); err != nil || state.Status != "expired" {
 		t.Fatalf("expired status = %+v, err = %v", state, err)
 	}
-	if _, err := ExchangeDeviceCode(ctx, fixture.queries, fixture.cfg, expired.DeviceCode); !errors.Is(err, ErrDeviceCodeExpired) {
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, expired.DeviceCode); !errors.Is(err, ErrDeviceCodeExpired) {
 		t.Fatalf("expired exchange error = %v", err)
 	}
 	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, consent, expired.UserCode); !errors.Is(err, ErrDeviceCodeNotFound) {
@@ -111,5 +112,92 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	}
 	if _, err := DeviceCodeStatus(ctx, fixture.queries, fixture.cfg, "ZZZZ-ZZZZ"); !errors.Is(err, ErrDeviceCodeNotFound) {
 		t.Fatalf("unknown status error = %v", err)
+	}
+}
+
+func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
+	fixture := newIdentityFixture(t)
+	ctx := t.Context()
+	userID := fixture.user(t, "Developer", "")
+	orgID := fixture.organization(t, "device-atomic")
+	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
+	approver := auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleDeveloper}
+	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}, started.UserCode); err != nil {
+		t.Fatal(err)
+	}
+
+	restore := fixture.rejectLoginSessions(t)
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); err == nil {
+		t.Fatal("exchange succeeded without a login session")
+	}
+	if state, err := DeviceCodeStatus(ctx, fixture.queries, fixture.cfg, started.UserCode); err != nil || state.Status != "approved" {
+		t.Fatalf("status after failed exchange = %+v, err = %v, want approved", state, err)
+	}
+	if count := fixture.sessionCount(t); count != 0 {
+		t.Fatalf("sessions after failed exchange = %d, want 0", count)
+	}
+	restore()
+
+	raw, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode)
+	if err != nil {
+		t.Fatalf("retried exchange error = %v", err)
+	}
+	if principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw); err != nil || principal.UserID != userID || principal.OrgID != orgID {
+		t.Fatalf("retried principal = %+v, err = %v", principal, err)
+	}
+	if _, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode); !errors.Is(err, ErrInvalidDeviceCode) {
+		t.Fatalf("second exchange error = %v", err)
+	}
+}
+
+func TestDeviceCodePostgresConcurrentExchangeIssuesOneSession(t *testing.T) {
+	fixture := newIdentityFixture(t)
+	ctx := t.Context()
+	userID := fixture.user(t, "Developer", "")
+	orgID := fixture.organization(t, "device-concurrent")
+	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
+	approver := auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleDeveloper}
+	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, approver, DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}, started.UserCode); err != nil {
+		t.Fatal(err)
+	}
+
+	const exchanges = 2
+	start := make(chan struct{})
+	errs := make(chan error, exchanges)
+	var wg sync.WaitGroup
+	for range exchanges {
+		wg.Go(func() {
+			<-start
+			_, err := ExchangeDeviceCode(ctx, fixture.pool, fixture.cfg, started.DeviceCode)
+			errs <- err
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	var succeeded, rejected int
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrInvalidDeviceCode):
+			rejected++
+		default:
+			t.Fatalf("concurrent exchange error = %v", err)
+		}
+	}
+	if succeeded != 1 || rejected != 1 {
+		t.Fatalf("concurrent exchanges succeeded = %d rejected = %d, want 1 and 1", succeeded, rejected)
+	}
+	if count := fixture.activeSessions(t, userID); count != 1 {
+		t.Fatalf("sessions after concurrent exchange = %d, want 1", count)
 	}
 }

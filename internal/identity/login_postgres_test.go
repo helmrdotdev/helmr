@@ -16,7 +16,7 @@ func TestSignInPostgres(t *testing.T) {
 	ctx := t.Context()
 
 	admin := ExternalIdentity{Provider: "github", Subject: "1", DisplayName: "admin", Email: "admin@example.test", EmailVerified: true}
-	raw, err := SignIn(ctx, fixture.queries, fixture.cfg, admin)
+	raw, err := SignIn(ctx, fixture.pool, fixture.cfg, admin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestSignInPostgres(t *testing.T) {
 
 	unverified := ExternalIdentity{Provider: "github", Subject: "2", DisplayName: "unverified", Email: "admin2@example.test"}
 	unverifiedConfig := NewConfig(fixture.keys, Lifetimes{}, []string{"admin2@example.test"})
-	if _, err := SignIn(ctx, fixture.queries, unverifiedConfig, unverified); err != nil {
+	if _, err := SignIn(ctx, fixture.pool, unverifiedConfig, unverified); err != nil {
 		t.Fatal(err)
 	}
 	var unverifiedAdmin bool
@@ -47,11 +47,59 @@ func TestSignInPostgres(t *testing.T) {
 	}
 
 	fixture.exec(t, `UPDATE users SET disabled_at = now() WHERE id = $1`, adminID)
-	if _, err := SignIn(ctx, fixture.queries, fixture.cfg, admin); !errors.Is(err, ErrInactiveMember) {
+	renamedAdmin := admin
+	renamedAdmin.DisplayName = "renamed admin"
+	if _, err := SignIn(ctx, fixture.pool, fixture.cfg, renamedAdmin); !errors.Is(err, ErrInactiveMember) {
 		t.Fatalf("disabled sign-in error = %v", err)
+	}
+	var disabledName string
+	if err := fixture.pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1`, adminID).Scan(&disabledName); err != nil || disabledName != "admin" {
+		t.Fatalf("disabled user display name = %q, err = %v, want admin", disabledName, err)
+	}
+	if count := fixture.activeSessions(t, adminID); count != 1 {
+		t.Fatalf("disabled user sessions = %d, want the earlier one", count)
 	}
 	if _, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("disabled user session error = %v", err)
+	}
+}
+
+func TestSignInPostgresFailedSessionRecordsNothing(t *testing.T) {
+	fixture := newIdentityFixture(t)
+	ctx := t.Context()
+	returning := ExternalIdentity{Provider: "github", Subject: "returning", DisplayName: "Before", Email: "returning@example.test", EmailVerified: true}
+	if _, err := SignIn(ctx, fixture.pool, fixture.cfg, returning); err != nil {
+		t.Fatal(err)
+	}
+	returningID, _ := fixture.userByEmail(t, "returning@example.test")
+
+	restore := fixture.rejectLoginSessions(t)
+	first := ExternalIdentity{Provider: "github", Subject: "first", DisplayName: "First", Email: "admin@example.test", EmailVerified: true}
+	if _, err := SignIn(ctx, fixture.pool, fixture.cfg, first); err == nil {
+		t.Fatal("first sign-in succeeded without a login session")
+	}
+	var identities, users int
+	if err := fixture.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM auth_identities WHERE subject = 'first'), (SELECT count(*) FROM users WHERE primary_email = 'admin@example.test')`).Scan(&identities, &users); err != nil || identities != 0 || users != 0 {
+		t.Fatalf("after failed first sign-in identities = %d users = %d, err = %v, want none", identities, users, err)
+	}
+	renamed := returning
+	renamed.DisplayName = "After"
+	if _, err := SignIn(ctx, fixture.pool, fixture.cfg, renamed); err == nil {
+		t.Fatal("returning sign-in succeeded without a login session")
+	}
+	var displayName string
+	if err := fixture.pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1`, returningID).Scan(&displayName); err != nil || displayName != "Before" {
+		t.Fatalf("display name after failed sign-in = %q, err = %v, want Before", displayName, err)
+	}
+	restore()
+
+	raw, err := SignIn(ctx, fixture.pool, fixture.cfg, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstID, admin := fixture.userByEmail(t, "admin@example.test")
+	if principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw); err != nil || principal.UserID != firstID || !admin || !principal.Admin {
+		t.Fatalf("retried principal = %+v admin = %t, err = %v", principal, admin, err)
 	}
 }
 
@@ -71,6 +119,9 @@ func TestSignInWithInvitationPostgres(t *testing.T) {
 	if _, _, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, "unknown"); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("unknown invitation error = %v", err)
 	}
+	if _, _, err := ResolveInvitation(ctx, fixture.queries, fixture.cfg, ""); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("empty invitation error = %v", err)
+	}
 
 	other := ExternalIdentity{Provider: "github", Subject: "other", DisplayName: "other", Email: "other@example.test", EmailVerified: true}
 	if _, err := SignInWithInvitation(ctx, fixture.pool, fixture.cfg, tokenHash, other); !errors.Is(err, ErrWrongAccount) {
@@ -87,7 +138,7 @@ func TestSignInWithInvitationPostgres(t *testing.T) {
 		Provider: "github", Subject: "invitee", DisplayName: "Invitee",
 		Email: "primary@example.test", EmailVerified: true, VerifiedEmails: []string{"primary@example.test", "Invitee@Example.test"},
 	}
-	earlier, err := SignIn(ctx, fixture.queries, fixture.cfg, invitee)
+	earlier, err := SignIn(ctx, fixture.pool, fixture.cfg, invitee)
 	if err != nil {
 		t.Fatal(err)
 	}
