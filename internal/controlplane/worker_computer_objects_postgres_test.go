@@ -160,7 +160,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 		t.Fatal("foreign Runtime probed storage")
 	}
 	// Exercise the actual bounded producer and execution adapter through these
-	// authenticated routes, using the admitted diskFile geometry and sparse contents.
+	// authenticated routes, using the admitted disk geometry and sparse contents.
 	diskFile, err := os.CreateTemp(t.TempDir(), "disk")
 	if err != nil {
 		t.Fatal(err)

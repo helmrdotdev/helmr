@@ -37,7 +37,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"email":             {"email/resend"},
 		"frameio":           {"api", "db", "proto/program/v0", "wire"},
 		"httpclient":        {"controlplane", "db", "workerapi"},
-		"wire":              {"api", "controlplane", "db", "executor", "guestd", "disk"},
+		"wire":              {"api", "controlplane", "db", "disk", "executor", "guestd"},
 		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "controlplane", "db", "disk", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
 		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "controlplane", "db", "executor", "vm"},
 		"disk":              {"api", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
