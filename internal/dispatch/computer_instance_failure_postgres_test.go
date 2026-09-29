@@ -179,8 +179,7 @@ func TestInstanceReclaimRequiresCurrentCloseAndKeepsFailure(t *testing.T) {
 func TestSourceFailureReconcilesPendingMembersAfterReporterStops(t *testing.T) {
 	f, work, a := commandPlacementFixture(t)
 	pending := pendingSharedCommand(t, f, work)
-	owned := pendingSharedCommand(t, f, work)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET created_by_subject_type='api_key' WHERE id=$1`, pending.CommandID)
+	peer := pendingSharedCommand(t, f, work)
 	var id pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&id); err != nil {
 		t.Fatal(err)
@@ -220,9 +219,8 @@ func TestSourceFailureReconcilesPendingMembersAfterReporterStops(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT status,terminal_reason_code FROM computer_commands WHERE id=$1`, pending.CommandID).Scan(&status, &code); err != nil || status != "failed" || code != "computer_source_unavailable" {
 		t.Fatalf("Command=%s %s %v", status, code, err)
 	}
-	var ownedCancelled bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='cancelled' AND terminal_reason_code='computer_command_cancelled' FROM computer_commands WHERE id=$1`, owned.CommandID).Scan(&ownedCancelled); err != nil || !ownedCancelled {
-		t.Fatalf("owned cancellation=%v %v", ownedCancelled, err)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_reason_code FROM computer_commands WHERE id=$1`, peer.CommandID).Scan(&status, &code); err != nil || status != "failed" || code != "computer_source_unavailable" {
+		t.Fatalf("peer Command=%s %s %v", status, code, err)
 	}
 
 }

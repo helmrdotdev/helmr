@@ -8,8 +8,7 @@ import (
 func TestPreparationReconcilerSettlesUnstartedMembers(t *testing.T) {
 	f, work, a := commandPlacementFixture(t)
 	pending := pendingSharedCommand(t, f, work)
-	owned := pendingSharedCommand(t, f, work)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_commands SET created_by_subject_type='api_key' WHERE id=$1`, pending.CommandID)
+	peer := pendingSharedCommand(t, f, work)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET preparation_attempt_count=8,preparation_instance_id=(SELECT computer_instance_id FROM run_leases WHERE id=$1) WHERE id=(SELECT computer_id FROM run_leases WHERE id=$1)`, work.LeaseID)
 	// Ready acknowledgement alone does not imply a successful restored activation.
 	// Simulate a durable close before the preparation success transaction.
@@ -40,9 +39,8 @@ func TestPreparationReconcilerSettlesUnstartedMembers(t *testing.T) {
 	if !retained {
 		t.Fatal("logical failure released physical reservation")
 	}
-	var ownedCancelled bool
-	if err := f.Pool.QueryRow(t.Context(), `SELECT status='cancelled' AND terminal_reason_code='computer_command_cancelled' FROM computer_commands WHERE id=$1`, owned.CommandID).Scan(&ownedCancelled); err != nil || !ownedCancelled {
-		t.Fatalf("owned cancellation=%v %v", ownedCancelled, err)
+	if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_reason_code FROM computer_commands WHERE id=$1`, peer.CommandID).Scan(&status, &code); err != nil || status != "failed" || code != "computer_preparation_exhausted" {
+		t.Fatalf("peer Command=%s %s %v", status, code, err)
 	}
 
 }
