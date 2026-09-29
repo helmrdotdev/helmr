@@ -425,7 +425,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	state, err := s.db.GetWorkerHostStatus(r.Context(), db.GetWorkerHostStatusParams{
 		ID:                          pgvalue.UUID(worker.WorkerHostID),
 		WorkerGroupID:               pgvalue.UUID(worker.WorkerGroupID),
-		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))

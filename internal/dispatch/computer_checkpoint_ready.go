@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -105,7 +106,7 @@ func CompleteComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 	if err = validateComputerCheckpointMembers(ctx, tx, instance, cp, len(candidate.RecoveryPoint.Runs)); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	if _, err = q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds}); err != nil {
+	if _, err = q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	phases, err := json.Marshal(request.Manifest.Phases)
@@ -151,7 +152,7 @@ func CheckComputerCheckpointReady(ctx context.Context, tx pgx.Tx, worker Compute
 		return db.ComputerCheckpoint{}, err
 	}
 	if source.checkpoint.Status == "creating" {
-		_, err = db.New(tx).GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: source.instance.ID, EnvironmentID: source.instance.EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds})
+		_, err = db.New(tx).GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: source.instance.ID, EnvironmentID: source.instance.EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 	}
 	return source.checkpoint, err
 }

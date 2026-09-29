@@ -155,6 +155,34 @@ func (q *Queries) CompleteComputerPreparation(ctx context.Context, arg CompleteC
 	return i, err
 }
 
+const getComputerPreparationDeadlinesValid = `-- name: GetComputerPreparationDeadlinesValid :one
+SELECT (i.preparation_expires_at>clock_timestamp() AND i.writer_expires_at>clock_timestamp()
+ AND i.desired_state='ready' AND i.desired_version=$1 AND i.reclaimed_at IS NULL
+ AND i.writer_generation=$2 AND i.observed_state='allocated'
+ AND w.status='active' AND w.current_epoch=i.worker_epoch
+ AND w.observed_at>=clock_timestamp()-$3::bigint*interval '1 second')::boolean AS valid
+ FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$4
+`
+
+type GetComputerPreparationDeadlinesValidParams struct {
+	DesiredVersion         int64       `json:"desired_version"`
+	WriterGeneration       int64       `json:"writer_generation"`
+	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
+	ID                     pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetComputerPreparationDeadlinesValid(ctx context.Context, arg GetComputerPreparationDeadlinesValidParams) (bool, error) {
+	row := q.db.QueryRow(ctx, getComputerPreparationDeadlinesValid,
+		arg.DesiredVersion,
+		arg.WriterGeneration,
+		arg.WorkerFreshnessSeconds,
+		arg.ID,
+	)
+	var valid bool
+	err := row.Scan(&valid)
+	return valid, err
+}
+
 const invalidateExhaustedComputerCheckpoint = `-- name: InvalidateExhaustedComputerCheckpoint :exec
 UPDATE computer_checkpoints cp SET status='invalid',invalidated_at=clock_timestamp(),
  invalidation_reason_code='computer_preparation_exhausted'

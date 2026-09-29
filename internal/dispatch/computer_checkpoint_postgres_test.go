@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 
 	"testing"
@@ -299,7 +299,7 @@ func TestComputerCaptureDiscoveryFences(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: request.ComputerInstanceID, EnvironmentID: request.EnvironmentID, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds}
+	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: request.ComputerInstanceID, EnvironmentID: request.EnvironmentID, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}
 	if got, err := db.New(f.Pool).GetComputerInstanceCaptureCheckpoint(t.Context(), params); err != nil || got.ID != cp.ID {
 		t.Fatalf("capture discovery: %v %v", got, err)
 	}

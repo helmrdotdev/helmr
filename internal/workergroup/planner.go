@@ -16,7 +16,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -628,7 +627,7 @@ func freshExecutionItem(key string, configJSON []byte) item {
 
 func currentBins(ctx context.Context, store PlanStore, workerGroupID uuid.UUID) ([]bin, bool, error) {
 	rows, err := store.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
-		WorkerGroupID: pgvalue.UUID(workerGroupID), ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		WorkerGroupID: pgvalue.UUID(workerGroupID), ObservationFreshnessSeconds: ObservationFreshnessSeconds,
 		RowLimit: maximumPlanningWorkers + 1,
 	})
 	if err != nil {

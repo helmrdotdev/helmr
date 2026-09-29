@@ -9,7 +9,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -47,9 +46,10 @@ func TestRunLeaseClaimReadinessFailsClosedWithoutObservation(t *testing.T) {
 	}
 
 	worker, err := fixture.queries.LockRunLeaseClaimReadyWorker(ctx, LockRunLeaseClaimReadyWorkerParams{
-		ID:                          pgvalue.UUID(fixture.workerID),
-		WorkerGroupID:               runLeaseTestWorkerGroup,
-		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ID:            pgvalue.UUID(fixture.workerID),
+		WorkerGroupID: runLeaseTestWorkerGroup,
+		// No freshness window admits a worker without an observation.
+		ObservationFreshnessSeconds: 120,
 	})
 	if err != nil {
 		t.Fatal(err)

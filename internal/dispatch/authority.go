@@ -6,8 +6,9 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -103,30 +104,11 @@ SELECT worker_pools.id
 		return fmt.Errorf("lock eligible worker pool: %w", err)
 	}
 
-	var workerID pgtype.UUID
-	err = tx.QueryRow(ctx, `
-SELECT worker_hosts.id
-  FROM worker_hosts
-  JOIN worker_groups
-    ON worker_groups.id = worker_hosts.worker_group_id
-  JOIN worker_pools
-    ON worker_pools.id = worker_hosts.worker_pool_id
-   AND worker_pools.worker_group_id = worker_hosts.worker_group_id
-  LEFT JOIN vm_platforms
-    ON vm_platforms.id = worker_hosts.vm_platform_id
- WHERE worker_hosts.id = $1
-   AND worker_hosts.worker_group_id = $2
-   AND worker_hosts.current_epoch = $3
-   AND (worker_hosts.status = 'active' OR ($7::boolean AND worker_hosts.status='draining'))
-   AND worker_pools.status = 'active'
-	AND worker_hosts.observed_at >= clock_timestamp() - $5 * interval '1 second'
-	AND worker_hosts.run_paused_reason IS NULL
-	AND vm_platforms.arch = $4
-	   AND vm_platforms.contract = $6
-	FOR UPDATE OF worker_hosts`, fence.WorkerHostID, fence.GroupID,
-		fence.WorkerEpoch, fence.RunArchitecture,
-		workerapi.WorkerObservationFreshnessSeconds, vmplatform.Contract, fence.AllowDraining,
-	).Scan(&workerID)
+	_, err = db.New(tx).LockRunEligibleWorkerHost(ctx, db.LockRunEligibleWorkerHostParams{
+		ID: fence.WorkerHostID, WorkerGroupID: fence.GroupID, WorkerEpoch: fence.WorkerEpoch,
+		AllowDraining: fence.AllowDraining, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
+		RunArchitecture: fence.RunArchitecture, Contract: vmplatform.Contract,
+	})
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
 	}

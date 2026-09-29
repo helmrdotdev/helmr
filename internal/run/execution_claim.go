@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -171,11 +171,7 @@ func lockExecution(ctx context.Context, tx pgx.Tx, request ExecutionFence, opera
 		return ExecutionAuthority{}, pgx.ErrNoRows
 	}
 	// Evaluate time only after every potentially blocking authority lock.
-	var live bool
-	err = tx.QueryRow(ctx, `SELECT l.expires_at>clock_timestamp() AND (l.status NOT IN ('assigned','starting') OR l.start_deadline_at>clock_timestamp())
- AND i.writer_expires_at>clock_timestamp() AND ($3 OR (h.observed_at>=clock_timestamp()-$2*interval '1 second'
- AND h.run_paused_reason IS NULL)) FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id
- JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.id=$1`, l.ID, workerapi.WorkerObservationFreshnessSeconds, (operation == executionLive || operation == executionResume)).Scan(&live)
+	live, err := q.GetRunLeaseExecutionLive(ctx, db.GetRunLeaseExecutionLiveParams{ID: l.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, SkipWorkerReadiness: operation == executionLive || operation == executionResume})
 	if err != nil {
 		return ExecutionAuthority{}, err
 	}

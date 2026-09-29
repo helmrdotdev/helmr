@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"testing"
 	"time"
@@ -113,7 +113,7 @@ func TestResidentReadinessRejectsWorkerExpiringDuringComputerLock(t *testing.T) 
 	if _, err = hold.Exec(t.Context(), `SELECT id FROM computers WHERE id=$1 FOR UPDATE`, i.ComputerID); err != nil {
 		t.Fatal(err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp()-($2-2)*interval '1 second' WHERE id=$1`, i.WorkerHostID, workerapi.WorkerObservationFreshnessSeconds)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET observed_at=clock_timestamp()-($2-2)*interval '1 second' WHERE id=$1`, i.WorkerHostID, workergroup.ObservationFreshnessSeconds)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	pidCh := make(chan int32, 1)
@@ -144,7 +144,7 @@ func TestResidentReadinessRejectsWorkerExpiringDuringComputerLock(t *testing.T) 
 	}
 	for {
 		var blocked, expired bool
-		if err = f.Pool.QueryRow(ctx, `SELECT coalesce((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1),false),observed_at<clock_timestamp()-$3*interval '1 second' FROM worker_hosts WHERE id=$2`, pid, i.WorkerHostID, workerapi.WorkerObservationFreshnessSeconds).Scan(&blocked, &expired); err != nil {
+		if err = f.Pool.QueryRow(ctx, `SELECT coalesce((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1),false),observed_at<clock_timestamp()-$3*interval '1 second' FROM worker_hosts WHERE id=$2`, pid, i.WorkerHostID, workergroup.ObservationFreshnessSeconds).Scan(&blocked, &expired); err != nil {
 			t.Fatal(err)
 		}
 		if blocked && expired {

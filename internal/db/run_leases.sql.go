@@ -452,6 +452,28 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 	return i, err
 }
 
+const getRunLeaseExecutionLive = `-- name: GetRunLeaseExecutionLive :one
+SELECT (l.expires_at>clock_timestamp() AND (l.status NOT IN ('assigned','starting') OR l.start_deadline_at>clock_timestamp())
+ AND i.writer_expires_at>clock_timestamp() AND ($1::boolean OR (h.observed_at>=clock_timestamp()-$2::bigint*interval '1 second'
+ AND h.run_paused_reason IS NULL)))::boolean AS live
+ FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id
+ JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.id=$3
+`
+
+type GetRunLeaseExecutionLiveParams struct {
+	SkipWorkerReadiness    bool        `json:"skip_worker_readiness"`
+	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
+	ID                     pgtype.UUID `json:"id"`
+}
+
+// Caller holds every execution authority lock; time is evaluated afterwards.
+func (q *Queries) GetRunLeaseExecutionLive(ctx context.Context, arg GetRunLeaseExecutionLiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, getRunLeaseExecutionLive, arg.SkipWorkerReadiness, arg.WorkerFreshnessSeconds, arg.ID)
+	var live bool
+	err := row.Scan(&live)
+	return live, err
+}
+
 const getRunLeaseRenewalTime = `-- name: GetRunLeaseRenewalTime :one
 SELECT clock_timestamp()::timestamptz
 `

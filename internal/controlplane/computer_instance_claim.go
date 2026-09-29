@@ -6,7 +6,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -54,5 +54,5 @@ func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workerA
 		}
 	}
 	hash := sha256.Sum256([]byte(token))
-	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: host.ID, WorkerEpoch: worker.WorkerEpoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds})
+	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: host.ID, WorkerEpoch: worker.WorkerEpoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 }

@@ -28,6 +28,10 @@ const (
 	WorkerHostStatusLost             WorkerHostStatus = "lost"
 )
 
+// ObservationFreshnessSeconds bounds how old a Worker Host observation may be
+// while the host still counts as live for placement, execution and capture.
+const ObservationFreshnessSeconds = int64(120)
+
 type WorkerPoolStatus string
 
 const (

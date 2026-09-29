@@ -553,6 +553,27 @@ func (q *Queries) GetComputerInstanceAssignmentSource(ctx context.Context, id pg
 	return i, err
 }
 
+const getComputerInstanceWriterLive = `-- name: GetComputerInstanceWriterLive :one
+SELECT (i.writer_expires_at>clock_timestamp()
+ AND (w.status='active' OR ($1::boolean AND w.status='draining')) AND w.current_epoch=i.worker_epoch
+ AND w.observed_at>=clock_timestamp()-$2::bigint*interval '1 second')::boolean AS writer_live
+ FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$3
+`
+
+type GetComputerInstanceWriterLiveParams struct {
+	AllowDraining          bool        `json:"allow_draining"`
+	WorkerFreshnessSeconds int64       `json:"worker_freshness_seconds"`
+	ID                     pgtype.UUID `json:"id"`
+}
+
+// Ready-Instance writer liveness for preparation readiness checks.
+func (q *Queries) GetComputerInstanceWriterLive(ctx context.Context, arg GetComputerInstanceWriterLiveParams) (bool, error) {
+	row := q.db.QueryRow(ctx, getComputerInstanceWriterLive, arg.AllowDraining, arg.WorkerFreshnessSeconds, arg.ID)
+	var writer_live bool
+	err := row.Scan(&writer_live)
+	return writer_live, err
+}
+
 const getWorkerComputerInstanceTarget = `-- name: GetWorkerComputerInstanceTarget :one
 SELECT i.org_id,i.environment_id,i.computer_id,h.worker_pool_id
 FROM computer_instances i JOIN worker_hosts h ON h.id=i.worker_host_id AND h.worker_group_id=i.worker_group_id

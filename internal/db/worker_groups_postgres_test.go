@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,7 +24,7 @@ func TestComputerInstanceCapacitySelectionFindsViableWorkerPastPlannerLimit(t *t
 	seedCapacityQueryWorkers(t, ctx, pool, 1002, 1001)
 	q := db.New(pool)
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID, ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 		RowLimit: 1001,
 	})
 	if err != nil {
@@ -126,7 +125,7 @@ func TestComputerInstanceCapacityRestoreCompatibilityMatchesPlanner(t *testing.T
 
 func runCapacitySelectionParams() db.SelectComputerInstanceCapacityParams {
 	return db.SelectComputerInstanceCapacityParams{
-		RegionID: dbtest.DefaultRegionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RegionID: dbtest.DefaultRegionID, ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 		RunArchitecture: "x86_64", Contract: vmplatform.Contract,
 		RequiredCPUMillis: 1000, RequiredMemoryBytes: 1 << 30,
 		RequiredGuestEphemeralDiskBytes: 32 << 30,
@@ -206,7 +205,7 @@ func TestWorkerEpochOwnsLivenessAndActivationReplayPreservesIt(t *testing.T) {
 	}
 	bins, err := q.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
-		ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 		RowLimit:                    100,
 	})
 	if err != nil {

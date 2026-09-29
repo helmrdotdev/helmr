@@ -37,10 +37,9 @@ type EnrollmentRequest struct {
 type RunLeaseDiscoveryRequest struct{}
 
 const (
-	WorkerObservationInterval         = 30 * time.Second
-	WorkerObservationFreshnessSeconds = int64(120)
-	RunFinalizationTerminalTail       = 10 * time.Minute
-	RunFinalizationReplayTail         = 30 * time.Second
+	WorkerObservationInterval   = 30 * time.Second
+	RunFinalizationTerminalTail = 10 * time.Minute
+	RunFinalizationReplayTail   = 30 * time.Second
 )
 
 type RunLeaseWork struct {
@@ -474,12 +473,12 @@ type ComputerAddress struct {
 }
 
 type CreateComputerRequest struct {
-	Lease             RunLeaseFence                 `json:"lease"`
-	CorrelationID     string                        `json:"correlation_id"`
-	SandboxDeclaredID string                        `json:"sandbox_declared_id"`
-	Key               *string                       `json:"key,omitempty"`
+	Lease             RunLeaseFence           `json:"lease"`
+	CorrelationID     string                  `json:"correlation_id"`
+	SandboxDeclaredID string                  `json:"sandbox_declared_id"`
+	Key               *string                 `json:"key,omitempty"`
 	Secrets           []secretbinding.Binding `json:"secrets,omitempty"`
-	IdempotencyKey    string                        `json:"idempotency_key,omitempty"`
+	IdempotencyKey    string                  `json:"idempotency_key,omitempty"`
 }
 
 type CreateComputerResponse struct {

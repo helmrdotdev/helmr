@@ -365,6 +365,26 @@ func (q *Queries) GetCheckpointReadyReplay(ctx context.Context, arg GetCheckpoin
 	return i, err
 }
 
+const getComputerCaptureWorkerFresh = `-- name: GetComputerCaptureWorkerFresh :one
+SELECT (observed_at>=clock_timestamp()-$1::bigint*interval '1 second'
+ AND ($2::timestamptz IS NULL OR $2>clock_timestamp()))::boolean AS fresh
+ FROM worker_hosts WHERE id=$3
+`
+
+type GetComputerCaptureWorkerFreshParams struct {
+	WorkerFreshnessSeconds int64              `json:"worker_freshness_seconds"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
+	ID                     pgtype.UUID        `json:"id"`
+}
+
+// Caller holds every capture lock; wall-clock deadlines are evaluated afterwards.
+func (q *Queries) GetComputerCaptureWorkerFresh(ctx context.Context, arg GetComputerCaptureWorkerFreshParams) (bool, error) {
+	row := q.db.QueryRow(ctx, getComputerCaptureWorkerFresh, arg.WorkerFreshnessSeconds, arg.ExpiresAt, arg.ID)
+	var fresh bool
+	err := row.Scan(&fresh)
+	return fresh, err
+}
+
 const getComputerInstanceCaptureCheckpoint = `-- name: GetComputerInstanceCaptureCheckpoint :one
 SELECT checkpoint.id, checkpoint.computer_id, checkpoint.base_computer_disk_version_id, checkpoint.private_computer_disk_version_id, checkpoint.vm_config_artifact_id, checkpoint.vm_state_artifact_id, checkpoint.memory_artifact_id, checkpoint.scratch_disk_artifact_id, checkpoint.status, checkpoint.manifest, checkpoint.phase_timings, checkpoint.ready_request_fingerprint, checkpoint.failed_request_fingerprint, checkpoint.expires_at, checkpoint.created_at, checkpoint.ready_at, checkpoint.invalidated_at, checkpoint.invalidation_reason_code, checkpoint.computer_payload_required, checkpoint.environment_id, checkpoint.source_computer_instance_id, checkpoint.writer_generation, checkpoint.membership_revision, checkpoint.program_deployment_id, checkpoint.resume_computer_instance_id, checkpoint.resume_committed_at, checkpoint.computer_spec_id FROM computer_instances instance
 JOIN computers computer ON computer.id=instance.computer_id AND computer.environment_id=instance.environment_id
