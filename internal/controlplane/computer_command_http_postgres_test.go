@@ -92,12 +92,12 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 	}
 }
 
-func computerCommandHTTPPostRequest(body string, computerID string, principal auth.Actor) *http.Request {
+func computerCommandHTTPPostRequest(body string, computerID string, principal auth.Principal) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/v1/computers/%s/exec", computerID), strings.NewReader(body))
 	route := chi.NewRouteContext()
 	route.URLParams.Add("computerID", computerID)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }
 

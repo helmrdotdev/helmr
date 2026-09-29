@@ -28,8 +28,8 @@ type invitationListCursor struct {
 }
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	rows, err := org.ListMembers(r.Context(), s.db, managingMember(actor))
+	principal := principalFromContext(r.Context())
+	rows, err := org.ListMembers(r.Context(), s.db, managingMember(principal))
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -47,11 +47,11 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	var after *org.InvitationPosition
 	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
 		cursor, err := decodeInvitationListCursor(rawCursor)
-		if err != nil || cursor.OrgID != actor.OrgID.String() {
+		if err != nil || cursor.OrgID != principal.OrgID.String() {
 			writeError(w, badRequest(errors.New("invitation cursor is invalid")))
 			return
 		}
@@ -62,7 +62,7 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 		}
 		after = &org.InvitationPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, hasMore, err := org.ListInvitations(r.Context(), s.db, managingMember(actor), invitationListLimit, after)
+	rows, hasMore, err := org.ListInvitations(r.Context(), s.db, managingMember(principal), invitationListLimit, after)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -80,7 +80,7 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeInvitationListCursor(invitationListCursor{
-			OrgID: actor.OrgID.String(), CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
+			OrgID: principal.OrgID.String(), CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano),
 			ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
@@ -121,7 +121,7 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid invitation request JSON: %w", err))
 		return
 	}
-	invitation, rawToken, err := org.CreateInvitation(r.Context(), s.db, s.authKeys.Invitation, managingMember(actorFromContext(r.Context())), org.InvitationInput{
+	invitation, rawToken, err := org.CreateInvitation(r.Context(), s.db, s.authKeys.Invitation, managingMember(principalFromContext(r.Context())), org.InvitationInput{
 		Email:         input.Email,
 		Role:          input.Role,
 		ExpiresInDays: input.ExpiresInDays,
@@ -147,7 +147,7 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(org.ErrInvitationNotFound))
 		return
 	}
-	if err := org.RevokeInvitation(r.Context(), s.db, managingMember(actorFromContext(r.Context())), invitationID); err != nil {
+	if err := org.RevokeInvitation(r.Context(), s.db, managingMember(principalFromContext(r.Context())), invitationID); err != nil {
 		writeError(w, orgError(err))
 		return
 	}
@@ -165,7 +165,7 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
-	updated, err := org.UpdateMemberRole(r.Context(), s.db, managingMember(actorFromContext(r.Context())), targetUserID, input.Role, input.ExpectedRole)
+	updated, err := org.UpdateMemberRole(r.Context(), s.db, managingMember(principalFromContext(r.Context())), targetUserID, input.Role, input.ExpectedRole)
 	if err != nil {
 		writeError(w, orgError(err))
 		return
@@ -184,15 +184,15 @@ func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(org.ErrMemberNotFound))
 		return
 	}
-	if err := org.RemoveMember(r.Context(), s.db, managingMember(actorFromContext(r.Context())), targetUserID); err != nil {
+	if err := org.RemoveMember(r.Context(), s.db, managingMember(principalFromContext(r.Context())), targetUserID); err != nil {
 		writeError(w, orgError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func managingMember(actor auth.Actor) org.ManagingMember {
-	return org.ManagingMember{OrgID: actor.OrgID, UserID: actor.UserID, Role: actor.Role}
+func managingMember(principal auth.Principal) org.ManagingMember {
+	return org.ManagingMember{OrgID: principal.OrgID, UserID: principal.UserID, Role: principal.Role}
 }
 
 func (s *Server) inviteURL(token string) string {

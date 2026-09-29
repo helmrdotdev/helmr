@@ -92,7 +92,7 @@ type finalizeReceipt struct {
 // Prepare authorizes the principal to deploy into the environment, admits the
 // uploaded bundle root and binds the idempotency key. It reads the root but no
 // bundle object.
-func (f *Finalizer) Prepare(ctx context.Context, principal auth.Actor, scope auth.Scope, bundleDigest string, idempotencyKey string) (Finalization, error) {
+func (f *Finalizer) Prepare(ctx context.Context, principal auth.Principal, scope auth.Scope, bundleDigest string, idempotencyKey string) (Finalization, error) {
 	if err := authorizeDeploy(principal, scope); err != nil {
 		return Finalization{}, err
 	}

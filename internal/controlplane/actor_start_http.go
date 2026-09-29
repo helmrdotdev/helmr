@@ -61,7 +61,7 @@ func (s *Server) startActorHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	if err := authorizeActorStartBeforeLookup(principal); err != nil {
 		writeError(w, err)
 		return
@@ -145,9 +145,9 @@ func decodeStartActorRequest(r *http.Request) (api.StartActorRequest, error) {
 	return request, nil
 }
 
-func authorizeActorStartBeforeLookup(principal auth.Actor) error {
+func authorizeActorStartBeforeLookup(principal auth.Principal) error {
 	switch principal.Kind {
-	case auth.ActorKindAPIKey:
+	case auth.PrincipalKindAPIKey:
 		scope, ok := principal.EnvironmentScope()
 		if !ok {
 			return unavailable(codedError{
@@ -159,7 +159,7 @@ func authorizeActorStartBeforeLookup(principal auth.Actor) error {
 		if principal.HasPermission(auth.PermissionActorsStart, scope) {
 			return nil
 		}
-	case auth.ActorKindSession:
+	case auth.PrincipalKindSession:
 		if auth.RoleAllows(principal.Role, auth.PermissionActorsStart) {
 			return nil
 		}
@@ -366,7 +366,7 @@ func rejectActorStartNullTagElements(raw []byte, label string) error {
 }
 
 func actorStartRequestFromAPI(
-	principal auth.Actor,
+	principal auth.Principal,
 	projectID uuid.UUID,
 	environmentID uuid.UUID,
 	actorDeclaredID string,

@@ -32,7 +32,7 @@ type computerListCursor struct {
 }
 
 func (s *Server) listComputersHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(codedError{code: "invalid_computer_reference", message: err.Error()}))

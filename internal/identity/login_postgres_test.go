@@ -32,7 +32,7 @@ func TestSignInPostgres(t *testing.T) {
 		t.Fatal("login session was not hashed with the session key")
 	}
 	principal, err := AuthenticateLoginSession(ctx, fixture.queries, fixture.cfg, raw)
-	if err != nil || principal.UserID != adminID || principal.Kind != auth.ActorKindSession || !principal.Admin || principal.Role != "" {
+	if err != nil || principal.UserID != adminID || principal.Kind != auth.PrincipalKindSession || !principal.Admin || principal.Role != "" {
 		t.Fatalf("principal = %+v, err = %v", principal, err)
 	}
 
@@ -254,21 +254,21 @@ func TestLoadAccountPostgres(t *testing.T) {
 	fixture := newIdentityFixture(t)
 	ctx := t.Context()
 	userID := fixture.user(t, "Newcomer", "")
-	account, err := LoadAccount(ctx, fixture.queries, auth.Actor{UserID: userID, Kind: auth.ActorKindSession})
+	account, err := LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession})
 	if err != nil || account.DisplayName != "Newcomer" || account.OrganizationExists {
 		t.Fatalf("account = %+v, err = %v", account, err)
 	}
 	orgID := fixture.organization(t, "account")
 	fixture.member(t, orgID, userID, db.OrgMemberRoleOwner)
-	account, err = LoadAccount(ctx, fixture.queries, auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession})
+	account, err = LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession})
 	if err != nil || account.OrgSlug != "account" || account.HasProjects {
 		t.Fatalf("org account = %+v, err = %v", account, err)
 	}
-	account, err = LoadAccount(ctx, fixture.queries, auth.Actor{UserID: userID, Kind: auth.ActorKindSession})
+	account, err = LoadAccount(ctx, fixture.queries, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession})
 	if err != nil || !account.OrganizationExists {
 		t.Fatalf("account without selected organization = %+v, err = %v", account, err)
 	}
-	if _, err := LoadAccount(ctx, fixture.queries, auth.Actor{UserID: uuid.NewV7(), Kind: auth.ActorKindSession}); !errors.Is(err, ErrUserNotFound) {
+	if _, err := LoadAccount(ctx, fixture.queries, auth.Principal{UserID: uuid.NewV7(), Kind: auth.PrincipalKindSession}); !errors.Is(err, ErrUserNotFound) {
 		t.Fatalf("missing user error = %v", err)
 	}
 }

@@ -60,7 +60,7 @@ func (s *Server) denyDeviceCode(w http.ResponseWriter, r *http.Request) {
 	s.decideDeviceCode(w, r, identity.DenyDeviceCode)
 }
 
-func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.Querier, cfg identity.Config, approver auth.Actor, consent identity.DeviceConsent, userCode string) (identity.DeviceCodeState, error)) {
+func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide func(ctx context.Context, q db.Querier, cfg identity.Config, approver auth.Principal, consent identity.DeviceConsent, userCode string) (identity.DeviceCodeState, error)) {
 	if err := s.userAuthConfigured(); err != nil {
 		writeError(w, unavailable(err))
 		return
@@ -71,7 +71,7 @@ func (s *Server) decideDeviceCode(w http.ResponseWriter, r *http.Request, decide
 		return
 	}
 	consent := identity.DeviceConsent{UserID: request.UserID, OrgID: request.OrgID}
-	state, err := decide(r.Context(), s.db, s.identity, actorFromContext(r.Context()), consent, request.UserCode)
+	state, err := decide(r.Context(), s.db, s.identity, principalFromContext(r.Context()), consent, request.UserCode)
 	if err != nil {
 		writeError(w, identityError(err))
 		return

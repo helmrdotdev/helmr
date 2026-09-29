@@ -47,12 +47,12 @@ func TestPreparationExhaustedCommandIsPlacementFailure(t *testing.T) {
 func TestComputerCommandGETRequiresExecPermissionNotComputerRead(t *testing.T) {
 	orgID := uuid.New()
 	scope := auth.Scope{OrgID: orgID, ProjectID: "project", EnvironmentID: "environment"}
-	viewer := auth.Actor{Kind: auth.ActorKindSession, OrgID: orgID, Role: auth.RoleViewer}
+	viewer := auth.Principal{Kind: auth.PrincipalKindSession, OrgID: orgID, Role: auth.RoleViewer}
 	if canAccessComputerCommandOutput(viewer, scope) {
 		t.Fatal("Computer reader was allowed to read Computer Exec output")
 	}
-	createOnly := auth.Actor{
-		Kind: auth.ActorKindAPIKey, OrgID: orgID, Role: auth.RoleDeveloper,
+	createOnly := auth.Principal{
+		Kind: auth.PrincipalKindAPIKey, OrgID: orgID, Role: auth.RoleDeveloper,
 		ProjectID: "project", EnvironmentID: "environment",
 		Permissions: []auth.Permission{auth.PermissionComputerCommandCreate},
 	}

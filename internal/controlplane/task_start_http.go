@@ -45,7 +45,7 @@ func (s *Server) startTaskHTTP(w http.ResponseWriter, r *http.Request) {
 		}))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	if err := authorizeTaskStartBeforeLookup(principal); err != nil {
 		writeError(w, err)
 		return
@@ -189,14 +189,14 @@ func decodeStartTaskRequest(r *http.Request) (api.StartTaskRequest, bool, error)
 	return request, payloadPresent, nil
 }
 
-func authorizeTaskStartBeforeLookup(principal auth.Actor) error {
+func authorizeTaskStartBeforeLookup(principal auth.Principal) error {
 	switch principal.Kind {
-	case auth.ActorKindAPIKey:
+	case auth.PrincipalKindAPIKey:
 		scope, ok := principal.EnvironmentScope()
 		if ok && principal.HasPermission(auth.PermissionRunsCreate, scope) {
 			return nil
 		}
-	case auth.ActorKindSession:
+	case auth.PrincipalKindSession:
 		if auth.RoleAllows(principal.Role, auth.PermissionRunsCreate) {
 			return nil
 		}

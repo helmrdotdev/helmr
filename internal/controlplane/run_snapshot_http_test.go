@@ -236,8 +236,8 @@ func TestRunReadDeniesBeforeScopeLookup(t *testing.T) {
 	route.URLParams.Add("projectID", "missing")
 	route.URLParams.Add("environmentID", "missing")
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{
-		Kind: auth.ActorKindAPIKey, OrgID: uuid.NewV7(),
+	ctx = context.WithValue(ctx, principalContextKey{}, auth.Principal{
+		Kind: auth.PrincipalKindAPIKey, OrgID: uuid.NewV7(),
 		ProjectID: uuid.NewV7().String(), EnvironmentID: uuid.NewV7().String(),
 	})
 	recorder := httptest.NewRecorder()

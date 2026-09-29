@@ -26,7 +26,7 @@ type Account struct {
 
 // LoadAccount loads the account of a session principal. A user that no longer
 // exists is ErrUserNotFound.
-func LoadAccount(ctx context.Context, q db.Querier, user auth.Actor) (Account, error) {
+func LoadAccount(ctx context.Context, q db.Querier, user auth.Principal) (Account, error) {
 	orgID := pgtype.UUID{}
 	if user.OrgID != uuid.Nil() {
 		orgID = pgvalue.UUID(user.OrgID)

@@ -15,8 +15,8 @@ import (
 )
 
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	if actor.UserID == uuid.Nil() {
+	principal := principalFromContext(r.Context())
+	if principal.UserID == uuid.Nil() {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
 		return
 	}
@@ -33,7 +33,7 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	created, err := org.CreateOrganization(r.Context(), s.tx, org.OrganizationInput{
 		Slug:         request.Slug,
 		Name:         request.Name,
-		OwnerUserID:  actor.UserID,
+		OwnerUserID:  principal.UserID,
 		InitialSetup: initialSetup,
 	})
 	if err != nil {

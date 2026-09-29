@@ -63,7 +63,7 @@ type sessionProjectionRow struct {
 }
 
 func (s *Server) listSessionsHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	if err := authorizeSessionOperation(principal, auth.PermissionSessionsRead); err != nil {
 		writeError(w, err)
 		return
@@ -164,7 +164,7 @@ func (s *Server) getSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_session_id", message: err.Error()}))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	if err := authorizeSessionOperation(principal, auth.PermissionSessionsRead); err != nil {
 		writeError(w, err)
 		return

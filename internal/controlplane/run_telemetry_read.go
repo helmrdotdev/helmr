@@ -230,7 +230,7 @@ func (s *Server) resolveRunTelemetryTarget(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (runTelemetryTarget, bool) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, ok := s.authorizeRunRequest(
 		w,
 		r,

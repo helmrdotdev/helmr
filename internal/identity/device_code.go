@@ -84,18 +84,18 @@ func DeviceCodeStatus(ctx context.Context, q db.Querier, cfg Config, userCode st
 // ApproveDeviceCode approves the pending device code with the user code for
 // the approver's organization, so that the device can exchange it for a login
 // session of the approver. DenyDeviceCode denies it instead.
-func ApproveDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Actor, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
+func ApproveDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
 	return decideDeviceCode(ctx, q, cfg, approver, consent, userCode, true)
 }
 
 // DenyDeviceCode denies the pending device code with the user code.
-func DenyDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Actor, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
+func DenyDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string) (DeviceCodeState, error) {
 	return decideDeviceCode(ctx, q, cfg, approver, consent, userCode, false)
 }
 
 // decideDeviceCode requires an approver with an organization whose account
 // and organization are the ones consented to.
-func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Actor, consent DeviceConsent, userCode string, approve bool) (DeviceCodeState, error) {
+func decideDeviceCode(ctx context.Context, q db.Querier, cfg Config, approver auth.Principal, consent DeviceConsent, userCode string, approve bool) (DeviceCodeState, error) {
 	hash, err := userCodeHash(cfg, userCode)
 	if err != nil {
 		return DeviceCodeState{}, err

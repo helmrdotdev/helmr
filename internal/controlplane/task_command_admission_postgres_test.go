@@ -22,7 +22,7 @@ func TestTaskAndCommandAdmissionShareSecretLockOrder(t *testing.T) {
 	go func() {
 		_, err := f.server.admitComputerCommand(ctx, computerCommandRequest{
 			OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, ComputerID: f.computerIDs[0],
-			Creator: computerCommandCreator{SubjectType: string(auth.ActorKindAPIKey), SubjectID: uuid.NewV7().String()}, Command: []string{"true"}, IdempotencyKey: "command-secret-order",
+			Creator: computerCommandCreator{SubjectType: string(auth.PrincipalKindAPIKey), SubjectID: uuid.NewV7().String()}, Command: []string{"true"}, IdempotencyKey: "command-secret-order",
 			Authorize: func(ctx context.Context, tx pgx.Tx) error {
 				if _, err := db.New(tx).LockComputerSecretsForAdmission(ctx, pgvalue.UUID(f.computerIDs[0])); err != nil {
 					return err

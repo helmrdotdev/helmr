@@ -207,47 +207,47 @@ func issueLoginSession(ctx context.Context, q db.Querier, cfg Config, userID pgt
 // session, a disabled user, or a session whose selected membership is no
 // longer active is auth.ErrUnauthenticated. A session that selects no
 // organization takes the user's first active membership.
-func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) (auth.Actor, error) {
+func AuthenticateLoginSession(ctx context.Context, q db.Querier, cfg Config, rawSession string) (auth.Principal, error) {
 	tokenHash, err := auth.HashToken(cfg.sessionKey, rawSession)
 	if err != nil {
-		return auth.Actor{}, err
+		return auth.Principal{}, err
 	}
 	row, err := q.GetAuthSessionByTokenHash(ctx, tokenHash)
 	if isNoRows(err) {
-		return auth.Actor{}, auth.ErrUnauthenticated
+		return auth.Principal{}, auth.ErrUnauthenticated
 	}
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("load login session: %w", err)
+		return auth.Principal{}, fmt.Errorf("load login session: %w", err)
 	}
 	sessionID, err := pgvalue.UUIDValue(row.ID)
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("login session id: %w", err)
+		return auth.Principal{}, fmt.Errorf("login session id: %w", err)
 	}
 	userID, err := pgvalue.UUIDValue(row.UserID)
 	if err != nil {
-		return auth.Actor{}, fmt.Errorf("login session user id: %w", err)
+		return auth.Principal{}, fmt.Errorf("login session user id: %w", err)
 	}
 	if err := q.RefreshAuthSession(ctx, db.RefreshAuthSessionParams{
 		ID:        row.ID,
 		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(cfg.lifetimes.Session)),
 	}); err != nil {
-		return auth.Actor{}, fmt.Errorf("refresh login session: %w", err)
+		return auth.Principal{}, fmt.Errorf("refresh login session: %w", err)
 	}
-	actor := auth.Actor{
+	principal := auth.Principal{
 		UserID:    userID,
 		SessionID: sessionID,
-		Kind:      auth.ActorKindSession,
+		Kind:      auth.PrincipalKindSession,
 		Admin:     row.Admin,
 	}
 	if row.OrgID.Valid {
 		orgID, err := pgvalue.UUIDValue(row.OrgID)
 		if err != nil {
-			return auth.Actor{}, fmt.Errorf("login session org id: %w", err)
+			return auth.Principal{}, fmt.Errorf("login session org id: %w", err)
 		}
-		actor.OrgID = orgID
-		actor.Role = auth.Role(row.Role)
+		principal.OrgID = orgID
+		principal.Role = auth.Role(row.Role)
 	}
-	return actor, nil
+	return principal, nil
 }
 
 // RevokeLoginSession revokes the login session with the raw token. An empty,

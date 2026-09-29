@@ -44,14 +44,14 @@ func (s *Server) finalizeDeploymentBundle(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(errors.New("deployment bundle digest is invalid")))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	finalization, err := s.deploymentFinalizer.Prepare(
-		r.Context(), actor, scope, request.BundleDigest, request.IdempotencyKey,
+		r.Context(), principal, scope, request.BundleDigest, request.IdempotencyKey,
 	)
 	if err != nil {
 		s.writeDeploymentError(w, err)

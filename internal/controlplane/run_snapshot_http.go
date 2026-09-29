@@ -66,7 +66,7 @@ type runSnapshotRecord struct {
 }
 
 func (s *Server) getRunSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, ok := s.authorizeRunRequest(
 		w, r, principal, auth.PermissionRunsRead,
 	)
@@ -99,7 +99,7 @@ func (s *Server) getRunSnapshotHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, ok := s.authorizeRunRequest(
 		w, r, principal, auth.PermissionRunsManage,
 	)
@@ -181,7 +181,7 @@ func (s *Server) cancelRunHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, ok := s.authorizeRunRequest(
 		w, r, principal, auth.PermissionRunsRead,
 	)
@@ -269,7 +269,7 @@ func (s *Server) listRunSnapshotsHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) authorizeRunRequest(
 	w http.ResponseWriter,
 	r *http.Request,
-	principal auth.Actor,
+	principal auth.Principal,
 	permission auth.Permission,
 ) (auth.Scope, pgtype.UUID, pgtype.UUID, bool) {
 	if err := authorizeRunBeforeLookup(principal, permission); err != nil {
@@ -297,9 +297,9 @@ func (s *Server) authorizeRunRequest(
 	return scope, projectID, environmentID, true
 }
 
-func authorizeRunBeforeLookup(principal auth.Actor, permission auth.Permission) error {
+func authorizeRunBeforeLookup(principal auth.Principal, permission auth.Permission) error {
 	switch principal.Kind {
-	case auth.ActorKindAPIKey:
+	case auth.PrincipalKindAPIKey:
 		scope, ok := principal.EnvironmentScope()
 		if !ok {
 			return unavailable(codedError{
@@ -310,7 +310,7 @@ func authorizeRunBeforeLookup(principal auth.Actor, permission auth.Permission) 
 		if principal.HasPermission(permission, scope) {
 			return nil
 		}
-	case auth.ActorKindSession:
+	case auth.PrincipalKindSession:
 		if auth.RoleAllows(principal.Role, permission) {
 			return nil
 		}

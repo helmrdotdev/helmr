@@ -8,9 +8,9 @@ import (
 
 func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {
 	orgID := uuid.New()
-	actor := Actor{
+	principal := Principal{
 		OrgID:         orgID,
-		Kind:          ActorKindAPIKey,
+		Kind:          PrincipalKindAPIKey,
 		Role:          RoleViewer,
 		ProjectID:     "00000000-0000-0000-0000-000000000101",
 		EnvironmentID: "00000000-0000-0000-0000-000000000102",
@@ -18,19 +18,19 @@ func TestAPIKeyPermissionIsLimitedByCreatorRole(t *testing.T) {
 	}
 
 	scope := Scope{OrgID: orgID, ProjectID: "00000000-0000-0000-0000-000000000101", EnvironmentID: "00000000-0000-0000-0000-000000000102"}
-	if !actor.HasPermission(PermissionRunsRead, scope) {
+	if !principal.HasPermission(PermissionRunsRead, scope) {
 		t.Fatal("viewer-backed api key should keep read grants")
 	}
-	if actor.HasPermission(PermissionSecretsWrite, scope) {
+	if principal.HasPermission(PermissionSecretsWrite, scope) {
 		t.Fatal("viewer-backed api key should not keep write grants after demotion")
 	}
 }
 
 func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 	orgID := uuid.New()
-	actor := Actor{
+	principal := Principal{
 		OrgID:       orgID,
-		Kind:        ActorKindAPIKey,
+		Kind:        PrincipalKindAPIKey,
 		Role:        RoleOwner,
 		Permissions: []Permission{PermissionRunsRead},
 	}
@@ -40,22 +40,22 @@ func TestAPIKeyScopeDoesNotMatchOrgScope(t *testing.T) {
 		EnvironmentID: "00000000-0000-0000-0000-000000000102",
 	}
 
-	if actor.HasPermission(PermissionRunsRead, scope) {
+	if principal.HasPermission(PermissionRunsRead, scope) {
 		t.Fatal("api key without environment scope matched an environment-scoped resource")
 	}
-	if actor.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
+	if principal.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
 		t.Fatal("api key matched org-level scope")
 	}
 
-	concreteActor := Actor{
+	concretePrincipal := Principal{
 		OrgID:         orgID,
-		Kind:          ActorKindAPIKey,
+		Kind:          PrincipalKindAPIKey,
 		Role:          RoleOwner,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		Permissions:   []Permission{PermissionRunsRead},
 	}
-	if concreteActor.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
+	if concretePrincipal.HasPermission(PermissionRunsRead, Scope{OrgID: orgID}) {
 		t.Fatal("environment-scoped api key matched an org-level scope")
 	}
 }
@@ -67,9 +67,9 @@ func TestGranularComputerPermissionsDoNotEscalate(t *testing.T) {
 		ProjectID:     "00000000-0000-0000-0000-000000000101",
 		EnvironmentID: "00000000-0000-0000-0000-000000000102",
 	}
-	actor := Actor{
+	principal := Principal{
 		OrgID:         orgID,
-		Kind:          ActorKindAPIKey,
+		Kind:          PrincipalKindAPIKey,
 		Role:          RoleDeveloper,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
@@ -84,7 +84,7 @@ func TestGranularComputerPermissionsDoNotEscalate(t *testing.T) {
 		PermissionComputersDelete,
 		PermissionComputerCommandCreate,
 	} {
-		if actor.HasPermission(permission, scope) {
+		if principal.HasPermission(permission, scope) {
 			t.Fatalf("read-only computer grants allowed %s", permission)
 		}
 	}

@@ -58,7 +58,7 @@ func (s *Server) cancelCommandHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("command ID is invalid")))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))

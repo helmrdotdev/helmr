@@ -21,7 +21,7 @@ type Position struct {
 
 // List returns up to limit Deployments of the environment after the given
 // position, newest first, and whether more follow.
-func List(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Scope, limit int32, after *Position) ([]db.ListScopedDeploymentsRow, bool, error) {
+func List(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, limit int32, after *Position) ([]db.ListScopedDeploymentsRow, bool, error) {
 	if err := authorizeRead(principal, scope); err != nil {
 		return nil, false, err
 	}
@@ -49,7 +49,7 @@ func List(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Sc
 }
 
 // Get returns a Deployment of the environment.
-func Get(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Scope, deploymentID uuid.UUID) (db.Deployment, error) {
+func Get(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, deploymentID uuid.UUID) (db.Deployment, error) {
 	if err := authorizeRead(principal, scope); err != nil {
 		return db.Deployment{}, err
 	}
@@ -70,7 +70,7 @@ func Get(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Sco
 }
 
 // GetCurrent returns the environment's promoted Deployment.
-func GetCurrent(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Scope) (db.Deployment, error) {
+func GetCurrent(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope) (db.Deployment, error) {
 	if err := authorize(principal, scope, auth.PermissionRunsRead); err != nil {
 		return db.Deployment{}, err
 	}
@@ -101,7 +101,7 @@ type DefinitionPage struct {
 // ListDefinitions returns up to limit declared IDs of the given kind after
 // afterDeclaredID, from the selected Deployment or, when selected is nil, the
 // environment's current one.
-func ListDefinitions(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, limit int32, afterDeclaredID *string) (DefinitionPage, error) {
+func ListDefinitions(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, limit int32, afterDeclaredID *string) (DefinitionPage, error) {
 	if err := authorizeRead(principal, scope); err != nil {
 		return DefinitionPage{}, err
 	}
@@ -130,7 +130,7 @@ func ListDefinitions(ctx context.Context, q db.Querier, principal auth.Actor, sc
 // GetDefinition returns the declared definition from the selected Deployment
 // or, when selected is nil, the environment's current one, together with that
 // Deployment's ID.
-func GetDefinition(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, declaredID string) (uuid.UUID, string, error) {
+func GetDefinition(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, kind definition.Kind, selected *uuid.UUID, declaredID string) (uuid.UUID, string, error) {
 	if err := authorizeRead(principal, scope); err != nil {
 		return uuid.UUID{}, "", err
 	}
@@ -152,7 +152,7 @@ func GetDefinition(ctx context.Context, q db.Querier, principal auth.Actor, scop
 
 // definitionDeployment resolves the Deployment whose definitions a read
 // targets. Only a Deployment with a recorded Program has readable definitions.
-func definitionDeployment(ctx context.Context, q db.Querier, principal auth.Actor, scope auth.Scope, selected *uuid.UUID) (db.Deployment, pgtype.UUID, error) {
+func definitionDeployment(ctx context.Context, q db.Querier, principal auth.Principal, scope auth.Scope, selected *uuid.UUID) (db.Deployment, pgtype.UUID, error) {
 	projectID, environmentID, err := scopeIDs(scope)
 	if err != nil {
 		return db.Deployment{}, pgtype.UUID{}, err

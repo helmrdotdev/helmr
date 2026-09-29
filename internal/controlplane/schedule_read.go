@@ -32,13 +32,13 @@ type scheduleListCursor struct {
 }
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
+	if !principal.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -67,7 +67,7 @@ func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
 		taskDeclaredID = pgvalue.Text(*exactTaskID)
 	}
 	rows, err := s.db.ListSchedules(r.Context(), db.ListSchedulesParams{
-		OrgID:               pgvalue.UUID(actor.OrgID),
+		OrgID:               pgvalue.UUID(principal.OrgID),
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		TaskDeclaredID:      taskDeclaredID,
@@ -190,13 +190,13 @@ func decodeScheduleListCursor(raw string) (scheduleListCursor, error) {
 }
 
 func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
+	if !principal.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
@@ -206,7 +206,7 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	row, err := s.db.GetScheduleByID(r.Context(), db.GetScheduleByIDParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
+		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ID:            pgvalue.UUID(scheduleID),

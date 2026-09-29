@@ -21,8 +21,8 @@ func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
 	}
 	owned := fixture.computerIDs[0].String()
 	free := fixture.computerIDs[1].String()
-	principal := auth.Actor{
-		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+	principal := auth.Principal{
+		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionComputersRead},
 	}
@@ -61,13 +61,13 @@ func TestComputerReadPostgresListsAttachedAndIdleComputers(t *testing.T) {
 	}
 }
 
-func computerReadPostgresRequest(target string, computerID string, principal auth.Actor) *http.Request {
+func computerReadPostgresRequest(target string, computerID string, principal auth.Principal) *http.Request {
 	request := httptest.NewRequest(http.MethodGet, target, nil)
 	route := chi.NewRouteContext()
 	if computerID != "" {
 		route.URLParams.Add("computerID", computerID)
 	}
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }

@@ -11,33 +11,33 @@ import (
 )
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	if actor.UserID == uuid.Nil() {
+	principal := principalFromContext(r.Context())
+	if principal.UserID == uuid.Nil() {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
 		return
 	}
-	account, err := identity.LoadAccount(r.Context(), s.db, actor)
+	account, err := identity.LoadAccount(r.Context(), s.db, principal)
 	if err != nil {
 		writeError(w, identityError(err))
 		return
 	}
-	hasOrg := actor.OrgID != uuid.Nil()
+	hasOrg := principal.OrgID != uuid.Nil()
 	response := api.MeResponse{
-		UserID:          actor.UserID.String(),
+		UserID:          principal.UserID.String(),
 		DisplayName:     account.DisplayName,
 		ProfileImageURL: account.ProfileImageURL,
 		PublicURL:       s.publicURL.String(),
-		Admin:           actor.Admin,
+		Admin:           principal.Admin,
 		Permissions:     []string{},
 		ProjectRequired: hasOrg && !account.HasProjects,
 	}
 	switch {
 	case hasOrg:
-		response.OrgID = actor.OrgID.String()
+		response.OrgID = principal.OrgID.String()
 		response.OrgName = account.OrgName
 		response.OrgSlug = account.OrgSlug
-		response.Role = string(actor.Role)
-		response.Permissions = sessionPermissions(actor.Role)
+		response.Role = string(principal.Role)
+		response.Permissions = sessionPermissions(principal.Role)
 	case s.selfHostedMode():
 		response.OrganizationRequired = !account.OrganizationExists
 		response.AccessRequired = account.OrganizationExists

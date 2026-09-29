@@ -183,8 +183,8 @@ func TestAuthorizeActorStartRejectsBeforeScopeLookup(t *testing.T) {
 	route.URLParams.Add("environmentID", "missing")
 	route.URLParams.Add("actorDeclaredID", "operator.v1")
 	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
-	request = request.WithContext(context.WithValue(request.Context(), actorContextKey{}, auth.Actor{
-		Kind: auth.ActorKindSession,
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, auth.Principal{
+		Kind: auth.PrincipalKindSession,
 		Role: auth.RoleViewer,
 	}))
 
@@ -200,7 +200,7 @@ func TestActorStartAuthenticationErrorsUseMachineReadableEnvelope(t *testing.T) 
 	server := &Server{log: slog.Default()}
 	for _, middleware := range []func(http.Handler) http.Handler{
 		func(next http.Handler) http.Handler {
-			return server.requireActorWithErrorWriter(next, writeActorStartAuthError)
+			return server.requirePrincipalWithErrorWriter(next, writeActorStartAuthError)
 		},
 		func(next http.Handler) http.Handler {
 			return server.requireSessionWithErrorWriter(next, writeActorStartAuthError)

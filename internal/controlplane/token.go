@@ -90,13 +90,13 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid token create JSON: %w", err))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionTokensCreate, scope) {
+	if !principal.HasPermission(auth.PermissionTokensCreate, scope) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
@@ -131,7 +131,7 @@ func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
 	response, replayed, err := s.createExternalToken(
 		r.Context(),
 		tokenCreateInput{
-			OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
+			OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
 			TimeoutMS: timeoutMS, Metadata: metadata, Tags: tags,
 			CreatedBy: json.RawMessage(`{"kind":"external"}`),
 		},
@@ -457,8 +457,8 @@ func normalizeTokenTimeout(raw *int64) (*int64, error) {
 }
 
 func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, err := s.requestedRunListScope(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -468,7 +468,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionTokensRead, scope) {
+	if !principal.HasPermission(auth.PermissionTokensRead, scope) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
@@ -508,7 +508,7 @@ func (s *Server) listTokens(w http.ResponseWriter, r *http.Request) {
 		cursor = &decoded
 	}
 	params := db.ListTokensParams{
-		OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
+		OrgID: pgvalue.UUID(principal.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
 		Status: state, LimitCount: limit + 1,
 	}
 	if cursor != nil {
@@ -1018,18 +1018,18 @@ func (s *Server) authorizeToken(
 		writeError(w, notFound(errTokenNotFound))
 		return db.Token{}, false
 	}
-	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	principal := principalFromContext(r.Context())
+	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return db.Token{}, false
 	}
-	if !actor.HasPermission(permission, scope) {
+	if !principal.HasPermission(permission, scope) {
 		writeError(w, forbidden(errPermissionRequired))
 		return db.Token{}, false
 	}
 	tokenRow, err := s.db.GetToken(r.Context(), db.GetTokenParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
+		OrgID:         pgvalue.UUID(principal.OrgID),
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ID:            pgvalue.UUID(tokenID),

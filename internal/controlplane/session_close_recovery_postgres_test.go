@@ -28,7 +28,7 @@ func TestSessionCloseSettlesStoppedExecutionThroughDeliveryPostgres(t *testing.T
 			if err != nil {
 				t.Fatal(err)
 			}
-			principal := auth.Actor{OrgID: f.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleOwner, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsResume}}
+			principal := auth.Principal{OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleOwner, ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(), Permissions: []auth.Permission{auth.PermissionRunsManage, auth.PermissionSessionsSend, auth.PermissionSessionsClose, auth.PermissionSessionsResume}}
 			call := func(handler http.HandlerFunc, raw any, result any) {
 				t.Helper()
 				body, err := json.Marshal(raw)

@@ -70,7 +70,7 @@ type InvalidObjectError struct {
 func (e InvalidObjectError) Error() string { return e.Err.Error() }
 func (e InvalidObjectError) Unwrap() error { return e.Err }
 
-func authorize(principal auth.Actor, scope auth.Scope, permissions ...auth.Permission) error {
+func authorize(principal auth.Principal, scope auth.Scope, permissions ...auth.Permission) error {
 	for _, permission := range permissions {
 		if principal.HasPermission(permission, scope) {
 			return nil
@@ -79,11 +79,11 @@ func authorize(principal auth.Actor, scope auth.Scope, permissions ...auth.Permi
 	return ErrPermissionRequired
 }
 
-func authorizeDeploy(principal auth.Actor, scope auth.Scope) error {
+func authorizeDeploy(principal auth.Principal, scope auth.Scope) error {
 	return authorize(principal, scope, auth.PermissionTasksDeploy)
 }
 
-func authorizeRead(principal auth.Actor, scope auth.Scope) error {
+func authorizeRead(principal auth.Principal, scope auth.Scope) error {
 	return authorize(principal, scope, auth.PermissionTasksDeploy, auth.PermissionRunsRead)
 }
 

@@ -40,8 +40,8 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	principal := auth.Actor{
-		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+	principal := auth.Principal{
+		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionSessionsRead},
 	}
@@ -65,11 +65,11 @@ func TestActorReadPostgresProjectsStableStatus(t *testing.T) {
 	}
 }
 
-func sessionReadPostgresRequest(target string, sessionID string, principal auth.Actor) *http.Request {
+func sessionReadPostgresRequest(target string, sessionID string, principal auth.Principal) *http.Request {
 	request := httptest.NewRequest(http.MethodGet, target, nil)
 	route := chi.NewRouteContext()
 	route.URLParams.Add("sessionID", sessionID)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }

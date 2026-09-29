@@ -39,7 +39,7 @@ func (s *Server) listCommandLogsHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(codedError{code: "invalid_command_reference", message: "command ID is invalid"}))
 		return
 	}
-	principal := actorFromContext(r.Context())
+	principal := principalFromContext(r.Context())
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))

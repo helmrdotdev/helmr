@@ -18,16 +18,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type actorContextKey struct{}
+type principalContextKey struct{}
 type workerContextKey struct{}
 
 func (s *Server) requireAPIKey(next http.Handler) http.Handler {
-	return s.requireAPIKeyWithErrorWriter(next, writeActorAuthError)
+	return s.requireAPIKeyWithErrorWriter(next, writePrincipalAuthError)
 }
 
 func (s *Server) requireAPIKeyWithErrorWriter(
 	next http.Handler,
-	writeAuthError actorAuthErrorWriter,
+	writeAuthError authErrorWriter,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token, ok := bearerToken(r.Header.Get("authorization"))
@@ -35,32 +35,32 @@ func (s *Server) requireAPIKeyWithErrorWriter(
 			writeAuthError(w, s.log, auth.ErrUnauthenticated)
 			return
 		}
-		actor, err := s.apiKeyActor(r, token)
+		principal, err := s.apiKeyPrincipal(r, token)
 		if err != nil {
 			writeAuthError(w, s.log, err)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 	})
 }
 
-type actorAuthErrorWriter func(http.ResponseWriter, *slog.Logger, error)
+type authErrorWriter func(http.ResponseWriter, *slog.Logger, error)
 
-func (s *Server) requireActorWithErrorWriter(
+func (s *Server) requirePrincipalWithErrorWriter(
 	next http.Handler,
-	writeAuthError actorAuthErrorWriter,
+	writeAuthError authErrorWriter,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
-			actor, err := s.bearerActor(r, token)
+			principal, err := s.bearerPrincipal(r, token)
 			if err != nil {
 				writeAuthError(w, s.log, err)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
-		actor, rawSession, err := s.sessionActor(r)
+		principal, rawSession, err := s.sessionPrincipal(r)
 		if err != nil {
 			if errors.Is(err, auth.ErrUnauthenticated) {
 				clearSessionCookie(w, r)
@@ -68,53 +68,53 @@ func (s *Server) requireActorWithErrorWriter(
 			writeAuthError(w, s.log, err)
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
+		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
 		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
 }
 
-func (s *Server) bearerActor(r *http.Request, token string) (auth.Actor, error) {
+func (s *Server) bearerPrincipal(r *http.Request, token string) (auth.Principal, error) {
 	token = strings.TrimSpace(token)
 	if strings.HasPrefix(token, auth.APIKeyPrefix) {
-		actor, err := s.apiKeyActor(r, token)
+		principal, err := s.apiKeyPrincipal(r, token)
 		if err == nil {
-			return actor, nil
+			return principal, nil
 		}
 		if !errors.Is(err, auth.ErrUnauthenticated) {
-			return auth.Actor{}, err
+			return auth.Principal{}, err
 		}
-		return s.sessionActorFromToken(r, token)
+		return s.sessionPrincipalFromToken(r, token)
 	}
-	actor, err := s.sessionActorFromToken(r, token)
+	principal, err := s.sessionPrincipalFromToken(r, token)
 	if err == nil {
-		return actor, nil
+		return principal, nil
 	}
 	if !errors.Is(err, auth.ErrUnauthenticated) && s.userAuthConfigured() == nil {
-		return auth.Actor{}, fmt.Errorf("session authentication: %w", err)
+		return auth.Principal{}, fmt.Errorf("session authentication: %w", err)
 	}
 	if s.auth == nil {
-		return auth.Actor{}, auth.ErrUnauthenticated
+		return auth.Principal{}, auth.ErrUnauthenticated
 	}
-	return s.apiKeyActor(r, token)
+	return s.apiKeyPrincipal(r, token)
 }
 
-func (s *Server) apiKeyActor(r *http.Request, token string) (auth.Actor, error) {
+func (s *Server) apiKeyPrincipal(r *http.Request, token string) (auth.Principal, error) {
 	if s.auth == nil {
-		return auth.Actor{}, fmt.Errorf("api key authentication: authentication is not configured")
+		return auth.Principal{}, fmt.Errorf("api key authentication: authentication is not configured")
 	}
-	actor, err := s.auth.Authenticate(r.Context(), token)
+	principal, err := s.auth.Authenticate(r.Context(), token)
 	if err != nil {
 		if errors.Is(err, auth.ErrUnauthenticated) {
-			return auth.Actor{}, err
+			return auth.Principal{}, err
 		}
-		return auth.Actor{}, fmt.Errorf("api key authentication: %w", err)
+		return auth.Principal{}, fmt.Errorf("api key authentication: %w", err)
 	}
-	return actor, nil
+	return principal, nil
 }
 
-func writeActorAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
+func writePrincipalAuthError(w http.ResponseWriter, log *slog.Logger, err error) {
 	if !errors.Is(err, auth.ErrUnauthenticated) {
 		log.Error("authentication failed", "error", err)
 		writeError(w, unavailable(errors.New("authentication is unavailable")))
@@ -129,7 +129,7 @@ func (s *Server) requireSession(next http.Handler) http.Handler {
 
 func (s *Server) requireAdmin(next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !actorFromContext(r.Context()).Admin {
+		if !principalFromContext(r.Context()).Admin {
 			writeError(w, forbidden(errors.New("administrator access is required")))
 			return
 		}
@@ -139,7 +139,7 @@ func (s *Server) requireAdmin(next http.Handler) http.Handler {
 
 func (s *Server) requireSessionWithErrorWriter(
 	next http.Handler,
-	writeAuthError actorAuthErrorWriter,
+	writeAuthError authErrorWriter,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token, ok := bearerToken(r.Header.Get("authorization")); ok {
@@ -148,21 +148,21 @@ func (s *Server) requireSessionWithErrorWriter(
 				writeAuthError(w, s.log, auth.ErrUnauthenticated)
 				return
 			}
-			actor, err := s.sessionActorFromToken(r, token)
+			principal, err := s.sessionPrincipalFromToken(r, token)
 			if err != nil {
 				writeAuthError(w, s.log, err)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
-		actor, rawSession, err := s.sessionActor(r)
+		principal, rawSession, err := s.sessionPrincipal(r)
 		if err != nil {
 			clearSessionCookie(w, r)
 			writeAuthError(w, s.log, err)
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
+		r = r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal))
 		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
@@ -204,12 +204,12 @@ func looksLikeSessionBearerToken(token string) bool {
 
 func (s *Server) requireSessionPermission(permission auth.Permission, next http.Handler) http.Handler {
 	return s.requireSession(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		actor := actorFromContext(r.Context())
-		if actor.Role == "" {
+		principal := principalFromContext(r.Context())
+		if principal.Role == "" {
 			writeError(w, forbidden(errors.New("organization is required")))
 			return
 		}
-		if !actor.HasPermission(permission, auth.Scope{OrgID: actor.OrgID}) {
+		if !principal.HasPermission(permission, auth.Scope{OrgID: principal.OrgID}) {
 			writeError(w, forbidden(errors.New("permission is required")))
 			return
 		}
@@ -217,21 +217,21 @@ func (s *Server) requireSessionPermission(permission auth.Permission, next http.
 	}))
 }
 
-func (s *Server) sessionActor(r *http.Request) (auth.Actor, string, error) {
+func (s *Server) sessionPrincipal(r *http.Request) (auth.Principal, string, error) {
 	cookie, err := r.Cookie(sessionCookieName(r))
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
-		return auth.Actor{}, "", auth.ErrUnauthenticated
+		return auth.Principal{}, "", auth.ErrUnauthenticated
 	}
-	actor, err := s.sessionActorFromToken(r, cookie.Value)
-	return actor, cookie.Value, err
+	principal, err := s.sessionPrincipalFromToken(r, cookie.Value)
+	return principal, cookie.Value, err
 }
 
-func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth.Actor, error) {
+func (s *Server) sessionPrincipalFromToken(r *http.Request, rawSession string) (auth.Principal, error) {
 	if strings.TrimSpace(rawSession) == "" {
-		return auth.Actor{}, auth.ErrUnauthenticated
+		return auth.Principal{}, auth.ErrUnauthenticated
 	}
 	if err := s.userAuthConfigured(); err != nil {
-		return auth.Actor{}, err
+		return auth.Principal{}, err
 	}
 	return identity.AuthenticateLoginSession(r.Context(), s.db, s.identity, rawSession)
 }
@@ -360,9 +360,9 @@ func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) h
 	})
 }
 
-func actorFromContext(ctx context.Context) auth.Actor {
-	actor, _ := ctx.Value(actorContextKey{}).(auth.Actor)
-	return actor
+func principalFromContext(ctx context.Context) auth.Principal {
+	principal, _ := ctx.Value(principalContextKey{}).(auth.Principal)
+	return principal
 }
 
 func workerFromContext(ctx context.Context) workerActor {

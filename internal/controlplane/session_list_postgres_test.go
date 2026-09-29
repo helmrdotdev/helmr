@@ -54,8 +54,8 @@ func TestSessionListPostgresFiltersByPublicStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	principal := auth.Actor{
-		OrgID: fixture.orgID, Kind: auth.ActorKindAPIKey, Role: auth.RoleDeveloper,
+	principal := auth.Principal{
+		OrgID: fixture.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
 		ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
 		Permissions: []auth.Permission{auth.PermissionSessionsRead},
 	}
@@ -136,7 +136,7 @@ func sessionListIDs(response api.ListSessionsResponse) string {
 func listSessionsPostgresHTTP(
 	t *testing.T,
 	fixture actorStartPostgresFixture,
-	principal auth.Actor,
+	principal auth.Principal,
 	target string,
 ) api.ListSessionsResponse {
 	t.Helper()

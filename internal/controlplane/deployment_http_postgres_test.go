@@ -111,7 +111,7 @@ func TestDeploymentHTTPPostgresAPIKeyRoutes(t *testing.T) {
 	scope := auth.Scope{OrgID: orgID, ProjectID: projectID.String(), EnvironmentID: environmentID.String()}
 	managerID := fixture.user(t, "Manager")
 	fixture.member(t, orgID, managerID, db.OrgMemberRoleOwner)
-	manager := auth.Actor{OrgID: orgID, UserID: managerID, Kind: auth.ActorKindSession, Role: auth.RoleOwner}
+	manager := auth.Principal{OrgID: orgID, UserID: managerID, Kind: auth.PrincipalKindSession, Role: auth.RoleOwner}
 	issue := func(permission auth.Permission) string {
 		t.Helper()
 		issued, err := identity.IssueAPIKey(t.Context(), fixture.queries, manager, scope, identity.APIKeyInput{

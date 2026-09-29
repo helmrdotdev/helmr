@@ -131,9 +131,9 @@ func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
 		`{"computer":{"id":%q},"idempotency_key":"http-start-1","run":{"ttl":"30m","retry":{"max_attempts":3}}}`,
 		fixture.computerRefs[0],
 	)
-	principal := auth.Actor{
+	principal := auth.Principal{
 		OrgID:         fixture.orgID,
-		Kind:          auth.ActorKindAPIKey,
+		Kind:          auth.PrincipalKindAPIKey,
 		Role:          auth.RoleDeveloper,
 		ProjectID:     fixture.projectID.String(),
 		EnvironmentID: fixture.environmentID.String(),
@@ -168,9 +168,9 @@ func TestActorStartHTTPPostgresCreatesAndReplaysIDs(t *testing.T) {
 func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	body := fmt.Sprintf(`{"computer":{"id":%q}}`, fixture.computerRefs[0])
-	principal := auth.Actor{
+	principal := auth.Principal{
 		OrgID:         fixture.orgID,
-		Kind:          auth.ActorKindAPIKey,
+		Kind:          auth.PrincipalKindAPIKey,
 		Role:          auth.RoleDeveloper,
 		ProjectID:     fixture.projectID.String(),
 		EnvironmentID: fixture.environmentID.String(),
@@ -195,9 +195,9 @@ func TestActorStartHTTPPostgresDeniesBeforeAdmission(t *testing.T) {
 func TestActorStartHTTPSessionPostgresCreates(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	body := fmt.Sprintf(`{"computer":{"id":%q}}`, fixture.computerRefs[0])
-	principal := auth.Actor{
+	principal := auth.Principal{
 		OrgID: fixture.orgID,
-		Kind:  auth.ActorKindSession,
+		Kind:  auth.PrincipalKindSession,
 		Role:  auth.RoleDeveloper,
 	}
 	recorder := httptest.NewRecorder()
@@ -321,7 +321,7 @@ func (fixture actorStartPostgresFixture) request(index int, key *string, idempot
 
 func actorStartHTTPPostgresRequest(
 	body string,
-	principal auth.Actor,
+	principal auth.Principal,
 	projectID string,
 	environmentID string,
 	actorDeclaredID string,
@@ -336,7 +336,7 @@ func actorStartHTTPPostgresRequest(
 	}
 	route.URLParams.Add("actorDeclaredID", actorDeclaredID)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
+	ctx = context.WithValue(ctx, principalContextKey{}, principal)
 	return request.WithContext(ctx)
 }
 

@@ -16,7 +16,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 	userID := fixture.user(t, "Developer", "")
 	orgID := fixture.organization(t, "device")
 	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
-	approver := auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleDeveloper}
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper}
 	consent := DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}
 
 	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
@@ -31,7 +31,7 @@ func TestDeviceCodePostgresApprovalIssuesOneSession(t *testing.T) {
 		t.Fatalf("status = %+v, err = %v", state, err)
 	}
 
-	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, auth.Actor{UserID: userID, Kind: auth.ActorKindSession}, DeviceConsent{UserID: userID.String()}, started.UserCode); !errors.Is(err, ErrOrganizationRequired) {
+	if _, err := ApproveDeviceCode(ctx, fixture.queries, fixture.cfg, auth.Principal{UserID: userID, Kind: auth.PrincipalKindSession}, DeviceConsent{UserID: userID.String()}, started.UserCode); !errors.Is(err, ErrOrganizationRequired) {
 		t.Fatalf("approval without organization error = %v", err)
 	}
 	for _, changed := range []DeviceConsent{{UserID: userID.String()}, {UserID: uuid.NewV7().String(), OrgID: orgID.String()}, {}} {
@@ -78,7 +78,7 @@ func TestDeviceCodePostgresDenialAndExpiry(t *testing.T) {
 	userID := fixture.user(t, "Viewer", "")
 	orgID := fixture.organization(t, "device-denied")
 	fixture.member(t, orgID, userID, db.OrgMemberRoleViewer)
-	approver := auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleViewer}
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleViewer}
 	consent := DeviceConsent{UserID: userID.String(), OrgID: orgID.String()}
 
 	denied, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
@@ -121,7 +121,7 @@ func TestDeviceCodePostgresFailedExchangeKeepsApprovedCode(t *testing.T) {
 	userID := fixture.user(t, "Developer", "")
 	orgID := fixture.organization(t, "device-atomic")
 	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
-	approver := auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleDeveloper}
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper}
 	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -160,7 +160,7 @@ func TestDeviceCodePostgresConcurrentExchangeIssuesOneSession(t *testing.T) {
 	userID := fixture.user(t, "Developer", "")
 	orgID := fixture.organization(t, "device-concurrent")
 	fixture.member(t, orgID, userID, db.OrgMemberRoleDeveloper)
-	approver := auth.Actor{UserID: userID, OrgID: orgID, Kind: auth.ActorKindSession, Role: auth.RoleDeveloper}
+	approver := auth.Principal{UserID: userID, OrgID: orgID, Kind: auth.PrincipalKindSession, Role: auth.RoleDeveloper}
 	started, err := StartDeviceCode(ctx, fixture.queries, fixture.cfg)
 	if err != nil {
 		t.Fatal(err)
