@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
-	"slices"
+	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -25,7 +24,7 @@ type LocatedDeclaration struct {
 	DeclaredID string          `json:"declaredId"`
 	ExportName string          `json:"exportName"`
 	Kind       DeclarationKind `json:"kind"`
-	SourcePath string          `json:"sourcePath"`
+	ModulePath string          `json:"modulePath"`
 	Slot       DeclarationSlot `json:"slot"`
 }
 
@@ -125,8 +124,8 @@ func validateLocatedDeclaration(declaration LocatedDeclaration) error {
 	if err := validateDeclaration(locatedDeclarationProjection(declaration)); err != nil {
 		return err
 	}
-	if err := validateDeclarationSourcePath(declaration.SourcePath); err != nil {
-		return fmt.Errorf("sourcePath: %w", err)
+	if err := validateDeclarationModulePath(declaration.ModulePath); err != nil {
+		return fmt.Errorf("modulePath: %w", err)
 	}
 	if declaration.Slot != DeclarationSlotHandler {
 		return errors.New("slot must be handler")
@@ -143,14 +142,14 @@ func validateLocatedDeclaration(declaration LocatedDeclaration) error {
 	return nil
 }
 
-func validateDeclarationSourcePath(value string) error {
+var declarationModulePattern = regexp.MustCompile(`^helmr/app/entry-[0-9]+\.mjs$`)
+
+func validateDeclarationModulePath(value string) error {
 	if err := validateArtifactPath(value, programArtifact); err != nil {
 		return err
 	}
-	if value == "helmr.config.ts" || strings.HasPrefix(value, "helmr/") || hasNodeModulesComponent(value) ||
-		!slices.Contains([]string{".js", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".jsx"}, path.Ext(value)) ||
-		strings.HasSuffix(value, ".d.ts") || strings.HasSuffix(value, ".d.mts") || strings.HasSuffix(value, ".d.cts") {
-		return errors.New("must identify a project declaration source, outside node_modules and build-only config")
+	if !declarationModulePattern.MatchString(value) {
+		return errors.New("must identify a generated declaration entry module")
 	}
 	return nil
 }
@@ -170,4 +169,13 @@ func locatedDeclarationProjection(declaration LocatedDeclaration) ProgramDeclara
 func cloneDeclarationLocator(locator DeclarationLocator) DeclarationLocator {
 	locator.Declarations = append([]LocatedDeclaration(nil), locator.Declarations...)
 	return locator
+}
+
+// Only generated modules and their maps may occupy the application namespace.
+func isGeneratedProgramEntry(entry artifactEntry) bool {
+	if entry.Path == "helmr/app" || entry.Path == "helmr/app/chunks" {
+		return entry.Kind == artifactEntryDirectory
+	}
+	return strings.HasPrefix(entry.Path, "helmr/app/") && entry.Kind == artifactEntryRegular &&
+		(strings.HasSuffix(entry.Path, ".mjs") || strings.HasSuffix(entry.Path, ".mjs.map"))
 }

@@ -22,7 +22,7 @@ test("config defaults are strict, computed ESM/CJS expressions execute once", as
   const f=await fixture({"package.json":{type},"helmr.config.ts":`import{writeFileSync}from'node:fs';writeFileSync(new URL('./evaluated',import.meta.url),'once',{flag:'wx'});const value={};export default value`})
   // CJS uses its native filename, not import.meta (which is ESM-only).
   if(type==="commonjs")await writeFile(resolve(f.root,"helmr.config.ts"),`import{writeFileSync}from'node:fs';writeFileSync(__dirname+'/evaluated','once',{flag:'wx'});const value={};export default value`)
-  try {expect(runHostConfig(f.root)).toEqual({discovery:{dirs:["tasks"],ignorePatterns:[]},build:{builder:{steps:[]},secrets:[]}});expect(await readFile(resolve(f.root,"evaluated"),"utf8")).toBe("once")}finally{await f.close()}
+  try {expect(runHostConfig(f.root)).toEqual({discovery:{assets:[],dirs:["tasks"],external:[],ignorePatterns:[]},build:{builder:{steps:[]},secrets:[]}});expect(await readFile(resolve(f.root,"evaluated"),"utf8")).toBe("once")}finally{await f.close()}
  }
  for(const body of ["export const other={}","export default undefined","export default 1","export default []"]){
   const f=await fixture({"helmr.config.ts":body})
@@ -33,24 +33,20 @@ test("config defaults are strict, computed ESM/CJS expressions execute once", as
  try{expect(()=>runHostConfig(f.root)).toThrow("failed to evaluate helmr.config.ts")}finally{await f.close()}
 })
 
-test("real packed SDK config/task/actor identity through a mixed JS-to-TS package",async()=>{
+test("packed SDK identity survives one split bundle and assets resolve independently of cwd",async()=>{
  const f=await fixture({
-  "helmr.config.ts":`import{defineConfig}from'@helmr/sdk';import{dirs}from'./shared';export default defineConfig({dirs})`,
-  "shared.ts":'export const dirs=["tasks"]',
-  "node_modules/mixed/package.json":{type:"module",exports:{import:"./index.js",require:"./cjs.cts"}},
-  "node_modules/mixed/index.js":'export{value}from"./value.ts"',
-  "node_modules/mixed/value.ts":'import{readFileSync}from"node:fs";export const value:string=readFileSync(new URL("./asset",import.meta.url),"utf8")',
-  "node_modules/mixed/asset":"installed",
-  "node_modules/mixed/cjs.cts":'module.exports="required"',
-  "tasks/task.ts":`import{task,actor}from'@helmr/sdk';import{value}from'mixed';import{createRequire}from'node:module';if(value!=='installed'||createRequire(import.meta.url)('mixed')!=='required')throw Error('wrong instance');export const build=task({id:'build',run:()=>value});export const worker=actor({id:'worker',run:async()=>{}})`,
+  "package.json":{type:"module",imports:{"#project/*":"./*"}},
+  "helmr.config.ts":`import{defineConfig}from'@helmr/sdk';export default defineConfig({build:{assets:["prompts/**"]}})`,
+  "prompts/system.md":"installed",
+  "shared.ts":`import{task}from'@helmr/sdk';import{readFileSync}from'node:fs';export const value=readFileSync(new URL(import.meta.resolve('#project/prompts/system.md')),'utf8');export const shared=task({id:'build',run:()=>value})`,
+  "tasks/a.ts":`export{shared as build}from'../shared'`,
+  "tasks/b.ts":`import{actor}from'@helmr/sdk';import{value}from'../shared';if(value!=='installed')throw Error('wrong asset');export const worker=actor({id:'worker',run:async()=>{}})`,
  },true)
  try{
-  const config=runHostConfig(f.root).discovery
-  const result=await analyzeProject({root:f.root,architecture:"x86_64",config})
+  const result=await analyzeProject({root:f.root,architecture:"x86_64",config:runHostConfig(f.root).discovery})
   expect(result.programDeclarations.map((d:{kind:string})=>d.kind)).toEqual(["task","actor"])
-  expect(result.programDeclarations[1].slots).toEqual(["handler"])
-  expect(result.declarationLocator.declarations.map((d:{sourcePath:string})=>d.sourcePath)).toEqual(["tasks/task.ts","tasks/task.ts"])
-  expect(Object.keys(result.result).sort()).toEqual(["apiVersion","config","discoveryCandidates","inputTreeDigest","language","nodeVersion","selections"])
+  expect(result.declarationLocator.declarations.map((d:{modulePath:string})=>d.modulePath)).toEqual(["helmr/app/entry-0.mjs","helmr/app/entry-1.mjs"])
+  expect(Object.keys(result.result).sort()).toEqual(["apiVersion","bundler","config","modules","nodeVersion","payloadDigest","selections"])
  }finally{await f.close()}
 })
 

@@ -20,7 +20,13 @@ try {
     ["schedule", ["fixtures/schedule/tasks"]],
   ]) {
     const config = resolve(output, `${name}-config.json`)
-    writeFileSync(config, JSON.stringify({ dirs, ignorePatterns: ["**/run.ts", "**/*.test.*"] }))
+    writeFileSync(config, JSON.stringify({ dirs, ignorePatterns: ["**/run.ts", "**/*.run.ts", "**/*.test.*"], external: [], assets: [] }))
+    const bundle = resolve(output, `${name}-bundle`)
+    const bundled = spawnSync(process.execPath, [
+      "--no-strip-types", "--no-global-search-paths", "internal/compiler/program-compiler.mjs",
+      "--bundle", project, config, nodeVersion, bundle,
+    ], { stdio: "inherit", env: { PATH: process.env.PATH } })
+    if (bundled.status !== 0) throw new Error(`sample bundler exited ${bundled.status}`)
     const framePath = resolve(output, `${name}-result`)
     const fd = openSync(framePath, "w")
     let child
@@ -34,10 +40,12 @@ try {
           "--no-global-search-paths",
           "--enable-source-maps",
           "internal/compiler/program-compiler.mjs",
-          resolve(project),
+          "--analyze",
+          resolve(bundle, "payload"),
           config,
           nodeVersion,
           `sha256:${"0".repeat(64)}`,
+          resolve(bundle, "bundle.json"),
           resolve(output, name),
         ],
         { stdio: ["ignore", "inherit", "inherit", fd], env: { PATH: process.env.PATH } },

@@ -7,14 +7,13 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/version"
 )
 
-func testLanguageIdentity() ModuleExecutionIdentity {
-	return ModuleExecutionIdentity{APIVersion: "helmr.module-execution.v0", AdapterDigest: testDigest("adapter"), TypeScriptDigest: testDigest("typescript"), TypeScriptVersion: version.RuntimeTypeScript()}
+func testBundlerIdentity() BundlerIdentity {
+	return BundlerIdentity{APIVersion: "helmr.bundle.v0", APIDigest: testDigest("api"), BinaryDigest: testDigest("binary"), EsbuildVersion: "0.28.2"}
 }
 func testCompilerInputs() CompilerInputs {
-	return CompilerInputs{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(),
+	return CompilerInputs{APIVersion: "helmr.compiler.v0", Bundler: testBundlerIdentity(),
 		ProgramCompiler: CompilerEntrypoint{APIVersion: "helmr.compiler.v0", Digest: testDigest("program compiler"), Entrypoint: "/nix/helmr/program-compiler.mjs"}}
 }
 
@@ -50,7 +49,7 @@ func TestProgramCompilerResultRoundTrip(t *testing.T) {
 
 func testProgramCompilerResult(t *testing.T) ProgramCompilerResult {
 	t.Helper()
-	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Language: testLanguageIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, InputTreeDigest: testDigest("input"), DiscoveryCandidates: []string{"tasks/build.ts"}, Selections: []ProgramCompilerSelection{{DeclaredID: "build", ExportName: "build", Kind: DeclarationKindTask, SourcePath: "tasks/build.ts", Slot: DeclarationSlotHandler}}}
+	return ProgramCompilerResult{APIVersion: "helmr.compiler.v0", Bundler: testBundlerIdentity(), NodeVersion: "24.21.0", Config: ProgramPathDigest{Path: "helmr/config.json", Digest: testDigest("config")}, PayloadDigest: testDigest("input"), Modules: []string{"helmr/app/entry-0.mjs"}, Selections: []ProgramCompilerSelection{{DeclaredID: "build", ExportName: "build", Kind: DeclarationKindTask, ModulePath: "helmr/app/entry-0.mjs", Slot: DeclarationSlotHandler}}}
 }
 
 func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
@@ -63,9 +62,9 @@ func TestProgramCompilerSelectionsUseDeclarationOrder(t *testing.T) {
 
 func TestCompilerAuthorityMismatchTuples(t *testing.T) {
 	for _, mutate := range []func(*ProgramCompilerResult){
-		func(v *ProgramCompilerResult) { v.Language.AdapterDigest = testDigest("changed") },
-		func(v *ProgramCompilerResult) { v.Language.TypeScriptDigest = testDigest("changed") },
-		func(v *ProgramCompilerResult) { v.Language.TypeScriptVersion = "7.0.2" },
+		func(v *ProgramCompilerResult) { v.Bundler.APIDigest = testDigest("changed") },
+		func(v *ProgramCompilerResult) { v.Bundler.BinaryDigest = testDigest("changed") },
+		func(v *ProgramCompilerResult) { v.Bundler.EsbuildVersion = "7.0.2" },
 		func(v *ProgramCompilerResult) { v.NodeVersion = "24.20.0" },
 		func(v *ProgramCompilerResult) { v.APIVersion = "helmr.compiler.unsupported" },
 	} {
@@ -125,11 +124,11 @@ func TestNativeCompilerContractsRejectOpenMissingAndUnsupportedShapes(t *testing
 		}
 	}
 	for _, mutate := range []func(*ProgramCompilerResult){
-		func(r *ProgramCompilerResult) { r.DiscoveryCandidates = nil },
+		func(r *ProgramCompilerResult) { r.Modules = nil },
 		func(r *ProgramCompilerResult) { r.Selections = nil },
 		func(r *ProgramCompilerResult) { r.Selections[0].Slot = "other" },
-		func(r *ProgramCompilerResult) { r.Selections[0].SourcePath = "tasks/missing.ts" },
-		func(r *ProgramCompilerResult) { r.DiscoveryCandidates = []string{"tasks/build.ts", "tasks/build.ts"} },
+		func(r *ProgramCompilerResult) { r.Selections[0].ModulePath = "tasks/missing.ts" },
+		func(r *ProgramCompilerResult) { r.Modules = []string{"helmr/app/entry-0.mjs", "helmr/app/entry-0.mjs"} },
 	} {
 		candidate := testProgramCompilerResult(t)
 		mutate(&candidate)

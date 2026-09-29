@@ -14,7 +14,6 @@ type dependencyVersion struct {
 
 type dependencyVersions struct {
 	Node       dependencyVersion `json:"node"`
-	TypeScript dependencyVersion `json:"typescript"`
 }
 
 var runtimeVersions = func() dependencyVersions {
@@ -22,7 +21,7 @@ var runtimeVersions = func() dependencyVersions {
 	if err := json.Unmarshal(runtimeDependencies, &dependencies); err != nil {
 		panic(err)
 	}
-	if dependencies.Node.Version == "" || dependencies.TypeScript.Version == "" {
+	if dependencies.Node.Version == "" {
 		panic("missing Product Runtime dependency version")
 	}
 	return dependencies
@@ -30,6 +29,3 @@ var runtimeVersions = func() dependencyVersions {
 
 // Node is the exact Product-owned Node execution version.
 func Node() string { return runtimeVersions.Node.Version }
-
-// RuntimeTypeScript is the Runtime's exact parser/emitter version, not the authoring toolchain.
-func RuntimeTypeScript() string { return runtimeVersions.TypeScript.Version }

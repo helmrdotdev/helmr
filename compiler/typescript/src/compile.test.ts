@@ -57,11 +57,11 @@ describe("declaration analysis", () => {
       .image(image("root").from("debian:bookworm"))
       .resources({ cpu: 0.125, memory: "1024MiB" })
     const exports = [
-      { sourcePath: "src/machine.ts", exportName: "machine", value: machine },
-      { sourcePath: "src/tasks.ts", exportName: "toString", value: noPayloadTask },
-      { sourcePath: "src/actor.ts", exportName: "service", value: service },
-      { sourcePath: "src/tasks.ts", exportName: "constructor", value: payloadTask },
-      { sourcePath: "src/queues.ts", exportName: "jobs", value: jobs },
+      { modulePath: "helmr/app/entry-9.mjs", exportName: "machine", value: machine },
+      { modulePath: "helmr/app/entry-16.mjs", exportName: "toString", value: noPayloadTask },
+      { modulePath: "helmr/app/entry-4.mjs", exportName: "service", value: service },
+      { modulePath: "helmr/app/entry-16.mjs", exportName: "constructor", value: payloadTask },
+      { modulePath: "helmr/app/entry-11.mjs", exportName: "jobs", value: jobs },
     ] as const
 
     const result = analyze({ architecture: "x86_64", exports })
@@ -90,21 +90,21 @@ describe("declaration analysis", () => {
         declaredId: "constructor",
         exportName: "constructor",
         kind: "task",
-        sourcePath: "src/tasks.ts",
+        modulePath: "helmr/app/entry-16.mjs",
         slot: "handler",
       },
       {
         declaredId: "toString",
         exportName: "toString",
         kind: "task",
-        sourcePath: "src/tasks.ts",
+        modulePath: "helmr/app/entry-16.mjs",
         slot: "handler",
       },
       {
         declaredId: "service",
         exportName: "service",
         kind: "actor",
-        sourcePath: "src/actor.ts",
+        modulePath: "helmr/app/entry-4.mjs",
         slot: "handler",
       },
     ])
@@ -129,8 +129,8 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { sourcePath: "src/task.ts", exportName: "sharedTask", value: sharedTask },
-          { sourcePath: "src/actor.ts", exportName: "sharedActor", value: sharedActor },
+          { modulePath: "helmr/app/entry-15.mjs", exportName: "sharedTask", value: sharedTask },
+          { modulePath: "helmr/app/entry-4.mjs", exportName: "sharedActor", value: sharedActor },
         ],
       }).buildPlan.definitions,
     ).toHaveLength(2)
@@ -143,8 +143,8 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { sourcePath: "src/a.ts", exportName: "first", value: first },
-          { sourcePath: "src/b.ts", exportName: "second", value: second },
+          { modulePath: "helmr/app/entry-3.mjs", exportName: "first", value: first },
+          { modulePath: "helmr/app/entry-5.mjs", exportName: "second", value: second },
         ],
       }),
     ).toThrow("duplicate task declaration")
@@ -156,9 +156,9 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { sourcePath: "src/queue.ts", exportName: "shared", value: shared },
+          { modulePath: "helmr/app/entry-10.mjs", exportName: "shared", value: shared },
           {
-            sourcePath: "src/task.ts",
+            modulePath: "helmr/app/entry-15.mjs",
             exportName: "usesShared",
             value: task({
               id: "uses-shared",
@@ -176,10 +176,10 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [
-          { sourcePath: "src/a.ts", exportName: "first", value: first },
-          { sourcePath: "src/b.ts", exportName: "second", value: second },
+          { modulePath: "helmr/app/entry-3.mjs", exportName: "first", value: first },
+          { modulePath: "helmr/app/entry-5.mjs", exportName: "second", value: second },
           {
-            sourcePath: "src/task.ts",
+            modulePath: "helmr/app/entry-15.mjs",
             exportName: "task",
             value: task({ id: "task", queue: first, run: () => null }),
           },
@@ -198,12 +198,12 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          sourcePath: "src/z-barrel.ts",
+          modulePath: "helmr/app/entry-3.mjs",
           exportName: "shared",
           value: definition,
         },
         {
-          sourcePath: "src/a-direct.ts",
+          modulePath: "helmr/app/entry-2.mjs",
           exportName: "renamed",
           value: definition,
         },
@@ -216,7 +216,7 @@ describe("declaration analysis", () => {
         declaredId: "shared",
         exportName: "renamed",
         kind: "task",
-        sourcePath: "src/a-direct.ts",
+        modulePath: "helmr/app/entry-2.mjs",
         slot: "handler",
       },
     ])
@@ -229,11 +229,11 @@ describe("declaration analysis", () => {
   test("rejects invalid locator text before canonicalization", () => {
     const definition = task({ id: "located", run: () => null })
     for (const item of [
-      { sourcePath: "src/\ud800.ts", exportName: "located" },
-      { sourcePath: "src/located.ts", exportName: "\udc00" },
-      { sourcePath: "node_modules/pkg/task.ts", exportName: "located" },
-      { sourcePath: "src/task.d.ts", exportName: "located" },
-      { sourcePath: "helmr.config.ts", exportName: "located" },
+      { modulePath: "src/\ud800.ts", exportName: "located" },
+      { modulePath: "helmr/app/entry-8.mjs", exportName: "\udc00" },
+      { modulePath: "node_modules/pkg/task.ts", exportName: "located" },
+      { modulePath: "tasks/../task.ts", exportName: "located" },
+      { modulePath: "helmr.config.ts", exportName: "located" },
     ]) {
       expect(() =>
         analyze({
@@ -273,6 +273,22 @@ describe("declaration analysis", () => {
     }
   })
 
+  test("preserves cross-image copy source paths independently of generated module locations", () => {
+    const dependency = image("dependency").from("debian:bookworm")
+    const machine = sandbox({ id: "cross-image-copy" })
+      .image(image("root").from("debian:bookworm").copyFrom("/usr/local/bin/tool", dependency, "/opt/tool"))
+      .resources({ cpu: 1, memory: "1GiB" })
+    const result = analyze({
+      architecture: "x86_64",
+      exports: [{ modulePath: "helmr/app/entry-0.mjs", exportName: "machine", value: machine }],
+    })
+    const definition = result.buildPlan.definitions[0]
+    if (definition?.kind !== "sandbox") throw new Error("Sandbox missing")
+    expect(definition.manifest.imageBuild.images.flatMap(value => value.steps)).toContainEqual({
+      copyFromImage: { dst: "/usr/local/bin/tool", imageKey: "dependency", srcPath: "/opt/tool" },
+    })
+  })
+
   test("emits source copies without caller-provided integrity fields", () => {
     const machine = sandbox({ id: "source-copy" })
       .image(
@@ -285,7 +301,7 @@ describe("declaration analysis", () => {
     const result = analyze({
       architecture: "x86_64",
       exports: [{
-        sourcePath: "src/computer.ts",
+        modulePath: "helmr/app/entry-6.mjs",
         exportName: "machine",
         value: machine,
       }],
@@ -328,7 +344,7 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [{
-          sourcePath: "src/computer.ts",
+          modulePath: "helmr/app/entry-6.mjs",
           exportName: "machine",
           value: sandbox({ id: "machine" })
             .image(forged as never)
@@ -355,12 +371,12 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          sourcePath: "src/schedules.ts",
+          modulePath: "helmr/app/entry-13.mjs",
           exportName: "nightly",
           value: scheduled,
         },
         {
-          sourcePath: "src/schedules.ts",
+          modulePath: "helmr/app/entry-13.mjs",
           exportName: "maintenance",
           value: maintenance,
         },
@@ -395,7 +411,7 @@ describe("declaration analysis", () => {
     expect(() => analyze({
       architecture: "x86_64",
       exports: [{
-        sourcePath: "src/schedules.ts",
+        modulePath: "helmr/app/entry-13.mjs",
         exportName: "nightly",
         value: scheduled,
       }],
@@ -419,12 +435,12 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          sourcePath: "src/schedules.ts",
+          modulePath: "helmr/app/entry-13.mjs",
           exportName: "nightly",
           value: scheduled,
         },
         {
-          sourcePath: "src/sandbox.ts",
+          modulePath: "helmr/app/entry-12.mjs",
           exportName: "maintenance",
           value: exported,
         },
@@ -448,17 +464,17 @@ describe("declaration analysis", () => {
       architecture: "x86_64",
       exports: [
         {
-          sourcePath: "src/schedules.ts",
+          modulePath: "helmr/app/entry-13.mjs",
           exportName: "nightly",
           value: scheduled,
         },
         {
-          sourcePath: "src/sandbox.ts",
+          modulePath: "helmr/app/entry-12.mjs",
           exportName: "maintenance",
           value: maintenance,
         },
         {
-          sourcePath: "src/index.ts",
+          modulePath: "helmr/app/entry-7.mjs",
           exportName: "computer",
           value: maintenance,
         },
@@ -484,7 +500,7 @@ describe("declaration analysis", () => {
         analyze({
           architecture: "x86_64",
           exports: [{
-            sourcePath: "src/task.ts",
+            modulePath: "helmr/app/entry-15.mjs",
             exportName: "task",
             value: definition,
           }],
@@ -503,7 +519,7 @@ describe("declaration analysis", () => {
       analyze({
         architecture: "x86_64",
         exports: [{
-          sourcePath: "src/task.ts",
+          modulePath: "helmr/app/entry-15.mjs",
           exportName: "task",
           value: definition,
         }],
@@ -552,7 +568,7 @@ describe("declaration analysis", () => {
     const program = analyze({
       architecture: "x86_64",
       exports: [{
-        sourcePath: "src/task.ts",
+        modulePath: "helmr/app/entry-15.mjs",
         exportName: "build",
         value: task({ id: "build", run: () => null }),
       }],
@@ -582,7 +598,7 @@ describe("declaration analysis", () => {
     const computerOnly = analyze({
       architecture: "x86_64",
       exports: [{
-        sourcePath: "src/computer.ts",
+        modulePath: "helmr/app/entry-6.mjs",
         exportName: "machine",
         value: machine,
       }],

@@ -45,7 +45,7 @@ type ProgramDeclaration struct {
 
 type ProgramLocator struct {
 	ExportName string          `json:"exportName"`
-	SourcePath string          `json:"sourcePath"`
+	ModulePath string          `json:"modulePath"`
 	Slot       DeclarationSlot `json:"slot"`
 }
 

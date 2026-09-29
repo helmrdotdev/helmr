@@ -594,7 +594,7 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 			},
 			Locator: &deployment.ProgramLocator{
 				ExportName: "task",
-				SourcePath: ".helmr/modules/" + strings.Repeat("1", 64) + ".mjs",
+				ModulePath: "helmr/app/entry-0.mjs",
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},

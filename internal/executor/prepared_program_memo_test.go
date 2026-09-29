@@ -172,7 +172,7 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 			},
 			Locator: &deployment.ProgramLocator{
 				ExportName: "task",
-				SourcePath: ".helmr/modules/" + strings.Repeat("1", 64) + ".mjs",
+				ModulePath: "helmr/app/entry-0.mjs",
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
@@ -224,6 +224,16 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	if store.getCalls[programObject.Digest] != 2 || store.getCalls[runtimeObject.Digest] != 2 {
 		t.Fatal("hit bypassed snapshot reads")
 	}
+	// Both artifacts have valid independent verification receipts, but a Program
+	// may only launch with the exact Runtime selected when it was built.
+	otherRuntime := store.put(deployment.RuntimeArtifactMediaType, []byte("another runtime"))
+	otherDescriptor := runtimeDescriptor
+	otherDescriptor.Digest = otherRuntime.Digest
+	otherDescriptor.SizeBytes = otherRuntime.SizeBytes
+	pool.verifiedRuntimes[otherDescriptor] = pool.verifiedRuntimes[runtimeDescriptor]
+	target.Source.Program.Runtime = workerapi.CASObject{Digest: otherRuntime.Digest, SizeBytes: otherRuntime.SizeBytes, MediaType: otherRuntime.MediaType}
+	run("runtime reservation authority")
+	target.Source.Program.Runtime = workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}
 	target.Source.Program.IndexDigest = "sha256:" + strings.Repeat("0", 64)
 	run("deployment authority")
 	target.Source.Program.IndexDigest = sha256sum.DigestBytes(canonical)

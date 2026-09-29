@@ -21,8 +21,8 @@ the Linux build never imports the config again.
 - The config is ordinary TypeScript: relative helpers (with or without file
   extensions), enums, tsconfig `paths`, and installed ESM/CommonJS packages,
   including packages hoisted to a parent `node_modules`, resolve as usual. It is
-  transpiled, not type-checked, and is not guaranteed to match the task-module
-  loader in every detail.
+  transpiled, not type-checked, and is not guaranteed to match the Program bundler
+  in every detail.
 - Prepare what the config imports on that machine, normally with your package
   manager (at least `@helmr/sdk`). Helmr never installs host dependencies, and
   host `node_modules` are never copied into the Linux build. A config that
@@ -53,6 +53,8 @@ export default defineConfig({
       .run(["/bin/sh", "/opt/setup.sh"]),
     installCommand: "./scripts/install.sh",
     secrets: ["NPM_TOKEN"],
+    external: ["sharp"],
+    assets: ["prompts/**"],
   },
 })
 ```
@@ -61,6 +63,8 @@ export default defineConfig({
 | --- | --- |
 | `build.builder` | Ordered preparation of the Linux build environment, run before dependencies are installed. Omit it to use Helmr's builder image unchanged. |
 | `build.installCommand` | Replaces package-manager inference. One shell command run unprivileged with `/bin/bash -euo pipefail -c`. |
+| `build.external` | Whole public-registry package names to install separately from the generated JavaScript. Declare each in the root package manifest. |
+| `build.assets` | Positive project-relative globs selecting files to include at their original relative locations. |
 | `build.secrets` | Names of variables in the invoking environment. Each is mounted as `/run/secrets/NAME` during dependency installation only; values are never written to the config result or the bundle, and never sent to the Control Plane. |
 
 Helmr's builder image is a standard digest-pinned Debian environment with the
@@ -87,13 +91,13 @@ Helmr's builder image and offers only `copy(source, destination)` and
   Each step starts from that same context; files persist, shell state does not.
   Use a copied script for multi-line setup.
 - The steps run once per build. The resulting environment is stored, and that
-  exact image is used both for dependency installation and for evaluating task
-  modules, so a step whose result varies cannot differ between phases. Task
-  modules are evaluated with Helmr's own compiler, Runtime and builder mounted
-  read-only from the pinned image; final assembly uses the pinned image alone.
+  environment is used for project installation, runtime dependency installation
+  and declaration analysis. Bundling runs in a separate filesystem containing
+  the installed project and pinned compiler. Analysis evaluates the assembled
+  payload offline; final assembly reuses those bytes without evaluating it again.
 - What the environment installs is a build input and is not exported: only the
-  installed project tree becomes the Program. Computer images declare their
-  own runtime packages.
+  generated JavaScript, selected assets and runtime dependencies become the
+  Program. Computer images declare their own runtime packages.
 
 ```ts
 import { defineConfig } from "@helmr/sdk"
@@ -131,24 +135,57 @@ bounds: 10 GiB of regular-file content, 1 GiB per file, 200,000 entries includin
 the root, and 128 MiB of path and link names. The intermediate PAX stream is
 limited to 11 GiB including metadata and padding.
 
-## Installed dependencies and source execution
+## Program bundling and runtime dependencies
 
-Helmr installs dependencies once for the target Linux platform and retains the
-whole installed tree. Config, declaration analysis, and Program execution use
-one platform-owned Node 24.21 language adapter. JavaScript keeps native Node
-resolution, package exports, module cache and file locations. Reached TypeScript
-and JSX files are transformed in memory using the Runtime-pinned TypeScript version, including
-files under `node_modules`, mixed JavaScript-to-TypeScript packages, and dynamic
-loads. There is no package selection setting and no dependency reinstallation by
-name. Aliases, nested versions, hoisted packages and contained package symlinks
-use their actual installed instances.
+Helmr bundles declaration entries together into a split JavaScript module graph
+using pinned esbuild. The server executes that generated JavaScript with the
+managed Node.js Runtime; it does not read the project's TypeScript configuration
+or transform TypeScript at runtime. Source maps include original source content.
+Original source directories and build-only dependencies are not otherwise
+included automatically.
 
-Sources retain their original URLs and extensions. ESM `import.meta.url`,
-`import.meta.resolve()`, adjacent assets, CommonJS filenames, `createRequire`,
-and computed loads use Node's native locations. Module identity follows Node:
-ESM URLs and CommonJS filenames have their usual cache behavior; different
-conditional export targets can still be separate instances. Installation must
-produce native artifacts before the tree is frozen.
+Use `build.external` for native addons, packages that discover their own files
+or executables, and runtime-only package lookups. Explicit roots are installed
+even if no static import reaches them. Each root uses the exact version found
+in the installed project; pinned npm resolves and installs its runtime dependency
+tree once in a fresh build environment. The completed tree is shipped unchanged.
+A later build may select different transitive versions. Helmr does not retain a
+runtime install lock for replay.
+
+External roots must be whole package names with public-registry semver declarations.
+Workspace, file, Git and alias roots, private registries and package-manager
+patch or override dialects other than npm overrides are unsupported. Source
+workspaces can still be bundled. npm overrides are passed through unchanged:
+a direct-root override must match the generated exact version or use npm's
+`$packageName` reference. Keep shared peers external when they must have a single
+runtime instance.
+
+Use `build.assets` to include prompts, templates and other files. Patterns apply
+after source capture and `.helmrignore`; matches keep their project-relative
+locations. Missing matches, symlinks and collisions with managed metadata or
+runtime dependencies fail the build.
+
+Program execution starts in `/computer`; its versioned payload is mounted
+read-only separately. `/computer` is a working-directory default, not a boundary
+on Computer access or persistence. Locate shipped files independently of cwd
+using ordinary Node.js package imports:
+
+```json
+{ "imports": { "#project/*": "./*" } }
+```
+
+```ts
+const prompt = await readFile(
+  new URL(import.meta.resolve("#project/prompts/system.md")),
+  "utf8",
+)
+```
+
+`imports` resolves locations; `build.assets` selects files to ship. Root package
+name, type, imports and exports are preserved. Bundling does not preserve arbitrary
+source-relative `import.meta.url` paths. Computed imports and Worker entrypoints
+must refer to JavaScript included in the payload or installed runtime packages;
+there is no additional TypeScript entrypoint setting.
 
 Native code has two distinct targets. Addons loaded by Program code run inside
 the platform Node: x86_64 Linux, that Node's ABI, and the Runtime's own glibc
@@ -164,14 +201,10 @@ Computer processes: they use the Computer image's loader and libraries, and
 Helmr injects nothing into them. One installed tree serves every Computer of a
 Deployment; a musl image can run it when its native code is self-contained.
 
-Missing imports fail when reached. Unused optional dependencies are not eagerly
-resolved. The retained tree includes dormant files and assets; admission binds
-all of their bytes, executable modes, directory entries and symlink targets.
-Declaration indexes identify original source paths and exports, not generated
-customer bundles. Runtime compilation cannot load generated source from a mutable
-Computer. Put Program control code in the captured project; arbitrary commands
-and tools inside a Computer remain under the Computer image's own execution
-rules.
+Static imports are resolved during bundling. Dynamic runtime imports fail when
+reached if their targets are absent. Declaration indexes identify generated
+module paths and exports. Program code loads from the admitted payload; arbitrary
+commands and tools inside a Computer follow the Computer image's execution rules.
 
 ## Config and language semantics
 
@@ -186,43 +219,20 @@ aliases, symlinks, query URLs and dynamic imports, fail. Shared data and helpers
 belong in ordinary modules. Authoring scripts outside the managed compiler may
 still import the config.
 
-JavaScript and TypeScript/JSX importers use the nearest contained `tsconfig.json`
-and its contained `extends` chain for resolution in every phase. Linked sources
-use their canonical target ancestry; copied packages use their installed ancestry.
-An absent config means empty project
-options. Invalid JSONC, missing extended configs, cycles and escaping reads fail.
-This is isolated TypeScript transformation, not typechecking or a promise of all
-`tsc`, Bun or future TypeScript syntax. Project output settings are ignored;
-Node module format is authoritative. JSX preserve settings lower to classic JSX;
-configured automatic JSX, factories, decorators and class-field lowering apply.
+At build time, esbuild resolves imports and reads TypeScript configuration,
+including package-based `extends`, within the captured installed project.
+Its supported TypeScript and JSX transformation rules apply; this is not
+TypeScript type-checking or a promise of every `tsc` or Bun feature. Keep an
+ordinary type-check command in the project's development checks.
 
-For all contained source importers, `paths` aliases match exact keys first, then the
-longest wildcard prefix/suffix; targets are attempted in order, with `baseUrl`
-for otherwise unmatched bare imports. Missing alias candidates fall back to
-native resolution. Builtins and package `#imports` stay native. JavaScript bytes
-are not transformed; these resolution rules also let JavaScript reach TypeScript
-helpers in a mixed source graph.
-
-Relative imports try Node first. A missing `.js`, `.mjs` or `.cjs` target can use
-`.ts`, `.mts` or `.cts` respectively. Extensionless fallback tries `.js`, `.mjs`,
-`.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.jsx`, then directory indexes in that order.
-Existing JavaScript wins collisions. Broken package exports, package configs and
-syntax errors are not treated as missing candidates. Explicit extensions avoid
-ambiguity.
-
-Alias targets are filesystem paths. ESM relative imports use URL encoding for
-literal `#`, `%` and `?` filename characters; query/fragment URLs retain separate
-module identities. Relative `require()` names treat those characters literally.
-
-Managed entry requires a contained regular object `package.json` at the project
-root, no ancestor `node_modules` entries, and disabled global/`NODE_PATH` lookup.
-An unsupported image layout fails explicitly; Helmr does not alter the image to
-mask it. Actual file source and TypeScript config reads must stay inside the
-Program. Deliberate path-directed image metadata lookups, user filesystem access,
-custom hooks and process effects remain native image authority. These module
-rules are not a tenant sandbox or a guarantee that arbitrary image-dependent
-code behaves identically during build and execution. Helmr does not inject
-`NODE_OPTIONS` into arbitrary Computer tools.
+At runtime, generated JavaScript uses native Node.js resolution. The managed
+entry requires a contained regular-object `package.json`, rejects ancestor
+`node_modules` lookup, and disables global/`NODE_PATH` lookup. Code modules must
+resolve within the admitted Program or the managed Runtime's permitted modules;
+TypeScript and JSX are not compiled on demand. These module rules are not a
+filesystem sandbox. User filesystem operations and Computer tools retain their
+normal authority. Helmr does not inject `NODE_OPTIONS` into arbitrary Computer
+tools.
 
 ## Runtime configuration
 

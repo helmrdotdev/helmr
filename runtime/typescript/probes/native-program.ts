@@ -50,7 +50,7 @@ export function runNativeProgram(bridge: string, config: any, definition: any, i
       readLocator: async () => JSON.stringify({ formatVersion: 0, runtimeContract: "helmr.runtime.v0",
         architecture: "x86_64", configResultDigest: `sha256:${"4".repeat(64)}`, queues: [],
         declarations: [{ kind: "actor", declaredId: definition.id, manifest: {},
-          locator: { exportName: "definition", sourcePath: "main.ts", slot: "handler" } }] }),
+          locator: { exportName: "definition", modulePath: "helmr/app/entry-0.mjs", slot: "handler" } }] }),
       write: async data => {
         const event = fromBinary(programProto.RunEventSchema, data.subarray(4)).event
         if (event.case === "entrypointReady" || event.case === "resumeConsumed") return

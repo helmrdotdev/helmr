@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
+
+	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 const dockerfileFrontend = "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
@@ -53,7 +55,7 @@ const (
 var managedContextLines = []string{
 	"USER 0:0",
 	"ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache",
-	"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work\"]",
+	"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"rm -rf /computer/project /computer/home /computer/output /computer/tmp /computer/work && install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work\"]",
 	"WORKDIR /computer/project",
 }
 
@@ -81,113 +83,113 @@ func InstalledDockerfile(install InstallPlan) ([]byte, error) {
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
-// Dockerfile renders two networkless stages. The first is the last stage that
-// executes tenant modules and exports only a closed prepared result. The
-// second starts from the pinned builder image, never from the project's build
-// environment, and performs static Program and bundle assembly from that
-// result plus the exact installed-tree context.
+// Dockerfile performs static finalization of the exact prepared payload.
 func Dockerfile() ([]byte, error) {
-	prepare, err := dockerRunJSON([]string{
-		"/opt/helmr/bin/bundle-builder",
-		"--project", "/computer/project",
-		"--work", "/computer/work",
-		"--prepare-output", "/computer/output/prepared",
-		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
-		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
-		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
-		"--node", "/opt/helmr/runtime/bin/node",
-		"--config", resolvedConfigPath,
-		"--program-compiler", "/nix/helmr/program-compiler.mjs",
-		"--encoder", "/opt/helmr/bin/mksquashfs",
-	})
-	if err != nil {
-		return nil, err
-	}
 	finalizer, err := dockerRunJSON([]string{
-		"/opt/helmr/bin/bundle-builder",
-		"--prepared", "/computer/prepared",
-		"--program-project", "/computer/program",
-		"--work", "/computer/work",
-		"--bundle-output", "/computer/output/bundle",
-		"--computer-images", "/computer/images/images.json",
-		"--mkfs", "/opt/helmr/bin/mke2fs",
-		"--filesystem-config", "/opt/helmr/release/mke2fs.conf",
-		"--expected-plan", "/computer/images/build-plan.json",
+		"/opt/helmr/bin/bundle-builder", "--prepared", "/computer/prepared",
+		"--work", "/computer/work", "--bundle-output", "/computer/output/bundle",
+		"--computer-images", "/computer/images/images.json", "--mkfs", "/opt/helmr/bin/mke2fs",
+		"--filesystem-config", "/opt/helmr/release/mke2fs.conf", "--expected-plan", "/computer/images/build-plan.json",
 		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
-		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
-		"--encoder", "/opt/helmr/bin/mksquashfs",
+		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json", "--encoder", "/opt/helmr/bin/mksquashfs",
 	})
 	if err != nil {
 		return nil, err
 	}
-	lines := append(materializedDockerfileLines(),
-		"FROM materialized AS prepared",
-		"RUN --network=none "+canonicalToolMounts+prepare,
-		"FROM "+BuilderContextName+" AS finalized",
-		"USER 0:0",
-		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"install -d -o 65532 -g 65532 /computer/images /computer/output /computer/program /computer/tmp /computer/work && install -d -o 65532 -g 65532 /computer/prepared\"]",
-		"WORKDIR /computer/program",
-		"COPY --from=installed-tree --chown=65532:65532 /computer/project/ /computer/program/",
-		"COPY --from=prepared --chown=65532:65532 /computer/output/prepared/ /computer/prepared/",
-		"COPY --from=helmr_images --chown=65532:65532 / /computer/images/",
-		"USER 65532:65532",
-		"RUN --network=none "+finalizer,
-		"FROM scratch AS bundle",
-		"COPY --from=finalized /computer/output/bundle/ /",
-		"",
-	)
-	return []byte(strings.Join(lines, "\n")), nil
-}
-
-func AnalysisDockerfile() ([]byte, error) {
-	command, err := dockerRunJSON([]string{
-		"/opt/helmr/bin/bundle-builder", "--project", "/computer/project",
-		"--work", "/computer/work", "--analysis-output", "/computer/output/build-plan.json",
-		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
-		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
-		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
-		"--node", "/opt/helmr/runtime/bin/node",
-		"--config", resolvedConfigPath,
-		"--program-compiler", "/nix/helmr/program-compiler.mjs",
-		"--encoder", "/opt/helmr/bin/mksquashfs",
-	})
-	if err != nil {
-		return nil, err
-	}
-	lines := append(materializedDockerfileLines(),
-		"FROM materialized AS analyzed",
-		"RUN --network=none "+canonicalToolMounts+command,
-		"FROM scratch AS analysis",
-		"COPY --from=analyzed /computer/output/build-plan.json /build-plan.json",
-		"",
-	)
-	return []byte(strings.Join(lines, "\n")), nil
-}
-
-// resolvedConfigPath is outside the installed project tree and owned by root;
-// the CLI writes the file read-only. Declaration modules can read the
-// discovery config but it is not theirs.
-const resolvedConfigPath = "/computer/config/config.json"
-
-// materializedDockerfileLines starts declaration evaluation from the same
-// materialized environment the install used, not from the install stage:
-// prepared libraries are present for native imports, install-time mutations
-// outside the project are not.
-func materializedDockerfileLines() []string {
 	lines := []string{
 		"# syntax=" + dockerfileFrontend,
-		"FROM helmr_installed AS installed-tree",
-		"FROM " + EnvironmentContextName + " AS materialized",
+		"FROM " + BuilderContextName + " AS finalized",
 	}
 	lines = append(lines, managedContextLines...)
-	return append(lines,
-		"COPY --from=installed-tree --chown=0:0 /computer/project/ /computer/project/",
-		"COPY --from="+ConfigContextName+" --chown=0:0 /config.json "+resolvedConfigPath,
-		"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"chown -R 0:0 /computer/project && chmod -R a-w /computer/project\"]",
-		"USER 65532:65532",
+	lines = append(lines,
+		"COPY --from=helmr_prepared --chown=65532:65532 / /computer/prepared/",
+		"COPY --from=helmr_images --chown=0:0 / /computer/images/",
+		"USER 65532:65532", "RUN --network=none "+finalizer,
+		"FROM scratch AS bundle", "COPY --from=finalized /computer/output/bundle/ /", "",
 	)
+	return []byte(strings.Join(lines, "\n")), nil
 }
+
+// PreparationDockerfile confines source transformation to the compiler closure,
+// installs runtime packages once, and analyzes only the selective payload.
+func PreparationDockerfile() ([]byte, error) {
+	bundle, err := dockerRunJSON([]string{
+		"/opt/helmr/runtime/bin/node", "--no-strip-types", "--no-global-search-paths",
+		"/nix/helmr/program-compiler.mjs", "--bundle", "/computer/project", resolvedConfigPath, version.Node(), "/computer/output/bundle",
+	})
+	if err != nil {
+		return nil, err
+	}
+	install, err := dockerRunJSON([]string{
+		"/opt/helmr/runtime/bin/node", "--no-strip-types", "--no-global-search-paths", "/nix/helmr/program-compiler.mjs", "--install-runtime",
+	})
+	if err != nil {
+		return nil, err
+	}
+	assemble, err := dockerRunJSON([]string{
+		"/opt/helmr/runtime/bin/node", "--no-strip-types", "--no-global-search-paths",
+		"/nix/helmr/program-compiler.mjs", "--assemble", "/computer/bundle", "/computer/installed", "/computer/output/payload",
+	})
+	if err != nil {
+		return nil, err
+	}
+	analyze, err := dockerRunJSON([]string{
+		"/opt/helmr/bin/bundle-builder", "--project", "/computer/project",
+		"--work", "/computer/work", "--prepare-output", "/computer/output/prepared",
+		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
+		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
+		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
+		"--node", "/opt/helmr/runtime/bin/node", "--config", resolvedConfigPath,
+		"--bundle-manifest", "/computer/bundle.json",
+		"--program-compiler", "/nix/helmr/program-compiler.mjs", "--encoder", "/opt/helmr/bin/mksquashfs",
+	})
+	if err != nil {
+		return nil, err
+	}
+	lines := []string{
+		"# syntax=" + dockerfileFrontend,
+		"FROM scratch AS bundled",
+		"COPY --from=" + BuilderContextName + " /opt/helmr/runtime/bin/ /opt/helmr/runtime/bin/",
+		"COPY --from=" + BuilderContextName + " /opt/helmr/runtime/lib/ /opt/helmr/runtime/lib/",
+		"COPY --from=" + BuilderContextName + " /nix/helmr/ /nix/helmr/",
+		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /computer/output/",
+		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /computer/tmp/",
+		"COPY --from=" + ConfigContextName + " --chown=0:0 /config.json " + resolvedConfigPath,
+		"ENV TMPDIR=/computer/tmp HOME=/computer/tmp",
+		"WORKDIR /computer/project", "USER 65532:65532", "RUN --network=none --mount=type=bind,from=helmr_installed,source=/computer/project,target=/computer/project " + bundle,
+		"FROM " + EnvironmentContextName + " AS runtime-installed",
+	}
+	lines = append(lines, managedContextLines...)
+	lines = append(lines,
+		"ENV NODE_OPTIONS= NODE_PATH= PATH=/opt/helmr/runtime/bin:/usr/local/bin:/usr/bin:/bin",
+		"COPY --from=bundled --chown=65532:65532 /computer/output/bundle/install/ /computer/project/",
+		"USER 65532:65532",
+		"RUN --mount=type=cache,target=/computer/npm-cache,uid=65532,gid=65532 "+canonicalToolMounts+install,
+		"FROM "+BuilderContextName+" AS assembled",
+	)
+	lines = append(lines, managedContextLines...)
+	lines = append(lines,
+		"COPY --from=bundled --chown=0:0 /computer/output/bundle/ /computer/bundle/",
+		"COPY --from=runtime-installed --chown=0:0 /computer/project/ /computer/installed/",
+		"USER 65532:65532", "RUN --network=none "+assemble,
+		"FROM "+EnvironmentContextName+" AS analyzed",
+	)
+	lines = append(lines, managedContextLines...)
+	lines = append(lines,
+		"COPY --from=assembled --chown=0:0 /computer/output/payload/ /computer/project/",
+		"COPY --from=bundled --chown=0:0 /computer/output/bundle/bundle.json /computer/bundle.json",
+		"COPY --from="+ConfigContextName+" --chown=0:0 /config.json "+resolvedConfigPath,
+		`RUN ["/bin/bash","-euo","pipefail","-c","chmod -R a-w /computer/project"]`,
+		"USER 65532:65532", "RUN --network=none "+canonicalToolMounts+analyze,
+		"FROM scratch AS preparation",
+		"COPY --from=analyzed /computer/output/prepared/ /",
+		"",
+	)
+	return []byte(strings.Join(lines, "\n")), nil
+}
+
+const resolvedConfigPath = "/computer/config/config.json"
 
 func installRunInstruction(plan InstallPlan) (string, error) {
 	secretIDs, err := NormalizeSecretIDs(plan.SecretIDs)

@@ -85,7 +85,7 @@ export interface ProgramIO {
 
 interface ProgramLocator {
   readonly exportName: string
-  readonly sourcePath: string
+  readonly modulePath: string
   readonly slot: "handler"
 }
 
@@ -494,7 +494,7 @@ export async function runProgram(
   }
   const declaration = located[0]!
   const locator = declaration.locator!
-  const moduleURL = resolveModuleURL(locatorURL, locator.sourcePath)
+  const moduleURL = resolveModuleURL(locatorURL, locator.modulePath)
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId)
   await writeRunEvent(io, {
     case: "entrypointReady",
@@ -515,7 +515,7 @@ export async function runProgram(
   let definition: InternalTaskDefinition | InternalActorDefinition
   try {
     const imported = io.importModule === undefined
-      ? await (await import("@helmr/module-execution")).importSourceExports(moduleURL)
+      ? await import(moduleURL.href)
       : await io.importModule(moduleURL)
     const inspected = inspectDefinition(imported[locator.exportName])
     if (
@@ -616,7 +616,7 @@ function parseProgramIndexDeclaration(
   if (
     typeof located["exportName"] !== "string" ||
     located["exportName"] === "" ||
-    typeof located["sourcePath"] !== "string" ||
+    typeof located["modulePath"] !== "string" ||
     located["slot"] !== "handler"
   ) {
     throw new Error(`Program index declaration ${index} locator is invalid`)
@@ -626,25 +626,22 @@ function parseProgramIndexDeclaration(
     declaredId: record["declaredId"],
     locator: {
       exportName: located["exportName"],
-      sourcePath: validateSourcePath(located["sourcePath"]),
+      modulePath: validateModulePath(located["modulePath"]),
       slot: "handler",
     },
   }
 }
 
-function validateSourcePath(value: string): string {
-  const components = value.split("/")
-  if (components.some((part) => part === "" || part === "." || part === ".." || part === "node_modules" || part.includes("\\") || /[\u0000-\u001f\u007f-\u009f]/.test(part)) ||
-      components[0] === "helmr" || value === "helmr.config.ts" ||
-      !/\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/.test(value) || /\.d\.[cm]?ts$/.test(value)) {
-    throw new Error("declaration sourcePath must identify a project source module")
+function validateModulePath(value: string): string {
+  if (!/^helmr\/app\/entry-[0-9]+\.mjs$/.test(value)) {
+    throw new Error("declaration modulePath must identify a generated entry module")
   }
   return value
 }
 
-function resolveModuleURL(locatorURL: URL, sourcePath: string): URL {
+function resolveModuleURL(locatorURL: URL, modulePath: string): URL {
   const root = path.dirname(path.dirname(fileURLToPath(locatorURL)))
-  const resolved = path.resolve(root, sourcePath)
+  const resolved = path.resolve(root, modulePath)
   const relative = path.relative(root, resolved)
   if (
     relative === "" ||
@@ -652,7 +649,7 @@ function resolveModuleURL(locatorURL: URL, sourcePath: string): URL {
     relative.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relative)
   ) {
-    throw new Error("declaration sourcePath escapes the Program root")
+    throw new Error("declaration modulePath escapes the Program root")
   }
   return pathToFileURL(resolved)
 }

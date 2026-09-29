@@ -52,7 +52,7 @@ describe("declaration discovery", () => {
     expect(result.declarationLocator.declarations.find(
       (item) => item.declaredId === "shared",
     )).toMatchObject({
-      sourcePath: "tasks/barrel.js",
+      modulePath: "helmr/app/entry-3.mjs",
       exportName: "shared",
       slot: "handler",
     })

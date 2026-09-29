@@ -14,6 +14,7 @@ type ProgramInput struct {
 	WorkDirectory    string
 	NodePath         string
 	ConfigPath       string
+	BundlePath       string
 	ProgramCompiler  string
 	SquashFSEncoder  string
 	Compiler         deployment.CompilerInputs
@@ -23,7 +24,6 @@ type ProgramInput struct {
 
 type PreparedProgramInput struct {
 	PreparedDirectory string
-	ProgramDirectory  string
 	WorkDirectory     string
 	ProgramObjectPath string
 	SquashFSEncoder   string
@@ -50,8 +50,4 @@ func PrepareProgram(context.Context, ProgramInput, string) (ProgramAnalysis, err
 
 func BuildPreparedProgram(context.Context, PreparedProgramInput) (ProgramResult, error) {
 	return ProgramResult{}, errors.New("canonical prepared Program builds require linux/amd64 BuildKit")
-}
-
-func AnalyzeProgram(context.Context, ProgramInput) (ProgramAnalysis, error) {
-	return ProgramAnalysis{}, errors.New("canonical Program analysis requires linux/amd64 BuildKit")
 }

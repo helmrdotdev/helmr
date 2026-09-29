@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestInputTreeDirectoryAndArtifactHaveOneIdentity(t *testing.T) {
+func TestPayloadDirectoryAndArtifactHaveOneIdentity(t *testing.T) {
 	root := t.TempDir()
 	artifact := newMemoryArtifact()
 	files := map[string]string{"package.json": "{}", "main.ts": "export default 1", "unused.txt": "asset"}
@@ -26,11 +26,11 @@ func TestInputTreeDirectoryAndArtifactHaveOneIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact.addLink("link", "unused.txt")
-	directoryDigest, err := ProgramInputTreeDigest(t.Context(), root)
+	directoryDigest, err := ProgramPayloadDigest(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	archiveDigest, err := inputTreeDigest(t.Context(), artifact.entries, artifact.Open)
+	archiveDigest, err := payloadDigest(t.Context(), artifact.entries, artifact.Open)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,34 +47,33 @@ func TestInputTreeDirectoryAndArtifactHaveOneIdentity(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			change()
-			changed, err := inputTreeDigest(t.Context(), artifact.entries, artifact.Open)
+			changed, err := payloadDigest(t.Context(), artifact.entries, artifact.Open)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if changed == archiveDigest {
-				t.Fatal("input mutation not bound")
+				t.Fatal("payload mutation not bound")
 			}
 			archiveDigest = changed
 		})
 	}
 	artifact.addDirectory("helmr")
 	artifact.addFile("helmr/config.json", []byte("{}"), 0644)
-	generated, err := inputTreeDigest(context.Background(), artifact.entries, artifact.Open)
+	generated, err := payloadDigest(context.Background(), artifact.entries, artifact.Open)
 	if err != nil || generated != archiveDigest {
 		t.Fatalf("generated metadata entered input digest: %s %v", generated, err)
 	}
 }
 
-func TestSourceAdmissionRejectsCanonicalRootConfigAndDormantTampering(t *testing.T) {
+func TestPayloadAdmissionRejectsModuleLinksAndDormantTampering(t *testing.T) {
 	p := newTestProgram(t)
-	p.artifact.replaceFile("tasks/build.ts", []byte("export default {}"))
-	p.refreshManifest(t)
-	delete(p.artifact.files, "helmr.config.ts")
-	p.artifact.entries = slices.DeleteFunc(p.artifact.entries, func(e artifactEntry) bool { return e.Path == "helmr.config.ts" })
-	p.artifact.addLink("helmr.config.ts", "tasks/build.ts")
+	delete(p.artifact.files, "helmr/app/entry-0.mjs")
+	p.artifact.entries = slices.DeleteFunc(p.artifact.entries, func(e artifactEntry) bool { return e.Path == "helmr/app/entry-0.mjs" })
+	p.artifact.addFile("other.mjs", []byte("export default {}"), 0644)
+	p.artifact.addLink("helmr/app/entry-0.mjs", "../../other.mjs")
 	p.refreshManifest(t)
 	if _, err := verifyProgramArtifact(t.Context(), p.descriptor); err == nil {
-		t.Fatal("canonical root config used as declaration")
+		t.Fatal("generated module symlink accepted")
 	}
 	p = newTestProgram(t)
 	p.artifact.addFile("dormant.txt", []byte("before"), 0644)
@@ -85,7 +84,7 @@ func TestSourceAdmissionRejectsCanonicalRootConfigAndDormantTampering(t *testing
 	}
 }
 
-func TestInputTreeAcceptsLargeDormantInstalledBinary(t *testing.T) {
+func TestPayloadAcceptsLargeDormantInstalledBinary(t *testing.T) {
 	root := t.TempDir()
 	file, err := os.Create(filepath.Join(root, "binary"))
 	if err != nil {
@@ -97,17 +96,33 @@ func TestInputTreeAcceptsLargeDormantInstalledBinary(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ProgramInputTreeDigest(t.Context(), root); err != nil {
+	if _, err := ProgramPayloadDigest(t.Context(), root); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestInputTreeRejectsInvalidLinkBytesBeforeHash(t *testing.T) {
+func TestPayloadRejectsInvalidLinkBytesBeforeHash(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Symlink(string([]byte{0xff}), filepath.Join(root, "bad-link")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ProgramInputTreeDigest(t.Context(), root); err == nil {
+	if _, err := ProgramPayloadDigest(t.Context(), root); err == nil {
 		t.Fatal("accepted invalid link bytes")
+	}
+}
+
+func TestPayloadAdmissionBindsGeneratedCodeAndAssetResolution(t *testing.T) {
+	for _, name := range []string{"helmr/app/entry-0.mjs", "package.json", "prompt.md"} {
+		t.Run(name, func(t *testing.T) {
+			program := newTestProgram(t)
+			if name == "prompt.md" {
+				program.artifact.addFile(name, []byte("original prompt"), 0644)
+			}
+			program.refreshManifest(t)
+			program.artifact.replaceFile(name, []byte("changed payload"))
+			if _, err := verifyProgramArtifact(t.Context(), program.descriptor); err == nil {
+				t.Fatal("payload mutation was accepted")
+			}
+		})
 	}
 }

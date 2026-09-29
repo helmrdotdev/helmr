@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   }
   if (config.build.installCommand !== undefined) build["installCommand"] = config.build.installCommand
   const body = canonicalizeJsonValue({
-    discovery: { dirs: [...config.dirs], ignorePatterns: [...config.ignorePatterns] },
+    discovery: { dirs: [...config.dirs], ignorePatterns: [...config.ignorePatterns], external: [...config.build.external], assets: [...config.build.assets] },
     build,
   })
   if (body.byteLength === 0 || body.byteLength > maxDocumentBytes) {

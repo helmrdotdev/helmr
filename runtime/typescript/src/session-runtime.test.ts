@@ -137,7 +137,7 @@ function harness(
             manifest: {},
             locator: {
               exportName: "definition",
-              sourcePath: "main.ts",
+              modulePath: "helmr/app/entry-0.mjs",
               slot: "handler",
             },
           },

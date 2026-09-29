@@ -75,7 +75,7 @@ func TestProgramManifestRejectsInvalidFinalAuthority(t *testing.T) {
 			value.ProgramIndexDigest = "invalid"
 		},
 		"module": func(value *ProgramManifest) {
-			value.InputTreeDigest = "invalid"
+			value.PayloadDigest = "invalid"
 		},
 	}
 	for name, mutate := range tests {

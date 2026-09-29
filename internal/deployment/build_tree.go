@@ -124,7 +124,7 @@ func validateCompilerBuildTree(
 		return fmt.Errorf("compiler build tree: %w", err)
 	}
 	for _, entry := range tree.ordered {
-		if strings.HasPrefix(entry.Path, "helmr/") && entry.Path != "helmr/compiler-result.json" && entry.Path != "helmr/config.json" {
+		if strings.HasPrefix(entry.Path, "helmr/") && !isGeneratedProgramEntry(entry) && entry.Path != "helmr/compiler-result.json" && entry.Path != "helmr/config.json" {
 			return fmt.Errorf("compiler build tree contains unknown path %q", entry.Path)
 		}
 	}

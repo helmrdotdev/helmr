@@ -52,12 +52,12 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 
 func TestRuntimeMetadataRoundTrip(t *testing.T) {
 	metadata := RuntimeMetadata{
-		Language:         testLanguageIdentity(),
-		Architecture:     ArchitectureX8664,
-		FormatVersion:    RuntimeMetadataFormatVersion,
-		NodeVersion:      "24.21.0",
-		ProgramNodeFlags: testNodeProgramFlags(),
-		RuntimeContract:  RuntimeContract,
+		ModulePolicyDigest: testDigest("preload"),
+		Architecture:       ArchitectureX8664,
+		FormatVersion:      RuntimeMetadataFormatVersion,
+		NodeVersion:        "24.21.0",
+		ProgramNodeFlags:   testNodeProgramFlags(),
+		RuntimeContract:    RuntimeContract,
 	}
 	raw, err := CanonicalRuntimeMetadata(metadata)
 	if err != nil {

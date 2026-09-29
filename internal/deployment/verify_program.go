@@ -90,7 +90,7 @@ func (verifier *programVerifier) verifyLayout() error {
 		return fmt.Errorf("root node_modules must be a directory")
 	}
 	for _, entry := range verifier.artifact.ordered {
-		if strings.HasPrefix(entry.Path, "helmr/") && entry.Path != "helmr/program-manifest.json" && entry.Path != "helmr/config.json" && entry.Path != "helmr/declarations.json" {
+		if strings.HasPrefix(entry.Path, "helmr/") && !isGeneratedProgramEntry(entry) && entry.Path != "helmr/program-manifest.json" && entry.Path != "helmr/config.json" && entry.Path != "helmr/declarations.json" {
 			return fmt.Errorf("unknown platform-owned path %q", entry.Path)
 		}
 	}
@@ -101,7 +101,7 @@ func (verifier *programVerifier) verifyDeclarations() error {
 		if declaration.Locator == nil {
 			continue
 		}
-		if err := verifyDeclarationSource(verifier.artifact, declaration.Locator.SourcePath); err != nil {
+		if err := verifyDeclarationModule(verifier.artifact, declaration.Locator.ModulePath); err != nil {
 			return err
 		}
 	}

@@ -138,6 +138,8 @@ func resolvedDocument(steps ...hostconfig.Step) hostconfig.Document {
 	}
 	document.Discovery.Dirs = []string{"src"}
 	document.Discovery.IgnorePatterns = []string{}
+	document.Discovery.External = []string{}
+	document.Discovery.Assets = []string{}
 	return document
 }
 

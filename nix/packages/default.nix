@@ -59,19 +59,13 @@ let
       pkgsGo.go_1_27;
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
-  moduleExecution = pkgs.callPackage ./module-execution.nix {
-    typescriptRelease = runtimeDependencies.typescript;
-  };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix {
-    inherit squashfsTools moduleExecution;
-    typescriptVersion = runtimeDependencies.typescript.version;
+    inherit squashfsTools;
     nodeVersion = nodeRelease.version;
     nodeRelease = nodeArchive "x86_64-linux";
     debianRuntimeImage = debianImage debianImages.runtimeLibraries;
   };
   compiler = pkgs.callPackage ./compiler.nix {
-    inherit moduleExecution;
-    typescriptVersion = runtimeDependencies.typescript.version;
     nodejs_24 = nodejs;
   };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {

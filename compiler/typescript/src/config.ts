@@ -44,9 +44,12 @@ export async function loadConfig(path: string, importSourceExports: (url: URL) =
   }
 }
 
-// The deployed discovery config is exactly dirs and ignorePatterns; build
-// settings are producer-only and never reach the Program compiler.
-export type DiscoveryConfig = Pick<HelmrConfig, "dirs" | "ignorePatterns">
+// Only code and file selection cross into target compilation. Environment
+// preparation, install commands and secret names remain host-owned.
+export type DiscoveryConfig = Pick<HelmrConfig, "dirs" | "ignorePatterns"> & {
+  readonly external: readonly string[]
+  readonly assets: readonly string[]
+}
 
 export function inspectCanonicalConfig(value: unknown): DiscoveryConfig {
   if (
@@ -60,15 +63,16 @@ export function inspectCanonicalConfig(value: unknown): DiscoveryConfig {
   const record = value as Record<string, unknown>
   const keys = Object.keys(record).sort()
   if (
-    keys.length !== 2 ||
-    keys[0] !== "dirs" ||
-    keys[1] !== "ignorePatterns"
+    keys.length !== 4 ||
+    keys[0] !== "assets" || keys[1] !== "dirs" ||
+    keys[2] !== "external" || keys[3] !== "ignorePatterns"
   ) {
     throw new Error("canonical config does not match the build contract")
   }
   const config = inspectConfig({
     dirs: record["dirs"],
     ignorePatterns: record["ignorePatterns"],
+    build: { external: record["external"], assets: record["assets"] },
   })
-  return { dirs: config.dirs, ignorePatterns: config.ignorePatterns }
+  return { dirs: config.dirs, ignorePatterns: config.ignorePatterns, external: config.build.external, assets: config.build.assets }
 }

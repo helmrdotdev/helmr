@@ -28,10 +28,8 @@ for (const [entry, target] of entries) {
     entryPoints: [entry!], bundle: true, platform: "node", format: "esm", write: false,
     target: group === "hostconfig" ? hostNodeTarget : nodeTarget,
     // jiti's bundled CommonJS pieces call require(); an ES module has none.
-    banner: group === "hostconfig" ? { js: 'import { createRequire as helmrCreateRequire } from "node:module"; const require = helmrCreateRequire(import.meta.url);' } : {},
-    plugins: [{ name: "shared-language", setup(build) {
-      build.onResolve({ filter: /^@helmr\/module-execution$/ }, () => ({ path: "../moduleexecution/loader.mjs", external: true }))
-    } }],
+    banner: group !== "runtime" ? { js: 'import { createRequire as helmrCreateRequire } from "node:module"; const require = helmrCreateRequire(import.meta.url);' } : {},
+    external: group === "compiler" ? ["esbuild"] : [],
   })
   const bytes = result.outputFiles[0]!.text
   if (check) {

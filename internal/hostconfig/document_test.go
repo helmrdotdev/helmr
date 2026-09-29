@@ -12,6 +12,8 @@ func resolved(t *testing.T, captured string, steps ...Step) error {
 	document := Document{Build: Build{Builder: Builder{Steps: steps}, Secrets: []string{}}}
 	document.Discovery.Dirs = []string{"src"}
 	document.Discovery.IgnorePatterns = []string{}
+	document.Discovery.External = []string{}
+	document.Discovery.Assets = []string{}
 	return document.Resolve(captured)
 }
 
@@ -79,15 +81,15 @@ func TestResolveRejectsSourcesOutsideTheCaptureAndHelmrOwnedDestinations(t *test
 }
 
 func TestParseDocumentIsStrict(t *testing.T) {
-	valid := `{"discovery":{"dirs":["src"],"ignorePatterns":[]},"build":{"builder":{"steps":[]},"secrets":[]}}`
+	valid := `{"discovery":{"assets":[],"dirs":["src"],"external":[],"ignorePatterns":[]},"build":{"builder":{"steps":[]},"secrets":[]}}`
 	if _, err := parseDocument([]byte(valid)); err != nil {
 		t.Fatal(err)
 	}
 	for name, raw := range map[string]string{
-		"unknown field":   `{"discovery":{"dirs":["src"],"ignorePatterns":[]},"build":{"builder":{"steps":[]},"secrets":[],"packages":[]}}`,
-		"secret value":    `{"discovery":{"dirs":["src"],"ignorePatterns":[]},"build":{"builder":{"steps":[]},"secrets":[],"secretValues":{"A":"b"}}}`,
+		"unknown field":   `{"discovery":{"assets":[],"dirs":["src"],"external":[],"ignorePatterns":[]},"build":{"builder":{"steps":[]},"secrets":[],"packages":[]}}`,
+		"secret value":    `{"discovery":{"assets":[],"dirs":["src"],"external":[],"ignorePatterns":[]},"build":{"builder":{"steps":[]},"secrets":[],"secretValues":{"A":"b"}}}`,
 		"trailing":        valid + `{}`,
-		"missing builder": `{"discovery":{"dirs":["src"],"ignorePatterns":[]},"build":{"secrets":[]}}`,
+		"missing builder": `{"discovery":{"assets":[],"dirs":["src"],"external":[],"ignorePatterns":[]},"build":{"secrets":[]}}`,
 	} {
 		if _, err := parseDocument([]byte(raw)); err == nil {
 			t.Fatalf("%s was accepted", name)

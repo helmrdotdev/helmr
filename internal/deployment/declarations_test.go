@@ -2,7 +2,6 @@ package deployment
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -17,7 +16,7 @@ func TestDeclarationLocatorCanonicalRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(parsed.Declarations) != 2 ||
-		parsed.Declarations[0].SourcePath != testSourcePath("a") ||
+		parsed.Declarations[0].ModulePath != testModulePath("a") ||
 		parsed.Declarations[1].ExportName != "対話" {
 		t.Fatalf("parsed locator = %#v", parsed)
 	}
@@ -46,15 +45,15 @@ func TestDeclarationLocatorRejectsOpenOrDivergentShapes(t *testing.T) {
 			return locator
 		},
 		"node_modules module": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].SourcePath = "node_modules/task.js"
+			locator.Declarations[0].ModulePath = "node_modules/task.js"
 			return locator
 		},
 		"noncanonical platform module": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].SourcePath = "helmr/task.js"
+			locator.Declarations[0].ModulePath = "helmr/task.js"
 			return locator
 		},
 		"build-only root config": func(locator DeclarationLocator) DeclarationLocator {
-			locator.Declarations[0].SourcePath = "helmr.config.ts"
+			locator.Declarations[0].ModulePath = "helmr.config.ts"
 			return locator
 		},
 		"control export": func(locator DeclarationLocator) DeclarationLocator {
@@ -95,14 +94,14 @@ func testDeclarationLocator() DeclarationLocator {
 			{
 				Kind:       DeclarationKindTask,
 				DeclaredID: "build",
-				SourcePath: testSourcePath("a"),
+				ModulePath: testModulePath("a"),
 				ExportName: "build",
 				Slot:       DeclarationSlotHandler,
 			},
 			{
 				Kind:       DeclarationKindActor,
 				DeclaredID: "chat",
-				SourcePath: testSourcePath("b"),
+				ModulePath: testModulePath("b"),
 				ExportName: "対話",
 				Slot:       DeclarationSlotHandler,
 			},
@@ -110,6 +109,9 @@ func testDeclarationLocator() DeclarationLocator {
 	}
 }
 
-func testSourcePath(digit string) string {
-	return "tasks/" + strings.Repeat(digit, 3) + ".ts"
+func testModulePath(digit string) string {
+	if digit == "a" {
+		return "helmr/app/entry-0.mjs"
+	}
+	return "helmr/app/entry-1.mjs"
 }

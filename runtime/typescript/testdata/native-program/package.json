@@ -1,1 +1,10 @@
-{"private":true,"type":"module"}
+{
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#project/*": "./*"
+  },
+  "dependencies": {
+    "sqlite3": "^5.1.7"
+  }
+}

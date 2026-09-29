@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/version"
 )
 
 type CompilerEntrypoint struct {
@@ -16,26 +15,25 @@ type CompilerEntrypoint struct {
 	Entrypoint string `json:"entrypoint"`
 }
 
-// ModuleExecutionIdentity binds the exact shared parser, emitter and source guard.
-type ModuleExecutionIdentity struct {
-	APIVersion        string `json:"apiVersion"`
-	AdapterDigest     string `json:"adapterDigest"`
-	TypeScriptDigest  string `json:"typescriptDigest"`
-	TypeScriptVersion string `json:"typescriptVersion"`
+// BundlerIdentity identifies the build-only JavaScript generation contract.
+type BundlerIdentity struct {
+	APIVersion     string `json:"apiVersion"`
+	EsbuildVersion string `json:"esbuildVersion"`
+	APIDigest      string `json:"apiDigest"`
+	BinaryDigest   string `json:"binaryDigest"`
 }
 
-func ValidateModuleExecutionIdentity(value ModuleExecutionIdentity) error {
-	if value.APIVersion != "helmr.module-execution.v0" || value.TypeScriptVersion != version.RuntimeTypeScript() ||
-		!sha256DigestPattern.MatchString(value.AdapterDigest) || !sha256DigestPattern.MatchString(value.TypeScriptDigest) {
-		return errors.New("module execution identity does not match the v0 contract")
+func ValidateBundlerIdentity(value BundlerIdentity) error {
+	if value.APIVersion != "helmr.bundle.v0" || value.EsbuildVersion != "0.28.2" || !sha256DigestPattern.MatchString(value.APIDigest) || !sha256DigestPattern.MatchString(value.BinaryDigest) {
+		return errors.New("bundler identity does not match the v0 contract")
 	}
 	return nil
 }
 
 type CompilerInputs struct {
-	APIVersion      string                  `json:"apiVersion"`
-	Language        ModuleExecutionIdentity `json:"language"`
-	ProgramCompiler CompilerEntrypoint      `json:"programCompiler"`
+	APIVersion      string             `json:"apiVersion"`
+	Bundler         BundlerIdentity    `json:"bundler"`
+	ProgramCompiler CompilerEntrypoint `json:"programCompiler"`
 }
 
 func ParseCompilerInputs(raw []byte) (CompilerInputs, error) {
@@ -94,7 +92,7 @@ func ValidateCompilerInputs(input CompilerInputs) error {
 		input.ProgramCompiler.Entrypoint != "/nix/helmr/program-compiler.mjs" {
 		return errors.New("compiler inputs do not match the v0 contract")
 	}
-	if err := ValidateModuleExecutionIdentity(input.Language); err != nil {
+	if err := ValidateBundlerIdentity(input.Bundler); err != nil {
 		return err
 	}
 	for _, entry := range []CompilerEntrypoint{input.ProgramCompiler} {

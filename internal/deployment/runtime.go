@@ -41,12 +41,12 @@ type RuntimeDescriptor struct {
 }
 
 type RuntimeMetadata struct {
-	Language         ModuleExecutionIdentity `json:"language"`
-	Architecture     RuntimeArchitecture     `json:"architecture"`
-	FormatVersion    int                     `json:"formatVersion"`
-	NodeVersion      string                  `json:"nodeVersion"`
-	ProgramNodeFlags []string                `json:"programNodeFlags"`
-	RuntimeContract  string                  `json:"runtimeContract"`
+	ModulePolicyDigest string              `json:"modulePolicyDigest"`
+	Architecture       RuntimeArchitecture `json:"architecture"`
+	FormatVersion      int                 `json:"formatVersion"`
+	NodeVersion        string              `json:"nodeVersion"`
+	ProgramNodeFlags   []string            `json:"programNodeFlags"`
+	RuntimeContract    string              `json:"runtimeContract"`
 }
 
 func ParseRuntimeMetadata(raw []byte) (RuntimeMetadata, error) {
@@ -76,8 +76,8 @@ func CanonicalRuntimeMetadata(metadata RuntimeMetadata) ([]byte, error) {
 }
 
 func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
-	if err := ValidateModuleExecutionIdentity(metadata.Language); err != nil {
-		return err
+	if !sha256DigestPattern.MatchString(metadata.ModulePolicyDigest) {
+		return errors.New("runtime module policy digest is invalid")
 	}
 	if metadata.FormatVersion != RuntimeMetadataFormatVersion {
 		return fmt.Errorf(

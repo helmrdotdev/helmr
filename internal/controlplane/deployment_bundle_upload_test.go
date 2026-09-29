@@ -213,7 +213,7 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 		Kind: deployment.DefinitionKindTask, DeclaredID: "hello", Task: &task,
 		Locator: &deployment.ProgramLocator{
 			ExportName: "hello",
-			SourcePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
+			ModulePath: "helmr/app/entry-0.mjs",
 			Slot:       deployment.DeclarationSlotHandler,
 		},
 	}

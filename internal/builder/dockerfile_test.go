@@ -85,40 +85,28 @@ func TestEnvironmentRunsPreparationAsRootFromCapturedSourceInOrder(t *testing.T)
 	}
 }
 
-func TestEveryGraphStartsFromTheOneMaterializedEnvironment(t *testing.T) {
-	installed, err := InstalledDockerfile(InstallPlan{Argv: []string{"npm", "ci"}})
+func TestPreparationSeparatesCompilerInstallAndAnalysis(t *testing.T) {
+	raw, err := PreparationDockerfile()
 	if err != nil {
 		t.Fatal(err)
 	}
-	analysis, err := AnalysisDockerfile()
-	if err != nil {
-		t.Fatal(err)
-	}
-	final, err := Dockerfile()
-	if err != nil {
-		t.Fatal(err)
-	}
-	allowedBases := map[string]bool{
-		"helmr-builder": true, "helmr_environment": true, "materialized": true, "helmr_installed": true, "scratch": true,
-	}
-	for name, raw := range map[string][]byte{"installed": installed, "analysis": analysis, "final": final} {
-		environments := 0
-		for _, stage := range renderedStages(t, raw) {
-			if !allowedBases[stage.base] {
-				t.Fatalf("%s graph stage %q starts from %q", name, stage.name, stage.base)
-			}
-			if stage.base == "helmr_environment" {
-				environments++
-				// Preparation left root's context in the image; Helmr's own is restored first.
-				want := []string{"USER 0:0", "ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache"}
-				if strings.Join(stage.instructions[:2], "\n") != strings.Join(want, "\n") {
-					t.Fatalf("%s graph stage %q does not restore the managed context:\n%s", name, stage.name, strings.Join(stage.instructions, "\n"))
-				}
-			}
+	stages := renderedStages(t, raw)
+	for _, item := range []struct{ name, base string }{{"bundled", "scratch"}, {"runtime-installed", "helmr_environment"}, {"assembled", "helmr-builder"}, {"analyzed", "helmr_environment"}, {"preparation", "scratch"}} {
+		if stageNamed(t, stages, item.name).base != item.base {
+			t.Fatalf("wrong base for %s", item.name)
 		}
-		if environments != 1 {
-			t.Fatalf("%s graph uses the environment %d times", name, environments)
-		}
+	}
+	bundled := strings.Join(stageNamed(t, stages, "bundled").instructions, "\n")
+	if strings.Contains(bundled, "source=/nix,target=/nix") || !strings.Contains(bundled, "--mount=type=bind,from=helmr_installed") || !strings.Contains(bundled, "--network=none") {
+		t.Fatal("bundling input boundary is not restricted and read-only")
+	}
+	analyzed := strings.Join(stageNamed(t, stages, "analyzed").instructions, "\n")
+	if strings.Contains(analyzed, "from=helmr_installed") || !strings.Contains(analyzed, "/computer/output/payload/") || !strings.Contains(analyzed, "--network=none "+canonicalToolMounts) {
+		t.Fatal("analysis must receive only payload and canonical tools")
+	}
+	installed := strings.Join(stageNamed(t, stages, "runtime-installed").instructions, "\n")
+	if !strings.Contains(installed, "--install-runtime") || !strings.Contains(installed, "rm -rf /computer/project") {
+		t.Fatal("runtime install must be fresh")
 	}
 }
 
@@ -134,7 +122,7 @@ func TestInstallIsTheOnlyStageWithNetworkSecretsAndProjectSource(t *testing.T) {
 	want := []string{
 		"USER 0:0",
 		"ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache",
-		`RUN ["/bin/bash","-euo","pipefail","-c","install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work"]`,
+		`RUN ["/bin/bash","-euo","pipefail","-c","rm -rf /computer/project /computer/home /computer/output /computer/tmp /computer/work && install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work"]`,
 		"WORKDIR /computer/project",
 		"COPY --chown=65532:65532 . .",
 		"USER 65532:65532",
@@ -155,65 +143,6 @@ func TestInstallIsTheOnlyStageWithNetworkSecretsAndProjectSource(t *testing.T) {
 	}
 }
 
-func TestTenantModulesRunOfflineWithCanonicalToolsAndTheResolvedConfig(t *testing.T) {
-	for name, render := range map[string]func() ([]byte, error){"analysis": AnalysisDockerfile, "final": Dockerfile} {
-		t.Run(name, func(t *testing.T) {
-			raw, err := render()
-			if err != nil {
-				t.Fatal(err)
-			}
-			stages := renderedStages(t, raw)
-			materialized := stageNamed(t, stages, "materialized")
-			copies := []string{}
-			for _, instruction := range materialized.instructions {
-				if strings.HasPrefix(instruction, "COPY") {
-					copies = append(copies, instruction)
-				}
-			}
-			wantCopies := []string{
-				"COPY --from=installed-tree --chown=0:0 /computer/project/ /computer/project/",
-				"COPY --from=helmr_config --chown=0:0 /config.json /computer/config/config.json",
-			}
-			if strings.Join(copies, "\n") != strings.Join(wantCopies, "\n") {
-				t.Fatalf("evaluation inputs:\n%s", strings.Join(copies, "\n"))
-			}
-			executing := "analyzed"
-			if name == "final" {
-				executing = "prepared"
-			}
-			stage := stageNamed(t, stages, executing)
-			if stage.base != "materialized" || len(stage.instructions) != 1 {
-				t.Fatalf("stage %q = %+v", executing, stage)
-			}
-			run := stage.instructions[0]
-			for _, required := range []string{
-				"RUN --network=none ",
-				"--mount=type=bind,from=helmr-builder,source=/opt/helmr,target=/opt/helmr ",
-				"--mount=type=bind,from=helmr-builder,source=/nix,target=/nix ",
-				`["/opt/helmr/bin/bundle-builder",`,
-				`"--node","/opt/helmr/runtime/bin/node"`,
-				`"--config","/computer/config/config.json"`,
-			} {
-				if !strings.Contains(run, required) {
-					t.Fatalf("tenant execution is missing %q:\n%s", required, run)
-				}
-			}
-			if strings.Contains(run, "evaluator") {
-				t.Fatalf("the target still evaluates the config: %s", run)
-			}
-			// Every Helmr-owned tool path is covered by a canonical mount.
-			arguments := run[strings.Index(run, "["):]
-			for argument := range strings.SplitSeq(strings.Trim(arguments, "[]"), ",") {
-				argument = strings.Trim(argument, `"`)
-				if strings.HasPrefix(argument, "/") && !strings.HasPrefix(argument, "/computer/") &&
-					!strings.HasPrefix(argument, "/opt/helmr/") && !strings.HasPrefix(argument, "/nix/") {
-					t.Fatalf("tenant execution uses unmounted tool path %q", argument)
-				}
-			}
-		})
-	}
-}
-
 func TestFinalizerNeverSeesTheEnvironmentOrExecutesTenantStages(t *testing.T) {
 	raw, err := Dockerfile()
 	if err != nil {
@@ -230,17 +159,16 @@ func TestFinalizerNeverSeesTheEnvironmentOrExecutesTenantStages(t *testing.T) {
 			continue
 		}
 		copies++
-		if !strings.Contains(instruction, "--from=installed-tree ") &&
-			!strings.Contains(instruction, "--from=prepared --chown=65532:65532 /computer/output/prepared/ ") &&
+		if !strings.Contains(instruction, "--from=helmr_prepared ") &&
 			!strings.Contains(instruction, "--from=helmr_images ") {
 			t.Fatalf("finalizer takes unexpected input: %s", instruction)
 		}
 	}
-	if copies != 3 {
-		t.Fatalf("finalizer has %d inputs, want installed tree, prepared output and images", copies)
+	if copies != 2 {
+		t.Fatalf("finalizer has %d inputs, want prepared output and images", copies)
 	}
 	last := finalized.instructions[len(finalized.instructions)-1]
-	if !strings.HasPrefix(last, `RUN --network=none ["/opt/helmr/bin/bundle-builder","--prepared","/computer/prepared","--program-project","/computer/program"`) {
+	if !strings.HasPrefix(last, `RUN --network=none ["/opt/helmr/bin/bundle-builder","--prepared","/computer/prepared"`) {
 		t.Fatalf("finalizer run = %s", last)
 	}
 	if strings.Contains(last, "--node") || strings.Contains(last, "--config") {

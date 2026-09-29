@@ -412,6 +412,10 @@ fi
 native_build native-unchanged
 step_cached "$tmp/native-unchanged.log" "$setup_step"
 step_cached "$tmp/native-unchanged.log" "$install_step"
+# Each new preparation resolves runtime dependencies and analyzes its payload,
+# even when authoring inputs and the download cache are unchanged.
+step_ran "$tmp/native-unchanged.log" '"--install-runtime"'
+step_ran "$tmp/native-unchanged.log" '"--prepare-output"'
 [ "$(program_file native-unchanged generated/environment-stamp.txt)" = "$(program_file native generated/environment-stamp.txt)" ]
 
 # A source file the lifecycle script reads: preparation is reused, the install
@@ -498,5 +502,51 @@ prepare_host_sdk "$agentic_project"
   { tail -n 120 "$tmp/agentic.log" >&2; exit 1; }
 jq -e '[.computerImages[].declaredId] == ["agentic-work"]' "$tmp/agentic/bundle.json" >/dev/null
 HELMR_AGENTIC_BUNDLE="$tmp/agentic" bash "$repo_root/tests/build/agentic-work.test.sh"
+
+# The packed SDK fixture exercises the selective Program through the actual CLI
+# graph, then runs the managed Runtime against the admitted generated artifact.
+project="$tmp/native-program-project"
+cp -a "$repo_root/runtime/typescript/testdata/native-program" "$project"
+prepare_host_sdk "$project"
+mkdir -p "$project/vendor"
+cp -R "$repo_root/dist/npm/sdk/package" "$project/vendor/sdk"
+cp -R "$repo_root/dist/npm/proto/package" "$project/vendor/proto"
+cp -RL "$repo_root/sdk/typescript/node_modules/@bufbuild/protobuf" "$project/vendor/protobuf"
+python3 - "$project" <<'PYFIX'
+import json,sys,pathlib
+p=pathlib.Path(sys.argv[1]); f=p/'package.json'; d=json.loads(f.read_text());d['dependencies'].update({'@helmr/sdk':'file:vendor/sdk','@helmr/proto':'file:vendor/proto','@bufbuild/protobuf':'file:vendor/protobuf','mixed':'file:mixed'});f.write_text(json.dumps(d))
+(p/'mixed/asset.txt').write_text('installed\n')
+PYFIX
+# Preserve the actual CLI preparation output solely for the test's deterministic
+# finalizer check; production CLI cleanup remains unchanged.
+mkdir "$tmp/shim"
+export HELMR_TEST_REAL_DOCKER="$(command -v docker)" HELMR_TEST_PREPARED="$tmp/prepared"
+cat >"$tmp/shim/docker" <<'PYWRAP'
+#!/usr/bin/env python3
+import os,sys,subprocess,shutil
+args=sys.argv[1:]
+result=subprocess.run([os.environ['HELMR_TEST_REAL_DOCKER'],*args])
+if result.returncode==0 and '--target' in args and args[args.index('--target')+1]=='preparation':
+ output=args[args.index('--output')+1]
+ path=next(x[5:] for x in output.split(',') if x.startswith('dest='))
+ shutil.copytree(path,os.environ['HELMR_TEST_PREPARED'],dirs_exist_ok=True,symlinks=True)
+sys.exit(result.returncode)
+PYWRAP
+chmod +x "$tmp/shim/docker"
+PATH="$tmp/shim:$PATH" "$tmp/helmr" build "$project" --output "$tmp/native-program-bundle" 2>"$tmp/pipeline.log" || { tail -n 100 "$tmp/pipeline.log" >&2; exit 1; }
+digest=$(jq -er '.program.artifact.digest | sub("^sha256:"; "")' "$tmp/native-program-bundle/bundle.json")
+unsquashfs -d "$tmp/program" "$tmp/native-program-bundle/objects/sha256/$digest" >"$tmp/unpack.log"
+test ! -e "$tmp/program/tasks"
+test ! -e "$tmp/program/helmr.config.ts"
+test ! -e "$tmp/program/tsconfig.json"
+test ! -e "$tmp/program/node_modules/@helmr/sdk"
+test -f "$tmp/program/mixed/asset.txt"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/builder.test" ./internal/builder
+docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
+grep -E '^--- PASS: TestPreparedProgramFinalization ' "$tmp/finalization.log"
+bun build "$repo_root/runtime/typescript/src/native-runtime.test.ts" --target=node --format=esm --outfile "$tmp/native-runtime.test.mjs"
+docker run --rm --platform linux/amd64 --workdir /computer -v "$tmp/program:/opt/helmr/program:ro" -v "$tmp/native-runtime.test.mjs:/probe.mjs:ro" -e HELMR_NATIVE_RUNTIME_TEST=1 --entrypoint /opt/helmr/runtime/bin/node bundle-builder:0 --test /probe.mjs | tee "$tmp/native-runtime.log"
+grep -E '# pass 4|ℹ pass 4' "$tmp/native-runtime.log"
+printf 'ok - selective Program, static finalization and native Runtime\n'
 
 printf 'ok - canonical bundle builder package-manager, computer-image, native-environment and agentic-work e2e\n'
