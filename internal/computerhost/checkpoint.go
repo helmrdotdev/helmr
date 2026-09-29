@@ -70,14 +70,25 @@ type computerCheckpointer struct {
 	reservations   *reservation.Ledger
 	objects        cas.ImmutableStore
 	session        vm.CheckpointableMachine
-	encryptor      *CheckpointEncryptor
-	tempDir        string
-	computer       workerapi.CheckpointComputerBase
+	// mount is set when session is served; see ReleaseCheckpointSource.
+	mount     *instanceMount
+	encryptor *CheckpointEncryptor
+	tempDir   string
+	computer  workerapi.CheckpointComputerBase
 }
 
+// ReleaseCheckpointSource stops the source machine. A served machine is
+// released through its mount, which joins the mount's Computer saves before
+// closing the machine; an unmounted prepared machine has no save owner and is
+// closed directly.
 func (c *computerCheckpointer) ReleaseCheckpointSource(ctx context.Context) error {
-	// The checkpoint source is released by closing the raw machine.
-	if err := c.session.Close(ctx); err != nil {
+	var err error
+	if c.mount != nil {
+		err = c.mount.ReleaseCheckpointSource(ctx)
+	} else {
+		err = c.session.Close(ctx)
+	}
+	if err != nil {
 		return err
 	}
 	return c.cleanupAfterSourceStopped()

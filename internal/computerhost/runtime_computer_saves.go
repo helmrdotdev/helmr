@@ -96,6 +96,30 @@ func (s *runtimeComputerSaves) Quiesce(ctx context.Context) error {
 	return pending.Quiesce(ctx)
 }
 
+// joined reports whether the save loop and the pending save's producer have
+// finished, so neither can still use the machine. After Quiesce has stopped
+// admission this can only change from false to true.
+func (s *runtimeComputerSaves) joined() bool {
+	s.mu.Lock()
+	loopDone, pending := s.loopDone, s.pending
+	s.mu.Unlock()
+	if loopDone != nil {
+		select {
+		case <-loopDone:
+		default:
+			return false
+		}
+	}
+	if pending != nil {
+		select {
+		case <-pending.done:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // liveCaptureMachine is a runtime machine whose Computer can be cut live for a
 // save. PreparedMachines admits only such machines. A live cut resumes
 // before upload. The concrete retained capture must also support durable local

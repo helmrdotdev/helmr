@@ -77,6 +77,34 @@ func TestInstanceMountDuplicateReleaseObservesContext(t *testing.T) {
 	}
 }
 
+// Capture retries a failed source exclusion; a physical close whose join
+// timed out is attempted again, while the first result stays recorded.
+func TestInstanceMountRetriesTimedOutCheckpointRelease(t *testing.T) {
+	calls := 0
+	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
+		calls++
+		if calls == 1 {
+			return context.DeadlineExceeded
+		}
+		return nil
+	}})
+	if err := session.ReleaseCheckpointSource(t.Context()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("physical close calls = %d, want 2", calls)
+	}
+	if released, err := session.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("recorded release = %v, %v", released, err)
+	}
+}
+
 func waitForTestSignal(t *testing.T, signal <-chan struct{}, name string) {
 	t.Helper()
 	select {
