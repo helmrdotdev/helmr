@@ -38,7 +38,12 @@ let
     name: nativeBuildInputs: command:
     pkgs.runCommand name
       {
-        nativeBuildInputs = [ helmrPackages.goPackage ] ++ nativeBuildInputs;
+        # jq: scripts/test-go-selection.sh proves pinned tests ran, not skipped.
+        nativeBuildInputs = [
+          helmrPackages.goPackage
+          pkgs.jq
+        ]
+        ++ nativeBuildInputs;
         src = ../.;
       }
       ''
@@ -170,8 +175,9 @@ in
     vendoredGoCheck "deployment-bundle-finalizer-check" [ helmrPackages.squashfsTools ]
       ''
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
-          go test ./internal/builder \
-            -run '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$'
+          bash scripts/test-go-selection.sh \
+            '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$' \
+            ./internal/builder
       '';
   timezone-manifest =
     pkgs.runCommand "timezone-manifest-check" { src = ../internal/definition/tzdb_names.txt; }
@@ -195,19 +201,19 @@ in
     export HELMR_SUBSTRATE_MKE2FS_CONFIG=${helmrPackages.workerHost}/share/helmr/mke2fs.conf
     export HELMR_SUBSTRATE_E2FSCK=${lib.getBin pkgs.e2fsprogs}/bin/e2fsck
     export HELMR_SUBSTRATE_DEBUGFS=${lib.getBin pkgs.e2fsprogs}/bin/debugfs
-    go test ./internal/builder -run '^TestDeterministicExt4Projection$' -count=1 -v
+    bash scripts/test-go-selection.sh -v '^TestDeterministicExt4Projection$' ./internal/builder
   '';
   platform-release = helmrPackages.platformRelease;
   platform-release-publish-contract = vendoredGoCheck "platform-release-publish-contract-check" [ ] ''
     HELMR_PLATFORM_RELEASE_DIR=${helmrPackages.platformRelease} \
-      go test ./cmd/control-plane -run '^TestPublishPinnedPlatformRelease$'
+      bash scripts/test-go-selection.sh '^TestPublishPinnedPlatformRelease$' ./cmd/control-plane
     HELMR_RUNTIME_RELEASE_DIR=${helmrPackages.runtimeRelease} \
-      go test ./internal/artifact/verify -run '^TestVerifyPinnedRuntimeRelease$'
+      bash scripts/test-go-selection.sh '^TestVerifyPinnedRuntimeRelease$' ./internal/artifact/verify
   '';
   program-archive-contract =
     vendoredGoCheck "program-archive-contract-check" [ helmrPackages.squashfsTools ]
       ''
         HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
-          go test ./internal/builder -run '^TestPinnedProgramEncoder$'
+          bash scripts/test-go-selection.sh '^TestPinnedProgramEncoder$' ./internal/builder
       '';
 }

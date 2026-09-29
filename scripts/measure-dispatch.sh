@@ -34,4 +34,5 @@ export HELMR_MEASURE_DISPATCH=1
 export HELMR_TEST_DATABASE_URL="postgres://postgres@127.0.0.1:${postgres_port}/postgres?sslmode=disable"
 
 cd "$repo_root"
-go test -run '^TestMeasureDispatchHierarchy$' -count=1 -timeout 60m -v ./internal/dispatch
+GOFLAGS="${GOFLAGS:-} -timeout=60m" \
+	bash scripts/test-go-selection.sh -v '^TestMeasureDispatchHierarchy$' ./internal/dispatch

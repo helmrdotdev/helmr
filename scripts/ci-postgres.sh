@@ -3,8 +3,9 @@ set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [ "${1:-}" = --help ]; then
-  echo 'usage: scripts/ci-postgres.sh [TOP_LEVEL_TEST_PATTERN PACKAGE...]'
+  echo 'usage: scripts/ci-postgres.sh [[-v] TOP_LEVEL_TEST_PATTERN PACKAGE...]'
   echo 'No arguments runs the CI suite. A selection must execute passing, non-skipped tests in every package.'
+  echo '-v streams the selected tests'"'"' output while they run.'
   exit 0
 fi
 if [ "$#" = 1 ]; then

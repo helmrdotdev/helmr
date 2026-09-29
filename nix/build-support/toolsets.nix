@@ -141,6 +141,7 @@ rec {
 
   ciGo = ciShell ++ [
     helmrPackages.goPackage
+    pkgs.jq # scripts/test-go-selection.sh proves pinned tests ran, not skipped.
     helmrPackages.nodejs # Host config evaluation in internal/hostconfig and cmd/helmr tests.
     pkgs.stdenv.cc
     pkgs.gnumake

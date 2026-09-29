@@ -135,7 +135,10 @@ let
   runtimeRelease =
     pkgs.runCommand "helmr-runtime-release-verified"
       {
-        nativeBuildInputs = [ goPackage ];
+        nativeBuildInputs = [
+          goPackage
+          pkgs.jq
+        ];
         src = self;
       }
       ''
@@ -151,7 +154,7 @@ let
         export GOTOOLCHAIN=local
         export CGO_ENABLED=0
         HELMR_RUNTIME_RELEASE_DIR=${runtimeReleaseUnchecked} \
-          go test ./internal/artifact/verify -run '^TestVerifyPinnedRuntimeRelease$'
+          bash scripts/test-go-selection.sh '^TestVerifyPinnedRuntimeRelease$' ./internal/artifact/verify
         cd ..
         cp -a ${runtimeReleaseUnchecked} "$out"
       '';
