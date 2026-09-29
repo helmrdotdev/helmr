@@ -383,7 +383,7 @@ func TestProtectedGuestIngressCeilingsBeforeReplay(t *testing.T) {
 	})
 	t.Run("create-replayed-target", func(t *testing.T) {
 		bindings := []secretbinding.Binding{{Name: "token-a", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}
-		placements, err := normalizeComputerSecretPlacements(bindings)
+		placements, err := secretbinding.NormalizedPlacements(bindings)
 		if err != nil {
 			t.Fatal(err)
 		}

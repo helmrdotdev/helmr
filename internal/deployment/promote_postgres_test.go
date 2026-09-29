@@ -1,13 +1,10 @@
-package controlplane
+package deployment
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -15,8 +12,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
@@ -32,7 +27,7 @@ import (
 
 type deploymentPromotionPostgresFixture struct {
 	pool          *pgxpool.Pool
-	server        *Server
+	txb           db.TxBeginner
 	orgID         uuid.UUID
 	projectID     uuid.UUID
 	environmentID uuid.UUID
@@ -49,17 +44,17 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 	t.Run("invalid and cross-scope targets fail", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, uuid.NewV7(), principal, "", "")
-		if recorder.Code != http.StatusNotFound {
-			t.Fatalf("invalid target status=%d body=%s", recorder.Code, recorder.Body.String())
+		_, err := fixture.promote(t, uuid.NewV7(), principal)
+		if !errors.Is(err, ErrNotDeployable) {
+			t.Fatalf("invalid target error = %v", err)
 		}
 		if got := fixture.currentDeployment(t); got != fixture.currentID {
 			t.Fatalf("current after invalid target = %s, want %s", got, fixture.currentID)
 		}
 
-		recorder = fixture.promote(t, fixture.otherID, principal, "", "")
-		if recorder.Code != http.StatusNotFound {
-			t.Fatalf("cross-scope status=%d body=%s", recorder.Code, recorder.Body.String())
+		_, err = fixture.promote(t, fixture.otherID, principal)
+		if !errors.Is(err, ErrNotDeployable) {
+			t.Fatalf("cross-scope error = %v", err)
 		}
 		if got := fixture.currentDeployment(t); got != fixture.currentID {
 			t.Fatalf("current after cross-scope = %s, want %s", got, fixture.currentID)
@@ -68,12 +63,10 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 	t.Run("schedule reconciliation rolls back", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, fixture.scheduledID, principal, "", "")
-		if recorder.Code != http.StatusBadRequest {
-			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-		}
-		if !strings.Contains(recorder.Body.String(), "REPORT_TOKEN") {
-			t.Fatalf("error = %s, want unavailable scheduled secret", recorder.Body.String())
+		_, err := fixture.promote(t, fixture.scheduledID, principal)
+		var input InputError
+		if !errors.As(err, &input) || !strings.Contains(err.Error(), "REPORT_TOKEN") {
+			t.Fatalf("error = %v, want unavailable scheduled secret", err)
 		}
 		if got := fixture.currentDeployment(t); got != fixture.currentID {
 			t.Fatalf("current after failed reconciliation = %s, want %s", got, fixture.currentID)
@@ -99,9 +92,8 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		first := fixture.promote(t, fixture.scheduledID, principal, "", "")
-		if first.Code != http.StatusOK {
-			t.Fatalf("first promotion status=%d body=%s", first.Code, first.Body.String())
+		if _, err := fixture.promote(t, fixture.scheduledID, principal); err != nil {
+			t.Fatalf("first promotion: %v", err)
 		}
 		lastFire := time.Date(2026, 7, 24, 9, 0, 0, 0, time.UTC)
 		claimExpires := lastFire.Add(time.Minute)
@@ -118,9 +110,8 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 			 WHERE environment_id = $4
 			   AND task_declared_id = 'daily-report'
 		`, lastFire, claimExpires, retryAfter, fixture.environmentID)
-		second := fixture.promote(t, fixture.scheduledID, principal, "", "")
-		if second.Code != http.StatusOK {
-			t.Fatalf("second promotion status=%d body=%s", second.Code, second.Body.String())
+		if _, err := fixture.promote(t, fixture.scheduledID, principal); err != nil {
+			t.Fatalf("second promotion: %v", err)
 		}
 		var unchanged bool
 		if err := fixture.pool.QueryRow(t.Context(), `
@@ -174,9 +165,10 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		`, fixture.environmentID).Scan(&before); err != nil {
 			t.Fatal(err)
 		}
-		recorder := fixture.promote(t, fixture.scheduledID, principal, "", "")
-		if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), "REPORT_TOKEN") {
-			t.Fatalf("revoked Secret status=%d body=%s", recorder.Code, recorder.Body.String())
+		_, err := fixture.promote(t, fixture.scheduledID, principal)
+		var input InputError
+		if !errors.As(err, &input) || !strings.Contains(err.Error(), "REPORT_TOKEN") {
+			t.Fatalf("revoked Secret error = %v", err)
 		}
 		if got := fixture.currentDeployment(t); got != fixture.scheduledID {
 			t.Fatalf("current after revoked Secret = %s, want %s", got, fixture.scheduledID)
@@ -203,16 +195,12 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 
 	t.Run("older immutable deployment", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
-		recorder := fixture.promote(t, fixture.olderID, principal, "", "")
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-		}
-		var response api.DeploymentResponse
-		if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		promoted, err := fixture.promote(t, fixture.olderID, principal)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if response.ID != fixture.olderID.String() {
-			t.Fatalf("promoted = %+v", response)
+		if pgvalue.MustUUIDValue(promoted.ID) != fixture.olderID {
+			t.Fatalf("promoted = %+v", promoted)
 		}
 		if got := fixture.currentDeployment(t); got != fixture.olderID {
 			t.Fatalf("current = %s, want older %s", got, fixture.olderID)
@@ -231,18 +219,14 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 		}
 	})
 
-	t.Run("session route", func(t *testing.T) {
+	t.Run("session principal", func(t *testing.T) {
 		fixture.setCurrent(t, fixture.currentID)
 		session := auth.Actor{
 			OrgID: fixture.orgID, UserID: uuid.NewV7(),
 			Kind: auth.ActorKindSession, Role: auth.RoleDeveloper,
 		}
-		recorder := fixture.promote(
-			t, fixture.olderID, session,
-			fixture.projectID.String(), fixture.environmentID.String(),
-		)
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("session route status=%d body=%s", recorder.Code, recorder.Body.String())
+		if _, err := fixture.promote(t, fixture.olderID, session); err != nil {
+			t.Fatalf("session principal promotion: %v", err)
 		}
 		if got := fixture.currentDeployment(t); got != fixture.olderID {
 			t.Fatalf("current after session route = %s, want %s", got, fixture.olderID)
@@ -262,9 +246,10 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		done := make(chan *httptest.ResponseRecorder, 1)
+		done := make(chan error, 1)
 		go func() {
-			done <- fixture.promote(t, fixture.olderID, principal, "", "")
+			_, err := fixture.promote(t, fixture.olderID, principal)
+			done <- err
 		}()
 		deadline := time.Now().Add(5 * time.Second)
 		for {
@@ -294,9 +279,9 @@ func TestPromoteDeploymentPostgres(t *testing.T) {
 			t.Fatal(err)
 		}
 		select {
-		case recorder := <-done:
-			if recorder.Code != http.StatusOK {
-				t.Fatalf("serialized promotion status=%d body=%s", recorder.Code, recorder.Body.String())
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("serialized promotion: %v", err)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("promotion did not complete after environment lock release")
@@ -315,7 +300,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	scheduleCount, placementCount := prepareDeploymentPromotionScaleFixture(t, fixture)
 	principal := fixture.apiKeyPrincipal()
 	beginner := &deploymentPromotionCountingBeginner{pool: fixture.pool}
-	fixture.server.tx = beginner
+	fixture.txb = beginner
 
 	flushDeploymentMeasurementStats(t, fixture.pool)
 	var walBefore string
@@ -329,11 +314,11 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	}
 	baseline, stopHeapSampling := startDeploymentFinalizeHeapSampling()
 	started := time.Now()
-	recorder := fixture.promote(t, fixture.scheduledID, principal, "", "")
+	_, err := fixture.promote(t, fixture.scheduledID, principal)
 	elapsed := time.Since(started)
 	heapDelta := stopHeapSampling()
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("maximum promotion status=%d body=%s", recorder.Code, recorder.Body.String())
+	if err != nil {
+		t.Fatalf("maximum promotion: %v", err)
 	}
 
 	flushDeploymentMeasurementStats(t, fixture.pool)
@@ -389,7 +374,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	cancelBeginner := &deploymentPromotionCountingBeginner{
 		pool: fixture.pool, secretBulkStarted: bulkStarted,
 	}
-	fixture.server.tx = cancelBeginner
+	fixture.txb = cancelBeginner
 	blocker, err := fixture.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -407,17 +392,15 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	done := make(chan *httptest.ResponseRecorder, 1)
+	done := make(chan error, 1)
 	go func() {
-		done <- fixture.promoteContext(ctx, t, fixture.scheduledID, principal, "", "")
+		_, err := fixture.promoteContext(ctx, t, fixture.scheduledID, principal)
+		done <- err
 	}()
 	select {
 	case <-bulkStarted:
 	case completed := <-done:
-		t.Fatalf(
-			"promotion completed before bulk Secret replacement: status=%d body=%s",
-			completed.Code, completed.Body.String(),
-		)
+		t.Fatalf("promotion completed before bulk Secret replacement: %v", completed)
 	case <-time.After(65 * time.Second):
 		var query, waitType, waitEvent string
 		if err := fixture.pool.QueryRow(t.Context(), `
@@ -458,7 +441,7 @@ func TestPromoteDeploymentPostgresMaximumBulkBudget(t *testing.T) {
 	cancel()
 	select {
 	case canceled := <-done:
-		if canceled.Code == http.StatusOK {
+		if canceled == nil {
 			t.Fatal("canceled maximum promotion succeeded")
 		}
 	case <-time.After(50 * time.Millisecond):
@@ -509,9 +492,8 @@ func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	first := fixture.promote(t, fixture.scheduledID, principal, "", "")
-	if first.Code != http.StatusOK {
-		t.Fatalf("initial promotion status=%d body=%s", first.Code, first.Body.String())
+	if _, err := fixture.promote(t, fixture.scheduledID, principal); err != nil {
+		t.Fatalf("initial promotion: %v", err)
 	}
 
 	admission, err := fixture.pool.Begin(t.Context())
@@ -530,12 +512,11 @@ func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *
 	}
 
 	beginner := &deploymentPromotionCountingBeginner{pool: fixture.pool}
-	fixture.server.tx = beginner
-	done := make(chan *httptest.ResponseRecorder, 1)
+	fixture.txb = beginner
+	done := make(chan error, 1)
 	go func() {
-		done <- fixture.promoteContext(
-			t.Context(), t, fixture.scheduledID, principal, "", "",
-		)
+		_, err := fixture.promoteContext(t.Context(), t, fixture.scheduledID, principal)
+		done <- err
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -581,9 +562,9 @@ func TestPromoteDeploymentPostgresAvoidsScheduleAdmissionSecretLockInversion(t *
 		t.Fatal(err)
 	}
 	select {
-	case promoted := <-done:
-		if promoted.Code != http.StatusOK {
-			t.Fatalf("promotion status=%d body=%s", promoted.Code, promoted.Body.String())
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("promotion: %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("promotion did not resume after schedule admission committed")
@@ -824,13 +805,9 @@ func (fixture deploymentPromotionPostgresFixture) promote(
 	t *testing.T,
 	deploymentID uuid.UUID,
 	principal auth.Actor,
-	projectID string,
-	environmentID string,
-) *httptest.ResponseRecorder {
+) (db.Deployment, error) {
 	t.Helper()
-	return fixture.promoteContext(
-		t.Context(), t, deploymentID, principal, projectID, environmentID,
-	)
+	return fixture.promoteContext(t.Context(), t, deploymentID, principal)
 }
 
 func (fixture deploymentPromotionPostgresFixture) promoteContext(
@@ -838,24 +815,12 @@ func (fixture deploymentPromotionPostgresFixture) promoteContext(
 	t *testing.T,
 	deploymentID uuid.UUID,
 	principal auth.Actor,
-	projectID string,
-	environmentID string,
-) *httptest.ResponseRecorder {
+) (db.Deployment, error) {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodPost, "/", http.NoBody)
-	route := chi.NewRouteContext()
-	route.URLParams.Add("deploymentID", deploymentID.String())
-	if projectID != "" {
-		route.URLParams.Add("projectID", projectID)
+	scope := auth.Scope{
+		OrgID: fixture.orgID, ProjectID: fixture.projectID.String(), EnvironmentID: fixture.environmentID.String(),
 	}
-	if environmentID != "" {
-		route.URLParams.Add("environmentID", environmentID)
-	}
-	ctx = context.WithValue(ctx, chi.RouteCtxKey, route)
-	ctx = context.WithValue(ctx, actorContextKey{}, principal)
-	recorder := httptest.NewRecorder()
-	fixture.server.promoteDeployment(recorder, request.WithContext(ctx))
-	return recorder
+	return Promote(ctx, fixture.txb, principal, scope, deploymentID)
 }
 
 func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPostgresFixture {
@@ -875,11 +840,7 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 		currentID:     uuid.NewV7(),
 		scheduledID:   uuid.NewV7(),
 		otherID:       uuid.NewV7(),
-		server: &Server{
-			db:  db.New(pool),
-			tx:  pool,
-			log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		},
+		txb:           pool,
 	}
 	programID, imageID := uuid.NewV7(), uuid.NewV7()
 	otherProgramID := uuid.NewV7()

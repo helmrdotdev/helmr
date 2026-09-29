@@ -57,7 +57,7 @@ func (s *Server) planDeploymentBundleUpload(w http.ResponseWriter, r *http.Reque
 		strings.ToLower(actor.OrgID.String()), pgvalue.UUID(actor.OrgID), raw, manifest,
 	)
 	if err != nil {
-		writeDeploymentError(w, s, err)
+		s.writeDeploymentError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -81,7 +81,7 @@ func planDeploymentBundleUploads(
 	if err != nil {
 		return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("resolve supported Runtime object: %w", err)
 	}
-	if err := requireExactCASObject(runtimeObject, runtimeExpected); err != nil {
+	if err := cas.RequireExact(runtimeObject, runtimeExpected); err != nil {
 		return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("supported Runtime object: %w", err)
 	}
 
@@ -118,7 +118,7 @@ func planDeploymentBundleUploads(
 			if statErr != nil {
 				return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("resolve owned deployment object: %w", statErr)
 			}
-			if err := requireExactCASObject(global, descriptor); err != nil {
+			if err := cas.RequireExact(global, descriptor); err != nil {
 				return api.DeploymentBundleUploadPlanResponse{}, fmt.Errorf("owned deployment object: %w", err)
 			}
 			continue
@@ -143,13 +143,6 @@ func planDeploymentBundleUploads(
 		})
 	}
 	return response, nil
-}
-
-func requireExactCASObject(object cas.Object, expected cas.Descriptor) error {
-	if object.Digest != expected.Digest || object.SizeBytes != expected.SizeBytes || object.MediaType != expected.MediaType {
-		return errors.New("CAS object does not match its descriptor")
-	}
-	return nil
 }
 
 func cloneStringMap(source map[string]string) map[string]string {

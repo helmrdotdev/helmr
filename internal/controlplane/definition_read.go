@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,12 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -34,240 +30,153 @@ type definitionListCursor struct {
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, "task")
+	s.listDefinitions(w, r, definition.KindTask)
 }
 
 func (s *Server) getTask(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, "task", chi.URLParam(r, "taskID"))
+	s.getDefinition(w, r, definition.KindTask, chi.URLParam(r, "taskID"))
 }
 
 func (s *Server) listActors(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, "actor")
+	s.listDefinitions(w, r, definition.KindActor)
 }
 
 func (s *Server) getActor(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, "actor", chi.URLParam(r, "actorID"))
+	s.getDefinition(w, r, definition.KindActor, chi.URLParam(r, "actorID"))
 }
 
 func (s *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
-	s.listDefinitions(w, r, "sandbox")
+	s.listDefinitions(w, r, definition.KindSandbox)
 }
 
 func (s *Server) getSandbox(w http.ResponseWriter, r *http.Request) {
-	s.getDefinition(w, r, "sandbox", chi.URLParam(r, "sandboxID"))
+	s.getDefinition(w, r, definition.KindSandbox, chi.URLParam(r, "sandboxID"))
 }
 
-func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind string) {
+func (s *Server) listDefinitions(w http.ResponseWriter, r *http.Request, kind definition.Kind) {
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !canReadDeployments(principal, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	selector, cursor, limit, err := parseDefinitionListQuery(r, kind, scope.ProjectID, scope.EnvironmentID)
+	selected, cursor, limit, err := parseDefinitionListQuery(r, string(kind), scope.ProjectID, scope.EnvironmentID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
+	var after *string
 	if cursor != nil {
-		selector = pgvalue.UUID(uuid.MustParse(cursor.DeploymentID))
+		cursorDeploymentID := uuid.MustParse(cursor.DeploymentID)
+		selected, after = &cursorDeploymentID, &cursor.AfterID
 	}
-	deploymentID, err := s.resolveDefinitionDeployment(
-		r.Context(), selector, pgvalue.UUID(principal.OrgID), projectID, environmentID,
-	)
+	page, err := deployment.ListDefinitions(r.Context(), s.db, principal, scope, kind, selected, limit, after)
 	if err != nil {
-		writeError(w, err)
+		s.writeDeploymentError(w, err)
 		return
 	}
-	resolvedDeploymentID := pgvalue.UUIDString(deploymentID)
-	if cursor != nil && cursor.DeploymentID != resolvedDeploymentID {
-		writeError(w, badRequest(errors.New("definition cursor deployment does not match")))
-		return
-	}
-	afterID := ""
-	if cursor != nil {
-		afterID = cursor.AfterID
-	}
-	rows, err := s.db.ListDefinitionSnapshots(r.Context(), db.ListDefinitionSnapshotsParams{
-		EnvironmentID: environmentID, DeploymentID: deploymentID, Kind: kind,
-		HasAfter: cursor != nil, AfterID: afterID, RowLimit: limit + 1,
-	})
-	if err != nil {
-		s.log.Error("list Definitions failed", "kind", kind, "error", err)
-		writeError(w, errors.New("list definitions"))
-		return
-	}
-	hasMore := len(rows) > int(limit)
-	if hasMore {
-		rows = rows[:limit]
-	}
+	deploymentID := page.DeploymentID.String()
 	nextCursor := ""
-	if hasMore {
+	if page.HasMore {
 		nextCursor, err = encodeDefinitionListCursor(definitionListCursor{
 			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			DeploymentID: resolvedDeploymentID, Kind: kind, AfterID: rows[len(rows)-1],
+			DeploymentID: deploymentID, Kind: string(kind), AfterID: page.DeclaredIDs[len(page.DeclaredIDs)-1],
 		})
 		if err != nil {
 			writeError(w, errors.New("list Definitions"))
 			return
 		}
 	}
-	writeDefinitionList(w, kind, resolvedDeploymentID, rows, nextCursor)
+	writeDefinitionList(w, kind, deploymentID, page.DeclaredIDs, nextCursor)
 }
 
-func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind, id string) {
+func (s *Server) getDefinition(w http.ResponseWriter, r *http.Request, kind definition.Kind, id string) {
 	if err := api.ValidateDefinitionID(id); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	principal := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, principal)
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, principal)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !canReadDeployments(principal, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	selector, err := parseDefinitionItemQuery(r)
+	selected, err := parseDefinitionItemQuery(r)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	deploymentID, err := s.resolveDefinitionDeployment(
-		r.Context(), selector, pgvalue.UUID(principal.OrgID), projectID, environmentID,
-	)
+	deploymentID, declaredID, err := deployment.GetDefinition(r.Context(), s.db, principal, scope, kind, selected, id)
 	if err != nil {
-		writeError(w, err)
+		s.writeDeploymentError(w, err)
 		return
 	}
-	declaredID, err := s.db.GetDefinitionSnapshot(r.Context(), db.GetDefinitionSnapshotParams{
-		EnvironmentID: environmentID, DeploymentID: deploymentID, Kind: kind, DeclaredID: id,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("definition not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get definition"))
-		return
-	}
-	writeDefinition(w, kind, declaredID, pgvalue.UUIDString(deploymentID))
-}
-
-func (s *Server) resolveDefinitionDeployment(
-	ctx context.Context,
-	selector pgtype.UUID,
-	orgID, projectID, environmentID pgtype.UUID,
-) (pgtype.UUID, error) {
-	var (
-		deployment db.Deployment
-		err        error
-	)
-	if selector.Valid {
-		deployment, err = s.db.GetDeployment(ctx, db.GetDeploymentParams{
-			OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, ID: selector,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, notFound(codedError{
-				code: "deployment_not_found", message: "Deployment was not found",
-			})
-		}
-	} else {
-		deployment, err = s.db.GetCurrentDeploymentForRoute(ctx, db.GetCurrentDeploymentForRouteParams{
-			OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return pgtype.UUID{}, notFound(codedError{
-				code: "no_current_deployment", message: "Environment has no current Deployment",
-			})
-		}
-	}
-	if err != nil {
-		return pgtype.UUID{}, errors.New("resolve definition deployment")
-	}
-	if !deployment.ProgramArtifactID.Valid || len(deployment.ProgramIndexDigest) == 0 ||
-		deployment.RuntimeArtifactDigest == "" {
-		return pgtype.UUID{}, conflict(codedError{
-			code: "deployment_not_materialized", message: "Deployment definitions are not materialized",
-		})
-	}
-	return deployment.ID, nil
-}
-
-func canReadDeployments(principal auth.Actor, scope auth.Scope) bool {
-	return principal.HasPermission(auth.PermissionTasksDeploy, scope) ||
-		principal.HasPermission(auth.PermissionRunsRead, scope)
+	writeDefinition(w, kind, declaredID, deploymentID.String())
 }
 
 func parseDefinitionListQuery(
 	r *http.Request,
 	kind, projectID, environmentID string,
-) (pgtype.UUID, *definitionListCursor, int32, error) {
+) (*uuid.UUID, *definitionListCursor, int32, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
 		if name != "deployment_id" && name != "cursor" && name != "limit" {
-			return pgtype.UUID{}, nil, 0, fmt.Errorf("query parameter %q is not supported", name)
+			return nil, nil, 0, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || entries[0] == "" {
-			return pgtype.UUID{}, nil, 0, fmt.Errorf("%s must appear once", name)
+			return nil, nil, 0, fmt.Errorf("%s must appear once", name)
 		}
 	}
 	limit := definitionListDefaultLimit
 	if raw := values.Get("limit"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil || parsed < 1 || parsed > int64(definitionListMaxLimit) {
-			return pgtype.UUID{}, nil, 0, errors.New("limit must be an integer in [1,100]")
+			return nil, nil, 0, errors.New("limit must be an integer in [1,100]")
 		}
 		limit = int32(parsed)
 	}
 	selector, err := parseOptionalDefinitionDeploymentID(values.Get("deployment_id"))
 	if err != nil {
-		return pgtype.UUID{}, nil, 0, err
+		return nil, nil, 0, err
 	}
 	if raw := values.Get("cursor"); raw != "" {
 		cursor, err := decodeDefinitionListCursor(raw)
 		if err != nil {
-			return pgtype.UUID{}, nil, 0, err
+			return nil, nil, 0, err
 		}
 		if cursor.ProjectID != projectID || cursor.EnvironmentID != environmentID || cursor.Kind != kind {
-			return pgtype.UUID{}, nil, 0, errors.New("definition cursor does not match request scope")
+			return nil, nil, 0, errors.New("definition cursor does not match request scope")
 		}
-		if selector.Valid && pgvalue.UUIDString(selector) != cursor.DeploymentID {
-			return pgtype.UUID{}, nil, 0, errors.New("deployment_id does not match definition cursor")
+		if selector != nil && selector.String() != cursor.DeploymentID {
+			return nil, nil, 0, errors.New("deployment_id does not match definition cursor")
 		}
 		return selector, &cursor, limit, nil
 	}
 	return selector, nil, limit, nil
 }
 
-func parseDefinitionItemQuery(r *http.Request) (pgtype.UUID, error) {
+func parseDefinitionItemQuery(r *http.Request) (*uuid.UUID, error) {
 	values := r.URL.Query()
 	for name, entries := range values {
 		if name != "deployment_id" {
-			return pgtype.UUID{}, fmt.Errorf("query parameter %q is not supported", name)
+			return nil, fmt.Errorf("query parameter %q is not supported", name)
 		}
 		if len(entries) != 1 || entries[0] == "" {
-			return pgtype.UUID{}, errors.New("deployment_id must appear once")
+			return nil, errors.New("deployment_id must appear once")
 		}
 	}
 	return parseOptionalDefinitionDeploymentID(values.Get("deployment_id"))
 }
 
-func parseOptionalDefinitionDeploymentID(raw string) (pgtype.UUID, error) {
+func parseOptionalDefinitionDeploymentID(raw string) (*uuid.UUID, error) {
 	if raw == "" {
-		return pgtype.UUID{}, nil
+		return nil, nil
 	}
 	id, err := ids.Parse(raw)
 	if err != nil {
-		return pgtype.UUID{}, errors.New("deployment_id must be a canonical UUIDv7")
+		return nil, errors.New("deployment_id must be a canonical UUIDv7")
 	}
-	return pgvalue.UUID(id), nil
+	return &id, nil
 }
 
 func encodeDefinitionListCursor(cursor definitionListCursor) (string, error) {
@@ -299,21 +208,21 @@ func decodeDefinitionListCursor(raw string) (definitionListCursor, error) {
 	return cursor, nil
 }
 
-func writeDefinitionList(w http.ResponseWriter, kind, deploymentID string, ids []string, nextCursor string) {
+func writeDefinitionList(w http.ResponseWriter, kind definition.Kind, deploymentID string, ids []string, nextCursor string) {
 	switch kind {
-	case "task":
+	case definition.KindTask:
 		items := make([]api.DefinitionListItem, 0, len(ids))
 		for _, id := range ids {
 			items = append(items, api.DefinitionListItem{ID: id})
 		}
 		writeJSON(w, http.StatusOK, api.ListTasksResponse{DeploymentID: deploymentID, Tasks: items, NextCursor: nextCursor})
-	case "actor":
+	case definition.KindActor:
 		items := make([]api.DefinitionListItem, 0, len(ids))
 		for _, id := range ids {
 			items = append(items, api.DefinitionListItem{ID: id})
 		}
 		writeJSON(w, http.StatusOK, api.ListActorsResponse{DeploymentID: deploymentID, Actors: items, NextCursor: nextCursor})
-	case "sandbox":
+	case definition.KindSandbox:
 		items := make([]api.DefinitionListItem, 0, len(ids))
 		for _, id := range ids {
 			items = append(items, api.DefinitionListItem{ID: id})
@@ -322,13 +231,13 @@ func writeDefinitionList(w http.ResponseWriter, kind, deploymentID string, ids [
 	}
 }
 
-func writeDefinition(w http.ResponseWriter, kind, id, deploymentID string) {
+func writeDefinition(w http.ResponseWriter, kind definition.Kind, id, deploymentID string) {
 	switch kind {
-	case "task":
+	case definition.KindTask:
 		writeJSON(w, http.StatusOK, api.Task{ID: id, DeploymentID: deploymentID})
-	case "actor":
+	case definition.KindActor:
 		writeJSON(w, http.StatusOK, api.Actor{ID: id, DeploymentID: deploymentID})
-	case "sandbox":
+	case definition.KindSandbox:
 		writeJSON(w, http.StatusOK, api.Sandbox{ID: id, DeploymentID: deploymentID})
 	}
 }

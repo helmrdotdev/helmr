@@ -86,7 +86,7 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 	default:
 		return computerCreateResult{}, errComputerCreateInvalid
 	}
-	placements, err := normalizeComputerSecretPlacements(request.Secrets)
+	placements, err := secretbinding.NormalizedPlacements(request.Secrets)
 	if err != nil {
 		return computerCreateResult{}, fmt.Errorf("%w: %v", errComputerCreateInvalid, err)
 	}
@@ -371,15 +371,6 @@ func (s *Server) createComputer(ctx context.Context, request computerCreateReque
 	return result, err
 }
 
-func normalizeComputerSecretPlacements(input []secretbinding.Binding) ([]secretbinding.Placement, error) {
-	for _, value := range input {
-		if err := secretbinding.ValidateBinding(value); err != nil {
-			return nil, err
-		}
-	}
-	return secretbinding.Normalize(secretbinding.Placements(input))
-}
-
 func validateComputerKey(value *string) error {
 	if value == nil {
 		return nil
@@ -411,7 +402,7 @@ func computerCreateResultFromReceipt(raw []byte) (computerCreateResult, error) {
 		validateComputerKey(receipt.Computer.Key) != nil {
 		return computerCreateResult{}, errComputerCreateReceipt
 	}
-	if _, err := normalizeComputerSecretPlacements(receipt.Computer.Secrets); err != nil {
+	if _, err := secretbinding.NormalizedPlacements(receipt.Computer.Secrets); err != nil {
 		return computerCreateResult{}, errComputerCreateReceipt
 	}
 	return computerCreateResult{

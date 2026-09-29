@@ -1,4 +1,4 @@
-package controlplane
+package deployment
 
 import (
 	"bytes"
@@ -30,16 +30,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestRegisterFinalizedDeploymentBundlePostgresRollsBackEveryAuthorityRow(t *testing.T) {
+func TestRegisterPostgresRollsBackEveryAuthorityRow(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
 	prepared := fixture.prepared
-	prepared.definitions = []finalizedDeploymentDefinition{{
+	prepared.definitions = []preparedDefinition{{
 		kind: "invalid", declaredID: "invalid", manifest: []byte(`{}`), manifestDigest: bytes.Repeat([]byte{1}, 32),
 	}}
 	request := fixture.idempotencyRequest(t, "rollback")
-	if _, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, prepared, request,
-	); err == nil {
+	if _, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, prepared, request)); err == nil {
 		t.Fatal("registration with an invalid definition succeeded")
 	}
 	for table, query := range map[string]string{
@@ -63,7 +61,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresRollsBackEveryAuthorityRow(t *
 	}
 }
 
-func TestRegisterFinalizedDeploymentBundlePostgresConvergesConcurrentExactRequests(t *testing.T) {
+func TestRegisterPostgresConvergesConcurrentExactRequests(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
 	responses := make([]string, 2)
 	errors := make([]error, 2)
@@ -76,11 +74,8 @@ func TestRegisterFinalizedDeploymentBundlePostgresConvergesConcurrentExactReques
 		wait.Add(1)
 		go func(index int) {
 			defer wait.Done()
-			response, err := fixture.server.registerFinalizedDeploymentBundle(
-				t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-				requests[index],
-			)
-			responses[index], errors[index] = response.ID, err
+			response, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, requests[index]))
+			responses[index], errors[index] = pgvalue.UUIDString(response.ID), err
 		}(index)
 	}
 	wait.Wait()
@@ -116,32 +111,23 @@ func TestRegisterFinalizedDeploymentBundlePostgresConvergesConcurrentExactReques
 	}
 }
 
-func TestRegisterFinalizedDeploymentBundlePostgresRejectsIdempotencyKeyForAnotherBundle(t *testing.T) {
+func TestRegisterPostgresRejectsIdempotencyKeyForAnotherBundle(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
-	if _, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "shared"),
-	); err != nil {
+	if _, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "shared"))); err != nil {
 		t.Fatal(err)
 	}
 	changed := fixture.prepared
 	changed.root.Digest = "sha256:" + string(bytes.Repeat([]byte{'d'}, 64))
-	_, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, changed,
-		fixture.idempotencyRequestFor(t, fixture.environmentID, "shared", changed.root.Digest),
-	)
+	_, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, changed, fixture.idempotencyRequestFor(t, fixture.environmentID, "shared", changed.root.Digest)))
 	var conflict idempotency.ConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("error = %v, want idempotency conflict", err)
 	}
 }
 
-func TestFinishFinalizedDeploymentBundlePostgresReplaysAvailableExactBundleWithoutReadingObjects(t *testing.T) {
+func TestFinalizePostgresReplaysAvailableExactBundleWithoutReadingObjects(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
-	created, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "first"),
-	)
+	created, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "first")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,10 +135,9 @@ func TestFinishFinalizedDeploymentBundlePostgresReplaysAvailableExactBundleWitho
 		descriptor: fixture.prepared.objects[0],
 		body:       make([]byte, fixture.prepared.objects[0].SizeBytes),
 	}
-	replayed, err := fixture.server.finishFinalizedDeploymentBundle(
-		t.Context(), store, fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "replay"),
-		func(deploymentFinalizeProgress) error {
+	replayed, err := NewFinalizer(store, store, bundle.Admission{}, discardLogger()).Finalize(
+		t.Context(), fixture.queries, fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "replay")),
+		func(string) error {
 			t.Fatal("replay verified object bytes")
 			return nil
 		},
@@ -165,21 +150,18 @@ func TestFinishFinalizedDeploymentBundlePostgresReplaysAvailableExactBundleWitho
 	}
 }
 
-func TestFinishFinalizedDeploymentBundlePostgresFailsClosedWhenReplayObjectIsUnavailable(t *testing.T) {
+func TestFinalizePostgresFailsClosedWhenReplayObjectIsUnavailable(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
-	if _, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "first"),
-	); err != nil {
+	if _, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "first"))); err != nil {
 		t.Fatal(err)
 	}
 	store := &deploymentFinalizeTrackingStore{
 		descriptor: fixture.prepared.objects[0],
 		statErr:    errors.New("missing"),
 	}
-	if _, err := fixture.server.finishFinalizedDeploymentBundle(
-		t.Context(), store, fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "replay"), func(deploymentFinalizeProgress) error { return nil },
+	if _, err := NewFinalizer(store, store, bundle.Admission{}, discardLogger()).Finalize(
+		t.Context(), fixture.queries, fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "replay")),
+		func(string) error { return nil },
 	); err == nil {
 		t.Fatal("replay with an unavailable object succeeded")
 	}
@@ -188,16 +170,13 @@ func TestFinishFinalizedDeploymentBundlePostgresFailsClosedWhenReplayObjectIsUna
 	}
 }
 
-func TestFinishFinalizedDeploymentBundlePostgresVerifiesSameDigestInAnotherEnvironment(t *testing.T) {
+func TestFinalizePostgresVerifiesSameDigestInAnotherEnvironment(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
-	if _, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "first"),
-	); err != nil {
+	if _, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "first"))); err != nil {
 		t.Fatal(err)
 	}
 	otherEnvironment := pgvalue.UUID(uuid.NewV7())
-	if _, err := fixture.server.db.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
+	if _, err := fixture.queries.CreateEnvironment(t.Context(), db.CreateEnvironmentParams{
 		ID: otherEnvironment, OrgID: pgvalue.UUID(fixture.orgID), ProjectID: fixture.projectID,
 		Slug: "preview", Name: "Preview", ColorHex: "#315FCE",
 	}); err != nil {
@@ -207,10 +186,9 @@ func TestFinishFinalizedDeploymentBundlePostgresVerifiesSameDigestInAnotherEnvir
 		descriptor: fixture.prepared.objects[0],
 		body:       make([]byte, fixture.prepared.objects[0].SizeBytes),
 	}
-	if _, err := fixture.server.finishFinalizedDeploymentBundle(
-		t.Context(), store, fixture.orgID, fixture.projectID, otherEnvironment, fixture.prepared,
-		fixture.idempotencyRequestFor(t, otherEnvironment, "other", fixture.prepared.root.Digest),
-		func(deploymentFinalizeProgress) error { return nil },
+	if _, err := NewFinalizer(store, store, bundle.Admission{}, discardLogger()).Finalize(
+		t.Context(), fixture.queries, fixture.txb, fixture.finalization(otherEnvironment, fixture.prepared, fixture.idempotencyRequestFor(t, otherEnvironment, "other", fixture.prepared.root.Digest)),
+		func(string) error { return nil },
 	); err == nil {
 		t.Fatal("unverified object created a deployment in another environment")
 	}
@@ -219,14 +197,14 @@ func TestFinishFinalizedDeploymentBundlePostgresVerifiesSameDigestInAnotherEnvir
 	}
 }
 
-func TestRegisterFinalizedDeploymentBundlePostgresMaximumBulkBudget(t *testing.T) {
+func TestRegisterPostgresMaximumBulkBudget(t *testing.T) {
 	if os.Getenv("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE") != "1" {
 		t.Skip("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE is not set")
 	}
 	fixture := newDeploymentFinalizePostgresFixture(t)
 	fixture.prepared.definitions = deploymentFinalizeScaleDefinitions(10_000)
 	beginner := &deploymentFinalizeCountingBeginner{pool: fixture.pool}
-	fixture.server.tx = beginner
+	fixture.txb = beginner
 
 	flushDeploymentMeasurementStats(t, fixture.pool)
 	var walBefore string
@@ -241,16 +219,13 @@ func TestRegisterFinalizedDeploymentBundlePostgresMaximumBulkBudget(t *testing.T
 
 	baseline, stopHeapSampling := startDeploymentFinalizeHeapSampling()
 	started := time.Now()
-	response, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "maximum-bulk-budget"),
-	)
+	response, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "maximum-bulk-budget")))
 	elapsed := time.Since(started)
 	heapDelta := stopHeapSampling()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.ID == "" {
+	if !response.ID.Valid {
 		t.Fatal("maximum finalization returned no deployment")
 	}
 
@@ -305,7 +280,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresMaximumBulkBudget(t *testing.T
 	}
 }
 
-func TestRegisterFinalizedDeploymentBundlePostgresCancellationRollsBackBulk(t *testing.T) {
+func TestRegisterPostgresCancellationRollsBackBulk(t *testing.T) {
 	if os.Getenv("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE") != "1" {
 		t.Skip("HELMR_TEST_DEPLOYMENT_FINALIZE_SCALE is not set")
 	}
@@ -313,7 +288,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresCancellationRollsBackBulk(t *t
 	fixture.prepared.definitions = deploymentFinalizeScaleDefinitions(10_000)
 	bulkStarted := make(chan struct{}, 1)
 	beginner := &deploymentFinalizeCountingBeginner{pool: fixture.pool, bulkStarted: bulkStarted}
-	fixture.server.tx = beginner
+	fixture.txb = beginner
 
 	blocker, err := fixture.pool.Begin(t.Context())
 	if err != nil {
@@ -327,10 +302,7 @@ func TestRegisterFinalizedDeploymentBundlePostgresCancellationRollsBackBulk(t *t
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		_, err := fixture.server.registerFinalizedDeploymentBundle(
-			ctx, fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-			fixture.idempotencyRequest(t, "cancel-bulk"),
-		)
+		_, err := register(ctx, fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "cancel-bulk")))
 		done <- err
 	}()
 	select {
@@ -390,17 +362,11 @@ func TestRegisterFinalizedDeploymentBundlePostgresCancellationRollsBackBulk(t *t
 
 func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
-	created, err := fixture.server.registerFinalizedDeploymentBundle(
-		t.Context(), fixture.orgID, fixture.projectID, fixture.environmentID, fixture.prepared,
-		fixture.idempotencyRequest(t, "malformed-batches"),
-	)
+	created, err := register(t.Context(), fixture.txb, fixture.finalization(fixture.environmentID, fixture.prepared, fixture.idempotencyRequest(t, "malformed-batches")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	deploymentUUID, err := uuid.Parse(created.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	deploymentUUID := pgvalue.MustUUIDValue(created.ID)
 	queries := db.New(fixture.pool)
 
 	t.Run("mismatched cardinality", func(t *testing.T) {
@@ -479,10 +445,10 @@ func TestCreateDeploymentDefinitionsPostgresRejectsMalformedBatchesAtomically(t 
 	}
 }
 
-func deploymentFinalizeScaleDefinitions(count int) []finalizedDeploymentDefinition {
-	definitions := make([]finalizedDeploymentDefinition, count)
+func deploymentFinalizeScaleDefinitions(count int) []preparedDefinition {
+	definitions := make([]preparedDefinition, count)
 	for index := range definitions {
-		definitions[index] = finalizedDeploymentDefinition{
+		definitions[index] = preparedDefinition{
 			kind: "task", declaredID: fmt.Sprintf("task-%05d", index),
 			manifest: []byte(`{}`), manifestDigest: make([]byte, 32),
 		}
@@ -659,11 +625,12 @@ func (s *deploymentFinalizeTrackingStore) Get(context.Context, string) (io.ReadC
 
 type deploymentFinalizePostgresFixture struct {
 	pool          *pgxpool.Pool
-	server        *Server
+	queries       *db.Queries
+	txb           db.TxBeginner
 	orgID         uuid.UUID
 	projectID     pgtype.UUID
 	environmentID pgtype.UUID
-	prepared      finalizedDeploymentBundle
+	prepared      preparedBundle
 }
 
 func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgresFixture {
@@ -703,7 +670,7 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 		Digest:    "sha256:" + string(bytes.Repeat([]byte{'b'}, 64)),
 		SizeBytes: 4096, MediaType: artifact.ProgramArtifactMediaType,
 	}
-	prepared := finalizedDeploymentBundle{
+	prepared := preparedBundle{
 		root: cas.Descriptor{
 			Digest:    "sha256:" + string(bytes.Repeat([]byte{'a'}, 64)),
 			SizeBytes: 512, MediaType: bundle.MediaType,
@@ -721,8 +688,19 @@ func newDeploymentFinalizePostgresFixture(t *testing.T) deploymentFinalizePostgr
 		queueConfig: []byte(`{"formatVersion":0,"queues":[]}`),
 	}
 	return deploymentFinalizePostgresFixture{
-		pool: database.Pool, server: &Server{db: queries, tx: database.Pool},
+		pool: database.Pool, queries: queries, txb: database.Pool,
 		orgID: orgID, projectID: projectID, environmentID: environmentID, prepared: prepared,
+	}
+}
+
+func (f deploymentFinalizePostgresFixture) finalization(
+	environmentID pgtype.UUID,
+	prepared preparedBundle,
+	request idempotency.Request,
+) Finalization {
+	return Finalization{
+		orgID: f.orgID, projectID: f.projectID, environmentID: environmentID,
+		bundle: prepared, request: request,
 	}
 }
 

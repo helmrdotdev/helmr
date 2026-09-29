@@ -1,11 +1,9 @@
-package controlplane
+package deployment
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"sort"
 	"time"
 	"uuid"
@@ -15,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -27,99 +26,67 @@ type scheduleReconciliation struct {
 	record     db.ReconcileSchedulesRow
 }
 
-func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
-	deploymentID, err := parseUUIDParam(r, "deploymentID")
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
+// Promote makes a Deployment the environment's current one. In one
+// transaction it locks the environment row, reconciles the environment's
+// schedules and their Secret bindings to the Deployment's scheduled Tasks,
+// switches the current Deployment and records the promotion event; any
+// rejection rolls back the whole set. It returns the promoted Deployment.
+func Promote(ctx context.Context, txb db.TxBeginner, principal auth.Actor, scope auth.Scope, deploymentID uuid.UUID) (db.Deployment, error) {
+	if err := authorizeDeploy(principal, scope); err != nil {
+		return db.Deployment{}, err
 	}
-	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	projectID, environmentID, err := scopeIDs(scope)
 	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
+		return db.Deployment{}, err
 	}
 	effectiveFrom := time.Now().UTC()
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		target, err := work.q.LockDeploymentPromotionTarget(
-			r.Context(),
-			db.LockDeploymentPromotionTargetParams{
-				OrgID:         pgvalue.UUID(actor.OrgID),
-				ProjectID:     projectID,
-				EnvironmentID: environmentID,
-				DeploymentID:  pgvalue.UUID(deploymentID),
-			},
-		)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return notFound(errors.New("deployment not found or is not deployable"))
+	var promoted db.Deployment
+	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		q := db.New(tx)
+		target, err := q.LockDeploymentPromotionTarget(ctx, db.LockDeploymentPromotionTargetParams{
+			OrgID:         pgvalue.UUID(principal.OrgID),
+			ProjectID:     projectID,
+			EnvironmentID: environmentID,
+			DeploymentID:  pgvalue.UUID(deploymentID),
+		})
+		if isNoRows(err) {
+			return ErrNotDeployable
 		}
 		if err != nil {
 			return fmt.Errorf("lock deployment promotion target: %w", err)
 		}
-		if err := reconcileSchedules(
-			r.Context(),
-			work.q,
-			target,
-			effectiveFrom,
-		); err != nil {
+		if err := reconcileSchedules(ctx, q, target, effectiveFrom); err != nil {
 			return err
 		}
-		if err := work.q.PromoteDeployment(
-			r.Context(),
-			db.PromoteDeploymentParams{
-				OrgID:         target.OrgID,
-				ProjectID:     target.ProjectID,
-				EnvironmentID: target.EnvironmentID,
-				DeploymentID:  target.ID,
-			},
-		); err != nil {
+		if err := q.PromoteDeployment(ctx, db.PromoteDeploymentParams{
+			OrgID:         target.OrgID,
+			ProjectID:     target.ProjectID,
+			EnvironmentID: target.EnvironmentID,
+			DeploymentID:  target.ID,
+		}); err != nil {
 			return fmt.Errorf("promote deployment: %w", err)
 		}
-		if err := appendDeploymentLifecycleEvent(
-			r.Context(),
-			work.q,
-			target.OrgID,
-			target.ProjectID,
-			target.EnvironmentID,
-			target.ID,
-			"deployment.promoted",
-			"info",
-			"control",
-			"promoted",
-			"Deployment promoted",
+		if err := appendLifecycleEvent(
+			ctx, q, target, "deployment.promoted", "info", "control", "promoted", "Deployment promoted",
 		); err != nil {
 			return fmt.Errorf("record deployment promotion event: %w", err)
 		}
+		promoted = target
 		return nil
 	})
 	if err != nil {
-		writeDeploymentError(w, s, err)
-		return
+		return db.Deployment{}, err
 	}
-	record, err := s.db.GetDeployment(r.Context(), db.GetDeploymentParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(deploymentID),
-	})
-	if err != nil {
-		writeError(w, fmt.Errorf("get promoted deployment: %w", err))
-		return
-	}
-	writeJSON(w, http.StatusOK, deploymentResponse(record))
+	return promoted, nil
 }
 
 func reconcileSchedules(
 	ctx context.Context,
-	store db.Querier,
+	q db.Querier,
 	target db.Deployment,
 	effectiveFrom time.Time,
 ) error {
-	definitions, err := store.ListDeploymentDefinitionsForDeployment(
+	definitions, err := q.ListDeploymentDefinitionsForDeployment(
 		ctx,
 		db.ListDeploymentDefinitionsForDeploymentParams{
 			EnvironmentID: target.EnvironmentID,
@@ -164,7 +131,7 @@ func reconcileSchedules(
 	})
 	for index := 1; index < len(plans); index++ {
 		if plans[index-1].definition.DeclaredID == plans[index].definition.DeclaredID {
-			return badRequest(fmt.Errorf(
+			return invalidInput(fmt.Errorf(
 				"duplicate scheduled task %q",
 				plans[index].definition.DeclaredID,
 			))
@@ -182,7 +149,7 @@ func reconcileSchedules(
 	}
 	sort.Strings(secretNames)
 	if len(secretNames) > 0 {
-		secretRecords, err := store.LockActiveSecretsByNameForComputerCreate(
+		secretRecords, err := q.LockActiveSecretsByNameForComputerCreate(
 			ctx,
 			db.LockActiveSecretsByNameForComputerCreateParams{
 				EnvironmentID: target.EnvironmentID,
@@ -197,7 +164,7 @@ func reconcileSchedules(
 		}
 		for _, name := range secretNames {
 			if !secretIDs[name].Valid {
-				return badRequest(fmt.Errorf("scheduled Computer Secret %q is unavailable", name))
+				return invalidInput(fmt.Errorf("scheduled Computer Secret %q is unavailable", name))
 			}
 		}
 	}
@@ -226,7 +193,7 @@ func reconcileSchedules(
 			params.EffectiveFroms[index] = pgvalue.Timestamptz(effectiveFrom)
 			params.NextFireAts[index] = pgvalue.Timestamptz(plan.nextFireAt)
 		}
-		records, err := store.ReconcileSchedules(ctx, params)
+		records, err := q.ReconcileSchedules(ctx, params)
 		if err != nil {
 			return fmt.Errorf("reconcile schedules: %w", err)
 		}
@@ -247,7 +214,7 @@ func reconcileSchedules(
 		plan := &plans[i]
 		scheduledIDs = append(scheduledIDs, plan.definition.DeclaredID)
 	}
-	if err := store.ArchiveOmittedSchedules(
+	if err := q.ArchiveOmittedSchedules(
 		ctx,
 		db.ArchiveOmittedSchedulesParams{
 			EffectiveFrom:   pgvalue.Timestamptz(effectiveFrom),
@@ -287,10 +254,10 @@ func reconcileSchedules(
 			insertion.OriginsJson = append(insertion.OriginsJson, string(encoded))
 		}
 	}
-	if err := store.DeleteScheduleSecretsForSchedules(ctx, deletion); err != nil {
+	if err := q.DeleteScheduleSecretsForSchedules(ctx, deletion); err != nil {
 		return fmt.Errorf("delete schedule Secret selections: %w", err)
 	}
-	inserted, err := store.InsertScheduleSecrets(ctx, insertion)
+	inserted, err := q.InsertScheduleSecrets(ctx, insertion)
 	if err != nil {
 		return fmt.Errorf("insert schedule Secret selections: %w", err)
 	}
@@ -310,25 +277,25 @@ func prepareScheduleReconciliation(
 	effectiveFrom time.Time,
 ) (scheduleReconciliation, error) {
 	if err := definition.ValidateCron(manifest.Cron); err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q cron: %w", deploymentDefinition.DeclaredID, err))
+		return scheduleReconciliation{}, invalidInput(fmt.Errorf("schedule %q cron: %w", deploymentDefinition.DeclaredID, err))
 	}
 	if err := definition.ValidateTimezone(manifest.Timezone); err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q timezone: %w", deploymentDefinition.DeclaredID, err))
+		return scheduleReconciliation{}, invalidInput(fmt.Errorf("schedule %q timezone: %w", deploymentDefinition.DeclaredID, err))
 	}
 	if _, ok := sandboxes[manifest.Computer.SandboxDeclaredID]; !ok {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf(
+		return scheduleReconciliation{}, invalidInput(fmt.Errorf(
 			"schedule %q sandbox %q is absent from the deployment",
 			deploymentDefinition.DeclaredID,
 			manifest.Computer.SandboxDeclaredID,
 		))
 	}
-	placements, err := normalizeComputerSecretPlacements(manifest.Computer.Secrets)
+	placements, err := secretbinding.NormalizedPlacements(manifest.Computer.Secrets)
 	if err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q computer secrets: %w", deploymentDefinition.DeclaredID, err))
+		return scheduleReconciliation{}, invalidInput(fmt.Errorf("schedule %q computer secrets: %w", deploymentDefinition.DeclaredID, err))
 	}
 	next, err := definition.NextCronTime(manifest.Cron, manifest.Timezone, effectiveFrom)
 	if err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q next fire: %w", deploymentDefinition.DeclaredID, err))
+		return scheduleReconciliation{}, invalidInput(fmt.Errorf("schedule %q next fire: %w", deploymentDefinition.DeclaredID, err))
 	}
 	return scheduleReconciliation{
 		definition: deploymentDefinition,
@@ -336,4 +303,28 @@ func prepareScheduleReconciliation(
 		placements: placements,
 		nextFireAt: next,
 	}, nil
+}
+
+func appendLifecycleEvent(ctx context.Context, q db.Querier, target db.Deployment, kind string, severity string, source string, status string, message string) error {
+	payload, err := json.Marshal(map[string]string{"status": status})
+	if err != nil {
+		return err
+	}
+	if err := telemetry.ValidateEvent(message, payload); err != nil {
+		return err
+	}
+	_, err = q.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
+		OrgID:          target.OrgID,
+		ProjectID:      target.ProjectID,
+		EnvironmentID:  target.EnvironmentID,
+		DeploymentID:   target.ID,
+		Category:       "lifecycle",
+		Severity:       severity,
+		Source:         source,
+		Kind:           kind,
+		Message:        message,
+		Payload:        payload,
+		RedactionClass: "internal",
+	})
+	return err
 }
