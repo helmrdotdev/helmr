@@ -34,14 +34,9 @@ type ProgramInput struct {
 	ConfigPath       string
 	BundlePath       string
 	ProgramCompiler  string
-	SquashFSEncoder  string
 	Compiler         deployment.CompilerInputs
 	Runtime          deployment.RuntimeDescriptor
 	RuntimeMetadata  deployment.RuntimeMetadata
-}
-
-type ProgramAnalysis struct {
-	Plan deployment.BuildPlan
 }
 
 type PreparedProgramInput struct {
@@ -69,73 +64,69 @@ func PrepareProgram(
 	ctx context.Context,
 	input ProgramInput,
 	output string,
-) (_ ProgramAnalysis, returnErr error) {
+) (returnErr error) {
 	if ctx == nil {
-		return ProgramAnalysis{}, errors.New("program preparation context is nil")
+		return errors.New("program preparation context is nil")
 	}
 	if err := validateProgramInput(input); err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	if output == "" || !filepath.IsAbs(output) || filepath.Clean(output) != output {
-		return ProgramAnalysis{}, errors.New("prepared Program output must be an absolute clean path")
+		return errors.New("prepared Program output must be an absolute clean path")
 	}
 	if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
 		if err == nil {
-			return ProgramAnalysis{}, errors.New("prepared Program output already exists")
+			return errors.New("prepared Program output already exists")
 		}
-		return ProgramAnalysis{}, fmt.Errorf("inspect prepared Program output: %w", err)
+		return fmt.Errorf("inspect prepared Program output: %w", err)
 	}
 	work, err := os.MkdirTemp(input.WorkDirectory, ".helmr-program-")
 	if err != nil {
-		return ProgramAnalysis{}, fmt.Errorf("create Program preparation directory: %w", err)
+		return fmt.Errorf("create Program preparation directory: %w", err)
 	}
 	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(work)) }()
 	stage, err := os.MkdirTemp(filepath.Dir(output), ".helmr-prepared-program-")
 	if err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, os.RemoveAll(stage)) }()
 	compilerOutput := filepath.Join(stage, "compiler-output")
 	if err := os.Mkdir(compilerOutput, 0o700); err != nil {
-		return ProgramAnalysis{}, fmt.Errorf("create compiler output: %w", err)
+		return fmt.Errorf("create compiler output: %w", err)
 	}
 	config, verification, err := analyzePayload(ctx, input, work, compilerOutput)
 	if err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	configRaw, err := deployment.CanonicalBuildConfig(config)
 	if err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	verificationRaw, err := deployment.CanonicalVerificationResult(verification)
 	if err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	if err := writeExclusiveFile(filepath.Join(stage, "config.json"), configRaw); err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	if err := writeExclusiveFile(filepath.Join(stage, "verification.json"), verificationRaw); err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	if err := copyPayload(input.ProjectDirectory, filepath.Join(stage, "payload")); err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	planRaw := []byte(verification.Succeeded.Files[0].Content)
 	if err := writeExclusiveFile(filepath.Join(stage, "build-plan.json"), planRaw); err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	if _, _, err := readPreparedProgram(stage); err != nil {
-		return ProgramAnalysis{}, err
+		return err
 	}
 	if err := os.Rename(stage, output); err != nil {
-		return ProgramAnalysis{}, fmt.Errorf("publish prepared Program: %w", err)
+		return fmt.Errorf("publish prepared Program: %w", err)
 	}
 	stage = ""
-	plan, err := deployment.ParseBuildPlan([]byte(verification.Succeeded.Files[0].Content))
-	if err != nil {
-		return ProgramAnalysis{}, err
-	}
-	return ProgramAnalysis{Plan: plan}, nil
+	return nil
 }
 
 // BuildPreparedProgram assembles a Program from one installed-tree copy and
@@ -316,7 +307,6 @@ func validateProgramInput(input ProgramInput) error {
 		"resolved config":   input.ConfigPath,
 		"bundle manifest":   input.BundlePath,
 		"Program Compiler":  input.ProgramCompiler,
-		"SquashFS encoder":  input.SquashFSEncoder,
 	} {
 		if value == "" || !filepath.IsAbs(value) || filepath.Clean(value) != value {
 			return fmt.Errorf("%s must be an absolute clean path", name)

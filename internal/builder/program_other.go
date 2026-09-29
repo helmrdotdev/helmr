@@ -16,7 +16,6 @@ type ProgramInput struct {
 	ConfigPath       string
 	BundlePath       string
 	ProgramCompiler  string
-	SquashFSEncoder  string
 	Compiler         deployment.CompilerInputs
 	Runtime          deployment.RuntimeDescriptor
 	RuntimeMetadata  deployment.RuntimeMetadata
@@ -33,10 +32,6 @@ type PreparedProgramInput struct {
 	ComputerImages    []deployment.BundleComputerImage
 }
 
-type ProgramAnalysis struct {
-	Plan deployment.BuildPlan
-}
-
 type ProgramResult struct {
 	Program      deployment.ProgramOutput
 	Config       deployment.BuildConfig
@@ -44,8 +39,8 @@ type ProgramResult struct {
 	ObjectPath   string
 }
 
-func PrepareProgram(context.Context, ProgramInput, string) (ProgramAnalysis, error) {
-	return ProgramAnalysis{}, errors.New("canonical Program preparation requires linux/amd64 BuildKit")
+func PrepareProgram(context.Context, ProgramInput, string) error {
+	return errors.New("canonical Program preparation requires linux/amd64 BuildKit")
 }
 
 func BuildPreparedProgram(context.Context, PreparedProgramInput) (ProgramResult, error) {

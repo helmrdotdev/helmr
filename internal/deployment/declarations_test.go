@@ -2,7 +2,11 @@ package deployment
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 func TestDeclarationLocatorCanonicalRoundTrip(t *testing.T) {
@@ -71,17 +75,38 @@ func TestDeclarationLocatorRejectsOpenOrDivergentShapes(t *testing.T) {
 }
 
 func TestParseDeclarationLocatorRejectsUnknownAndNoncanonicalJSON(t *testing.T) {
-	for name, raw := range map[string][]byte{
-		"unknown": []byte(
-			`{"declarations":[{"declaredId":"build","exportName":"build","kind":"task","sourcePath":"build.js","unknown":true}],"formatVersion":0}`,
-		),
-		"noncanonical": []byte(
-			`{"formatVersion":0,"declarations":[{"declaredId":"build","exportName":"build","kind":"task","sourcePath":"build.js"}]}`,
-		),
+	valid, err := CanonicalDeclarationLocator(testDeclarationLocator())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseDeclarationLocator(valid); err != nil {
+		t.Fatal(err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(valid, &object); err != nil {
+		t.Fatal(err)
+	}
+	declarations := object["declarations"].([]any)
+	declarations[0].(map[string]any)["unknown"] = true
+	unknown, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unknown, err = jsoncanon.Transform(unknown)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		raw  []byte
+		want string
+	}{
+		"unknown":      {unknown, `unknown field "unknown"`},
+		"noncanonical": {append([]byte(" "), valid...), "not RFC 8785 canonical JSON"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := ParseDeclarationLocator(raw); err == nil {
-				t.Fatal("ParseDeclarationLocator returned nil error")
+			_, err := ParseDeclarationLocator(test.raw)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParseDeclarationLocator error = %v, want %q", err, test.want)
 			}
 		})
 	}
