@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -16,30 +15,26 @@ func (m ComputerMaterializer) releaseComputerCommand(ctx context.Context, sessio
 	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.OrgID != mount.OrgID || release.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("Command release does not match the Instance"))
 	}
-	conn, err := session.OpenStream(ctx)
-	if err != nil {
+	if err := (guestControl{machine: session}).releaseCommand(ctx, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
 		return err
 	}
-	defer conn.Close()
-	closed := make(chan struct{})
-	stopClose := context.AfterFunc(ctx, func() { defer close(closed); _ = conn.Close() })
-	defer func() {
-		if !stopClose() {
-			<-closed
-		}
-	}()
-	if err := wire.WriteStreamFrameHeader(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, 0); err != nil {
-		return err
-	}
-	if err := frameio.WriteProtoFrame(conn, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
-		return err
-	}
+	return client.ReconcileComputerCommand(ctx, r)
+}
+
+// releaseCommand asks the guest to release one completed Command. Cancellation
+// closes the stream at any step and returns only after that close has finished.
+func (g guestControl) releaseCommand(ctx context.Context, request *computerv0.ComputerCommandReleaseRequest) error {
 	var response computerv0.ComputerCommandReleaseResponse
-	if err := frameio.ReadProtoFrame(conn, &response); err != nil {
+	if err := g.exchange(ctx, guestControlExchange{
+		header:        wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: request.GetAuthority().GetOperationId()},
+		request:       request,
+		response:      &response,
+		closeOnCancel: guestControlCloseOnCancelAwait,
+	}); err != nil {
 		return err
 	}
 	if response.Error != "" || !response.Released {
 		return computerBasicExecProtocol(errors.New(response.Error))
 	}
-	return client.ReconcileComputerCommand(ctx, r)
+	return nil
 }

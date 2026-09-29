@@ -124,7 +124,7 @@ func (p *PreparedRuntimePool) restorePreparedRuntime(
 		identity.Runs = append(identity.Runs, &computerv0.CapturedRun{RunId: member.RunID, AttemptNumber: uint32(member.AttemptNumber), RunWaitId: member.RunWaitID, RunLeaseId: member.RunLeaseID, CorrelationId: member.CorrelationID})
 	}
 	verify := &computerv0.VerifyComputerRestoreRequest{Identity: identity}
-	if err := verifyRestoredComputerOnSession(ctx, session, verify); err != nil {
+	if err := (guestControl{machine: session}).verifyRestore(ctx, verify); err != nil {
 		return nil, errors.Join(fmt.Errorf("verify restored frozen Computer: %w", err), p.closeSession(ctx, session))
 	}
 

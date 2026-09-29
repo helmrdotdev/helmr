@@ -4,37 +4,35 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/frameio"
+
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"google.golang.org/protobuf/proto"
 )
 
-func verifyRestoredComputerOnSession(
+func (g guestControl) verifyRestore(
 	ctx context.Context,
-	session vm.Machine,
 	request *computerv0.VerifyComputerRestoreRequest,
 ) error {
-	if session == nil || request == nil || request.GetIdentity() == nil {
+	if g.machine == nil || request == nil || request.GetIdentity() == nil {
 		return errors.New("restored computer verification is required")
 	}
-	stream, err := session.OpenStream(ctx)
-	if err != nil {
-		return fmt.Errorf("open restored computer verification stream: %w", err)
-	}
-	defer stream.Close()
-	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
-		Type: wire.StreamTypeComputerRestoreVerify, ComputerID: request.GetIdentity().GetComputerId(),
-		CheckpointID: request.GetIdentity().GetCheckpointId(),
-	}, 0); err != nil {
-		return err
-	}
-	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return err
-	}
 	var response computerv0.VerifyComputerRestoreResponse
-	if err := readComputerControlResponse(ctx, stream, &response); err != nil {
+	if err := g.exchange(ctx, guestControlExchange{
+		header: wire.StreamHeader{
+			Type: wire.StreamTypeComputerRestoreVerify, ComputerID: request.GetIdentity().GetComputerId(),
+			CheckpointID: request.GetIdentity().GetCheckpointId(),
+		},
+		request:         request,
+		response:        &response,
+		readWithContext: true,
+		wrap: func(step guestControlStep, err error) error {
+			if step == guestControlOpen {
+				return fmt.Errorf("open restored computer verification stream: %w", err)
+			}
+			return err
+		},
+	}); err != nil {
 		return err
 	}
 	if !proto.Equal(response.GetIdentity(), request.GetIdentity()) {

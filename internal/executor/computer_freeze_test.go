@@ -104,7 +104,7 @@ func TestComputerFreezeVerifiesWholeGuestProof(t *testing.T) {
 				done <- frameio.WriteProtoFrame(server, response)
 			}()
 			session := &computerFreezeSession{stream: client}
-			point, err := freezeComputerOnSession(ctx, session, target)
+			point, err := guestControl{machine: session}.freeze(ctx, target)
 			wantError := test.change != nil && test.name != "reordered"
 			if (err != nil) != wantError {
 				t.Fatalf("freeze: %v", err)
@@ -166,7 +166,7 @@ func TestComputerFreezeCancellationClosesBlockedStreamOnly(t *testing.T) {
 			defer cancel()
 			session := &computerFreezeSession{stream: client}
 			done := make(chan error, 1)
-			go func() { _, err := freezeComputerOnSession(ctx, session, freezeTarget(0)); done <- err }()
+			go func() { _, err := guestControl{machine: session}.freeze(ctx, freezeTarget(0)); done <- err }()
 			if _, _, err := wire.ReadStreamFrameHeader(server); err != nil {
 				t.Fatal(err)
 			}

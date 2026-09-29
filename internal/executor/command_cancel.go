@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -16,26 +15,19 @@ func (m ComputerMaterializer) cancelComputerCommand(ctx context.Context, session
 	if request.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || request.RequestFingerprint == "" {
 		return computerBasicExecProtocol(errors.New("Command cancellation does not match the Instance"))
 	}
-	conn, err := session.OpenStream(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	closed := make(chan struct{})
-	stopClose := context.AfterFunc(ctx, func() { defer close(closed); _ = conn.Close() })
-	defer func() {
-		if !stopClose() {
-			<-closed
-		}
-	}()
-	if err := wire.WriteStreamFrameHeader(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, OperationID: r.CommandID}, 0); err != nil {
-		return err
-	}
-	if err := frameio.WriteProtoFrame(conn, &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: request.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), OperationExpiresAtUnixNano: request.ExpiresAt.UnixNano(), RequestFingerprint: request.RequestFingerprint}}); err != nil {
-		return err
-	}
+	return guestControl{machine: session}.cancelCommand(ctx, &computerv0.ComputerCommandCancelRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: request.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), OperationExpiresAtUnixNano: request.ExpiresAt.UnixNano(), RequestFingerprint: request.RequestFingerprint}})
+}
+
+// cancelCommand asks the guest to cancel one Command. Cancellation closes the
+// stream at any step and returns only after that close has finished.
+func (g guestControl) cancelCommand(ctx context.Context, request *computerv0.ComputerCommandCancelRequest) error {
 	var response computerv0.ComputerCommandCancelResponse
-	if err := frameio.ReadProtoFrame(conn, &response); err != nil {
+	if err := g.exchange(ctx, guestControlExchange{
+		header:        wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, OperationID: request.GetAuthority().GetOperationId()},
+		request:       request,
+		response:      &response,
+		closeOnCancel: guestControlCloseOnCancelAwait,
+	}); err != nil {
 		return err
 	}
 	if response.Error != "" || !response.Accepted {

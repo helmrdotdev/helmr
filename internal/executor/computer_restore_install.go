@@ -3,7 +3,6 @@ package executor
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -20,7 +19,8 @@ func activateRestoredComputerOnSession(ctx context.Context, session vm.Machine, 
 	if session == nil || control == nil || request == nil || request.Envelope == nil || request.CheckpointId == "" || request.DesiredVersion <= 0 {
 		return errors.New("complete restore installation and control plane are required")
 	}
-	if err := sendComputerRestoreInstallation(ctx, session, request, wire.StreamTypeComputerRestoreInstall); err != nil {
+	guest := guestControl{machine: session}
+	if err := guest.sendRestoreInstallation(ctx, request, wire.StreamTypeComputerRestoreInstall); err != nil {
 		return err
 	}
 	ack := workerapi.ComputerRestoreAckRequest{ComputerInstanceID: request.Envelope.ComputerInstanceId, CheckpointID: request.CheckpointId, DesiredVersion: request.DesiredVersion, WriterGeneration: int64(request.Envelope.WriterGeneration), Grants: make([]workerapi.ComputerRestoreGrant, 0, len(request.Grants))}
@@ -37,28 +37,23 @@ func activateRestoredComputerOnSession(ctx context.Context, session vm.Machine, 
 	if receipt.ComputerInstanceID != ack.ComputerInstanceID || receipt.CheckpointID != ack.CheckpointID || receipt.DesiredVersion != ack.DesiredVersion || receipt.WriterGeneration != ack.WriterGeneration {
 		return errors.New("restore acknowledgement changed installation identity")
 	}
-	return sendComputerRestoreInstallation(ctx, session, request, wire.StreamTypeComputerRestoreActivate)
+	return guest.sendRestoreInstallation(ctx, request, wire.StreamTypeComputerRestoreActivate)
 }
 
-func sendComputerRestoreInstallation(ctx context.Context, session vm.Machine, request *computerv0.ComputerRestoreInstallation, kind wire.StreamType) error {
+// sendRestoreInstallation delivers one installation phase. Cancellation closes
+// the phase stream at any step of the exchange.
+func (g guestControl) sendRestoreInstallation(ctx context.Context, request *computerv0.ComputerRestoreInstallation, kind wire.StreamType) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	stream, err := session.OpenStream(ctx)
-	if err != nil {
-		return err
-	}
-	defer stream.Close()
-	stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
-	defer stop()
-	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{Type: kind, ComputerID: request.Envelope.ComputerId, ComputerInstanceID: request.Envelope.ComputerInstanceId, CheckpointID: request.CheckpointId}, 0); err != nil {
-		return err
-	}
-	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return err
-	}
 	var response computerv0.ComputerRestoreInstallationResponse
-	if err := readComputerControlResponse(ctx, stream, &response); err != nil {
+	if err := g.exchange(ctx, guestControlExchange{
+		header:          wire.StreamHeader{Type: kind, ComputerID: request.Envelope.ComputerId, ComputerInstanceID: request.Envelope.ComputerInstanceId, CheckpointID: request.CheckpointId},
+		request:         request,
+		response:        &response,
+		closeOnCancel:   guestControlCloseOnCancelAsync,
+		readWithContext: true,
+	}); err != nil {
 		return err
 	}
 	if !proto.Equal(response.Installation, request) {

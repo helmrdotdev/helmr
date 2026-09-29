@@ -72,7 +72,7 @@ func TestRestoreVerificationChecksCompleteGuestResponse(t *testing.T) {
 				}
 				done <- frameio.WriteProtoFrame(server, &computerv0.VerifyComputerRestoreResponse{Identity: response})
 			}()
-			err := verifyRestoredComputerOnSession(ctx, restoreVerificationSession{client}, &computerv0.VerifyComputerRestoreRequest{Identity: identity})
+			err := guestControl{machine: restoreVerificationSession{client}}.verifyRestore(ctx, &computerv0.VerifyComputerRestoreRequest{Identity: identity})
 			if (err != nil) != (test.change != nil) {
 				t.Fatalf("verification: %v", err)
 			}

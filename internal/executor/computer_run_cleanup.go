@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -68,26 +67,19 @@ func (m ComputerMaterializer) cleanupComputerRun(ctx context.Context, session vm
 	if member.RunID == "" || member.RunLeaseID == "" || member.AttemptNumber == 0 {
 		return errors.New("incomplete Program cleanup identity")
 	}
-	conn, err := session.OpenStream(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	closed := make(chan struct{})
-	stopClose := context.AfterFunc(ctx, func() { defer close(closed); _ = conn.Close() })
-	defer func() {
-		if !stopClose() {
-			<-closed
-		}
-	}()
-	if err = wire.WriteStreamFrameHeader(conn, wire.StreamHeader{Type: wire.StreamTypeComputerRunCleanup, RunID: member.RunID}, 0); err != nil {
-		return err
-	}
-	if err = frameio.WriteProtoFrame(conn, &computerv0.ComputerRunCleanupRequest{ComputerId: mount.ComputerID, ComputerInstanceId: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ChannelToken: m.channelToken(mount), RunId: member.RunID, RunLeaseId: member.RunLeaseID, AttemptNumber: member.AttemptNumber}); err != nil {
-		return err
-	}
+	return guestControl{machine: session}.cleanupRun(ctx, &computerv0.ComputerRunCleanupRequest{ComputerId: mount.ComputerID, ComputerInstanceId: mount.ComputerInstanceID, WriterGeneration: mount.WriterGeneration, ChannelToken: m.channelToken(mount), RunId: member.RunID, RunLeaseId: member.RunLeaseID, AttemptNumber: member.AttemptNumber})
+}
+
+// cleanupRun asks the guest to prove cleanup of one Program run. Cancellation
+// closes the stream at any step and returns only after that close has finished.
+func (g guestControl) cleanupRun(ctx context.Context, request *computerv0.ComputerRunCleanupRequest) error {
 	var response computerv0.ComputerRunCleanupResponse
-	if err = frameio.ReadProtoFrame(conn, &response); err != nil {
+	if err := g.exchange(ctx, guestControlExchange{
+		header:        wire.StreamHeader{Type: wire.StreamTypeComputerRunCleanup, RunID: request.GetRunId()},
+		request:       request,
+		response:      &response,
+		closeOnCancel: guestControlCloseOnCancelAwait,
+	}); err != nil {
 		return err
 	}
 	if !response.Reconciled || response.Error != "" {
