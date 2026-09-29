@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -270,7 +270,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 			candidates, err := queries.ListStaleWorkerFenceCandidates(ctx, db.ListStaleWorkerFenceCandidatesParams{
 				WorkerGroupID:               scope.groupID,
 				RegistrationStaleBefore:     pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
-				ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+				ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 				RowLimit:                    f.batch,
 			})
 			if err != nil {
@@ -291,7 +291,7 @@ func (f *StaleWorkerFencer) ReconcileOnce(ctx context.Context) (StaleWorkerFence
 					WorkerGroupID:               candidate.WorkerGroupID,
 					ExpectedEpoch:               candidate.CurrentEpoch,
 					RegistrationStaleBefore:     pgtype.Timestamptz{Time: registrationStaleBefore, Valid: true},
-					ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+					ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 					ReasonCode:                  pgtype.Text{String: staleWorkerReasonCode, Valid: true},
 				})
 				switch {

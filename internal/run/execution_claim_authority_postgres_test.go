@@ -149,3 +149,51 @@ func TestExecutionClaimRejectsSessionGenerationChangedDuringLockWait(t *testing.
 		t.Fatalf("rejected claim changed lease: %v %v", untouched, err)
 	}
 }
+
+// Worker Run readiness (observation freshness and Run pause) gates claim and
+// start. Live members keep their execution authority on a paused or stale Worker.
+func TestExecutionWorkerReadinessGatesOnlyClaimAndStart(t *testing.T) {
+	for _, test := range []struct{ name, sql string }{
+		{"paused Worker", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`},
+		{"stale Worker", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, _, fence := executionClaimFixture(t)
+			const ready = `UPDATE worker_hosts SET run_paused_reason=NULL,observed_at=clock_timestamp() WHERE id=$1`
+			inTx := func(fn func(pgx.Tx) error) error {
+				tx, err := f.Pool.Begin(t.Context())
+				if err != nil {
+					return err
+				}
+				defer tx.Rollback(context.Background())
+				if err = fn(tx); err != nil {
+					return err
+				}
+				return tx.Commit(t.Context())
+			}
+			start := func(tx pgx.Tx) error { _, err := StartExecution(t.Context(), tx, fence); return err }
+			live := func(tx pgx.Tx) error { _, err := LockLiveExecution(t.Context(), tx, fence); return err }
+
+			dbtest.MustExec(t, t.Context(), f.Pool, test.sql, f.WorkerID)
+			if _, err := claimExecutionTest(t, f, fence, true); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("claim on unready Worker=%v", err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, ready, f.WorkerID)
+			if _, err := claimExecutionTest(t, f, fence, true); err != nil {
+				t.Fatal(err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, test.sql, f.WorkerID)
+			if err := inTx(start); !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("start on unready Worker=%v", err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, ready, f.WorkerID)
+			if err := inTx(start); err != nil {
+				t.Fatal(err)
+			}
+			dbtest.MustExec(t, t.Context(), f.Pool, test.sql, f.WorkerID)
+			if err := inTx(live); err != nil {
+				t.Fatalf("live member on unready Worker=%v", err)
+			}
+		})
+	}
+}

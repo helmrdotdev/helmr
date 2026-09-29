@@ -209,3 +209,9 @@ WHERE instance.id=sqlc.arg(computer_instance_id) AND instance.environment_id=sql
  AND checkpoint.status='creating' AND (checkpoint.expires_at IS NULL OR checkpoint.expires_at>clock_timestamp())
  AND worker.status IN ('active','draining') AND worker_group.status IN ('active','draining')
  AND worker.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second';
+
+-- Caller holds every capture lock; wall-clock deadlines are evaluated afterwards.
+-- name: GetComputerCaptureWorkerFresh :one
+SELECT (observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second'
+ AND (sqlc.narg(expires_at)::timestamptz IS NULL OR sqlc.narg(expires_at)>clock_timestamp()))::boolean AS fresh
+ FROM worker_hosts WHERE id=sqlc.arg(id);

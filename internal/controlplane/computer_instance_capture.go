@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func computerInstanceReconcileAction(row db.ListComputerInstanceReconcileTargetsRow) string {
@@ -30,7 +31,7 @@ func loadComputerInstanceCapture(ctx context.Context, store db.Querier, row db.L
 	cp, err := store.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{
 		ComputerInstanceID: row.ID, EnvironmentID: row.EnvironmentID, WorkerGroupID: row.WorkerGroupID,
 		WorkerHostID: row.WorkerHostID, WorkerEpoch: row.WorkerEpoch, DesiredVersion: row.DesiredVersion,
-		WorkerFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("load computer capture checkpoint: %w", err)

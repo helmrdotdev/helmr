@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -134,6 +135,46 @@ UPDATE worker_hosts
 	)
 	if err == nil {
 		t.Fatal("runtime-paused Worker remained eligible for Runtime admission")
+	}
+}
+
+func TestWorkerFenceRequiresRunReadyWorker(t *testing.T) {
+	for _, test := range []struct {
+		name, sql     string
+		allowDraining bool
+		eligible      bool
+	}{
+		{"ready", ``, false, true},
+		{"Run paused", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, false, false},
+		{"Run paused with draining allowed", `UPDATE worker_hosts SET run_paused_reason='startup_recovery_leak' WHERE id=$1`, true, false},
+		{"stale observation", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, false, false},
+		{"unobserved", `UPDATE worker_hosts SET observed_at=NULL WHERE id=$1`, false, false},
+		{"draining", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, false, false},
+		{"draining allowed", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp() WHERE id=$1`, true, true},
+		{"stale draining allowed", `UPDATE worker_hosts SET status='draining',draining_at=clock_timestamp(),observed_at=clock_timestamp()-interval '1 hour' WHERE id=$1`, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f, _, authority := commandPlacementFixture(t)
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.Pool, test.sql, f.WorkerID)
+			}
+			tx, err := authority.begin(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer rollback(context.Background(), tx)
+			err = lockWorkerFence(t.Context(), tx, workerFence{
+				GroupID: pgvalue.UUID(runtest.WorkerGroupID), RegionID: "us-east-1",
+				WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1,
+				RunArchitecture: runtimeArchitecture, AllowDraining: test.allowDraining,
+			})
+			if test.eligible && err != nil {
+				t.Fatalf("eligible Worker rejected: %v", err)
+			}
+			if !test.eligible && !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("ineligible Worker fence error = %v, want no rows", err)
+			}
+		})
 	}
 }
 

@@ -440,3 +440,11 @@ SELECT *
    AND worker_epoch = sqlc.arg(worker_epoch)
    AND computer_id = sqlc.arg(computer_id)
  FOR UPDATE;
+
+-- Caller holds every execution authority lock; time is evaluated afterwards.
+-- name: GetRunLeaseExecutionLive :one
+SELECT (l.expires_at>clock_timestamp() AND (l.status NOT IN ('assigned','starting') OR l.start_deadline_at>clock_timestamp())
+ AND i.writer_expires_at>clock_timestamp() AND (sqlc.arg(skip_worker_readiness)::boolean OR (h.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second'
+ AND h.run_paused_reason IS NULL)))::boolean AS live
+ FROM run_leases l JOIN computer_instances i ON i.id=l.computer_instance_id
+ JOIN worker_hosts h ON h.id=l.worker_host_id WHERE l.id=sqlc.arg(id);

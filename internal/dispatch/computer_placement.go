@@ -17,7 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -77,7 +77,7 @@ func discoverComputerPlacement(ctx context.Context, tx pgx.Tx, environmentID, co
 		return p, err
 	}
 	p.worker, err = db.New(tx).SelectComputerInstanceCapacity(ctx, db.SelectComputerInstanceCapacityParams{
-		RegionID: p.computer.RegionID, ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
+		RegionID: p.computer.RegionID, ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 		RunArchitecture: runtimeArchitecture, Contract: vmplatform.Contract,
 		RequiredCPUMillis: p.cpu, RequiredMemoryBytes: p.memory, RequiredGuestEphemeralDiskBytes: p.disk,
 		RequiredWorkerGroupID: p.checkpointGroup, RequiredVMPlatformID: p.platform, RequiredVMVCPUCount: p.vcpu, RequiredCPUConfigDigest: p.cpuDigest,

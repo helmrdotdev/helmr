@@ -217,3 +217,10 @@ UPDATE computer_instances AS i SET guest_channel_token_hash=sqlc.arg(token_hash)
 SELECT spec.seed_digest,spec.seed_size_bytes,spec.seed_media_type,platform.rootfs_digest,platform.contract
  FROM computer_specs spec JOIN computer_instances i ON i.computer_spec_id=spec.id AND i.environment_id=spec.environment_id
  JOIN vm_platforms platform ON platform.id=i.vm_platform_id WHERE i.id=sqlc.arg(id);
+
+-- Ready-Instance writer liveness for preparation readiness checks.
+-- name: GetComputerInstanceWriterLive :one
+SELECT (i.writer_expires_at>clock_timestamp()
+ AND (w.status='active' OR (sqlc.arg(allow_draining)::boolean AND w.status='draining')) AND w.current_epoch=i.worker_epoch
+ AND w.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second')::boolean AS writer_live
+ FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=sqlc.arg(id);

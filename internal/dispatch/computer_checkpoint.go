@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -63,9 +63,7 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
 		}
 	}
 	// Evaluate wall-clock deadlines only after the final potentially blocking lock.
-	var fresh bool
-	err = tx.QueryRow(ctx, `SELECT observed_at>=clock_timestamp()-$2*interval '1 second'
- AND ($3::timestamptz IS NULL OR $3>clock_timestamp()) FROM worker_hosts WHERE id=$1`, workerID, workerapi.WorkerObservationFreshnessSeconds, request.ExpiresAt).Scan(&fresh)
+	fresh, err := q.GetComputerCaptureWorkerFresh(ctx, db.GetComputerCaptureWorkerFreshParams{ID: workerID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, ExpiresAt: request.ExpiresAt})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}

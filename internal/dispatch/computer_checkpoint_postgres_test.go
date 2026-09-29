@@ -9,7 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 
 	"testing"
@@ -52,18 +52,27 @@ func TestComputerCaptureCompleteSet(t *testing.T) {
 }
 
 func TestComputerCaptureRejectsUnsafeSet(t *testing.T) {
-	for _, test := range []struct{ name, sql string }{
-		{"working peer", `UPDATE runs SET status='running' WHERE id=$1`},
-		{"expired grant", `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '2 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`},
-		{"ready condition", `UPDATE run_waits SET due_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`},
-		{"unentered peer", `UPDATE run_attempts SET entrypoint_entered_at=NULL WHERE run_id=$1`},
-		{"stale revision", `UPDATE runs SET revision=revision+1 WHERE id=$1`},
-		{"expired writer", `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE run_id=$1)`},
-		{"stale worker", `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=(SELECT worker_host_id FROM run_leases WHERE run_id=$1)`},
+	for _, test := range []struct {
+		name, sql      string
+		expiredRequest bool
+	}{
+		{name: "working peer", sql: `UPDATE runs SET status='running' WHERE id=$1`},
+		{name: "expired grant", sql: `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '2 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`},
+		{name: "ready condition", sql: `UPDATE run_waits SET due_at=clock_timestamp()-interval '1 second' WHERE run_id=$1`},
+		{name: "unentered peer", sql: `UPDATE run_attempts SET entrypoint_entered_at=NULL WHERE run_id=$1`},
+		{name: "stale revision", sql: `UPDATE runs SET revision=revision+1 WHERE id=$1`},
+		{name: "expired writer", sql: `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=(SELECT computer_instance_id FROM run_leases WHERE run_id=$1)`},
+		{name: "stale worker", sql: `UPDATE worker_hosts SET observed_at=clock_timestamp()-interval '1 hour' WHERE id=(SELECT worker_host_id FROM run_leases WHERE run_id=$1)`},
+		{name: "expired request deadline", expiredRequest: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f, _, peer, request := dispatchtest.Capture(t)
-			dbtest.MustExec(t, t.Context(), f.Pool, test.sql, peer.RunID)
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.Pool, test.sql, peer.RunID)
+			}
+			if test.expiredRequest {
+				request.ExpiresAt = pgvalue.Timestamptz(time.Now().Add(-time.Second))
+			}
 			tx, err := f.Pool.Begin(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -299,7 +308,7 @@ func TestComputerCaptureDiscoveryFences(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: request.ComputerInstanceID, EnvironmentID: request.EnvironmentID, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds}
+	params := db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: request.ComputerInstanceID, EnvironmentID: request.EnvironmentID, WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.WorkerID), WorkerEpoch: 1, DesiredVersion: request.DesiredVersion + 1, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}
 	if got, err := db.New(f.Pool).GetComputerInstanceCaptureCheckpoint(t.Context(), params); err != nil || got.ID != cp.ID {
 		t.Fatalf("capture discovery: %v %v", got, err)
 	}

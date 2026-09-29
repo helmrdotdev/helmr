@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -106,11 +106,8 @@ func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 	}
 	p := ComputerPreparation{OrgID: i.OrgID, ProjectID: i.ProjectID, EnvironmentID: environmentID, ComputerID: computerID, VersionID: root, WriterGeneration: i.WriterGeneration, LogicalBytes: i.ReservedGuestEphemeralDiskBytes, instance: i}
 	if readiness && i.ObservedState == "ready" {
-		var writerLive bool
-		if err = tx.QueryRow(ctx, `SELECT i.writer_expires_at>clock_timestamp()
- AND (w.status='active' OR ($3::boolean AND w.status='draining')) AND w.current_epoch=i.worker_epoch
- AND w.observed_at>=clock_timestamp()-$2*interval '1 second'
- FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$1`, i.ID, workerapi.WorkerObservationFreshnessSeconds, receipt && i.AdmissionState == "draining").Scan(&writerLive); err != nil {
+		writerLive, err := q.GetComputerInstanceWriterLive(ctx, db.GetComputerInstanceWriterLiveParams{ID: i.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, AllowDraining: receipt && i.AdmissionState == "draining"})
+		if err != nil {
 			return ComputerPreparation{}, err
 		}
 		if !writerLive {
@@ -125,13 +122,7 @@ func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 }
 
 func (p ComputerPreparation) CheckDeadlines(ctx context.Context, tx pgx.Tx) error {
-	var valid bool
-	err := tx.QueryRow(ctx, `SELECT i.preparation_expires_at>clock_timestamp() AND i.writer_expires_at>clock_timestamp()
- AND i.desired_state='ready' AND i.desired_version=$3 AND i.reclaimed_at IS NULL
- AND i.writer_generation=$4 AND i.observed_state='allocated'
- AND w.status='active' AND w.current_epoch=i.worker_epoch
- AND w.observed_at>=clock_timestamp()-$2*interval '1 second'
- FROM computer_instances i JOIN worker_hosts w ON w.id=i.worker_host_id WHERE i.id=$1`, p.instance.ID, workerapi.WorkerObservationFreshnessSeconds, p.instance.DesiredVersion, p.instance.WriterGeneration).Scan(&valid)
+	valid, err := db.New(tx).GetComputerPreparationDeadlinesValid(ctx, db.GetComputerPreparationDeadlinesValidParams{ID: p.instance.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, DesiredVersion: p.instance.DesiredVersion, WriterGeneration: p.instance.WriterGeneration})
 	if err != nil {
 		return err
 	}
