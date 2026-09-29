@@ -14,8 +14,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -396,7 +396,7 @@ func TestReconcileDesiredRuntimesBacksOffWhenCapacityIsFull(t *testing.T) {
 	connector := &blockingMaterializingConnector{started: make(chan string, 1)}
 	pool := NewPreparedRuntimePool(connector, store, 2, nil)
 	pool.TempDir = t.TempDir()
-	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
+	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
 	pool.ComputerInstances = &batchRuntimeClient{}
 	if err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("occupied", 7)); err != nil {
@@ -561,7 +561,7 @@ func TestPreparedRuntimeSourcePreservesComputerReservationAuthority(t *testing.T
 
 func TestPreparedRuntimeRejectsComputerArchitectureOutsideWorkerCertification(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-	pool.RuntimeArchitecture = deployment.ArchitectureX8664
+	pool.RuntimeArchitecture = definition.ArchitectureX8664
 	_, closeProgram, err := pool.prepareProgram(
 		context.Background(),
 		t.TempDir(),
@@ -580,17 +580,17 @@ func TestPreparedRuntimeRejectsComputerArchitectureOutsideWorkerCertification(t 
 func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("a", 64)
 	index := deployment.ProgramIndex{
-		Architecture:       deployment.ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: digest,
 		Declarations: []deployment.ProgramIndexDeclaration{{
-			Kind:       deployment.DefinitionKindTask,
+			Kind:       definition.KindTask,
 			DeclaredID: "task",
-			Task: &deployment.TaskManifest{
-				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
-				Run: deployment.RunManifest{
+			Task: &definition.TaskManifest{
+				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
+				Run: definition.RunManifest{
 					Queue:         "task/task",
 					MaxDurationMs: 900000,
-					Retry:         retry.Manifest{Enabled: false},
+					Retry:         definition.RetryManifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{
@@ -599,10 +599,10 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
-		Queues: []deployment.QueueInput{{
+		Queues: []definition.QueueInput{{
 			Name: "task/task",
 		}},
-		RuntimeContract: deployment.RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	}
 	canonical, err := deployment.CanonicalProgramIndex(index)

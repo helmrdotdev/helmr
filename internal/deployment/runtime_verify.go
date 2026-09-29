@@ -11,6 +11,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/safepath"
 )
 
@@ -188,7 +189,7 @@ func validateRuntimePath(entry artifactEntry, required map[string]uint32) error 
 func verifyRuntimeExecutables(
 	ctx context.Context,
 	artifact *inspectedArtifact,
-	architecture RuntimeArchitecture,
+	architecture definition.RuntimeArchitecture,
 ) error {
 	machine, loader, err := runtimeELFTarget(architecture)
 	if err != nil {
@@ -512,8 +513,8 @@ func resolveRuntimeDependency(
 	return "", errors.Join(failures...)
 }
 
-func runtimeELFTarget(architecture RuntimeArchitecture) (elf.Machine, string, error) {
-	if architecture == ArchitectureX8664 {
+func runtimeELFTarget(architecture definition.RuntimeArchitecture) (elf.Machine, string, error) {
+	if architecture == definition.ArchitectureX8664 {
 		return elf.EM_X86_64, runtimeMountPath + "/lib/ld-linux-x86-64.so.2", nil
 	}
 	return elf.EM_NONE, "", fmt.Errorf("runtime architecture %q is unsupported", architecture)

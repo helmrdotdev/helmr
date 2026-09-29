@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/executor"
 	"github.com/helmrdotdev/helmr/internal/firecracker"
@@ -148,7 +149,7 @@ func run(log *slog.Logger) error {
 	}
 	hostRuntimeEvidence := connector.HostRuntimeEvidence()
 	runtimeCapabilities := connector.RuntimeCapabilities()
-	runtimeArchitecture := deployment.RuntimeArchitecture(runtimeCapabilities.Arch)
+	runtimeArchitecture := definition.RuntimeArchitecture(runtimeCapabilities.Arch)
 	if err := deployment.ValidateRuntimeArchitecture(runtimeArchitecture); err != nil {
 		return fmt.Errorf("validate Firecracker runtime architecture: %w", err)
 	}

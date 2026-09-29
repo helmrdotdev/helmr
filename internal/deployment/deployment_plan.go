@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-)
 
-const DeploymentPlanFormatVersion = 0
+	"github.com/helmrdotdev/helmr/internal/definition"
+)
 
 // DeploymentPlan is the final scheduler and execution projection committed by
 // a deployment bundle. It contains no producer build instructions.
 type DeploymentPlan struct {
 	FormatVersion int                       `json:"formatVersion"`
 	Definitions   []ProgramIndexDeclaration `json:"definitions"`
-	Queues        []QueueInput              `json:"queues"`
+	Queues        []definition.QueueInput   `json:"queues"`
 }
 
 // DeploymentPlanFromProgramIndex derives the final scheduler projection from
@@ -24,12 +24,12 @@ func DeploymentPlanFromProgramIndex(index ProgramIndex) (DeploymentPlan, error) 
 		return DeploymentPlan{}, fmt.Errorf("deployment plan program index: %w", err)
 	}
 	plan := DeploymentPlan{
-		FormatVersion: DeploymentPlanFormatVersion,
+		FormatVersion: definition.DeploymentPlanFormatVersion,
 		Definitions:   make([]ProgramIndexDeclaration, len(index.Declarations)),
 		Queues:        cloneQueueInputs(index.Queues),
 	}
-	for position, definition := range index.Declarations {
-		plan.Definitions[position] = cloneProgramIndexDeclaration(definition)
+	for position, declaration := range index.Declarations {
+		plan.Definitions[position] = cloneProgramIndexDeclaration(declaration)
 	}
 	if err := ValidateDeploymentPlan(plan); err != nil {
 		return DeploymentPlan{}, err
@@ -38,29 +38,29 @@ func DeploymentPlanFromProgramIndex(index ProgramIndex) (DeploymentPlan, error) 
 }
 
 func ValidateDeploymentPlan(plan DeploymentPlan) error {
-	if plan.FormatVersion != DeploymentPlanFormatVersion {
+	if plan.FormatVersion != definition.DeploymentPlanFormatVersion {
 		return fmt.Errorf(
 			"deployment plan formatVersion = %d, want %d",
 			plan.FormatVersion,
-			DeploymentPlanFormatVersion,
+			definition.DeploymentPlanFormatVersion,
 		)
 	}
 	if len(plan.Definitions) == 0 {
 		return errors.New("deployment plan definitions must be a non-empty array")
 	}
-	if len(plan.Definitions) > maxBuildDefinitions {
-		return fmt.Errorf("deployment plan contains more than %d definitions", maxBuildDefinitions)
+	if len(plan.Definitions) > definition.MaxBuildDefinitions {
+		return fmt.Errorf("deployment plan contains more than %d definitions", definition.MaxBuildDefinitions)
 	}
 	if plan.Queues == nil {
 		return errors.New("deployment plan queues must be an array")
 	}
-	if len(plan.Queues) > maxBuildQueues {
-		return fmt.Errorf("deployment plan contains more than %d queues", maxBuildQueues)
+	if len(plan.Queues) > definition.MaxBuildQueues {
+		return fmt.Errorf("deployment plan contains more than %d queues", definition.MaxBuildQueues)
 	}
 
 	queues := make(map[string]struct{}, len(plan.Queues))
 	for position, queue := range plan.Queues {
-		if err := validateQueueInput(queue); err != nil {
+		if err := definition.ValidateQueueInput(queue); err != nil {
 			return fmt.Errorf("deployment plan queue %d: %w", position, err)
 		}
 		if position > 0 && bytes.Compare(
@@ -100,16 +100,16 @@ func validateProgramIndexDeployment(index ProgramIndex, plan DeploymentPlan) err
 		return errors.New("program index does not match deployment plan")
 	}
 	for position := range index.Queues {
-		left, err := CanonicalQueueConfig(QueueConfig{
-			FormatVersion: DeploymentPlanFormatVersion,
-			Queues:        []QueueInput{index.Queues[position]},
+		left, err := definition.CanonicalQueueConfig(definition.QueueConfig{
+			FormatVersion: definition.DeploymentPlanFormatVersion,
+			Queues:        []definition.QueueInput{index.Queues[position]},
 		})
 		if err != nil {
 			return err
 		}
-		right, err := CanonicalQueueConfig(QueueConfig{
-			FormatVersion: DeploymentPlanFormatVersion,
-			Queues:        []QueueInput{plan.Queues[position]},
+		right, err := definition.CanonicalQueueConfig(definition.QueueConfig{
+			FormatVersion: definition.DeploymentPlanFormatVersion,
+			Queues:        []definition.QueueInput{plan.Queues[position]},
 		})
 		if err != nil {
 			return err
@@ -136,9 +136,9 @@ func validateProgramIndexDeployment(index ProgramIndex, plan DeploymentPlan) err
 
 func deploymentPlanSandboxes(plan DeploymentPlan) []ProgramIndexDeclaration {
 	sandboxes := make([]ProgramIndexDeclaration, 0)
-	for _, definition := range plan.Definitions {
-		if definition.Kind == DefinitionKindSandbox {
-			sandboxes = append(sandboxes, cloneProgramIndexDeclaration(definition))
+	for _, declaration := range plan.Definitions {
+		if declaration.Kind == definition.KindSandbox {
+			sandboxes = append(sandboxes, cloneProgramIndexDeclaration(declaration))
 		}
 	}
 	return sandboxes

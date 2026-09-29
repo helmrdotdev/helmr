@@ -12,7 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -20,16 +20,16 @@ import (
 
 func initializingComputerSourceRow(t *testing.T) db.ListComputerInstanceReconcileTargetsRow {
 	t.Helper()
-	config, err := json.Marshal(deployment.ComputerConfig{
-		Architecture: deployment.ArchitectureX8664, RuntimeContract: deployment.RuntimeContract,
+	config, err := json.Marshal(definition.ComputerConfig{
+		Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract,
 		Profile:   computer.SeedProfile,
-		Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024},
+		Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024},
 		Image:     oci.RuntimeConfig{User: "1000", Env: []string{"HELLO=world"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec, err := deployment.ParseComputerSpec(config, cas.Descriptor{Digest: dbtest.Digest("seed"), SizeBytes: 1024, MediaType: computer.SeedMediaType})
+	spec, err := definition.ParseComputerSpec(config, cas.Descriptor{Digest: dbtest.Digest("seed"), SizeBytes: 1024, MediaType: computer.SeedMediaType})
 	if err != nil {
 		t.Fatal(err)
 	}

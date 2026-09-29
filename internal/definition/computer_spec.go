@@ -1,4 +1,4 @@
-package deployment
+package definition
 
 import (
 	"bytes"
@@ -14,7 +14,25 @@ import (
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
-const computerSpecDigestDomain = "helmr.computer-spec.v0\x00"
+const (
+	computerSpecDigestDomain = "helmr.computer-spec.v0\x00"
+
+	RuntimeContract             = "helmr.runtime.v0"
+	ArchitectureX8664           = RuntimeArchitecture("x86_64")
+	MaxComputerImageBytes int64 = 17179869184
+)
+
+type RuntimeArchitecture string
+
+// ComputerImage is the verified seed image a sandbox manifest is compiled against.
+type ComputerImage struct {
+	Profile      string
+	Config       oci.RuntimeConfig
+	Architecture RuntimeArchitecture
+	Digest       string
+	MediaType    string
+	SizeBytes    int64
+}
 
 // ComputerConfig contains the immutable launch requirements of a Computer.
 // Program content, deployment provenance and Secret bindings are separate owners.
@@ -36,7 +54,7 @@ type ComputerSpec struct {
 // CompileComputerSpec is shared by bundle compilation and admission. It does not
 // include the declaration's name: equal environments have equal identities even
 // when multiple declarations or deployments refer to them.
-func CompileComputerSpec(manifest SandboxManifest, image BundleComputerImageArtifact) (ComputerSpec, error) {
+func CompileComputerSpec(manifest SandboxManifest, image ComputerImage) (ComputerSpec, error) {
 	if manifest.Image.Profile != image.Profile ||
 		manifest.Image.ArtifactDigest != image.Digest ||
 		manifest.Image.MediaType != image.MediaType ||
@@ -80,8 +98,8 @@ func ParseComputerSpec(raw []byte, seed cas.Descriptor) (ComputerSpec, error) {
 	}
 	identity, err := json.Marshal(struct {
 		Config json.RawMessage `json:"config"`
-		Seed   BundleObject    `json:"seed"`
-	}{Config: canonical, Seed: BundleObject{Digest: seed.Digest, SizeBytes: seed.SizeBytes, MediaType: seed.MediaType}})
+		Seed   seedObject      `json:"seed"`
+	}{Config: canonical, Seed: seedObject{Digest: seed.Digest, SizeBytes: seed.SizeBytes, MediaType: seed.MediaType}})
 	if err != nil {
 		return ComputerSpec{}, err
 	}
@@ -108,7 +126,7 @@ func ParseComputerConfig(raw []byte) (ComputerConfig, error) {
 	if config.Architecture != ArchitectureX8664 || config.RuntimeContract != RuntimeContract || config.Profile != computer.SeedProfile {
 		return ComputerConfig{}, errors.New("unsupported computer launch contract")
 	}
-	if err := validateResourcesManifest(config.Resources); err != nil {
+	if err := ValidateResourcesManifest(config.Resources); err != nil {
 		return ComputerConfig{}, fmt.Errorf("computer resources: %w", err)
 	}
 	// Empty arrays and absent OCI defaults have the same launch meaning. Preserve
@@ -117,6 +135,12 @@ func ParseComputerConfig(raw []byte) (ComputerConfig, error) {
 	config.Image.Entrypoint = append([]string{}, config.Image.Entrypoint...)
 	config.Image.Cmd = append([]string{}, config.Image.Cmd...)
 	return config, nil
+}
+
+type seedObject struct {
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"sizeBytes"`
+	MediaType string `json:"mediaType"`
 }
 
 func equalImageConfig(left, right oci.RuntimeConfig) bool {

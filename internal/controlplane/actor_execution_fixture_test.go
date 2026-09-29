@@ -15,7 +15,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/session"
@@ -46,7 +46,7 @@ func actorExecutionOnFixture(t *testing.T, base runtest.Fixture, input json.RawM
 	work := base.AddRunLease(t, "assigned", time.Now())
 	sid := base.ConvertToActor(t, t.Context(), work, `{"enabled":false}`)
 	dbtest.MustExec(t, t.Context(), base.Pool, `UPDATE runs SET queue_concurrency_limit=8 WHERE id=$1`, work.RunID)
-	manifest, digest, err := deployment.CanonicalManifestAndDigest([]byte(`{"idleTimeoutMs":1000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
+	manifest, digest, err := definition.CanonicalManifestAndDigest([]byte(`{"idleTimeoutMs":1000,"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}

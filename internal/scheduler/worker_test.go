@@ -10,8 +10,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -131,7 +131,7 @@ func scheduleAt(at time.Time) db.Schedule {
 		EnvironmentID:        pgvalue.UUID(uuid.NewV7()),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
-		CronSemanticsVersion: schedule.CronSemanticsVersion,
+		CronSemanticsVersion: definition.CronSemanticsVersion,
 		Generation:           3,
 		NextFireAt:           pgvalue.TimestamptzUTCZeroInvalid(at),
 		ClaimedBy:            pgvalue.Text("worker"),

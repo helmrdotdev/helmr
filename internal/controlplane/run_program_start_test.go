@@ -7,7 +7,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
@@ -15,12 +15,12 @@ import (
 )
 
 func TestEncodeProgramStartPreservesTaskPayloadPresence(t *testing.T) {
-	run, attempt, definition := validTaskProgramStart(t, deployment.SchemaKindNone)
-	first, err := encodeProgramStart(run, attempt, nil, definition, "v42")
+	run, attempt, deploymentDefinition := validTaskProgramStart(t, definition.SchemaKindNone)
+	first, err := encodeProgramStart(run, attempt, nil, deploymentDefinition, "v42")
 	if err != nil {
 		t.Fatalf("encodeProgramStart: %v", err)
 	}
-	second, err := encodeProgramStart(run, attempt, nil, definition, "v42")
+	second, err := encodeProgramStart(run, attempt, nil, deploymentDefinition, "v42")
 	if err != nil {
 		t.Fatalf("encodeProgramStart replay: %v", err)
 	}
@@ -35,9 +35,9 @@ func TestEncodeProgramStartPreservesTaskPayloadPresence(t *testing.T) {
 		t.Fatal("payload-free Task was not encoded as no_payload")
 	}
 
-	run, attempt, definition = validTaskProgramStart(t, deployment.SchemaKindStandard)
+	run, attempt, deploymentDefinition = validTaskProgramStart(t, definition.SchemaKindStandard)
 	run.Payload = []byte("null")
-	body, err := encodeProgramStart(run, attempt, nil, definition, "v42")
+	body, err := encodeProgramStart(run, attempt, nil, deploymentDefinition, "v42")
 	if err != nil {
 		t.Fatalf("encodeProgramStart JSON null: %v", err)
 	}
@@ -50,13 +50,13 @@ func TestEncodeProgramStartPreservesTaskPayloadPresence(t *testing.T) {
 	}
 
 	run.Payload = nil
-	if _, err := encodeProgramStart(run, attempt, nil, definition, "v42"); err == nil {
+	if _, err := encodeProgramStart(run, attempt, nil, deploymentDefinition, "v42"); err == nil {
 		t.Fatal("payload Task accepted absent payload")
 	}
 }
 
 func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
-	run, attempt, definition := validTaskProgramStart(t, deployment.SchemaKindNone)
+	run, attempt, deploymentDefinition := validTaskProgramStart(t, definition.SchemaKindNone)
 	actorID := pgvalue.UUID(uuid.New())
 	run.EntrypointKind = "actor"
 	run.EntrypointDeclaredID = "reviewer"
@@ -66,8 +66,8 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 	run.SessionInputHighWatermark = pgtype.Int8{Int64: 7, Valid: true}
 	attempt.EntrypointKind = "actor"
 	attempt.SessionInputStartSequence = pgtype.Int8{Int64: 5, Valid: true}
-	definition.Kind = "actor"
-	definition.DeclaredID = "reviewer"
+	deploymentDefinition.Kind = "actor"
+	deploymentDefinition.DeclaredID = "reviewer"
 	key := "repository-17"
 	actor := db.Session{
 		ID:                     actorID,
@@ -78,7 +78,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 		ComputerID:             run.ComputerID,
 		Key:                    pgtype.Text{String: key, Valid: true},
 	}
-	body, err := encodeProgramStart(run, attempt, &actor, definition, "v42")
+	body, err := encodeProgramStart(run, attempt, &actor, deploymentDefinition, "v42")
 	if err != nil {
 		t.Fatalf("encodeProgramStart Actor: %v", err)
 	}
@@ -95,14 +95,14 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 		t.Fatalf("unexpected Actor Program-start: %v", &message)
 	}
 
-	run, attempt, definition = validTaskProgramStart(t, deployment.SchemaKindNone)
+	run, attempt, deploymentDefinition = validTaskProgramStart(t, definition.SchemaKindNone)
 	run.CauseKind = "schedule"
 	run.ScheduleID = pgvalue.UUID(uuid.New())
 	run.ScheduleGeneration = pgtype.Int8{Int64: 3, Valid: true}
 	run.ScheduledAt = pgtype.Timestamptz{Time: time.UnixMilli(1700000000000), Valid: true}
 	run.PreviousScheduledAt = pgtype.Timestamptz{Time: time.UnixMilli(1699996400000), Valid: true}
 	run.ScheduleTimezone = pgtype.Text{String: "Asia/Tokyo", Valid: true}
-	body, err = encodeProgramStart(run, attempt, nil, definition, "v42")
+	body, err = encodeProgramStart(run, attempt, nil, deploymentDefinition, "v42")
 	if err != nil {
 		t.Fatalf("encodeProgramStart schedule: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestEncodeProgramStartActorAndScheduleCause(t *testing.T) {
 
 func validTaskProgramStart(
 	t *testing.T,
-	payloadKind deployment.SchemaKind,
+	payloadKind definition.SchemaKind,
 ) (db.Run, db.RunAttempt, db.DeploymentDefinition) {
 	t.Helper()
 	runID := pgvalue.UUID(uuid.New())
@@ -130,7 +130,7 @@ func validTaskProgramStart(
 	computerID := pgvalue.UUID(uuid.New())
 	versionID := pgvalue.UUID(uuid.New())
 	raw := []byte(`{"payload":{"kind":"` + string(payloadKind) + `"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
-	_, digest, err := deployment.CanonicalManifestAndDigest(raw)
+	_, digest, err := definition.CanonicalManifestAndDigest(raw)
 	if err != nil {
 		t.Fatalf("CanonicalManifestAndDigest: %v", err)
 	}
@@ -153,15 +153,15 @@ func validTaskProgramStart(
 		ComputerID:                computerID,
 		BaseComputerDiskVersionID: versionID,
 	}
-	definition := db.DeploymentDefinition{
+	deploymentDefinition := db.DeploymentDefinition{
 		ID:              definitionID,
 		EnvironmentID:   environmentID,
 		DeploymentID:    deploymentID,
 		Kind:            "task",
 		DeclaredID:      "compile",
-		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+		ManifestVersion: definition.DeploymentPlanFormatVersion,
 		Manifest:        raw,
 		ManifestDigest:  digest[:],
 	}
-	return run, attempt, definition
+	return run, attempt, deploymentDefinition
 }

@@ -64,9 +64,9 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 		"./cmd/worker",
 		"./internal/builder",
 		"./internal/capacity",
+		"./internal/definition",
 		"./internal/deployment",
 		"./internal/hostconfig",
-		"./internal/schedule",
 	}
 	for _, goos := range []string{"linux", "darwin"} {
 		for _, pkg := range packages {

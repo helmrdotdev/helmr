@@ -13,7 +13,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -491,7 +491,7 @@ func TestComputerCommandItemRejectsMalformedSandboxDemand(t *testing.T) {
 	}
 	item = computerCommandItem(db.ListPendingComputerCommandCapacityCandidatesRow{
 		ComputerID:     plannerTestUUID(49),
-		ComputerConfig: bytes.Replace(plannerComputerConfig(), []byte(deployment.RuntimeContract), []byte("unknown-contract"), 1),
+		ComputerConfig: bytes.Replace(plannerComputerConfig(), []byte(definition.RuntimeContract), []byte("unknown-contract"), 1),
 	})
 	if item.reason != reasonInvalidWorkload {
 		t.Fatalf("unsupported-contract reason = %q, want %q", item.reason, reasonInvalidWorkload)
@@ -862,7 +862,7 @@ func plannerRunResources() ResourceVector {
 }
 
 func plannerComputerConfig() []byte {
-	result, err := json.Marshal(deployment.ComputerConfig{Architecture: deployment.ArchitectureX8664, RuntimeContract: deployment.RuntimeContract, Profile: computer.SeedProfile, Resources: deployment.ResourcesManifest{
+	result, err := json.Marshal(definition.ComputerConfig{Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, Profile: computer.SeedProfile, Resources: definition.ResourcesManifest{
 		MilliCPU: 1000, MemoryMiB: 1024,
 	}})
 	if err != nil {

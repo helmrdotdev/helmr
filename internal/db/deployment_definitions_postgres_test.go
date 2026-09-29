@@ -10,7 +10,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestDeploymentDefinitionManifestJSONBRoundTrip(t *testing.T) {
@@ -19,7 +19,7 @@ func TestDeploymentDefinitionManifestJSONBRoundTrip(t *testing.T) {
 	ids := seedPostgres(t, ctx, pool)
 	fixture := loadDefinitionContractFixture(t)
 
-	canonical, digest, err := deployment.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
+	canonical, digest, err := definition.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestDeploymentDefinitionManifestJSONBRoundTrip(t *testing.T) {
 	`, definitionID).Scan(&storedJSON, &storedDigest); err != nil {
 		t.Fatal(err)
 	}
-	recanonical, redigest, err := deployment.CanonicalManifestAndDigest(storedJSON)
+	recanonical, redigest, err := definition.CanonicalManifestAndDigest(storedJSON)
 	if err != nil {
 		t.Fatal(err)
 	}

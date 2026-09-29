@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
@@ -81,7 +82,7 @@ type PreparedRuntimePool struct {
 	AdmitRuntimeStart     func(context.Context) error
 	Capacity              *capacity.Ledger
 	PlatformStore         cas.Reader
-	RuntimeArchitecture   deployment.RuntimeArchitecture
+	RuntimeArchitecture   definition.RuntimeArchitecture
 	VerifierCgroupRoot    string
 
 	computerDevices   map[preparedRuntimeRef]vm.ComputerDevice
@@ -962,7 +963,7 @@ func (p *PreparedRuntimePool) prepareProgram(
 		Digest:          program.Runtime.Digest,
 		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
 		MediaType:       program.Runtime.MediaType,
-		RuntimeContract: deployment.RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       program.Runtime.SizeBytes,
 	}
 	runtimeSnapshot, err := deployment.SnapshotRuntimeObject(

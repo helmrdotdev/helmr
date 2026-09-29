@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -238,7 +239,7 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	}
 	program.Index.RuntimeDigest = "sha256:" + strings.Repeat("f", 64)
 	plan := DeploymentPlan{
-		FormatVersion: DeploymentPlanFormatVersion,
+		FormatVersion: definition.DeploymentPlanFormatVersion,
 		Definitions:   append([]ProgramIndexDeclaration(nil), program.Index.Declarations...),
 		Queues:        cloneQueueInputs(program.Index.Queues),
 	}
@@ -246,7 +247,7 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 		DeclaredID: "repo",
 		Artifact: BundleComputerImageArtifact{
 			Profile:      computer.SeedProfile,
-			Architecture: ArchitectureX8664,
+			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("d", 64),
 			MediaType:    ComputerImageArtifactMediaType,
 			SizeBytes:    4096,
@@ -255,12 +256,12 @@ func testDeploymentBundle(t *testing.T) DeploymentBundle {
 	bundle := DeploymentBundle{
 		Contract: DeploymentBundleContract,
 		Platform: DeploymentBundlePlatform{
-			Architecture: ArchitectureX8664,
+			Architecture: definition.ArchitectureX8664,
 			OS:           DeploymentBundleTargetOS,
 		},
 		Plan: plan,
 		Runtime: DeploymentBundleRuntime{
-			Contract: RuntimeContract,
+			Contract: definition.RuntimeContract,
 			Artifact: BundleObject{
 				Digest:    "sha256:" + strings.Repeat("f", 64),
 				SizeBytes: 4096,

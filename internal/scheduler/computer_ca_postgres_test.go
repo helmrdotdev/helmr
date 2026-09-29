@@ -5,13 +5,13 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,7 +30,7 @@ type caScheduleAuthority struct {
 	placements []computer.SecretPlacement
 }
 
-func (a caScheduleAuthority) ResolveScheduledTask(v int32, id string, manifest, digest, queues []byte) (deployment.ScheduledTaskAdmission, error) {
+func (a caScheduleAuthority) ResolveScheduledTask(v int32, id string, manifest, digest, queues []byte) (definition.ScheduledTaskAdmission, error) {
 	task, err := a.fixedAuthority.ResolveScheduledTask(v, id, manifest, digest, queues)
 	task.SecretPlacements = a.placements
 	return task, err

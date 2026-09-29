@@ -4,19 +4,19 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/retry"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
 	ttl := int64(100)
 	attempts := int64(3)
 	limit := int64(2)
-	run := RunManifest{TTLMs: &ttl, Retry: retry.Manifest{MaxAttempts: &attempts, Backoff: &retry.Backoff{}}}
+	run := definition.RunManifest{TTLMs: &ttl, Retry: definition.RetryManifest{MaxAttempts: &attempts, Backoff: &definition.RetryBackoff{}}}
 	index := ProgramIndex{Declarations: []ProgramIndexDeclaration{
-		{Task: &TaskManifest{Run: run, Schedule: &ScheduleManifest{Computer: ScheduleComputerManifest{Secrets: []api.ComputerSecret{{Name: "original"}}}}}, Locator: &ProgramLocator{ExportName: "original"}},
-		{Actor: &ActorManifest{Run: run}},
-		{Sandbox: &SandboxManifest{}},
-	}, Queues: []QueueInput{{Name: "original", ConcurrencyLimit: &limit}}}
+		{Task: &definition.TaskManifest{Run: run, Schedule: &definition.ScheduleManifest{Computer: definition.ScheduleComputerManifest{Secrets: []api.ComputerSecret{{Name: "original"}}}}}, Locator: &ProgramLocator{ExportName: "original"}},
+		{Actor: &definition.ActorManifest{Run: run}},
+		{Sandbox: &definition.SandboxManifest{}},
+	}, Queues: []definition.QueueInput{{Name: "original", ConcurrencyLimit: &limit}}}
 	clone := index.Clone()
 	*clone.Declarations[0].Task.Run.TTLMs = 200
 	*clone.Declarations[0].Task.Run.Retry.MaxAttempts = 9
@@ -29,7 +29,7 @@ func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
 	clone.Declarations[2].Sandbox.Resources.MemoryMiB = 999
 	*clone.Queues[0].ConcurrencyLimit = 99
 	clone.Queues[0].Name = "changed"
-	for _, original := range []RunManifest{index.Declarations[0].Task.Run, index.Declarations[1].Actor.Run} {
+	for _, original := range []definition.RunManifest{index.Declarations[0].Task.Run, index.Declarations[1].Actor.Run} {
 		if *original.TTLMs != 100 || *original.Retry.MaxAttempts != 3 || original.Retry.Backoff.MinMs != 0 {
 			t.Errorf("clone mutation changed source Run: ttl=%d attempts=%d backoff=%d", *original.TTLMs, *original.Retry.MaxAttempts, original.Retry.Backoff.MinMs)
 		}
@@ -40,7 +40,7 @@ func TestProgramIndexCloneOwnsNestedValues(t *testing.T) {
 		*index.Queues[0].ConcurrencyLimit != 2 || index.Queues[0].Name != "original" {
 		t.Error("clone mutation changed source schedule, locator, sandbox or queue")
 	}
-	if got := (ProgramIndex{Declarations: []ProgramIndexDeclaration{}, Queues: []QueueInput{}}).Clone(); got.Declarations == nil || got.Queues == nil {
+	if got := (ProgramIndex{Declarations: []ProgramIndexDeclaration{}, Queues: []definition.QueueInput{}}).Clone(); got.Declarations == nil || got.Queues == nil {
 		t.Fatal("clone lost canonical empty arrays")
 	}
 }

@@ -12,9 +12,9 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -59,7 +59,7 @@ func TestChildRequestRejectsExplicitNullRetryPolicy(t *testing.T) {
 	}`), &request); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := retry.Parse(request.RetryPolicy); err == nil {
+	if _, err := definition.ParseRetry(request.RetryPolicy); err == nil {
 		t.Fatal("explicit null retry policy was accepted")
 	}
 }

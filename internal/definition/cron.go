@@ -1,4 +1,4 @@
-package schedule
+package definition
 
 import (
 	_ "embed"

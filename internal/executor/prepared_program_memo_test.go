@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -21,7 +21,7 @@ func TestPreparedProgramMemoDescriptorAndOwnership(t *testing.T) {
 	pool := &PreparedRuntimePool{}
 	descriptor := deployment.ProgramDescriptor{Digest: "sha256:one", SizeBytes: 42, MediaType: deployment.ProgramArtifactMediaType}
 	limit := int64(3)
-	index := deployment.ProgramIndex{Queues: []deployment.QueueInput{{Name: "queue", ConcurrencyLimit: &limit}}, Declarations: []deployment.ProgramIndexDeclaration{{Locator: &deployment.ProgramLocator{ExportName: "original"}}}}
+	index := deployment.ProgramIndex{Queues: []definition.QueueInput{{Name: "queue", ConcurrencyLimit: &limit}}, Declarations: []deployment.ProgramIndexDeclaration{{Locator: &deployment.ProgramLocator{ExportName: "original"}}}}
 	calls := 0
 	verify := func() (deployment.ProgramIndex, error) { calls++; return index, nil }
 	first, err := pool.verifyProgram(t.Context(), descriptor, verify)
@@ -114,7 +114,7 @@ func TestPreparedProgramMemoConcurrentMisses(t *testing.T) {
 			got, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) {
 				entered <- struct{}{}
 				<-release
-				return deployment.ProgramIndex{Queues: []deployment.QueueInput{{Name: "original"}}}, nil
+				return deployment.ProgramIndex{Queues: []definition.QueueInput{{Name: "original"}}}, nil
 			})
 			if err != nil {
 				t.Error(err)
@@ -158,17 +158,17 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	}
 	digest := "sha256:" + strings.Repeat("a", 64)
 	index := deployment.ProgramIndex{
-		Architecture:       deployment.ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: digest,
 		Declarations: []deployment.ProgramIndexDeclaration{{
-			Kind:       deployment.DefinitionKindTask,
+			Kind:       definition.KindTask,
 			DeclaredID: "task",
-			Task: &deployment.TaskManifest{
-				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
-				Run: deployment.RunManifest{
+			Task: &definition.TaskManifest{
+				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
+				Run: definition.RunManifest{
 					Queue:         "task/task",
 					MaxDurationMs: 900000,
-					Retry:         retry.Manifest{Enabled: false},
+					Retry:         definition.RetryManifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{
@@ -177,10 +177,10 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
-		Queues: []deployment.QueueInput{{
+		Queues: []definition.QueueInput{{
 			Name: "task/task",
 		}},
-		RuntimeContract: deployment.RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	}
 
@@ -192,15 +192,15 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeDescriptor := deployment.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: deployment.ArchitectureX8664, RuntimeContract: deployment.RuntimeContract, FormatVersion: deployment.RuntimeDescriptorFormatVersion}
+	runtimeDescriptor := deployment.RuntimeDescriptor{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType, Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, FormatVersion: deployment.RuntimeDescriptorFormatVersion}
 	descriptor := deployment.ProgramDescriptor{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}
-	pool := &PreparedRuntimePool{CAS: store, PlatformStore: store, RuntimeArchitecture: deployment.ArchitectureX8664, verifiedRuntimes: map[deployment.RuntimeDescriptor]deployment.RuntimeIndex{runtimeDescriptor: {Architecture: deployment.ArchitectureX8664, RuntimeContract: deployment.RuntimeContract}}}
+	pool := &PreparedRuntimePool{CAS: store, PlatformStore: store, RuntimeArchitecture: definition.ArchitectureX8664, verifiedRuntimes: map[deployment.RuntimeDescriptor]deployment.RuntimeIndex{runtimeDescriptor: {Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract}}}
 	// Inject only the isolated verifier result; exercise real snapshots and the
 	// production prepareProgram authority path on every hit.
 	if _, err := pool.verifyProgram(t.Context(), descriptor, func() (deployment.ProgramIndex, error) { return index, nil }); err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: "memo-test", Source: workerapi.RuntimeSource{ComputerArchitecture: string(deployment.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
+	target := workerapi.RuntimeReconcileTarget{ID: "memo-test", Source: workerapi.RuntimeSource{ComputerArchitecture: string(definition.ArchitectureX8664), Program: &workerapi.RuntimeProgram{DeploymentID: "deployment", Runtime: workerapi.CASObject{Digest: runtimeObject.Digest, SizeBytes: runtimeObject.SizeBytes, MediaType: runtimeObject.MediaType}, Artifact: workerapi.CASObject{Digest: programObject.Digest, SizeBytes: programObject.SizeBytes, MediaType: programObject.MediaType}, IndexDigest: sha256sum.DigestBytes(canonical)}}}
 	run := func(want string) {
 		t.Helper()
 		dir := t.TempDir()
@@ -243,8 +243,8 @@ func TestPreparedProgramMemoHitPreservesSnapshotAndTargetAuthority(t *testing.T)
 	target.Source.Program.DeploymentID = "deployment"
 	target.Source.ComputerArchitecture = "aarch64"
 	run("computer architecture")
-	target.Source.ComputerArchitecture = string(deployment.ArchitectureX8664)
-	for _, bad := range []deployment.ProgramIndex{{Architecture: deployment.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: deployment.RuntimeArchitecture("aarch64"), RuntimeContract: deployment.RuntimeContract}} {
+	target.Source.ComputerArchitecture = string(definition.ArchitectureX8664)
+	for _, bad := range []deployment.ProgramIndex{{Architecture: definition.ArchitectureX8664, RuntimeContract: "wrong"}, {Architecture: definition.RuntimeArchitecture("aarch64"), RuntimeContract: definition.RuntimeContract}} {
 		pool.mu.Lock()
 		pool.programIndex = &bad
 		pool.mu.Unlock()

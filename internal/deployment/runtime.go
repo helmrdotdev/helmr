@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	productversion "github.com/helmrdotdev/helmr/internal/version"
@@ -27,26 +28,26 @@ const (
 )
 
 type RuntimeIndex struct {
-	Architecture    RuntimeArchitecture `json:"architecture"`
-	RuntimeContract string              `json:"runtimeContract"`
+	Architecture    definition.RuntimeArchitecture `json:"architecture"`
+	RuntimeContract string                         `json:"runtimeContract"`
 }
 
 type RuntimeDescriptor struct {
-	Architecture    RuntimeArchitecture `json:"architecture"`
-	Digest          string              `json:"digest"`
-	FormatVersion   int                 `json:"formatVersion"`
-	MediaType       string              `json:"mediaType"`
-	RuntimeContract string              `json:"runtimeContract"`
-	SizeBytes       int64               `json:"sizeBytes"`
+	Architecture    definition.RuntimeArchitecture `json:"architecture"`
+	Digest          string                         `json:"digest"`
+	FormatVersion   int                            `json:"formatVersion"`
+	MediaType       string                         `json:"mediaType"`
+	RuntimeContract string                         `json:"runtimeContract"`
+	SizeBytes       int64                          `json:"sizeBytes"`
 }
 
 type RuntimeMetadata struct {
-	ModulePolicyDigest string              `json:"modulePolicyDigest"`
-	Architecture       RuntimeArchitecture `json:"architecture"`
-	FormatVersion      int                 `json:"formatVersion"`
-	NodeVersion        string              `json:"nodeVersion"`
-	ProgramNodeFlags   []string            `json:"programNodeFlags"`
-	RuntimeContract    string              `json:"runtimeContract"`
+	ModulePolicyDigest string                         `json:"modulePolicyDigest"`
+	Architecture       definition.RuntimeArchitecture `json:"architecture"`
+	FormatVersion      int                            `json:"formatVersion"`
+	NodeVersion        string                         `json:"nodeVersion"`
+	ProgramNodeFlags   []string                       `json:"programNodeFlags"`
+	RuntimeContract    string                         `json:"runtimeContract"`
 }
 
 func ParseRuntimeMetadata(raw []byte) (RuntimeMetadata, error) {
@@ -89,11 +90,11 @@ func ValidateRuntimeMetadata(metadata RuntimeMetadata) error {
 	if !validArchitecture(metadata.Architecture) {
 		return fmt.Errorf("runtime metadata architecture %q is unsupported", metadata.Architecture)
 	}
-	if metadata.RuntimeContract != RuntimeContract {
+	if metadata.RuntimeContract != definition.RuntimeContract {
 		return fmt.Errorf(
 			"runtime metadata runtimeContract = %q, want %q",
 			metadata.RuntimeContract,
-			RuntimeContract,
+			definition.RuntimeContract,
 		)
 	}
 	expectedFlags, err := NodeProgramFlags(metadata.NodeVersion)
@@ -121,19 +122,19 @@ func NodeProgramFlags(version string) ([]string, error) {
 	return append(flags, "--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"), nil
 }
 
-func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
+func RuntimeArchitectureFromGo(value string) (definition.RuntimeArchitecture, error) {
 	architecture, err := vmplatform.ArchitectureFromGo(value)
-	return RuntimeArchitecture(architecture), err
+	return definition.RuntimeArchitecture(architecture), err
 }
 
-func RuntimeArchitectureGo(value RuntimeArchitecture) (string, error) {
-	if value == ArchitectureX8664 {
+func RuntimeArchitectureGo(value definition.RuntimeArchitecture) (string, error) {
+	if value == definition.ArchitectureX8664 {
 		return "amd64", nil
 	}
 	return "", fmt.Errorf("runtime architecture %q is unsupported", value)
 }
 
-func ValidateRuntimeArchitecture(value RuntimeArchitecture) error {
+func ValidateRuntimeArchitecture(value definition.RuntimeArchitecture) error {
 	if !validArchitecture(value) {
 		return fmt.Errorf("runtime architecture %q is unsupported", value)
 	}
@@ -185,11 +186,11 @@ func CanonicalRuntimeIndex(index RuntimeIndex) ([]byte, error) {
 }
 
 func ValidateRuntimeIndex(index RuntimeIndex) error {
-	if index.RuntimeContract != RuntimeContract {
+	if index.RuntimeContract != definition.RuntimeContract {
 		return fmt.Errorf(
 			"runtime index runtimeContract = %q, want %q",
 			index.RuntimeContract,
-			RuntimeContract,
+			definition.RuntimeContract,
 		)
 	}
 	if !validArchitecture(index.Architecture) {
@@ -246,11 +247,11 @@ func ValidateRuntimeDescriptor(descriptor RuntimeDescriptor) error {
 			RuntimeArtifactMediaType,
 		)
 	}
-	if descriptor.RuntimeContract != RuntimeContract {
+	if descriptor.RuntimeContract != definition.RuntimeContract {
 		return fmt.Errorf(
 			"runtime descriptor runtimeContract = %q, want %q",
 			descriptor.RuntimeContract,
-			RuntimeContract,
+			definition.RuntimeContract,
 		)
 	}
 	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > maxJSONSafeInteger {

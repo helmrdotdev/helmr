@@ -10,7 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -23,7 +23,7 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 	if (row.SourceDiskVersionID.Valid && row.SourceDiskVersionID != row.PreparationDiskVersionID) || (row.SourceCheckpointID.Valid && !row.SourceDiskVersionID.Valid) {
 		return source, errors.New("computer instance source does not match its retained disk")
 	}
-	if row.ComputerArchitecture != string(deployment.ArchitectureX8664) || row.ReservedGuestEphemeralDiskBytes != computer.SeedCapacity {
+	if row.ComputerArchitecture != string(definition.ArchitectureX8664) || row.ReservedGuestEphemeralDiskBytes != computer.SeedCapacity {
 		return source, errors.New("computer instance has an unsupported computer capacity or architecture")
 	}
 	source.VersionID = pgvalue.UUIDString(row.PreparationDiskVersionID)
@@ -36,14 +36,14 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 			return source, errors.New("initializing computer has persisted disk or continuation state")
 		}
 		object := cas.Descriptor{Digest: row.ComputerImageDigest, SizeBytes: row.ComputerImageSizeBytes, MediaType: row.ComputerImageMediaType}
-		spec, err := deployment.ParseComputerSpec(row.ComputerConfig, object)
+		spec, err := definition.ParseComputerSpec(row.ComputerConfig, object)
 		if err != nil {
 			return source, fmt.Errorf("project computer seed: %w", err)
 		}
 		if !bytes.Equal(spec.Digest[:], row.ComputerSpecDigest) {
 			return source, errors.New("computer seed does not match admitted specification")
 		}
-		var config deployment.ComputerConfig
+		var config definition.ComputerConfig
 		if err := json.Unmarshal(spec.Config, &config); err != nil {
 			return source, err
 		}

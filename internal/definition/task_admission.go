@@ -1,4 +1,4 @@
-package deployment
+package definition
 
 import (
 	"encoding/json"
@@ -6,7 +6,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 type TaskRunAdmission struct {
@@ -53,8 +52,8 @@ func ResolveTaskRunAdmission(
 	validate := func(candidate TaskManifest) error {
 		return ValidateBuildPlan(BuildPlan{
 			FormatVersion: BuildPlanFormatVersion,
-			Definitions: []DefinitionInput{{
-				Kind: DefinitionKindTask, DeclaredID: declaredID, Task: &candidate,
+			Definitions: []Input{{
+				Kind: KindTask, DeclaredID: declaredID, Task: &candidate,
 			}},
 			Queues: queueConfig.Queues,
 		})
@@ -70,7 +69,7 @@ func ResolveTaskRunAdmission(
 		manifest.Run.TTLMs = &value
 	}
 	if len(retryOverride) > 0 {
-		override, err := retry.Parse(retryOverride)
+		override, err := ParseRetry(retryOverride)
 		if err != nil {
 			return TaskRunAdmission{}, fmt.Errorf("parse task retry override: %w", err)
 		}

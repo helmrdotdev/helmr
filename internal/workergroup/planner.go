@@ -12,7 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -607,7 +607,7 @@ func computerCommandItem(row db.ListPendingComputerCommandCapacityCandidatesRow)
 
 func freshExecutionItem(key string, configJSON []byte) item {
 	result := item{role: "run", key: key}
-	manifest, err := deployment.ParseComputerConfig(configJSON)
+	manifest, err := definition.ParseComputerConfig(configJSON)
 	if err != nil {
 		result.reason = reasonInvalidWorkload
 		return result

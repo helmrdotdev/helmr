@@ -10,6 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
@@ -18,34 +19,34 @@ func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 		return nil, errors.New("program index declaration must contain exactly one manifest")
 	}
 	switch declaration.Kind {
-	case DefinitionKindTask:
+	case definition.KindTask:
 		if declaration.Task == nil || declaration.Locator == nil {
 			return nil, errors.New("task program index declaration requires manifest and locator")
 		}
 		return json.Marshal(struct {
-			DeclaredID string          `json:"declaredId"`
-			Kind       DefinitionKind  `json:"kind"`
-			Locator    *ProgramLocator `json:"locator"`
-			Manifest   *TaskManifest   `json:"manifest"`
+			DeclaredID string                   `json:"declaredId"`
+			Kind       definition.Kind          `json:"kind"`
+			Locator    *ProgramLocator          `json:"locator"`
+			Manifest   *definition.TaskManifest `json:"manifest"`
 		}{declaration.DeclaredID, declaration.Kind, declaration.Locator, declaration.Task})
-	case DefinitionKindActor:
+	case definition.KindActor:
 		if declaration.Actor == nil || declaration.Locator == nil {
 			return nil, errors.New("actor program index declaration requires manifest and locator")
 		}
 		return json.Marshal(struct {
-			DeclaredID string          `json:"declaredId"`
-			Kind       DefinitionKind  `json:"kind"`
-			Locator    *ProgramLocator `json:"locator"`
-			Manifest   *ActorManifest  `json:"manifest"`
+			DeclaredID string                    `json:"declaredId"`
+			Kind       definition.Kind           `json:"kind"`
+			Locator    *ProgramLocator           `json:"locator"`
+			Manifest   *definition.ActorManifest `json:"manifest"`
 		}{declaration.DeclaredID, declaration.Kind, declaration.Locator, declaration.Actor})
-	case DefinitionKindSandbox:
+	case definition.KindSandbox:
 		if declaration.Sandbox == nil || declaration.Locator != nil {
 			return nil, errors.New("sandbox program index declaration requires manifest and forbids locator")
 		}
 		return json.Marshal(struct {
-			DeclaredID string           `json:"declaredId"`
-			Kind       DefinitionKind   `json:"kind"`
-			Manifest   *SandboxManifest `json:"manifest"`
+			DeclaredID string                      `json:"declaredId"`
+			Kind       definition.Kind             `json:"kind"`
+			Manifest   *definition.SandboxManifest `json:"manifest"`
 		}{declaration.DeclaredID, declaration.Kind, declaration.Sandbox})
 	default:
 		return nil, fmt.Errorf("program index declaration kind %q is unsupported", declaration.Kind)
@@ -54,19 +55,19 @@ func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
 
 func (declaration *ProgramIndexDeclaration) UnmarshalJSON(raw []byte) error {
 	var header struct {
-		Kind DefinitionKind `json:"kind"`
+		Kind definition.Kind `json:"kind"`
 	}
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return err
 	}
 	*declaration = ProgramIndexDeclaration{Kind: header.Kind}
 	switch header.Kind {
-	case DefinitionKindTask:
+	case definition.KindTask:
 		var wire struct {
-			DeclaredID string          `json:"declaredId"`
-			Kind       DefinitionKind  `json:"kind"`
-			Locator    *ProgramLocator `json:"locator"`
-			Manifest   *TaskManifest   `json:"manifest"`
+			DeclaredID string                   `json:"declaredId"`
+			Kind       definition.Kind          `json:"kind"`
+			Locator    *ProgramLocator          `json:"locator"`
+			Manifest   *definition.TaskManifest `json:"manifest"`
 		}
 		if err := decodeClosedDefinition(raw, &wire); err != nil {
 			return err
@@ -74,12 +75,12 @@ func (declaration *ProgramIndexDeclaration) UnmarshalJSON(raw []byte) error {
 		declaration.DeclaredID = wire.DeclaredID
 		declaration.Locator = wire.Locator
 		declaration.Task = wire.Manifest
-	case DefinitionKindActor:
+	case definition.KindActor:
 		var wire struct {
-			DeclaredID string          `json:"declaredId"`
-			Kind       DefinitionKind  `json:"kind"`
-			Locator    *ProgramLocator `json:"locator"`
-			Manifest   *ActorManifest  `json:"manifest"`
+			DeclaredID string                    `json:"declaredId"`
+			Kind       definition.Kind           `json:"kind"`
+			Locator    *ProgramLocator           `json:"locator"`
+			Manifest   *definition.ActorManifest `json:"manifest"`
 		}
 		if err := decodeClosedDefinition(raw, &wire); err != nil {
 			return err
@@ -87,11 +88,11 @@ func (declaration *ProgramIndexDeclaration) UnmarshalJSON(raw []byte) error {
 		declaration.DeclaredID = wire.DeclaredID
 		declaration.Locator = wire.Locator
 		declaration.Actor = wire.Manifest
-	case DefinitionKindSandbox:
+	case definition.KindSandbox:
 		var wire struct {
-			DeclaredID string           `json:"declaredId"`
-			Kind       DefinitionKind   `json:"kind"`
-			Manifest   *SandboxManifest `json:"manifest"`
+			DeclaredID string                      `json:"declaredId"`
+			Kind       definition.Kind             `json:"kind"`
+			Manifest   *definition.SandboxManifest `json:"manifest"`
 		}
 		if err := decodeClosedDefinition(raw, &wire); err != nil {
 			return err
@@ -132,39 +133,39 @@ func validateProgramIndexDeclaration(
 		return errors.New("must contain exactly one manifest")
 	}
 	switch declaration.Kind {
-	case DefinitionKindTask:
+	case definition.KindTask:
 		if declaration.Task == nil || declaration.Locator == nil {
 			return errors.New("task requires manifest and locator")
 		}
-		if declaration.Task.Payload.Kind != SchemaKindNone &&
-			declaration.Task.Payload.Kind != SchemaKindStandard {
+		if declaration.Task.Payload.Kind != definition.SchemaKindNone &&
+			declaration.Task.Payload.Kind != definition.SchemaKindStandard {
 			return fmt.Errorf("task payload kind %q is unsupported", declaration.Task.Payload.Kind)
 		}
-		if err := validateRunManifest(declaration.Task.Run, queues); err != nil {
+		if err := definition.ValidateRunManifest(declaration.Task.Run, queues); err != nil {
 			return fmt.Errorf("task run: %w", err)
 		}
 		if declaration.Task.Schedule != nil {
-			if declaration.Task.Payload.Kind != SchemaKindStandard {
+			if declaration.Task.Payload.Kind != definition.SchemaKindStandard {
 				return errors.New("scheduled task payload kind must be standard_schema")
 			}
-			if err := validateScheduleManifest(*declaration.Task.Schedule); err != nil {
+			if err := definition.ValidateScheduleManifest(*declaration.Task.Schedule); err != nil {
 				return fmt.Errorf("task schedule: %w", err)
 			}
 		}
 		return validateProgramLocator(*declaration.Locator)
-	case DefinitionKindActor:
+	case definition.KindActor:
 		if declaration.Actor == nil || declaration.Locator == nil {
 			return errors.New("actor requires manifest and locator")
 		}
-		if err := validateRunManifest(declaration.Actor.Run, queues); err != nil {
+		if err := definition.ValidateRunManifest(declaration.Actor.Run, queues); err != nil {
 			return fmt.Errorf("actor run: %w", err)
 		}
 		if declaration.Actor.IdleTimeoutMs < 1 ||
-			declaration.Actor.IdleTimeoutMs > maxActorIdleMs {
-			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
+			declaration.Actor.IdleTimeoutMs > definition.MaxActorIdleMs {
+			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", definition.MaxActorIdleMs)
 		}
 		return validateProgramLocator(*declaration.Locator)
-	case DefinitionKindSandbox:
+	case definition.KindSandbox:
 		if declaration.Sandbox == nil || declaration.Locator != nil {
 			return errors.New("sandbox requires manifest and forbids locator")
 		}
@@ -183,7 +184,7 @@ func validateProgramIndexDeclaration(
 				ComputerImageArtifactMediaType,
 			)
 		}
-		if err := validateResourcesManifest(declaration.Sandbox.Resources); err != nil {
+		if err := definition.ValidateResourcesManifest(declaration.Sandbox.Resources); err != nil {
 			return fmt.Errorf("sandbox resources: %w", err)
 		}
 		return nil
@@ -273,7 +274,7 @@ func cloneProgramIndexDeclaration(
 	return declaration
 }
 
-func cloneRunManifest(run RunManifest) RunManifest {
+func cloneRunManifest(run definition.RunManifest) definition.RunManifest {
 	if run.TTLMs != nil {
 		value := *run.TTLMs
 		run.TTLMs = &value
@@ -290,13 +291,13 @@ func cloneRunManifest(run RunManifest) RunManifest {
 }
 
 func buildProgramIndex(
-	plan BuildPlan,
+	plan definition.BuildPlan,
 	locator DeclarationLocator,
 	images []BundleComputerImage,
 	configResultDigest string,
 	runtimeDigest string,
 ) (ProgramIndex, error) {
-	if err := ValidateBuildPlan(plan); err != nil {
+	if err := definition.ValidateBuildPlan(plan); err != nil {
 		return ProgramIndex{}, err
 	}
 	if err := ValidateDeclarationLocator(locator); err != nil {
@@ -311,63 +312,63 @@ func buildProgramIndex(
 		computerImages[image.DeclaredID] = image.Artifact
 	}
 	declarations := make([]ProgramIndexDeclaration, 0, len(plan.Definitions))
-	for _, definition := range plan.Definitions {
+	for _, input := range plan.Definitions {
 		declaration := ProgramIndexDeclaration{
-			Kind:       definition.Kind,
-			DeclaredID: definition.DeclaredID,
+			Kind:       input.Kind,
+			DeclaredID: input.DeclaredID,
 		}
-		switch definition.Kind {
-		case DefinitionKindTask:
-			located, exists := locators[string(DeclarationKindTask)+"\x00"+definition.DeclaredID]
+		switch input.Kind {
+		case definition.KindTask:
+			located, exists := locators[string(DeclarationKindTask)+"\x00"+input.DeclaredID]
 			if !exists {
 				return ProgramIndex{}, fmt.Errorf(
 					"task %q has no generated locator",
-					definition.DeclaredID,
+					input.DeclaredID,
 				)
 			}
-			declaration.Task = definition.Task
+			declaration.Task = input.Task
 			declaration.Locator = &ProgramLocator{
 				ExportName: located.ExportName,
 				ModulePath: located.ModulePath,
 				Slot:       located.Slot,
 			}
-		case DefinitionKindActor:
-			located, exists := locators[string(DeclarationKindActor)+"\x00"+definition.DeclaredID]
+		case definition.KindActor:
+			located, exists := locators[string(DeclarationKindActor)+"\x00"+input.DeclaredID]
 			if !exists {
 				return ProgramIndex{}, fmt.Errorf(
 					"actor %q has no generated locator",
-					definition.DeclaredID,
+					input.DeclaredID,
 				)
 			}
-			declaration.Actor = definition.Actor
+			declaration.Actor = input.Actor
 			declaration.Locator = &ProgramLocator{
 				ExportName: located.ExportName,
 				ModulePath: located.ModulePath,
 				Slot:       located.Slot,
 			}
-		case DefinitionKindSandbox:
-			image, exists := computerImages[definition.DeclaredID]
-			if !exists || definition.Sandbox == nil {
+		case definition.KindSandbox:
+			image, exists := computerImages[input.DeclaredID]
+			if !exists || input.Sandbox == nil {
 				return ProgramIndex{}, fmt.Errorf(
 					"sandbox %q has no image result",
-					definition.DeclaredID,
+					input.DeclaredID,
 				)
 			}
-			declaration.Sandbox = &SandboxManifest{
-				Image: SandboxImageManifest{
+			declaration.Sandbox = &definition.SandboxManifest{
+				Image: definition.SandboxImageManifest{
 					Profile: image.Profile, Config: image.Config,
 					ArtifactDigest: image.Digest,
 					MediaType:      image.MediaType,
 				},
-				Resources: definition.Sandbox.Resources,
+				Resources: input.Sandbox.Resources,
 			}
-			if _, err := CompileComputerSpec(*declaration.Sandbox, image); err != nil {
-				return ProgramIndex{}, fmt.Errorf("sandbox %q: %w", definition.DeclaredID, err)
+			if _, err := definition.CompileComputerSpec(*declaration.Sandbox, image.ComputerImage()); err != nil {
+				return ProgramIndex{}, fmt.Errorf("sandbox %q: %w", input.DeclaredID, err)
 			}
 		default:
 			return ProgramIndex{}, fmt.Errorf(
 				"definition kind %q is unsupported",
-				definition.Kind,
+				input.Kind,
 			)
 		}
 		declarations = append(declarations, cloneProgramIndexDeclaration(declaration))
@@ -376,11 +377,11 @@ func buildProgramIndex(
 		return compareProgramIndexDeclarations(declarations[left], declarations[right]) < 0
 	})
 	index := ProgramIndex{
-		Architecture:       ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: configResultDigest,
 		Declarations:       declarations,
 		Queues:             cloneQueueInputs(plan.Queues),
-		RuntimeContract:    RuntimeContract,
+		RuntimeContract:    definition.RuntimeContract,
 		RuntimeDigest:      runtimeDigest,
 	}
 	if err := ValidateProgramIndex(index); err != nil {
@@ -393,9 +394,9 @@ func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration 
 	declarations := make([]ProgramDeclaration, 0)
 	for _, declaration := range index.Declarations {
 		switch declaration.Kind {
-		case DefinitionKindTask:
+		case definition.KindTask:
 			slots := []DeclarationSlot{DeclarationSlotHandler}
-			if declaration.Task.Payload.Kind == SchemaKindStandard {
+			if declaration.Task.Payload.Kind == definition.SchemaKindStandard {
 				slots = append(slots, DeclarationSlotPayloadSchema)
 			}
 			declarations = append(declarations, ProgramDeclaration{
@@ -403,7 +404,7 @@ func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration 
 				DeclaredID: declaration.DeclaredID,
 				Slots:      slots,
 			})
-		case DefinitionKindActor:
+		case definition.KindActor:
 			declarations = append(declarations, ProgramDeclaration{
 				Kind:       DeclarationKindActor,
 				DeclaredID: declaration.DeclaredID,
@@ -417,8 +418,8 @@ func programIndexExecutionDeclarations(index ProgramIndex) []ProgramDeclaration 
 	return declarations
 }
 
-func cloneQueueInputs(source []QueueInput) []QueueInput {
-	cloned := make([]QueueInput, len(source))
+func cloneQueueInputs(source []definition.QueueInput) []definition.QueueInput {
+	cloned := make([]definition.QueueInput, len(source))
 	copy(cloned, source)
 	for index := range cloned {
 		if cloned[index].ConcurrencyLimit != nil {
@@ -427,4 +428,13 @@ func cloneQueueInputs(source []QueueInput) []QueueInput {
 		}
 	}
 	return cloned
+}
+
+func decodeClosedDefinition(raw []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	return ensureEOF(decoder, "definition input")
 }

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/computer"
 
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -114,12 +114,12 @@ UPDATE environments
 `, demoSeedEnvironmentID, demoSeedDeploymentID); err != nil {
 		return err
 	}
-	manifest := deployment.SandboxManifest{
-		Image:     deployment.SandboxImageManifest{Profile: computer.SeedProfile, ArtifactDigest: imageDigest, MediaType: computer.SeedMediaType},
-		Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
+	manifest := definition.SandboxManifest{
+		Image:     definition.SandboxImageManifest{Profile: computer.SeedProfile, ArtifactDigest: imageDigest, MediaType: computer.SeedMediaType},
+		Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
 	}
-	spec, err := deployment.CompileComputerSpec(manifest, deployment.BundleComputerImageArtifact{
-		Profile: computer.SeedProfile, Architecture: deployment.ArchitectureX8664,
+	spec, err := definition.CompileComputerSpec(manifest, definition.ComputerImage{
+		Profile: computer.SeedProfile, Architecture: definition.ArchitectureX8664,
 		Digest: imageDigest, MediaType: computer.SeedMediaType, SizeBytes: 1,
 	})
 	if err != nil {
@@ -342,7 +342,7 @@ INSERT INTO tokens (
 }
 
 func manifestDigest(raw string) ([]byte, []byte, error) {
-	canonical, digest, err := deployment.CanonicalManifestAndDigest([]byte(raw))
+	canonical, digest, err := definition.CanonicalManifestAndDigest([]byte(raw))
 	if err != nil {
 		return nil, nil, err
 	}

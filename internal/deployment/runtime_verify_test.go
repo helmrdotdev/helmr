@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestRuntimeTopologyAcceptsClosedLayout(t *testing.T) {
@@ -95,10 +97,10 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		"metadata Node flags": func(artifact *memoryArtifact) {
 			invalid := RuntimeMetadata{
 				ModulePolicyDigest: testDigest("preload"),
-				Architecture:       ArchitectureX8664, FormatVersion: RuntimeMetadataFormatVersion,
+				Architecture:       definition.ArchitectureX8664, FormatVersion: RuntimeMetadataFormatVersion,
 				NodeVersion:      "24.21.0",
 				ProgramNodeFlags: []string{"--no-experimental-strip-types", "--enable-source-maps"},
-				RuntimeContract:  RuntimeContract,
+				RuntimeContract:  definition.RuntimeContract,
 			}
 			raw, err := json.Marshal(invalid)
 			if err != nil {
@@ -176,7 +178,7 @@ func TestVerifiedRuntimeResultMatchesDescriptor(t *testing.T) {
 
 	for name, mutate := range map[string]func(*RuntimeDescriptor){
 		"architecture": func(value *RuntimeDescriptor) {
-			value.Architecture = RuntimeArchitecture("aarch64")
+			value.Architecture = definition.RuntimeArchitecture("aarch64")
 		},
 		"runtime API": func(value *RuntimeDescriptor) {
 			value.RuntimeContract = "helmr.runtime.unsupported"
@@ -202,11 +204,11 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	t.Helper()
 	metadata := RuntimeMetadata{
 		ModulePolicyDigest: testDigest("preload"),
-		Architecture:       ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		FormatVersion:      RuntimeMetadataFormatVersion,
 		NodeVersion:        "24.21.0",
 		ProgramNodeFlags:   testNodeProgramFlags(),
-		RuntimeContract:    RuntimeContract,
+		RuntimeContract:    definition.RuntimeContract,
 	}
 	metadataRaw, err := CanonicalRuntimeMetadata(metadata)
 	if err != nil {

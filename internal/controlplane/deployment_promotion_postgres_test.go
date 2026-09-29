@@ -22,9 +22,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -611,15 +610,15 @@ func prepareDeploymentPromotionScaleFixture(
 			t.Fatal(err)
 		}
 	}
-	taskManifest, taskDigest, err := deployment.CanonicalManifestAndDigest(promotionScaleJSON(t, deployment.TaskManifest{
-		Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindStandard},
-		Run: deployment.RunManifest{
+	taskManifest, taskDigest, err := definition.CanonicalManifestAndDigest(promotionScaleJSON(t, definition.TaskManifest{
+		Payload: definition.SchemaManifest{Kind: definition.SchemaKindStandard},
+		Run: definition.RunManifest{
 			Queue: "default", MaxDurationMs: 300_000,
-			Retry: retry.Manifest{Enabled: false},
+			Retry: definition.RetryManifest{Enabled: false},
 		},
-		Schedule: &deployment.ScheduleManifest{
+		Schedule: &definition.ScheduleManifest{
 			Cron: "0 9 * * *", Timezone: "UTC",
-			Computer: deployment.ScheduleComputerManifest{
+			Computer: definition.ScheduleComputerManifest{
 				SandboxDeclaredID: "reporting", Secrets: placements,
 			},
 		},
@@ -642,20 +641,20 @@ func prepareDeploymentPromotionScaleFixture(
 	params := db.CreateDeploymentDefinitionsParams{
 		EnvironmentID:   pgvalue.UUID(fixture.environmentID),
 		DeploymentID:    pgvalue.UUID(fixture.scheduledID),
-		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+		ManifestVersion: definition.DeploymentPlanFormatVersion,
 		Ids:             make([]pgtype.UUID, definitionCount), Kinds: make([]string, definitionCount),
 		DeclaredIds: make([]string, definitionCount), Manifests: make([][]byte, definitionCount),
 		ManifestDigests: make([][]byte, definitionCount), ComputerSpecIds: make([]pgtype.UUID, definitionCount),
 	}
 	params.Ids[0] = pgvalue.UUID(uuid.NewV7())
-	params.Kinds[0] = string(deployment.DefinitionKindSandbox)
+	params.Kinds[0] = string(definition.KindSandbox)
 	params.DeclaredIds[0] = "reporting"
 	params.Manifests[0] = []byte(`{}`)
 	params.ManifestDigests[0] = make([]byte, 32)
 	params.ComputerSpecIds[0] = pgvalue.UUID(dbtest.InsertDefaultComputerSpec(t, t.Context(), fixture.pool, imageID))
 	for index := 1; index < definitionCount; index++ {
 		params.Ids[index] = pgvalue.UUID(uuid.NewV7())
-		params.Kinds[index] = string(deployment.DefinitionKindTask)
+		params.Kinds[index] = string(definition.KindTask)
 		params.DeclaredIds[index] = fmt.Sprintf("task-%05d", index-1)
 		params.Manifests[index] = taskManifest
 		params.ManifestDigests[index] = taskDigest[:]
@@ -936,7 +935,7 @@ func newDeploymentPromotionPostgresFixture(t *testing.T) deploymentPromotionPost
 	scheduledManifest := []byte(
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}},"schedule":{"cron":"0 9 * * *","timezone":"UTC","computer":{"sandboxId":"reporting","secrets":[{"secret":"REPORT_TOKEN","env":{"name":"REPORT_TOKEN","mode":"raw"}}]}}}`,
 	)
-	canonical, digest, err := deployment.CanonicalManifestAndDigest(scheduledManifest)
+	canonical, digest, err := definition.CanonicalManifestAndDigest(scheduledManifest)
 	if err != nil {
 		t.Fatal(err)
 	}

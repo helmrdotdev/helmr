@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -264,11 +265,11 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	addr := freeSmokeAddr(t)
 	runtimeDescriptor, err := deployment.CanonicalRuntimeDescriptor(deployment.RuntimeDescriptor{
-		Architecture:    deployment.ArchitectureX8664,
+		Architecture:    definition.ArchitectureX8664,
 		Digest:          "sha256:" + strings.Repeat("a", 64),
 		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
 		MediaType:       deployment.RuntimeArtifactMediaType,
-		RuntimeContract: deployment.RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       4096,
 	})
 	if err != nil {

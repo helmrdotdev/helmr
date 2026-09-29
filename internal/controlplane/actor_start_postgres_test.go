@@ -20,7 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -481,11 +481,11 @@ func newActorStartPostgresFixture(t *testing.T, computerCount int) actorStartPos
 	taskManifest := []byte(
 		`{"payload":{"kind":"standard_schema"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`,
 	)
-	_, actorManifestDigest, err := deployment.CanonicalManifestAndDigest(actorManifest)
+	_, actorManifestDigest, err := definition.CanonicalManifestAndDigest(actorManifest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, taskManifestDigest, err := deployment.CanonicalManifestAndDigest(taskManifest)
+	_, taskManifestDigest, err := definition.CanonicalManifestAndDigest(taskManifest)
 	if err != nil {
 		t.Fatal(err)
 	}

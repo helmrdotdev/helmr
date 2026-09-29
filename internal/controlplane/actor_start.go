@@ -12,11 +12,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -223,7 +222,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 				return errActorStartSecretUnavailable
 			}
 		}
-		runAuthority, err := deployment.ResolveActorRunAdmission(
+		runAuthority, err := definition.ResolveActorRunAdmission(
 			deploymentAuthority.ActorManifestVersion,
 			normalized.ActorDeclaredID,
 			deploymentAuthority.ActorManifest,
@@ -390,7 +389,7 @@ func normalizeActorStart(request actorStartRequest) (normalizedActorStart, error
 		if err != nil {
 			return normalizedActorStart{}, fmt.Errorf("%w: retry must be unambiguous JSON", errActorStartInvalid)
 		}
-		if _, err := retry.Parse(canonicalRetry); err != nil {
+		if _, err := definition.ParseRetry(canonicalRetry); err != nil {
 			return normalizedActorStart{}, fmt.Errorf("%w: %v", errActorStartInvalid, err)
 		}
 		request.ManagedRetryPolicy = canonicalRetry

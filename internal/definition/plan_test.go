@@ -1,4 +1,4 @@
-package deployment
+package definition
 
 import (
 	"encoding/json"
@@ -8,7 +8,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
@@ -166,7 +165,7 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 		{
 			name: "empty definitions",
 			change: func(plan *BuildPlan) {
-				plan.Definitions = []DefinitionInput{}
+				plan.Definitions = []Input{}
 			},
 			errMsg: "non-empty array",
 		},
@@ -194,7 +193,7 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 		{
 			name: "kind manifest mismatch",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[0].Kind = DefinitionKindActor
+				plan.Definitions[0].Kind = KindActor
 			},
 			errMsg: "actor manifest",
 		},
@@ -222,7 +221,7 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 		{
 			name: "actor idle timeout maximum",
 			change: func(plan *BuildPlan) {
-				plan.Definitions[1].Actor.IdleTimeoutMs = maxActorIdleMs + 1
+				plan.Definitions[1].Actor.IdleTimeoutMs = MaxActorIdleMs + 1
 			},
 			errMsg: "idleTimeoutMs",
 		},
@@ -487,16 +486,16 @@ func TestValidateBuildPlanQueues(t *testing.T) {
 func testBuildPlan() BuildPlan {
 	return BuildPlan{
 		FormatVersion: BuildPlanFormatVersion,
-		Definitions: []DefinitionInput{
+		Definitions: []Input{
 			{
-				Kind:       DefinitionKindTask,
+				Kind:       KindTask,
 				DeclaredID: "build",
 				Task: &TaskManifest{
 					Payload: SchemaManifest{Kind: SchemaKindStandard},
 					Run: RunManifest{
 						Queue:         "task/build",
 						MaxDurationMs: 900000,
-						Retry:         retry.Manifest{Enabled: false},
+						Retry:         RetryManifest{Enabled: false},
 					},
 					Schedule: &ScheduleManifest{
 						Cron:     "0 9 * * *",
@@ -509,19 +508,19 @@ func testBuildPlan() BuildPlan {
 				},
 			},
 			{
-				Kind:       DefinitionKindActor,
+				Kind:       KindActor,
 				DeclaredID: "chat",
 				Actor: &ActorManifest{
 					Run: RunManifest{
 						Queue:         "actor/chat",
 						MaxDurationMs: 900000,
-						Retry:         retry.Manifest{Enabled: false},
+						Retry:         RetryManifest{Enabled: false},
 					},
 					IdleTimeoutMs: 30000,
 				},
 			},
 			{
-				Kind:       DefinitionKindSandbox,
+				Kind:       KindSandbox,
 				DeclaredID: "repo",
 				Sandbox: &SandboxInputManifest{
 					ImageBuild: imagebuild.Build{
@@ -555,15 +554,15 @@ func testBuildPlan() BuildPlan {
 	}
 }
 
-func validRetryManifest() retry.Manifest {
-	return retry.Manifest{
+func validRetryManifest() RetryManifest {
+	return RetryManifest{
 		Enabled:     true,
 		MaxAttempts: new(int64(3)),
-		Backoff: &retry.Backoff{
+		Backoff: &RetryBackoff{
 			MinMs:  1000,
 			MaxMs:  30000,
 			Factor: 2,
-			Jitter: retry.JitterFull,
+			Jitter: RetryJitterFull,
 		},
 	}
 }

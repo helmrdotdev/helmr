@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"testing"
@@ -57,16 +57,16 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 			},
 		},
 	}}
-	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err != nil {
+	if _, err := validatePreparedRuntimeRestore(target, definition.ArchitectureX8664); err != nil {
 		t.Fatal(err)
 	}
 	target.Source.CPUConfigDigest = sha256sum.DigestBytes([]byte("other-cpu-config"))
-	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+	if _, err := validatePreparedRuntimeRestore(target, definition.ArchitectureX8664); err == nil {
 		t.Fatal("mismatched runtime reservation CPU shape was accepted")
 	}
 	target.Source.CPUConfigDigest = cpuConfigDigest
 	target.Source.Restore.Artifacts[2].Role = "vm_state"
-	if _, err := validatePreparedRuntimeRestore(target, deployment.ArchitectureX8664); err == nil {
+	if _, err := validatePreparedRuntimeRestore(target, definition.ArchitectureX8664); err == nil {
 		t.Fatal("mismatched Checkpoint Artifact membership was accepted")
 	}
 	target.Source.Restore.Artifacts[2].Role = "memory"
