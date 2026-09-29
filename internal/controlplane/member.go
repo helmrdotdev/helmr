@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/mail"
 	"net/url"
-	"strings"
 	"time"
 	"uuid"
 
@@ -16,15 +14,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const (
-	invitationListLimit         = 200
-	defaultInvitationExpiryDays = 7
-)
+const invitationListLimit = int32(200)
 
 type invitationListCursor struct {
 	OrgID     string `json:"org_id"`
@@ -32,19 +27,11 @@ type invitationListCursor struct {
 	ID        string `json:"id"`
 }
 
-var (
-	errSelfMemberManagementLoss = errors.New("cannot remove your own member management access")
-	errSelfMemberRemoval        = errors.New("cannot remove your own member access")
-	errLastActiveOwner          = errors.New("cannot remove or demote the last active owner")
-	errOwnerRoleRequired        = errors.New("owner role is required to manage owners")
-	errMemberRoleChanged        = errors.New("member role changed")
-)
-
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	rows, err := s.db.ListOrgMembers(r.Context(), pgvalue.UUID(actor.OrgID))
+	rows, err := org.ListMembers(r.Context(), s.db, managingMember(actor))
 	if err != nil {
-		writeError(w, errors.New("list members"))
+		writeError(w, orgError(err))
 		return
 	}
 	items := make([]api.MemberSummary, 0, len(rows))
@@ -61,8 +48,7 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	var afterCreatedAt pgtype.Timestamptz
-	var afterID pgtype.UUID
+	var after *org.InvitationPosition
 	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
 		cursor, err := decodeInvitationListCursor(rawCursor)
 		if err != nil || cursor.OrgID != actor.OrgID.String() {
@@ -74,22 +60,12 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request) {
 			writeError(w, badRequest(errors.New("invitation cursor is invalid")))
 			return
 		}
-		afterCreatedAt = pgvalue.Timestamptz(createdAt)
-		afterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+		after = &org.InvitationPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, err := s.db.ListInvitations(r.Context(), db.ListInvitationsParams{
-		OrgID:          pgvalue.UUID(actor.OrgID),
-		AfterCreatedAt: afterCreatedAt,
-		AfterID:        afterID,
-		RowLimit:       invitationListLimit + 1,
-	})
+	rows, hasMore, err := org.ListInvitations(r.Context(), s.db, managingMember(actor), invitationListLimit, after)
 	if err != nil {
-		writeError(w, errors.New("list invitations"))
+		writeError(w, orgError(err))
 		return
-	}
-	hasMore := len(rows) > invitationListLimit
-	if hasMore {
-		rows = rows[:invitationListLimit]
 	}
 	items := make([]api.InvitationSummary, 0, len(rows))
 	for _, row := range rows {
@@ -145,93 +121,16 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid invitation request JSON: %w", err))
 		return
 	}
-	email, err := normalizeInviteEmail(input.Email)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	role, err := normalizeMemberRole(input.Role)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	if role == db.OrgMemberRoleOwner && actor.Role != auth.RoleOwner {
-		writeMemberManagementError(w, errOwnerRoleRequired)
-		return
-	}
-	if _, err := s.db.RevokeExpiredInvitationsByEmail(r.Context(), db.RevokeExpiredInvitationsByEmailParams{
-		OrgID:        pgvalue.UUID(actor.OrgID),
-		InviteeEmail: email,
-	}); err != nil {
-		writeError(w, errors.New("expire invitations"))
-		return
-	}
-	pending, err := s.db.GetPendingInvitationByEmail(r.Context(), db.GetPendingInvitationByEmailParams{
-		OrgID:        pgvalue.UUID(actor.OrgID),
-		InviteeEmail: email,
-	})
-	if err != nil && !isNoRows(err) {
-		writeError(w, errors.New("load invitation"))
-		return
-	}
-	if err == nil && pending.Role == db.OrgMemberRoleOwner && actor.Role != auth.RoleOwner {
-		writeMemberManagementError(w, errOwnerRoleRequired)
-		return
-	}
-	if err == nil {
-		writeError(w, conflict(errors.New("pending invitation already exists for email")))
-		return
-	}
-	expiresInDays := defaultInvitationExpiryDays
-	if input.ExpiresInDays != nil {
-		expiresInDays = *input.ExpiresInDays
-	}
-	if expiresInDays < 1 || expiresInDays > 30 {
-		writeError(w, badRequest(errors.New("expires_in_days must be between 1 and 30")))
-		return
-	}
-	rawToken, err := auth.GenerateOpaque(32)
-	if err != nil {
-		writeError(w, errors.New("generate invitation token"))
-		return
-	}
-	tokenHash, err := auth.HashToken(s.authKeys.Invitation, rawToken)
-	if err != nil {
-		writeError(w, errors.New("hash invitation token"))
-		return
-	}
-	record, err := s.db.CreateInvitation(r.Context(), db.CreateInvitationParams{
-		ID:              pgvalue.UUID(uuid.NewV7()),
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		InviteeEmail:    email,
-		Role:            role,
-		InvitedByUserID: pgvalue.UUID(actor.UserID),
-		TokenHash:       tokenHash,
-		ExpiresAt:       pgvalue.Timestamptz(time.Now().AddDate(0, 0, expiresInDays)),
+	invitation, rawToken, err := org.CreateInvitation(r.Context(), s.db, s.authKeys.Invitation, managingMember(actorFromContext(r.Context())), org.InvitationInput{
+		Email:         input.Email,
+		Role:          input.Role,
+		ExpiresInDays: input.ExpiresInDays,
 	})
 	if err != nil {
-		if isNoRows(err) {
-			pending, pendingErr := s.db.GetPendingInvitationByEmail(r.Context(), db.GetPendingInvitationByEmailParams{
-				OrgID:        pgvalue.UUID(actor.OrgID),
-				InviteeEmail: email,
-			})
-			if pendingErr == nil && pending.Role == db.OrgMemberRoleOwner && actor.Role != auth.RoleOwner {
-				writeMemberManagementError(w, errOwnerRoleRequired)
-				return
-			}
-			writeError(w, conflict(errors.New("active member already exists for email")))
-			return
-		}
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			writeError(w, conflict(errors.New("pending invitation already exists for email")))
-			return
-		}
-		writeError(w, errors.New("create invitation"))
+		writeError(w, orgError(err))
 		return
 	}
-	summary, err := invitationSummaryFromRecord(record)
+	summary, err := invitationSummaryFromRecord(invitation)
 	if err != nil {
 		writeError(w, errors.New("format invitation"))
 		return
@@ -245,37 +144,11 @@ func (s *Server) createInvitation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 	invitationID, err := parseUUIDParam(r, "id")
 	if err != nil {
-		writeError(w, notFound(errors.New("invitation not found")))
+		writeError(w, notFound(org.ErrInvitationNotFound))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	invitation, err := s.db.GetRevocableInvitation(r.Context(), db.GetRevocableInvitationParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(invitationID),
-	})
-	if err != nil {
-		if isNoRows(err) {
-			writeError(w, notFound(errors.New("invitation not found")))
-			return
-		}
-		writeError(w, errors.New("load invitation"))
-		return
-	}
-	if invitation.Role == db.OrgMemberRoleOwner && actor.Role != auth.RoleOwner {
-		writeMemberManagementError(w, errOwnerRoleRequired)
-		return
-	}
-	rows, err := s.db.RevokeInvitation(r.Context(), db.RevokeInvitationParams{
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		ID:              pgvalue.UUID(invitationID),
-		RevokedByUserID: pgvalue.UUID(actor.UserID),
-	})
-	if err != nil {
-		writeError(w, errors.New("revoke invitation"))
-		return
-	}
-	if rows == 0 {
-		writeError(w, notFound(errors.New("invitation not found")))
+	if err := org.RevokeInvitation(r.Context(), s.db, managingMember(actorFromContext(r.Context())), invitationID); err != nil {
+		writeError(w, orgError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -284,7 +157,7 @@ func (s *Server) revokeInvitation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 	targetUserID, err := parseUUIDParam(r, "userID")
 	if err != nil {
-		writeError(w, notFound(errors.New("member not found")))
+		writeError(w, notFound(org.ErrMemberNotFound))
 		return
 	}
 	var input api.UpdateMemberRoleRequest
@@ -292,61 +165,12 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid member role request JSON: %w", err))
 		return
 	}
-	newRole, err := normalizeMemberRole(input.Role)
+	updated, err := org.UpdateMemberRole(r.Context(), s.db, managingMember(actorFromContext(r.Context())), targetUserID, input.Role, input.ExpectedRole)
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, orgError(err))
 		return
 	}
-	expectedRole, err := normalizeMemberRole(input.ExpectedRole)
-	if err != nil {
-		writeError(w, badRequest(errors.New("expected_role must be owner, admin, developer, or viewer")))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	target, err := s.db.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
-		OrgID:  pgvalue.UUID(actor.OrgID),
-		UserID: pgvalue.UUID(targetUserID),
-	})
-	if err != nil {
-		if isNoRows(err) {
-			writeError(w, notFound(errors.New("member not found")))
-			return
-		}
-		writeError(w, errors.New("load member"))
-		return
-	}
-	if target.DisabledAt.Valid || target.UserDisabledAt.Valid {
-		writeError(w, notFound(errors.New("member not found")))
-		return
-	}
-	if target.Role != expectedRole {
-		writeMemberManagementError(w, errMemberRoleChanged)
-		return
-	}
-	if err := s.authorizeMemberRoleChange(actor, target, expectedRole, newRole); err != nil {
-		writeMemberManagementError(w, err)
-		return
-	}
-	updated, err := s.db.UpdateOrgMemberRole(r.Context(), db.UpdateOrgMemberRoleParams{
-		OrgID:        pgvalue.UUID(actor.OrgID),
-		UserID:       pgvalue.UUID(targetUserID),
-		Role:         newRole,
-		ExpectedRole: expectedRole,
-		ActorIsOwner: actor.Role == auth.RoleOwner,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			if expectedRole == db.OrgMemberRoleOwner && newRole != db.OrgMemberRoleOwner {
-				writeMemberManagementError(w, errLastActiveOwner)
-				return
-			}
-			writeMemberManagementError(w, errMemberRoleChanged)
-			return
-		}
-		writeError(w, errors.New("update member role"))
-		return
-	}
-	summary, err := memberSummaryFromOrgMember(updated, target.DisplayName, target.PrimaryEmail, pgtype.Timestamptz{})
+	summary, err := memberSummaryFromUpdated(updated)
 	if err != nil {
 		writeError(w, errors.New("format member"))
 		return
@@ -357,114 +181,18 @@ func (s *Server) updateMemberRole(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeMember(w http.ResponseWriter, r *http.Request) {
 	targetUserID, err := parseUUIDParam(r, "userID")
 	if err != nil {
-		writeError(w, notFound(errors.New("member not found")))
+		writeError(w, notFound(org.ErrMemberNotFound))
 		return
 	}
-	actor := actorFromContext(r.Context())
-	if actor.UserID == targetUserID {
-		writeError(w, forbidden(errSelfMemberRemoval))
-		return
-	}
-	target, err := s.db.GetOrgMemberForManagement(r.Context(), db.GetOrgMemberForManagementParams{
-		OrgID:  pgvalue.UUID(actor.OrgID),
-		UserID: pgvalue.UUID(targetUserID),
-	})
-	if err != nil {
-		if isNoRows(err) {
-			writeError(w, notFound(errors.New("member not found")))
-			return
-		}
-		writeError(w, errors.New("load member"))
-		return
-	}
-	if target.DisabledAt.Valid || target.UserDisabledAt.Valid {
-		writeError(w, notFound(errors.New("member not found")))
-		return
-	}
-	if target.Role == db.OrgMemberRoleOwner {
-		if actor.Role != auth.RoleOwner {
-			writeMemberManagementError(w, errOwnerRoleRequired)
-			return
-		}
-	}
-	if _, err := s.db.DisableOrgMemberAndRevokeOrgSessions(r.Context(), db.DisableOrgMemberAndRevokeOrgSessionsParams{
-		OrgID:        pgvalue.UUID(actor.OrgID),
-		UserID:       pgvalue.UUID(targetUserID),
-		ExpectedRole: target.Role,
-		ActorIsOwner: actor.Role == auth.RoleOwner,
-	}); err != nil {
-		if isNoRows(err) {
-			if target.Role == db.OrgMemberRoleOwner {
-				writeMemberManagementError(w, errLastActiveOwner)
-				return
-			}
-			writeError(w, notFound(errors.New("member not found")))
-			return
-		}
-		writeError(w, errors.New("remove member"))
+	if err := org.RemoveMember(r.Context(), s.db, managingMember(actorFromContext(r.Context())), targetUserID); err != nil {
+		writeError(w, orgError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) authorizeMemberRoleChange(actor auth.Actor, target db.GetOrgMemberForManagementRow, expectedRole db.OrgMemberRole, newRole db.OrgMemberRole) error {
-	targetUserID, err := pgvalue.UUIDValue(target.UserID)
-	if err != nil {
-		return err
-	}
-	if actor.UserID == targetUserID && !roleCanManageMembers(newRole) {
-		return errSelfMemberManagementLoss
-	}
-	if (expectedRole == db.OrgMemberRoleOwner || newRole == db.OrgMemberRoleOwner) && actor.Role != auth.RoleOwner {
-		return errOwnerRoleRequired
-	}
-	return nil
-}
-
-func writeMemberManagementError(w http.ResponseWriter, err error) {
-	switch {
-	case errors.Is(err, errSelfMemberManagementLoss), errors.Is(err, errLastActiveOwner), errors.Is(err, errOwnerRoleRequired):
-		writeError(w, forbidden(err))
-	case errors.Is(err, errMemberRoleChanged):
-		writeError(w, conflict(err))
-	default:
-		writeError(w, errors.New("manage member"))
-	}
-}
-
-func roleCanManageMembers(role db.OrgMemberRole) bool {
-	return role == db.OrgMemberRoleOwner || role == db.OrgMemberRoleAdmin
-}
-
-func normalizeMemberRole(value string) (db.OrgMemberRole, error) {
-	switch strings.TrimSpace(value) {
-	case string(db.OrgMemberRoleOwner):
-		return db.OrgMemberRoleOwner, nil
-	case string(db.OrgMemberRoleAdmin):
-		return db.OrgMemberRoleAdmin, nil
-	case string(db.OrgMemberRoleDeveloper):
-		return db.OrgMemberRoleDeveloper, nil
-	case string(db.OrgMemberRoleViewer):
-		return db.OrgMemberRoleViewer, nil
-	default:
-		return "", errors.New("role must be owner, admin, developer, or viewer")
-	}
-}
-
-func normalizeInviteEmail(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" || len(value) > 320 {
-		return "", errors.New("email is required")
-	}
-	address, err := mail.ParseAddress(value)
-	if err != nil || address.Address != value {
-		return "", errors.New("email must be a valid address")
-	}
-	return normalizeEmailAddress(address.Address), nil
-}
-
-func normalizeEmailAddress(email string) string {
-	return strings.ToLower(strings.TrimSpace(email))
+func managingMember(actor auth.Actor) org.ManagingMember {
+	return org.ManagingMember{OrgID: actor.OrgID, UserID: actor.UserID, Role: actor.Role}
 }
 
 func (s *Server) inviteURL(token string) string {
@@ -501,36 +229,25 @@ func memberSummaryFromListRow(row db.ListOrgMembersRow) (api.MemberSummary, erro
 	}, nil
 }
 
-func memberSummaryFromOrgMember(member db.OrgMember, displayName pgtype.Text, email pgtype.Text, userDisabledAt pgtype.Timestamptz) (api.MemberSummary, error) {
+func memberSummaryFromUpdated(updated org.UpdatedMember) (api.MemberSummary, error) {
+	member := updated.Member
 	userID, err := pgvalue.UUIDValue(member.UserID)
 	if err != nil {
 		return api.MemberSummary{}, err
 	}
-	name := ""
-	if displayName.Valid {
-		name = displayName.String
-	}
-	disabledAt := member.DisabledAt
-	if userDisabledAt.Valid && (!disabledAt.Valid || userDisabledAt.Time.Before(disabledAt.Time)) {
-		disabledAt = userDisabledAt
-	}
 	status := api.MemberStatusActive
-	if disabledAt.Valid {
+	if member.DisabledAt.Valid {
 		status = api.MemberStatusDisabled
-	}
-	emailValue := ""
-	if email.Valid {
-		emailValue = email.String
 	}
 	return api.MemberSummary{
 		UserID:      userID.String(),
-		DisplayName: name,
-		Email:       emailValue,
+		DisplayName: updated.DisplayName.String,
+		Email:       updated.PrimaryEmail.String,
 		Role:        string(member.Role),
 		Status:      status,
 		CreatedAt:   pgvalue.Time(member.CreatedAt),
 		UpdatedAt:   pgvalue.Time(member.UpdatedAt),
-		DisabledAt:  pgvalue.TimePtr(disabledAt),
+		DisabledAt:  pgvalue.TimePtr(member.DisabledAt),
 	}, nil
 }
 

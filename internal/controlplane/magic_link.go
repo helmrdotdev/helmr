@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/org"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -103,7 +104,7 @@ func (s *Server) magicLinkLoginStart(w http.ResponseWriter, r *http.Request, req
 		writeError(w, unavailable(errors.New("magic link mailer is not configured")))
 		return
 	}
-	email, err := normalizeInviteEmail(request.Email)
+	email, err := org.NormalizeEmail(request.Email)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
