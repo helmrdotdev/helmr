@@ -14,7 +14,7 @@ import (
 
 type actorInputReconcileDB interface {
 	db.DBTX
-	Begin(context.Context) (pgx.Tx, error)
+	db.TxBeginner
 }
 
 type Reconciler struct {

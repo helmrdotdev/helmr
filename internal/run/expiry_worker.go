@@ -19,7 +19,7 @@ const (
 
 type queuedChildExpiryDB interface {
 	db.DBTX
-	Begin(context.Context) (pgx.Tx, error)
+	db.TxBeginner
 }
 
 type QueuedChildExpiryWorker struct {

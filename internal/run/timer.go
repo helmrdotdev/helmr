@@ -12,7 +12,7 @@ import (
 
 type timerWaitReconcileDB interface {
 	db.DBTX
-	Begin(context.Context) (pgx.Tx, error)
+	db.TxBeginner
 }
 
 type TimerWaitReconciler struct {

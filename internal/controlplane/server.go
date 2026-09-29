@@ -60,7 +60,7 @@ type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
 	db                    db.Querier
-	tx                    TxBeginner
+	tx                    db.TxBeginner
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
@@ -111,7 +111,7 @@ type ServerConfig struct {
 	DeploymentMode string
 
 	DB          db.Querier
-	TX          TxBeginner
+	TX          db.TxBeginner
 	ReadinessDB db.DBTX
 
 	Auth               auth.Authenticator

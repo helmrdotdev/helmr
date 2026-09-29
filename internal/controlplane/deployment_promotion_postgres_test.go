@@ -792,7 +792,7 @@ func deploymentPromotionArgumentBytes(args []any) int64 {
 	return total
 }
 
-var _ TxBeginner = (*deploymentPromotionCountingBeginner)(nil)
+var _ db.TxBeginner = (*deploymentPromotionCountingBeginner)(nil)
 
 func (fixture deploymentPromotionPostgresFixture) apiKeyPrincipal() auth.Actor {
 	return auth.Actor{

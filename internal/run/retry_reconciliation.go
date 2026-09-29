@@ -11,7 +11,7 @@ import (
 
 type RetryReconciliationDB interface {
 	db.DBTX
-	CancellationDB
+	db.TxBeginner
 }
 
 type RetryReconciler struct{ db RetryReconciliationDB }

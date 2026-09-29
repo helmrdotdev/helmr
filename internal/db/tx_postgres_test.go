@@ -1,15 +1,16 @@
-package controlplane
+package db_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 )
 
-func TestTransactionDurability(t *testing.T) {
+func TestRunTxDurability(t *testing.T) {
 	pool := dbtest.Open(t).Pool
 	dbtest.MustExec(t, t.Context(), pool, `CREATE TABLE transaction_probe (id integer PRIMARY KEY)`)
 	for _, mode := range []string{"commit", "work_error", "cancel", "panic", "commit_error"} {
@@ -23,8 +24,8 @@ func TestTransactionDurability(t *testing.T) {
 			var tx pgx.Tx
 			func() {
 				defer func() { recovered = recover() }()
-				err = inTxWith(ctx, pool, func(work *txWork) error {
-					tx = work.tx
+				err = db.RunTx(ctx, pool, func(work pgx.Tx) error {
+					tx = work
 					if _, e := tx.Exec(ctx, `INSERT INTO transaction_probe VALUES (1)`); e != nil {
 						return e
 					}

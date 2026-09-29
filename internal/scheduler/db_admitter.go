@@ -19,22 +19,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type TxBeginner interface {
-	Begin(context.Context) (pgx.Tx, error)
-}
-
 type Authority interface {
 	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (definition.ScheduledTaskAdmission, error)
 }
 
 type DBAdmitter struct {
 	generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)
-	db                 TxBeginner
+	db                 db.TxBeginner
 	authority          Authority
 	now                func() time.Time
 }
 
-func NewDBAdmitter(database TxBeginner, authority Authority, generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)) (*DBAdmitter, error) {
+func NewDBAdmitter(database db.TxBeginner, authority Authority, generateProxyTrust func(uuid.UUID, uuid.UUID, time.Time) (secret.ProxyTrust, error)) (*DBAdmitter, error) {
 	if database == nil {
 		return nil, errors.New("schedule admission database is required")
 	}

@@ -32,13 +32,9 @@ const (
 
 type Store struct {
 	db         db.Querier
-	tx         transactionBeginner
+	tx         db.TxBeginner
 	encryption cipher.AEAD
 	rand       io.Reader
-}
-
-type transactionBeginner interface {
-	Begin(context.Context) (pgx.Tx, error)
 }
 
 type UnavailableError struct {
@@ -58,7 +54,7 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &unavailable)
 }
 
-func New(database db.Querier, transactions transactionBeginner, encryptionKey []byte) (*Store, error) {
+func New(database db.Querier, transactions db.TxBeginner, encryptionKey []byte) (*Store, error) {
 	if database == nil {
 		return nil, errors.New("secret database is required")
 	}

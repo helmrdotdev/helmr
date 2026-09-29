@@ -2,177 +2,56 @@ package controlplane
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
-func TestInTxCommits(t *testing.T) {
-	tx := &testTransaction{}
-	txb := testTxBeginner{tx: tx}
+func TestInTxWithBuildsWorkForBegunTransaction(t *testing.T) {
+	tx := &inTxWithTestTransaction{}
 	var called bool
-	if err := inTxWith(context.Background(), txb, func(work *txWork) error {
+	if err := inTxWith(context.Background(), inTxWithTestBeginner{tx: tx}, func(work *txWork) error {
 		if work.q == nil {
 			t.Fatal("tx work query store is nil")
+		}
+		if work.tx != tx {
+			t.Fatal("tx work does not hold the begun transaction")
 		}
 		called = true
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !called {
-		t.Fatal("transaction body was not called")
-	}
-	if !tx.committed || tx.rolledBack {
-		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
+	if !called || !tx.committed {
+		t.Fatalf("called=%v committed=%v", called, tx.committed)
 	}
 }
 
-func TestInTxReturnsBeginError(t *testing.T) {
-	want := errors.New("begin failed")
-	txb := testTxBeginner{beginErr: want}
-	err := inTxWith(context.Background(), txb, func(*txWork) error {
-		t.Fatal("transaction body should not run")
-		return nil
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("err = %v, want %v", err, want)
-	}
-	if got := err.Error(); got != "begin transaction" {
-		t.Fatalf("err string = %q, want sanitized transaction stage", got)
+func TestInTxWithRejectsNilBody(t *testing.T) {
+	err := inTxWith(context.Background(), inTxWithTestBeginner{tx: &inTxWithTestTransaction{}}, nil)
+	if err == nil || err.Error() != "transaction function is required" {
+		t.Fatalf("err = %v, want transaction function is required", err)
 	}
 }
 
-func TestInTxRollsBackOnError(t *testing.T) {
-	tx := &testTransaction{}
-	txb := testTxBeginner{tx: tx}
-	want := errors.New("work failed")
-	err := inTxWith(context.Background(), txb, func(*txWork) error {
-		return want
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("err = %v, want %v", err, want)
-	}
-	if tx.committed || !tx.rolledBack {
-		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
-	}
+type inTxWithTestBeginner struct {
+	tx pgx.Tx
 }
 
-func TestInTxJoinsRollbackError(t *testing.T) {
-	workErr := errors.New("work failed")
-	rollbackErr := errors.New("rollback failed")
-	tx := &testTransaction{rollbackErr: rollbackErr}
-	txb := testTxBeginner{tx: tx}
-	err := inTxWith(context.Background(), txb, func(*txWork) error {
-		return workErr
-	})
-	if !errors.Is(err, workErr) || !errors.Is(err, rollbackErr) {
-		t.Fatalf("err = %v, want work and rollback errors", err)
-	}
-	if strings.Contains(err.Error(), rollbackErr.Error()) {
-		t.Fatalf("err string leaked rollback detail: %q", err.Error())
-	}
-}
-
-func TestInTxRollsBackOnCommitError(t *testing.T) {
-	want := errors.New("commit failed")
-	tx := &testTransaction{commitErr: want}
-	txb := testTxBeginner{tx: tx}
-	err := inTxWith(context.Background(), txb, func(*txWork) error {
-		return nil
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("err = %v, want %v", err, want)
-	}
-	if strings.Contains(err.Error(), want.Error()) {
-		t.Fatalf("err string leaked commit detail: %q", err.Error())
-	}
-	if !tx.committed || !tx.rolledBack {
-		t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
-	}
-}
-
-func TestInTxRollsBackAndRepanics(t *testing.T) {
-	tx := &testTransaction{}
-	txb := testTxBeginner{tx: tx}
-	defer func() {
-		recovered := recover()
-		if recovered != "boom" {
-			t.Fatalf("recovered = %v, want boom", recovered)
-		}
-		if tx.committed || !tx.rolledBack {
-			t.Fatalf("committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
-		}
-	}()
-	_ = inTxWith(context.Background(), txb, func(*txWork) error {
-		panic("boom")
-	})
-}
-
-type testTxBeginner struct {
-	tx       pgx.Tx
-	beginErr error
-}
-
-func (b testTxBeginner) Begin(context.Context) (pgx.Tx, error) {
-	if b.beginErr != nil {
-		return nil, b.beginErr
-	}
+func (b inTxWithTestBeginner) Begin(context.Context) (pgx.Tx, error) {
 	return b.tx, nil
 }
 
-type testTransaction struct {
-	committed   bool
-	rolledBack  bool
-	commitErr   error
-	rollbackErr error
+type inTxWithTestTransaction struct {
+	pgx.Tx
+	committed bool
 }
 
-func (tx *testTransaction) Begin(context.Context) (pgx.Tx, error) {
-	panic("unexpected nested transaction")
-}
-
-func (tx *testTransaction) Commit(context.Context) error {
+func (tx *inTxWithTestTransaction) Commit(context.Context) error {
 	tx.committed = true
-	return tx.commitErr
+	return nil
 }
 
-func (tx *testTransaction) Rollback(context.Context) error {
-	tx.rolledBack = true
-	return tx.rollbackErr
-}
-
-func (tx *testTransaction) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
-	panic("unexpected CopyFrom")
-}
-
-func (tx *testTransaction) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults {
-	panic("unexpected SendBatch")
-}
-
-func (tx *testTransaction) LargeObjects() pgx.LargeObjects {
-	panic("unexpected LargeObjects")
-}
-
-func (tx *testTransaction) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
-	panic("unexpected Prepare")
-}
-
-func (tx *testTransaction) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
-	panic("unexpected Exec")
-}
-
-func (tx *testTransaction) Query(context.Context, string, ...any) (pgx.Rows, error) {
-	panic("unexpected Query")
-}
-
-func (tx *testTransaction) QueryRow(context.Context, string, ...any) pgx.Row {
-	panic("unexpected QueryRow")
-}
-
-func (tx *testTransaction) Conn() *pgx.Conn {
+func (tx *inTxWithTestTransaction) Rollback(context.Context) error {
 	return nil
 }

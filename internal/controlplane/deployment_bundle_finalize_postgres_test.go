@@ -631,7 +631,7 @@ func startDeploymentFinalizeHeapSampling() (uint64, func() uint64) {
 	}
 }
 
-var _ TxBeginner = (*deploymentFinalizeCountingBeginner)(nil)
+var _ db.TxBeginner = (*deploymentFinalizeCountingBeginner)(nil)
 
 type deploymentFinalizeTrackingStore struct {
 	cas.UploadStore
