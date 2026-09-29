@@ -61,9 +61,9 @@ func TestPhysicalCloseRetainsResourcesWithoutProofWhenDeviceCleanupFails(t *test
 	if pool.runtimeCheckedOut(ref.id, ref.epoch) || len(pool.Reservations.Snapshot().Reservations) != 1 || pool.computerDevices[ref] == nil {
 		t.Fatal("exited checkout must relinquish ownership while retaining uncleaned resources")
 	}
-	pool.Backend = &cleanupRuntimeConnector{}
+	pool.Backend = &cleanupRuntimeBackend{}
 	device.err = nil
-	target := runtimeCapacityTarget(ref.id, ref.epoch)
+	target := runtimeReservationTarget(ref.id, ref.epoch)
 	control := &typedRuntimeClient{}
 	if err := pool.StopRuntimeTarget(t.Context(), control, target); err != nil {
 		t.Fatal(err)

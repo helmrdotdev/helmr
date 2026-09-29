@@ -274,7 +274,7 @@ func TestComputerCheckpointPoolRecoversUncertainReadyReceipt(t *testing.T) {
 	defer cancel()
 	// The server committed ready, but the client lost the response and its deadline.
 	client := &checkpointReconcileClient{target: target, onReady: cancel, readyError: context.Canceled, failedError: &httpclient.Error{StatusCode: 409, Message: "checkpoint already ready"}}
-	connector := &countingRuntimeConnector{}
+	connector := &countingRuntimeBackend{}
 	ref := preparedRuntimeRef{id: target.ID, epoch: target.WorkerEpoch}
 	p := &PreparedRuntimePool{Backend: connector, ComputerCaptures: &ComputerCaptureRuns{}, Checkpoints: client, CheckpointEncryptor: testCheckpointEncryptor(t), ComputerObjects: &captureStore{}, Reservations: testCheckpointReservations(t), TempDir: t.TempDir(), checkedOut: map[preparedRuntimeRef]struct{}{ref: {}}, checkedOutEntries: map[preparedRuntimeRef]preparedRuntimeEntry{ref: {target: target, session: session}}}
 	if err := p.captureRuntimeTarget(ctx, client, target); err == nil {

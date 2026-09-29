@@ -177,7 +177,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
 	vmResources := resolveVMResources(cfg)
-	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
+	runtimeBackend, err := vm.NewStartLimiter(connector, runtimeCapacity.hostStartLimit)
 	if err != nil {
 		return fmt.Errorf("configure host runtime start limit: %w", err)
 	}
@@ -231,7 +231,7 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	if runtimeCapacity.preparedPoolSize > 0 {
-		preparedRuntimePool = executor.NewPreparedRuntimePool(runtimeConnector, store, runtimeCapacity.preparedPoolSize, log)
+		preparedRuntimePool = executor.NewPreparedRuntimePool(runtimeBackend, store, runtimeCapacity.preparedPoolSize, log)
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
 		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes

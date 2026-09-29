@@ -1498,7 +1498,7 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 		return reservation.ErrOverflow
 	}
 	projectionBytes += retained
-	request, err := runtimeCapacityVectorWithProjection(
+	request, err := runtimeReservationVectorWithProjection(
 		int64(target.Source.ReservedCPUMillis),
 		int64(target.Source.ReservedMemoryMiB),
 		target.Source.ReservedDiskMiB,
@@ -1507,7 +1507,7 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 	if err != nil {
 		return err
 	}
-	created, err := p.Reservations.Reserve(runtimeCapacityKey(target.ID, target.WorkerEpoch), request)
+	created, err := p.Reservations.Reserve(runtimeReservationKey(target.ID, target.WorkerEpoch), request)
 	if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil && !created {
 		return errPreparedRuntimeCapacityBusy
 	}
@@ -1517,7 +1517,7 @@ func (p *PreparedRuntimePool) reserveRuntimeCapacity(
 	if staging > 0 {
 		created, err = p.Reservations.Reserve(restoreStagingKey(target.ID, target.WorkerEpoch), reservation.Vector{GuestEphemeralDiskBytes: staging})
 		if err != nil || !created {
-			releaseErr := p.Reservations.Release(runtimeCapacityKey(target.ID, target.WorkerEpoch))
+			releaseErr := p.Reservations.Release(runtimeReservationKey(target.ID, target.WorkerEpoch))
 			if errors.Is(err, reservation.ErrCapacityExceeded) || err == nil {
 				err = errPreparedRuntimeCapacityBusy
 			}
@@ -1548,7 +1548,7 @@ func (p *PreparedRuntimePool) releaseRuntimeCapacity(computerInstanceID string, 
 	if err := p.Reservations.Release(restoreStagingKey(computerInstanceID, runtimeEpoch)); err != nil {
 		return err
 	}
-	if err := p.Reservations.Release(runtimeCapacityKey(computerInstanceID, runtimeEpoch)); err != nil {
+	if err := p.Reservations.Release(runtimeReservationKey(computerInstanceID, runtimeEpoch)); err != nil {
 		return err
 	}
 	p.mu.Lock()

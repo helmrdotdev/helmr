@@ -48,9 +48,9 @@ type blockingCloseRuntimeSession struct {
 	once    sync.Once
 }
 
-type countingRuntimeConnector struct{ calls atomic.Int32 }
+type countingRuntimeBackend struct{ calls atomic.Int32 }
 
-type cleanupRuntimeConnector struct {
+type cleanupRuntimeBackend struct {
 	cleaned []string
 	err     error
 }
@@ -125,7 +125,7 @@ func TestFatalRuntimeFailureWaitsForControlAcknowledgement(t *testing.T) {
 	}
 }
 
-func (c *cleanupRuntimeConnector) Cleanup(_ context.Context, owner vm.Owner) error {
+func (c *cleanupRuntimeBackend) Cleanup(_ context.Context, owner vm.Owner) error {
 	c.cleaned = append(c.cleaned, owner.ID)
 	return c.err
 }
@@ -155,7 +155,7 @@ func (s *blockingCloseRuntimeSession) Close(ctx context.Context) error {
 	}
 }
 
-func (c *countingRuntimeConnector) Cleanup(context.Context, vm.Owner) error {
+func (c *countingRuntimeBackend) Cleanup(context.Context, vm.Owner) error {
 	c.calls.Add(1)
 	return nil
 }
@@ -311,7 +311,7 @@ func TestStopRuntimeTargetDefersToCheckedOutComputerRuntime(t *testing.T) {
 }
 
 func TestStopRuntimeTargetReconcilesMissingLocalRuntimeExactly(t *testing.T) {
-	cleaner := &cleanupRuntimeConnector{}
+	cleaner := &cleanupRuntimeBackend{}
 	pool := NewPreparedRuntimePool(cleaner, nil, 1, nil)
 	client := &typedRuntimeClient{}
 	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
@@ -332,7 +332,7 @@ func TestStopRuntimeTargetReconcilesMissingLocalRuntimeExactly(t *testing.T) {
 }
 
 func TestStopRuntimeTargetDoesNotCloseWhenExactCleanupFails(t *testing.T) {
-	cleaner := &cleanupRuntimeConnector{err: errors.New("cleanup failed")}
+	cleaner := &cleanupRuntimeBackend{err: errors.New("cleanup failed")}
 	pool := NewPreparedRuntimePool(cleaner, nil, 1, nil)
 	client := &typedRuntimeClient{}
 	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
@@ -363,7 +363,7 @@ func TestReconcileDesiredRuntimesStopsCleanly(t *testing.T) {
 }
 
 func TestReconcileDesiredRuntimesSkipsActiveRedelivery(t *testing.T) {
-	connector := &countingRuntimeConnector{}
+	connector := &countingRuntimeBackend{}
 	pool := NewPreparedRuntimePool(connector, nil, 2, nil)
 	session := &blockingCloseRuntimeSession{started: make(chan struct{}), release: make(chan struct{})}
 	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, Action: workerapi.RuntimeReconcileClose}
@@ -400,7 +400,7 @@ func TestReconcileDesiredRuntimesBacksOffWhenCapacityIsFull(t *testing.T) {
 	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	pool.ComputerInstances = &batchRuntimeClient{}
-	if err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("occupied", 7)); err != nil {
+	if err := pool.reserveRuntimeCapacity(runtimeReservationTarget("occupied", 7)); err != nil {
 		t.Fatal(err)
 	}
 	target := runtimePreparationTarget(mount, uuid.NewV7().String(), 7)
@@ -475,7 +475,7 @@ func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 	}
 	defer borrowed.Session.Close(context.Background())
 
-	pool := NewPreparedRuntimePool(&cleanupRuntimeConnector{}, unavailableRuntimeCAS{}, 1, nil)
+	pool := NewPreparedRuntimePool(&cleanupRuntimeBackend{}, unavailableRuntimeCAS{}, 1, nil)
 	client := &typedRuntimeClient{}
 	pool.ComputerInstances = client
 	if err := pool.warmRuntimeTarget(context.Background(), client, retryableWarmTarget(), func() {}); err != nil {
@@ -487,7 +487,7 @@ func TestWarmRuntimeTargetStartsWhileUnrelatedRunIsBorrowed(t *testing.T) {
 }
 
 func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *testing.T) {
-	pool := NewPreparedRuntimePool(&cleanupRuntimeConnector{}, unavailableRuntimeCAS{}, 1, nil)
+	pool := NewPreparedRuntimePool(&cleanupRuntimeBackend{}, unavailableRuntimeCAS{}, 1, nil)
 	pool.entries["occupied"] = []preparedRuntimeEntry{{computerInstanceID: "occupied", runtimeEpoch: 7}}
 	client := &typedRuntimeClient{}
 
@@ -507,13 +507,13 @@ func TestWarmRuntimeTargetRetriesCapacityBackpressureWithoutDurableFailure(t *te
 }
 
 func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
-	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000510", 7)
+	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000510", 7)
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
-	wantKey := runtimeCapacityKey(target.ID, target.WorkerEpoch)
+	wantKey := runtimeReservationKey(target.ID, target.WorkerEpoch)
 	wantVector := reservation.Vector{
 		CPUMillis: 1000, MemoryBytes: 512 << 20, GuestEphemeralDiskBytes: 1024 << 20,
 		VMSlots: 1,
@@ -624,13 +624,13 @@ func TestPreparedRuntimeBindsProgramIndexToDeploymentReceipt(t *testing.T) {
 func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 2, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
-	first := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000511", 7)
+	first := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000511", 7)
 	if err := pool.reserveRuntimeCapacity(first); err != nil {
 		t.Fatal(err)
 	}
 	assertRuntimeCapacityBackpressure(t, pool.reserveRuntimeCapacity(first))
 
-	err := pool.reserveRuntimeCapacity(runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000512", 7))
+	err := pool.reserveRuntimeCapacity(runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000512", 7))
 	assertRuntimeCapacityBackpressure(t, err)
 	if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 		t.Fatalf("reservations = %d, want 1", got)
@@ -640,7 +640,7 @@ func TestPreparedRuntimeCapacityExhaustionIsRetryableBackpressure(t *testing.T) 
 func TestPreparedRuntimeCapacityRejectsNegativeGuestDisk(t *testing.T) {
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
-	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000514", 7)
+	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000514", 7)
 	target.Source.ReservedDiskMiB = -1
 	if err := pool.reserveRuntimeCapacity(target); err == nil {
 		t.Fatal("negative guest disk capacity unexpectedly reserved")
@@ -651,8 +651,8 @@ func TestPreparedRuntimeCapacityRejectsNegativeGuestDisk(t *testing.T) {
 }
 
 func TestPreparedRuntimeCloseFailureRetainsCapacityUntilReclaim(t *testing.T) {
-	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000513", 7)
-	connector := &cleanupRuntimeConnector{}
+	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000513", 7)
+	connector := &cleanupRuntimeBackend{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
@@ -700,7 +700,7 @@ func runtimePreparationTarget(mount workerapi.ComputerInstanceAssignment, id str
 	return target
 }
 
-func runtimeCapacityTarget(id string, epoch int64) workerapi.RuntimeReconcileTarget {
+func runtimeReservationTarget(id string, epoch int64) workerapi.RuntimeReconcileTarget {
 	return workerapi.RuntimeReconcileTarget{
 		ID: id, WorkerEpoch: epoch,
 		Source: workerapi.RuntimeSource{
@@ -732,7 +732,7 @@ func assertRuntimeCapacityBackpressure(t *testing.T, err error) {
 }
 
 func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *testing.T) {
-	connector := &cleanupRuntimeConnector{}
+	connector := &cleanupRuntimeBackend{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
 	target := workerapi.RuntimeReconcileTarget{
@@ -751,7 +751,7 @@ func TestReclaimFailedRuntimeTargetPersistsProofOnlyAfterExactHostCleanup(t *tes
 }
 
 func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *testing.T) {
-	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
+	connector := &cleanupRuntimeBackend{err: errors.New("process still alive")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	client := &typedRuntimeClient{}
 	target := workerapi.RuntimeReconcileTarget{ID: "019c10d5-a6f7-7af1-8f5f-000000000502", WorkerEpoch: 7}
@@ -764,10 +764,10 @@ func TestReclaimFailedRuntimeTargetKeepsQuarantineWhenCleanupIsAmbiguous(t *test
 }
 
 func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t *testing.T) {
-	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000515", 7)
+	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000515", 7)
 	target.DesiredVersion = 2
 	target.ObservedVersion = 4
-	connector := &cleanupRuntimeConnector{}
+	connector := &cleanupRuntimeBackend{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
@@ -801,8 +801,8 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 }
 
 func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t *testing.T) {
-	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000517", 7)
-	connector := &cleanupRuntimeConnector{err: errors.New("runtime still exists")}
+	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000517", 7)
+	connector := &cleanupRuntimeBackend{err: errors.New("runtime still exists")}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
@@ -828,10 +828,10 @@ func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t
 }
 
 func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.T) {
-	target := runtimeCapacityTarget("019c10d5-a6f7-7af1-8f5f-000000000518", 7)
+	target := runtimeReservationTarget("019c10d5-a6f7-7af1-8f5f-000000000518", 7)
 	target.DesiredVersion = 2
 	target.ObservedVersion = 4
-	connector := &cleanupRuntimeConnector{}
+	connector := &cleanupRuntimeBackend{}
 	pool := NewPreparedRuntimePool(connector, nil, 1, nil)
 	pool.Reservations = newPreparedRuntimeReservations(t, 1)
 	if err := pool.reserveRuntimeCapacity(target); err != nil {

@@ -3,7 +3,7 @@ package executor
 import "testing"
 
 func TestComputerCapacityIncludesDiskProjection(t *testing.T) {
-	request, err := runtimeCapacityVectorWithProjection(1000, 512, 1024, 256<<20)
+	request, err := runtimeReservationVectorWithProjection(1000, 512, 1024, 256<<20)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -122,7 +122,7 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 
 func computerPreparedRuntimePool(t *testing.T, mount workerapi.ComputerInstanceAssignment, session vm.Machine) *PreparedRuntimePool {
 	t.Helper()
-	target := runtimeCapacityTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
+	target := runtimeReservationTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
 	target.Source.ComputerID = mount.ComputerID
 	target.Source.WriterGeneration = mount.WriterGeneration
 	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
@@ -663,7 +663,7 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 			computerMount.ComputerID = uuid.NewV7().String()
 			computerMount.GuestdChannelToken = "channel-token"
 			computerMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
-			target := runtimeCapacityTarget(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch)
+			target := runtimeReservationTarget(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch)
 			target.Source.ComputerID = computerMount.ComputerID
 			target.Source.WriterGeneration = computerMount.WriterGeneration
 			target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: computerMount.Target.BaseComputerDiskVersionID}
@@ -726,7 +726,7 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 			if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 				t.Fatalf("capacity reservations after close failure = %d, want 1", got)
 			}
-			connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
+			connector := &cleanupRuntimeBackend{err: errors.New("process still alive")}
 			pool.Backend = connector
 			control := &typedRuntimeClient{}
 			if err := pool.StopRuntimeTarget(context.Background(), control, target); err == nil {
@@ -1448,9 +1448,9 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	}
 	// Reconciliation receives a CP-authorized target after active leases expire.
 	// It must use host cleanup, not retry the cached session Close failure.
-	connector := &cleanupRuntimeConnector{err: errors.New("process still alive")}
+	connector := &cleanupRuntimeBackend{err: errors.New("process still alive")}
 	pool.Backend = connector
-	target := runtimeCapacityTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
+	target := runtimeReservationTarget(mount.ComputerInstanceID, mount.RuntimeEpoch)
 	target.Source.ComputerID = mount.ComputerID
 	target.Source.Computer = &workerapi.RuntimeComputerSource{VersionID: mount.Target.BaseComputerDiskVersionID}
 	control := &typedRuntimeClient{}
