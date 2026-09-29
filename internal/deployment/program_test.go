@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 type contractFixture struct {
@@ -37,9 +38,9 @@ func TestProgramIndexCanonicalRoundTrip(t *testing.T) {
 	if string(reencoded) != string(raw) {
 		t.Fatalf("reencoded Program index differs:\n%s\n%s", reencoded, raw)
 	}
-	if parsed.Declarations[0].Kind != DefinitionKindActor ||
-		parsed.Declarations[1].Kind != DefinitionKindSandbox ||
-		parsed.Declarations[2].Kind != DefinitionKindTask {
+	if parsed.Declarations[0].Kind != definition.KindActor ||
+		parsed.Declarations[1].Kind != definition.KindSandbox ||
+		parsed.Declarations[2].Kind != definition.KindTask {
 		t.Fatalf("Program index declarations are not in unsigned UTF-8 kind order")
 	}
 }
@@ -167,7 +168,7 @@ func TestProgramIndexParserEnforcesSizeBound(t *testing.T) {
 
 func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 	fixture := loadContractFixture(t)
-	canonical, manifestDigest, err := CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
+	canonical, manifestDigest, err := definition.CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +193,7 @@ func testProgramIndex(t *testing.T) ProgramIndex {
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,
 				MediaType:    ComputerImageArtifactMediaType,
-				Architecture: ArchitectureX8664,
+				Architecture: definition.ArchitectureX8664,
 			},
 		}},
 		"sha256:"+strings.Repeat("4", 64),

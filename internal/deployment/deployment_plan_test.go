@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/retry"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestDeploymentPlanFromProgramIndex(t *testing.T) {
@@ -20,7 +20,7 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 	maxAttempts := int64(3)
 	taskIndex := -1
 	for position := range index.Declarations {
-		if index.Declarations[position].Kind == DefinitionKindTask {
+		if index.Declarations[position].Kind == definition.KindTask {
 			taskIndex = position
 			break
 		}
@@ -29,13 +29,13 @@ func TestDeploymentPlanFromProgramIndex(t *testing.T) {
 		t.Fatal("test Program index has no task")
 	}
 	index.Declarations[taskIndex].Task.Run.TTLMs = &ttl
-	index.Declarations[taskIndex].Task.Run.Retry = retry.Manifest{
+	index.Declarations[taskIndex].Task.Run.Retry = definition.RetryManifest{
 		Enabled: true, MaxAttempts: &maxAttempts,
-		Backoff: &retry.Backoff{MinMs: 100, MaxMs: 1000, Factor: 2, Jitter: retry.JitterFull},
+		Backoff: &definition.RetryBackoff{MinMs: 100, MaxMs: 1000, Factor: 2, Jitter: definition.RetryJitterFull},
 	}
-	index.Declarations[taskIndex].Task.Schedule = &ScheduleManifest{
+	index.Declarations[taskIndex].Task.Schedule = &definition.ScheduleManifest{
 		Cron: "0 * * * *", Timezone: "UTC",
-		Computer: ScheduleComputerManifest{
+		Computer: definition.ScheduleComputerManifest{
 			SandboxDeclaredID: "repo",
 			Secrets:           []api.ComputerSecret{{Name: "TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "raw"}}},
 		},
@@ -78,12 +78,12 @@ func TestDeploymentPlanFromProgramIndexRejectsInvalidIndex(t *testing.T) {
 func TestDeploymentPlanFromProgramIndexPreservesEmptyQueueArray(t *testing.T) {
 	index := testProgramIndex(t)
 	for _, declaration := range index.Declarations {
-		if declaration.Kind == DefinitionKindSandbox {
+		if declaration.Kind == definition.KindSandbox {
 			index.Declarations = []ProgramIndexDeclaration{declaration}
 			break
 		}
 	}
-	index.Queues = []QueueInput{}
+	index.Queues = []definition.QueueInput{}
 	plan, err := DeploymentPlanFromProgramIndex(index)
 	if err != nil {
 		t.Fatal(err)

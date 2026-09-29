@@ -13,6 +13,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/buildcontext"
 	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/hostconfig"
 	"github.com/spf13/cobra"
@@ -226,7 +227,7 @@ func buildDeploymentBundleAt(
 	if err != nil {
 		return fmt.Errorf("read analyzed build plan: %w", err)
 	}
-	plan, err := deployment.ParseBuildPlan(planRaw)
+	plan, err := definition.ParseBuildPlan(planRaw)
 	if err != nil {
 		return fmt.Errorf("verify analyzed build plan: %w", err)
 	}

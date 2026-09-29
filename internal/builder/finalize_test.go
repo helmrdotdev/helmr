@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -113,7 +113,7 @@ func TestReferencedBundleObjectsDeduplicatesSharedComputerImage(t *testing.T) {
 		DeclaredID: "first",
 		Artifact: deployment.BundleComputerImageArtifact{
 			Profile:      computer.SeedProfile,
-			Architecture: deployment.ArchitectureX8664,
+			Architecture: definition.ArchitectureX8664,
 			Digest:       "sha256:" + strings.Repeat("b", 64), SizeBytes: 20,
 			MediaType: deployment.ComputerImageArtifactMediaType,
 		},
@@ -276,16 +276,16 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
 	programDigest := sha256sum.DigestBytes(programBytes)
 	index := deployment.ProgramIndex{
-		Architecture:       deployment.ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
 		Declarations: []deployment.ProgramIndexDeclaration{{
-			Kind:       deployment.DefinitionKindTask,
+			Kind:       definition.KindTask,
 			DeclaredID: "hello",
-			Task: &deployment.TaskManifest{
-				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
-				Run: deployment.RunManifest{
+			Task: &definition.TaskManifest{
+				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
+				Run: definition.RunManifest{
 					Queue: "tasks", MaxDurationMs: 5000,
-					Retry: retry.Manifest{Enabled: false},
+					Retry: definition.RetryManifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{
@@ -294,16 +294,16 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
-		Queues:          []deployment.QueueInput{{Name: "tasks"}},
-		RuntimeContract: deployment.RuntimeContract,
+		Queues:          []definition.QueueInput{{Name: "tasks"}},
+		RuntimeContract: definition.RuntimeContract,
 		RuntimeDigest:   runtimeDigest,
 	}
 	return BundleInput{
 		Runtime: deployment.RuntimeDescriptor{
-			Architecture: deployment.ArchitectureX8664,
+			Architecture: definition.ArchitectureX8664,
 			Digest:       runtimeDigest, FormatVersion: deployment.RuntimeDescriptorFormatVersion,
 			MediaType:       deployment.RuntimeArtifactMediaType,
-			RuntimeContract: deployment.RuntimeContract, SizeBytes: 4096,
+			RuntimeContract: definition.RuntimeContract, SizeBytes: 4096,
 		},
 		Program: deployment.ProgramOutput{
 			Artifact: deployment.ProgramDescriptor{
@@ -332,15 +332,15 @@ func writeVerifiedProgramFixture(
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
 	index := deployment.ProgramIndex{
-		Architecture:       deployment.ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: sha256sum.DigestBytes(configRaw),
 		Declarations: []deployment.ProgramIndexDeclaration{{
-			Kind: deployment.DefinitionKindTask, DeclaredID: "hello",
-			Task: &deployment.TaskManifest{
-				Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone},
-				Run: deployment.RunManifest{
+			Kind: definition.KindTask, DeclaredID: "hello",
+			Task: &definition.TaskManifest{
+				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
+				Run: definition.RunManifest{
 					Queue: "tasks", MaxDurationMs: 5000,
-					Retry: retry.Manifest{Enabled: false},
+					Retry: definition.RetryManifest{Enabled: false},
 				},
 			},
 			Locator: &deployment.ProgramLocator{
@@ -348,11 +348,11 @@ func writeVerifiedProgramFixture(
 				Slot: deployment.DeclarationSlotHandler,
 			},
 		}},
-		Queues:          []deployment.QueueInput{{Name: "tasks"}},
-		RuntimeContract: deployment.RuntimeContract, RuntimeDigest: runtimeDigest,
+		Queues:          []definition.QueueInput{{Name: "tasks"}},
+		RuntimeContract: definition.RuntimeContract, RuntimeDigest: runtimeDigest,
 	}
 	for _, image := range images {
-		index.Declarations = append(index.Declarations, deployment.ProgramIndexDeclaration{Kind: deployment.DefinitionKindSandbox, DeclaredID: image.DeclaredID, Sandbox: &deployment.SandboxManifest{Image: deployment.SandboxImageManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}}})
+		index.Declarations = append(index.Declarations, deployment.ProgramIndexDeclaration{Kind: definition.KindSandbox, DeclaredID: image.DeclaredID, Sandbox: &definition.SandboxManifest{Image: definition.SandboxImageManifest{ArtifactDigest: image.Artifact.Digest, MediaType: image.Artifact.MediaType, Profile: image.Artifact.Profile, Config: image.Artifact.Config}, Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 1024}}})
 	}
 	sort.Slice(index.Declarations, func(i, j int) bool { return index.Declarations[i].Kind < index.Declarations[j].Kind })
 	indexRaw, err := deployment.CanonicalProgramIndex(index)

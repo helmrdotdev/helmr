@@ -13,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -51,7 +52,7 @@ func EncodeProgram(
 	if verification.Outcome != VerificationOutcomeSucceeded {
 		return nil, errors.New("program encoding requires successful verification")
 	}
-	plan, err := ParseBuildPlan(
+	plan, err := definition.ParseBuildPlan(
 		[]byte(verification.Succeeded.Files[0].Content),
 	)
 	if err != nil {

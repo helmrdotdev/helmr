@@ -4,16 +4,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/retry"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestTaskRetryDelayUsesAttemptCountAndCappedIntegerBackoff(t *testing.T) {
 	maxAttempts := int64(5)
-	policy := retry.Manifest{
+	policy := definition.RetryManifest{
 		Enabled:     true,
 		MaxAttempts: &maxAttempts,
-		Backoff: &retry.Backoff{
-			MinMs: 1000, MaxMs: 3000, Factor: 2, Jitter: retry.JitterNone,
+		Backoff: &definition.RetryBackoff{
+			MinMs: 1000, MaxMs: 3000, Factor: 2, Jitter: definition.RetryJitterNone,
 		},
 	}
 	for attempt, want := range []time.Duration{time.Second, 2 * time.Second, 3 * time.Second, 3 * time.Second} {
@@ -29,11 +29,11 @@ func TestTaskRetryDelayUsesAttemptCountAndCappedIntegerBackoff(t *testing.T) {
 
 func TestTaskRetryDelayUsesInclusiveFullJitter(t *testing.T) {
 	maxAttempts := int64(2)
-	policy := retry.Manifest{
+	policy := definition.RetryManifest{
 		Enabled:     true,
 		MaxAttempts: &maxAttempts,
-		Backoff: &retry.Backoff{
-			MinMs: 1000, MaxMs: 3000, Factor: 2, Jitter: retry.JitterFull,
+		Backoff: &definition.RetryBackoff{
+			MinMs: 1000, MaxMs: 3000, Factor: 2, Jitter: definition.RetryJitterFull,
 		},
 	}
 	delay, retry, err := taskRetryDelay(policy, 1, func(maximum int64) (int64, error) {

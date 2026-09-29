@@ -13,11 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 const actorStartBodyLimit = int64(
@@ -427,7 +427,7 @@ func actorStartRequestFromScope(
 		return actorStartRequest{}, err
 	}
 	if len(retryPolicy) > 0 {
-		if _, err := retry.Parse(retryPolicy); err != nil {
+		if _, err := definition.ParseRetry(retryPolicy); err != nil {
 			return actorStartRequest{}, fmt.Errorf("normalize run.retry: %w", err)
 		}
 	}

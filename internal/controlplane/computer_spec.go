@@ -9,7 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,9 +25,9 @@ func registerDeploymentComputerSpecs(
 ) (map[string]db.ComputerSpec, error) {
 	specs := make(map[string]db.ComputerSpec)
 	ordered := make([]finalizedDeploymentDefinition, 0, len(definitions))
-	for _, definition := range definitions {
-		if definition.computerSpec != nil {
-			ordered = append(ordered, definition)
+	for _, finalized := range definitions {
+		if finalized.computerSpec != nil {
+			ordered = append(ordered, finalized)
 		}
 	}
 	// Deployments can name the same specs in different orders. Acquire their
@@ -35,8 +35,8 @@ func registerDeploymentComputerSpecs(
 	slices.SortFunc(ordered, func(left, right finalizedDeploymentDefinition) int {
 		return bytes.Compare(left.computerSpec.Digest[:], right.computerSpec.Digest[:])
 	})
-	for _, definition := range ordered {
-		spec := definition.computerSpec
+	for _, finalized := range ordered {
+		spec := finalized.computerSpec
 		artifact, ok := artifacts[spec.Seed.Digest]
 		if !ok {
 			return nil, fmt.Errorf("computer seed %q is not registered", spec.Seed.Digest)
@@ -49,7 +49,7 @@ func registerDeploymentComputerSpecs(
 		if err != nil {
 			return nil, fmt.Errorf("register computer spec: %w", err)
 		}
-		roundTrip, err := deployment.ParseComputerSpec(stored.Config, cas.Descriptor{
+		roundTrip, err := definition.ParseComputerSpec(stored.Config, cas.Descriptor{
 			Digest: stored.SeedDigest, SizeBytes: stored.SeedSizeBytes, MediaType: stored.SeedMediaType,
 		})
 		if err != nil {
@@ -59,7 +59,7 @@ func registerDeploymentComputerSpecs(
 			!bytes.Equal(roundTrip.Config, spec.Config) {
 			return nil, fmt.Errorf("registered computer spec has different canonical content")
 		}
-		specs[definition.declaredID] = stored
+		specs[finalized.declaredID] = stored
 	}
 	return specs, nil
 }

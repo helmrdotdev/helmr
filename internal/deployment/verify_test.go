@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/retry"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -242,17 +242,17 @@ func newTestProgram(t *testing.T) *testProgram {
 	sourcePath := "helmr/app/entry-0.mjs"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
 	programRaw, err := CanonicalProgramIndex(ProgramIndex{
-		Architecture:       ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: testDigest(string(configRaw)),
 		Declarations: []ProgramIndexDeclaration{{
-			Kind:       DefinitionKindTask,
+			Kind:       definition.KindTask,
 			DeclaredID: "build",
-			Task: &TaskManifest{
-				Payload: SchemaManifest{Kind: SchemaKindNone},
-				Run: RunManifest{
+			Task: &definition.TaskManifest{
+				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
+				Run: definition.RunManifest{
 					Queue:         "task/build",
 					MaxDurationMs: 900000,
-					Retry:         retry.Manifest{Enabled: false},
+					Retry:         definition.RetryManifest{Enabled: false},
 				},
 			},
 			Locator: &ProgramLocator{
@@ -261,10 +261,10 @@ func newTestProgram(t *testing.T) *testProgram {
 				Slot:       DeclarationSlotHandler,
 			},
 		}},
-		Queues: []QueueInput{{
+		Queues: []definition.QueueInput{{
 			Name: "task/build",
 		}},
-		RuntimeContract: RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	})
 	if err != nil {

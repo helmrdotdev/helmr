@@ -13,7 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
@@ -46,7 +46,7 @@ func discoverComputerPlacement(ctx context.Context, tx pgx.Tx, environmentID, co
 	if err != nil {
 		return p, err
 	}
-	config, err := deployment.ParseComputerConfig(spec.Config)
+	config, err := definition.ParseComputerConfig(spec.Config)
 	if err != nil {
 		return p, err
 	}

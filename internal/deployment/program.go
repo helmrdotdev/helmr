@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
@@ -18,13 +19,10 @@ import (
 const (
 	programVerificationVersion = 0
 
-	RuntimeContract                       = "helmr.runtime.v0"
 	ProgramArtifactMediaType              = "application/vnd.helmr.deployment-program.v0+squashfs"
-	manifestDigestDomain                  = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger              int64 = 9007199254740991
 	maxProgramFileSizeBytes         int64 = 16777216
 	maxProgramVerificationSizeBytes       = 17891328
-	ArchitectureX8664                     = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                   = DeclarationKind("task")
 	DeclarationKindActor                  = DeclarationKind("actor")
 	DeclarationSlotHandler                = DeclarationSlot("handler")
@@ -33,7 +31,6 @@ const (
 
 var sha256DigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
-type RuntimeArchitecture string
 type DeclarationKind string
 type DeclarationSlot string
 
@@ -50,11 +47,11 @@ type ProgramLocator struct {
 }
 
 type ProgramIndexDeclaration struct {
-	Kind       DefinitionKind `json:"-"`
-	DeclaredID string         `json:"-"`
-	Task       *TaskManifest
-	Actor      *ActorManifest
-	Sandbox    *SandboxManifest
+	Kind       definition.Kind `json:"-"`
+	DeclaredID string          `json:"-"`
+	Task       *definition.TaskManifest
+	Actor      *definition.ActorManifest
+	Sandbox    *definition.SandboxManifest
 	Locator    *ProgramLocator
 }
 
@@ -76,12 +73,12 @@ type ProgramConfig struct {
 }
 
 type ProgramIndex struct {
-	Architecture       RuntimeArchitecture       `json:"architecture"`
-	ConfigResultDigest string                    `json:"configResultDigest"`
-	Declarations       []ProgramIndexDeclaration `json:"declarations"`
-	Queues             []QueueInput              `json:"queues"`
-	RuntimeContract    string                    `json:"runtimeContract"`
-	RuntimeDigest      string                    `json:"runtimeDigest"`
+	Architecture       definition.RuntimeArchitecture `json:"architecture"`
+	ConfigResultDigest string                         `json:"configResultDigest"`
+	Declarations       []ProgramIndexDeclaration      `json:"declarations"`
+	Queues             []definition.QueueInput        `json:"queues"`
+	RuntimeContract    string                         `json:"runtimeContract"`
+	RuntimeDigest      string                         `json:"runtimeDigest"`
 }
 
 // ProgramOutput is the canonical Program artifact and its execution index.
@@ -285,7 +282,7 @@ func cloneProgramIndex(index ProgramIndex) ProgramIndex {
 			index.Declarations[position],
 		)
 	}
-	queues := make([]QueueInput, len(index.Queues))
+	queues := make([]definition.QueueInput, len(index.Queues))
 	copy(queues, index.Queues)
 	index.Queues = queues
 	for position := range index.Queues {
@@ -350,8 +347,8 @@ func CanonicalProgramIndex(index ProgramIndex) ([]byte, error) {
 }
 
 func ValidateProgramIndex(index ProgramIndex) error {
-	if index.RuntimeContract != RuntimeContract {
-		return fmt.Errorf("program index runtimeContract = %q, want %q", index.RuntimeContract, RuntimeContract)
+	if index.RuntimeContract != definition.RuntimeContract {
+		return fmt.Errorf("program index runtimeContract = %q, want %q", index.RuntimeContract, definition.RuntimeContract)
 	}
 	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
 		return errors.New("program index runtimeDigest is not a lowercase SHA-256 digest")
@@ -367,7 +364,7 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	}
 	queues := make(map[string]struct{}, len(index.Queues))
 	for position, queue := range index.Queues {
-		if err := validateQueueInput(queue); err != nil {
+		if err := definition.ValidateQueueInput(queue); err != nil {
 			return fmt.Errorf("program index queue %d: %w", position, err)
 		}
 		if position > 0 && bytes.Compare(
@@ -396,21 +393,21 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	return nil
 }
 
-func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
+func buildPlanProgramDeclarations(plan definition.BuildPlan) []ProgramDeclaration {
 	declarations := make([]ProgramDeclaration, 0)
-	for _, definition := range plan.Definitions {
-		switch definition.Kind {
-		case DefinitionKindTask:
+	for _, input := range plan.Definitions {
+		switch input.Kind {
+		case definition.KindTask:
 			slots := []DeclarationSlot{DeclarationSlotHandler}
-			if definition.Task.Payload.Kind == SchemaKindStandard {
+			if input.Task.Payload.Kind == definition.SchemaKindStandard {
 				slots = append(slots, DeclarationSlotPayloadSchema)
 			}
 			declarations = append(declarations, ProgramDeclaration{
-				Kind: DeclarationKindTask, DeclaredID: definition.DeclaredID, Slots: slots,
+				Kind: DeclarationKindTask, DeclaredID: input.DeclaredID, Slots: slots,
 			})
-		case DefinitionKindActor:
+		case definition.KindActor:
 			declarations = append(declarations, ProgramDeclaration{
-				Kind: DeclarationKindActor, DeclaredID: definition.DeclaredID,
+				Kind: DeclarationKindActor, DeclaredID: input.DeclaredID,
 				Slots: []DeclarationSlot{DeclarationSlotHandler},
 			})
 		}
@@ -418,19 +415,8 @@ func buildPlanProgramDeclarations(plan BuildPlan) []ProgramDeclaration {
 	return declarations
 }
 
-func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return nil, [sha256.Size]byte{}, fmt.Errorf("canonicalize deployment manifest: %w", err)
-	}
-	if len(canonical) == 0 || canonical[0] != '{' {
-		return nil, [sha256.Size]byte{}, fmt.Errorf("deployment manifest root must be an object")
-	}
-	return canonical, domainDigest(manifestDigestDomain, canonical), nil
-}
-
-func validArchitecture(architecture RuntimeArchitecture) bool {
-	return architecture == ArchitectureX8664
+func validArchitecture(architecture definition.RuntimeArchitecture) bool {
+	return architecture == definition.ArchitectureX8664
 }
 
 func hasNodeModulesComponent(value string) bool {

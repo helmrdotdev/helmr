@@ -12,11 +12,10 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -128,7 +127,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		if err != nil {
 			return fmt.Errorf("lock task start deployment authority: %w", err)
 		}
-		admission, err := deployment.ResolveTaskRunAdmission(
+		admission, err := definition.ResolveTaskRunAdmission(
 			program.TaskManifestVersion,
 			normalized.TaskDeclaredID,
 			program.TaskManifest,
@@ -332,7 +331,7 @@ func normalizeTaskStart(request taskStartRequest) (normalizedTaskStart, error) {
 		if err != nil {
 			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid", errTaskStartInvalid)
 		}
-		if _, err := retry.Parse(retryPolicy); err != nil {
+		if _, err := definition.ParseRetry(retryPolicy); err != nil {
 			return normalizedTaskStart{}, fmt.Errorf("%w: retry is invalid: %v", errTaskStartInvalid, err)
 		}
 		request.RetryPolicy = retryPolicy

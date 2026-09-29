@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -269,7 +270,7 @@ func validateVerificationSucceeded(succeeded VerificationSucceeded) error {
 			VerificationBuildPlanPath,
 		)
 	}
-	plan, err := ParseBuildPlan([]byte(succeeded.Files[0].Content))
+	plan, err := definition.ParseBuildPlan([]byte(succeeded.Files[0].Content))
 	if err != nil {
 		return fmt.Errorf("verification result build plan: %w", err)
 	}

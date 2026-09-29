@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -87,7 +88,7 @@ func newWorkerRunLeaseClaimHTTPFixture(t *testing.T) (*Server, runtest.Fixture, 
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
 	raw := []byte(`{"payload":{"kind":"none"},"run":{"maxDurationMs":300000,"queue":"default","retry":{"enabled":false}}}`)
-	_, digest, err := deployment.CanonicalManifestAndDigest(raw)
+	_, digest, err := definition.CanonicalManifestAndDigest(raw)
 	if err != nil {
 		t.Fatal(err)
 	}

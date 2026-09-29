@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
@@ -120,19 +121,19 @@ func run(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("read expected build plan: %w", err)
 	}
-	expectedPlan, err := deployment.ParseBuildPlan(expectedPlanRaw)
+	expectedPlan, err := definition.ParseBuildPlan(expectedPlanRaw)
 	if err != nil {
 		return fmt.Errorf("parse expected build plan: %w", err)
 	}
-	actualPlan, err := deployment.ParseBuildPlan([]byte(result.Verification.Succeeded.Files[0].Content))
+	actualPlan, err := definition.ParseBuildPlan([]byte(result.Verification.Succeeded.Files[0].Content))
 	if err != nil {
 		return err
 	}
-	expectedCanonical, err := deployment.CanonicalBuildPlan(expectedPlan)
+	expectedCanonical, err := definition.CanonicalBuildPlan(expectedPlan)
 	if err != nil {
 		return err
 	}
-	actualCanonical, err := deployment.CanonicalBuildPlan(actualPlan)
+	actualCanonical, err := definition.CanonicalBuildPlan(actualPlan)
 	if err != nil {
 		return err
 	}

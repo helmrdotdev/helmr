@@ -1,4 +1,4 @@
-package deployment
+package definition
 
 import (
 	"bytes"
@@ -10,8 +10,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 )
 
-func computerSpecFixture() (SandboxManifest, BundleComputerImageArtifact) {
-	image := BundleComputerImageArtifact{
+func computerSpecFixture() (SandboxManifest, ComputerImage) {
+	image := ComputerImage{
 		Profile: computer.SeedProfile, Architecture: ArchitectureX8664,
 		Digest: "sha256:" + strings.Repeat("a", 64), MediaType: computer.SeedMediaType, SizeBytes: 4096,
 	}
@@ -62,24 +62,24 @@ func TestComputerSpecLaunchChangesChangeIdentity(t *testing.T) {
 	}
 	for _, test := range []struct {
 		name string
-		edit func(*SandboxManifest, *BundleComputerImageArtifact)
+		edit func(*SandboxManifest, *ComputerImage)
 	}{
-		{"seed bytes", func(m *SandboxManifest, i *BundleComputerImageArtifact) {
+		{"seed bytes", func(m *SandboxManifest, i *ComputerImage) {
 			i.Digest = "sha256:" + strings.Repeat("b", 64)
 			m.Image.ArtifactDigest = i.Digest
 		}},
-		{"seed size", func(m *SandboxManifest, i *BundleComputerImageArtifact) { i.SizeBytes++ }},
-		{"cpu", func(m *SandboxManifest, i *BundleComputerImageArtifact) { m.Resources.MilliCPU++ }},
-		{"memory", func(m *SandboxManifest, i *BundleComputerImageArtifact) { m.Resources.MemoryMiB++ }},
-		{"image env", func(m *SandboxManifest, i *BundleComputerImageArtifact) {
+		{"seed size", func(m *SandboxManifest, i *ComputerImage) { i.SizeBytes++ }},
+		{"cpu", func(m *SandboxManifest, i *ComputerImage) { m.Resources.MilliCPU++ }},
+		{"memory", func(m *SandboxManifest, i *ComputerImage) { m.Resources.MemoryMiB++ }},
+		{"image env", func(m *SandboxManifest, i *ComputerImage) {
 			i.Config.Env = []string{"A=one", "A=two"}
 			m.Image.Config = i.Config
 		}},
-		{"image user", func(m *SandboxManifest, i *BundleComputerImageArtifact) {
+		{"image user", func(m *SandboxManifest, i *ComputerImage) {
 			i.Config.User = "1000"
 			m.Image.Config = i.Config
 		}},
-		{"working directory", func(m *SandboxManifest, i *BundleComputerImageArtifact) {
+		{"working directory", func(m *SandboxManifest, i *ComputerImage) {
 			i.Config.WorkingDir = "/app"
 			m.Image.Config = i.Config
 		}},

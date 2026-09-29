@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 func TestZeroFormatVersionRequiresExplicitCanonicalField(t *testing.T) {
-	metadata := RuntimeMetadata{ModulePolicyDigest: testDigest("preload"), Architecture: ArchitectureX8664,
+	metadata := RuntimeMetadata{ModulePolicyDigest: testDigest("preload"), Architecture: definition.ArchitectureX8664,
 		FormatVersion: RuntimeMetadataFormatVersion, NodeVersion: "24.21.0",
-		ProgramNodeFlags: testNodeProgramFlags(), RuntimeContract: RuntimeContract}
+		ProgramNodeFlags: testNodeProgramFlags(), RuntimeContract: definition.RuntimeContract}
 	cases := []struct {
 		name  string
 		value any

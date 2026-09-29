@@ -1,4 +1,4 @@
-package deployment
+package definition
 
 import (
 	"bytes"
@@ -66,8 +66,8 @@ func ResolveActorRunAdmission(
 	validate := func(candidate ActorManifest) error {
 		return ValidateBuildPlan(BuildPlan{
 			FormatVersion: BuildPlanFormatVersion,
-			Definitions: []DefinitionInput{{
-				Kind: DefinitionKindActor, DeclaredID: declaredID, Actor: &candidate,
+			Definitions: []Input{{
+				Kind: KindActor, DeclaredID: declaredID, Actor: &candidate,
 			}},
 			Queues: queueConfig.Queues,
 		})

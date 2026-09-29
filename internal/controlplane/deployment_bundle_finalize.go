@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -41,7 +42,7 @@ type finalizedDeploymentDefinition struct {
 	declaredID     string
 	manifest       []byte
 	manifestDigest []byte
-	computerSpec   *deployment.ComputerSpec
+	computerSpec   *definition.ComputerSpec
 }
 
 type deploymentFinalizeReceipt struct {
@@ -624,38 +625,38 @@ func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]final
 		images[image.DeclaredID] = image.Artifact
 	}
 	definitions := make([]finalizedDeploymentDefinition, 0, len(bundle.Plan.Definitions))
-	for _, definition := range bundle.Plan.Definitions {
+	for _, declaration := range bundle.Plan.Definitions {
 		var manifest any
-		var computerSpec *deployment.ComputerSpec
-		switch definition.Kind {
-		case deployment.DefinitionKindTask:
-			manifest = definition.Task
-		case deployment.DefinitionKindActor:
-			manifest = definition.Actor
-		case deployment.DefinitionKindSandbox:
-			manifest = definition.Sandbox
-			value, ok := images[definition.DeclaredID]
+		var computerSpec *definition.ComputerSpec
+		switch declaration.Kind {
+		case definition.KindTask:
+			manifest = declaration.Task
+		case definition.KindActor:
+			manifest = declaration.Actor
+		case definition.KindSandbox:
+			manifest = declaration.Sandbox
+			value, ok := images[declaration.DeclaredID]
 			if !ok {
-				return nil, fmt.Errorf("deployment sandbox %q has no image", definition.DeclaredID)
+				return nil, fmt.Errorf("deployment sandbox %q has no image", declaration.DeclaredID)
 			}
-			spec, err := deployment.CompileComputerSpec(*definition.Sandbox, value)
+			spec, err := definition.CompileComputerSpec(*declaration.Sandbox, value.ComputerImage())
 			if err != nil {
-				return nil, fmt.Errorf("deployment sandbox %q: %w", definition.DeclaredID, err)
+				return nil, fmt.Errorf("deployment sandbox %q: %w", declaration.DeclaredID, err)
 			}
 			computerSpec = &spec
 		default:
-			return nil, fmt.Errorf("deployment definition kind %q is unsupported", definition.Kind)
+			return nil, fmt.Errorf("deployment definition kind %q is unsupported", declaration.Kind)
 		}
 		raw, err := json.Marshal(manifest)
 		if err != nil {
 			return nil, err
 		}
-		canonical, digest, err := deployment.CanonicalManifestAndDigest(raw)
+		canonical, digest, err := definition.CanonicalManifestAndDigest(raw)
 		if err != nil {
 			return nil, err
 		}
 		definitions = append(definitions, finalizedDeploymentDefinition{
-			kind: string(definition.Kind), declaredID: definition.DeclaredID,
+			kind: string(declaration.Kind), declaredID: declaration.DeclaredID,
 			manifest: canonical, manifestDigest: digest[:], computerSpec: computerSpec,
 		})
 	}
@@ -663,7 +664,7 @@ func finalizedDeploymentDefinitions(bundle deployment.DeploymentBundle) ([]final
 }
 
 func canonicalDeploymentQueueConfig(plan deployment.DeploymentPlan) ([]byte, error) {
-	queues := make([]deployment.QueueInput, len(plan.Queues))
+	queues := make([]definition.QueueInput, len(plan.Queues))
 	for index, queue := range plan.Queues {
 		queues[index] = queue
 		if queue.ConcurrencyLimit != nil {
@@ -671,8 +672,8 @@ func canonicalDeploymentQueueConfig(plan deployment.DeploymentPlan) ([]byte, err
 			queues[index].ConcurrencyLimit = &value
 		}
 	}
-	return deployment.CanonicalQueueConfig(deployment.QueueConfig{
-		FormatVersion: deployment.DeploymentPlanFormatVersion, Queues: queues,
+	return definition.CanonicalQueueConfig(definition.QueueConfig{
+		FormatVersion: definition.DeploymentPlanFormatVersion, Queues: queues,
 	})
 }
 
@@ -762,22 +763,22 @@ func createFinalizedDeploymentDefinitions(
 		ComputerSpecIds: make([]pgtype.UUID, definitionCount),
 		EnvironmentID:   environmentID,
 		DeploymentID:    deploymentID,
-		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+		ManifestVersion: definition.DeploymentPlanFormatVersion,
 	}
-	for index, definition := range definitions {
+	for index, finalized := range definitions {
 		definitionParams.Ids[index] = pgvalue.UUID(uuid.NewV7())
-		definitionParams.Kinds[index] = definition.kind
-		definitionParams.DeclaredIds[index] = definition.declaredID
-		definitionParams.Manifests[index] = definition.manifest
-		definitionParams.ManifestDigests[index] = definition.manifestDigest
-		if definition.kind != string(deployment.DefinitionKindSandbox) {
+		definitionParams.Kinds[index] = finalized.kind
+		definitionParams.DeclaredIds[index] = finalized.declaredID
+		definitionParams.Manifests[index] = finalized.manifest
+		definitionParams.ManifestDigests[index] = finalized.manifestDigest
+		if finalized.kind != string(definition.KindSandbox) {
 			continue
 		}
-		spec, ok := specs[definition.declaredID]
+		spec, ok := specs[finalized.declaredID]
 		if !ok {
 			return fmt.Errorf(
 				"create deployment definition: computer spec for %q is not registered",
-				definition.declaredID,
+				finalized.declaredID,
 			)
 		}
 		definitionParams.ComputerSpecIds[index] = spec.ID

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
 const upcomingCount = 5
@@ -54,7 +54,7 @@ func BuildAdmission(value db.Schedule) (Admission, error) {
 }
 
 func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
-	if value.CronSemanticsVersion != schedule.CronSemanticsVersion {
+	if value.CronSemanticsVersion != definition.CronSemanticsVersion {
 		return Admission{}, &AdmissionError{
 			Code:    ErrorUnsupportedCronVersion,
 			Message: fmt.Sprintf("unsupported cron semantics %q", value.CronSemanticsVersion),
@@ -71,7 +71,7 @@ func BuildAdmissionAt(value db.Schedule, now time.Time) (Admission, error) {
 	if now := now.UTC(); now.After(anchor) {
 		anchor = now
 	}
-	upcoming, err := schedule.NextCronTimes(value.CronPattern, value.Timezone, anchor, upcomingCount)
+	upcoming, err := definition.NextCronTimes(value.CronPattern, value.Timezone, anchor, upcomingCount)
 	if err != nil {
 		return Admission{}, &AdmissionError{
 			Code:    ErrorInvalidCron,

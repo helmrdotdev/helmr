@@ -14,7 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -134,7 +134,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Run lease reconciler: %w", err)
 	}
-	scheduleAuthority := deployment.NewScheduleAuthority()
+	scheduleAuthority := definition.NewScheduleAuthority()
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
 	if err != nil {
 		return fmt.Errorf("configure scheduled Computer CA encryption: %w", err)

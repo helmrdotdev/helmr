@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/distribution/reference"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
@@ -18,8 +18,8 @@ type ComputerBuild struct {
 	Build      imagebuild.Build
 }
 
-func ComputerBuilds(plan deployment.BuildPlan) ([]ComputerBuild, error) {
-	if err := deployment.ValidateBuildPlan(plan); err != nil {
+func ComputerBuilds(plan definition.BuildPlan) ([]ComputerBuild, error) {
+	if err := definition.ValidateBuildPlan(plan); err != nil {
 		return nil, err
 	}
 	builds := make([]ComputerBuild, 0)

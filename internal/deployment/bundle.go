@@ -10,6 +10,7 @@ import (
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -69,8 +70,8 @@ func (admission DeploymentBundleAdmission) Admit(bundle DeploymentBundle) error 
 }
 
 type DeploymentBundlePlatform struct {
-	Architecture RuntimeArchitecture `json:"architecture"`
-	OS           string              `json:"os"`
+	Architecture definition.RuntimeArchitecture `json:"architecture"`
+	OS           string                         `json:"os"`
 }
 
 type DeploymentBundleRuntime struct {
@@ -84,12 +85,24 @@ type BundleComputerImage struct {
 }
 
 type BundleComputerImageArtifact struct {
-	Profile      string              `json:"profile"`
-	Config       oci.RuntimeConfig   `json:"config"`
-	Architecture RuntimeArchitecture `json:"architecture"`
-	Digest       string              `json:"digest"`
-	MediaType    string              `json:"mediaType"`
-	SizeBytes    int64               `json:"sizeBytes"`
+	Profile      string                         `json:"profile"`
+	Config       oci.RuntimeConfig              `json:"config"`
+	Architecture definition.RuntimeArchitecture `json:"architecture"`
+	Digest       string                         `json:"digest"`
+	MediaType    string                         `json:"mediaType"`
+	SizeBytes    int64                          `json:"sizeBytes"`
+}
+
+// ComputerImage returns the seed image input a sandbox manifest is compiled against.
+func (artifact BundleComputerImageArtifact) ComputerImage() definition.ComputerImage {
+	return definition.ComputerImage{
+		Profile:      artifact.Profile,
+		Config:       artifact.Config,
+		Architecture: artifact.Architecture,
+		Digest:       artifact.Digest,
+		MediaType:    artifact.MediaType,
+		SizeBytes:    artifact.SizeBytes,
+	}
 }
 
 type BundleObject struct {
@@ -181,11 +194,11 @@ func ValidateDeploymentBundle(bundle DeploymentBundle) error {
 			DeploymentBundleTargetOS,
 		)
 	}
-	if bundle.Platform.Architecture != ArchitectureX8664 {
+	if bundle.Platform.Architecture != definition.ArchitectureX8664 {
 		return fmt.Errorf(
 			"deployment bundle platform architecture = %q, want %q",
 			bundle.Platform.Architecture,
-			ArchitectureX8664,
+			definition.ArchitectureX8664,
 		)
 	}
 	if err := ValidateDeploymentPlan(bundle.Plan); err != nil {
@@ -217,11 +230,11 @@ func ValidateDeploymentBundle(bundle DeploymentBundle) error {
 }
 
 func validateBundleRuntime(runtime DeploymentBundleRuntime) error {
-	if runtime.Contract != RuntimeContract {
+	if runtime.Contract != definition.RuntimeContract {
 		return fmt.Errorf(
 			"deployment bundle runtime contract = %q, want %q",
 			runtime.Contract,
-			RuntimeContract,
+			definition.RuntimeContract,
 		)
 	}
 	if err := validateBundleObject(runtime.Artifact, "runtime"); err != nil {

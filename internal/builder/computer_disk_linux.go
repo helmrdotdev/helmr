@@ -5,6 +5,7 @@ package builder
 import (
 	"context"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/substrate"
 )
@@ -14,5 +15,5 @@ func buildComputerDisk(ctx context.Context, source, target, scratch, mkfs, confi
 	if err != nil {
 		return deployment.BundleComputerImageArtifact{}, err
 	}
-	return deployment.BundleComputerImageArtifact{Architecture: deployment.ArchitectureX8664, Profile: computer.SeedProfile, Config: seed.Config, Digest: seed.Artifact.Object.Digest, SizeBytes: seed.Artifact.Object.SizeBytes, MediaType: seed.Artifact.Object.MediaType}, nil
+	return deployment.BundleComputerImageArtifact{Architecture: definition.ArchitectureX8664, Profile: computer.SeedProfile, Config: seed.Config, Digest: seed.Artifact.Object.Digest, SizeBytes: seed.Artifact.Object.SizeBytes, MediaType: seed.Artifact.Object.MediaType}, nil
 }

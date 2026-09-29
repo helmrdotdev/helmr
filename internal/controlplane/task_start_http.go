@@ -11,11 +11,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 const taskStartBodyLimit = int64(maxTaskPayloadBytes + maxRunMetadataBytes + 64<<10)
@@ -231,7 +231,7 @@ func taskStartPolicyFromAPI(request api.StartTaskRequest) (*int64, json.RawMessa
 		return nil, nil, err
 	}
 	if len(retryPolicy) > 0 {
-		if _, err := retry.Parse(retryPolicy); err != nil {
+		if _, err := definition.ParseRetry(retryPolicy); err != nil {
 			return nil, nil, fmt.Errorf("normalize retry: %w", err)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -12,7 +13,7 @@ import (
 
 func validateRestoreIdentity(
 	checkpoint workerapi.CheckpointManifest,
-	workerArchitecture deployment.RuntimeArchitecture,
+	workerArchitecture definition.RuntimeArchitecture,
 ) error {
 	runtimeInfo := checkpoint.RecoveryPoint.Runtime
 	if runtimeInfo.Backend != "firecracker" {
@@ -70,7 +71,7 @@ func requireCheckpointArtifact(artifact workerapi.CheckpointArtifact, field stri
 
 func validatePreparedRuntimeRestore(
 	target workerapi.RuntimeReconcileTarget,
-	workerArchitecture deployment.RuntimeArchitecture,
+	workerArchitecture definition.RuntimeArchitecture,
 ) (workerapi.CheckpointManifest, error) {
 	restore := target.Source.Restore
 	if restore == nil || strings.TrimSpace(restore.CheckpointID) == "" ||

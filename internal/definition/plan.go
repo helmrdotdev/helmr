@@ -1,54 +1,58 @@
-package deployment
+package definition
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
-	"github.com/helmrdotdev/helmr/internal/retry"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 const (
-	BuildPlanFormatVersion = 0
+	BuildPlanFormatVersion      = 0
+	DeploymentPlanFormatVersion = 0
 
-	DefinitionKindTask    = DefinitionKind("task")
-	DefinitionKindActor   = DefinitionKind("actor")
-	DefinitionKindSandbox = DefinitionKind("sandbox")
+	manifestDigestDomain       = "helmr.deployment-definition-manifest.v0\x00"
+	maxJSONSafeInteger   int64 = 9007199254740991
+
+	KindTask    = Kind("task")
+	KindActor   = Kind("actor")
+	KindSandbox = Kind("sandbox")
 
 	SchemaKindNone     = SchemaKind("none")
 	SchemaKindStandard = SchemaKind("standard_schema")
 
 	maxBuildPlanBytes         = 16 << 20
-	maxBuildDefinitions       = 10000
-	maxBuildQueues            = 1000
+	MaxBuildDefinitions       = 10000
+	MaxBuildQueues            = 1000
 	maxBuildImageSteps        = 10000
 	minRunDurationMs    int64 = 5000
 	maxRunDurationMs    int64 = 86400000
 	maxQueuedRunTTLMs   int64 = 31536000000
-	maxActorIdleMs      int64 = 3600000
-	maxRetryDelayMs     int64 = retry.MaxDelayMilliseconds
+	MaxActorIdleMs      int64 = 3600000
+	maxRetryDelayMs     int64 = MaxRetryDelayMilliseconds
 )
 
-type DefinitionKind string
+type Kind string
 type SchemaKind string
 
 type BuildPlan struct {
-	FormatVersion int               `json:"formatVersion"`
-	Definitions   []DefinitionInput `json:"definitions"`
-	Queues        []QueueInput      `json:"queues"`
+	FormatVersion int          `json:"formatVersion"`
+	Definitions   []Input      `json:"definitions"`
+	Queues        []QueueInput `json:"queues"`
 }
 
-type DefinitionInput struct {
-	Kind       DefinitionKind `json:"-"`
-	DeclaredID string         `json:"-"`
+type Input struct {
+	Kind       Kind   `json:"-"`
+	DeclaredID string `json:"-"`
 	Task       *TaskManifest
 	Actor      *ActorManifest
 	Sandbox    *SandboxInputManifest
@@ -107,10 +111,10 @@ type SchemaManifest struct {
 }
 
 type RunManifest struct {
-	Queue         string         `json:"queue"`
-	MaxDurationMs int64          `json:"maxDurationMs"`
-	Retry         retry.Manifest `json:"retry"`
-	TTLMs         *int64         `json:"ttlMs,omitempty"`
+	Queue         string        `json:"queue"`
+	MaxDurationMs int64         `json:"maxDurationMs"`
+	Retry         RetryManifest `json:"retry"`
+	TTLMs         *int64        `json:"ttlMs,omitempty"`
 }
 
 type ScheduleManifest struct {
@@ -148,7 +152,7 @@ func CanonicalQueueConfig(config QueueConfig) ([]byte, error) {
 		)
 	}
 	for index, queue := range config.Queues {
-		if err := validateQueueInput(queue); err != nil {
+		if err := ValidateQueueInput(queue); err != nil {
 			return nil, fmt.Errorf("queue config queue %d: %w", index, err)
 		}
 		if index > 0 && bytes.Compare(
@@ -232,19 +236,19 @@ func ValidateBuildPlan(plan BuildPlan) error {
 	if len(plan.Definitions) == 0 {
 		return errors.New("build plan definitions must be a non-empty array")
 	}
-	if len(plan.Definitions) > maxBuildDefinitions {
-		return fmt.Errorf("build plan contains more than %d definitions", maxBuildDefinitions)
+	if len(plan.Definitions) > MaxBuildDefinitions {
+		return fmt.Errorf("build plan contains more than %d definitions", MaxBuildDefinitions)
 	}
 	if plan.Queues == nil {
 		return errors.New("build plan queues must be an array")
 	}
-	if len(plan.Queues) > maxBuildQueues {
-		return fmt.Errorf("build plan contains more than %d queues", maxBuildQueues)
+	if len(plan.Queues) > MaxBuildQueues {
+		return fmt.Errorf("build plan contains more than %d queues", MaxBuildQueues)
 	}
 
 	queues := make(map[string]struct{}, len(plan.Queues))
 	for index, queue := range plan.Queues {
-		if err := validateQueueInput(queue); err != nil {
+		if err := ValidateQueueInput(queue); err != nil {
 			return fmt.Errorf("build plan queue %d: %w", index, err)
 		}
 		if index > 0 && bytes.Compare([]byte(plan.Queues[index-1].Name), []byte(queue.Name)) >= 0 {
@@ -271,35 +275,35 @@ func ValidateBuildPlan(plan BuildPlan) error {
 	return nil
 }
 
-func (input DefinitionInput) MarshalJSON() ([]byte, error) {
+func (input Input) MarshalJSON() ([]byte, error) {
 	if input.manifestCount() != 1 {
 		return nil, errors.New("definition input must contain exactly one manifest")
 	}
 	switch input.Kind {
-	case DefinitionKindTask:
+	case KindTask:
 		if input.Task == nil {
 			return nil, errors.New("task definition requires a task manifest")
 		}
 		return json.Marshal(struct {
-			Kind       DefinitionKind `json:"kind"`
-			DeclaredID string         `json:"declaredId"`
-			Manifest   *TaskManifest  `json:"manifest"`
+			Kind       Kind          `json:"kind"`
+			DeclaredID string        `json:"declaredId"`
+			Manifest   *TaskManifest `json:"manifest"`
 		}{input.Kind, input.DeclaredID, input.Task})
-	case DefinitionKindActor:
+	case KindActor:
 		if input.Actor == nil {
 			return nil, errors.New("actor definition requires an actor manifest")
 		}
 		return json.Marshal(struct {
-			Kind       DefinitionKind `json:"kind"`
+			Kind       Kind           `json:"kind"`
 			DeclaredID string         `json:"declaredId"`
 			Manifest   *ActorManifest `json:"manifest"`
 		}{input.Kind, input.DeclaredID, input.Actor})
-	case DefinitionKindSandbox:
+	case KindSandbox:
 		if input.Sandbox == nil {
 			return nil, errors.New("sandbox definition requires a sandbox manifest")
 		}
 		return json.Marshal(struct {
-			Kind       DefinitionKind        `json:"kind"`
+			Kind       Kind                  `json:"kind"`
 			DeclaredID string                `json:"declaredId"`
 			Manifest   *SandboxInputManifest `json:"manifest"`
 		}{input.Kind, input.DeclaredID, input.Sandbox})
@@ -308,30 +312,30 @@ func (input DefinitionInput) MarshalJSON() ([]byte, error) {
 	}
 }
 
-func (input *DefinitionInput) UnmarshalJSON(raw []byte) error {
+func (input *Input) UnmarshalJSON(raw []byte) error {
 	var header struct {
-		Kind DefinitionKind `json:"kind"`
+		Kind Kind `json:"kind"`
 	}
 	if err := json.Unmarshal(raw, &header); err != nil {
 		return err
 	}
 
-	*input = DefinitionInput{Kind: header.Kind}
+	*input = Input{Kind: header.Kind}
 	switch header.Kind {
-	case DefinitionKindTask:
+	case KindTask:
 		var wire struct {
-			Kind       DefinitionKind `json:"kind"`
-			DeclaredID string         `json:"declaredId"`
-			Manifest   *TaskManifest  `json:"manifest"`
+			Kind       Kind          `json:"kind"`
+			DeclaredID string        `json:"declaredId"`
+			Manifest   *TaskManifest `json:"manifest"`
 		}
 		if err := decodeClosedDefinition(raw, &wire); err != nil {
 			return err
 		}
 		input.DeclaredID = wire.DeclaredID
 		input.Task = wire.Manifest
-	case DefinitionKindActor:
+	case KindActor:
 		var wire struct {
-			Kind       DefinitionKind `json:"kind"`
+			Kind       Kind           `json:"kind"`
 			DeclaredID string         `json:"declaredId"`
 			Manifest   *ActorManifest `json:"manifest"`
 		}
@@ -340,9 +344,9 @@ func (input *DefinitionInput) UnmarshalJSON(raw []byte) error {
 		}
 		input.DeclaredID = wire.DeclaredID
 		input.Actor = wire.Manifest
-	case DefinitionKindSandbox:
+	case KindSandbox:
 		var wire struct {
-			Kind       DefinitionKind        `json:"kind"`
+			Kind       Kind                  `json:"kind"`
 			DeclaredID string                `json:"declaredId"`
 			Manifest   *SandboxInputManifest `json:"manifest"`
 		}
@@ -366,7 +370,7 @@ func decodeClosedDefinition(raw []byte, value any) error {
 	return ensureEOF(decoder, "definition input")
 }
 
-func (input DefinitionInput) manifestCount() int {
+func (input Input) manifestCount() int {
 	count := 0
 	for _, present := range []bool{
 		input.Task != nil,
@@ -380,7 +384,7 @@ func (input DefinitionInput) manifestCount() int {
 	return count
 }
 
-func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) error {
+func validateDefinitionInput(input Input, queues map[string]struct{}) error {
 	if !sourceid.Valid(input.DeclaredID) {
 		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", input.DeclaredID)
 	}
@@ -388,35 +392,35 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		return errors.New("definition input must contain exactly one manifest")
 	}
 	switch input.Kind {
-	case DefinitionKindTask:
+	case KindTask:
 		if input.Task == nil {
 			return errors.New("task definition requires a task manifest")
 		}
 		if input.Task.Payload.Kind != SchemaKindNone && input.Task.Payload.Kind != SchemaKindStandard {
 			return fmt.Errorf("task payload kind %q is unsupported", input.Task.Payload.Kind)
 		}
-		if err := validateRunManifest(input.Task.Run, queues); err != nil {
+		if err := ValidateRunManifest(input.Task.Run, queues); err != nil {
 			return fmt.Errorf("task run: %w", err)
 		}
 		if input.Task.Schedule != nil {
 			if input.Task.Payload.Kind != SchemaKindStandard {
 				return errors.New("scheduled task payload kind must be standard_schema")
 			}
-			if err := validateScheduleManifest(*input.Task.Schedule); err != nil {
+			if err := ValidateScheduleManifest(*input.Task.Schedule); err != nil {
 				return fmt.Errorf("task schedule: %w", err)
 			}
 		}
-	case DefinitionKindActor:
+	case KindActor:
 		if input.Actor == nil {
 			return errors.New("actor definition requires an actor manifest")
 		}
-		if err := validateRunManifest(input.Actor.Run, queues); err != nil {
+		if err := ValidateRunManifest(input.Actor.Run, queues); err != nil {
 			return fmt.Errorf("actor run: %w", err)
 		}
-		if input.Actor.IdleTimeoutMs < 1 || input.Actor.IdleTimeoutMs > maxActorIdleMs {
-			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
+		if input.Actor.IdleTimeoutMs < 1 || input.Actor.IdleTimeoutMs > MaxActorIdleMs {
+			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", MaxActorIdleMs)
 		}
-	case DefinitionKindSandbox:
+	case KindSandbox:
 		if input.Sandbox == nil {
 			return errors.New("sandbox definition requires a sandbox manifest")
 		}
@@ -426,7 +430,7 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		); err != nil {
 			return fmt.Errorf("computer imageBuild: %w", err)
 		}
-		if err := validateResourcesManifest(input.Sandbox.Resources); err != nil {
+		if err := ValidateResourcesManifest(input.Sandbox.Resources); err != nil {
 			return fmt.Errorf("sandbox resources: %w", err)
 		}
 	default:
@@ -435,7 +439,7 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 	return nil
 }
 
-func validateRunManifest(run RunManifest, queues map[string]struct{}) error {
+func ValidateRunManifest(run RunManifest, queues map[string]struct{}) error {
 	if err := api.ValidateQueueName(run.Queue); err != nil {
 		return err
 	}
@@ -452,20 +456,20 @@ func validateRunManifest(run RunManifest, queues map[string]struct{}) error {
 	if run.TTLMs != nil && (*run.TTLMs < 1 || *run.TTLMs > maxQueuedRunTTLMs) {
 		return fmt.Errorf("ttlMs must be in [1,%d]", maxQueuedRunTTLMs)
 	}
-	return retry.Validate(run.Retry)
+	return ValidateRetry(run.Retry)
 }
 
-func validateScheduleManifest(manifest ScheduleManifest) error {
+func ValidateScheduleManifest(manifest ScheduleManifest) error {
 	if len(manifest.Cron) == 0 || len(manifest.Cron) > 1024 {
 		return errors.New("cron must be 1-1024 bytes")
 	}
 	if len(manifest.Timezone) == 0 || len(manifest.Timezone) > 255 {
 		return errors.New("timezone must be 1-255 bytes")
 	}
-	if err := schedule.ValidateCron(manifest.Cron); err != nil {
+	if err := ValidateCron(manifest.Cron); err != nil {
 		return err
 	}
-	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
+	if err := ValidateTimezone(manifest.Timezone); err != nil {
 		return err
 	}
 	if err := api.ValidateSandboxDeclaredID(manifest.Computer.SandboxDeclaredID); err != nil {
@@ -499,7 +503,7 @@ func validateScheduleManifest(manifest ScheduleManifest) error {
 	return nil
 }
 
-func validateResourcesManifest(resources ResourcesManifest) error {
+func ValidateResourcesManifest(resources ResourcesManifest) error {
 	if !positiveSafeInteger(resources.MilliCPU) {
 		return errors.New("milliCpu must be a positive JavaScript-safe integer")
 	}
@@ -509,7 +513,7 @@ func validateResourcesManifest(resources ResourcesManifest) error {
 	return nil
 }
 
-func validateQueueInput(queue QueueInput) error {
+func ValidateQueueInput(queue QueueInput) error {
 	if err := api.ValidateQueueName(queue.Name); err != nil {
 		return err
 	}
@@ -523,7 +527,7 @@ func positiveSafeInteger(value int64) bool {
 	return value > 0 && value <= maxJSONSafeInteger
 }
 
-func compareDefinitionInputs(left, right DefinitionInput) int {
+func compareDefinitionInputs(left, right Input) int {
 	leftKind := definitionKindOrder(left.Kind)
 	rightKind := definitionKindOrder(right.Kind)
 	if leftKind < rightKind {
@@ -535,15 +539,45 @@ func compareDefinitionInputs(left, right DefinitionInput) int {
 	return bytes.Compare([]byte(left.DeclaredID), []byte(right.DeclaredID))
 }
 
-func definitionKindOrder(kind DefinitionKind) int {
+func definitionKindOrder(kind Kind) int {
 	switch kind {
-	case DefinitionKindTask:
+	case KindTask:
 		return 0
-	case DefinitionKindActor:
+	case KindActor:
 		return 1
-	case DefinitionKindSandbox:
+	case KindSandbox:
 		return 2
 	default:
 		return 3
 	}
+}
+
+func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, [sha256.Size]byte{}, fmt.Errorf("canonicalize deployment manifest: %w", err)
+	}
+	if len(canonical) == 0 || canonical[0] != '{' {
+		return nil, [sha256.Size]byte{}, fmt.Errorf("deployment manifest root must be an object")
+	}
+	return canonical, domainDigest(manifestDigestDomain, canonical), nil
+}
+
+func domainDigest(domain string, canonical []byte) [sha256.Size]byte {
+	hash := sha256.New()
+	hash.Write([]byte(domain))
+	hash.Write(canonical)
+	var digest [sha256.Size]byte
+	copy(digest[:], hash.Sum(nil))
+	return digest
+}
+
+func ensureEOF(decoder *json.Decoder, label string) error {
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("%s contains trailing data", label)
+		}
+		return fmt.Errorf("decode %s trailing data: %w", label, err)
+	}
+	return nil
 }

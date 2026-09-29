@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -175,7 +175,7 @@ func TestReconcileDesiredRuntimesRunsBatchConcurrentlyAndWaitsForShutdown(t *tes
 	var logs bytes.Buffer
 	pool := NewPreparedRuntimePool(connector, store, 2, slog.New(slog.NewTextHandler(&logs, nil)))
 	pool.TempDir = t.TempDir()
-	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
+	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
 	pool.Capacity = newPreparedRuntimeCapacity(t, 2)
 	items := make([]workerapi.RuntimeReconcileTarget, 2)
 	for i := range items {
@@ -228,7 +228,7 @@ func TestWarmRuntimePreparationDeadlineCancelsBlockedMaterialization(t *testing.
 	connector := &blockingMaterializingConnector{started: make(chan string, 1), canceled: make(chan string, 1)}
 	pool := NewPreparedRuntimePool(connector, store, 1, nil)
 	pool.TempDir = t.TempDir()
-	pool.RuntimeArchitecture = deployment.RuntimeArchitecture("x86_64")
+	pool.RuntimeArchitecture = definition.RuntimeArchitecture("x86_64")
 	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
 	client := &typedRuntimeClient{}
 	pool.ComputerInstances = client

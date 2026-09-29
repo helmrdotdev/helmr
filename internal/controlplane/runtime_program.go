@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -55,7 +56,7 @@ func projectRuntimeProgram(
 	if err != nil {
 		return workerapi.RuntimeProgram{}, err
 	}
-	if expectedArchitecture != "" && expectedArchitecture != string(deployment.ArchitectureX8664) {
+	if expectedArchitecture != "" && expectedArchitecture != string(definition.ArchitectureX8664) {
 		return workerapi.RuntimeProgram{}, errors.New("program architecture does not match computer")
 	}
 	runtimeDigest := authority.runtimeDigest

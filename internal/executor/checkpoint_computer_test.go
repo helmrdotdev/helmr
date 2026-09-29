@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -68,7 +68,7 @@ func TestWarmRuntimeRejectsUnpairedCheckpointBeforeAdmission(t *testing.T) {
 	target.Source.Restore = &workerapi.RuntimeRestore{CheckpointID: "checkpoint-1", Manifest: encoded}
 	target.PreparationExpiresAt = time.Now().Add(time.Minute)
 	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
-	pool.RuntimeArchitecture = deployment.ArchitectureX8664
+	pool.RuntimeArchitecture = definition.ArchitectureX8664
 	admitted := false
 	pool.AdmitRuntimeStart = func(context.Context) error { admitted = true; return nil }
 	err = pool.warmRuntimeTarget(t.Context(), &typedRuntimeClient{}, target, func() { t.Fatal("unpaired checkpoint started preparation") })

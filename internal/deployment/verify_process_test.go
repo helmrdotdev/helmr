@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/retry"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestVerifierResultRoundTrip(t *testing.T) {
@@ -248,17 +248,17 @@ func verifierRecordBytes(kind verifierRecordKind, payload []byte) []byte {
 func canonicalVerifierProgramIndex(t *testing.T) []byte {
 	t.Helper()
 	canonical, err := CanonicalProgramIndex(ProgramIndex{
-		Architecture:       ArchitectureX8664,
+		Architecture:       definition.ArchitectureX8664,
 		ConfigResultDigest: "sha256:" + strings.Repeat("8", 64),
 		Declarations: []ProgramIndexDeclaration{{
-			Kind:       DefinitionKindTask,
+			Kind:       definition.KindTask,
 			DeclaredID: "verify",
-			Task: &TaskManifest{
-				Payload: SchemaManifest{Kind: SchemaKindNone},
-				Run: RunManifest{
+			Task: &definition.TaskManifest{
+				Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone},
+				Run: definition.RunManifest{
 					Queue:         "task/verify",
 					MaxDurationMs: 900000,
-					Retry:         retry.Manifest{Enabled: false},
+					Retry:         definition.RetryManifest{Enabled: false},
 				},
 			},
 			Locator: &ProgramLocator{
@@ -267,10 +267,10 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 				Slot:       DeclarationSlotHandler,
 			},
 		}},
-		Queues: []QueueInput{{
+		Queues: []definition.QueueInput{{
 			Name: "task/verify",
 		}},
-		RuntimeContract: RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		RuntimeDigest:   "sha256:" + strings.Repeat("f", 64),
 	})
 	if err != nil {
@@ -298,8 +298,8 @@ func canonicalVerifierProgramVerification(t *testing.T) []byte {
 func canonicalVerifierRuntimeIndex(t *testing.T) []byte {
 	t.Helper()
 	canonical, err := CanonicalRuntimeIndex(RuntimeIndex{
-		Architecture:    ArchitectureX8664,
-		RuntimeContract: RuntimeContract,
+		Architecture:    definition.ArchitectureX8664,
+		RuntimeContract: definition.RuntimeContract,
 	})
 	if err != nil {
 		t.Fatal(err)

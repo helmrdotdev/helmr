@@ -6,16 +6,17 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func TestPreparedRuntimePoolMemoizesSuccessfulRuntimeVerification(t *testing.T) {
 	descriptor := deployment.RuntimeDescriptor{
-		Architecture:    deployment.ArchitectureX8664,
+		Architecture:    definition.ArchitectureX8664,
 		Digest:          "sha256:runtime",
 		FormatVersion:   deployment.RuntimeDescriptorFormatVersion,
 		MediaType:       deployment.RuntimeArtifactMediaType,
-		RuntimeContract: deployment.RuntimeContract,
+		RuntimeContract: definition.RuntimeContract,
 		SizeBytes:       42,
 	}
 	index := deployment.RuntimeIndex{
@@ -63,7 +64,7 @@ func TestPreparedRuntimePoolAllowsConcurrentRuntimeVerificationMisses(t *testing
 	const workers = 8
 	pool := &PreparedRuntimePool{}
 	descriptor := deployment.RuntimeDescriptor{Digest: "sha256:runtime"}
-	index := deployment.RuntimeIndex{RuntimeContract: deployment.RuntimeContract}
+	index := deployment.RuntimeIndex{RuntimeContract: definition.RuntimeContract}
 	entered := make(chan struct{}, workers)
 	release := make(chan struct{})
 	results := make(chan bool, workers)

@@ -174,7 +174,7 @@ in
             -run '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$'
       '';
   timezone-manifest =
-    pkgs.runCommand "timezone-manifest-check" { src = ../internal/schedule/tzdb_names.txt; }
+    pkgs.runCommand "timezone-manifest-check" { src = ../internal/definition/tzdb_names.txt; }
       ''
         LC_ALL=C sort -u "$src" > normalized
         cmp normalized "$src"

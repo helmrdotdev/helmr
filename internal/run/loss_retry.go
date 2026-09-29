@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 )
 
 type lostTaskRetry struct {
@@ -48,12 +48,12 @@ func (g OwnedFinalization) taskLossRetry(ctx context.Context, r cancellationRun,
 	}
 	delay := time.Duration(0)
 	if entered {
-		policy, err := retry.Parse(current.RetryPolicy)
+		policy, err := definition.ParseRetry(current.RetryPolicy)
 		if err != nil {
 			return nil, nil
 		} // Invalid pinned policy cannot authorize reexecution.
 		var eligible bool
-		delay, eligible, err = retry.Delay(policy, current.CurrentAttemptNumber, nil)
+		delay, eligible, err = definition.RetryDelay(policy, current.CurrentAttemptNumber, nil)
 		if err != nil || !eligible {
 			return nil, err
 		}

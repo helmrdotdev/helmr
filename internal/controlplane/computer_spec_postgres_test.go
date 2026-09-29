@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -21,14 +22,14 @@ import (
 func TestComputerSpecPostgresReusedAcrossProgramDeployments(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
 	image := deployment.BundleComputerImageArtifact{
-		Profile: computer.SeedProfile, Architecture: deployment.ArchitectureX8664,
+		Profile: computer.SeedProfile, Architecture: definition.ArchitectureX8664,
 		Digest: "sha256:" + strings.Repeat("d", 64), SizeBytes: 4096, MediaType: computer.SeedMediaType,
 	}
-	manifest := deployment.SandboxManifest{
-		Image:     deployment.SandboxImageManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
-		Resources: deployment.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
+	manifest := definition.SandboxManifest{
+		Image:     definition.SandboxImageManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},
+		Resources: definition.ResourcesManifest{MilliCPU: 1000, MemoryMiB: 512},
 	}
-	spec, err := deployment.CompileComputerSpec(manifest, image)
+	spec, err := definition.CompileComputerSpec(manifest, image.ComputerImage())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestComputerSpecPostgresReusedAcrossProgramDeployments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, manifestDigest, err := deployment.CanonicalManifestAndDigest(raw)
+	canonical, manifestDigest, err := definition.CanonicalManifestAndDigest(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +81,7 @@ func TestComputerSpecPostgresReusedAcrossProgramDeployments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	roundTrip, err := deployment.ParseComputerSpec(stored.Config, cas.Descriptor{Digest: stored.SeedDigest, SizeBytes: stored.SeedSizeBytes, MediaType: stored.SeedMediaType})
+	roundTrip, err := definition.ParseComputerSpec(stored.Config, cas.Descriptor{Digest: stored.SeedDigest, SizeBytes: stored.SeedSizeBytes, MediaType: stored.SeedMediaType})
 	if err != nil {
 		t.Fatal(err)
 	}

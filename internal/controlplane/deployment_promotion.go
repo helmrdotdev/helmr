@@ -13,16 +13,15 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type scheduleReconciliation struct {
 	definition db.DeploymentDefinition
-	manifest   deployment.ScheduleManifest
+	manifest   definition.ScheduleManifest
 	placements []computer.SecretPlacement
 	nextFireAt time.Time
 	record     db.ReconcileSchedulesRow
@@ -131,29 +130,29 @@ func reconcileSchedules(
 		return fmt.Errorf("list deployment definitions for schedule reconciliation: %w", err)
 	}
 	sandboxes := make(map[string]struct{})
-	for _, definition := range definitions {
-		if definition.Kind == string(deployment.DefinitionKindSandbox) {
-			sandboxes[definition.DeclaredID] = struct{}{}
+	for _, deploymentDefinition := range definitions {
+		if deploymentDefinition.Kind == string(definition.KindSandbox) {
+			sandboxes[deploymentDefinition.DeclaredID] = struct{}{}
 		}
 	}
 	plans := make([]scheduleReconciliation, 0, len(definitions))
-	for _, definition := range definitions {
-		if definition.Kind != string(deployment.DefinitionKindTask) {
+	for _, deploymentDefinition := range definitions {
+		if deploymentDefinition.Kind != string(definition.KindTask) {
 			continue
 		}
-		manifest, err := deployment.ParseTaskManifest(
-			definition.ManifestVersion,
-			definition.Manifest,
-			definition.ManifestDigest,
+		manifest, err := definition.ParseTaskManifest(
+			deploymentDefinition.ManifestVersion,
+			deploymentDefinition.Manifest,
+			deploymentDefinition.ManifestDigest,
 		)
 		if err != nil {
-			return fmt.Errorf("parse task %q for schedule reconciliation: %w", definition.DeclaredID, err)
+			return fmt.Errorf("parse task %q for schedule reconciliation: %w", deploymentDefinition.DeclaredID, err)
 		}
 		if manifest.Schedule == nil {
 			continue
 		}
 		plan, err := prepareScheduleReconciliation(
-			definition, *manifest.Schedule, sandboxes, effectiveFrom,
+			deploymentDefinition, *manifest.Schedule, sandboxes, effectiveFrom,
 		)
 		if err != nil {
 			return err
@@ -214,7 +213,7 @@ func reconcileSchedules(
 			EffectiveFroms:          make([]pgtype.Timestamptz, len(plans)),
 			NextFireAts:             make([]pgtype.Timestamptz, len(plans)),
 			EnvironmentID:           target.EnvironmentID,
-			CronSemanticsVersion:    schedule.CronSemanticsVersion,
+			CronSemanticsVersion:    definition.CronSemanticsVersion,
 		}
 		for index := range plans {
 			plan := &plans[index]
@@ -305,34 +304,34 @@ func reconcileSchedules(
 }
 
 func prepareScheduleReconciliation(
-	definition db.DeploymentDefinition,
-	manifest deployment.ScheduleManifest,
+	deploymentDefinition db.DeploymentDefinition,
+	manifest definition.ScheduleManifest,
 	sandboxes map[string]struct{},
 	effectiveFrom time.Time,
 ) (scheduleReconciliation, error) {
-	if err := schedule.ValidateCron(manifest.Cron); err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q cron: %w", definition.DeclaredID, err))
+	if err := definition.ValidateCron(manifest.Cron); err != nil {
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q cron: %w", deploymentDefinition.DeclaredID, err))
 	}
-	if err := schedule.ValidateTimezone(manifest.Timezone); err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q timezone: %w", definition.DeclaredID, err))
+	if err := definition.ValidateTimezone(manifest.Timezone); err != nil {
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q timezone: %w", deploymentDefinition.DeclaredID, err))
 	}
 	if _, ok := sandboxes[manifest.Computer.SandboxDeclaredID]; !ok {
 		return scheduleReconciliation{}, badRequest(fmt.Errorf(
 			"schedule %q sandbox %q is absent from the deployment",
-			definition.DeclaredID,
+			deploymentDefinition.DeclaredID,
 			manifest.Computer.SandboxDeclaredID,
 		))
 	}
 	placements, err := normalizeComputerSecretPlacements(manifest.Computer.Secrets)
 	if err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q computer secrets: %w", definition.DeclaredID, err))
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q computer secrets: %w", deploymentDefinition.DeclaredID, err))
 	}
-	next, err := schedule.NextCronTime(manifest.Cron, manifest.Timezone, effectiveFrom)
+	next, err := definition.NextCronTime(manifest.Cron, manifest.Timezone, effectiveFrom)
 	if err != nil {
-		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q next fire: %w", definition.DeclaredID, err))
+		return scheduleReconciliation{}, badRequest(fmt.Errorf("schedule %q next fire: %w", deploymentDefinition.DeclaredID, err))
 	}
 	return scheduleReconciliation{
-		definition: definition,
+		definition: deploymentDefinition,
 		manifest:   manifest,
 		placements: placements,
 		nextFireAt: next,

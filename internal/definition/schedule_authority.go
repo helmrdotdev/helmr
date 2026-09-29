@@ -1,4 +1,4 @@
-package deployment
+package definition
 
 import (
 	"bytes"
@@ -34,8 +34,8 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 	}
 	if err := ValidateBuildPlan(BuildPlan{
 		FormatVersion: BuildPlanFormatVersion,
-		Definitions: []DefinitionInput{{
-			Kind:       DefinitionKindTask,
+		Definitions: []Input{{
+			Kind:       KindTask,
 			DeclaredID: declaredID,
 			Task:       &manifest,
 		}},

@@ -10,7 +10,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
@@ -196,7 +196,7 @@ func promotionTaskDefinition(
 	raw string,
 ) db.DeploymentDefinition {
 	t.Helper()
-	canonical, digest, err := deployment.CanonicalManifestAndDigest([]byte(raw))
+	canonical, digest, err := definition.CanonicalManifestAndDigest([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func promotionTaskDefinition(
 		DeploymentID:    target.ID,
 		Kind:            "task",
 		DeclaredID:      declaredID,
-		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+		ManifestVersion: definition.DeploymentPlanFormatVersion,
 		Manifest:        canonical,
 		ManifestDigest:  digest[:],
 	}
@@ -326,7 +326,7 @@ func TestScheduleAndDirectComputerOriginCapacity(t *testing.T) {
 					bindings = append(bindings, api.ComputerSecret{Name: "token", Env: &api.SecretEnv{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
 				}
 				_, directErr := normalizeComputerSecretPlacements(bindings)
-				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, deployment.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Computer: deployment.ScheduleComputerManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())
+				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, definition.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Computer: definition.ScheduleComputerManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())
 				wantErr := extra && variant != "dedup"
 				if (directErr != nil) != wantErr || (scheduleErr != nil) != wantErr {
 					t.Fatalf("extra=%v direct=%v scheduled=%v", extra, directErr, scheduleErr)

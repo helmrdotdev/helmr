@@ -11,7 +11,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -468,18 +468,18 @@ func loadChildTaskAdmission(
 	store db.Querier,
 	parent db.Run,
 	request normalizedTaskStart,
-) (deployment.TaskRunAdmission, error) {
-	definition, err := store.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
+) (definition.TaskRunAdmission, error) {
+	deploymentDefinition, err := store.GetDeploymentDefinition(ctx, db.GetDeploymentDefinitionParams{
 		EnvironmentID: parent.EnvironmentID,
 		DeploymentID:  parent.DeploymentID,
 		Kind:          "task",
 		DeclaredID:    request.TaskDeclaredID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return deployment.TaskRunAdmission{}, errTaskNotDeployed
+		return definition.TaskRunAdmission{}, errTaskNotDeployed
 	}
 	if err != nil {
-		return deployment.TaskRunAdmission{}, fmt.Errorf(
+		return definition.TaskRunAdmission{}, fmt.Errorf(
 			"load child task definition: %w",
 			err,
 		)
@@ -492,30 +492,30 @@ func loadChildTaskAdmission(
 		},
 	)
 	if err != nil {
-		return deployment.TaskRunAdmission{}, fmt.Errorf(
+		return definition.TaskRunAdmission{}, fmt.Errorf(
 			"load child task deployment authority: %w",
 			err,
 		)
 	}
-	admission, err := deployment.ResolveTaskRunAdmission(
-		definition.ManifestVersion,
-		definition.DeclaredID,
-		definition.Manifest,
-		definition.ManifestDigest,
+	admission, err := definition.ResolveTaskRunAdmission(
+		deploymentDefinition.ManifestVersion,
+		deploymentDefinition.DeclaredID,
+		deploymentDefinition.Manifest,
+		deploymentDefinition.ManifestDigest,
 		program.QueueConfig,
 		request.QueueName,
 		request.QueuedTTLMS,
 		request.RetryPolicy,
 	)
 	if err != nil {
-		return deployment.TaskRunAdmission{}, fmt.Errorf(
+		return definition.TaskRunAdmission{}, fmt.Errorf(
 			"%w: %v",
 			errTaskStartAuthority,
 			err,
 		)
 	}
 	if admission.HasPayload != request.PayloadPresent {
-		return deployment.TaskRunAdmission{}, errTaskPayloadPresenceInvalid
+		return definition.TaskRunAdmission{}, errTaskPayloadPresenceInvalid
 	}
 	return admission, nil
 }

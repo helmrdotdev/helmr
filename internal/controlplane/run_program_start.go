@@ -9,7 +9,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
@@ -112,7 +112,7 @@ func encodeProgramStart(
 func programStartTask(
 	run db.Run,
 	actor *db.Session,
-	definition db.DeploymentDefinition,
+	deploymentDefinition db.DeploymentDefinition,
 ) (*programv0.TaskStart, error) {
 	if actor != nil ||
 		run.SessionID.Valid ||
@@ -120,23 +120,23 @@ func programStartTask(
 		run.SessionInputHighWatermark.Valid {
 		return nil, errors.New("task program-start contains actor authority")
 	}
-	manifest, err := deployment.ParseTaskManifest(
-		definition.ManifestVersion,
-		definition.Manifest,
-		definition.ManifestDigest,
+	manifest, err := definition.ParseTaskManifest(
+		deploymentDefinition.ManifestVersion,
+		deploymentDefinition.Manifest,
+		deploymentDefinition.ManifestDigest,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("decode task manifest authority: %w", err)
 	}
 	switch manifest.Payload.Kind {
-	case deployment.SchemaKindNone:
+	case definition.SchemaKindNone:
 		if run.Payload != nil {
 			return nil, errors.New("payload-free task run contains a payload")
 		}
 		return &programv0.TaskStart{
 			Payload: &programv0.TaskStart_NoPayload{NoPayload: &programv0.NoPayload{}},
 		}, nil
-	case deployment.SchemaKindStandard:
+	case definition.SchemaKindStandard:
 		if run.Payload == nil {
 			return nil, errors.New("payload task run has no payload")
 		}

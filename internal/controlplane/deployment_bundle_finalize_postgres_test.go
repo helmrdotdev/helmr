@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -497,7 +498,7 @@ func deploymentDefinitionBatchParams(
 		DeclaredIds: make([]string, count), Manifests: make([][]byte, count),
 		ManifestDigests: make([][]byte, count), ComputerSpecIds: make([]pgtype.UUID, count),
 		EnvironmentID: environmentID, DeploymentID: deploymentID,
-		ManifestVersion: deployment.DeploymentPlanFormatVersion,
+		ManifestVersion: definition.DeploymentPlanFormatVersion,
 	}
 	for index := range count {
 		params.Ids[index] = pgvalue.UUID(uuid.NewV7())

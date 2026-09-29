@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -348,7 +348,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 }
 
 func testCheckpointRuntimeArchitecture() string {
-	return string(deployment.ArchitectureX8664)
+	return string(definition.ArchitectureX8664)
 }
 
 func checkpointPhaseHasFilepackStats(phases []workerapi.CheckpointPhase, name string) bool {

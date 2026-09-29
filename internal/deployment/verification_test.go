@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -231,9 +232,9 @@ func TestVerificationFailureContract(t *testing.T) {
 func testComputerVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := testBuildPlan()
-	plan.Definitions = []DefinitionInput{plan.Definitions[2]}
-	plan.Queues = []QueueInput{}
-	raw, err := CanonicalBuildPlan(plan)
+	plan.Definitions = []definition.Input{plan.Definitions[2]}
+	plan.Queues = []definition.QueueInput{}
+	raw, err := definition.CanonicalBuildPlan(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +254,7 @@ func testComputerVerificationResult(t *testing.T) VerificationResult {
 func testProgramVerificationResult(t *testing.T) VerificationResult {
 	t.Helper()
 	plan := testBuildPlan()
-	planRaw, err := CanonicalBuildPlan(plan)
+	planRaw, err := definition.CanonicalBuildPlan(plan)
 	if err != nil {
 		t.Fatal(err)
 	}

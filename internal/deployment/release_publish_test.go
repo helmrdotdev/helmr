@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -94,9 +95,9 @@ func platformReleaseFixture(t *testing.T) (string, platformReleaseManifest) {
 	directory := t.TempDir()
 	runtime := []byte("runtime squashfs")
 	descriptor := RuntimeDescriptor{
-		Architecture: ArchitectureX8664, Digest: digestBytes(runtime),
+		Architecture: definition.ArchitectureX8664, Digest: digestBytes(runtime),
 		FormatVersion: RuntimeDescriptorFormatVersion, MediaType: RuntimeArtifactMediaType,
-		RuntimeContract: RuntimeContract, SizeBytes: int64(len(runtime)),
+		RuntimeContract: definition.RuntimeContract, SizeBytes: int64(len(runtime)),
 	}
 	path := platformReleaseObjectPath(directory, descriptor.Digest)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

@@ -8,8 +8,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -20,7 +20,7 @@ func TestBuildAdmissionProducesStablePlatformInput(t *testing.T) {
 		ID:                   pgvalue.UUID(uuid.NewV7()),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
-		CronSemanticsVersion: schedule.CronSemanticsVersion,
+		CronSemanticsVersion: definition.CronSemanticsVersion,
 		NextFireAt:           pgvalue.TimestamptzUTCZeroInvalid(scheduledAt),
 		LastFireAt:           pgvalue.TimestamptzUTCZeroInvalid(lastScheduledAt),
 	}
@@ -52,7 +52,7 @@ func TestBuildAdmissionSkipsMissedInstants(t *testing.T) {
 		ID:                   pgvalue.UUID(uuid.NewV7()),
 		CronPattern:          "0 9 * * *",
 		Timezone:             "Asia/Tokyo",
-		CronSemanticsVersion: schedule.CronSemanticsVersion,
+		CronSemanticsVersion: definition.CronSemanticsVersion,
 		NextFireAt:           pgvalue.TimestamptzUTCZeroInvalid(scheduledAt),
 	}, scheduledAt.Add(72*time.Hour))
 	if err != nil {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -56,7 +56,7 @@ func TestPendingComputerCommandCapacityCountsComputersAndPhysicalInstances(t *te
 		if len(rows) != 1 || rows[0].ComputerID != pgvalue.UUID(computerID) || len(rows[0].AccountedPoolIds) != accounted {
 			t.Fatalf("computer demand=%+v want one Computer and %d accounted pools", rows, accounted)
 		}
-		if _, err := deployment.ParseComputerConfig(rows[0].ComputerConfig); err != nil {
+		if _, err := definition.ParseComputerConfig(rows[0].ComputerConfig); err != nil {
 			t.Fatal(err)
 		}
 		if accounted == 1 && rows[0].AccountedPoolIds[0] != pgvalue.UUID(f.WorkerPoolID) {

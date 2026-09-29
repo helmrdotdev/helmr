@@ -10,9 +10,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -203,15 +203,15 @@ func bundleCASObject(object deployment.BundleObject) cas.Object {
 
 func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBundle) {
 	t.Helper()
-	run := deployment.RunManifest{
+	run := definition.RunManifest{
 		Queue: "default", MaxDurationMs: 5000,
-		Retry: retry.Manifest{Enabled: false},
+		Retry: definition.RetryManifest{Enabled: false},
 	}
-	task := deployment.TaskManifest{
-		Payload: deployment.SchemaManifest{Kind: deployment.SchemaKindNone}, Run: run,
+	task := definition.TaskManifest{
+		Payload: definition.SchemaManifest{Kind: definition.SchemaKindNone}, Run: run,
 	}
 	declaration := deployment.ProgramIndexDeclaration{
-		Kind: deployment.DefinitionKindTask, DeclaredID: "hello", Task: &task,
+		Kind: definition.KindTask, DeclaredID: "hello", Task: &task,
 		Locator: &deployment.ProgramLocator{
 			ExportName: "hello",
 			ModulePath: "helmr/app/entry-0.mjs",
@@ -219,19 +219,19 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 		},
 	}
 	plan := deployment.DeploymentPlan{
-		FormatVersion: deployment.DeploymentPlanFormatVersion,
+		FormatVersion: definition.DeploymentPlanFormatVersion,
 		Definitions:   []deployment.ProgramIndexDeclaration{declaration},
-		Queues:        []deployment.QueueInput{{Name: "default"}},
+		Queues:        []definition.QueueInput{{Name: "default"}},
 	}
 	programDigest := "sha256:" + strings.Repeat("a", 64)
 	bundle := deployment.DeploymentBundle{
 		Contract: deployment.DeploymentBundleContract,
 		Platform: deployment.DeploymentBundlePlatform{
-			Architecture: deployment.ArchitectureX8664, OS: deployment.DeploymentBundleTargetOS,
+			Architecture: definition.ArchitectureX8664, OS: deployment.DeploymentBundleTargetOS,
 		},
 		Plan: plan,
 		Runtime: deployment.DeploymentBundleRuntime{
-			Contract: deployment.RuntimeContract,
+			Contract: definition.RuntimeContract,
 			Artifact: deployment.BundleObject{
 				Digest: "sha256:" + strings.Repeat("f", 64), SizeBytes: 4096,
 				MediaType: deployment.RuntimeArtifactMediaType,
@@ -242,11 +242,11 @@ func controlPlaneDeploymentBundle(t *testing.T) ([]byte, deployment.DeploymentBu
 				Digest: programDigest, SizeBytes: 4096, MediaType: deployment.ProgramArtifactMediaType,
 			},
 			Index: deployment.ProgramIndex{
-				Architecture:       deployment.ArchitectureX8664,
+				Architecture:       definition.ArchitectureX8664,
 				ConfigResultDigest: "sha256:" + strings.Repeat("c", 64),
 				Declarations:       []deployment.ProgramIndexDeclaration{declaration},
 				Queues:             plan.Queues,
-				RuntimeContract:    deployment.RuntimeContract,
+				RuntimeContract:    definition.RuntimeContract,
 				RuntimeDigest:      "sha256:" + strings.Repeat("f", 64),
 			},
 		},

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/retry"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -139,11 +139,11 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 	}
 	delay, again := time.Duration(0), false
 	if request.Kind == "failed" && r.ActiveElapsedMs < r.MaxActiveDurationMs {
-		policy, e := retry.Parse(r.RetryPolicy)
+		policy, e := definition.ParseRetry(r.RetryPolicy)
 		if e != nil {
 			return errors.Join(ErrTaskCompletionAdmission, e)
 		}
-		delay, again, err = retry.Delay(policy, a.Attempt.Number, nil)
+		delay, again, err = definition.RetryDelay(policy, a.Attempt.Number, nil)
 		if err != nil {
 			return err
 		}

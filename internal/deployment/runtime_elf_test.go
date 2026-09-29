@@ -6,11 +6,13 @@ import (
 	"encoding/binary"
 	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestRuntimeELFFixturesAcceptSupportedArchitectures(t *testing.T) {
-	for _, architecture := range []RuntimeArchitecture{
-		ArchitectureX8664,
+	for _, architecture := range []definition.RuntimeArchitecture{
+		definition.ArchitectureX8664,
 	} {
 		t.Run(string(architecture), func(t *testing.T) {
 			artifact := newValidRuntimeELFArtifact(t, architecture)
@@ -26,7 +28,7 @@ func TestRuntimeELFFixturesAcceptSupportedArchitectures(t *testing.T) {
 }
 
 func TestRuntimeELFRequiresExactRUNPATH(t *testing.T) {
-	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	tests := map[string]testELF64Spec{
 		"nested RUNPATH": {
 			machine:      machine,
@@ -55,7 +57,7 @@ func TestRuntimeELFRequiresExactRUNPATH(t *testing.T) {
 	}
 	for name, spec := range tests {
 		t.Run(name, func(t *testing.T) {
-			artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+			artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 			replaceMemoryArtifactFile(
 				t,
 				artifact,
@@ -65,7 +67,7 @@ func TestRuntimeELFRequiresExactRUNPATH(t *testing.T) {
 			if err := verifyRuntimeExecutables(
 				context.Background(),
 				inspectRuntimeELFArtifact(t, artifact),
-				ArchitectureX8664,
+				definition.ArchitectureX8664,
 			); err == nil {
 				t.Fatal("runtime verifier accepted a non-canonical search path")
 			}
@@ -74,7 +76,7 @@ func TestRuntimeELFRequiresExactRUNPATH(t *testing.T) {
 }
 
 func TestRuntimeELFRejectsInvalidDynamicDependencyFiles(t *testing.T) {
-	machine, _ := testRuntimeELFTarget(t, ArchitectureX8664)
+	machine, _ := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	tests := map[string][]byte{
 		"non-ELF": []byte("not an ELF shared object"),
 		"ET_EXEC": buildTestELF64(t, testELF64Spec{
@@ -84,12 +86,12 @@ func TestRuntimeELFRejectsInvalidDynamicDependencyFiles(t *testing.T) {
 	}
 	for name, dependency := range tests {
 		t.Run(name, func(t *testing.T) {
-			artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+			artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 			replaceMemoryArtifactFile(t, artifact, "lib/libnode.so", dependency)
 			if err := verifyRuntimeExecutables(
 				context.Background(),
 				inspectRuntimeELFArtifact(t, artifact),
-				ArchitectureX8664,
+				definition.ArchitectureX8664,
 			); err == nil {
 				t.Fatal("runtime verifier accepted an invalid dynamic dependency")
 			}
@@ -98,8 +100,8 @@ func TestRuntimeELFRejectsInvalidDynamicDependencyFiles(t *testing.T) {
 }
 
 func TestRuntimeELFChecksTransitiveClosureForEveryLibrary(t *testing.T) {
-	artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
-	machine, _ := testRuntimeELFTarget(t, ArchitectureX8664)
+	artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
+	machine, _ := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	replaceMemoryArtifactFile(t, artifact, "lib/libnode.so", buildTestELF64(t, testELF64Spec{
 		machine:  machine,
 		fileType: elf.ET_DYN,
@@ -110,15 +112,15 @@ func TestRuntimeELFChecksTransitiveClosureForEveryLibrary(t *testing.T) {
 	if err := verifyRuntimeExecutables(
 		context.Background(),
 		inspectRuntimeELFArtifact(t, artifact),
-		ArchitectureX8664,
+		definition.ArchitectureX8664,
 	); err == nil {
 		t.Fatal("runtime verifier accepted a library with an unresolved transitive dependency")
 	}
 }
 
 func TestRuntimeELFResolvesDirectorySymlinkComponents(t *testing.T) {
-	artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
-	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	artifact.addDirectory("lib/real")
 	artifact.addFile(
 		"lib/real/libnode.so",
@@ -149,15 +151,15 @@ func TestRuntimeELFResolvesDirectorySymlinkComponents(t *testing.T) {
 	if err := verifyRuntimeExecutables(
 		context.Background(),
 		inspectRuntimeELFArtifact(t, artifact),
-		ArchitectureX8664,
+		definition.ArchitectureX8664,
 	); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestRuntimeELFRejectsDuplicateInterpreter(t *testing.T) {
-	artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
-	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	replaceMemoryArtifactFile(t, artifact, runtimeNodePath, buildTestELF64(t, testELF64Spec{
 		machine:      machine,
 		fileType:     elf.ET_DYN,
@@ -169,14 +171,14 @@ func TestRuntimeELFRejectsDuplicateInterpreter(t *testing.T) {
 	if err := verifyRuntimeExecutables(
 		context.Background(),
 		inspectRuntimeELFArtifact(t, artifact),
-		ArchitectureX8664,
+		definition.ArchitectureX8664,
 	); err == nil {
 		t.Fatal("runtime verifier accepted multiple PT_INTERP headers")
 	}
 }
 
 func TestRuntimeELFRequiresConfinedSharedObjectIdentity(t *testing.T) {
-	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	otherMachine := elf.EM_AARCH64
 	tests := map[string]struct {
 		path string
@@ -217,12 +219,12 @@ func TestRuntimeELFRequiresConfinedSharedObjectIdentity(t *testing.T) {
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+			artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 			replaceMemoryArtifactFile(t, artifact, test.path, buildTestELF64(t, test.spec))
 			if err := verifyRuntimeExecutables(
 				context.Background(),
 				inspectRuntimeELFArtifact(t, artifact),
-				ArchitectureX8664,
+				definition.ArchitectureX8664,
 			); err == nil {
 				t.Fatal("runtime verifier accepted a shared object outside the identity contract")
 			}
@@ -231,7 +233,7 @@ func TestRuntimeELFRequiresConfinedSharedObjectIdentity(t *testing.T) {
 }
 
 func TestRuntimeELFRequiresLoaderBootstrapShape(t *testing.T) {
-	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	loaderPath := strings.TrimPrefix(loader, runtimeMountPath+"/")
 	tests := map[string]testELF64Spec{
 		"dynamic dependency": {
@@ -252,12 +254,12 @@ func TestRuntimeELFRequiresLoaderBootstrapShape(t *testing.T) {
 	}
 	for name, spec := range tests {
 		t.Run(name, func(t *testing.T) {
-			artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+			artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 			replaceMemoryArtifactFile(t, artifact, loaderPath, buildTestELF64(t, spec))
 			if err := verifyRuntimeExecutables(
 				context.Background(),
 				inspectRuntimeELFArtifact(t, artifact),
-				ArchitectureX8664,
+				definition.ArchitectureX8664,
 			); err == nil {
 				t.Fatal("runtime verifier accepted a patched loader bootstrap")
 			}
@@ -266,7 +268,7 @@ func TestRuntimeELFRequiresLoaderBootstrapShape(t *testing.T) {
 }
 
 func TestRuntimeELFRequiresExactLibcIdentity(t *testing.T) {
-	machine, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	machine, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	otherLoader := runtimeMountPath + "/lib/ld-linux-aarch64.so.1"
 	tests := map[string]testELF64Spec{
 		"missing interpreter": {
@@ -319,7 +321,7 @@ func TestRuntimeELFRequiresExactLibcIdentity(t *testing.T) {
 	}
 	for name, spec := range tests {
 		t.Run(name, func(t *testing.T) {
-			artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+			artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 			replaceMemoryArtifactFile(
 				t,
 				artifact,
@@ -329,7 +331,7 @@ func TestRuntimeELFRequiresExactLibcIdentity(t *testing.T) {
 			if err := verifyRuntimeExecutables(
 				context.Background(),
 				inspectRuntimeELFArtifact(t, artifact),
-				ArchitectureX8664,
+				definition.ArchitectureX8664,
 			); err == nil {
 				t.Fatal("runtime verifier accepted libc outside the exact identity contract")
 			}
@@ -338,7 +340,7 @@ func TestRuntimeELFRequiresExactLibcIdentity(t *testing.T) {
 }
 
 func TestRuntimeELFRequiresExactLibraryModes(t *testing.T) {
-	_, loader := testRuntimeELFTarget(t, ArchitectureX8664)
+	_, loader := testRuntimeELFTarget(t, definition.ArchitectureX8664)
 	tests := map[string]string{
 		"loader is not executable": strings.TrimPrefix(loader, runtimeMountPath+"/"),
 		"libc is executable":       runtimeLibcPath,
@@ -346,7 +348,7 @@ func TestRuntimeELFRequiresExactLibraryModes(t *testing.T) {
 	}
 	for name, filePath := range tests {
 		t.Run(name, func(t *testing.T) {
-			artifact := newValidRuntimeELFArtifact(t, ArchitectureX8664)
+			artifact := newValidRuntimeELFArtifact(t, definition.ArchitectureX8664)
 			artifact.mutate(filePath, func(entry *artifactEntry) {
 				if filePath == strings.TrimPrefix(loader, runtimeMountPath+"/") {
 					entry.Mode = 0644
@@ -357,7 +359,7 @@ func TestRuntimeELFRequiresExactLibraryModes(t *testing.T) {
 			if err := verifyRuntimeExecutables(
 				context.Background(),
 				inspectRuntimeELFArtifact(t, artifact),
-				ArchitectureX8664,
+				definition.ArchitectureX8664,
 			); err == nil {
 				t.Fatal("runtime verifier accepted a library outside the mode contract")
 			}
@@ -554,7 +556,7 @@ func alignTestELFOffset(value, alignment int) int {
 
 func newValidRuntimeELFArtifact(
 	t *testing.T,
-	architecture RuntimeArchitecture,
+	architecture definition.RuntimeArchitecture,
 ) *memoryArtifact {
 	t.Helper()
 	machine, loader := testRuntimeELFTarget(t, architecture)
@@ -591,7 +593,7 @@ func newValidRuntimeELFArtifact(
 
 func testRuntimeELFTarget(
 	t *testing.T,
-	architecture RuntimeArchitecture,
+	architecture definition.RuntimeArchitecture,
 ) (elf.Machine, string) {
 	t.Helper()
 	machine, loader, err := runtimeELFTarget(architecture)
