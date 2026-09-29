@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -69,8 +70,21 @@ func TestComputerFreezeWaitsForEveryMember(t *testing.T) {
 	}
 }
 
+// replaceComputerDiskFlush keeps tests from flushing the test machine's disks,
+// whose duration depends on unrelated writers, and counts Guest flushes.
+func replaceComputerDiskFlush(t *testing.T) *atomic.Int32 {
+	t.Helper()
+	var flushes atomic.Int32
+	previous := flushComputerDisk
+	flushComputerDisk = func() { flushes.Add(1) }
+	t.Cleanup(func() { flushComputerDisk = previous })
+	return &flushes
+}
+
 func TestComputerFreezeConnectionReturnsCompleteProof(t *testing.T) {
+	flushes := replaceComputerDiskFlush(t)
 	for _, count := range []int{0, 2} {
+		flushes.Store(0)
 		mounts, _, request := captureBarrierFixture(count)
 		waits := newWaitingRunRegistry()
 		for i := range count {
@@ -89,6 +103,9 @@ func TestComputerFreezeConnectionReturnsCompleteProof(t *testing.T) {
 		var response computerv0.FreezeComputerResponse
 		if err := frameio.ReadProtoFrame(client, &response); err != nil {
 			t.Fatal(err)
+		}
+		if got := flushes.Load(); got != 1 {
+			t.Fatalf("freeze acknowledged after %d disk flushes", got)
 		}
 		client.Close()
 		cancel()
