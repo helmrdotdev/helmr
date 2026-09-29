@@ -74,11 +74,11 @@ func (m ComputerMaterializer) cleanupComputerRun(ctx context.Context, session vm
 // closes the stream at any step and returns only after that close has finished.
 func (g guestControl) cleanupRun(ctx context.Context, request *computerv0.ComputerRunCleanupRequest) error {
 	var response computerv0.ComputerRunCleanupResponse
-	if err := g.exchange(ctx, guestControlExchange{
-		header:        wire.StreamHeader{Type: wire.StreamTypeComputerRunCleanup, RunID: request.GetRunId()},
-		request:       request,
-		response:      &response,
-		closeOnCancel: guestControlCloseOnCancelAwait,
+	if _, err := g.exchange(ctx, guestControlExchange{
+		header:       wire.StreamHeader{Type: wire.StreamTypeComputerRunCleanup, RunID: request.GetRunId()},
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelAwaitStreamClose,
 	}); err != nil {
 		return err
 	}

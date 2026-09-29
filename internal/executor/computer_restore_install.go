@@ -47,12 +47,11 @@ func (g guestControl) sendRestoreInstallation(ctx context.Context, request *comp
 		return err
 	}
 	var response computerv0.ComputerRestoreInstallationResponse
-	if err := g.exchange(ctx, guestControlExchange{
-		header:          wire.StreamHeader{Type: kind, ComputerID: request.Envelope.ComputerId, ComputerInstanceID: request.Envelope.ComputerInstanceId, CheckpointID: request.CheckpointId},
-		request:         request,
-		response:        &response,
-		closeOnCancel:   guestControlCloseOnCancelAsync,
-		readWithContext: true,
+	if _, err := g.exchange(ctx, guestControlExchange{
+		header:       wire.StreamHeader{Type: kind, ComputerID: request.Envelope.ComputerId, ComputerInstanceID: request.Envelope.ComputerInstanceId, CheckpointID: request.CheckpointId},
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelCloseStreamAndRead,
 	}); err != nil {
 		return err
 	}

@@ -23,19 +23,19 @@ func (g guestControl) renewAuthority(ctx context.Context, request *computerv0.Re
 	}
 	fence := request.GetPrevious().GetFence()
 	var response computerv0.RenewComputerAuthorityResponse
-	if err := g.exchange(ctx, guestControlExchange{
+	step, err := g.exchange(ctx, guestControlExchange{
 		header: wire.StreamHeader{
 			Type:               wire.StreamTypeComputerAuthorityRenew,
 			RunID:              fence.GetRunId(),
 			ComputerID:         fence.GetComputerId(),
 			ComputerInstanceID: fence.GetComputerInstanceId(),
 		},
-		request:         request,
-		response:        &response,
-		readWithContext: true,
-		wrap:            computerAuthorityRenewalTransportError,
-	}); err != nil {
-		return nil, err
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelReadOnly,
+	})
+	if err != nil {
+		return nil, computerAuthorityRenewalTransportError(step, err)
 	}
 	if strings.TrimSpace(response.GetError()) != "" {
 		return nil, fmt.Errorf("computer authority renewal failed: %s", response.GetError())
@@ -75,21 +75,19 @@ func (g guestControl) grantProgramResume(
 	}
 	fence := request.GetAuthority().GetFence()
 	var response computerv0.GrantProgramResumeResponse
-	if err := g.exchange(ctx, guestControlExchange{
+	step, err := g.exchange(ctx, guestControlExchange{
 		header: wire.StreamHeader{
 			Type: wire.StreamTypeProgramResumeGrant, RunID: fence.GetRunId(),
 			ComputerID: fence.GetComputerId(), ComputerInstanceID: fence.GetComputerInstanceId(),
 		},
-		request:         request,
-		response:        &response,
-		readWithContext: true,
-		wrap: func(step guestControlStep, err error) error {
-			if step == guestControlOpen {
-				return fmt.Errorf("open program resume grant stream: %w", err)
-			}
-			return err
-		},
-	}); err != nil {
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelReadOnly,
+	})
+	if err != nil {
+		if step == guestControlOpen {
+			return nil, fmt.Errorf("open program resume grant stream: %w", err)
+		}
 		return nil, err
 	}
 	attach := response.GetAttach()

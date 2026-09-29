@@ -22,11 +22,11 @@ func (m ComputerMaterializer) cancelComputerCommand(ctx context.Context, session
 // stream at any step and returns only after that close has finished.
 func (g guestControl) cancelCommand(ctx context.Context, request *computerv0.ComputerCommandCancelRequest) error {
 	var response computerv0.ComputerCommandCancelResponse
-	if err := g.exchange(ctx, guestControlExchange{
-		header:        wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, OperationID: request.GetAuthority().GetOperationId()},
-		request:       request,
-		response:      &response,
-		closeOnCancel: guestControlCloseOnCancelAwait,
+	if _, err := g.exchange(ctx, guestControlExchange{
+		header:       wire.StreamHeader{Type: wire.StreamTypeComputerCommandCancel, OperationID: request.GetAuthority().GetOperationId()},
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelAwaitStreamClose,
 	}); err != nil {
 		return err
 	}

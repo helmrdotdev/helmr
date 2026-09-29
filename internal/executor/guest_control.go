@@ -17,7 +17,7 @@ type guestControl struct {
 }
 
 // guestControlStep names the exchange step that failed, so an operation can
-// annotate its own transport failures.
+// annotate its own failures.
 type guestControlStep uint8
 
 const (
@@ -27,55 +27,52 @@ const (
 	guestControlReadResponse
 )
 
-// guestControlCloseOnCancel selects whether context cancellation closes the
-// operation stream while the exchange is in progress.
-type guestControlCloseOnCancel uint8
+// guestControlCancellation is how context cancellation reaches an operation
+// stream. Each operation keeps the cancellation behavior it has always had;
+// the policies differ because the operations do, not by design of the helper.
+type guestControlCancellation uint8
 
 const (
-	// guestControlCloseOnCancelNone leaves header and request writes unaffected
-	// by cancellation.
-	guestControlCloseOnCancelNone guestControlCloseOnCancel = iota
-	// guestControlCloseOnCancelAsync closes the stream when ctx is done at any
-	// step, without waiting for that close before returning.
-	guestControlCloseOnCancelAsync
-	// guestControlCloseOnCancelAwait closes the stream when ctx is done at any
-	// step and returns only after that close has finished.
-	guestControlCloseOnCancelAwait
+	// guestControlCancelReadOnly leaves header and request writes unaffected
+	// by cancellation; the response read returns ctx.Err() and closes the
+	// stream. Used by authority renewal, program resume grant and restore
+	// verification.
+	guestControlCancelReadOnly guestControlCancellation = iota
+	// guestControlCancelCloseStream closes the stream when ctx is done at any
+	// step, without waiting for that close, and reads the response directly.
+	// Used by freeze.
+	guestControlCancelCloseStream
+	// guestControlCancelCloseStreamAndRead closes the stream when ctx is done
+	// at any step, without waiting for that close, and the response read
+	// returns ctx.Err(). Used by restore installation and activation.
+	guestControlCancelCloseStreamAndRead
+	// guestControlCancelAwaitStreamClose closes the stream when ctx is done at
+	// any step, reads the response directly and returns only after that close
+	// has finished. Used by Command cancellation and Program run cleanup.
+	guestControlCancelAwaitStreamClose
 )
 
 type guestControlExchange struct {
-	header   wire.StreamHeader
-	request  proto.Message
-	response proto.Message
-	// closeOnCancel selects how cancellation reaches the stream during the
-	// whole exchange.
-	closeOnCancel guestControlCloseOnCancel
-	// readWithContext makes the response read return ctx.Err() on
-	// cancellation, closing the stream to release the blocked read.
-	readWithContext bool
-	// wrap annotates a failed step. A nil wrap returns step errors unchanged.
-	wrap func(guestControlStep, error) error
+	header       wire.StreamHeader
+	request      proto.Message
+	response     proto.Message
+	cancellation guestControlCancellation
 }
 
-// exchange performs one request/response operation on a new guest stream. The
-// stream is closed before exchange returns.
-func (g guestControl) exchange(ctx context.Context, call guestControlExchange) error {
-	fail := func(step guestControlStep, err error) error {
-		if call.wrap == nil {
-			return err
-		}
-		return call.wrap(step, err)
-	}
+// exchange performs one request/response operation on a new guest stream and
+// closes the stream before returning. On failure it reports the failed step;
+// the error itself is returned unchanged.
+func (g guestControl) exchange(ctx context.Context, call guestControlExchange) (guestControlStep, error) {
 	stream, err := g.machine.OpenStream(ctx)
 	if err != nil {
-		return fail(guestControlOpen, err)
+		return guestControlOpen, err
 	}
 	defer stream.Close()
-	switch call.closeOnCancel {
-	case guestControlCloseOnCancelAsync:
+	switch call.cancellation {
+	case guestControlCancelCloseStream, guestControlCancelCloseStreamAndRead:
 		stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
 		defer stop()
-	case guestControlCloseOnCancelAwait:
+	case guestControlCancelAwaitStreamClose:
 		closed := make(chan struct{})
 		stop := context.AfterFunc(ctx, func() { defer close(closed); _ = stream.Close() })
 		defer func() {
@@ -84,24 +81,34 @@ func (g guestControl) exchange(ctx context.Context, call guestControlExchange) e
 			}
 		}()
 	}
-	if err := wire.WriteStreamFrameHeader(stream, call.header, 0); err != nil {
-		return fail(guestControlWriteHeader, err)
+	if step, err := writeGuestControlRequest(stream, call.header, call.request); err != nil {
+		return step, err
 	}
-	if err := frameio.WriteProtoFrame(stream, call.request); err != nil {
-		return fail(guestControlWriteRequest, err)
-	}
-	if call.readWithContext {
-		err = readComputerControlResponse(ctx, stream, call.response)
-	} else {
+	switch call.cancellation {
+	case guestControlCancelReadOnly, guestControlCancelCloseStreamAndRead:
+		err = readResponseWithContext(ctx, stream, call.response)
+	default:
 		err = frameio.ReadProtoFrame(stream, call.response)
 	}
 	if err != nil {
-		return fail(guestControlReadResponse, err)
+		return guestControlReadResponse, err
 	}
-	return nil
+	return 0, nil
 }
 
-func readComputerControlResponse(ctx context.Context, stream vm.Stream, message proto.Message) error {
+// writeGuestControlRequest writes one operation's stream header and request
+// frame.
+func writeGuestControlRequest(stream vm.Stream, header wire.StreamHeader, request proto.Message) (guestControlStep, error) {
+	if err := wire.WriteStreamFrameHeader(stream, header, 0); err != nil {
+		return guestControlWriteHeader, err
+	}
+	if err := frameio.WriteProtoFrame(stream, request); err != nil {
+		return guestControlWriteRequest, err
+	}
+	return 0, nil
+}
+
+func readResponseWithContext(ctx context.Context, stream vm.Stream, message proto.Message) error {
 	result := make(chan error, 1)
 	go func() { result <- frameio.ReadProtoFrame(stream, message) }()
 	select {

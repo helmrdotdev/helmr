@@ -27,18 +27,16 @@ func (g guestControl) freeze(ctx context.Context, target workerapi.RuntimeReconc
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
 	var response computerv0.FreezeComputerResponse
-	if err = g.exchange(ctx, guestControlExchange{
-		header:        wire.StreamHeader{Type: wire.StreamTypeComputerFreeze, ComputerID: request.ComputerId, CheckpointID: request.CheckpointId},
-		request:       request,
-		response:      &response,
-		closeOnCancel: guestControlCloseOnCancelAsync,
-		wrap: func(step guestControlStep, err error) error {
-			if step == guestControlOpen {
-				return fmt.Errorf("open computer freeze stream: %w", err)
-			}
-			return err
-		},
-	}); err != nil {
+	step, err := g.exchange(ctx, guestControlExchange{
+		header:       wire.StreamHeader{Type: wire.StreamTypeComputerFreeze, ComputerID: request.ComputerId, CheckpointID: request.CheckpointId},
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelCloseStream,
+	})
+	if err != nil {
+		if step == guestControlOpen {
+			return workerapi.CheckpointRecoveryPoint{}, fmt.Errorf("open computer freeze stream: %w", err)
+		}
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
 	return computerFrozenRecoveryPoint(target, request, &response)

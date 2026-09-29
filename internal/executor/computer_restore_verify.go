@@ -18,21 +18,19 @@ func (g guestControl) verifyRestore(
 		return errors.New("restored computer verification is required")
 	}
 	var response computerv0.VerifyComputerRestoreResponse
-	if err := g.exchange(ctx, guestControlExchange{
+	step, err := g.exchange(ctx, guestControlExchange{
 		header: wire.StreamHeader{
 			Type: wire.StreamTypeComputerRestoreVerify, ComputerID: request.GetIdentity().GetComputerId(),
 			CheckpointID: request.GetIdentity().GetCheckpointId(),
 		},
-		request:         request,
-		response:        &response,
-		readWithContext: true,
-		wrap: func(step guestControlStep, err error) error {
-			if step == guestControlOpen {
-				return fmt.Errorf("open restored computer verification stream: %w", err)
-			}
-			return err
-		},
-	}); err != nil {
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelReadOnly,
+	})
+	if err != nil {
+		if step == guestControlOpen {
+			return fmt.Errorf("open restored computer verification stream: %w", err)
+		}
 		return err
 	}
 	if !proto.Equal(response.GetIdentity(), request.GetIdentity()) {
