@@ -61,7 +61,9 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 		"./cmd/guestd",
 		"./cmd/helmr",
 		"./cmd/internal/bundle-builder",
+		"./cmd/worker",
 		"./internal/builder",
+		"./internal/capacity",
 		"./internal/deployment",
 		"./internal/hostconfig",
 		"./internal/schedule",
@@ -76,7 +78,7 @@ func TestLightProgramsDoNotReachDatabase(t *testing.T) {
 				t.Fatalf("go list %s for %s: %v\n%s", pkg, goos, err, output)
 			}
 			for _, dependency := range strings.Fields(string(output)) {
-				if dependency == internalImportPrefix+"db" || strings.HasPrefix(dependency, "github.com/jackc/pgx/") {
+				if dependency == internalImportPrefix+"db" || dependency == internalImportPrefix+"pglock" || dependency == internalImportPrefix+"pgvalue" || strings.HasPrefix(dependency, "github.com/jackc/pgx/") {
 					t.Fatalf("%s must not depend on %s for %s", pkg, dependency, goos)
 				}
 			}

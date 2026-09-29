@@ -1,4 +1,4 @@
-package workergroup
+package auth
 
 import (
 	"bytes"

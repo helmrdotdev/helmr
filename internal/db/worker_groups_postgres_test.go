@@ -8,12 +8,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -89,13 +89,13 @@ func TestComputerInstanceCapacityRestoreCompatibilityMatchesPlanner(t *testing.T
 			ctx := context.Background()
 			pool := newPostgresDB(t, ctx)
 			seedCapacityQueryWorkers(t, ctx, pool, 1, 0)
-			plannerCompatible := capacity.CanRestore(capacity.RestoreRequirements{
+			plannerCompatible := workergroup.CanRestore(workergroup.RestoreRequirements{
 				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, VMPlatformID: dbtest.DefaultRuntimeID,
 				VCPUCount: 1, CPUConfigDigest: test.cpuDigest,
-				Resources: capacity.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
-			}, capacity.Pool{
+				Resources: workergroup.ResourceVector{CPUMillis: 1000, MemoryBytes: 1 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
+			}, workergroup.Pool{
 				WorkerGroupID: dbtest.DefaultWorkerGroupUUID, VMPlatformID: dbtest.DefaultRuntimeID,
-				PerVM:     capacity.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
+				PerVM:     workergroup.ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 32 << 30, VMSlots: 1},
 				CPUShapes: []vmplatform.CPUShape{{VCPUCount: 1, CPUConfigDigest: dbtest.DefaultCPUConfigID}},
 			})
 			immediateParams := runCapacitySelectionParams()

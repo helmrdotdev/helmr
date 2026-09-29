@@ -1,4 +1,4 @@
-package capacity
+package workergroup
 
 import (
 	"bytes"

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/auth"
 )
 
 func TestReadWorkerEnrollmentToken(t *testing.T) {
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestReadWorkerEnrollmentToken(t *testing.T) {
 }
 
 func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}

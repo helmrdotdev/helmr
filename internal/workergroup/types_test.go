@@ -1,4 +1,4 @@
-package capacity
+package workergroup
 
 import (
 	"math"
@@ -9,8 +9,8 @@ import (
 )
 
 func TestWorkerTemplateValidation(t *testing.T) {
-	template := WorkerTemplate{
-		Schema:    WorkerTemplateSchema,
+	template := Template{
+		Schema:    TemplateSchema,
 		Runtime:   testRuntimeProfile(t),
 		CPUShapes: testCPUShapes(4),
 		Capacity: ResourceVector{
@@ -32,7 +32,7 @@ func TestWorkerTemplateValidation(t *testing.T) {
 }
 
 func TestWorkerTemplateRejectsIncompleteCPUShapes(t *testing.T) {
-	template := validTestWorkerTemplate(t)
+	template := validTestTemplate(t)
 	template.CPUShapes = template.CPUShapes[:len(template.CPUShapes)-1]
 	if err := template.Validate(); err == nil {
 		t.Fatal("template with an incomplete CPU shape map was accepted")
@@ -40,17 +40,17 @@ func TestWorkerTemplateRejectsIncompleteCPUShapes(t *testing.T) {
 }
 
 func TestWorkerTemplateRejectsCPUShapeOverflow(t *testing.T) {
-	template := validTestWorkerTemplate(t)
+	template := validTestTemplate(t)
 	template.PerVM.CPUMillis = math.MaxInt64
 	if err := template.Validate(); err == nil {
 		t.Fatal("template with an unrepresentable vCPU range was accepted")
 	}
 }
 
-func validTestWorkerTemplate(t *testing.T) WorkerTemplate {
+func validTestTemplate(t *testing.T) Template {
 	t.Helper()
-	return WorkerTemplate{
-		Schema:    WorkerTemplateSchema,
+	return Template{
+		Schema:    TemplateSchema,
 		Runtime:   testRuntimeProfile(t),
 		CPUShapes: testCPUShapes(4),
 		Capacity:  ResourceVector{CPUMillis: 4000, MemoryBytes: 8 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},

@@ -13,10 +13,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -100,7 +100,7 @@ func (s *Server) capacityResolveWorkerPool(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("project capacity worker pool"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacity.WorkerPool{
+	writeJSON(w, http.StatusOK, workergroup.WorkerPool{
 		ID: pgvalue.MustUUIDValue(pool.ID).String(), WorkerGroupID: pgvalue.UUIDString(pool.WorkerGroupID),
 		Name: pool.Name, Status: status,
 	})
@@ -142,7 +142,7 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
 		return
 	}
-	var request capacity.ReconcileWorkerGroupPrimaryPoolsRequest
+	var request workergroup.ReconcilePrimaryPoolsRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid primary Pool selection JSON: %w", err)))
 		return
@@ -172,7 +172,7 @@ func (s *Server) capacityReconcileWorkerGroupPrimaryPools(w http.ResponseWriter,
 		writeError(w, errors.New("project capacity worker group"))
 		return
 	}
-	writeJSON(w, http.StatusOK, capacity.ReconcileWorkerGroupPrimaryPoolsResponse{
+	writeJSON(w, http.StatusOK, workergroup.ReconcilePrimaryPoolsResponse{
 		WorkerGroup: capacityWorkerGroup(result.group, status),
 		Applied:     result.applied,
 	})
@@ -189,8 +189,8 @@ func capacityOptionalPoolID(raw string) (pgtype.UUID, error) {
 	return pgvalue.UUID(id), nil
 }
 
-func capacityWorkerGroup(group db.WorkerGroup, status capacity.WorkerGroupStatus) capacity.WorkerGroup {
-	return capacity.WorkerGroup{
+func capacityWorkerGroup(group db.WorkerGroup, status workergroup.WorkerGroupStatus) workergroup.Group {
+	return workergroup.Group{
 		ID: pgvalue.UUIDString(group.ID), Name: group.Name, RegionID: group.RegionID, Status: status,
 		ClaimVersion:  group.ClaimVersion,
 		PrimaryPoolID: pgvalue.UUIDString(group.PrimaryPoolID),
@@ -215,18 +215,18 @@ func (s *Server) capacityPlan(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("worker_group_id must be a canonical UUIDv7")))
 		return
 	}
-	var request capacity.PlanRequest
+	var request workergroup.PlanRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid capacity plan JSON: %w", err)))
 		return
 	}
-	response, err := capacity.Plan(r.Context(), s.db, workerGroupID, request, time.Now())
+	response, err := workergroup.Plan(r.Context(), s.db, workerGroupID, request, time.Now())
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("worker group was not found")))
 		return
 	}
 	if err != nil {
-		if errors.Is(err, capacity.ErrInvalidPlanRequest) {
+		if errors.Is(err, workergroup.ErrInvalidPlanRequest) {
 			writeError(w, badRequest(err))
 			return
 		}
@@ -249,8 +249,8 @@ func (s *Server) capacityListWorkerHosts(w http.ResponseWriter, r *http.Request)
 		writeError(w, errors.New("list capacity worker instances"))
 		return
 	}
-	response := capacity.ListWorkerHostsResponse{
-		WorkerHosts: make([]capacity.WorkerHost, 0, len(rows)),
+	response := workergroup.ListWorkerHostsResponse{
+		WorkerHosts: make([]workergroup.WorkerHost, 0, len(rows)),
 	}
 	for _, row := range rows {
 		projected, err := projectWorkerHost(
@@ -303,7 +303,7 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		writeError(w, badRequest(err))
 		return
 	}
-	var request capacity.DrainWorkerHostRequest
+	var request workergroup.DrainWorkerHostRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker drain JSON: %w", err)))
 		return
@@ -323,7 +323,7 @@ func (s *Server) capacityDrainWorkerHost(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if request.RequireZeroQueuedDemand && instance.Status == string(db.WorkerHostStatusActive) {
-		present, err := capacity.HasQueuedDemand(r.Context(), s.db, pgvalue.MustUUIDValue(instance.WorkerGroupID))
+		present, err := workergroup.HasQueuedDemand(r.Context(), s.db, pgvalue.MustUUIDValue(instance.WorkerGroupID))
 		if err != nil {
 			s.log.Error("check queued demand for capacity drain", "worker_host_id", id.String(), "error", err)
 			writeError(w, errors.New("check queued demand for worker drain"))
@@ -493,31 +493,31 @@ func capacityWorkerHostListParams(r *http.Request) (db.ListCapacityWorkerHostsPa
 	return params, nil
 }
 
-func workerGroupPublicStatus(state string) (capacity.WorkerGroupStatus, error) {
+func workerGroupPublicStatus(state string) (workergroup.WorkerGroupStatus, error) {
 	switch state {
 	case db.WorkerGroupStatusActive:
-		return capacity.WorkerGroupStatusActive, nil
+		return workergroup.WorkerGroupStatusActive, nil
 	case db.WorkerGroupStatusPaused:
-		return capacity.WorkerGroupStatusPaused, nil
+		return workergroup.WorkerGroupStatusPaused, nil
 	case db.WorkerGroupStatusDraining:
-		return capacity.WorkerGroupStatusDraining, nil
+		return workergroup.WorkerGroupStatusDraining, nil
 	case db.WorkerGroupStatusDisabled:
-		return capacity.WorkerGroupStatusDisabled, nil
+		return workergroup.WorkerGroupStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("worker group state %q has no public projection", state)
 	}
 }
 
-func workerPoolPublicStatus(state string) (capacity.WorkerPoolStatus, error) {
+func workerPoolPublicStatus(state string) (workergroup.WorkerPoolStatus, error) {
 	switch state {
 	case "pending":
-		return capacity.WorkerPoolStatusPending, nil
+		return workergroup.WorkerPoolStatusPending, nil
 	case "active":
-		return capacity.WorkerPoolStatusActive, nil
+		return workergroup.WorkerPoolStatusActive, nil
 	case "draining":
-		return capacity.WorkerPoolStatusDraining, nil
+		return workergroup.WorkerPoolStatusDraining, nil
 	case "disabled":
-		return capacity.WorkerPoolStatusDisabled, nil
+		return workergroup.WorkerPoolStatusDisabled, nil
 	default:
 		return "", fmt.Errorf("worker pool state %q has no public projection", state)
 	}
@@ -536,12 +536,12 @@ func projectWorkerHost(
 	lostAt pgtype.Timestamptz,
 	createdAt pgtype.Timestamptz,
 	updatedAt pgtype.Timestamptz,
-) (capacity.WorkerHost, error) {
+) (workergroup.WorkerHost, error) {
 	publicStatus, err := workerHostPublicStatus(status)
 	if err != nil {
-		return capacity.WorkerHost{}, err
+		return workergroup.WorkerHost{}, err
 	}
-	result := capacity.WorkerHost{
+	result := workergroup.WorkerHost{
 		ID: uuid.UUID(id.Bytes).String(), ResourceID: resourceID,
 		WorkerGroupID: pgvalue.UUIDString(workerGroupID), WorkerPoolID: uuid.UUID(workerPoolID.Bytes).String(),
 		Status: publicStatus, ClaimVersion: claimVersion,
@@ -562,18 +562,18 @@ func projectWorkerHost(
 	return result, nil
 }
 
-func workerHostPublicStatus(state string) (capacity.WorkerHostStatus, error) {
+func workerHostPublicStatus(state string) (workergroup.WorkerHostStatus, error) {
 	switch state {
 	case db.WorkerHostStatusRegistering:
-		return capacity.WorkerHostStatusRegistering, nil
+		return workergroup.WorkerHostStatusRegistering, nil
 	case db.WorkerHostStatusActive:
-		return capacity.WorkerHostStatusActive, nil
+		return workergroup.WorkerHostStatusActive, nil
 	case db.WorkerHostStatusDraining:
-		return capacity.WorkerHostStatusDraining, nil
+		return workergroup.WorkerHostStatusDraining, nil
 	case db.WorkerHostStatusTerminationReady:
-		return capacity.WorkerHostStatusTerminationReady, nil
+		return workergroup.WorkerHostStatusTerminationReady, nil
 	case db.WorkerHostStatusLost:
-		return capacity.WorkerHostStatusLost, nil
+		return workergroup.WorkerHostStatusLost, nil
 	default:
 		return "", fmt.Errorf("worker instance state %q has no public projection", state)
 	}

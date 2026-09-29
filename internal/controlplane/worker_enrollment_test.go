@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/auth"
 )
 
 func TestStrictWorkerEnrollmentBearer(t *testing.T) {
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}

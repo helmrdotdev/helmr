@@ -11,11 +11,11 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -121,15 +121,15 @@ func TestNormalizeWorkerCapabilitiesReturnsCanonicalCompleteEvidence(t *testing.
 func TestWorkerTemplateDerivesImmutablePoolContract(t *testing.T) {
 	capabilities := validWorkerCapabilities(t)
 
-	want := capacity.WorkerTemplate{
-		Schema:    capacity.WorkerTemplateSchema,
+	want := workergroup.Template{
+		Schema:    workergroup.TemplateSchema,
 		Runtime:   capabilities.Runtime,
 		CPUShapes: append([]vmplatform.CPUShape(nil), capabilities.CPUShapes...),
-		Capacity: capacity.ResourceVector{
+		Capacity: workergroup.ResourceVector{
 			CPUMillis: 8_000, MemoryBytes: 16 << 30, GuestEphemeralDiskBytes: 64 << 30,
 			VMSlots: 4,
 		},
-		PerVM: capacity.ResourceVector{
+		PerVM: workergroup.ResourceVector{
 			CPUMillis: 2_000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 8 << 30,
 		},
 	}
@@ -287,7 +287,7 @@ func sealedWorkerPool(
 	poolID pgtype.UUID,
 	groupID uuid.UUID,
 	name string,
-	template capacity.WorkerTemplate,
+	template workergroup.Template,
 ) (db.WorkerPool, []db.WorkerPoolCpuShape) {
 	pool := db.WorkerPool{
 		ID:                              poolID,
