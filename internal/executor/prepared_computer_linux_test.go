@@ -102,7 +102,7 @@ func TestComputerPreparationPublicationAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: computer.SeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
+	target := workerapi.RuntimeReconcileTarget{ID: uuid.NewV7().String(), WorkerEpoch: 1, DesiredVersion: 1, Source: workerapi.RuntimeSource{ComputerID: uuid.NewV7().String(), ReservedDiskMiB: computer.SeedCapacity / mebibyte, Computer: &workerapi.RuntimeComputerSource{VersionID: uuid.NewV7().String(), LogicalBytes: computer.SeedCapacity, Seed: &workerapi.ComputerSeed{Profile: definition.ComputerSeedProfile, Object: workerapi.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}}}}}
 	const budget = 64 << 20
 	for _, failure := range []string{"capacity", "register", "upload", "commit", ""} {
 		t.Run("failure="+failure, func(t *testing.T) {

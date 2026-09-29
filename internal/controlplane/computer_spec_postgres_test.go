@@ -10,7 +10,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -22,8 +21,8 @@ import (
 func TestComputerSpecPostgresReusedAcrossProgramDeployments(t *testing.T) {
 	fixture := newDeploymentFinalizePostgresFixture(t)
 	image := deployment.BundleComputerImageArtifact{
-		Profile: computer.SeedProfile, Architecture: definition.ArchitectureX8664,
-		Digest: "sha256:" + strings.Repeat("d", 64), SizeBytes: 4096, MediaType: computer.SeedMediaType,
+		Profile: definition.ComputerSeedProfile, Architecture: definition.ArchitectureX8664,
+		Digest: "sha256:" + strings.Repeat("d", 64), SizeBytes: 4096, MediaType: definition.ComputerSeedMediaType,
 	}
 	manifest := definition.SandboxManifest{
 		Image:     definition.SandboxImageManifest{Profile: image.Profile, Config: image.Config, ArtifactDigest: image.Digest, MediaType: image.MediaType},

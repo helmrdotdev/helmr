@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 type TaskRunAdmission struct {
@@ -24,7 +24,7 @@ type ScheduledTaskAdmission struct {
 	MaxActiveDurationMS   int64
 	RetryPolicy           []byte
 	SandboxDeclaredID     string
-	SecretPlacements      []computer.SecretPlacement
+	SecretPlacements      []secretbinding.Placement
 }
 
 func ResolveTaskRunAdmission(

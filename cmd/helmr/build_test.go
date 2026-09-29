@@ -12,8 +12,8 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/hostconfig"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/spf13/cobra"
 )
 
@@ -28,12 +28,12 @@ func TestBuildComputerImagesBuildsUniqueRenderedInputOnce(t *testing.T) {
 	computerBuild := func(declaredID, ref string) builder.ComputerBuild {
 		return builder.ComputerBuild{
 			DeclaredID: declaredID,
-			Build: imagebuild.Build{
+			Build: definition.ImageBuild{
 				Root: "root",
-				Images: []imagebuild.Spec{{
+				Images: []definition.ImageSpec{{
 					Key:      "root",
-					Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-					Steps:    []imagebuild.Step{{From: &imagebuild.From{Ref: ref}}},
+					Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
+					Steps:    []definition.ImageStep{{From: &definition.ImageFrom{Ref: ref}}},
 				}},
 			},
 		}

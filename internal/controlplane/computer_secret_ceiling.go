@@ -4,10 +4,10 @@ import (
 	"context"
 	"slices"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -40,7 +40,7 @@ func authorizeComputerSecretTarget(ctx context.Context, q db.Querier, sourceID, 
 	return nil
 }
 
-func authorizeComputerSecretCreate(ctx context.Context, q db.Querier, sourceID, environmentID pgtype.UUID, requested []api.ComputerSecret) error {
+func authorizeComputerSecretCreate(ctx context.Context, q db.Querier, sourceID, environmentID pgtype.UUID, requested []secretbinding.Binding) error {
 	placements, err := normalizeComputerSecretPlacements(requested)
 	if err != nil {
 		return err

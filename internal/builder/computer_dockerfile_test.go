@@ -4,20 +4,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestComputerImageDockerfileUsesInstalledTreeAndDigestPinnedBase(t *testing.T) {
 	base := "docker.io/library/alpine@sha256:" + strings.Repeat("b", 64)
-	build := imagebuild.Build{
+	build := definition.ImageBuild{
 		Root: "root",
-		Images: []imagebuild.Spec{{
-			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-			Steps: []imagebuild.Step{
-				{From: &imagebuild.From{Ref: base}},
-				{CopySourceFile: &imagebuild.CopySourceFile{Path: "dist/app.js", Dst: "/app/app.js"}},
-				{Env: &imagebuild.Env{Key: "MESSAGE", Value: "hello world"}},
-				{Run: &imagebuild.Run{Argv: []string{"/bin/sh", "-c", "test -f /app/app.js"}}},
+		Images: []definition.ImageSpec{{
+			Key: "root", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
+			Steps: []definition.ImageStep{
+				{From: &definition.ImageFrom{Ref: base}},
+				{CopySourceFile: &definition.ImageCopySourceFile{Path: "dist/app.js", Dst: "/app/app.js"}},
+				{Env: &definition.ImageEnv{Key: "MESSAGE", Value: "hello world"}},
+				{Run: &definition.ImageRun{Argv: []string{"/bin/sh", "-c", "test -f /app/app.js"}}},
 			},
 		}},
 	}
@@ -46,11 +46,11 @@ func TestComputerImageDockerfileUsesInstalledTreeAndDigestPinnedBase(t *testing.
 }
 
 func TestComputerImageDockerfileAcceptsTaggedBase(t *testing.T) {
-	build := imagebuild.Build{
+	build := definition.ImageBuild{
 		Root: "root",
-		Images: []imagebuild.Spec{{
-			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "node:24-bookworm-slim"}}},
+		Images: []definition.ImageSpec{{
+			Key: "root", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
+			Steps: []definition.ImageStep{{From: &definition.ImageFrom{Ref: "node:24-bookworm-slim"}}},
 		}},
 	}
 	raw, _, err := ComputerImageDockerfile(build)
@@ -65,11 +65,11 @@ func TestComputerImageDockerfileAcceptsTaggedBase(t *testing.T) {
 func TestComputerImageDockerfileDisambiguatesInternalNames(t *testing.T) {
 	for _, base := range []string{"helmr_installed", "installed-tree", "helmr_computer_0"} {
 		t.Run(base, func(t *testing.T) {
-			build := imagebuild.Build{
+			build := definition.ImageBuild{
 				Root: "root",
-				Images: []imagebuild.Spec{{
-					Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-					Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: base}}},
+				Images: []definition.ImageSpec{{
+					Key: "root", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
+					Steps: []definition.ImageStep{{From: &definition.ImageFrom{Ref: base}}},
 				}},
 			}
 			raw, _, err := ComputerImageDockerfile(build)
@@ -85,11 +85,11 @@ func TestComputerImageDockerfileDisambiguatesInternalNames(t *testing.T) {
 }
 
 func TestComputerImageDockerfilePreservesScratchBase(t *testing.T) {
-	build := imagebuild.Build{
+	build := definition.ImageBuild{
 		Root: "root",
-		Images: []imagebuild.Spec{{
-			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "scratch"}}},
+		Images: []definition.ImageSpec{{
+			Key: "root", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
+			Steps: []definition.ImageStep{{From: &definition.ImageFrom{Ref: "scratch"}}},
 		}},
 	}
 	raw, _, err := ComputerImageDockerfile(build)
@@ -102,11 +102,11 @@ func TestComputerImageDockerfilePreservesScratchBase(t *testing.T) {
 }
 
 func TestComputerImageDockerfileRejectsInvalidBase(t *testing.T) {
-	build := imagebuild.Build{
+	build := definition.ImageBuild{
 		Root: "root",
-		Images: []imagebuild.Spec{{
-			Key: "root", Platform: imagebuild.Platform{OS: "linux", Architecture: "x86_64"},
-			Steps: []imagebuild.Step{{From: &imagebuild.From{Ref: "not a valid ref"}}},
+		Images: []definition.ImageSpec{{
+			Key: "root", Platform: definition.ImagePlatform{OS: "linux", Architecture: "x86_64"},
+			Steps: []definition.ImageStep{{From: &definition.ImageFrom{Ref: "not a valid ref"}}},
 		}},
 	}
 	if _, _, err := ComputerImageDockerfile(build); err == nil {

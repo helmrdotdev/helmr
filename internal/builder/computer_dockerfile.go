@@ -10,12 +10,11 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
 type ComputerBuild struct {
 	DeclaredID string
-	Build      imagebuild.Build
+	Build      definition.ImageBuild
 }
 
 func ComputerBuilds(plan definition.BuildPlan) ([]ComputerBuild, error) {
@@ -43,13 +42,13 @@ func ComputerBuilds(plan definition.BuildPlan) ([]ComputerBuild, error) {
 // source authority. Registry authentication, when needed, belongs to the
 // caller's local Docker/BuildKit session rather than Helmr or Control Plane.
 func ComputerImageDockerfile(
-	build imagebuild.Build,
+	build definition.ImageBuild,
 ) ([]byte, string, error) {
 	lines := []string{"# syntax=" + dockerfileFrontend, "FROM helmr_installed AS installed-tree"}
-	if err := imagebuild.Validate(build, "x86_64"); err != nil {
+	if err := definition.ValidateImageBuild(build, "x86_64"); err != nil {
 		return nil, "", err
 	}
-	byKey := make(map[string]imagebuild.Spec, len(build.Images))
+	byKey := make(map[string]definition.ImageSpec, len(build.Images))
 	for _, image := range build.Images {
 		byKey[image.Key] = image
 	}
@@ -129,7 +128,7 @@ func ComputerImageDockerfile(
 	return []byte(strings.Join(lines, "\n")), aliases[build.Root], nil
 }
 
-func normalizeComputerBase(from imagebuild.From) (string, error) {
+func normalizeComputerBase(from definition.ImageFrom) (string, error) {
 	if from.Ref == "scratch" {
 		return from.Ref, nil
 	}

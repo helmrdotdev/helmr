@@ -74,7 +74,7 @@ func TestStageProtectedEnvPublicTrustAndCollisions(t *testing.T) {
 }
 
 func TestGuestSecretEnvNameContract(t *testing.T) {
-	data, err := os.ReadFile("../computer/testdata/secret-env-names.json")
+	data, err := os.ReadFile("../secretbinding/testdata/secret-env-names.json")
 	if err != nil {
 		t.Fatal(err)
 	}

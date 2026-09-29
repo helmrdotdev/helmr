@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -75,8 +76,8 @@ func TestRunPinnedComputerCreateUsesSourceDeploymentAndFencesBeforeClaim(t *test
 			Kind: computerDeclarationRunPinned, RunID: source.RunID,
 		},
 		DeclaredID: "computer.v1", Key: &key,
-		Secrets: []api.ComputerSecret{
-			{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "API_TOKEN", Mode: "raw"}},
+		Secrets: []secretbinding.Binding{
+			{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "API_TOKEN", Mode: "raw"}},
 		},
 		IdempotencyKey: "create",
 		Authorize: func(context.Context, pgx.Tx) error {
@@ -90,7 +91,7 @@ func TestRunPinnedComputerCreateUsesSourceDeploymentAndFencesBeforeClaim(t *test
 	if created.Snapshot.ID != created.ComputerID.String() ||
 		created.Snapshot.Status != api.ComputerStatusAvailable ||
 		len(created.Snapshot.Secrets) != 1 ||
-		!reflect.DeepEqual(created.Snapshot.Secrets[0], api.ComputerSecret{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "API_TOKEN", Mode: "raw"}}) {
+		!reflect.DeepEqual(created.Snapshot.Secrets[0], secretbinding.Binding{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "API_TOKEN", Mode: "raw"}}) {
 		t.Fatalf("creation snapshot = %+v", created.Snapshot)
 	}
 	if _, err := fixture.pool.Exec(t.Context(), `
@@ -362,10 +363,10 @@ SELECT status FROM computers WHERE id = $1`, blockedComputerID).Scan(&blockedSta
 func TestProtectedComputerCreatePersistsFixedMixedBindings(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	fixture.server.secretProxy = testComputerCAStore(t, fixture.pool)
-	request := computerCreateRequest{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID, Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted}, DeclaredID: "computer.v1", IdempotencyKey: "mixed-protected", Secrets: []api.ComputerSecret{
-		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "GH_TOKEN", Mode: "protected", AllowedOrigins: []string{"HTTPS://API.GITHUB.COM:443/"}}},
-		{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "RAW_TOKEN", Mode: "raw"}},
-		{Name: "API_TOKEN", File: &api.SecretFile{Path: "/run/secrets/key"}},
+	request := computerCreateRequest{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID, Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted}, DeclaredID: "computer.v1", IdempotencyKey: "mixed-protected", Secrets: []secretbinding.Binding{
+		{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "GH_TOKEN", Mode: "protected", AllowedOrigins: []string{"HTTPS://API.GITHUB.COM:443/"}}},
+		{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "RAW_TOKEN", Mode: "raw"}},
+		{Name: "API_TOKEN", File: &secretbinding.File{Path: "/run/secrets/key"}},
 	}}
 	result, err := fixture.server.createComputer(t.Context(), request)
 	if err != nil {

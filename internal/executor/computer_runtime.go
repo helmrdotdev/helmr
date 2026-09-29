@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	programv0 "github.com/helmrdotdev/helmr/internal/proto/program/v0"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -174,24 +176,24 @@ func workerComputerCreateRequest(
 	if err := validateRuntimeComputerCorrelation(requested.GetCorrelationId()); err != nil {
 		return workerapi.CreateComputerRequest{}, err
 	}
-	if err := api.ValidateSandboxDeclaredID(requested.GetDeclaredId()); err != nil {
+	if err := definition.ValidateSandboxDeclaredID(requested.GetDeclaredId()); err != nil {
 		return workerapi.CreateComputerRequest{}, err
 	}
-	secrets := make([]api.ComputerSecret, 0, len(requested.GetSecrets()))
+	secrets := make([]secretbinding.Binding, 0, len(requested.GetSecrets()))
 	for _, placement := range requested.GetSecrets() {
 		if placement == nil {
 			return workerapi.CreateComputerRequest{}, errors.New("computer secret placement is required")
 		}
-		secret := api.ComputerSecret{Name: placement.GetSecret()}
+		secret := secretbinding.Binding{Name: placement.GetSecret()}
 		switch value := placement.GetPlacement().(type) {
 		case *programv0.ComputerSecretPlacement_Env:
-			secret.Env = &api.SecretEnv{Name: value.Env.GetName(), Mode: value.Env.GetMode(), AllowedOrigins: value.Env.GetAllowedOrigins()}
+			secret.Env = &secretbinding.Env{Name: value.Env.GetName(), Mode: value.Env.GetMode(), AllowedOrigins: value.Env.GetAllowedOrigins()}
 		case *programv0.ComputerSecretPlacement_File:
-			secret.File = &api.SecretFile{Path: value.File.GetPath()}
+			secret.File = &secretbinding.File{Path: value.File.GetPath()}
 		default:
 			return workerapi.CreateComputerRequest{}, errors.New("computer secret target is required")
 		}
-		if err := api.ValidateComputerSecret(secret); err != nil {
+		if err := secretbinding.ValidateBinding(secret); err != nil {
 			return workerapi.CreateComputerRequest{}, err
 		}
 		secrets = append(secrets, secret)

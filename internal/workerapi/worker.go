@@ -6,6 +6,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 )
 
@@ -473,12 +474,12 @@ type ComputerAddress struct {
 }
 
 type CreateComputerRequest struct {
-	Lease             RunLeaseFence        `json:"lease"`
-	CorrelationID     string               `json:"correlation_id"`
-	SandboxDeclaredID string               `json:"sandbox_declared_id"`
-	Key               *string              `json:"key,omitempty"`
-	Secrets           []api.ComputerSecret `json:"secrets,omitempty"`
-	IdempotencyKey    string               `json:"idempotency_key,omitempty"`
+	Lease             RunLeaseFence                 `json:"lease"`
+	CorrelationID     string                        `json:"correlation_id"`
+	SandboxDeclaredID string                        `json:"sandbox_declared_id"`
+	Key               *string                       `json:"key,omitempty"`
+	Secrets           []secretbinding.Binding `json:"secrets,omitempty"`
+	IdempotencyKey    string                        `json:"idempotency_key,omitempty"`
 }
 
 type CreateComputerResponse struct {

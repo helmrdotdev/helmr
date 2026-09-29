@@ -12,8 +12,8 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5"
 
@@ -70,16 +70,16 @@ func TestComputerCACreationRoutesAndRollback(t *testing.T) {
 					request.Declaration = computerDeclarationSelector{Kind: computerDeclarationRunPinned, RunID: started.BootRunID}
 					request.Authorize = func(context.Context, pgx.Tx) error { return nil }
 				}
-				protected := api.ComputerSecret{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}
-				raw := api.ComputerSecret{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "RAW", Mode: "raw"}}
+				protected := secretbinding.Binding{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}
+				raw := secretbinding.Binding{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "RAW", Mode: "raw"}}
 				switch mode {
 				case "none":
 				case "raw":
-					request.Secrets = []api.ComputerSecret{raw}
+					request.Secrets = []secretbinding.Binding{raw}
 				case "mixed":
-					request.Secrets = []api.ComputerSecret{protected, raw, {Name: "API_TOKEN", File: &api.SecretFile{Path: "/run/secrets/key"}}}
+					request.Secrets = []secretbinding.Binding{protected, raw, {Name: "API_TOKEN", File: &secretbinding.File{Path: "/run/secrets/key"}}}
 				default:
-					request.Secrets = []api.ComputerSecret{protected}
+					request.Secrets = []secretbinding.Binding{protected}
 				}
 				if mode == "missing-store" {
 					f.server.secretProxy = nil
@@ -153,7 +153,7 @@ func TestComputerCACreationRoutesAndRollback(t *testing.T) {
 func TestComputerCAConcurrentIdempotentCreation(t *testing.T) {
 	f := newActorStartPostgresFixture(t, 1)
 	f.server.secretProxy = testComputerCAStore(t, f.pool)
-	request := computerCreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted}, DeclaredID: "computer.v1", IdempotencyKey: "same-ca", Secrets: []api.ComputerSecret{{Name: "API_TOKEN", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}}
+	request := computerCreateRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted}, DeclaredID: "computer.v1", IdempotencyKey: "same-ca", Secrets: []secretbinding.Binding{{Name: "API_TOKEN", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}}
 	var wg sync.WaitGroup
 	results := make(chan computerCreateResult, 8)
 	errs := make(chan error, 8)
@@ -238,14 +238,14 @@ func TestComputerCAGuestCreateIngress(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE run_attempts SET entrypoint_entered_at=now() WHERE run_id=$1", f.run.RunID)
 			// Raw source authority permits the requested protected/raw subsets.
 			dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_secrets SET mode='raw',placeholder='',allowed_origins='{}' WHERE computer_id=$1", f.computer)
-			bindings := []api.ComputerSecret{{Name: "token-a", Env: &api.SecretEnv{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}
+			bindings := []secretbinding.Binding{{Name: "token-a", Env: &secretbinding.Env{Name: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}}
 			switch mode {
 			case "none":
 				bindings = nil
 			case "raw":
-				bindings = []api.ComputerSecret{{Name: "token-a", Env: &api.SecretEnv{Name: "RAW", Mode: "raw"}}}
+				bindings = []secretbinding.Binding{{Name: "token-a", Env: &secretbinding.Env{Name: "RAW", Mode: "raw"}}}
 			case "mixed":
-				bindings = append(bindings, api.ComputerSecret{Name: "token-a", Env: &api.SecretEnv{Name: "RAW", Mode: "raw"}}, api.ComputerSecret{Name: "token-a", File: &api.SecretFile{Path: "/run/secrets/key"}})
+				bindings = append(bindings, secretbinding.Binding{Name: "token-a", Env: &secretbinding.Env{Name: "RAW", Mode: "raw"}}, secretbinding.Binding{Name: "token-a", File: &secretbinding.File{Path: "/run/secrets/key"}})
 			}
 			request := workerapi.CreateComputerRequest{Lease: workerapi.RunLeaseFence{ID: f.run.LeaseID.String(), LeaseSequence: 1}, CorrelationID: uuid.NewV7().String(), SandboxDeclaredID: "test-computer", Secrets: bindings, IdempotencyKey: "guest-ca"}
 			var first string

@@ -8,10 +8,8 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
-	"github.com/helmrdotdev/helmr/internal/sourceid"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func (declaration ProgramIndexDeclaration) MarshalJSON() ([]byte, error) {
@@ -123,7 +121,7 @@ func validateProgramIndexDeclaration(
 	declaration ProgramIndexDeclaration,
 	queues map[string]struct{},
 ) error {
-	if !sourceid.Valid(declaration.DeclaredID) {
+	if !definition.ValidDeclaredID(declaration.DeclaredID) {
 		return fmt.Errorf(
 			"declaredId %q is outside the exact ASCII ID domain",
 			declaration.DeclaredID,
@@ -174,7 +172,7 @@ func validateProgramIndexDeclaration(
 		) {
 			return errors.New("computer image artifactDigest is not a lowercase SHA-256 digest")
 		}
-		if declaration.Sandbox.Image.Profile != computer.SeedProfile {
+		if declaration.Sandbox.Image.Profile != definition.ComputerSeedProfile {
 			return fmt.Errorf("sandbox disk profile %q is unsupported", declaration.Sandbox.Image.Profile)
 		}
 		if declaration.Sandbox.Image.MediaType != ComputerImageArtifactMediaType {
@@ -236,7 +234,7 @@ func cloneProgramIndexDeclaration(
 		if value.Schedule != nil {
 			schedule := *value.Schedule
 			schedule.Computer.Secrets = make(
-				[]api.ComputerSecret,
+				[]secretbinding.Binding,
 				len(value.Schedule.Computer.Secrets),
 			)
 			for index, binding := range value.Schedule.Computer.Secrets {

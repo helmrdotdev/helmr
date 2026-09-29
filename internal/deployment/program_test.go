@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
@@ -189,7 +188,7 @@ func testProgramIndex(t *testing.T) ProgramIndex {
 		[]BundleComputerImage{{
 			DeclaredID: "repo",
 			Artifact: BundleComputerImageArtifact{
-				Profile:      computer.SeedProfile,
+				Profile:      definition.ComputerSeedProfile,
 				Digest:       "sha256:" + strings.Repeat("d", 64),
 				SizeBytes:    4096,
 				MediaType:    ComputerImageArtifactMediaType,

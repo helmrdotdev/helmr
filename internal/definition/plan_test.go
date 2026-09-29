@@ -5,9 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
@@ -421,8 +420,8 @@ func TestValidateBuildPlanSchedule(t *testing.T) {
 		{
 			name: "computer secret target",
 			change: func(manifest *ScheduleManifest) {
-				manifest.Computer.Secrets = []api.ComputerSecret{{
-					Name: "TOKEN", Env: &api.SecretEnv{Name: "HELMR_TOKEN", Mode: "raw"},
+				manifest.Computer.Secrets = []secretbinding.Binding{{
+					Name: "TOKEN", Env: &secretbinding.Env{Name: "HELMR_TOKEN", Mode: "raw"},
 				}}
 			},
 			errMsg: "reserved computer secret environment target",
@@ -502,7 +501,7 @@ func testBuildPlan() BuildPlan {
 						Timezone: "UTC",
 						Computer: ScheduleComputerManifest{
 							SandboxDeclaredID: "repo",
-							Secrets:           []api.ComputerSecret{},
+							Secrets:           []secretbinding.Binding{},
 						},
 					},
 				},
@@ -523,17 +522,17 @@ func testBuildPlan() BuildPlan {
 				Kind:       KindSandbox,
 				DeclaredID: "repo",
 				Sandbox: &SandboxInputManifest{
-					ImageBuild: imagebuild.Build{
+					ImageBuild: ImageBuild{
 						Root: "repo",
-						Images: []imagebuild.Spec{{
+						Images: []ImageSpec{{
 							Key: "repo",
-							Platform: imagebuild.Platform{
+							Platform: ImagePlatform{
 								OS:           "linux",
 								Architecture: "x86_64",
 							},
-							Steps: []imagebuild.Step{
-								{From: &imagebuild.From{Ref: "debian:bookworm-slim"}},
-								{CopySourceFile: &imagebuild.CopySourceFile{
+							Steps: []ImageStep{
+								{From: &ImageFrom{Ref: "debian:bookworm-slim"}},
+								{CopySourceFile: &ImageCopySourceFile{
 									Dst:  "/app/package.json",
 									Path: "package.json",
 								}},

@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/origin"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 )
 
 const MarkerPrefix = "hlmr_protected_"
@@ -64,7 +64,7 @@ func New(config Config) (*Proxy, error) {
 	}
 	config.Origins = slices.Clone(config.Origins)
 	for _, value := range config.Origins {
-		canonical, err := origin.Canonical(value)
+		canonical, err := secretbinding.CanonicalOrigin(value)
 		if err != nil || canonical != value {
 			return nil, errors.New("egress origin is not canonical")
 		}
@@ -220,7 +220,7 @@ func authority(value, scheme string) (string, error) {
 	}
 	host := strings.ToLower(u.Hostname())
 	ip, ipErr := netip.ParseAddr(host)
-	if (ipErr == nil && !ip.Is4()) || (ipErr != nil && !origin.ValidHostname(host)) {
+	if (ipErr == nil && !ip.Is4()) || (ipErr != nil && !secretbinding.ValidOriginHostname(host)) {
 		return "", errors.New("invalid destination hostname")
 	}
 	port := u.Port()

@@ -11,7 +11,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
@@ -21,8 +21,8 @@ import (
 type BuildTreeSource struct {
 	tree       *BuildTree
 	entries    []artifactEntry
-	paths      []imagebuild.SourcePath
-	descriptor imagebuild.SourceArchiveDescriptor
+	paths      []SourcePath
+	descriptor SourceArchiveDescriptor
 }
 
 // SelectImageSource expands every source-copy root in plan against the exact
@@ -30,7 +30,7 @@ type BuildTreeSource struct {
 // required before a local producer accepts the source tree.
 func (tree *BuildTree) SelectImageSource(
 	ctx context.Context,
-	plan imagebuild.Build,
+	plan definition.ImageBuild,
 ) (*BuildTreeSource, error) {
 	if ctx == nil {
 		return nil, errors.New("image source selection context is nil")
@@ -41,7 +41,7 @@ func (tree *BuildTree) SelectImageSource(
 	if len(plan.Images) == 0 {
 		return nil, errors.New("image source plan has no images")
 	}
-	if err := imagebuild.Validate(plan, plan.Images[0].Platform.Architecture); err != nil {
+	if err := definition.ValidateImageBuild(plan, plan.Images[0].Platform.Architecture); err != nil {
 		return nil, fmt.Errorf("validate image source plan: %w", err)
 	}
 
@@ -50,19 +50,19 @@ func (tree *BuildTree) SelectImageSource(
 	if err != nil {
 		return nil, err
 	}
-	if len(selected) > imagebuild.MaxSourceArchiveEntries {
+	if len(selected) > MaxSourceArchiveEntries {
 		return nil, fmt.Errorf(
 			"image source archive entry count exceeds %d",
-			imagebuild.MaxSourceArchiveEntries,
+			MaxSourceArchiveEntries,
 		)
 	}
-	paths := make([]imagebuild.SourcePath, len(selected))
+	paths := make([]SourcePath, len(selected))
 	for index, entry := range selected {
 		kind, err := imageSourcePathKind(entry.Kind)
 		if err != nil {
 			return nil, err
 		}
-		paths[index] = imagebuild.SourcePath{Path: entry.Path, Kind: kind}
+		paths[index] = SourcePath{Path: entry.Path, Kind: kind}
 	}
 
 	digest := sha256.New()
@@ -70,19 +70,19 @@ func (tree *BuildTree) SelectImageSource(
 	if err := writeSelectedBuildTreeArchive(ctx, counter, tree.inspected, selected); err != nil {
 		return nil, err
 	}
-	descriptor := imagebuild.SourceArchiveDescriptor{
+	descriptor := SourceArchiveDescriptor{
 		ArchiveDigest:    sha256sum.FormatDigest(digest.Sum(nil)),
 		ArchiveSizeBytes: counter.written,
 		ArchiveEntries:   len(selected),
-		PathSetDigest:    imagebuild.PathSetDigest(paths),
+		PathSetDigest:    SourcePathSetDigest(paths),
 	}
 	if descriptor.ArchiveSizeBytes < 1 ||
-		descriptor.ArchiveSizeBytes > imagebuild.MaxSourceArchiveBytes {
+		descriptor.ArchiveSizeBytes > MaxSourceArchiveBytes {
 		return nil, errors.New("image source archive size is outside the v0 contract")
 	}
 	entryCopy := make([]artifactEntry, len(selected))
 	copy(entryCopy, selected)
-	pathCopy := make([]imagebuild.SourcePath, len(paths))
+	pathCopy := make([]SourcePath, len(paths))
 	copy(pathCopy, paths)
 	return &BuildTreeSource{
 		tree:       tree,
@@ -92,18 +92,18 @@ func (tree *BuildTree) SelectImageSource(
 	}, nil
 }
 
-func (source *BuildTreeSource) Descriptor() (imagebuild.SourceArchiveDescriptor, error) {
+func (source *BuildTreeSource) Descriptor() (SourceArchiveDescriptor, error) {
 	if source == nil || source.tree == nil || len(source.entries) != len(source.paths) {
-		return imagebuild.SourceArchiveDescriptor{}, errors.New("image source selection is invalid")
+		return SourceArchiveDescriptor{}, errors.New("image source selection is invalid")
 	}
 	return source.descriptor, nil
 }
 
-func (source *BuildTreeSource) Paths() ([]imagebuild.SourcePath, error) {
+func (source *BuildTreeSource) Paths() ([]SourcePath, error) {
 	if source == nil || source.tree == nil || len(source.entries) != len(source.paths) {
 		return nil, errors.New("image source selection is invalid")
 	}
-	paths := make([]imagebuild.SourcePath, len(source.paths))
+	paths := make([]SourcePath, len(source.paths))
 	copy(paths, source.paths)
 	return paths, nil
 }
@@ -144,7 +144,7 @@ func (source *BuildTreeSource) WriteTo(
 	return nil
 }
 
-func imageSourceRoots(plan imagebuild.Build) (map[string]struct{}, map[string]struct{}) {
+func imageSourceRoots(plan definition.ImageBuild) (map[string]struct{}, map[string]struct{}) {
 	files := make(map[string]struct{})
 	directories := make(map[string]struct{})
 	for _, image := range plan.Images {
@@ -235,14 +235,14 @@ func buildTreeImageSourceReserved(name string) bool {
 	return name == "helmr" || strings.HasPrefix(name, "helmr/")
 }
 
-func imageSourcePathKind(kind artifactEntryKind) (imagebuild.SourcePathKind, error) {
+func imageSourcePathKind(kind artifactEntryKind) (SourcePathKind, error) {
 	switch kind {
 	case artifactEntryRegular:
-		return imagebuild.SourcePathFile, nil
+		return SourcePathFile, nil
 	case artifactEntryDirectory:
-		return imagebuild.SourcePathDirectory, nil
+		return SourcePathDirectory, nil
 	case artifactEntrySymlink:
-		return imagebuild.SourcePathSymlink, nil
+		return SourcePathSymlink, nil
 	default:
 		return "", fmt.Errorf("image source artifact kind %q is unsupported", kind)
 	}

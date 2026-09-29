@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
 
@@ -54,7 +55,7 @@ func BuildSeed(ctx context.Context, image, target, scratch, mkfs, config string,
 		return computer.Seed{}, errors.New("image contents exceed seed capacity")
 	}
 	disk := filepath.Join(dir, "disk.ext4")
-	key := fmt.Sprintf("%s:%s:%d", computer.SeedMediaType, digest, capacity)
+	key := fmt.Sprintf("%s:%s:%d", definition.ComputerSeedMediaType, digest, capacity)
 	if err := createExt4(ctx, mkfs, config, filesystem, disk, capacity, key); err != nil {
 		return computer.Seed{}, err
 	}

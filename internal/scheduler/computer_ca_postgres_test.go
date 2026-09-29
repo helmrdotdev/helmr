@@ -3,16 +3,16 @@ package scheduler
 import (
 	"bytes"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,7 +27,7 @@ func testProxyTrustGenerator(t *testing.T, pool *pgxpool.Pool) func(uuid.UUID, u
 
 type caScheduleAuthority struct {
 	fixedAuthority
-	placements []computer.SecretPlacement
+	placements []secretbinding.Placement
 }
 
 func (a caScheduleAuthority) ResolveScheduledTask(v int32, id string, manifest, digest, queues []byte) (definition.ScheduledTaskAdmission, error) {
@@ -46,14 +46,14 @@ func TestScheduledComputerCACreationAndRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			placements := []computer.SecretPlacement{{Name: "API_TOKEN", Kind: "env", Target: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}
+			placements := []secretbinding.Placement{{Name: "API_TOKEN", Kind: "env", Target: "TOKEN", Mode: "protected", AllowedOrigins: []string{"https://example.com"}}}
 			switch mode {
 			case "none":
 				placements = nil
 			case "raw":
-				placements = []computer.SecretPlacement{{Name: "API_TOKEN", Kind: "env", Target: "RAW", Mode: "raw"}}
+				placements = []secretbinding.Placement{{Name: "API_TOKEN", Kind: "env", Target: "RAW", Mode: "raw"}}
 			case "mixed":
-				placements = append(placements, computer.SecretPlacement{Name: "API_TOKEN", Kind: "env", Target: "RAW", Mode: "raw"}, computer.SecretPlacement{Name: "API_TOKEN", Kind: "file", Target: "/run/secrets/key", Mode: "raw"})
+				placements = append(placements, secretbinding.Placement{Name: "API_TOKEN", Kind: "env", Target: "RAW", Mode: "raw"}, secretbinding.Placement{Name: "API_TOKEN", Kind: "file", Target: "/run/secrets/key", Mode: "raw"})
 			}
 			dbtest.MustExec(t, t.Context(), pool, "DELETE FROM schedule_secrets WHERE schedule_id=$1", candidate.ID)
 			for _, p := range placements {

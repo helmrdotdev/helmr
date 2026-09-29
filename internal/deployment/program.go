@@ -13,7 +13,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/sourceid"
 )
 
 const (
@@ -429,7 +428,7 @@ func hasNodeModulesComponent(value string) bool {
 }
 
 func validateDeclaration(declaration ProgramDeclaration) error {
-	if !sourceid.Valid(declaration.DeclaredID) {
+	if !definition.ValidDeclaredID(declaration.DeclaredID) {
 		return fmt.Errorf("declaredId %q is outside the exact ASCII ID domain", declaration.DeclaredID)
 	}
 	switch declaration.Kind {

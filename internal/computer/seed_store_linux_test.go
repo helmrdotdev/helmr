@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 )
 
 func TestSeedTransferAndComputerSeparation(t *testing.T) {
@@ -64,9 +65,9 @@ func TestSeedTransferAndComputerSeparation(t *testing.T) {
 		name     string
 		artifact SeedArtifact
 	}{
-		{"digest", SeedArtifact{Object: cas.Descriptor{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SizeBytes: artifact.Object.SizeBytes, MediaType: SeedMediaType}, LogicalBytes: size}},
+		{"digest", SeedArtifact{Object: cas.Descriptor{Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SizeBytes: artifact.Object.SizeBytes, MediaType: definition.ComputerSeedMediaType}, LogicalBytes: size}},
 		{"logical-size", SeedArtifact{Object: artifact.Object, LogicalBytes: 2 * size}},
-		{"encoded-size", SeedArtifact{Object: cas.Descriptor{Digest: artifact.Object.Digest, SizeBytes: artifact.Object.SizeBytes + 1, MediaType: SeedMediaType}, LogicalBytes: size}},
+		{"encoded-size", SeedArtifact{Object: cas.Descriptor{Digest: artifact.Object.Digest, SizeBytes: artifact.Object.SizeBytes + 1, MediaType: definition.ComputerSeedMediaType}, LogicalBytes: size}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := filepath.Join(dir, tc.name)
@@ -89,7 +90,7 @@ func TestSeedTransferAndComputerSeparation(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded[len(encoded)-1] ^= 1
-	corrupt, err := objects.Put(t.Context(), SeedMediaType, bytes.NewReader(encoded))
+	corrupt, err := objects.Put(t.Context(), definition.ComputerSeedMediaType, bytes.NewReader(encoded))
 	if err != nil {
 		t.Fatal(err)
 	}

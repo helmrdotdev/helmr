@@ -8,12 +8,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -181,7 +181,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 		break
 	}
 	for _, selected := range selectedSecrets {
-		placeholder, err := computer.SecretPlaceholder(selected.Mode)
+		placeholder, err := secretbinding.Placeholder(selected.Mode)
 		if err != nil {
 			return err
 		}
@@ -255,7 +255,7 @@ func (a *DBAdmitter) AdmitSchedule(ctx context.Context, candidate db.Schedule) e
 }
 
 func sameSecretPlacements(
-	expected []computer.SecretPlacement,
+	expected []secretbinding.Placement,
 	selected []db.ScheduleSecret,
 ) bool {
 	if len(expected) != len(selected) {

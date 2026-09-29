@@ -13,8 +13,8 @@ import (
 	"path"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/imagebuild"
 )
 
 // Document is the resolved config. It is internal to one build: it is neither
@@ -83,7 +83,7 @@ func (document *Document) Resolve(captured string) error {
 			if step.Source != "" || step.Destination != "" {
 				return fmt.Errorf("%s run has copy fields", label)
 			}
-			if err := imagebuild.ValidateRunArgv(step.Argv, label+" run"); err != nil {
+			if err := definition.ValidateImageRunArgv(step.Argv, label+" run"); err != nil {
 				return err
 			}
 			for _, argument := range step.Argv {
@@ -95,7 +95,7 @@ func (document *Document) Resolve(captured string) error {
 			if step.Argv != nil {
 				return fmt.Errorf("%s copy has run fields", label)
 			}
-			if err := imagebuild.ValidateAbsolutePath(step.Destination, label+" copy destination"); err != nil {
+			if err := definition.ValidateImageAbsolutePath(step.Destination, label+" copy destination"); err != nil {
 				return err
 			}
 			if strings.Contains(step.Destination, `\`) {

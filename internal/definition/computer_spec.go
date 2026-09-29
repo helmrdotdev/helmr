@@ -9,7 +9,6 @@ import (
 	"slices"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/oci"
 )
@@ -20,6 +19,11 @@ const (
 	RuntimeContract             = "helmr.runtime.v0"
 	ArchitectureX8664           = RuntimeArchitecture("x86_64")
 	MaxComputerImageBytes int64 = 17179869184
+
+	// ComputerSeedProfile and ComputerSeedMediaType identify the client-built
+	// Computer seed disk format.
+	ComputerSeedProfile   = "linux-amd64-ext4-v1"
+	ComputerSeedMediaType = "application/vnd.helmr.computer.seed.v0+filepack"
 )
 
 type RuntimeArchitecture string
@@ -85,7 +89,7 @@ func ParseComputerSpec(raw []byte, seed cas.Descriptor) (ComputerSpec, error) {
 	if err := cas.ValidateDescriptor(seed); err != nil {
 		return ComputerSpec{}, fmt.Errorf("computer seed: %w", err)
 	}
-	if seed.MediaType != computer.SeedMediaType || seed.SizeBytes > MaxComputerImageBytes {
+	if seed.MediaType != ComputerSeedMediaType || seed.SizeBytes > MaxComputerImageBytes {
 		return ComputerSpec{}, errors.New("unsupported computer seed descriptor")
 	}
 	normalized, err := json.Marshal(config)
@@ -123,7 +127,7 @@ func ParseComputerConfig(raw []byte) (ComputerConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return ComputerConfig{}, fmt.Errorf("decode computer config: %w", err)
 	}
-	if config.Architecture != ArchitectureX8664 || config.RuntimeContract != RuntimeContract || config.Profile != computer.SeedProfile {
+	if config.Architecture != ArchitectureX8664 || config.RuntimeContract != RuntimeContract || config.Profile != ComputerSeedProfile {
 		return ComputerConfig{}, errors.New("unsupported computer launch contract")
 	}
 	if err := ValidateResourcesManifest(config.Resources); err != nil {

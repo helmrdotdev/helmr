@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
@@ -176,7 +177,7 @@ func publishTestSeed(t *testing.T, objects cas.Store, source, staging string, co
 		t.Fatal(err)
 	}
 	defer file.Close()
-	object, err := objects.Put(t.Context(), SeedMediaType, file)
+	object, err := objects.Put(t.Context(), definition.ComputerSeedMediaType, file)
 	if err != nil {
 		t.Fatal(err)
 	}

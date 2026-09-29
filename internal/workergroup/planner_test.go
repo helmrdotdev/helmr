@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"reflect"
 	"strings"
 	"testing"
@@ -862,7 +861,7 @@ func plannerRunResources() ResourceVector {
 }
 
 func plannerComputerConfig() []byte {
-	result, err := json.Marshal(definition.ComputerConfig{Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, Profile: computer.SeedProfile, Resources: definition.ResourcesManifest{
+	result, err := json.Marshal(definition.ComputerConfig{Architecture: definition.ArchitectureX8664, RuntimeContract: definition.RuntimeContract, Profile: definition.ComputerSeedProfile, Resources: definition.ResourcesManifest{
 		MilliCPU: 1000, MemoryMiB: 1024,
 	}})
 	if err != nil {

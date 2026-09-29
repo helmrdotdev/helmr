@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -24,7 +25,7 @@ func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if err := api.ValidateSandboxDeclaredID(request.SandboxDeclaredID); err != nil {
+	if err := definition.ValidateSandboxDeclaredID(request.SandboxDeclaredID); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
