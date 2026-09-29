@@ -15,8 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-// unsupportedMachineStarts gives cleanup-only test backends the full vm.Backend
-// surface; starting a machine through it always fails.
+// unsupportedMachineStarts provides failing Restore and Materialize defaults so
+// test backends satisfy vm.Backend; a fake may override either method.
 type unsupportedMachineStarts struct{}
 
 func (unsupportedMachineStarts) Restore(context.Context, vm.RestoreRequest) (vm.Machine, error) {

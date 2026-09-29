@@ -66,7 +66,7 @@ func TestMaterializeCheckpointObjectRejectsDescriptorMismatch(t *testing.T) {
 	}
 }
 
-func TestMaterializeCheckpointObjectRejectsOversizeCiphertext(t *testing.T) {
+func TestMaterializeCheckpointObjectRejectsCiphertextBeyondDescriptor(t *testing.T) {
 	ciphertext := encryptedCheckpointObject(t, []byte("runtime manifest"), "manifest")
 	for _, test := range []struct {
 		name      string
@@ -74,14 +74,18 @@ func TestMaterializeCheckpointObjectRejectsOversizeCiphertext(t *testing.T) {
 		sizeBytes int64
 		want      string
 	}{
-		{name: "beyond advertised size", body: ciphertext, sizeBytes: int64(len(ciphertext)) - 1, want: "checkpoint object descriptor mismatch"},
-		{name: "trailing bytes", body: append(bytes.Clone(ciphertext), 0), sizeBytes: int64(len(ciphertext)), want: "trailing checkpoint ciphertext after end record"},
+		{name: "stream longer than advertised size", body: ciphertext, sizeBytes: int64(len(ciphertext)) - 1, want: "checkpoint object descriptor mismatch"},
+		{name: "large stream beyond advertised size", body: append(bytes.Clone(ciphertext), make([]byte, 1<<20)...), sizeBytes: int64(len(ciphertext))},
+		{name: "trailing bytes after end record", body: append(bytes.Clone(ciphertext), 0), sizeBytes: int64(len(ciphertext))},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			artifact := workerapi.CheckpointArtifact{Digest: sha256sum.DigestBytes(ciphertext), SizeBytes: test.sizeBytes, MediaType: cas.CheckpointVMConfigMediaType}
-			_, err := materializeCheckpointObject(t.Context(), checkpointObjectReader{body: test.body}, testCheckpointEncryptor(t), artifact, "manifest", t.TempDir())
-			if err == nil || err.Error() != test.want {
-				t.Fatalf("materialize error = %v, want %q", err, test.want)
+			artifact := workerapi.CheckpointArtifact{Digest: sha256sum.DigestBytes(test.body), SizeBytes: test.sizeBytes, MediaType: cas.CheckpointVMConfigMediaType}
+			if test.name == "stream longer than advertised size" {
+				artifact.Digest = sha256sum.DigestBytes(ciphertext)
+			}
+			path, err := materializeCheckpointObject(t.Context(), checkpointObjectReader{body: test.body}, testCheckpointEncryptor(t), artifact, "manifest", t.TempDir())
+			if err == nil || path != "" || (test.want != "" && err.Error() != test.want) {
+				t.Fatalf("materialize = (%q, %v), want rejection %q", path, err, test.want)
 			}
 		})
 	}
@@ -99,8 +103,10 @@ func TestMaterializeCheckpointObjectRequiresStorageAndEncryption(t *testing.T) {
 			return err
 		},
 	} {
-		if err := call(); err == nil || err.Error() != "checkpoint storage and encryption are required" {
-			t.Fatalf("%s: materialize error = %v", name, err)
-		}
+		t.Run(name, func(t *testing.T) {
+			if err := call(); err == nil || err.Error() != "checkpoint storage and encryption are required" {
+				t.Fatalf("materialize error = %v", err)
+			}
+		})
 	}
 }
