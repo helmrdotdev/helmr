@@ -28,7 +28,7 @@ func TestComputerBasicExecExecutesRetainedBytes(t *testing.T) {
 	digest := sha256.Sum256(before)
 	req := testComputerBasicExecRequest("process-1", "fingerprint")
 	req.Secrets = []*computerv0.ComputerSecretDelivery{{PlacementKind: "file", PlacementTarget: "/secrets/pinned-token", Value: []byte("pinned-value")}}
-	body, err := json.Marshal(computerBasicExecSpec{Command: []string{"/bin/check", "-test.run=^TestComputerBasicExecRetainedBytesHelper$"}, Cwd: "/computer", Env: map[string]string{"COMPUTER_EXEC_BYTES_HELPER": "1"}, TimeoutMS: 10000})
+	body, err := json.Marshal(computerBasicExecSpec{Command: []string{"/bin/check", "-test.run=^TestComputerBasicExecRetainedBytesHelper$"}, Cwd: "/workspace", Env: map[string]string{"COMPUTER_EXEC_BYTES_HELPER": "1"}, TimeoutMS: 10000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func testLinuxComputerCommandImage(t *testing.T) (*computerMountEntry, *computer
 	entry.writerGeneration = 1
 	entry.channelToken = "channel-token"
 	entry.imageRoot = image
-	entry.computerMount = "/computer"
+	entry.computerMount = "/workspace"
 	entry.runtimeUser = &resolvedRuntimeUser{UID: 0, GID: 0, Home: "/tmp"}
 
 	return entry, registry, authority
@@ -84,7 +84,7 @@ func TestComputerBasicExecRetainedBytesHelper(t *testing.T) {
 		}
 	}
 	if os.Getenv("COMPUTER_EXEC_CHILD") == "1" {
-		file, err := os.OpenFile("/computer/child-lock", os.O_CREATE|os.O_RDWR, 0600)
+		file, err := os.OpenFile("/workspace/child-lock", os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
 			os.Exit(4)
 		}
@@ -129,7 +129,7 @@ func TestComputerBasicExecRetainedBytesHelper(t *testing.T) {
 		}
 		os.Exit(0)
 	}
-	data, err := os.ReadFile("/computer/file")
+	data, err := os.ReadFile("/workspace/file")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -147,7 +147,7 @@ func TestComputerBasicExecProcessContainment(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			entry, registry, _ := testLinuxComputerCommandImage(t)
 			req := testComputerBasicExecRequest("process-1", "fingerprint")
-			body, err := json.Marshal(computerBasicExecSpec{Command: []string{"/bin/check", "-test.run=^TestComputerBasicExecRetainedBytesHelper$"}, Cwd: "/computer", Env: map[string]string{"COMPUTER_EXEC_BYTES_HELPER": "1", "COMPUTER_EXEC_MODE": mode}, TimeoutMS: 2000})
+			body, err := json.Marshal(computerBasicExecSpec{Command: []string{"/bin/check", "-test.run=^TestComputerBasicExecRetainedBytesHelper$"}, Cwd: "/workspace", Env: map[string]string{"COMPUTER_EXEC_BYTES_HELPER": "1", "COMPUTER_EXEC_MODE": mode}, TimeoutMS: 2000})
 			if err != nil {
 				t.Fatal(err)
 			}

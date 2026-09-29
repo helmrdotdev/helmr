@@ -110,7 +110,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	}
 	// A later deployment cannot replace the Computer's initial configuration.
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE deployment_definitions SET manifest=jsonb_set(manifest,'{image,config}', '{"User":"changed"}') WHERE id=$1`, f.ComputerDefinitionID)
-	if source := read(); source.Config.User != "root" || source.Config.WorkingDir != "/computer" || source.Root == nil {
+	if source := read(); source.Config.User != "root" || source.Config.WorkingDir != "/workspace" || source.Root == nil {
 		t.Fatalf("continuation depended on receipt or new deployment: %+v", source)
 	}
 }

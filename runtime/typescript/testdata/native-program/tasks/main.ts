@@ -7,7 +7,7 @@ import { fork } from "node:child_process"
 export const deploy = task({
   id: "deploy",
   run: async () => {
-    if (process.cwd() !== "/computer") throw new Error("unexpected Program cwd")
+    if (process.cwd() !== "/workspace") throw new Error("unexpected Program cwd")
     const database = new sqlite3.Database(":memory:")
     const native = await new Promise<number>((resolve, reject) => database.get("SELECT 42 AS answer", (error, row: { answer: number }) => error ? reject(error) : resolve(row.answer)))
     await new Promise<void>((resolve, reject) => database.close(error => error ? reject(error) : resolve()))

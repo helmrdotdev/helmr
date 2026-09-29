@@ -142,9 +142,9 @@ func normalizeComputerBase(from imagebuild.From) (string, error) {
 
 func installedSource(relative string) string {
 	if relative == "." {
-		return "/computer/project"
+		return "/workspace/project"
 	}
-	return path.Join("/computer/project", relative)
+	return path.Join("/workspace/project", relative)
 }
 
 func dockerCopyJSON(from, source, destination string) (string, error) {

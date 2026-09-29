@@ -61,7 +61,7 @@ func TestUnpackAppliesLayersAndConfig(t *testing.T) {
 	image := ociTar(t, []ociTestLayer{
 		{mediaType: "application/vnd.oci.image.layer.v1.tar+gzip", body: gzipBytes(t, first)},
 		{mediaType: "application/vnd.oci.image.layer.v1.tar", body: second},
-	}, []byte(`{"Config":{"Env":["PATH=/bin","FOO=bar"],"WorkingDir":"/computer","User":"agent"}}`))
+	}, []byte(`{"Config":{"Env":["PATH=/bin","FOO=bar"],"WorkingDir":"/workspace","User":"agent"}}`))
 	root := t.TempDir()
 	oci, err := Unpack(bytes.NewReader(image), root)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestUnpackAppliesLayersAndConfig(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "app/remove.txt")); !os.IsNotExist(err) {
 		t.Fatalf("remove.txt exists after whiteout: %v", err)
 	}
-	if oci.Config.WorkingDir != "/computer" || oci.Config.User != "agent" || len(oci.Config.Env) != 2 {
+	if oci.Config.WorkingDir != "/workspace" || oci.Config.User != "agent" || len(oci.Config.Env) != 2 {
 		t.Fatalf("Config = %+v", oci.Config)
 	}
 }
@@ -86,7 +86,7 @@ func TestInspectVerifiesCompleteImageWithoutExtractingLayers(t *testing.T) {
 	image := ociTar(t, []ociTestLayer{{
 		mediaType: "application/vnd.oci.image.layer.v1.tar",
 		body:      layer,
-	}}, []byte(`{"Config":{"WorkingDir":"/computer"}}`))
+	}}, []byte(`{"Config":{"WorkingDir":"/workspace"}}`))
 	metadata, err := Inspect(bytes.NewReader(image))
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestInspectVerifiesCompleteImageWithoutExtractingLayers(t *testing.T) {
 	if metadata.ManifestCount != 1 ||
 		metadata.Platform == nil ||
 		metadata.Platform.Architecture != "amd64" ||
-		metadata.Config.WorkingDir != "/computer" {
+		metadata.Config.WorkingDir != "/workspace" {
 		t.Fatalf("metadata = %#v", metadata)
 	}
 

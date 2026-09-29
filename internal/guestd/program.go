@@ -462,8 +462,8 @@ func validateProgramSecretFilePath(value string) error {
 		value == "/" {
 		return errors.New("program secret file placement is invalid")
 	}
-	if value == "/run/helmr" || strings.HasPrefix(value, "/run/helmr/") || value == "/computer" ||
-		strings.HasPrefix(value, "/computer/") ||
+	if value == "/run/helmr" || strings.HasPrefix(value, "/run/helmr/") || value == "/workspace" ||
+		strings.HasPrefix(value, "/workspace/") ||
 		value == "/var/lib/helmr" ||
 		strings.HasPrefix(value, "/var/lib/helmr/") ||
 		isReservedRuntimePath(value) {
@@ -496,7 +496,7 @@ func newProgramProcess(
 		return nil, func() {}, errors.New("computer runtime user is not resolved")
 	}
 	if filepath.Clean(entry.computerMount) != defaultRuntimeWorkdir {
-		return nil, func() {}, errors.New("computer durable root must be /computer")
+		return nil, func() {}, errors.New("computer durable root must be /workspace")
 	}
 	if err := prepareLaunchPath(
 		entry.imageRoot,
@@ -667,7 +667,7 @@ func programComputerSecretPaths(computerRoot string, secrets []*programv0.Progra
 		if !ok {
 			continue
 		}
-		const computerPrefix = "/computer/"
+		const computerPrefix = "/workspace/"
 		if !strings.HasPrefix(placement.File, computerPrefix) {
 			continue
 		}

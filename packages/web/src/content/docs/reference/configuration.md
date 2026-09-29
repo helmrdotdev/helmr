@@ -84,7 +84,7 @@ Helmr's builder image and offers only `copy(source, destination)` and
   `[` and `$` mean themselves in sources and destinations. A source may not
   contain `*`, `?` or `\` (copy its directory instead); a destination may not
   contain `\`. Destinations under `/opt/helmr`, `/nix` and
-  `/computer` belong to Helmr; use locations such as `/usr/local` or
+  `/workspace` belong to Helmr; use locations such as `/usr/local` or
   `/opt/<name>`.
 - `run` executes an argv without a shell, on Linux, as root with working
   directory `/`, `HOME=/root`, `TMPDIR=/tmp` and `XDG_CACHE_HOME=/root/.cache`.
@@ -165,8 +165,8 @@ after source capture and `.helmrignore`; matches keep their project-relative
 locations. Missing matches, symlinks and collisions with managed metadata or
 runtime dependencies fail the build.
 
-Program execution starts in `/computer`; its versioned payload is mounted
-read-only separately. `/computer` is a working-directory default, not a boundary
+Program execution starts in `/workspace`; its versioned payload is mounted
+read-only separately. `/workspace` is a working-directory default, not a boundary
 on Computer access or persistence. Locate shipped files independently of cwd
 using ordinary Node.js package imports:
 

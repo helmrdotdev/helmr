@@ -171,7 +171,7 @@ func validateBuildTreeLink(
 			continue
 		}
 		candidate := strings.Join(append(resolved, component), "/")
-		if err := safepath.ValidateTreePath(candidate, programMountPath, "/computer/project", "/computer/program"); err != nil {
+		if err := safepath.ValidateTreePath(candidate, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
 			return err
 		}
 		entry, exists := tree.entries[candidate]

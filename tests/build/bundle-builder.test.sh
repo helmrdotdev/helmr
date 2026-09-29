@@ -263,11 +263,11 @@ cat >"$mutation_project/tasks/hello.ts" <<'TS'
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { task } from "@helmr/sdk"
-if (existsSync("/computer/program")) {
+if (existsSync("/workspace/program")) {
   throw new Error("tenant code can observe the private Program assembly tree")
 }
 try {
-  mkdirSync("/computer/program")
+  mkdirSync("/workspace/program")
   throw new Error("tenant code created the private Program assembly tree")
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error ? error.code : ""
@@ -276,7 +276,7 @@ try {
   }
 }
 try {
-  writeFileSync("/computer/project/mutation.txt", "must-not-be-written")
+  writeFileSync("/workspace/project/mutation.txt", "must-not-be-written")
   throw new Error("installed tree was writable")
 } catch (error) {
   const code = error && typeof error === "object" && "code" in error ? error.code : ""
@@ -287,7 +287,7 @@ try {
 const child = spawn(process.execPath, ["-e", `
   const { writeFileSync } = require("node:fs")
   setInterval(() => {
-    try { writeFileSync("/computer/program/detached-mutation.txt", "must-not-be-written") } catch {}
+    try { writeFileSync("/workspace/program/detached-mutation.txt", "must-not-be-written") } catch {}
   }, 5)
 `], { detached: true, stdio: "ignore" })
 child.unref()
@@ -545,7 +545,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$repo_root" test -c -o "$tmp/builde
 docker run --rm --platform linux/amd64 -e TMPDIR=/tmp -v "$tmp/builder.test:/builder.test:ro" -v "$tmp/prepared:/fixture:ro" -e HELMR_PREPARED_PROGRAM_FIXTURE=/fixture --entrypoint /builder.test bundle-builder:0 -test.run '^TestPreparedProgramFinalization$' -test.v -test.count=1 | tee "$tmp/finalization.log"
 grep -E '^--- PASS: TestPreparedProgramFinalization ' "$tmp/finalization.log"
 bun build "$repo_root/runtime/typescript/src/native-runtime.test.ts" --target=node --format=esm --outfile "$tmp/native-runtime.test.mjs"
-docker run --rm --platform linux/amd64 --workdir /computer -v "$tmp/program:/opt/helmr/program:ro" -v "$tmp/native-runtime.test.mjs:/probe.mjs:ro" -e HELMR_NATIVE_RUNTIME_TEST=1 --entrypoint /opt/helmr/runtime/bin/node bundle-builder:0 --test /probe.mjs | tee "$tmp/native-runtime.log"
+docker run --rm --platform linux/amd64 --workdir /workspace -v "$tmp/program:/opt/helmr/program:ro" -v "$tmp/native-runtime.test.mjs:/probe.mjs:ro" -e HELMR_NATIVE_RUNTIME_TEST=1 --entrypoint /opt/helmr/runtime/bin/node bundle-builder:0 --test /probe.mjs | tee "$tmp/native-runtime.log"
 grep -E '# pass 4|ℹ pass 4' "$tmp/native-runtime.log"
 printf 'ok - selective Program, static finalization and native Runtime\n'
 

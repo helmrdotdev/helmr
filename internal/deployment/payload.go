@@ -48,7 +48,7 @@ func ProgramPayloadDigest(ctx context.Context, root string) (string, error) {
 			return errors.New("installed input exceeds Program entry bounds")
 		}
 		if relative != "." {
-			if err := safepath.ValidateTreePath(relative, programMountPath, "/computer/project", "/computer/program"); err != nil {
+			if err := safepath.ValidateTreePath(relative, programMountPath, "/workspace/project", "/workspace/program"); err != nil {
 				return err
 			}
 		}

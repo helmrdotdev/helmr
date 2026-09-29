@@ -318,7 +318,7 @@ const computerFeatures = [
     caption: "Choose the base image, install CLIs, and set the working directory and resources behind the Computer.",
     code: `const base = image("repo-agent")
   .from("node:24-bookworm-slim")
-  .workdir("/computer")
+  .workdir("/workspace")
   .run(["npm", "install", "-g", "@openai/codex"])
 
 export const repoSandbox = sandbox({
@@ -346,7 +346,7 @@ export const repoSandbox = sandbox({
 
 const result = await computer.exec({
   command: ["bash", "-lc", "bun test"],
-  cwd: "/computer",
+  cwd: "/workspace",
   idempotencyKey: \`verify:\${pr.id}\`
 })`,
   },
@@ -416,9 +416,9 @@ const fixedCode = {
   zimport: 'import { z } from "zod"',
   image: `const base = image("repo-agent")
   .from("node:24-bookworm-slim")
-  .workdir("/computer")
+  .workdir("/workspace")
   .run(["sh", "-ceu", "apt-get update && apt-get install -y git ripgrep"])
-  .copy(source.file("package.json"), "/computer/package.json")
+  .copy(source.file("package.json"), "/workspace/package.json")
   .run(["bun", "install"])`,
   sandbox: `export const repoSandbox = sandbox({ id: "repo-agent" })
   .image(base)
@@ -822,7 +822,7 @@ Authorization: Bearer <span class="tok-placeholder">hlmr_p_3f9c…e21a</span>`,
       <div class="section-head">
         <h2 class="headline section-title">
           Persistent VM filesystems.{" "}
-          <span class="faint">The same /computer, Run after Run.</span>
+          <span class="faint">The same /workspace, Run after Run.</span>
         </h2>
       </div>
       <div class="pair-panels computer-panels">

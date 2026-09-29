@@ -31,7 +31,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 		},
 		ComputerState: workerapi.CheckpointComputerState{Base: workerapi.CheckpointComputerBase{
 
-			MountPath: "/computer",
+			MountPath: "/workspace",
 		}},
 	}
 	manifest, err := json.Marshal(checkpoint)

@@ -175,7 +175,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if !strings.Contains(executableStat, "0755") {
 		t.Fatalf("executable permissions not preserved: %s", executableStat)
 	}
-	hardlinkStat := computerProofCommand(t, "debugfs", "-R", "stat /computer/result-link.txt", restored)
+	hardlinkStat := computerProofCommand(t, "debugfs", "-R", "stat /workspace/result-link.txt", restored)
 	if !strings.Contains(hardlinkStat, "Links: 2") {
 		t.Fatalf("hard link not preserved: %s", hardlinkStat)
 	}

@@ -70,7 +70,7 @@ func TestOwnershipTenantCopiesRejectBeforePlacement(t *testing.T) {
 	defer tx.Rollback(ctx)
 	commandID, claimID := uuid.NewV7(), uuid.NewV7()
 	dbtest.MustExec(t, ctx, tx, "INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at,receipt_expires_at) VALUES($1,$2,'computer.command.create',decode(repeat('fa',32),'hex'),decode(repeat('fb',32),'hex'),now(),now()+interval '30 days')", claimID, f.environmentID)
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_commands(id,environment_id,computer_id,argv,cwd,env,stdin,timeout_ms,claim_id,created_by_subject_type,created_by_subject_id) SELECT $1,environment_id,computer_id,ARRAY['true'],'/computer','{}','',300000,$2,'api_key','fixture' FROM runs WHERE id=$3`, commandID, claimID, work.runID)
+	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_commands(id,environment_id,computer_id,argv,cwd,env,stdin,timeout_ms,claim_id,created_by_subject_type,created_by_subject_id) SELECT $1,environment_id,computer_id,ARRAY['true'],'/workspace','{}','',300000,$2,'api_key','fixture' FROM runs WHERE id=$3`, commandID, claimID, work.runID)
 	for _, column := range []string{"environment_id", "computer_id", "claim_id"} {
 		t.Run(column, func(t *testing.T) {
 			rejectSchemaRow(t, tx, "23503", "UPDATE computer_commands SET "+column+"=$2 WHERE id=$1", commandID, uuid.NewV7())

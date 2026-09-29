@@ -706,7 +706,7 @@ func checkpointComputerBase(target workerapi.ComputerMountTarget) (workerapi.Che
 	if err := validateComputerMountTarget(target); err != nil {
 		return workerapi.CheckpointComputerBase{}, err
 	}
-	return workerapi.CheckpointComputerBase{MountPath: "/computer"}, nil
+	return workerapi.CheckpointComputerBase{MountPath: "/workspace"}, nil
 }
 
 func workerTaskOutcome(outcome *programv0.TaskOutcome) (workerapi.TaskOutcome, error) {

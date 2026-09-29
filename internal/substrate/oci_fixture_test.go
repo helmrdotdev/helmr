@@ -12,7 +12,7 @@ import (
 
 func ociTarFromLayers(t *testing.T, layers ...[]byte) []byte {
 	t.Helper()
-	config := []byte(`{"Config":{"Env":["PATH=/bin"],"WorkingDir":"/computer","User":"agent"}}`)
+	config := []byte(`{"Config":{"Env":["PATH=/bin"],"WorkingDir":"/workspace","User":"agent"}}`)
 	configDigest := sha256sum.HexBytes(config)
 	layerDescriptors := make([]oci.Descriptor, 0, len(layers))
 	for _, layer := range layers {

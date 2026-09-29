@@ -671,7 +671,7 @@ func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, conf
 			Config:              json.RawMessage(`{"recovery_point":{"runtime":{"backend":"firecracker"}}}`),
 		},
 		ComputerState: workerapi.CheckpointComputerState{
-			Base: workerapi.CheckpointComputerBase{MountPath: "/computer"},
+			Base: workerapi.CheckpointComputerBase{MountPath: "/workspace"},
 		},
 	}
 }

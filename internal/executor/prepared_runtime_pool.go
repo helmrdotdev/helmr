@@ -1359,7 +1359,7 @@ func preparedRuntimeComputerMountFromSource(source workerapi.RuntimeSource) work
 		VMPlatformID:            strings.TrimSpace(source.VMPlatformID),
 		ComputerImage:           source.ComputerImage,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
-		ComputerMountPath:       "/computer",
+		ComputerMountPath:       "/workspace",
 		RequestedMilliCPU:       int64(source.ReservedCPUMillis),
 		RequestedMemoryMiB:      int64(source.ReservedMemoryMiB),
 		RequestedDiskMiB:        source.ReservedDiskMiB,

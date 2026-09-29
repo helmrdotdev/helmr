@@ -52,7 +52,7 @@ because they existed in the project. Source maps include original source content
 for debugging. Their source paths are diagnostic names from the build layout,
 not files promised to exist on the Computer.
 
-Program execution starts in `/computer`, independently of its read-only payload.
+Program execution starts in `/workspace`, independently of its read-only payload.
 Use ordinary package imports to locate shipped files without changing that cwd:
 
 ```json

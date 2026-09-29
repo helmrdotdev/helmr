@@ -19,7 +19,7 @@ import (
 func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing.T) {
 	fixture := newActorStartPostgresFixture(t, 1)
 	principal := computerCommandHTTPPrincipal(fixture.orgID, fixture.projectID, fixture.environmentID)
-	body := `{"command":["printf","","hello world"],"cwd":"/computer/repo","env":{"LANG":"C.UTF-8"},"stdin_base64":"aGVsbG8=","timeout":"7s","idempotency_key":"http-exec-1"}`
+	body := `{"command":["printf","","hello world"],"cwd":"/workspace/repo","env":{"LANG":"C.UTF-8"},"stdin_base64":"aGVsbG8=","timeout":"7s","idempotency_key":"http-exec-1"}`
 
 	firstRecorder := httptest.NewRecorder()
 	fixture.server.executeComputerHTTP(
@@ -44,7 +44,7 @@ func TestExecuteComputerHTTPPostgresReturnsAdmissionAndTerminalReplay(t *testing
 	if err := fixture.pool.QueryRow(t.Context(), `SELECT argv,cwd,env->>'LANG',stdin,timeout_ms FROM computer_commands WHERE id=$1`, admitted.CommandID).Scan(&argv, &cwd, &language, &stdin, &timeoutMS); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(argv, []string{"printf", "", "hello world"}) || cwd != "/computer/repo" || language != "C.UTF-8" || string(stdin) != "hello" || timeoutMS != 7000 {
+	if !slices.Equal(argv, []string{"printf", "", "hello world"}) || cwd != "/workspace/repo" || language != "C.UTF-8" || string(stdin) != "hello" || timeoutMS != 7000 {
 		t.Fatalf("persisted launch argv=%q cwd=%q env=%q stdin=%q timeout=%d", argv, cwd, language, stdin, timeoutMS)
 	}
 

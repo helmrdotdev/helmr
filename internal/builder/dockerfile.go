@@ -54,9 +54,9 @@ const (
 // directories after the environment, whose preparation ran as root from /.
 var managedContextLines = []string{
 	"USER 0:0",
-	"ENV HOME=/computer/home TMPDIR=/computer/tmp XDG_CACHE_HOME=/computer/home/cache",
-	"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"rm -rf /computer/project /computer/home /computer/output /computer/tmp /computer/work && install -d -o 65532 -g 65532 /computer/home /computer/output /computer/project /computer/tmp /computer/work\"]",
-	"WORKDIR /computer/project",
+	"ENV HOME=/workspace/home TMPDIR=/workspace/tmp XDG_CACHE_HOME=/workspace/home/cache",
+	"RUN [\"/bin/bash\",\"-euo\",\"pipefail\",\"-c\",\"rm -rf /workspace/project /workspace/home /workspace/output /workspace/tmp /workspace/work && install -d -o 65532 -g 65532 /workspace/home /workspace/output /workspace/project /workspace/tmp /workspace/work\"]",
+	"WORKDIR /workspace/project",
 }
 
 // InstalledDockerfile is the only graph that runs user dependency lifecycle
@@ -77,7 +77,7 @@ func InstalledDockerfile(install InstallPlan) ([]byte, error) {
 		"USER 65532:65532",
 		installInstruction,
 		"FROM scratch AS installed-tree",
-		"COPY --from=installed --chown=65532:65532 /computer/project/ /computer/project/",
+		"COPY --from=installed --chown=65532:65532 /workspace/project/ /workspace/project/",
 		"",
 	)
 	return []byte(strings.Join(lines, "\n")), nil
@@ -86,10 +86,10 @@ func InstalledDockerfile(install InstallPlan) ([]byte, error) {
 // Dockerfile performs static finalization of the exact prepared payload.
 func Dockerfile() ([]byte, error) {
 	finalizer, err := dockerRunJSON([]string{
-		"/opt/helmr/bin/bundle-builder", "--prepared", "/computer/prepared",
-		"--work", "/computer/work", "--bundle-output", "/computer/output/bundle",
-		"--computer-images", "/computer/images/images.json", "--mkfs", "/opt/helmr/bin/mke2fs",
-		"--filesystem-config", "/opt/helmr/release/mke2fs.conf", "--expected-plan", "/computer/images/build-plan.json",
+		"/opt/helmr/bin/bundle-builder", "--prepared", "/workspace/prepared",
+		"--work", "/workspace/work", "--bundle-output", "/workspace/output/bundle",
+		"--computer-images", "/workspace/images/images.json", "--mkfs", "/opt/helmr/bin/mke2fs",
+		"--filesystem-config", "/opt/helmr/release/mke2fs.conf", "--expected-plan", "/workspace/images/build-plan.json",
 		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json", "--encoder", "/opt/helmr/bin/mksquashfs",
@@ -103,10 +103,10 @@ func Dockerfile() ([]byte, error) {
 	}
 	lines = append(lines, managedContextLines...)
 	lines = append(lines,
-		"COPY --from=helmr_prepared --chown=65532:65532 / /computer/prepared/",
-		"COPY --from=helmr_images --chown=0:0 / /computer/images/",
+		"COPY --from=helmr_prepared --chown=65532:65532 / /workspace/prepared/",
+		"COPY --from=helmr_images --chown=0:0 / /workspace/images/",
 		"USER 65532:65532", "RUN --network=none "+finalizer,
-		"FROM scratch AS bundle", "COPY --from=finalized /computer/output/bundle/ /", "",
+		"FROM scratch AS bundle", "COPY --from=finalized /workspace/output/bundle/ /", "",
 	)
 	return []byte(strings.Join(lines, "\n")), nil
 }
@@ -116,7 +116,7 @@ func Dockerfile() ([]byte, error) {
 func PreparationDockerfile() ([]byte, error) {
 	bundle, err := dockerRunJSON([]string{
 		"/opt/helmr/runtime/bin/node", "--no-strip-types", "--no-global-search-paths",
-		"/nix/helmr/program-compiler.mjs", "--bundle", "/computer/project", resolvedConfigPath, version.Node(), "/computer/output/bundle",
+		"/nix/helmr/program-compiler.mjs", "--bundle", "/workspace/project", resolvedConfigPath, version.Node(), "/workspace/output/bundle",
 	})
 	if err != nil {
 		return nil, err
@@ -129,19 +129,19 @@ func PreparationDockerfile() ([]byte, error) {
 	}
 	assemble, err := dockerRunJSON([]string{
 		"/opt/helmr/runtime/bin/node", "--no-strip-types", "--no-global-search-paths",
-		"/nix/helmr/program-compiler.mjs", "--assemble", "/computer/bundle", "/computer/installed", "/computer/output/payload",
+		"/nix/helmr/program-compiler.mjs", "--assemble", "/workspace/bundle", "/workspace/installed", "/workspace/output/payload",
 	})
 	if err != nil {
 		return nil, err
 	}
 	analyze, err := dockerRunJSON([]string{
-		"/opt/helmr/bin/bundle-builder", "--project", "/computer/project",
-		"--work", "/computer/work", "--prepare-output", "/computer/output/prepared",
+		"/opt/helmr/bin/bundle-builder", "--project", "/workspace/project",
+		"--work", "/workspace/work", "--prepare-output", "/workspace/output/prepared",
 		"--runtime-descriptor", "/opt/helmr/release/runtime.descriptor.json",
 		"--runtime-metadata", "/opt/helmr/runtime/helmr/runtime.json",
 		"--compiler-descriptor", "/nix/helmr/compiler.descriptor.json",
 		"--node", "/opt/helmr/runtime/bin/node", "--config", resolvedConfigPath,
-		"--bundle-manifest", "/computer/bundle.json",
+		"--bundle-manifest", "/workspace/bundle.json",
 		"--program-compiler", "/nix/helmr/program-compiler.mjs",
 	})
 	if err != nil {
@@ -153,43 +153,43 @@ func PreparationDockerfile() ([]byte, error) {
 		"COPY --from=" + BuilderContextName + " /opt/helmr/runtime/bin/ /opt/helmr/runtime/bin/",
 		"COPY --from=" + BuilderContextName + " /opt/helmr/runtime/lib/ /opt/helmr/runtime/lib/",
 		"COPY --from=" + BuilderContextName + " /nix/helmr/ /nix/helmr/",
-		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /computer/output/",
-		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /computer/tmp/",
+		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /workspace/output/",
+		"COPY --from=" + BuilderContextName + " --chown=65532:65532 --chmod=0755 /opt/helmr/empty/ /workspace/tmp/",
 		"COPY --from=" + ConfigContextName + " --chown=0:0 /config.json " + resolvedConfigPath,
-		"ENV TMPDIR=/computer/tmp HOME=/computer/tmp",
-		"WORKDIR /computer/project", "USER 65532:65532", "RUN --network=none --mount=type=bind,from=helmr_installed,source=/computer/project,target=/computer/project " + bundle,
+		"ENV TMPDIR=/workspace/tmp HOME=/workspace/tmp",
+		"WORKDIR /workspace/project", "USER 65532:65532", "RUN --network=none --mount=type=bind,from=helmr_installed,source=/workspace/project,target=/workspace/project " + bundle,
 		"FROM " + EnvironmentContextName + " AS runtime-installed",
 	}
 	lines = append(lines, managedContextLines...)
 	lines = append(lines,
 		"ENV NODE_OPTIONS= NODE_PATH= PATH=/opt/helmr/runtime/bin:/usr/local/bin:/usr/bin:/bin",
-		"COPY --from=bundled --chown=65532:65532 /computer/output/bundle/install/ /computer/project/",
+		"COPY --from=bundled --chown=65532:65532 /workspace/output/bundle/install/ /workspace/project/",
 		"USER 65532:65532",
-		"RUN --mount=type=cache,target=/computer/npm-cache,uid=65532,gid=65532 "+canonicalToolMounts+install,
+		"RUN --mount=type=cache,target=/workspace/npm-cache,uid=65532,gid=65532 "+canonicalToolMounts+install,
 		"FROM "+BuilderContextName+" AS assembled",
 	)
 	lines = append(lines, managedContextLines...)
 	lines = append(lines,
-		"COPY --from=bundled --chown=0:0 /computer/output/bundle/ /computer/bundle/",
-		"COPY --from=runtime-installed --chown=0:0 /computer/project/ /computer/installed/",
+		"COPY --from=bundled --chown=0:0 /workspace/output/bundle/ /workspace/bundle/",
+		"COPY --from=runtime-installed --chown=0:0 /workspace/project/ /workspace/installed/",
 		"USER 65532:65532", "RUN --network=none "+assemble,
 		"FROM "+EnvironmentContextName+" AS analyzed",
 	)
 	lines = append(lines, managedContextLines...)
 	lines = append(lines,
-		"COPY --from=assembled --chown=0:0 /computer/output/payload/ /computer/project/",
-		"COPY --from=bundled --chown=0:0 /computer/output/bundle/bundle.json /computer/bundle.json",
+		"COPY --from=assembled --chown=0:0 /workspace/output/payload/ /workspace/project/",
+		"COPY --from=bundled --chown=0:0 /workspace/output/bundle/bundle.json /workspace/bundle.json",
 		"COPY --from="+ConfigContextName+" --chown=0:0 /config.json "+resolvedConfigPath,
-		`RUN ["/bin/bash","-euo","pipefail","-c","chmod -R a-w /computer/project"]`,
+		`RUN ["/bin/bash","-euo","pipefail","-c","chmod -R a-w /workspace/project"]`,
 		"USER 65532:65532", "RUN --network=none "+canonicalToolMounts+analyze,
 		"FROM scratch AS preparation",
-		"COPY --from=analyzed /computer/output/prepared/ /",
+		"COPY --from=analyzed /workspace/output/prepared/ /",
 		"",
 	)
 	return []byte(strings.Join(lines, "\n")), nil
 }
 
-const resolvedConfigPath = "/computer/config/config.json"
+const resolvedConfigPath = "/workspace/config/config.json"
 
 func installRunInstruction(plan InstallPlan) (string, error) {
 	secretIDs, err := NormalizeSecretIDs(plan.SecretIDs)

@@ -119,7 +119,7 @@ func TestComputerCaptureRejectsChangedPhysicalSet(t *testing.T) {
 func TestPreparedComputerCaptureSealsWithoutProgram(t *testing.T) {
 	r, _, q := captureBarrierFixture(0)
 	r.entries = map[string]*computerMountEntry{}
-	prepared := &preparedComputerRuntime{computerID: q.ComputerId, computerInstanceID: q.ComputerInstanceId, writerGeneration: q.WriterGeneration, computerImageDigest: "image", computerMount: "/computer"}
+	prepared := &preparedComputerRuntime{computerID: q.ComputerId, computerInstanceID: q.ComputerInstanceId, writerGeneration: q.WriterGeneration, computerImageDigest: "image", computerMount: "/workspace"}
 	if err := r.setPreparedRuntime(prepared); err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestPreparedComputerCaptureSealsWithoutProgram(t *testing.T) {
 	if err = r.sealComputerCapture(q, time.Now); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := r.takePreparedRuntime(q.ComputerInstanceId, q.ComputerId, "image", "/computer", uint64(q.WriterGeneration)); ok {
+	if _, ok := r.takePreparedRuntime(q.ComputerInstanceId, q.ComputerId, "image", "/workspace", uint64(q.WriterGeneration)); ok {
 		t.Fatal("sealed preparation consumed")
 	}
 	if r.preparedRuntime != prepared {

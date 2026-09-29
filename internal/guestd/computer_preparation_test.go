@@ -51,8 +51,8 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 		Encoding: "oci-tar", SizeBytes: 79_664_879,
 	}
 	prepared, _, err := restorePreparedComputerRuntime(strings.NewReader("no image stream"), &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,
-		ComputerInstanceId: "runtime", MountPath: "/computer", ComputerImage: artifact,
-		MountedImageConfig: &computerv0.RuntimeImageConfig{WorkingDir: "/computer", User: "0:0"},
+		ComputerInstanceId: "runtime", MountPath: "/workspace", ComputerImage: artifact,
+		MountedImageConfig: &computerv0.RuntimeImageConfig{WorkingDir: "/workspace", User: "0:0"},
 	}, slogDiscard())
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 	registry.setPreparedRuntime(prepared)
 	request := &computerv0.MaterializeComputerRequest{
 		Envelope:  &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "runtime", ComputerId: "computer-1", WriterGeneration: 2},
-		MountPath: "/computer", Target: testComputerMountTarget("version"),
+		MountPath: "/workspace", Target: testComputerMountTarget("version"),
 		UsePreparedRuntime: true, ComputerImage: artifact,
 	}
 	for name, change := range map[string]func(*computerv0.MaterializeComputerRequest){
@@ -82,7 +82,7 @@ func TestPreparedComputerMaterializationUsesMountedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.imageRoot != root || entry.computerRoot != filepath.Join(root, "computer") {
+	if entry.imageRoot != root || entry.computerRoot != filepath.Join(root, "workspace") {
 		t.Fatalf("materialization changed mounted root: %+v", entry)
 	}
 	if _, err := restoreComputerMount(request, registry); err == nil || !strings.Contains(err.Error(), "prepared computer runtime is not available") {

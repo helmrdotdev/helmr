@@ -30,7 +30,7 @@ func TestComputerImageDockerfileUsesInstalledTreeAndDigestPinnedBase(t *testing.
 		"# syntax=" + dockerfileFrontend,
 		"FROM helmr_installed AS installed-tree",
 		"FROM --platform=linux/amd64 " + base + " AS " + target,
-		`COPY --from=installed-tree ["/computer/project/dist/app.js","/app/app.js"]`,
+		`COPY --from=installed-tree ["/workspace/project/dist/app.js","/app/app.js"]`,
 		`ENV MESSAGE="hello world"`,
 		`RUN ["/bin/sh","-c","test -f /app/app.js"]`,
 	} {

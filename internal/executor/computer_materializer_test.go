@@ -116,7 +116,7 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 		Target: workerapi.ComputerMountTarget{
 			BaseComputerDiskVersionID: "version-1",
 		},
-		ComputerMountPath: "/computer",
+		ComputerMountPath: "/workspace",
 	}
 }
 
@@ -402,7 +402,7 @@ func TestComputerMaterializerDispatchesBasicExec(t *testing.T) {
 		ComputerID:         "computer-1",
 		ComputerInstanceID: "instance-1",
 		RequestFingerprint: strings.Repeat("a", 64),
-		Request:            json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/computer","env":{},"timeout_ms":1000}`),
+		Request:            json.RawMessage(`{"command":["sh","-c","printf ok"],"cwd":"/workspace","env":{},"timeout_ms":1000}`),
 		Stdin:              []byte("input"),
 		Secrets:            []workerapi.SecretDelivery{{Env: &workerapi.SecretEnv{Name: "TOKEN"}, Value: secretValue}},
 		WriterGeneration:   4,

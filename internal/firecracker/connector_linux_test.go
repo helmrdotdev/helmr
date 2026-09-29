@@ -1480,7 +1480,7 @@ func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
 			ComputerInstanceID: computerInstanceID, VMPlatformID: evidence.RuntimeID,
 		},
 		RootfsDigest:      rootfsDigest,
-		ComputerMountPath: "/computer",
+		ComputerMountPath: "/workspace",
 		Resources:         compute.ResourceVector{MilliCPU: 1000},
 		VMVCPUCount:       1,
 		CPUConfigDigest:   testCPUConfigDigest(1),
@@ -1535,7 +1535,7 @@ func TestMaterializeRecordsScratchDiskPhase(t *testing.T) {
 				Resources:         compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 256, DiskMiB: 16, Slots: 1},
 				VMVCPUCount:       1,
 				CPUConfigDigest:   cpuConfigDigest,
-				ComputerMountPath: "/computer",
+				ComputerMountPath: "/workspace",
 				RecordPhase: func(phase vm.RuntimePhase) {
 					phases = append(phases, phase)
 				},
@@ -1573,7 +1573,7 @@ func TestMaterializeRequiresActivationProbedCPUShape(t *testing.T) {
 			ComputerInstanceID: computerInstanceID,
 		},
 		RootfsDigest:      rootfsDigest,
-		ComputerMountPath: "/computer",
+		ComputerMountPath: "/workspace",
 		Resources:         compute.ResourceVector{MilliCPU: 1500},
 		VMVCPUCount:       2,
 		CPUConfigDigest:   testCPUConfigDigest(2),

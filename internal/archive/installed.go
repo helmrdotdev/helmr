@@ -67,7 +67,7 @@ func appendInstalledTree(
 				if options.MaxEntries > 0 && len(entries) >= options.MaxEntries {
 					return errors.New("tar archive contains too many entries")
 				}
-				if err := safepath.ValidateTreePath(rel, "/computer/project", "/computer/program", "/opt/helmr/program"); err != nil {
+				if err := safepath.ValidateTreePath(rel, "/workspace/project", "/workspace/program", "/opt/helmr/program"); err != nil {
 					return fmt.Errorf("installed path %q: %w", rel, err)
 				}
 				if err := safepath.ValidateHostTreePath(hostRoot, rel); err != nil {

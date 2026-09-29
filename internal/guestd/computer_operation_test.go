@@ -38,13 +38,13 @@ func TestRestoredComputerRebindPreservesPairedFilesystem(t *testing.T) {
 			ComputerInstanceId: "runtime-c", ComputerId: "computer-1",
 			ChannelToken: "channel-c", WriterGeneration: 2,
 		},
-		MountPath: "/computer", Target: testComputerMountTarget("version-c"),
+		MountPath: "/workspace", Target: testComputerMountTarget("version-c"),
 		UsePreparedRuntime:   true,
 		RestoredCheckpointId: "checkpoint-b",
 	}
 	entry := &computerMountEntry{
 		computerID: "computer-1", channelToken: "channel-b",
-		computerInstanceID: "runtime-b", computerMount: "/computer", computerRoot: liveRoot,
+		computerInstanceID: "runtime-b", computerMount: "/workspace", computerRoot: liveRoot,
 		baseComputerDiskVersionID: "version-a",
 	}
 	entry.setWriterGeneration(1)
@@ -113,7 +113,7 @@ func TestComputerRuntimePrepareUsesComputerImageAndComputerInstanceID(t *testing
 	const computerInstanceID = " computer-instance-1 "
 	if err := frameio.WriteProtoFrame(client, &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,
 		ComputerInstanceId: computerInstanceID,
-		MountPath:          "/computer",
+		MountPath:          "/workspace",
 		ComputerImage: &computerv0.ComputerArtifact{
 			Digest:    imageDigest,
 			MediaType: computerImageMediaType,
@@ -139,13 +139,13 @@ func TestComputerRuntimePrepareUsesComputerImageAndComputerInstanceID(t *testing
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := registry.takePreparedRuntime("computer-instance-other", "computer-1", imageDigest, "/computer", 2); ok {
+	if _, ok := registry.takePreparedRuntime("computer-instance-other", "computer-1", imageDigest, "/workspace", 2); ok {
 		t.Fatal("prepared runtime accepted a different computer_instance_id")
 	}
-	if _, ok := registry.takePreparedRuntime(strings.TrimSpace(computerInstanceID), "computer-1", imageDigest, "/computer", 2); ok {
+	if _, ok := registry.takePreparedRuntime(strings.TrimSpace(computerInstanceID), "computer-1", imageDigest, "/workspace", 2); ok {
 		t.Fatal("prepared runtime normalized an opaque computer_instance_id")
 	}
-	prepared, ok := registry.takePreparedRuntime(computerInstanceID, "computer-1", imageDigest, "/computer", 2)
+	prepared, ok := registry.takePreparedRuntime(computerInstanceID, "computer-1", imageDigest, "/workspace", 2)
 	if !ok {
 		t.Fatal("prepared runtime did not accept the matching computer_instance_id")
 	}
@@ -173,7 +173,7 @@ func TestComputerImagePreparationContractIsExact(t *testing.T) {
 			}
 			_, _, err := restorePreparedComputerRuntime(bytes.NewReader(nil), &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,
 				ComputerInstanceId: "computer-instance-1",
-				MountPath:          "/computer",
+				MountPath:          "/workspace",
 				ComputerImage:      computerImage,
 			}, slogDiscard())
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
@@ -183,7 +183,7 @@ func TestComputerImagePreparationContractIsExact(t *testing.T) {
 	}
 	_, _, err := restorePreparedComputerRuntime(bytes.NewReader(nil), &computerv0.PrepareComputerRuntimeRequest{ComputerId: "computer-1", WriterGeneration: 2,
 		ComputerInstanceId: "   ",
-		MountPath:          "/computer",
+		MountPath:          "/workspace",
 	}, slogDiscard())
 	if err == nil || !strings.Contains(err.Error(), "identity is required") {
 		t.Fatalf("whitespace computer_instance_id error = %v", err)
@@ -309,8 +309,8 @@ func TestPreparedComputerMountPreservesFilesAndSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	registry := newComputerOperationRegistry()
-	registry.setPreparedRuntime(&preparedComputerRuntime{computerID: "computer-1", writerGeneration: 2, computerInstanceID: "runtime", computerImageDigest: "image", computerMount: "/computer", imageRoot: root, computerRoot: root, cleanup: func() {}})
-	entry, err := restoreComputerMount(&computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "runtime", ComputerId: "computer-1", WriterGeneration: 2}, MountPath: "/computer", Target: testComputerMountTarget("version"), UsePreparedRuntime: true, ComputerImage: &computerv0.ComputerArtifact{Digest: "image", MediaType: computerImageMediaType, Encoding: computerImageEncoding, SizeBytes: 1}}, registry)
+	registry.setPreparedRuntime(&preparedComputerRuntime{computerID: "computer-1", writerGeneration: 2, computerInstanceID: "runtime", computerImageDigest: "image", computerMount: "/workspace", imageRoot: root, computerRoot: root, cleanup: func() {}})
+	entry, err := restoreComputerMount(&computerv0.MaterializeComputerRequest{Envelope: &computerv0.ComputerOperationEnvelope{ComputerInstanceId: "runtime", ComputerId: "computer-1", WriterGeneration: 2}, MountPath: "/workspace", Target: testComputerMountTarget("version"), UsePreparedRuntime: true, ComputerImage: &computerv0.ComputerArtifact{Digest: "image", MediaType: computerImageMediaType, Encoding: computerImageEncoding, SizeBytes: 1}}, registry)
 	if err != nil {
 		t.Fatal(err)
 	}

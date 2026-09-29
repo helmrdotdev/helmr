@@ -217,7 +217,7 @@ func computerCommandCommand() *cobra.Command {
 	}
 	addScopeFlags(command, &projectID, &environmentID)
 	address.add(command)
-	command.Flags().StringVar(&cwd, "cwd", "", "Working directory (defaults to /computer).")
+	command.Flags().StringVar(&cwd, "cwd", "", "Working directory (defaults to /workspace).")
 	command.Flags().StringArrayVar(&envPairs, "set-env", nil, "Environment entry NAME=VALUE. Repeatable.")
 	command.Flags().StringVar(&stdinPath, "stdin", "", "Read stdin bytes from a file.")
 	command.Flags().StringVar(&timeout, "timeout", "", "Execution timeout (default 5m, maximum 15m).")

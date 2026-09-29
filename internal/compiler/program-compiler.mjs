@@ -12964,20 +12964,20 @@ async function assembleRuntime(options) {
 }
 async function installRuntimePackages() {
   const env = {
-    HOME: "/computer/home",
-    TMPDIR: "/computer/tmp",
+    HOME: "/workspace/home",
+    TMPDIR: "/workspace/tmp",
     LANG: "C.UTF-8",
     PATH: "/opt/helmr/runtime/bin:/usr/local/bin:/usr/bin:/bin"
   };
   for (const name of ["SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "PKG_CONFIG_PATH"]) {
     if (process.env[name] !== void 0) env[name] = process.env[name];
   }
-  const userConfig = "/computer/home/runtime-user.npmrc";
-  const globalConfig = "/computer/home/runtime-global.npmrc";
+  const userConfig = "/workspace/home/runtime-user.npmrc";
+  const globalConfig = "/workspace/home/runtime-global.npmrc";
   await writeFile2(userConfig, "");
   await writeFile2(globalConfig, "");
   await new Promise((resolve6, reject) => {
-    const child = spawn(process.execPath, ["/opt/helmr/npm/bin/npm-cli.js", "install", "--no-audit", "--no-fund", "--omit=dev", "--package-lock=true", "--prefer-online", "--registry=https://registry.npmjs.org/", `--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`, "--cache=/computer/npm-cache"], { env, stdio: "inherit" });
+    const child = spawn(process.execPath, ["/opt/helmr/npm/bin/npm-cli.js", "install", "--no-audit", "--no-fund", "--omit=dev", "--package-lock=true", "--prefer-online", "--registry=https://registry.npmjs.org/", `--userconfig=${userConfig}`, `--globalconfig=${globalConfig}`, "--cache=/workspace/npm-cache"], { env, stdio: "inherit" });
     child.once("error", reject);
     child.once("exit", (code) => code === 0 ? resolve6() : reject(new Error(`runtime package installation failed (${code})`)));
   });

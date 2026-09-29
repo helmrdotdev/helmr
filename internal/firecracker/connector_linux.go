@@ -540,7 +540,7 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 	if rootfsDigest != strings.TrimSpace(request.RootfsDigest) {
 		return fmt.Errorf("computerMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
 	}
-	if strings.TrimSpace(request.ComputerMountPath) != "/computer" {
+	if strings.TrimSpace(request.ComputerMountPath) != "/workspace" {
 		return fmt.Errorf("the Firecracker materialize computer mount path %q is not supported", request.ComputerMountPath)
 	}
 	requestedVCPUs, err := VCPUCountForMilliCPU(request.Resources.MilliCPU)

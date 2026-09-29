@@ -69,7 +69,7 @@ func TestNormalizeComputerCommandAppliesClosedDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if normalized.cwd != "/computer" ||
+	if normalized.cwd != "/workspace" ||
 		normalized.timeout != 5*time.Minute ||
 		normalized.timeoutMS != 300000 ||
 		len(normalized.command) != 3 ||
@@ -110,8 +110,8 @@ func TestNormalizeComputerCommandRejectsInvalidAuthorityAndBounds(t *testing.T) 
 		{name: "empty executable", request: computerCommandRequest{Command: []string{""}}, target: errComputerCommandInvalid},
 		{name: "nul argument", request: computerCommandRequest{Command: []string{"x", "\x00"}}, target: errComputerCommandInvalid},
 		{name: "too many arguments", request: computerCommandRequest{Command: tooManyArgs}, target: errComputerCommandTooLarge},
-		{name: "cwd escape", request: computerCommandRequest{Command: []string{"x"}, Cwd: "/computer/../etc"}, target: errComputerCommandInvalid},
-		{name: "cwd sibling", request: computerCommandRequest{Command: []string{"x"}, Cwd: "/computer-other"}, target: errComputerCommandInvalid},
+		{name: "cwd escape", request: computerCommandRequest{Command: []string{"x"}, Cwd: "/workspace/../etc"}, target: errComputerCommandInvalid},
+		{name: "cwd sibling", request: computerCommandRequest{Command: []string{"x"}, Cwd: "/workspace-other"}, target: errComputerCommandInvalid},
 		{name: "reserved env", request: computerCommandRequest{Command: []string{"x"}, Env: map[string]string{"HELMR_TOKEN": "x"}}, target: errComputerCommandInvalid},
 		{name: "too many env", request: computerCommandRequest{Command: []string{"x"}, Env: tooManyEnv}, target: errComputerCommandTooLarge},
 		{name: "stdin", request: computerCommandRequest{Command: []string{"x"}, Stdin: make([]byte, computerCommandStdinMaxBytes+1)}, target: errComputerCommandStdinTooLarge},
