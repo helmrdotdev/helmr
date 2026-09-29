@@ -3,16 +3,23 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/computerkey"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -149,6 +156,13 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 				result, err := b.initial(t.Context(), fence)
 				if err == nil || len(result.Key) != 0 {
 					t.Fatal("revoked authority received key")
+				}
+				want := errComputerKeyUnavailable
+				if change == "claim" || change == "group claim" {
+					want = errStaleWorkerClaims
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("%s classified as %v, want %v", change, err, want)
 				}
 				if len(observer.returned) > 0 && !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
 					t.Fatal("rejected plaintext not cleared")
@@ -316,5 +330,75 @@ func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T)
 	defer clear(result.Key)
 	if result.ID != pinned {
 		t.Fatal("provider retry replaced persisted key")
+	}
+}
+
+var errInjectedClaimRead = errors.New("injected Worker claim read failure")
+
+// claimReadFaults fails the Worker claim read once armed. Authority locks still
+// run, so the injected failure reaches exactly the post-lock claim comparison.
+type claimReadFaults struct {
+	db.TxBeginner
+	armed bool
+}
+
+func (f *claimReadFaults) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := f.TxBeginner.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return claimReadFaultTx{Tx: tx, faults: f}, nil
+}
+
+type claimReadFaultTx struct {
+	pgx.Tx
+	faults *claimReadFaults
+}
+
+func (t claimReadFaultTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if t.faults.armed && strings.HasPrefix(sql, "SELECT w.claim_version,g.claim_version") {
+		return claimReadFaultRow{}
+	}
+	return t.Tx.QueryRow(ctx, sql, args...)
+}
+
+type claimReadFaultRow struct{}
+
+func (claimReadFaultRow) Scan(...any) error { return errInjectedClaimRead }
+
+// finalClaimReadFailure arms the claim-read fault during provider unwrap, so the
+// first authority read succeeds and only the final revalidation fails.
+func finalClaimReadFailure(b *computerKeyBroker) (*observingKeyWrapper, func()) {
+	faults := &claimReadFaults{TxBeginner: b.tx}
+	observer := &observingKeyWrapper{ComputerKeyWrapper: b.wrapper, unwrap: func() { faults.armed = true }}
+	previousTx, previousWrapper := b.tx, b.wrapper
+	b.tx, b.wrapper = faults, observer
+	return observer, func() { b.tx, b.wrapper = previousTx, previousWrapper }
+}
+
+func invokeComputerKeyHandler(t *testing.T, handler http.HandlerFunc, fence computerKeyFence, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := workerActor{WorkerHostID: pgvalue.MustUUIDValue(fence.WorkerID), WorkerGroupID: pgvalue.MustUUIDValue(fence.WorkerGroupID), WorkerEpoch: fence.WorkerEpoch, ClaimVersion: fence.ClaimVersion, GroupClaimVersion: fence.GroupClaimVersion}
+	request := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw)).WithContext(context.WithValue(t.Context(), workerContextKey{}, worker))
+	response := httptest.NewRecorder()
+	handler(response, request)
+	return response
+}
+
+func TestInitialComputerKeyFinalClaimReadFailureIsUnavailable(t *testing.T) {
+	f, b, fence := initialKeyFixture(t)
+	f.server.computerKeys = b
+	observer, restore := finalClaimReadFailure(b)
+	defer restore()
+	response := invokeComputerKeyHandler(t, f.server.workerInitialComputerKey, fence, workerapi.InitialComputerKeyRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("final claim read failure status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(observer.returned) == 0 || !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
+		t.Fatal("plaintext not cleared after final claim read failure")
 	}
 }

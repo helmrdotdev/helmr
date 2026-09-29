@@ -20,6 +20,10 @@ import (
 
 var ErrProxyTrustExpired = errors.New("computer Secret transport has expired; create a new Computer")
 
+// ErrWorkerClaimsStale refuses material captured for a Worker credential whose
+// claim versions changed. It is a freshness signal: the Worker re-authenticates.
+var ErrWorkerClaimsStale = errors.New("worker authentication claims are stale")
+
 func proxyTrustAAD(environmentID, computerID uuid.UUID) []byte {
 	return []byte("helmr.computer-secret-proxy-trust.v0\x00" + environmentID.String() + "\x00" + computerID.String())
 }
@@ -95,7 +99,25 @@ func ValidateProxyTrust(certificate []byte, notAfter, now time.Time) error {
 	return nil
 }
 
-func (s *Store) ProxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error) {
+// ProxyLeaf signs a leaf with the Computer CA captured by one authorized
+// preparation statement, refusing a capture made with stale Worker claims.
+func (s *Store) ProxyLeaf(captured db.CaptureSecretProxyPreparationRow, hosts []string) ([]byte, []byte, error) {
+	if !captured.ClaimsCurrent {
+		return nil, nil, ErrWorkerClaimsStale
+	}
+	environmentID, e1 := pgvalue.UUIDValue(captured.EnvironmentID)
+	computerID, e2 := pgvalue.UUIDValue(captured.ComputerID)
+	if e1 != nil || e2 != nil {
+		return nil, nil, ErrDeliveryUnavailable
+	}
+	return s.proxyLeaf(ProxyTrust{
+		EnvironmentID: environmentID, ComputerID: computerID,
+		Certificate: captured.Certificate, NotAfter: captured.NotAfter.Time,
+		PrivateKeyNonce: captured.PrivateKeyNonce, PrivateKeyCiphertext: captured.PrivateKeyCiphertext,
+	}, hosts)
+}
+
+func (s *Store) proxyLeaf(row ProxyTrust, hosts []string) ([]byte, []byte, error) {
 	if len(hosts) == 0 || len(hosts) > 256 {
 		return nil, nil, ErrDeliveryUnavailable
 	}
@@ -172,6 +194,11 @@ func ValidateProtectedSelectors(selectors []string) error {
 // statement. Later rotation/revocation may overlap this already-authorized use;
 // no mutable database read may select a replacement version during decryption.
 func (s *Store) OpenProtected(rows []db.CaptureProtectedSecretEnvelopesRow, selectors []string) (map[string][]byte, error) {
+	for _, row := range rows {
+		if !row.ClaimsCurrent {
+			return nil, ErrWorkerClaimsStale
+		}
+	}
 	if err := ValidateProtectedSelectors(selectors); err != nil || len(rows) != len(selectors) {
 		return nil, ErrDeliveryUnavailable
 	}

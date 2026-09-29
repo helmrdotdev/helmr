@@ -3,6 +3,7 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"errors"
 
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -45,7 +46,12 @@ func (b *computerKeyBroker) source(ctx context.Context, f computerKeyFence) (_ c
 		}
 		source.Keys = append(source.Keys, computerKeyMaterial{Scope: source.Scope, ID: id, Key: key})
 	}
+	// Only authority rejections become unavailability; stale claims and database
+	// failures keep their own classification.
 	current, currentRows, err := b.sourceEnvelopes(ctx, f)
+	if err != nil && !errors.Is(err, errComputerKeyUnavailable) {
+		return computerSourceKeys{}, err
+	}
 	if err != nil || current.VersionID != source.VersionID || current.Scope != source.Scope || current.WriteKeyID != source.WriteKeyID || current.Root != source.Root || len(currentRows) != len(rows) {
 		return computerSourceKeys{}, errComputerKeyUnavailable
 	}
@@ -67,10 +73,8 @@ func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFe
 		if err != nil {
 			return errComputerKeyUnavailable
 		}
-		var claims bool
-		err = tx.QueryRow(ctx, `SELECT w.claim_version=$3 AND g.claim_version=$4 FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, f.WorkerID, f.WorkerGroupID, f.ClaimVersion, f.GroupClaimVersion).Scan(&claims)
-		if err != nil || !claims {
-			return errComputerKeyUnavailable
+		if err = f.checkLockedClaims(ctx, tx); err != nil {
+			return err
 		}
 		q := db.New(tx)
 		retained, root, keys, err := loadRuntimeComputerGeneration(ctx, q, f.RuntimeID)

@@ -95,6 +95,9 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		}
 		return nil
 	})
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, conflict(errors.New("command claim is stale")))
 		return
@@ -201,6 +204,9 @@ func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request,
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		return applyCommandCompletion(r.Context(), work.tx, workerFromContext(r.Context()), request, reconcile)
 	})
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, conflict(errors.New("command completion is stale or differs from its receipt")))
 		return

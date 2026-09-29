@@ -30,12 +30,11 @@ DO UPDATE SET content = telemetry_outbox.content
       AND telemetry_outbox.observed_at = excluded.observed_at
 RETURNING id, created_at;
 
--- The caller already holds the producer's worker, group, command and lease locks.
--- Recheck token claims and wall-clock expiry immediately before committing logs.
+-- The caller already holds the producer's worker, group, command and lease locks
+-- and compared token claims under them. Recheck wall-clock expiry immediately
+-- before committing logs.
 -- name: CommandLogProducerStillAuthorized :one
-SELECT w.claim_version = sqlc.arg(worker_claim_version)::bigint
-   AND g.claim_version = sqlc.arg(group_claim_version)::bigint
-   AND w.status IN ('active', 'draining')
+SELECT w.status IN ('active', 'draining')
    AND g.status IN ('active', 'paused', 'draining')
    AND clock_timestamp() < sqlc.arg(expires_at)::timestamptz AS authorized
   FROM worker_hosts w JOIN worker_groups g ON g.id = w.worker_group_id

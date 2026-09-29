@@ -32,6 +32,9 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 		RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion,
 	}, ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
 	result, err := s.publishInitialComputerGeneration(r.Context(), fence, initialComputerPublication{Root: request.Root, Config: request.Config})
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if err != nil {
 		writeError(w, conflict(errors.New("computer generation publication is unavailable")))
 		return

@@ -22,6 +22,9 @@ func (s *Server) workerAppendCommandLogs(w http.ResponseWriter, r *http.Request)
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		return appendCommandLog(r.Context(), work.tx, worker, request)
 	})
+	if writeStaleWorkerClaims(w, err) {
+		return
+	}
 	if errors.Is(err, errInvalidCommandLog) {
 		writeError(w, badRequest(err))
 		return

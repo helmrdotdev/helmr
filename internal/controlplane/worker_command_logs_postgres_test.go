@@ -72,19 +72,20 @@ func TestCommandLogProducerFenceReplayAndCompletion(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		mutate func(*workerActor)
+		want   error
 	}{
-		{"host", func(w *workerActor) { w.WorkerHostID = uuid.NewV7() }},
-		{"epoch", func(w *workerActor) { w.WorkerEpoch++ }},
-		{"group", func(w *workerActor) { w.WorkerGroupID = uuid.NewV7() }},
-		{"worker claim", func(w *workerActor) { w.ClaimVersion++ }},
-		{"group claim", func(w *workerActor) { w.GroupClaimVersion++ }},
+		{"host", func(w *workerActor) { w.WorkerHostID = uuid.NewV7() }, pgx.ErrNoRows},
+		{"epoch", func(w *workerActor) { w.WorkerEpoch++ }, pgx.ErrNoRows},
+		{"group", func(w *workerActor) { w.WorkerGroupID = uuid.NewV7() }, pgx.ErrNoRows},
+		{"worker claim", func(w *workerActor) { w.ClaimVersion++ }, errStaleWorkerClaims},
+		{"group claim", func(w *workerActor) { w.GroupClaimVersion++ }, errStaleWorkerClaims},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.mutate(&producer)
 			defer func() { producer = worker }()
 			unaccepted := request
 			unaccepted.ObservedSeq++
-			call(unaccepted, pgx.ErrNoRows)
+			call(unaccepted, test.want)
 		})
 	}
 	var count int

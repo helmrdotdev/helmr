@@ -63,6 +63,9 @@ func (s *Server) workerInitialComputerObject(w http.ResponseWriter, r *http.Requ
 		uploaded = &stored
 	}
 	if err = recordInitialComputerObject(r.Context(), s.tx, fence, request.Inspection, uploaded); err != nil {
+		if writeStaleWorkerClaims(w, err) {
+			return
+		}
 		writeError(w, conflict(errors.New("computer object authority or registration changed")))
 		return
 	}
