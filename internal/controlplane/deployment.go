@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,9 +12,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -39,38 +37,19 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	projectID, environmentID, err := runScopeIDs(scope)
-	if err != nil {
-		writeError(w, errors.New("list deployments"))
-		return
-	}
 	limit, cursor, err := parseDeploymentListQuery(r, scope.ProjectID, scope.EnvironmentID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	params := db.ListScopedDeploymentsParams{
-		OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID,
-		EnvironmentID: environmentID, RowLimit: limit + 1,
-	}
+	var after *deployment.Position
 	if cursor != nil {
-		params.HasAfter = true
-		params.AfterCreatedAt = pgvalue.Timestamptz(cursor.CreatedAt)
-		params.AfterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+		after = &deployment.Position{CreatedAt: cursor.CreatedAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, err := s.db.ListScopedDeployments(r.Context(), params)
+	rows, hasMore, err := deployment.List(r.Context(), s.db, actor, scope, limit, after)
 	if err != nil {
-		s.log.Error("list deployments failed", "error", err)
-		writeError(w, errors.New("list deployments"))
+		s.writeDeploymentError(w, err)
 		return
-	}
-	hasMore := len(rows) > int(limit)
-	if hasMore {
-		rows = rows[:limit]
 	}
 	items := make([]api.DeploymentListItem, 0, len(rows))
 	for _, row := range rows {
@@ -158,24 +137,9 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	projectID, environmentID, err := runScopeIDs(scope)
+	record, err := deployment.Get(r.Context(), s.db, actor, scope, deploymentID)
 	if err != nil {
-		writeError(w, errors.New("get deployment"))
-		return
-	}
-	record, err := s.db.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
-		OrgID: pgvalue.UUID(actor.OrgID), ID: pgvalue.UUID(deploymentID),
-	})
-	if isNoRows(err) || (err == nil && (record.ProjectID != projectID || record.EnvironmentID != environmentID)) {
-		writeError(w, notFound(errors.New("deployment not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get deployment"))
+		s.writeDeploymentError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, deploymentResponse(record))
@@ -188,32 +152,32 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	projectID, environmentID, err := runScopeIDs(scope)
+	record, err := deployment.GetCurrent(r.Context(), s.db, actor, scope)
 	if err != nil {
-		writeError(w, errors.New("get current deployment"))
-		return
-	}
-	record, err := s.db.GetCurrentDeployment(r.Context(), db.GetCurrentDeploymentParams{
-		OrgID: pgvalue.UUID(actor.OrgID), ProjectID: projectID, EnvironmentID: environmentID,
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(codedError{code: "no_current_deployment", message: "no current deployment"}))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get current deployment"))
+		s.writeDeploymentError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, deploymentResponse(record))
 }
 
-func deploymentVersion(id uuid.UUID) string {
-	milliseconds := int64(binary.BigEndian.Uint64(id[:]) >> 16)
-	return time.UnixMilli(milliseconds).UTC().Format("20060102") + "." + id.String()
+func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
+	deploymentID, err := parseUUIDParam(r, "deploymentID")
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	actor := actorFromContext(r.Context())
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	record, err := deployment.Promote(r.Context(), s.tx, actor, scope, deploymentID)
+	if err != nil {
+		s.writeDeploymentError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, deploymentResponse(record))
 }
 
 func deploymentResponse(record db.Deployment) api.DeploymentResponse {
@@ -223,19 +187,37 @@ func deploymentResponse(record db.Deployment) api.DeploymentResponse {
 	}
 }
 
-func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
-	var expired idempotency.ExpiredError
-	if errors.As(err, &expired) {
-		writeError(w, gone(expired))
-		return
+// deploymentError maps errors of the deployment owner to HTTP errors.
+func deploymentError(err error) error {
+	var input deployment.InputError
+	switch {
+	case errors.As(err, &input):
+		return badRequest(err)
+	case errors.Is(err, deployment.ErrPermissionRequired):
+		return forbidden(err)
+	case errors.Is(err, deployment.ErrNotFound),
+		errors.Is(err, deployment.ErrNotDeployable),
+		errors.Is(err, deployment.ErrDefinitionNotFound):
+		return notFound(err)
+	case errors.Is(err, deployment.ErrNoCurrentDeployment):
+		return notFound(codedError{code: "no_current_deployment", message: "no current deployment"})
+	case errors.Is(err, deployment.ErrNoCurrentDefinitions):
+		return notFound(codedError{code: "no_current_deployment", message: "Environment has no current Deployment"})
+	case errors.Is(err, deployment.ErrSelectedDeploymentNotFound):
+		return notFound(codedError{code: "deployment_not_found", message: "Deployment was not found"})
+	case errors.Is(err, deployment.ErrDefinitionsNotMaterialized):
+		return conflict(codedError{code: "deployment_not_materialized", message: "Deployment definitions are not materialized"})
+	default:
+		return err
 	}
-	var idempotencyConflict idempotency.ConflictError
-	if errors.As(err, &idempotencyConflict) {
-		writeError(w, conflict(errors.New("idempotency key conflicts with another deployment bundle")))
-		return
-	}
-	if errorStatus(err) != http.StatusInternalServerError {
-		writeError(w, err)
+}
+
+// writeDeploymentError writes a deployment owner error, logging the failures
+// it does not describe to the client.
+func (s *Server) writeDeploymentError(w http.ResponseWriter, err error) {
+	mapped := deploymentError(err)
+	if errorStatus(mapped) != http.StatusInternalServerError {
+		writeError(w, mapped)
 		return
 	}
 	s.log.Error("deployment request failed", "error", err)

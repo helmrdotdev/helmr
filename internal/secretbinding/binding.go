@@ -45,7 +45,7 @@ func ValidateBinding(secret Binding) error {
 // Placements maps structurally valid declarations to unnormalized
 // placements in declaration order. File declarations are always raw.
 // Callers validate each declaration first and normalize the result with
-// Normalize.
+// Normalize, as NormalizedPlacements does.
 func Placements(declarations []Binding) []Placement {
 	placements := make([]Placement, 0, len(declarations))
 	for _, declaration := range declarations {
@@ -58,4 +58,15 @@ func Placements(declarations []Binding) []Placement {
 		placements = append(placements, placement)
 	}
 	return placements
+}
+
+// NormalizedPlacements validates each declaration and returns the normalized
+// placements they declare.
+func NormalizedPlacements(declarations []Binding) ([]Placement, error) {
+	for _, declaration := range declarations {
+		if err := ValidateBinding(declaration); err != nil {
+			return nil, err
+		}
+	}
+	return Normalize(Placements(declarations))
 }

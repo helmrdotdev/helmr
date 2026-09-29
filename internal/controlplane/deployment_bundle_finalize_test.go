@@ -3,27 +3,18 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 )
 
 type deploymentFinalizeStreamRecorder struct {
@@ -85,12 +76,11 @@ func TestDeploymentFinalizationStreamFlushesStartedPingsAndOrdersProgressBeforeC
 	release := make(chan struct{})
 	finishStarted := make(chan struct{})
 	done := make(chan struct{})
-	server := &Server{deploymentFinalizePingEvery: time.Millisecond}
 	go func() {
 		defer close(done)
-		server.streamDeploymentFinalization(recorder, request, bundleDigest, func(
+		streamDeploymentFinalization(recorder, request, discardTestLogger(), time.Millisecond, bundleDigest, func(
 			ctx context.Context,
-			progress func(deploymentFinalizeProgress) error,
+			progress func(string) error,
 		) (api.DeploymentResponse, error) {
 			close(finishStarted)
 			select {
@@ -98,7 +88,7 @@ func TestDeploymentFinalizationStreamFlushesStartedPingsAndOrdersProgressBeforeC
 			case <-ctx.Done():
 				return api.DeploymentResponse{}, ctx.Err()
 			}
-			if err := progress(deploymentFinalizeProgress{digest: "sha256:object"}); err != nil {
+			if err := progress("sha256:object"); err != nil {
 				return api.DeploymentResponse{}, err
 			}
 			return api.DeploymentResponse{ID: "deployment-1", BundleDigest: bundleDigest}, nil
@@ -150,9 +140,9 @@ func TestDeploymentFinalizationStreamCancelsWorkAfterDisconnect(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		(&Server{}).streamDeploymentFinalization(recorder, request, "sha256:bundle", func(
+		streamDeploymentFinalization(recorder, request, discardTestLogger(), deploymentFinalizePingEvery, "sha256:bundle", func(
 			ctx context.Context,
-			_ func(deploymentFinalizeProgress) error,
+			_ func(string) error,
 		) (api.DeploymentResponse, error) {
 			<-ctx.Done()
 			close(finishCanceled)
@@ -185,11 +175,11 @@ func TestDeploymentFinalizationStreamCancelsWorkAfterDisconnect(t *testing.T) {
 func TestDeploymentFinalizationStreamEmitsOneSanitizedError(t *testing.T) {
 	recorder := newDeploymentFinalizeStreamRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/finalize", nil)
-	(&Server{}).streamDeploymentFinalization(recorder, request, "sha256:bundle", func(
+	streamDeploymentFinalization(recorder, request, discardTestLogger(), deploymentFinalizePingEvery, "sha256:bundle", func(
 		context.Context,
-		func(deploymentFinalizeProgress) error,
+		func(string) error,
 	) (api.DeploymentResponse, error) {
-		return api.DeploymentResponse{}, invalidDeploymentObjectError{err: errors.New("secret-sentinel")}
+		return api.DeploymentResponse{}, deployment.InvalidObjectError{Err: errors.New("secret-sentinel")}
 	})
 	_, stream := recorder.snapshot()
 	if strings.Count(stream, "event: error\n") != 1 || strings.Contains(stream, "event: complete\n") ||
@@ -198,12 +188,32 @@ func TestDeploymentFinalizationStreamEmitsOneSanitizedError(t *testing.T) {
 	}
 }
 
+func TestDeploymentFinalizationStreamReportsCanceledVerificationAsUnavailable(t *testing.T) {
+	recorder := newDeploymentFinalizeStreamRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/finalize", nil)
+	canceled := fmt.Errorf("read deployment object sha256:object: %w", context.Canceled)
+	if got := publicDeploymentFinalizeError(canceled).Code; got != "deployment_finalization_unavailable" {
+		t.Fatalf("public error code = %s", got)
+	}
+	streamDeploymentFinalization(recorder, request, discardTestLogger(), deploymentFinalizePingEvery, "sha256:bundle", func(
+		context.Context,
+		func(string) error,
+	) (api.DeploymentResponse, error) {
+		return api.DeploymentResponse{}, canceled
+	})
+	_, stream := recorder.snapshot()
+	if strings.Count(stream, "event: error\n") != 1 || strings.Contains(stream, "event: complete\n") ||
+		!strings.Contains(stream, `"code":"deployment_finalization_unavailable"`) {
+		t.Fatalf("stream = %q", stream)
+	}
+}
+
 func TestDeploymentFinalizationStreamContainsFinalizerPanic(t *testing.T) {
 	recorder := newDeploymentFinalizeStreamRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/finalize", nil)
-	(&Server{}).streamDeploymentFinalization(recorder, request, "sha256:bundle", func(
+	streamDeploymentFinalization(recorder, request, discardTestLogger(), deploymentFinalizePingEvery, "sha256:bundle", func(
 		context.Context,
-		func(deploymentFinalizeProgress) error,
+		func(string) error,
 	) (api.DeploymentResponse, error) {
 		panic("secret-panic-sentinel")
 	})
@@ -214,79 +224,6 @@ func TestDeploymentFinalizationStreamContainsFinalizerPanic(t *testing.T) {
 	}
 }
 
-func TestFinishFinalizedDeploymentBundleStopsBeforeTransactionAfterDisconnect(t *testing.T) {
-	image := deploymentFinalizeDiskFixture(t)
-	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(image))
-	descriptor := cas.Descriptor{
-		Digest: digest, SizeBytes: int64(len(image)), MediaType: bundle.ComputerImageMediaType,
-	}
-	store := &deploymentFinalizeObjectStore{descriptor: descriptor, body: image}
-	server := &Server{db: deploymentFinalizePossessionStore{}, deploymentVerifierSlots: make(chan struct{}, 1)}
-	_, err := server.finishFinalizedDeploymentBundle(
-		t.Context(), store, uuid.UUID{15: 1}, pgvalue.UUID(uuid.UUID{15: 2}), pgvalue.UUID(uuid.UUID{15: 3}),
-		finalizedDeploymentBundle{
-			root:    cas.Descriptor{Digest: "sha256:" + strings.Repeat("a", 64)},
-			bundle:  bundle.Manifest{},
-			objects: []cas.Descriptor{descriptor},
-		},
-		nil,
-		func(deploymentFinalizeProgress) error { return context.Canceled },
-	)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("error = %v, want cancellation before transaction", err)
-	}
-}
-
-type deploymentFinalizePossessionStore struct{ db.Querier }
-
-func (deploymentFinalizePossessionStore) GetCasObject(context.Context, db.GetCasObjectParams) (db.CasObject, error) {
-	return db.CasObject{}, pgx.ErrNoRows
-}
-
-func (deploymentFinalizePossessionStore) GetDeploymentByBundleDigest(
-	context.Context,
-	db.GetDeploymentByBundleDigestParams,
-) (db.Deployment, error) {
-	return db.Deployment{}, pgx.ErrNoRows
-}
-
-type deploymentFinalizeObjectStore struct {
-	cas.UploadStore
-	descriptor cas.Descriptor
-	body       []byte
-}
-
-func (s *deploymentFinalizeObjectStore) Stat(context.Context, string) (cas.Object, error) {
-	return cas.Object{
-		Digest: s.descriptor.Digest, SizeBytes: s.descriptor.SizeBytes, MediaType: s.descriptor.MediaType,
-	}, nil
-}
-
-func (s *deploymentFinalizeObjectStore) Get(context.Context, string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(s.body)), nil
-}
-
-func (s *deploymentFinalizeObjectStore) PromoteQuarantine(
-	context.Context,
-	string,
-	cas.Descriptor,
-) (cas.Object, error) {
-	return s.Stat(context.Background(), s.descriptor.Digest)
-}
-
-func deploymentFinalizeDiskFixture(t *testing.T) []byte {
-	t.Helper()
-	var output bytes.Buffer
-	output.WriteString("helmr-firecracker-filepack-v0\n")
-	header := []byte(fmt.Sprintf(`{"version":0,"role":"computer-seed","logical_size":%d,"chunk_size":4194304,"codec":"zstd"}`, disk.SeedCapacity))
-	if err := binary.Write(&output, binary.BigEndian, uint32(len(header))); err != nil {
-		t.Fatal(err)
-	}
-	output.Write(header)
-	output.WriteByte(255)
-	return output.Bytes()
-}
-
 func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 	const secret = "secret-sentinel"
 	for name, test := range map[string]struct {
@@ -295,7 +232,7 @@ func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 		message string
 	}{
 		"invalid object": {
-			err:     invalidDeploymentObjectError{err: errors.New(secret)},
+			err:     deployment.InvalidObjectError{Err: errors.New(secret)},
 			code:    "invalid_deployment_object",
 			message: "deployment object failed verification",
 		},
@@ -318,72 +255,3 @@ func TestPublicDeploymentFinalizeErrorUsesClosedMessages(t *testing.T) {
 		})
 	}
 }
-
-func TestVerifyFinalizedDeploymentDisk(t *testing.T) {
-	body := deploymentFinalizeDiskFixture(t)
-	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: bundle.ComputerImageMediaType}
-	server := &Server{deploymentVerifierSlots: make(chan struct{}, 1)}
-	for _, kind := range []string{"valid", "digest", "size", "truncated", "trailing"} {
-		t.Run(kind, func(t *testing.T) {
-			data := bytes.Clone(body)
-			object := descriptor
-			switch kind {
-			case "digest":
-				object.Digest = "sha256:" + strings.Repeat("a", 64)
-			case "size":
-				object.SizeBytes++
-			case "truncated":
-				data = data[:len(data)-1]
-			case "trailing":
-				data = append(data, 0)
-			}
-			store := &deploymentFinalizeObjectStore{descriptor: object, body: data}
-			err := server.verifyFinalizedDeploymentObject(t.Context(), store, bundle.Manifest{}, object)
-			if kind == "valid" {
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else if err == nil {
-				t.Fatal("invalid disk accepted")
-			}
-		})
-	}
-}
-
-func TestVerifyFinalizedDeploymentDiskCancellationIsNotInvalid(t *testing.T) {
-	body := deploymentFinalizeDiskFixture(t)
-	descriptor := cas.Descriptor{Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(body)), SizeBytes: int64(len(body)), MediaType: bundle.ComputerImageMediaType}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	store := cancellingDeploymentStore{body: body, cancel: cancel}
-	err := (&Server{}).verifyFinalizedDeploymentObject(ctx, store, bundle.Manifest{}, descriptor)
-	if got := publicDeploymentFinalizeError(err).Code; got != "deployment_finalization_unavailable" {
-		t.Fatalf("public error code = %s", got)
-	}
-	var invalid invalidDeploymentObjectError
-	if !errors.Is(err, context.Canceled) || errors.As(err, &invalid) {
-		t.Fatalf("cancellation misclassified: %v", err)
-	}
-}
-
-type cancellingDeploymentStore struct {
-	cas.Reader
-	body   []byte
-	cancel context.CancelFunc
-}
-
-func (s cancellingDeploymentStore) Get(context.Context, string) (io.ReadCloser, error) {
-	return cancellingDeploymentReader{Reader: bytes.NewReader(s.body), cancel: s.cancel}, nil
-}
-
-type cancellingDeploymentReader struct {
-	io.Reader
-	cancel context.CancelFunc
-}
-
-func (r cancellingDeploymentReader) Read(p []byte) (int, error) {
-	n, err := r.Reader.Read(p)
-	r.cancel()
-	return n, err
-}
-func (r cancellingDeploymentReader) Close() error { return nil }

@@ -41,7 +41,7 @@ func authorizeComputerSecretTarget(ctx context.Context, q db.Querier, sourceID, 
 }
 
 func authorizeComputerSecretCreate(ctx context.Context, q db.Querier, sourceID, environmentID pgtype.UUID, requested []secretbinding.Binding) error {
-	placements, err := normalizeComputerSecretPlacements(requested)
+	placements, err := secretbinding.NormalizedPlacements(requested)
 	if err != nil {
 		return err
 	}

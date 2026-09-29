@@ -87,6 +87,7 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/bootstrap \
 	./internal/db \
 	./internal/db/schema \
+	./internal/deployment \
 	./internal/eventstream \
 	./internal/dispatch \
 	./internal/idempotency \

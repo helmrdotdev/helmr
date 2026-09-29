@@ -23,6 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -89,9 +90,7 @@ type Server struct {
 	magicLinkDelivery     *MagicLinkDelivery
 	magicLinkDebugURLs    bool
 	identity              identity.Config
-
-	deploymentFinalizePingEvery time.Duration
-	deploymentVerifierSlots     chan struct{}
+	deploymentFinalizer   *deployment.Finalizer
 }
 
 const (
@@ -262,9 +261,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 			DeviceCode:         cfg.DeviceCodeTTL,
 			DevicePollInterval: cfg.DevicePollEvery,
 		}, cfg.AdminEmails),
-
-		deploymentFinalizePingEvery: 10 * time.Second,
-		deploymentVerifierSlots:     make(chan struct{}, 1),
+		deploymentFinalizer: deployment.NewFinalizer(cfg.CAS, cfg.PlatformStore, cfg.BundleAdmission, log),
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)

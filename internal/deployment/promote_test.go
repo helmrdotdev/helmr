@@ -1,4 +1,4 @@
-package controlplane
+package deployment
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -82,8 +81,8 @@ func TestReconcileSchedulesRejectsMissingSandboxBeforeMutation(t *testing.T) {
 	if err == nil || len(store.reconciled) != 0 || len(store.archived) != 0 {
 		t.Fatalf("reconcile error = %v, reconciled = %d, archived = %d", err, len(store.reconciled), len(store.archived))
 	}
-	var statusError apiError
-	if !errors.As(err, &statusError) || statusError.kind != errBadRequest {
+	var input InputError
+	if !errors.As(err, &input) {
 		t.Fatalf("error = %v, want bad request", err)
 	}
 }
@@ -105,8 +104,8 @@ func TestReconcileSchedulesRejectsDuplicateTasksBeforeMutation(t *testing.T) {
 	if err == nil || len(store.events) != 0 {
 		t.Fatalf("reconcile error = %v, mutation events = %v", err, store.events)
 	}
-	var statusError apiError
-	if !errors.As(err, &statusError) || statusError.kind != errBadRequest {
+	var input InputError
+	if !errors.As(err, &input) {
 		t.Fatalf("error = %v, want bad request", err)
 	}
 }
@@ -146,38 +145,6 @@ func TestReconcileSchedulesLocksSecretsBeforeMutation(t *testing.T) {
 	}
 	if len(store.lockedNames) != 2 || store.lockedNames[0] != "A_TOKEN" || store.lockedNames[1] != "Z_TOKEN" {
 		t.Fatalf("Secret lookup names = %v, want canonical complete set", store.lockedNames)
-	}
-}
-
-func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
-	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
-	scheduleID := uuid.NewV7()
-	row := db.Schedule{
-		ID:                   pgvalue.UUID(scheduleID),
-		TaskDeclaredID:       "daily-report",
-		CronPattern:          "0 9 * * *",
-		Timezone:             "UTC",
-		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
-		Generation:           4,
-		Status:               "errored",
-		EffectiveFrom:        pgvalue.Timestamptz(now),
-		NextFireAt:           pgvalue.Timestamptz(now.Add(time.Hour)),
-		LastFailure:          []byte(`{"code":"future_schedule_failure","message":"diagnosis","details":{"custom":1}}`),
-		CreatedAt:            pgvalue.Timestamptz(now.Add(-time.Hour)),
-		UpdatedAt:            pgvalue.Timestamptz(now),
-	}
-	response, err := scheduleResponse(row)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if response.ID != scheduleID.String() ||
-		response.TaskID != row.TaskDeclaredID ||
-		response.Status != api.ScheduleStatusErrored ||
-		response.LastFailure == nil ||
-		response.LastFailure.Code != "future_schedule_failure" ||
-		response.LastFailure.Message != "diagnosis" ||
-		string(response.LastFailure.Details) != `{"custom":1}` {
-		t.Fatalf("response = %+v", response)
 	}
 }
 
@@ -326,7 +293,7 @@ func TestScheduleAndDirectComputerOriginCapacity(t *testing.T) {
 				if extra {
 					bindings = append(bindings, secretbinding.Binding{Name: "token", Env: &secretbinding.Env{Name: "EXTRA", Mode: "protected", AllowedOrigins: []string{"https://extra.example.com"}}})
 				}
-				_, directErr := normalizeComputerSecretPlacements(bindings)
+				_, directErr := secretbinding.NormalizedPlacements(bindings)
 				_, scheduleErr := prepareScheduleReconciliation(db.DeploymentDefinition{}, definition.ScheduleManifest{Cron: "0 * * * *", Timezone: "UTC", Computer: definition.ScheduleComputerManifest{SandboxDeclaredID: "box", Secrets: bindings}}, map[string]struct{}{"box": {}}, time.Now())
 				wantErr := extra && variant != "dedup"
 				if (directErr != nil) != wantErr || (scheduleErr != nil) != wantErr {

@@ -4,6 +4,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestScheduleListCursorRoundTripAndScope(t *testing.T) {
@@ -69,5 +75,37 @@ func TestScheduleListQueryAcceptsExactTaskLookup(t *testing.T) {
 	}
 	if limit != 1 || cursor != nil || taskID == nil || *taskID != "scheduled-maintenance" {
 		t.Fatalf("limit=%d cursor=%+v taskID=%v", limit, cursor, taskID)
+	}
+}
+
+func TestScheduleResponseProjectsTimedDeclaration(t *testing.T) {
+	now := time.Date(2026, 7, 24, 3, 0, 0, 0, time.UTC)
+	scheduleID := uuid.NewV7()
+	row := db.Schedule{
+		ID:                   pgvalue.UUID(scheduleID),
+		TaskDeclaredID:       "daily-report",
+		CronPattern:          "0 9 * * *",
+		Timezone:             "UTC",
+		CronSemanticsVersion: "robfig-cron-v3.0.1/standard-5-field",
+		Generation:           4,
+		Status:               "errored",
+		EffectiveFrom:        pgvalue.Timestamptz(now),
+		NextFireAt:           pgvalue.Timestamptz(now.Add(time.Hour)),
+		LastFailure:          []byte(`{"code":"future_schedule_failure","message":"diagnosis","details":{"custom":1}}`),
+		CreatedAt:            pgvalue.Timestamptz(now.Add(-time.Hour)),
+		UpdatedAt:            pgvalue.Timestamptz(now),
+	}
+	response, err := scheduleResponse(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != scheduleID.String() ||
+		response.TaskID != row.TaskDeclaredID ||
+		response.Status != api.ScheduleStatusErrored ||
+		response.LastFailure == nil ||
+		response.LastFailure.Code != "future_schedule_failure" ||
+		response.LastFailure.Message != "diagnosis" ||
+		string(response.LastFailure.Details) != `{"custom":1}` {
+		t.Fatalf("response = %+v", response)
 	}
 }

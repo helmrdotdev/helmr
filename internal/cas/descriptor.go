@@ -32,6 +32,15 @@ func ValidateDescriptor(expected Descriptor) error {
 	return nil
 }
 
+// RequireExact reports an error unless the stored object has exactly the
+// described digest, size and media type.
+func RequireExact(object Object, expected Descriptor) error {
+	if object.Digest != expected.Digest || object.SizeBytes != expected.SizeBytes || object.MediaType != expected.MediaType {
+		return errors.New("CAS object does not match its descriptor")
+	}
+	return nil
+}
+
 func VerifyDescriptorFile(ctx context.Context, expected Descriptor, file *os.File) error {
 	reader := io.NewSectionReader(file, 0, expected.SizeBytes+1)
 	digest := sha256.New()

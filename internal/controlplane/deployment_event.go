@@ -10,16 +10,10 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	"github.com/jackc/pgx/v5/pgtype"
 )
-
-type deploymentEventAppender interface {
-	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
-}
 
 func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	deploymentID, err := parseUUIDParam(r, "deploymentID")
@@ -43,29 +37,9 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) && !actor.HasPermission(auth.PermissionRunsRead, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	projectID, environmentID, err := runScopeIDs(scope)
+	record, err := deployment.Get(r.Context(), s.db, actor, scope, deploymentID)
 	if err != nil {
-		writeError(w, errors.New("get deployment events"))
-		return
-	}
-	deployment, err := s.db.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
-		OrgID: pgvalue.UUID(actor.OrgID),
-		ID:    pgvalue.UUID(deploymentID),
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("deployment not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("get deployment"))
-		return
-	}
-	if deployment.ProjectID != projectID || deployment.EnvironmentID != environmentID {
-		writeError(w, notFound(errors.New("deployment not found")))
+		s.writeDeploymentError(w, err)
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
@@ -75,7 +49,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:       actor.OrgID,
 		SubjectType: eventSubjectTypeDeployment,
-		SubjectID:   pgvalue.MustUUIDValue(deployment.ID),
+		SubjectID:   pgvalue.MustUUIDValue(record.ID),
 		AfterSeq:    cursor,
 		Limit:       limit + 1,
 	})
@@ -142,28 +116,4 @@ func deploymentEventKindIsTerminal(kind string) bool {
 	default:
 		return false
 	}
-}
-
-func appendDeploymentLifecycleEvent(ctx context.Context, store deploymentEventAppender, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, kind string, severity string, source string, status string, message string) error {
-	payload, err := json.Marshal(map[string]string{"status": status})
-	if err != nil {
-		return err
-	}
-	if err := telemetry.ValidateEvent(message, payload); err != nil {
-		return err
-	}
-	_, err = store.AppendDeploymentEvent(ctx, db.AppendDeploymentEventParams{
-		OrgID:          orgID,
-		ProjectID:      projectID,
-		EnvironmentID:  environmentID,
-		DeploymentID:   deploymentID,
-		Category:       "lifecycle",
-		Severity:       severity,
-		Source:         source,
-		Kind:           kind,
-		Message:        message,
-		Payload:        payload,
-		RedactionClass: "internal",
-	})
-	return err
 }
