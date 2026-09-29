@@ -920,6 +920,9 @@ func TestComputerMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFai
 	if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 		t.Fatalf("capacity reservations = %d, want 1 until cleanup is proven", got)
 	}
+	if pool.runtimeCheckedOut(computerMount.ComputerInstanceID, computerMount.RuntimeEpoch) {
+		t.Fatal("close failure must hand checkout to reconciliation")
+	}
 }
 
 func TestComputerMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testing.T) {

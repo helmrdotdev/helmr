@@ -1232,7 +1232,8 @@ func (c *runtimeCheckout) Machine() vm.Machine {
 // a release step fails: the remaining resources stay recorded against the
 // runtime, and ending the claim is what lets runtime reconciliation clean them
 // up, since StopRuntimeTarget skips runtimes that are still checked out.
-// Releasing a claim that has already ended returns nil.
+// Releasing a claim that has already ended returns nil. A nil checkout holds
+// nothing, so releasing it returns nil; this serves a mount without a pool.
 func (c *runtimeCheckout) Release() error {
 	if c == nil {
 		return nil
@@ -1242,7 +1243,8 @@ func (c *runtimeCheckout) Release() error {
 
 // Relinquish ends the claim without releasing anything, for a runtime whose
 // machine could not be closed. Capacity and device ownership stay reserved until
-// runtime reconciliation proves physical cleanup.
+// runtime reconciliation proves physical cleanup. A nil checkout holds nothing,
+// so relinquishing it does nothing.
 func (c *runtimeCheckout) Relinquish() {
 	if c == nil {
 		return

@@ -73,6 +73,29 @@ func (d *countingCloseComputerDevice) closeCount() int {
 	return d.closes
 }
 
+// reportOrderRuntimeClient runs beforeReport ahead of recording each runtime
+// state report, so a test can observe local cleanup at report time.
+type reportOrderRuntimeClient struct {
+	typedRuntimeClient
+	beforeReport func()
+}
+
+func (c *reportOrderRuntimeClient) MarkComputerInstanceClosed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	c.beforeReport()
+	return c.typedRuntimeClient.MarkComputerInstanceClosed(ctx, request)
+}
+
+func (c *reportOrderRuntimeClient) MarkComputerInstanceFailed(ctx context.Context, request workerapi.ComputerInstanceStateRequest) (workerapi.ComputerInstance, error) {
+	c.beforeReport()
+	return c.typedRuntimeClient.MarkComputerInstanceFailed(ctx, request)
+}
+
+func computerDeviceTracked(pool *PreparedRuntimePool, ref preparedRuntimeRef) bool {
+	pool.mu.Lock()
+	defer pool.mu.Unlock()
+	return pool.computerDevices[ref] != nil
+}
+
 func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T) {
 	for _, retry := range []string{"stop", "reclaim"} {
 		t.Run(retry, func(t *testing.T) {
@@ -136,11 +159,18 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			if got := len(pool.Reservations.Snapshot().Reservations); got != 1 {
 				t.Fatalf("reservations after failed close = %d, want 1", got)
 			}
-			if pool.computerDevices[ref] == nil || device.closeCount() != 0 {
+			if !computerDeviceTracked(pool, ref) || device.closeCount() != 0 {
 				t.Fatal("failed close must retain the Computer device")
 			}
 
-			control := &typedRuntimeClient{}
+			reports := 0
+			control := &reportOrderRuntimeClient{beforeReport: func() {
+				reports++
+				if got := len(pool.Reservations.Snapshot().Reservations); got != 0 || computerDeviceTracked(pool, ref) || device.closeCount() != 1 {
+					t.Errorf("report before local release: reservations=%d device tracked=%t device closes=%d",
+						got, computerDeviceTracked(pool, ref), device.closeCount())
+				}
+			}}
 			switch retry {
 			case "stop":
 				if err := pool.StopRuntimeTarget(t.Context(), control, target); err != nil {
@@ -159,6 +189,9 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 					t.Fatalf("failed = %+v, want host reconciled proof", control.failed)
 				}
 			}
+			if reports != 1 {
+				t.Fatalf("reports = %d, want 1", reports)
+			}
 			if len(backend.cleaned) != 1 || backend.cleaned[0] != ref.id {
 				t.Fatalf("backend cleanups = %v, want exactly one", backend.cleaned)
 			}
@@ -168,17 +201,16 @@ func TestFailedCheckoutCloseDefersToOwnerThenReconcileCleansUpOnce(t *testing.T)
 			if got := len(pool.Reservations.Snapshot().Reservations); got != 0 {
 				t.Fatalf("reservations after reconcile = %d, want 0", got)
 			}
-			pool.mu.Lock()
-			_, deviceTracked := pool.computerDevices[ref]
-			pool.mu.Unlock()
-			if deviceTracked {
+			if computerDeviceTracked(pool, ref) {
 				t.Fatal("reconcile did not release the Computer device")
 			}
 		})
 	}
 }
 
-func TestReleaseCheckoutRelinquishesWhenCapacityReleaseFails(t *testing.T) {
+// The injected failure is the Computer device cleanup that Release performs
+// before returning reservations; the checkout must still be handed back.
+func TestReleaseCheckoutRelinquishesWhenDeviceCleanupFails(t *testing.T) {
 	_, mount := testComputerMountArtifacts(t)
 	mount.ComputerID = "computer"
 	pool := computerPreparedRuntimePool(t, mount, &closeTrackingRuntimeSession{})
@@ -196,8 +228,8 @@ func TestReleaseCheckoutRelinquishesWhenCapacityReleaseFails(t *testing.T) {
 	if pool.runtimeCheckedOut(ref.id, ref.epoch) {
 		t.Fatal("release must relinquish the checkout even when capacity release fails")
 	}
-	if got := len(pool.Reservations.Snapshot().Reservations); got != 1 || pool.computerDevices[ref] == nil {
-		t.Fatalf("reservations = %d, device retained = %t; want leftovers retained for reconcile", got, pool.computerDevices[ref] != nil)
+	if got := len(pool.Reservations.Snapshot().Reservations); got != 1 || !computerDeviceTracked(pool, ref) {
+		t.Fatalf("reservations = %d, device retained = %t; want leftovers retained for reconcile", got, computerDeviceTracked(pool, ref))
 	}
 	if err := checkout.Release(); err != nil {
 		t.Fatalf("repeated release = %v, want nil", err)
@@ -211,7 +243,12 @@ func TestReleaseCheckoutRelinquishesWhenCapacityReleaseFails(t *testing.T) {
 	device.mu.Unlock()
 	backend := &cleanupRuntimeBackend{}
 	pool.Backend = backend
-	control := &typedRuntimeClient{}
+	control := &reportOrderRuntimeClient{beforeReport: func() {
+		if got := len(pool.Reservations.Snapshot().Reservations); got != 0 || computerDeviceTracked(pool, ref) || device.closeCount() != 2 {
+			t.Errorf("report before local release: reservations=%d device tracked=%t device closes=%d",
+				got, computerDeviceTracked(pool, ref), device.closeCount())
+		}
+	}}
 	if err := pool.StopRuntimeTarget(t.Context(), control, runtimeReservationTarget(ref.id, ref.epoch)); err != nil {
 		t.Fatal(err)
 	}
