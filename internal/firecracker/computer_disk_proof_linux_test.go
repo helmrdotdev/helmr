@@ -8,8 +8,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"io"
 	"os"
 	"os/exec"
@@ -106,7 +106,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := computer.CaptureInitialGeneration(t.Context(), computer.GenerationCapture{Disk: file, Capacity: logicalSize, StagingParent: root, Scope: "filesystem-proof", KeyID: keyID, Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
+	candidate, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: file, Capacity: logicalSize, StagingParent: root, Scope: "filesystem-proof", KeyID: keyID, Key: key, Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
 	file.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -116,7 +116,7 @@ func TestComputerDiskProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	generation, err := computer.NewGenerationRoot(locator, logicalSize)
+	generation, err := disk.NewGenerationRoot(locator, logicalSize)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestComputerDiskProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	start = time.Now()
-	tree, err := computer.OpenGeneration(t.Context(), storage, "filesystem-proof", map[string][]byte{keyID: key}, generation, logicalSize)
+	tree, err := disk.OpenGeneration(t.Context(), storage, "filesystem-proof", map[string][]byte{keyID: key}, generation, logicalSize)
 	if err != nil {
 		t.Fatal(err)
 	}

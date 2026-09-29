@@ -18,7 +18,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/bundle"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -83,7 +83,7 @@ func testComputerMountArtifacts(t *testing.T) (*fakeCAS, workerapi.ComputerInsta
 	if err != nil {
 		t.Fatal(err)
 	}
-	computerArtifact, cleanup, err := computer.CreateEmptyComputerArtifact(t.TempDir())
+	computerArtifact, cleanup, err := disk.CreateEmptyComputerArtifact(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

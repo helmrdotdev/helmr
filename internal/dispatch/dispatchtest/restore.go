@@ -3,10 +3,10 @@ package dispatchtest
 import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
@@ -43,7 +43,7 @@ func RestoreReadyCapture(t *testing.T, f runtest.Fixture, worker dispatch.Comput
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func PrepareCapture(t *testing.T, f runtest.Fixture, worker dispatch.ComputerCap
 		t.Fatalf("certify root n=%d err=%v", n, err)
 	}
 	id := uuid.MustParse(r.CheckpointID)
-	key := computer.PublicationKey("checkpoint", id, id)
+	key := disk.PublicationKey("checkpoint", id, id)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_pins(computer_instance_id,digest,environment_id,computer_id,instance_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)`, r.ComputerInstanceID, root.Pack.Digest, f.EnvironmentID, r.Manifest.RecoveryPoint.ComputerID, r.DesiredVersion, key)
 	artifacts := []workerapi.CheckpointArtifact{r.Manifest.RuntimeState.ConfigArtifact, r.Manifest.RuntimeState.VMStateArtifact, r.Manifest.RuntimeState.MemoryArtifacts[0], r.Manifest.RuntimeState.ScratchDiskArtifact}
 	var uploaded []cas.Object
@@ -157,7 +157,7 @@ func CaptureRequest(t *testing.T, f runtest.Fixture, cp db.ComputerCheckpoint) (
 	artifact := func(name, media string) workerapi.CheckpointArtifact {
 		return workerapi.CheckpointArtifact{Digest: dbtest.Digest(name), SizeBytes: 128, MediaType: media}
 	}
-	root := computer.GenerationRoot{FormatVersion: 1, LogicalBytes: instance.ReservedGuestEphemeralDiskBytes, Offset: 128, Pack: computer.GenerationPack{Digest: dbtest.Digest("pack"), SizeBytes: 512, Rank: 2}, Page: computer.GenerationPage{Digest: dbtest.Digest("page"), Salt: strings.Repeat("aa", 32), KeyID: uuid.NewV7().String(), Kind: 3, Count: 1, SizeBytes: 64}}
+	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: instance.ReservedGuestEphemeralDiskBytes, Offset: 128, Pack: disk.GenerationPack{Digest: dbtest.Digest("pack"), SizeBytes: 512, Rank: 2}, Page: disk.GenerationPage{Digest: dbtest.Digest("page"), Salt: strings.Repeat("aa", 32), KeyID: uuid.NewV7().String(), Kind: 3, Count: 1, SizeBytes: 64}}
 	manifest := workerapi.CheckpointManifest{RecoveryPoint: point, RuntimeState: workerapi.CheckpointRuntimeState{Computer: &workerapi.CheckpointComputer{ComputerID: point.ComputerID, LogicalBytes: root.LogicalBytes, Root: root}, ConfigArtifact: artifact("config-object", cas.CheckpointVMConfigMediaType), VMStateArtifact: artifact("state-object", cas.CheckpointVMStateMediaType), ScratchDiskArtifact: artifact("scratch-object", cas.CheckpointScratchDiskMediaType), MemoryArtifacts: []workerapi.CheckpointArtifact{artifact("memory-object", cas.CheckpointMemoryMediaType)}, Config: json.RawMessage(`{"runtime":{}}`)}, ComputerState: workerapi.CheckpointComputerState{Base: workerapi.CheckpointComputerBase{MountPath: "/workspace"}}}
 	return dispatch.ComputerCaptureWorker{GroupID: instance.WorkerGroupID, HostID: instance.WorkerHostID, Epoch: instance.WorkerEpoch}, workerapi.RegisterCheckpointRequest{ComputerInstanceID: pgvalue.UUIDString(instance.ID), WorkerEpoch: instance.WorkerEpoch, DesiredVersion: instance.DesiredVersion, CheckpointID: pgvalue.UUIDString(cp.ID), Manifest: manifest}
 }

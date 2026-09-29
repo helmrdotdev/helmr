@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func requireRuntimeComputerRoot(ctx context.Context, q db.Querier, runtime db.ComputerInstance, environmentID, computerID pgtype.UUID, publicationKey []byte, root computer.GenerationRoot) error {
+func requireRuntimeComputerRoot(ctx context.Context, q db.Querier, runtime db.ComputerInstance, environmentID, computerID pgtype.UUID, publicationKey []byte, root disk.GenerationRoot) error {
 	locator, err := root.Locator(runtime.ReservedGuestEphemeralDiskBytes)
 	if err != nil {
 		return err

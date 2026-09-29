@@ -3,7 +3,7 @@ package dbtest
 import (
 	"context"
 	"encoding/json"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/jackc/pgx/v5/pgconn"
 	"strings"
 	"testing"
@@ -18,9 +18,9 @@ func InsertComputerGeneration(t *testing.T, ctx context.Context, tx interface {
 	t.Helper()
 	key := uuid.NewV7().String()
 	digest := Digest(key)
-	root := computer.GenerationRoot{FormatVersion: 1, LogicalBytes: computer.SeedCapacity, Offset: 128,
-		Pack: computer.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
-		Page: computer.GenerationPage{Digest: Digest(key + "page"), Salt: strings.Repeat("aa", 32), KeyID: key, Kind: 3, Count: 1, SizeBytes: 64}}
+	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: disk.SeedCapacity, Offset: 128,
+		Pack: disk.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
+		Page: disk.GenerationPage{Digest: Digest(key + "page"), Salt: strings.Repeat("aa", 32), KeyID: key, Kind: 3, Count: 1, SizeBytes: 64}}
 	locator, err := json.Marshal(root)
 	if err != nil {
 		t.Fatal(err)

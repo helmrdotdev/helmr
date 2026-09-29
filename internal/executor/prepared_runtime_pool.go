@@ -19,9 +19,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
@@ -1597,7 +1597,7 @@ func runtimeTargetStatusRequest(target workerapi.RuntimeReconcileTarget, failure
 	if failure != nil {
 		request.ReasonCode = workerapi.RuntimeFailureReconcile
 		message := failure.Error()
-		var sourceFailure *computer.SourceFailure
+		var sourceFailure *disk.SourceFailure
 		if errors.As(failure, &sourceFailure) {
 			request.ReasonCode = workerapi.RuntimeFailureComputerSource
 		}

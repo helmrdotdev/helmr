@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )

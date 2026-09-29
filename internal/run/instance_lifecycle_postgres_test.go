@@ -6,9 +6,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -302,7 +302,7 @@ func TestExhaustedRestoreInvalidatesCheckpointAndFailsParkedRun(t *testing.T) {
  FROM run_leases l WHERE l.id=$1 AND c.id=l.computer_id`, lease)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,admission_state='closed'
  WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, lease)
-			key, err := computer.NewFencingKey(make([]byte, 32))
+			key, err := disk.NewFencingKey(make([]byte, 32))
 			if err != nil {
 				t.Fatal(err)
 			}

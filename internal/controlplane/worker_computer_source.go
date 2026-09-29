@@ -8,9 +8,9 @@ import (
 	"io"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -23,7 +23,7 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 	if (row.SourceDiskVersionID.Valid && row.SourceDiskVersionID != row.PreparationDiskVersionID) || (row.SourceCheckpointID.Valid && !row.SourceDiskVersionID.Valid) {
 		return source, errors.New("computer instance source does not match its retained disk")
 	}
-	if row.ComputerArchitecture != string(definition.ArchitectureX8664) || row.ReservedGuestEphemeralDiskBytes != computer.SeedCapacity {
+	if row.ComputerArchitecture != string(definition.ArchitectureX8664) || row.ReservedGuestEphemeralDiskBytes != disk.SeedCapacity {
 		return source, errors.New("computer instance has an unsupported computer capacity or architecture")
 	}
 	source.VersionID = pgvalue.UUIDString(row.PreparationDiskVersionID)
@@ -47,7 +47,7 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 		if err := json.Unmarshal(spec.Config, &config); err != nil {
 			return source, err
 		}
-		if err := (computer.SeedArtifact{Object: object, LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes); err != nil {
+		if err := (disk.SeedArtifact{Object: object, LogicalBytes: source.LogicalBytes}).Validate(source.LogicalBytes); err != nil {
 			return source, fmt.Errorf("project computer seed: %w", err)
 		}
 		source.Config = config.Image
@@ -55,7 +55,7 @@ func projectRuntimeComputerSource(row db.ListComputerInstanceReconcileTargetsRow
 			Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType,
 		}}
 	case "committed", "private":
-		root, err := computer.ParseGenerationRoot(row.ComputerGenerationLocator, source.LogicalBytes)
+		root, err := disk.ParseGenerationRoot(row.ComputerGenerationLocator, source.LogicalBytes)
 		if err != nil {
 			return source, fmt.Errorf("project computer generation: %w", err)
 		}

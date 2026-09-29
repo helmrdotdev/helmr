@@ -2,13 +2,13 @@ package compute
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 )
 
 var ErrNoCapacity = errors.New("no compute capacity available")
 
 const (
-	ComputerGuestEphemeralDiskMiB = computer.SeedCapacity >> 20
+	ComputerGuestEphemeralDiskMiB = disk.SeedCapacity >> 20
 )
 
 type ResourceVector struct {

@@ -8,9 +8,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -20,10 +20,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, workerActor, workerapi.ComputerRestorePlanRequest, computer.FencingKey) {
+func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, workerActor, workerapi.ComputerRestorePlanRequest, disk.FencingKey) {
 	t.Helper()
 	f, authority, fence := dispatchtest.Restore(t, idle, setup...)
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtes
 	if err != nil {
 		t.Fatal(err)
 	}
-	capability, err := key.Derive(computer.FenceInput{InstanceID: uuid.MustParse(pgvalue.UUIDString(i.ID)), ComputerID: uuid.MustParse(pgvalue.UUIDString(i.ComputerID)), WriterGeneration: i.WriterGeneration})
+	capability, err := key.Derive(disk.FenceInput{InstanceID: uuid.MustParse(pgvalue.UUIDString(i.ID)), ComputerID: uuid.MustParse(pgvalue.UUIDString(i.ComputerID)), WriterGeneration: i.WriterGeneration})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func restorePlanFixture(t *testing.T, idle, committed bool, setup ...func(runtes
 	return f, w, workerapi.ComputerRestorePlanRequest{EnvironmentID: f.EnvironmentID.String(), ComputerInstanceID: pgvalue.UUIDString(i.ID), WriterGeneration: i.WriterGeneration}, key
 }
 
-func readRestorePlan(t *testing.T, f runtest.Fixture, w workerActor, r workerapi.ComputerRestorePlanRequest, k computer.FencingKey) (*workerapi.ComputerRestorePlan, error) {
+func readRestorePlan(t *testing.T, f runtest.Fixture, w workerActor, r workerapi.ComputerRestorePlanRequest, k disk.FencingKey) (*workerapi.ComputerRestorePlan, error) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {

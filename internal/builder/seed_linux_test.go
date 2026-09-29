@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 )
 
 func TestBuildCapacitySizedSeed(t *testing.T) {
@@ -34,7 +34,7 @@ func TestBuildCapacitySizedSeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	const capacity = int64(128 << 20)
-	var first computer.SeedArtifact
+	var first disk.SeedArtifact
 	for iteration := range 2 {
 		target := filepath.Join(t.TempDir(), "disk.filepack")
 		seed, err := buildSeed(t.Context(), image, target, dir, mkfs, config, capacity)
@@ -48,7 +48,7 @@ func TestBuildCapacitySizedSeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = computer.VerifySeed(t.Context(), input, seed.Artifact, capacity)
+		err = disk.VerifySeed(t.Context(), input, seed.Artifact, capacity)
 		input.Close()
 		if err != nil {
 			t.Fatal(err)

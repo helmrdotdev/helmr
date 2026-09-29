@@ -7,9 +7,9 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -19,7 +19,7 @@ func commandPlacementFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, *
 	t.Helper()
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

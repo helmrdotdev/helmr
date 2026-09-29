@@ -1,7 +1,7 @@
 package controlplane
 
 import (
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -11,5 +11,5 @@ import (
 // kinds or Run leases. This key binds retention to the authoritative owner and
 // operation without changing transport IDs or introducing another receipt table.
 func computerPublicationKey(kind string, owner, operation pgtype.UUID) []byte {
-	return computer.PublicationKey(kind, pgvalue.MustUUIDValue(owner), pgvalue.MustUUIDValue(operation))
+	return disk.PublicationKey(kind, pgvalue.MustUUIDValue(owner), pgvalue.MustUUIDValue(operation))
 }

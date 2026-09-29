@@ -14,8 +14,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 )
 
 // TestManagedNodeAgenticWork runs representative tool work on a writable Computer
@@ -44,16 +44,16 @@ func TestManagedNodeAgenticWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	directory := t.TempDir()
-	disk := filepath.Join(directory, "computer.ext4")
-	artifact := computer.SeedArtifact{Object: cas.Descriptor{Digest: seed.Digest, SizeBytes: seed.SizeBytes, MediaType: seed.MediaType}, LogicalBytes: computer.SeedCapacity}
-	if err := (computer.SeedStore{CAS: objects}).Decode(t.Context(), artifact, disk, computer.SeedCapacity); err != nil {
+	diskPath := filepath.Join(directory, "computer.ext4")
+	artifact := disk.SeedArtifact{Object: cas.Descriptor{Digest: seed.Digest, SizeBytes: seed.SizeBytes, MediaType: seed.MediaType}, LogicalBytes: disk.SeedCapacity}
+	if err := (disk.SeedStore{CAS: objects}).Decode(t.Context(), artifact, diskPath, disk.SeedCapacity); err != nil {
 		t.Fatal(err)
 	}
 	imageRoot := filepath.Join(directory, "root")
 	if err := os.Mkdir(imageRoot, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.CommandContext(t.Context(), "mount", "-t", "ext4", "-o", "loop", disk, imageRoot).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(t.Context(), "mount", "-t", "ext4", "-o", "loop", diskPath, imageRoot).CombinedOutput(); err != nil {
 		t.Fatalf("mount Computer: %v: %s", err, out)
 	}
 	t.Cleanup(func() {

@@ -8,9 +8,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -19,8 +19,8 @@ import (
 )
 
 type initialComputerPublication struct {
-	Root   computer.GenerationRoot `json:"root"`
-	Config oci.RuntimeConfig       `json:"config"`
+	Root   disk.GenerationRoot `json:"root"`
+	Config oci.RuntimeConfig   `json:"config"`
 }
 
 type computerPublicationResult struct {

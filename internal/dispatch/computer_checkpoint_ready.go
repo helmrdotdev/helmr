@@ -5,12 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"sort"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -59,12 +59,12 @@ func CompleteComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 			return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 		}
 	}
-	disk := candidate.RuntimeState.Computer
-	locator, err := disk.Root.Locator(instance.ReservedGuestEphemeralDiskBytes)
+	runtimeComputer := candidate.RuntimeState.Computer
+	locator, err := runtimeComputer.Root.Locator(instance.ReservedGuestEphemeralDiskBytes)
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	root, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, Digest: disk.Root.Pack.Digest})
+	root, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: instance.EnvironmentID, ComputerID: instance.ComputerID, Digest: runtimeComputer.Root.Pack.Digest})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
@@ -72,18 +72,18 @@ func CompleteComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 	if !root.Certified.Bool || json.Unmarshal(root.Inspection, &inspection) != nil || inspection.Pack == nil {
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
-	if err = inspection.Pack.CheckRoot(locator, disk.LogicalBytes); err != nil {
+	if err = inspection.Pack.CheckRoot(locator, runtimeComputer.LogicalBytes); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	publicationKey := computer.PublicationKey("checkpoint", pgvalue.MustUUIDValue(cp.ID), pgvalue.MustUUIDValue(cp.ID))
+	publicationKey := disk.PublicationKey("checkpoint", pgvalue.MustUUIDValue(cp.ID), pgvalue.MustUUIDValue(cp.ID))
 	if _, err = q.RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: instance.ID, PublicationKey: publicationKey, InstanceDesiredVersion: request.DesiredVersion, Digest: root.Digest}); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	version, err := q.CreatePrivateCheckpointComputerDiskVersion(ctx, db.CreatePrivateCheckpointComputerDiskVersionParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: instance.EnvironmentID, CheckpointID: cp.ID, RootPackDigest: pgvalue.Text(disk.Root.Pack.Digest), LogicalBytes: disk.LogicalBytes})
+	version, err := q.CreatePrivateCheckpointComputerDiskVersion(ctx, db.CreatePrivateCheckpointComputerDiskVersionParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: instance.EnvironmentID, CheckpointID: cp.ID, RootPackDigest: pgvalue.Text(runtimeComputer.Root.Pack.Digest), LogicalBytes: runtimeComputer.LogicalBytes})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	rootJSON, err := json.Marshal(disk.Root)
+	rootJSON, err := json.Marshal(runtimeComputer.Root)
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}

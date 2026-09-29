@@ -9,8 +9,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -29,7 +29,7 @@ type ComputerSaveClient interface {
 }
 
 type computerSaveCapture interface {
-	computer.CapturedGeneration
+	disk.CapturedGeneration
 	Adopt(context.Context, int) error
 	Collect(context.Context, int) (int64, error)
 }

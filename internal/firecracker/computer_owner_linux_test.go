@@ -5,7 +5,7 @@ package firecracker
 import (
 	"context"
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"os"
 	"path/filepath"
 	"sync"
@@ -188,7 +188,7 @@ func TestComputerCleanupWaitsForStartupBeforeDeviceBinding(t *testing.T) {
 	}
 }
 
-func (d *ownedComputerFixture) Capture(context.Context) (computer.CapturedGeneration, error) {
+func (d *ownedComputerFixture) Capture(context.Context) (disk.CapturedGeneration, error) {
 	d.captures++
 	return &ownedCaptureFixture{owner: d}, nil
 }
@@ -198,8 +198,8 @@ type ownedCaptureFixture struct {
 	released bool
 }
 
-func (*ownedCaptureFixture) Root() computer.GenerationRoot { return computer.GenerationRoot{} }
-func (*ownedCaptureFixture) Publish(context.Context, computer.ContinuationPublication) error {
+func (*ownedCaptureFixture) Root() disk.GenerationRoot { return disk.GenerationRoot{} }
+func (*ownedCaptureFixture) Publish(context.Context, disk.ContinuationPublication) error {
 	return errors.New("unexpected publication")
 }
 func (c *ownedCaptureFixture) Release() {

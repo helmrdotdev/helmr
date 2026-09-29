@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/oci"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
@@ -40,7 +40,7 @@ func generationPublicationFixture(t *testing.T) (initialPublicationFixture, comp
 	if err = recordInitialComputerObject(t.Context(), f.Pool, fence, evidence, nil); err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, f.logicalBytes)
+	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
 	if err != nil {
 		t.Fatal(err)
 	}

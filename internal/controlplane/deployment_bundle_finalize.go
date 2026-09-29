@@ -21,9 +21,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -555,7 +555,7 @@ func (s *Server) verifyFinalizedDeploymentObject(
 	case artifact.ProgramArtifactMediaType:
 		err = verifyStoredProgram(ctx, recorded, manifest.Program)
 	case bundle.ComputerImageMediaType:
-		err = computer.VerifySeed(ctx, recorded, computer.SeedArtifact{Object: object, LogicalBytes: computer.SeedCapacity}, computer.SeedCapacity)
+		err = disk.VerifySeed(ctx, recorded, disk.SeedArtifact{Object: object, LogicalBytes: disk.SeedCapacity}, disk.SeedCapacity)
 
 	default:
 		err = errors.New("deployment object media type is unsupported")

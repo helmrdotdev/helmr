@@ -10,8 +10,8 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -82,7 +82,7 @@ func projectRunLeaseClaimResponse(
 	projection runLeaseClaimProjection,
 	platformStore cas.Reader,
 	secretDelivery SecretDeliveryOpener,
-	fencingKey computer.FencingKey,
+	fencingKey disk.FencingKey,
 ) (workerapi.RunLeaseClaimResponse, error) {
 	physical := runLeaseProjectionAuthority{
 		run:      authority.run,
@@ -144,36 +144,36 @@ func projectRunLeaseClaimResponse(
 }
 
 func deriveComputerCapability(
-	key computer.FencingKey,
+	key disk.FencingKey,
 	instance db.ComputerInstance,
-) (computer.FencingCapability, error) {
+) (disk.FencingCapability, error) {
 	instanceID, err := pgvalue.UUIDValue(instance.ID)
 	if err != nil {
-		return computer.FencingCapability{}, errors.New("computer instance ID is invalid")
+		return disk.FencingCapability{}, errors.New("computer instance ID is invalid")
 	}
 	computerID, err := pgvalue.UUIDValue(instance.ComputerID)
 	if err != nil {
-		return computer.FencingCapability{}, errors.New("computer ID is invalid")
+		return disk.FencingCapability{}, errors.New("computer ID is invalid")
 	}
-	capability, err := key.Derive(computer.FenceInput{
+	capability, err := key.Derive(disk.FenceInput{
 		InstanceID:       instanceID,
 		ComputerID:       computerID,
 		WriterGeneration: instance.WriterGeneration,
 	})
 	if err != nil {
-		return computer.FencingCapability{}, err
+		return disk.FencingCapability{}, err
 	}
 	hash, err := hex.DecodeString(strings.TrimPrefix(capability.Hash, "sha256:"))
 	if err != nil {
-		return computer.FencingCapability{}, err
+		return disk.FencingCapability{}, err
 	}
 	if subtle.ConstantTimeCompare(hash, instance.WriterTokenHash) != 1 {
-		return computer.FencingCapability{}, errors.New("computer write capability does not match its Instance")
+		return disk.FencingCapability{}, errors.New("computer write capability does not match its Instance")
 	}
 	return capability, nil
 }
 
-func projectRestoredRunLeaseClaim(a runLeaseClaimAuthority, key computer.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
+func projectRestoredRunLeaseClaim(a runLeaseClaimAuthority, key disk.FencingKey) (workerapi.RunLeaseClaimResponse, error) {
 	lease, err := projectRunLeaseAssignment(runLeaseProjectionAuthority{run: a.run, attempt: a.attempt, runtime: a.runtime, runLease: a.runLease, computer: a.computer})
 	if err != nil {
 		return workerapi.RunLeaseClaimResponse{}, err

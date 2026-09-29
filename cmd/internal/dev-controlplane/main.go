@@ -26,12 +26,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -167,7 +167,7 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	computerFencingKey, err := computer.NewFencingKey(cfg.computerFencingKey)
+	computerFencingKey, err := disk.NewFencingKey(cfg.computerFencingKey)
 	if err != nil {
 		log.Error("configure Computer fencing key", "error", err)
 		os.Exit(1)

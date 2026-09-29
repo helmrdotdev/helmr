@@ -8,9 +8,9 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -313,7 +313,7 @@ func TestComputerCheckpointFailureSettlesRetryingResidents(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

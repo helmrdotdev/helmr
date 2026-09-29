@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 type computerSourceKeys struct {
 	VersionID, Scope, WriteKeyID string
-	Root                         computer.GenerationRoot
+	Root                         disk.GenerationRoot
 	Keys                         []computerKeyMaterial
 }
 
@@ -93,7 +93,7 @@ func (b *computerKeyBroker) sourceEnvelopes(ctx context.Context, f computerKeyFe
 		if !found {
 			keys = append(keys, writeKey)
 		}
-		scope, err := computer.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
+		scope, err := disk.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
 		if err != nil {
 			return errComputerKeyUnavailable
 		}

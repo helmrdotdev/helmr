@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 )
 
@@ -80,7 +80,7 @@ func TestIdleComputerCaptureEmptyCooldown(t *testing.T) {
 func TestIdleComputerReconcilerRequestsCapture(t *testing.T) {
 	f, _, _, request := dispatchtest.Capture(t)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_waits SET idle_timeout_ms=1,created_at=clock_timestamp()-interval '1 minute'`)
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestIdleComputerReconcilerAdvancesPastRejectedCandidate(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now() WHERE id=$1`, newer.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='cancelled',terminal_at=now(),terminal_reason_code='cancelled',process_reconciled_at=now() WHERE id=$1`, newer.LeaseID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET last_activity_at=clock_timestamp()-interval '1 minute' WHERE id=(SELECT computer_id FROM run_leases WHERE id=$1)`, newer.LeaseID)
-	key, err := computer.NewFencingKey(make([]byte, 32))
+	key, err := disk.NewFencingKey(make([]byte, 32))
 	if err != nil {
 		t.Fatal(err)
 	}

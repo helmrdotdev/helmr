@@ -19,13 +19,13 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
@@ -239,8 +239,8 @@ func (controlplanetestSecretDeliveryOpener) OpenDeliveries(
 	return nil, nil
 }
 
-func controlplanetestComputerFencingKey() computer.FencingKey {
-	key, err := computer.NewFencingKey(make([]byte, computer.FencingKeySize))
+func controlplanetestComputerFencingKey() disk.FencingKey {
+	key, err := disk.NewFencingKey(make([]byte, disk.FencingKeySize))
 	if err != nil {
 		panic(err)
 	}

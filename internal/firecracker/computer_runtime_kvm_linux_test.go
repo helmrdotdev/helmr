@@ -19,8 +19,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
-	"github.com/helmrdotdev/helmr/internal/computer"
-	"github.com/helmrdotdev/helmr/internal/computer/blockformat"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
 	"github.com/helmrdotdev/helmr/internal/nbd"
 	"github.com/helmrdotdev/helmr/internal/secretproxy"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -117,7 +117,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	initial, err := computer.CaptureInitialGeneration(t.Context(), computer.GenerationCapture{Disk: f, Capacity: capacity, StagingParent: input.Arena, Scope: "kvm-qualification", KeyID: keyID, Key: keys[keyID], Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
+	initial, err := disk.CaptureInitialGeneration(t.Context(), disk.GenerationCapture{Disk: f, Capacity: capacity, StagingParent: input.Arena, Scope: "kvm-qualification", KeyID: keyID, Key: keys[keyID], Fanout: 64, PackLimit: blockformat.MinPackLimit, MaxStagedBytes: 256 << 20, MaxObjects: 10000})
 	f.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +127,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := computer.NewGenerationRoot(locator, capacity)
+	root, err := disk.NewGenerationRoot(locator, capacity)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +135,8 @@ func TestComputerRuntimeKVM(t *testing.T) {
 		t.Fatal(err)
 	}
 	var wantMarker []byte
-	verifyMarker := func(root computer.GenerationRoot) {
-		tree, err := computer.OpenGeneration(t.Context(), store, "kvm-qualification", keys, root, capacity)
+	verifyMarker := func(root disk.GenerationRoot) {
+		tree, err := disk.OpenGeneration(t.Context(), store, "kvm-qualification", keys, root, capacity)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,16 +153,16 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			if err := os.Mkdir(dir, 0700); err != nil {
 				t.Fatal(err)
 			}
-			disk, err := computer.CreateLocalGeneration(t.Context(), computer.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: root, BaseSource: store, Scope: "kvm-qualification", ActiveKey: keyID, Keys: keys, DirtyBlocks: 256, StagedBytes: 256 << 20, PackLimit: blockformat.MinPackLimit})
+			local, err := disk.CreateLocalGeneration(t.Context(), disk.LocalGenerationConfig{Directory: filepath.Join(dir, "generation"), Base: root, BaseSource: store, Scope: "kvm-qualification", ActiveKey: keyID, Keys: keys, DirtyBlocks: 256, StagedBytes: 256 << 20, PackLimit: blockformat.MinPackLimit})
 			if err != nil {
 				t.Fatal(err)
 			}
 			arena := filepath.Join(dir, "attachment")
 			if err := os.Mkdir(arena, 0700); err != nil {
-				disk.Close()
+				local.Close()
 				t.Fatal(err)
 			}
-			device, err := computer.AttachDevice(t.Context(), disk, nbd.Config{Helper: input.Helper, Arena: arena, Socket: filepath.Join(arena, "nbd.sock"), Devices: input.Devices, Size: capacity})
+			device, err := disk.AttachDevice(t.Context(), local, nbd.Config{Helper: input.Helper, Arena: arena, Socket: filepath.Join(arena, "nbd.sock"), Devices: input.Devices, Size: capacity})
 			if device != nil {
 				defer func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -203,7 +203,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			}()
 			if len(wantMarker) != 0 {
 				got := make([]byte, len(wantMarker))
-				n, err := disk.ReadAt(t.Context(), got, filesystemBytes)
+				n, err := local.ReadAt(t.Context(), got, filesystemBytes)
 				if err != nil || n != len(got) || !bytes.Equal(got, wantMarker) {
 					t.Fatalf("cold marker mismatch: %d %v", n, err)
 				}
@@ -214,7 +214,7 @@ func TestComputerRuntimeKVM(t *testing.T) {
 			for i := 0; i < 2; i++ {
 				wantMarker = bytes.Repeat([]byte{0}, 4096)
 				copy(wantMarker, fmt.Sprintf("%s/capture/%d", name, i))
-				if n, err := disk.WriteAt(t.Context(), wantMarker, filesystemBytes); err != nil || n != len(wantMarker) {
+				if n, err := local.WriteAt(t.Context(), wantMarker, filesystemBytes); err != nil || n != len(wantMarker) {
 					t.Fatalf("write marker: %d %v", n, err)
 				}
 				start = time.Now()

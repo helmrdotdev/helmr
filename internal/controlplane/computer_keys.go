@@ -7,9 +7,9 @@ import (
 	"errors"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -110,7 +110,7 @@ func (b *computerKeyBroker) pinInitial(ctx context.Context, f computerKeyFence, 
 		if err != nil || !claims {
 			return errComputerKeyUnavailable
 		}
-		scope, err := computer.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
+		scope, err := disk.EncryptionScope(pgvalue.UUIDString(authority.OrgID), pgvalue.UUIDString(authority.EnvironmentID), pgvalue.UUIDString(authority.ComputerID))
 		if err != nil || (expectedScope != "" && expectedScope != scope) {
 			return errComputerKeyUnavailable
 		}

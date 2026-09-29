@@ -9,7 +9,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
@@ -79,7 +79,7 @@ func TestInitialComputerKeyRefreshesAuthenticationOnce(t *testing.T) {
 
 func TestComputerSourceRejectsIncompleteKeys(t *testing.T) {
 	key := uuid.NewV7().String()
-	valid := workerapi.ComputerSourceMaterial{VersionID: uuid.NewV7().String(), WriteKeyID: key, Root: computer.GenerationRoot{FormatVersion: 1, LogicalBytes: 4096, Offset: 128, Pack: computer.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 512, Rank: 2}, Page: computer.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: key, Kind: 3, Count: 1, SizeBytes: 64}}, Keys: []workerapi.ComputerKeyMaterial{{Scope: "scope", ID: key, Key: make([]byte, 32)}}}
+	valid := workerapi.ComputerSourceMaterial{VersionID: uuid.NewV7().String(), WriteKeyID: key, Root: disk.GenerationRoot{FormatVersion: 1, LogicalBytes: 4096, Offset: 128, Pack: disk.GenerationPack{Digest: "sha256:" + strings.Repeat("a", 64), SizeBytes: 512, Rank: 2}, Page: disk.GenerationPage{Digest: "sha256:" + strings.Repeat("b", 64), Salt: strings.Repeat("c", 64), KeyID: key, Kind: 3, Count: 1, SizeBytes: 64}}, Keys: []workerapi.ComputerKeyMaterial{{Scope: "scope", ID: key, Key: make([]byte, 32)}}}
 	for _, tc := range []string{"valid", "missing-write", "missing-root", "duplicate", "scope", "length", "unknown", "trailing", "error"} {
 		t.Run(tc, func(t *testing.T) {
 			m := valid

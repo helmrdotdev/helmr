@@ -1,6 +1,6 @@
 package workerapi
 
-import "github.com/helmrdotdev/helmr/internal/computer"
+import "github.com/helmrdotdev/helmr/internal/disk"
 
 // InitialComputerKeyRequest selects authority, never a caller-chosen key or scope.
 type InitialComputerKeyRequest struct {
@@ -24,10 +24,10 @@ type ComputerSourceRequest struct {
 }
 
 type ComputerSourceMaterial struct {
-	WriteKeyID string                  `json:"write_key_id"`
-	VersionID  string                  `json:"version_id"`
-	Root       computer.GenerationRoot `json:"root"`
-	Keys       []ComputerKeyMaterial   `json:"keys"`
+	WriteKeyID string                `json:"write_key_id"`
+	VersionID  string                `json:"version_id"`
+	Root       disk.GenerationRoot   `json:"root"`
+	Keys       []ComputerKeyMaterial `json:"keys"`
 }
 
 // Clear releases host-only plaintext after the caller copies it into its owner.

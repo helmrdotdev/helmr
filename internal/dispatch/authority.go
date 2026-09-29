@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
@@ -24,12 +24,12 @@ const runtimeArchitecture = "x86_64"
 
 type Authority struct {
 	pool       *pgxpool.Pool
-	fencingKey computer.FencingKey
+	fencingKey disk.FencingKey
 }
 
 func NewRunAuthority(
 	pool *pgxpool.Pool,
-	fencingKey computer.FencingKey,
+	fencingKey disk.FencingKey,
 ) (*Authority, error) {
 	authority, err := newAuthority(pool)
 	if err != nil {

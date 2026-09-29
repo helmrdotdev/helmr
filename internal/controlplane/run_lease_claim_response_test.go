@@ -12,9 +12,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/artifact"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/secret"
 )
 
@@ -125,7 +125,7 @@ func TestRunLeaseClaimProjectionLoadsOnlyLockedAttemptBase(t *testing.T) {
 
 func validRunLeaseClaimResponse(
 	t *testing.T,
-) (runLeaseClaimResponseAuthority, runLeaseClaimProjection, computer.FencingKey) {
+) (runLeaseClaimResponseAuthority, runLeaseClaimProjection, disk.FencingKey) {
 	t.Helper()
 	physical := validRunLeaseProjectionAuthority()
 	run, attempt, definition := validTaskProgramStart(t, definition.SchemaKindNone)
@@ -142,7 +142,7 @@ func validRunLeaseClaimResponse(
 	physical.runLease.AttemptNumber = attempt.Number
 	physical.runtime.EnvironmentID = run.EnvironmentID
 
-	key, err := computer.NewFencingKey(make([]byte, computer.FencingKeySize))
+	key, err := disk.NewFencingKey(make([]byte, disk.FencingKeySize))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,10 +180,10 @@ func validRunLeaseClaimResponse(
 }
 
 func deriveComputerCapabilityInput(
-	key computer.FencingKey,
+	key disk.FencingKey,
 	instance db.ComputerInstance,
-) (computer.FencingCapability, error) {
-	return key.Derive(computer.FenceInput{
+) (disk.FencingCapability, error) {
+	return key.Derive(disk.FenceInput{
 		InstanceID:       uuid.UUID(instance.ID.Bytes),
 		ComputerID:       uuid.UUID(instance.ComputerID.Bytes),
 		WriterGeneration: instance.WriterGeneration,

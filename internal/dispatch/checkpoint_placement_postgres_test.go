@@ -2,9 +2,9 @@ package dispatch_test
 
 import (
 	"errors"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -33,7 +33,7 @@ func TestCheckpointPlacementAllocatesRestoringInstance(t *testing.T) {
 			// Capacity observations are independent of the captured member fixture.
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET per_vm_guest_ephemeral_disk_bytes=34359738368,epoch_guest_ephemeral_disk_bytes=274877906944 WHERE id=$1`, f.WorkerID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_pools SET per_vm_guest_ephemeral_disk_bytes=34359738368,capacity_guest_ephemeral_disk_bytes=274877906944 WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, f.WorkerID)
-			key, err := computer.NewFencingKey(make([]byte, 32))
+			key, err := disk.NewFencingKey(make([]byte, 32))
 			if err != nil {
 				t.Fatal(err)
 			}
