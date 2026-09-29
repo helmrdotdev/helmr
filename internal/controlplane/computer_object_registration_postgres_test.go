@@ -182,7 +182,7 @@ func TestInitialComputerObjectInspectedRegistration(t *testing.T) {
 
 // The storage verification boundary is exercised by authenticated HTTP tests.
 // This fixture selects only independently established CAS membership.
-func testRecordInitialComputerObject(ctx context.Context, tx TxBeginner, f computerKeyFence, e blockformat.ObjectInspection, certify bool) error {
+func testRecordInitialComputerObject(ctx context.Context, tx db.TxBeginner, f computerKeyFence, e blockformat.ObjectInspection, certify bool) error {
 	if !certify {
 		return recordInitialComputerObject(ctx, tx, f, e, nil)
 	}

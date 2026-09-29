@@ -14,7 +14,7 @@ import (
 
 type database interface {
 	db.DBTX
-	Begin(context.Context) (pgx.Tx, error)
+	db.TxBeginner
 }
 
 type ComputerCommandCandidate struct {

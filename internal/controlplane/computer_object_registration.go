@@ -87,7 +87,7 @@ func describeComputerObject(e blockformat.ObjectInspection) (inspectedObject, er
 // continuation must use its own authority, never this preparation fence.
 // No remote/provider I/O runs under SQL locks. The caller owns staged bytes and
 // may upload only after registration succeeds. No generation head is advanced.
-func recordInitialComputerObject(ctx context.Context, dbtx TxBeginner, fence computerKeyFence, inspection blockformat.ObjectInspection, uploaded *cas.Object) error {
+func recordInitialComputerObject(ctx context.Context, dbtx db.TxBeginner, fence computerKeyFence, inspection blockformat.ObjectInspection, uploaded *cas.Object) error {
 	object, err := describeComputerObject(inspection)
 	if err != nil {
 		return err

@@ -23,7 +23,7 @@ type ComputerKeyWrapper interface {
 	Unwrap(context.Context, string, string, computerkey.Envelope) ([]byte, error)
 }
 type computerKeyBroker struct {
-	tx      TxBeginner
+	tx      db.TxBeginner
 	wrapper ComputerKeyWrapper
 }
 type computerKeyFence struct {
@@ -37,7 +37,7 @@ type computerKeyMaterial struct {
 
 var errComputerKeyUnavailable = errors.New("computer key authority is unavailable")
 
-func newComputerKeyBroker(tx TxBeginner, wrapper ComputerKeyWrapper) (*computerKeyBroker, error) {
+func newComputerKeyBroker(tx db.TxBeginner, wrapper ComputerKeyWrapper) (*computerKeyBroker, error) {
 	if tx == nil || wrapper == nil {
 		return nil, errors.New("computer key transactions and wrapping provider are required")
 	}

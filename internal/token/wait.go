@@ -19,7 +19,7 @@ const maxWaitBatch = int32(1000)
 
 type WaitDB interface {
 	db.DBTX
-	Begin(context.Context) (pgx.Tx, error)
+	db.TxBeginner
 }
 
 type WaitBatch struct {

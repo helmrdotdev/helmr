@@ -22,10 +22,6 @@ var (
 
 const maxCancellationGraphSize = 1000
 
-type CancellationDB interface {
-	Begin(context.Context) (pgx.Tx, error)
-}
-
 type CancellationRequest struct {
 	IdempotencyKey string
 	OrgID          uuid.UUID
@@ -42,7 +38,7 @@ type CancellationResult struct {
 }
 
 type Canceler struct {
-	db CancellationDB
+	db db.TxBeginner
 }
 
 type cancellationRun struct {
@@ -133,7 +129,7 @@ var runtimePreparationTermination = termination{
 	eventMessage:   "Run runtime preparation failed",
 }
 
-func NewCanceler(database CancellationDB) (*Canceler, error) {
+func NewCanceler(database db.TxBeginner) (*Canceler, error) {
 	if database == nil {
 		return nil, errors.New("run cancellation database is required")
 	}
