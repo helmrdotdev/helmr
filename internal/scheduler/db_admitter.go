@@ -10,9 +10,9 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5"
@@ -24,7 +24,7 @@ type TxBeginner interface {
 }
 
 type Authority interface {
-	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (schedule.TaskRun, error)
+	ResolveScheduledTask(int32, string, []byte, []byte, []byte) (deployment.ScheduledTaskAdmission, error)
 }
 
 type DBAdmitter struct {

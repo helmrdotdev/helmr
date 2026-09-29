@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"strings"
 	"testing"
 	"time"
@@ -30,7 +30,7 @@ type caScheduleAuthority struct {
 	placements []computer.SecretPlacement
 }
 
-func (a caScheduleAuthority) ResolveScheduledTask(v int32, id string, manifest, digest, queues []byte) (schedule.TaskRun, error) {
+func (a caScheduleAuthority) ResolveScheduledTask(v int32, id string, manifest, digest, queues []byte) (deployment.ScheduledTaskAdmission, error) {
 	task, err := a.fixedAuthority.ResolveScheduledTask(v, id, manifest, digest, queues)
 	task.SecretPlacements = a.placements
 	return task, err
