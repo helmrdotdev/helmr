@@ -182,9 +182,6 @@ func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
 
 func (c computerConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	r := c.runner
-	if r.materializer == nil {
-		return nil, false, nil
-	}
 	claimed, err := r.client.ClaimComputerInstance(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("claim computer mount: %w", err)

@@ -48,9 +48,50 @@ type ComputerMaterializer struct {
 	RuntimePool           *PreparedRuntimePool
 }
 
+// NewComputerMaterializer returns m after verifying the collaborators every
+// Computer mount needs. Timeouts, polling intervals, the logger and the
+// artifact cache keep their defaults when unset.
+func NewComputerMaterializer(m ComputerMaterializer) (ComputerMaterializer, error) {
+	if err := m.validate(); err != nil {
+		return ComputerMaterializer{}, err
+	}
+	return m, nil
+}
+
+func (m ComputerMaterializer) validate() error {
+	if m.RestoreControl == nil {
+		return errors.New("Computer restore control plane is required")
+	}
+	if m.ComputerSaves == nil {
+		return errors.New("Computer save control plane is required")
+	}
+	if m.ComputerSaveEvery <= 0 {
+		return errors.New("Computer save interval must be positive")
+	}
+	if m.CAS == nil {
+		return errors.New("computer materializer CAS is required")
+	}
+	if m.ComputerObjects == nil {
+		return errors.New("Computer object store is required")
+	}
+	if m.Sessions == nil {
+		return errors.New("computer mount session registry is required")
+	}
+	if m.RuntimePool == nil {
+		return errors.New("computer prepared runtime pool is required")
+	}
+	return nil
+}
+
 func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerMaterializerControlPlaneClient) (runErr error) {
 	if mount.WriterGeneration <= 0 {
 		return errors.New("Computer Instance writer generation is required")
+	}
+	// A materializer built without NewComputerMaterializer fails the mount here
+	// instead of when a later phase first needs the missing collaborator.
+	if err := m.validate(); err != nil {
+		_ = m.failComputerMount(client, mount, err)
+		return fmt.Errorf("configure computer materializer: %w", err)
 	}
 	totalStarted := time.Now()
 	m.logComputerMountPhase(mount, "computer mount started", "state", "starting")
@@ -142,11 +183,8 @@ func (m ComputerMaterializer) RunComputerMount(ctx context.Context, mount worker
 		default:
 		}
 	}()
-	unregisterSession := func() {}
-	if m.Sessions != nil {
-		unregisterSession = m.Sessions.RegisterComputerMountSession(mount, session, m.channelToken(mount))
-	}
-	defer func() { unregisterSession() }()
+	unregisterSession := m.Sessions.RegisterComputerMountSession(mount, session, m.channelToken(mount))
+	defer unregisterSession()
 
 	m.logComputerMountPhase(mount, "computer mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())
 	return m.serveComputerMount(ctx, renewal, session, mount, client, saveResults)
@@ -730,12 +768,6 @@ func (e computerMountFailure) Unwrap() error {
 func (m ComputerMaterializer) materializeSession(ctx context.Context, mount *workerapi.ComputerInstanceAssignment) (vm.Machine, string, error) {
 	if mount == nil {
 		return nil, "", computerMountFailure{code: "computer_mount_missing", err: errors.New("computer mount is required")}
-	}
-	if m.CAS == nil {
-		return nil, "", computerMountFailure{code: "computer_mount_cas_unconfigured", err: errors.New("computer materializer CAS is required")}
-	}
-	if m.RuntimePool == nil {
-		return nil, "", computerMountFailure{code: "computer_runtime_pool_unconfigured", err: errors.New("computer prepared runtime pool is required")}
 	}
 	mount.ComputerInstanceID = strings.TrimSpace(mount.ComputerInstanceID)
 	if mount.ComputerInstanceID == "" {

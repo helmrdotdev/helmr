@@ -53,28 +53,26 @@ func WithLogger(log *slog.Logger) Option {
 	}
 }
 
-func WithMaterializer(materializer Materializer) Option {
-	return func(runner *Runner) {
-		runner.materializer = materializer
-	}
-}
-
 func WithReservations(reservations *reservation.Ledger) Option {
 	return func(runner *Runner) {
 		runner.reservations = reservations
 	}
 }
 
-func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlPlaneClient, executor RunLeaseExecutor, materializer Materializer, capabilities workerapi.Capabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}
 	if executor == nil {
 		return nil, errors.New("worker executor is required")
 	}
+	if materializer == nil {
+		return nil, errors.New("worker materializer is required")
+	}
 	runner := &Runner{
 		client:           client,
 		runLeaseExecutor: executor,
+		materializer:     materializer,
 		capabilities:     capabilities,
 		pollEvery:        2 * time.Second,
 		renewEvery:       10 * time.Second,

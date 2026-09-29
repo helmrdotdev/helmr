@@ -51,7 +51,7 @@ func TestComputerMaterializerRenewsWhileAwaitingPreparedRuntime(t *testing.T) {
 			if fail {
 				client.renewErrors = []error{errors.New("renew failed")}
 			}
-			materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
+			materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Heartbeat: time.Millisecond, RuntimePool: pool}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			done := make(chan error, 1)
@@ -331,7 +331,7 @@ func TestComputerMountPhaseErrorUsesLatestGuestError(t *testing.T) {
 
 func TestComputerMaterializerFailsWhenPreparedRuntimeIsMissing(t *testing.T) {
 	store, computerMount := testComputerMountArtifacts(t)
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		RuntimePool: NewPreparedRuntimePool(nil, nil, 1, nil),
 	}
@@ -593,7 +593,7 @@ func TestComputerMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T) 
 		operation: discardReadWriteCloser{},
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, session)
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:            store,
 		TempDir:        t.TempDir(),
 		Heartbeat:      time.Hour,
@@ -631,7 +631,7 @@ func TestComputerMaterializerFailsComputerMountOnFatalHeartbeatError(t *testing.
 		operation: discardReadWriteCloser{},
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, session)
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   10 * time.Millisecond,
@@ -704,7 +704,7 @@ func TestRunComputerMountCloseFailureReturnsOwnershipForPhysicalCleanup(t *testi
 				}
 				cancel()
 			}}
-			materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+			materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 				Sessions:    sessions,
 				CAS:         store,
 				TempDir:     t.TempDir(),
@@ -769,7 +769,7 @@ func TestComputerMaterializerFailsComputerMountWhenSessionExits(t *testing.T) {
 		exit:      exit,
 	}
 	pool := computerPreparedRuntimePool(t, computerMount, session)
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, Sessions: NewComputerMountSessions(), ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		TempDir:     t.TempDir(),
 		Heartbeat:   time.Hour,
@@ -812,7 +812,7 @@ func TestComputerMaterializerOwnsProgramStartFailureCleanup(t *testing.T) {
 	sessions := NewComputerMountSessions()
 	mounted := make(chan struct{})
 	client := &computerMaterializerTestClient{onReady: func() { close(mounted) }}
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		Sessions:    sessions,
 		TempDir:     t.TempDir(),
@@ -881,7 +881,7 @@ func TestComputerMaterializerProgramStartFailureKeepsCapacityWhenRuntimeCloseFai
 	sessions := NewComputerMountSessions()
 	mounted := make(chan struct{})
 	client := &computerMaterializerTestClient{onReady: func() { close(mounted) }}
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{},
 		CAS:         store,
 		Sessions:    sessions,
 		TempDir:     t.TempDir(),
@@ -1410,7 +1410,7 @@ func TestCheckpointReleaseFailureReportsWithoutVMExit(t *testing.T) {
 	sessions := NewComputerMountSessions()
 	mounted := make(chan struct{})
 	client := &computerMaterializerTestClient{onReady: func() { close(mounted) }, failErrors: []error{reportErr}}
-	materializer := ComputerMaterializer{ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Sessions: sessions, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
+	materializer := ComputerMaterializer{RestoreControl: unusedComputerRestoreControl{}, ComputerSaves: &saveHostFixture{}, ComputerSaveEvery: time.Hour, ComputerObjects: &checkpointCAS{}, CAS: store, Sessions: sessions, TempDir: t.TempDir(), Heartbeat: time.Hour, PollEvery: time.Hour, RuntimePool: pool}
 	done := make(chan error, 1)
 	go func() { done <- materializer.RunComputerMount(ctx, mount, client) }()
 	select {
