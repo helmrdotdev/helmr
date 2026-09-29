@@ -32925,7 +32925,7 @@ function normalizeBuild(value2) {
   const secretNamePattern = /^[A-Z_][A-Z0-9_]{0,127}$/;
   const maxInstallCommandBytes = 16 << 10;
   if (value2 === void 0) {
-    return freeze({ builder: builder(), installCommand: void 0, secrets: freeze([]) });
+    return freeze({ builder: builder(), installCommand: void 0, secrets: freeze([]), external: freeze([]), assets: freeze([]) });
   }
   if (typeof value2 !== "object" || value2 === null || arrayIsArray(value2) || getPrototypeOf(value2) !== objectPrototype) {
     throw new Error("config build must be an ordinary object");
@@ -32934,8 +32934,8 @@ function normalizeBuild(value2) {
   const keys = ownKeys(value2);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index];
-    if (typeof key !== "string" || key !== "builder" && key !== "installCommand" && key !== "secrets") {
-      throw new Error("config build accepts only builder, installCommand and secrets");
+    if (typeof key !== "string" || key !== "builder" && key !== "installCommand" && key !== "secrets" && key !== "external" && key !== "assets") {
+      throw new Error("config build accepts only builder, installCommand, secrets, external and assets");
     }
     const descriptor = descriptors[key];
     if (descriptor === void 0 || !descriptor.enumerable || !hasOwn(descriptor, "value")) {
@@ -32968,7 +32968,9 @@ function normalizeBuild(value2) {
   return freeze({
     builder: builderValue === void 0 ? builder() : builderValue,
     installCommand,
-    secrets: freeze(secrets)
+    secrets: freeze(secrets),
+    external: freeze(normalizeStringSet(descriptors["external"]?.value ?? [], "config build.external", validateExternal, false)),
+    assets: freeze(normalizeStringSet(descriptors["assets"]?.value ?? [], "config build.assets", validateAssetPattern, false))
   });
 }
 function normalizeStringSet(value2, name, normalize, nonempty) {
@@ -33020,6 +33022,26 @@ function setArrayIndex(array, index, value2) {
     value: value2,
     writable: true
   });
+}
+function validateExternal(value2) {
+  if (typeof value2 !== "string" || !regexpTest(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/, value2)) {
+    throw new Error("config build.external entries must be whole package names");
+  }
+  return value2;
+}
+function validateAssetPattern(value2) {
+  if (typeof value2 !== "string" || value2 === "" || !hasOnlyUnicodeScalarValues(value2) || hasControl(value2) || startsWith(value2, "/") || startsWith(value2, "!") || includes(value2, "\\") || endsWith(value2, "/")) {
+    throw new Error("config build.assets entries must be positive project-relative file patterns");
+  }
+  const normalized = startsWith(value2, "./") ? slice(value2, 2) : value2;
+  const segments = split(normalized, "/");
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new Error("config build.assets entries must be normalized project-relative file patterns");
+    }
+  }
+  return normalized;
 }
 
 // sdk/typescript/src/internal/runtime.ts
@@ -33391,7 +33413,7 @@ async function main() {
   };
   if (config.build.installCommand !== void 0) build["installCommand"] = config.build.installCommand;
   const body = canonicalizeJsonValue({
-    discovery: { dirs: [...config.dirs], ignorePatterns: [...config.ignorePatterns] },
+    discovery: { dirs: [...config.dirs], ignorePatterns: [...config.ignorePatterns], external: [...config.build.external], assets: [...config.build.assets] },
     build
   });
   if (body.byteLength === 0 || body.byteLength > maxDocumentBytes) {

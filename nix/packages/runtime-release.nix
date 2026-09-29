@@ -1,11 +1,9 @@
 {
   lib,
-  moduleExecution,
   stdenv,
   stdenvNoCC,
   debianRuntimeImage,
   nodeVersion,
-  typescriptVersion,
   nodeRelease,
   coreutils,
   findutils,
@@ -76,10 +74,7 @@ stdenvNoCC.mkDerivation {
     install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
 
     install -m0644 ${../../internal/runtime/module-preload.mjs} "$tree/helmr/module-preload.mjs"
-    cp -a ${moduleExecution}/moduleexecution "$tree/moduleexecution"
-    cp -a ${moduleExecution}/share/licenses/typescript "$tree/share/licenses/typescript"
-    adapter_digest="sha256:$(sha256sum "$tree/moduleexecution/loader.mjs" | cut -d' ' -f1)"
-    typescript_digest="sha256:$(sha256sum "$tree/moduleexecution/typescript.cjs" | cut -d' ' -f1)"
+    policy_digest="sha256:$(sha256sum "$tree/helmr/module-preload.mjs" | cut -d' ' -f1)"
 
     debian="$TMPDIR/debian"
     mkdir -p "$TMPDIR/image" "$debian" "$tree/share/licenses/debian"
@@ -137,16 +132,14 @@ stdenvNoCC.mkDerivation {
     jq -cSj -n \
       --arg architecture "${architecture}" \
       --arg nodeVersion "${nodeVersion}" \
-      --arg typescriptVersion "${typescriptVersion}" \
-      --arg adapterDigest "$adapter_digest" \
-      --arg typescriptDigest "$typescript_digest" \
+      --arg policyDigest "$policy_digest" \
       --arg runtimeContract "helmr.runtime.v0" \
       '{
         architecture:$architecture,
         formatVersion:0,
         nodeVersion:$nodeVersion,
         programNodeFlags:["--no-strip-types","--no-global-search-paths","--enable-source-maps","--import=file:///opt/helmr/runtime/helmr/module-preload.mjs"],
-        language:{apiVersion:"helmr.module-execution.v0",adapterDigest:$adapterDigest,typescriptDigest:$typescriptDigest,typescriptVersion:$typescriptVersion},
+        modulePolicyDigest:$policyDigest,
         runtimeContract:$runtimeContract
       }' >"$tree/helmr/runtime.json"
 

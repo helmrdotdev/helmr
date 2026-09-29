@@ -289,7 +289,7 @@ func testBundleInput(programPath string, programBytes []byte) BundleInput {
 			},
 			Locator: &deployment.ProgramLocator{
 				ExportName: "hello",
-				SourcePath: ".helmr/modules/" + strings.Repeat("d", 64) + ".mjs",
+				ModulePath: "helmr/app/entry-0.mjs",
 				Slot:       deployment.DeclarationSlotHandler,
 			},
 		}},
@@ -326,8 +326,8 @@ func writeVerifiedProgramFixture(
 	if encoder == "" {
 		t.Skip("HELMR_SQUASHFS_ENCODER is not set")
 	}
-	configRaw := []byte(`{"dirs":["tasks"],"ignorePatterns":[]}`)
-	sourcePath := "tasks/build.ts"
+	configRaw := []byte(`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`)
+	sourcePath := "helmr/app/entry-0.mjs"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
 	runtimeDigest := "sha256:" + strings.Repeat("f", 64)
 	index := deployment.ProgramIndex{
@@ -343,7 +343,7 @@ func writeVerifiedProgramFixture(
 				},
 			},
 			Locator: &deployment.ProgramLocator{
-				ExportName: "build", SourcePath: sourcePath,
+				ExportName: "build", ModulePath: sourcePath,
 				Slot: deployment.DeclarationSlotHandler,
 			},
 		}},
@@ -391,11 +391,11 @@ func writeVerifiedProgramFixture(
 			t.Fatal(err)
 		}
 	}
-	inputDigest, err := deployment.ProgramInputTreeDigest(t.Context(), inputRoot)
+	inputDigest, err := deployment.ProgramPayloadDigest(t.Context(), inputRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest.InputTreeDigest = inputDigest
+	manifest.PayloadDigest = inputDigest
 	files["helmr/program-manifest.json"] = canonicalJSON(t, manifest)
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)

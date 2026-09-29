@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildConfigClosedCanonicalAuthority(t *testing.T) {
-	raw := []byte(`{"dirs":["tasks"],"ignorePatterns":[]}`)
+	raw := []byte(`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`)
 	config, err := ParseBuildConfig(raw)
 	if err != nil {
 		t.Fatal(err)

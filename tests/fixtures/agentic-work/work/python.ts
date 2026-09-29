@@ -1,11 +1,11 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { run } from "./run.ts"
 
 const python = "/opt/agentic-python/bin/python"
-const script = join(dirname(fileURLToPath(import.meta.url)), "analysis.py")
+const script = fileURLToPath(import.meta.resolve("#project/work/analysis.py"))
 
 // A data step: hand known input to Python, let NumPy's native code compute, and
 // read the structured artifact back.

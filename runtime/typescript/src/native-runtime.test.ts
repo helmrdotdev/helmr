@@ -26,7 +26,7 @@ for (const kind of ["task", "actor"] as const) {
       entrypoint: kind === "task" ? { case: "task", value: { payload: { case: "noPayload", value: {} } } } : { case: "actor", value: { sessionId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc33", startInputSequence: 0n, inputHighWatermark: 0n, runGeneration: 1n } },
     })
     const release = create(p.EntrypointReleaseSchema, { runId: start.runId, attemptNumber: start.attemptNumber, entrypoint: { declaredId, kind: kind === "task" ? { case: "task", value: {} } : { case: "actor", value: {} } } })
-    const child = spawn(process.execPath, [...flags, "/opt/helmr/runtime/helmr/entry.mjs"], { stdio: ["pipe", "pipe", "pipe", "pipe"], env: { PATH: process.env["PATH"] } })
+    const child = spawn(process.execPath, [...flags, "/opt/helmr/runtime/helmr/entry.mjs"], { cwd: "/computer", stdio: ["pipe", "pipe", "pipe", "pipe"], env: { PATH: process.env["PATH"] } })
     const control = child.stdio[3]!
     const output: Buffer[] = [], errors: Buffer[] = []
     control.on("data", chunk => output.push(Buffer.from(chunk)))
@@ -57,7 +57,7 @@ for (const signal of ["SIGTERM", "SIGKILL"] as const) {
       computerId: "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc30", baseComputerDiskVersionId: "version-1",
       entrypoint: { case: "task", value: { payload: { case: "noPayload", value: {} } } },
     })
-    const child = spawn(process.execPath, [...flags, "/opt/helmr/runtime/helmr/entry.mjs"], { stdio: ["pipe", "pipe", "pipe", "pipe"], env: { PATH: process.env["PATH"] } })
+    const child = spawn(process.execPath, [...flags, "/opt/helmr/runtime/helmr/entry.mjs"], { cwd: "/computer", stdio: ["pipe", "pipe", "pipe", "pipe"], env: { PATH: process.env["PATH"] } })
     const closed = once(child, "close")
     const control = child.stdio[3]!
     const ready = once(control, "data")

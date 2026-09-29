@@ -6,6 +6,14 @@ import { setupScript } from "./environment/paths"
 export default defineConfig({
   dirs: ["tasks"],
   build: {
+    external: ["opencode-ai"],
+    assets: [
+      "probe/check.cjs",
+      "build/Release/distro_addon.node",
+      "build/Release/vendored/**",
+      "build/Release/future_addon.node",
+      "generated/**",
+    ],
     builder: builder()
       .copy("recipe-input.txt", "/etc/helmr-recipe-input")
       // Sources are literal paths even where Docker would read a pattern:

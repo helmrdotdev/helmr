@@ -141,7 +141,7 @@ export interface DeclarationLocatorEntry {
   readonly declaredId: string
   readonly exportName: string
   readonly kind: "task" | "actor"
-  readonly sourcePath: string
+  readonly modulePath: string
   readonly slot: "handler"
 }
 
@@ -151,7 +151,7 @@ export interface DeclarationLocator {
 }
 
 export interface AnalysisExport {
-  readonly sourcePath: string
+  readonly modulePath: string
   readonly exportName: string
   readonly value: unknown
 }
@@ -176,7 +176,7 @@ export interface ProgramExportAnalysis {
 
 interface LocatedDefinition {
   readonly definition: InternalDefinition | InternalSandboxDefinition
-  readonly sourcePath: string
+  readonly modulePath: string
   readonly exportName: string
   readonly value: object
 }
@@ -282,7 +282,7 @@ function discoverDefinitions(
     const definition =
       inspectDefinition(item.value) ?? inspectSandboxDefinition(item.value)
     if (definition === undefined) continue
-    validateSourcePath(item.sourcePath)
+    validateModulePath(item.modulePath)
     validateExportName(item.exportName)
     const key = `${definition.kind}\0${definition.id}`
     const existing = identities.get(key)
@@ -290,7 +290,7 @@ function discoverDefinitions(
       if (existing.value === item.value) {
         const candidate = {
           definition,
-          sourcePath: item.sourcePath,
+          modulePath: item.modulePath,
           exportName: item.exportName,
           value: item.value as object,
         }
@@ -300,12 +300,12 @@ function discoverDefinitions(
         continue
       }
       throw new Error(
-        `duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.sourcePath}#${existing.located.exportName} and ${item.sourcePath}#${item.exportName}`,
+        `duplicate ${definition.kind} declaration ${JSON.stringify(definition.id)} at ${existing.located.modulePath}#${existing.located.exportName} and ${item.modulePath}#${item.exportName}`,
       )
     }
     const located = {
       definition,
-      sourcePath: item.sourcePath,
+      modulePath: item.modulePath,
       exportName: item.exportName,
       value: item.value as object,
     }
@@ -688,7 +688,7 @@ function locatorEntry(item: LocatedDefinition): DeclarationLocatorEntry {
     declaredId: item.definition.id,
     exportName: item.exportName,
     kind: item.definition.kind,
-    sourcePath: item.sourcePath,
+    modulePath: item.modulePath,
     slot: "handler",
   }
 }
@@ -788,39 +788,10 @@ function safePositiveNumber(value: bigint, label: string): number {
   return Number(value)
 }
 
-function validateSourcePath(path: string): void {
-  const suffixes = [
-    ".cjs",
-    ".cts",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".mts",
-    ".ts",
-    ".tsx",
-  ]
-  const components = path.split("/")
-  if (
-    path.length === 0 ||
-    !hasOnlyUnicodeScalarValues(path) ||
-    path.startsWith("/") ||
-    path.includes("\\") ||
-    /[\p{Cc}]/u.test(path) ||
-    components.some(
-      (component) =>
-        component === "" || component === "." || component === "..",
-    ) ||
-    components.includes("node_modules") ||
-    components[0] === "helmr" ||
-    path === "helmr.config.ts" ||
-    path.endsWith(".d.ts") ||
-    path.endsWith(".d.mts") ||
-    path.endsWith(".d.cts") ||
-    !suffixes.some((suffix) => path.endsWith(suffix))
-  ) {
-    throw new Error(
-      `sourcePath ${JSON.stringify(path)} is not an admitted first-party module path`,
-    )
+function validateModulePath(path: string): void {
+  if (!hasOnlyUnicodeScalarValues(path) || /[\p{Cc}]/u.test(path) ||
+      !/^helmr\/app\/entry-[0-9]+\.mjs$/.test(path)) {
+    throw new Error(`modulePath ${JSON.stringify(path)} is not a generated entry`)
   }
 }
 
@@ -856,7 +827,7 @@ function compareLocatorOccurrence(
   right: LocatedDefinition,
 ): number {
   return (
-    compareUTF8(left.sourcePath, right.sourcePath) ||
+    compareUTF8(left.modulePath, right.modulePath) ||
     compareUTF8(left.exportName, right.exportName)
   )
 }

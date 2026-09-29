@@ -145,7 +145,7 @@ describe("runProgram", () => {
             kind: "task",
             locator: {
               exportName: "definition",
-              sourcePath: "tasks/main.ts",
+              modulePath: "helmr/app/entry-0.mjs",
               slot: "handler"
             },
             manifest: {}
@@ -1431,7 +1431,7 @@ function programIO(options: {
             kind: "task",
             locator: {
               exportName: "definition",
-              sourcePath: `tasks/main.ts`,
+              modulePath: `helmr/app/entry-0.mjs`,
               slot: "handler",
             },
             manifest: {},
@@ -1441,7 +1441,7 @@ function programIO(options: {
             kind: "actor",
             locator: {
               exportName: "definition",
-              sourcePath: `tasks/other.ts`,
+              modulePath: `helmr/app/entry-1.mjs`,
               slot: "handler",
             },
             manifest: {},

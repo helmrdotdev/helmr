@@ -4743,7 +4743,7 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   }
   const declaration = located[0];
   const locator = declaration.locator;
-  const moduleURL = resolveModuleURL(locatorURL, locator.sourcePath);
+  const moduleURL = resolveModuleURL(locatorURL, locator.modulePath);
   const identity = entrypointIdentity(kind, start.entrypointDeclaredId);
   await writeRunEvent(io, {
     case: "entrypointReady",
@@ -4760,7 +4760,7 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   validateEntrypointRelease(release, start, kind);
   let definition;
   try {
-    const imported = io.importModule === void 0 ? await (await import("../moduleexecution/loader.mjs")).importSourceExports(moduleURL) : await io.importModule(moduleURL);
+    const imported = io.importModule === void 0 ? await import(moduleURL.href) : await io.importModule(moduleURL);
     const inspected = inspectDefinition(imported[locator.exportName]);
     if (inspected === void 0 || inspected.kind !== declaration.kind || inspected.id !== declaration.declaredId || inspected.kind !== "task" && inspected.kind !== "actor") {
       throw new Error(
@@ -4823,7 +4823,7 @@ function parseProgramIndexDeclaration(value, index) {
     throw new Error(`Program index declaration ${index} has no locator`);
   }
   const located = locator;
-  if (typeof located["exportName"] !== "string" || located["exportName"] === "" || typeof located["sourcePath"] !== "string" || located["slot"] !== "handler") {
+  if (typeof located["exportName"] !== "string" || located["exportName"] === "" || typeof located["modulePath"] !== "string" || located["slot"] !== "handler") {
     throw new Error(`Program index declaration ${index} locator is invalid`);
   }
   return {
@@ -4831,24 +4831,23 @@ function parseProgramIndexDeclaration(value, index) {
     declaredId: record["declaredId"],
     locator: {
       exportName: located["exportName"],
-      sourcePath: validateSourcePath(located["sourcePath"]),
+      modulePath: validateModulePath(located["modulePath"]),
       slot: "handler"
     }
   };
 }
-function validateSourcePath(value) {
-  const components = value.split("/");
-  if (components.some((part) => part === "" || part === "." || part === ".." || part === "node_modules" || part.includes("\\") || /[\u0000-\u001f\u007f-\u009f]/.test(part)) || components[0] === "helmr" || value === "helmr.config.ts" || !/\.(?:[cm]?js|jsx|[cm]?ts|tsx)$/.test(value) || /\.d\.[cm]?ts$/.test(value)) {
-    throw new Error("declaration sourcePath must identify a project source module");
+function validateModulePath(value) {
+  if (!/^helmr\/app\/entry-[0-9]+\.mjs$/.test(value)) {
+    throw new Error("declaration modulePath must identify a generated entry module");
   }
   return value;
 }
-function resolveModuleURL(locatorURL, sourcePath) {
+function resolveModuleURL(locatorURL, modulePath) {
   const root = path.dirname(path.dirname(fileURLToPath(locatorURL)));
-  const resolved = path.resolve(root, sourcePath);
+  const resolved = path.resolve(root, modulePath);
   const relative = path.relative(root, resolved);
   if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    throw new Error("declaration sourcePath escapes the Program root");
+    throw new Error("declaration modulePath escapes the Program root");
   }
   return pathToFileURL(resolved);
 }

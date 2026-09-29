@@ -23,6 +23,24 @@ describe("defineConfig", () => {
     expect(inspectConfig({ ...config })).toEqual(config)
   })
 
+  test("normalizes explicit runtime packages and asset patterns without retaining mutable inputs", () => {
+    const external = ["sharp", "@scope/tool"]
+    const assets = ["./prompts/**", "templates/*.txt"]
+    const config = defineConfig({ build: { external, assets } })
+    external.push("other")
+    assets.push("other/**")
+    expect(config.build.external).toEqual(["@scope/tool", "sharp"])
+    expect(config.build.assets).toEqual(["prompts/**", "templates/*.txt"])
+    expect(Object.isFrozen(config.build.external)).toBe(true)
+    expect(Object.isFrozen(config.build.assets)).toBe(true)
+    for (const value of ["tool/subpath", "node:fs", "../tool", "@scope"]) {
+      expect(() => defineConfig({ build: { external: [value] } })).toThrow()
+    }
+    for (const value of ["../prompts/**", "/prompts/**", "!prompts/**"]) {
+      expect(() => defineConfig({ build: { assets: [value] } })).toThrow()
+    }
+  })
+
   test("requires the explicit config shape", () => {
     expect(() => defineConfig({ dirs: [] })).toThrow()
     expect(defineConfig({ dirs: ["tasks"] })).toMatchObject({

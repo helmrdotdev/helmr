@@ -44,7 +44,7 @@ func TestProgramArtifactRejectsContractDivergence(t *testing.T) {
 			program.artifact.files["helmr/config.json"] = []byte("{}")
 		},
 		"source bytes": func(program *testProgram) {
-			program.artifact.replaceFile("tasks/build.ts", []byte("export default null"))
+			program.artifact.replaceFile("helmr/app/entry-0.mjs", []byte("export default null"))
 		},
 	}
 	for name, mutate := range tests {
@@ -236,9 +236,9 @@ func newTestProgram(t *testing.T) *testProgram {
 		`import { defineConfig } from "@helmr/sdk"; export default defineConfig({ dirs: ["tasks"] });`,
 	)
 	configRaw := []byte(
-		`{"dirs":["tasks"],"ignorePatterns":[]}`,
+		`{"assets":[],"dirs":["tasks"],"external":[],"ignorePatterns":[]}`,
 	)
-	sourcePath := "tasks/build.ts"
+	sourcePath := "helmr/app/entry-0.mjs"
 	sourceRaw := []byte("export const build = task({ id: \"build\" })\n")
 	programRaw, err := CanonicalProgramIndex(ProgramIndex{
 		Architecture:       ArchitectureX8664,
@@ -256,7 +256,7 @@ func newTestProgram(t *testing.T) *testProgram {
 			},
 			Locator: &ProgramLocator{
 				ExportName: "build",
-				SourcePath: sourcePath,
+				ModulePath: sourcePath,
 				Slot:       DeclarationSlotHandler,
 			},
 		}},
@@ -275,7 +275,7 @@ func newTestProgram(t *testing.T) *testProgram {
 			Digest: testDigest(string(configRaw)),
 			Path:   "helmr/config.json",
 		},
-		InputTreeDigest:    testDigest("pending"),
+		PayloadDigest:      testDigest("pending"),
 		ProgramIndexDigest: testDigest(string(programRaw)),
 	}
 	manifestRaw, err := canonicalProgramManifest(manifest)
@@ -285,7 +285,7 @@ func newTestProgram(t *testing.T) *testProgram {
 	artifact := newMemoryArtifact()
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("node_modules")
-	artifact.addDirectory("tasks")
+	artifact.addDirectory("helmr/app")
 	artifact.addFile("helmr/program-manifest.json", manifestRaw, 0644)
 	artifact.addFile("helmr/config.json", configRaw, 0644)
 	artifact.addFile("helmr/declarations.json", programRaw, 0644)
@@ -313,11 +313,11 @@ func (program *testProgram) refreshManifest(t *testing.T) {
 	for name, body := range program.artifact.files {
 		program.artifact.mutate(name, func(entry *artifactEntry) { entry.SizeBytes = int64(len(body)) })
 	}
-	digest, err := inputTreeDigest(t.Context(), program.artifact.entries, program.artifact.Open)
+	digest, err := payloadDigest(t.Context(), program.artifact.entries, program.artifact.Open)
 	if err != nil {
 		t.Fatal(err)
 	}
-	program.manifest.InputTreeDigest = digest
+	program.manifest.PayloadDigest = digest
 	raw, err := canonicalProgramManifest(program.manifest)
 	if err != nil {
 		t.Fatal(err)

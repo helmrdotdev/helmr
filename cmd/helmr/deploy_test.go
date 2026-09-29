@@ -569,7 +569,7 @@ func writeDeployTestBundle(t *testing.T) (string, []byte, string, string) {
 				Retry: deployment.RetryManifest{Enabled: false}},
 		},
 		Locator: &deployment.ProgramLocator{
-			ExportName: "hello", SourcePath: "tasks/hello.ts",
+			ExportName: "hello", ModulePath: "helmr/app/entry-0.mjs",
 			Slot: deployment.DeclarationSlotHandler,
 		},
 	}

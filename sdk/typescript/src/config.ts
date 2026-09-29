@@ -34,6 +34,10 @@ const regexpTest = RegExp.prototype.test.call.bind(
 ) as (regexp: RegExp, value: string) => boolean
 
 export interface HelmrBuildInput {
+  // Packages installed beside the generated JavaScript instead of bundled.
+  readonly external?: readonly string[]
+  // Project-relative positive file patterns copied into the Program.
+  readonly assets?: readonly string[]
   // Preparation of the managed Linux build environment, before installation.
   readonly builder?: Builder
   // Replaces package-manager inference. Runs unprivileged through
@@ -51,6 +55,8 @@ export interface HelmrConfigInput {
 }
 
 export interface HelmrBuildConfig {
+  readonly external: readonly string[]
+  readonly assets: readonly string[]
   readonly builder: Builder
   readonly installCommand: string | undefined
   readonly secrets: readonly string[]
@@ -273,7 +279,7 @@ function normalizeBuild(value: unknown): HelmrBuildConfig {
   const secretNamePattern = /^[A-Z_][A-Z0-9_]{0,127}$/
   const maxInstallCommandBytes = 16 << 10
   if (value === undefined) {
-    return freeze({ builder: builder(), installCommand: undefined, secrets: freeze([]) })
+    return freeze({ builder: builder(), installCommand: undefined, secrets: freeze([]), external: freeze([]), assets: freeze([]) })
   }
   if (
     typeof value !== "object" ||
@@ -289,9 +295,9 @@ function normalizeBuild(value: unknown): HelmrBuildConfig {
     const key = keys[index]
     if (
       typeof key !== "string" ||
-      (key !== "builder" && key !== "installCommand" && key !== "secrets")
+      (key !== "builder" && key !== "installCommand" && key !== "secrets" && key !== "external" && key !== "assets")
     ) {
-      throw new Error("config build accepts only builder, installCommand and secrets")
+      throw new Error("config build accepts only builder, installCommand, secrets, external and assets")
     }
     const descriptor = descriptors[key]
     if (
@@ -336,6 +342,8 @@ function normalizeBuild(value: unknown): HelmrBuildConfig {
     builder: builderValue === undefined ? builder() : builderValue,
     installCommand,
     secrets: freeze(secrets),
+    external: freeze(normalizeStringSet(descriptors["external"]?.value ?? [], "config build.external", validateExternal, false)),
+    assets: freeze(normalizeStringSet(descriptors["assets"]?.value ?? [], "config build.assets", validateAssetPattern, false)),
   })
 }
 
@@ -405,4 +413,28 @@ function setArrayIndex<T>(array: T[], index: number, value: T): void {
     value,
     writable: true,
   })
+}
+
+function validateExternal(value: unknown): string {
+  if (typeof value !== "string" || !regexpTest(/^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/, value)) {
+    throw new Error("config build.external entries must be whole package names")
+  }
+  return value
+}
+
+function validateAssetPattern(value: unknown): string {
+  if (typeof value !== "string" || value === "" || !hasOnlyUnicodeScalarValues(value) ||
+      hasControl(value) || startsWith(value, "/") || startsWith(value, "!") ||
+      includes(value, "\\") || endsWith(value, "/")) {
+    throw new Error("config build.assets entries must be positive project-relative file patterns")
+  }
+  const normalized = startsWith(value, "./") ? slice(value, 2) : value
+  const segments = split(normalized, "/")
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index]
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new Error("config build.assets entries must be normalized project-relative file patterns")
+    }
+  }
+  return normalized
 }

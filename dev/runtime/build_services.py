@@ -56,7 +56,7 @@ def inputs(source, env):
                 paths.extend(str((directory / file).relative_to(source)) for file in package.get(field, []))
         result[name] = tree_digest(source, paths)
     # Non-Go runtime/build inputs must also remain unchanged for host reuse.
-    prefixes = ['internal/runtime/', 'internal/moduleexecution/', 'internal/compiler/', 'internal/version/', 'nix/', 'images/', 'runtime/', 'sdk/', 'proto/', 'compiler/', 'packages/module-execution/', 'scripts/materialize-']
+    prefixes = ['internal/runtime/', 'internal/compiler/', 'internal/version/', 'nix/', 'images/', 'runtime/', 'sdk/', 'proto/', 'compiler/', 'scripts/materialize-']
     support = [str(p.relative_to(source)) for p in source.rglob('*') if p.is_file()
                and (str(p.relative_to(source)).startswith(tuple(prefixes)) or str(p.relative_to(source)) in ['flake.nix', 'flake.lock', 'bun.lock', 'package.json'])]
     result['runtime-support'] = tree_digest(source, support)

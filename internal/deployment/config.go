@@ -22,6 +22,8 @@ const (
 var configExtglob = regexp.MustCompile(`[?*+@!]\(`)
 
 type BuildConfig struct {
+	External       []string `json:"external"`
+	Assets         []string `json:"assets"`
 	Dirs           []string `json:"dirs"`
 	IgnorePatterns []string `json:"ignorePatterns"`
 }
@@ -102,6 +104,17 @@ func ValidateBuildConfig(config BuildConfig) error {
 		true,
 		validateConfigDirectory,
 	); err != nil {
+		return err
+	}
+	if err := validateConfigStrings(config.External, "external", false, func(value string) error {
+		if !externalPackageName.MatchString(value) {
+			return errors.New("entry must be a whole package name")
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := validateConfigStrings(config.Assets, "assets", false, validateAssetPattern); err != nil {
 		return err
 	}
 	return validateConfigStrings(
@@ -191,5 +204,19 @@ func validConfigText(value string) bool {
 func cloneBuildConfig(config BuildConfig) BuildConfig {
 	config.Dirs = slices.Clone(config.Dirs)
 	config.IgnorePatterns = slices.Clone(config.IgnorePatterns)
+	config.External = slices.Clone(config.External)
+	config.Assets = slices.Clone(config.Assets)
 	return config
+}
+
+var externalPackageName = regexp.MustCompile(`^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$`)
+
+func validateAssetPattern(value string) error {
+	if err := validateConfigDirectory(value); err != nil {
+		return err
+	}
+	if strings.HasPrefix(value, "!") {
+		return errors.New("asset patterns must be positive")
+	}
+	return nil
 }

@@ -16,11 +16,11 @@ import (
 
 const ProgramManifestFormatVersion = 0
 
-// ProgramManifest binds every installed input and the source declaration index.
+// ProgramManifest binds the executable payload and its declaration index.
 type ProgramManifest struct {
 	FormatVersion      int               `json:"formatVersion"`
 	Config             ProgramPathDigest `json:"config"`
-	InputTreeDigest    string            `json:"inputTreeDigest"`
+	PayloadDigest      string            `json:"payloadDigest"`
 	ProgramIndexDigest string            `json:"programIndexDigest"`
 }
 type ProgramPathDigest struct {
@@ -81,13 +81,13 @@ func canonicalProgramManifest(manifest ProgramManifest) ([]byte, error) {
 
 func validateProgramManifest(value ProgramManifest) error {
 	if value.FormatVersion != ProgramManifestFormatVersion || value.Config.Path != "helmr/config.json" ||
-		!sha256DigestPattern.MatchString(value.Config.Digest) || !sha256DigestPattern.MatchString(value.InputTreeDigest) || !sha256DigestPattern.MatchString(value.ProgramIndexDigest) {
+		!sha256DigestPattern.MatchString(value.Config.Digest) || !sha256DigestPattern.MatchString(value.PayloadDigest) || !sha256DigestPattern.MatchString(value.ProgramIndexDigest) {
 		return errors.New("program manifest v0 authority is invalid")
 	}
 	return nil
 }
 func programManifestFromCompilerResult(value ProgramCompilerResult, indexDigest string) ProgramManifest {
-	return ProgramManifest{FormatVersion: ProgramManifestFormatVersion, Config: value.Config, InputTreeDigest: value.InputTreeDigest, ProgramIndexDigest: indexDigest}
+	return ProgramManifest{FormatVersion: ProgramManifestFormatVersion, Config: value.Config, PayloadDigest: value.PayloadDigest, ProgramIndexDigest: indexDigest}
 }
 func verifyProgramManifestFiles(ctx context.Context, artifact *inspectedArtifact, value ProgramManifest) error {
 	if err := verifyProgramPathDigest(ctx, artifact, value.Config); err != nil {
@@ -100,11 +100,11 @@ func verifyProgramManifestFiles(ctx context.Context, artifact *inspectedArtifact
 	if _, err := ParseBuildConfig(raw); err != nil {
 		return err
 	}
-	digest, err := artifactInputTreeDigest(ctx, artifact)
+	digest, err := artifactPayloadDigest(ctx, artifact)
 	if err != nil {
 		return err
 	}
-	if digest != value.InputTreeDigest {
+	if digest != value.PayloadDigest {
 		return errors.New("program input tree digest does not match authority")
 	}
 	entry, canonical, err := resolveProgramArtifactPath(artifact, "package.json")
@@ -124,8 +124,8 @@ func verifyProgramManifestFiles(ctx context.Context, artifact *inspectedArtifact
 	}
 	return nil
 }
-func verifyDeclarationSource(artifact *inspectedArtifact, value string) error {
-	if err := validateDeclarationSourcePath(value); err != nil {
+func verifyDeclarationModule(artifact *inspectedArtifact, value string) error {
+	if err := validateDeclarationModulePath(value); err != nil {
 		return err
 	}
 	entry, canonical, err := resolveProgramArtifactPath(artifact, value)
@@ -134,15 +134,6 @@ func verifyDeclarationSource(artifact *inspectedArtifact, value string) error {
 	}
 	if entry.Kind != artifactEntryRegular || canonical != value {
 		return errors.New("declaration source must be a canonical regular file")
-	}
-	if _, exists := artifact.entries["helmr.config.ts"]; exists {
-		_, config, err := resolveProgramArtifactPath(artifact, "helmr.config.ts")
-		if err != nil {
-			return err
-		}
-		if config == canonical {
-			return errors.New("root config is build-only")
-		}
 	}
 	return nil
 }

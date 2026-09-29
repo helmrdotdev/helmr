@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -27,10 +26,9 @@ func run(ctx context.Context, arguments []string) error {
 	project := flags.String("project", "", "installed project tree")
 	prepareOutput := flags.String("prepare-output", "", "new closed prepared Program directory")
 	prepared := flags.String("prepared", "", "closed prepared Program directory")
-	programProject := flags.String("program-project", "", "private writable Program project tree")
 	work := flags.String("work", "", "private working directory")
 	bundleOutput := flags.String("bundle-output", "", "new deployment bundle directory")
-	analysisOutput := flags.String("analysis-output", "", "new canonical build-plan file")
+	bundlePath := flags.String("bundle-manifest", "", "generated module manifest")
 	computerImageInput := flags.String("computer-images", "", "computer image input document")
 	expectedPlanInput := flags.String("expected-plan", "", "canonical analysis build plan")
 	runtimeDescriptor := flags.String("runtime-descriptor", "", "canonical Runtime descriptor")
@@ -77,6 +75,7 @@ func run(ctx context.Context, arguments []string) error {
 		WorkDirectory:    cleanAbsolute(*work),
 		NodePath:         cleanAbsolute(*node),
 		ConfigPath:       cleanAbsolute(*configPath),
+		BundlePath:       cleanAbsolute(*bundlePath),
 		ProgramCompiler:  cleanAbsolute(*programCompiler),
 		SquashFSEncoder:  cleanAbsolute(*encoder),
 		Compiler:         compiler,
@@ -84,24 +83,13 @@ func run(ctx context.Context, arguments []string) error {
 		RuntimeMetadata:  metadata,
 	}
 	modes := 0
-	for _, selected := range []bool{*analysisOutput != "", *prepareOutput != "", *bundleOutput != ""} {
+	for _, selected := range []bool{*prepareOutput != "", *bundleOutput != ""} {
 		if selected {
 			modes++
 		}
 	}
 	if modes != 1 {
-		return errors.New("exactly one of --analysis-output, --prepare-output, or --bundle-output is required")
-	}
-	if *analysisOutput != "" {
-		analysis, err := builder.AnalyzeProgram(ctx, compilerInput)
-		if err != nil {
-			return err
-		}
-		canonical, err := deployment.CanonicalBuildPlan(analysis.Plan)
-		if err != nil {
-			return err
-		}
-		return writeExclusive(cleanAbsolute(*analysisOutput), canonical)
+		return errors.New("exactly one of --prepare-output or --bundle-output is required")
 	}
 	if *prepareOutput != "" {
 		_, err := builder.PrepareProgram(ctx, compilerInput, cleanAbsolute(*prepareOutput))
@@ -118,7 +106,6 @@ func run(ctx context.Context, arguments []string) error {
 	}
 	result, err := builder.BuildPreparedProgram(ctx, builder.PreparedProgramInput{
 		PreparedDirectory: cleanAbsolute(*prepared),
-		ProgramDirectory:  cleanAbsolute(*programProject),
 		WorkDirectory:     cleanAbsolute(*work),
 		ProgramObjectPath: filepath.Join(cleanAbsolute(*work), "program.squashfs"),
 		SquashFSEncoder:   cleanAbsolute(*encoder),
@@ -165,25 +152,6 @@ func run(ctx context.Context, arguments []string) error {
 		Objects:        objects,
 	})
 	return err
-}
-
-func writeExclusive(path string, body []byte) (returnErr error) {
-	if path == "" || !filepath.IsAbs(path) {
-		return errors.New("analysis output must be an absolute path")
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { returnErr = errors.Join(returnErr, file.Close()) }()
-	written, err := file.Write(body)
-	if err != nil {
-		return err
-	}
-	if written != len(body) {
-		return io.ErrShortWrite
-	}
-	return file.Sync()
 }
 
 func cleanAbsolute(value string) string {

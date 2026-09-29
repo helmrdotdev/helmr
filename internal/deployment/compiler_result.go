@@ -16,20 +16,20 @@ import (
 )
 
 type ProgramCompilerResult struct {
-	APIVersion          string                     `json:"apiVersion"`
-	Language            ModuleExecutionIdentity    `json:"language"`
-	NodeVersion         string                     `json:"nodeVersion"`
-	Config              ProgramPathDigest          `json:"config"`
-	InputTreeDigest     string                     `json:"inputTreeDigest"`
-	DiscoveryCandidates []string                   `json:"discoveryCandidates"`
-	Selections          []ProgramCompilerSelection `json:"selections"`
+	APIVersion    string                     `json:"apiVersion"`
+	Bundler       BundlerIdentity            `json:"bundler"`
+	NodeVersion   string                     `json:"nodeVersion"`
+	Config        ProgramPathDigest          `json:"config"`
+	PayloadDigest string                     `json:"payloadDigest"`
+	Modules       []string                   `json:"modules"`
+	Selections    []ProgramCompilerSelection `json:"selections"`
 }
 type ProgramCompilerSelection struct {
 	DeclaredID string          `json:"declaredId"`
 	ExportName string          `json:"exportName"`
 	Kind       DeclarationKind `json:"kind"`
 	Slot       DeclarationSlot `json:"slot"`
-	SourcePath string          `json:"sourcePath"`
+	ModulePath string          `json:"modulePath"`
 }
 
 func ParseProgramCompilerResult(raw []byte) (ProgramCompilerResult, error) {
@@ -92,28 +92,28 @@ func validateProgramCompilerResult(result ProgramCompilerResult) error {
 	if result.APIVersion != "helmr.compiler.v0" || result.NodeVersion != productversion.Node() {
 		return errors.New("program compiler execution contract is invalid")
 	}
-	if err := ValidateModuleExecutionIdentity(result.Language); err != nil {
+	if err := ValidateBundlerIdentity(result.Bundler); err != nil {
 		return err
 	}
-	if result.Config.Path != "helmr/config.json" || !sha256DigestPattern.MatchString(result.Config.Digest) || !sha256DigestPattern.MatchString(result.InputTreeDigest) {
+	if result.Config.Path != "helmr/config.json" || !sha256DigestPattern.MatchString(result.Config.Digest) || !sha256DigestPattern.MatchString(result.PayloadDigest) {
 		return errors.New("program compiler input authority is invalid")
 	}
-	if result.DiscoveryCandidates == nil || result.Selections == nil {
+	if result.Modules == nil || result.Selections == nil {
 		return errors.New("program compiler collections must be arrays")
 	}
-	for i, value := range result.DiscoveryCandidates {
-		if err := validateDeclarationSourcePath(value); err != nil {
+	for i, value := range result.Modules {
+		if err := validateDeclarationModulePath(value); err != nil {
 			return err
 		}
-		if i > 0 && result.DiscoveryCandidates[i-1] >= value {
+		if i > 0 && result.Modules[i-1] >= value {
 			return errors.New("discovery candidates are not in canonical order")
 		}
 	}
 	for i, value := range result.Selections {
-		if err := validateLocatedDeclaration(LocatedDeclaration{DeclaredID: value.DeclaredID, ExportName: value.ExportName, Kind: value.Kind, Slot: value.Slot, SourcePath: value.SourcePath}); err != nil {
+		if err := validateLocatedDeclaration(LocatedDeclaration{DeclaredID: value.DeclaredID, ExportName: value.ExportName, Kind: value.Kind, Slot: value.Slot, ModulePath: value.ModulePath}); err != nil {
 			return err
 		}
-		if _, found := slices.BinarySearch(result.DiscoveryCandidates, value.SourcePath); !found {
+		if _, found := slices.BinarySearch(result.Modules, value.ModulePath); !found {
 			return errors.New("selection is not a discovery candidate")
 		}
 		if i > 0 && compareProgramCompilerSelection(result.Selections[i-1], value) >= 0 {
@@ -126,7 +126,7 @@ func validateProgramCompilerAuthority(result ProgramCompilerResult, compiler Com
 	if err := ValidateCompilerInputs(compiler); err != nil {
 		return err
 	}
-	if result.APIVersion != compiler.APIVersion || result.Language != compiler.Language || result.NodeVersion != nodeVersion {
+	if result.APIVersion != compiler.APIVersion || result.Bundler != compiler.Bundler || result.NodeVersion != nodeVersion {
 		return errors.New("program compiler result does not match compiler/runtime authority")
 	}
 	return nil
@@ -135,8 +135,8 @@ func verifyProgramCompilerFiles(ctx context.Context, artifact *inspectedArtifact
 	if err := verifyProgramManifestFiles(ctx, artifact, programManifestFromCompilerResult(result, "sha256:"+strings.Repeat("0", 64))); err != nil {
 		return err
 	}
-	for _, candidate := range result.DiscoveryCandidates {
-		if err := verifyDeclarationSource(artifact, candidate); err != nil {
+	for _, candidate := range result.Modules {
+		if err := verifyDeclarationModule(artifact, candidate); err != nil {
 			return err
 		}
 	}
@@ -148,7 +148,7 @@ func validateProgramCompilerLocators(result ProgramCompilerResult, locator Decla
 	}
 	for i, value := range result.Selections {
 		d := locator.Declarations[i]
-		if value.DeclaredID != d.DeclaredID || value.ExportName != d.ExportName || value.Kind != d.Kind || value.Slot != d.Slot || value.SourcePath != d.SourcePath {
+		if value.DeclaredID != d.DeclaredID || value.ExportName != d.ExportName || value.Kind != d.Kind || value.Slot != d.Slot || value.ModulePath != d.ModulePath {
 			return errors.New("compiler selections do not match declaration locators")
 		}
 	}
@@ -164,9 +164,9 @@ func compareProgramCompilerSelection(left, right ProgramCompilerSelection) int {
 		return 1
 	}
 	return strings.Compare(
-		left.DeclaredID+"\x00"+left.SourcePath+"\x00"+
+		left.DeclaredID+"\x00"+left.ModulePath+"\x00"+
 			left.ExportName+"\x00"+string(left.Slot),
-		right.DeclaredID+"\x00"+right.SourcePath+"\x00"+
+		right.DeclaredID+"\x00"+right.ModulePath+"\x00"+
 			right.ExportName+"\x00"+string(right.Slot),
 	)
 }

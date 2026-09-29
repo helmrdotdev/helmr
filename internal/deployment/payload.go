@@ -17,10 +17,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
 
-// ProgramInputTreeDigest freezes the identity of every installed input before
+// ProgramPayloadDigest freezes the identity of every payload file before
 // any customer code executes. Its inventory uses the canonical archive modes;
 // admission uses the same hash function over the inspected archive inventory.
-func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
+func ProgramPayloadDigest(ctx context.Context, root string) (string, error) {
 	if ctx == nil {
 		return "", errors.New("program input digest context is nil")
 	}
@@ -46,9 +46,6 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 		}
 		if len(entries) >= MaxProgramTreeEntries {
 			return errors.New("installed input exceeds Program entry bounds")
-		}
-		if relative == "helmr" {
-			return errors.New("installed input contains reserved root helmr path")
 		}
 		if relative != "." {
 			if err := safepath.ValidateTreePath(relative, programMountPath, "/computer/project", "/computer/program"); err != nil {
@@ -137,25 +134,25 @@ func ProgramInputTreeDigest(ctx context.Context, root string) (string, error) {
 	if err := validateBuildTreeLinks(tree); err != nil {
 		return "", err
 	}
-	return inputTreeDigest(ctx, entries, func(ctx context.Context, name string) (io.ReadCloser, error) {
+	return payloadDigest(ctx, entries, func(ctx context.Context, name string) (io.ReadCloser, error) {
 		return confined.Open(name)
 	})
 }
 
-func artifactInputTreeDigest(ctx context.Context, artifact *inspectedArtifact) (string, error) {
-	return inputTreeDigest(ctx, artifact.ordered, artifact.reader.Open)
+func artifactPayloadDigest(ctx context.Context, artifact *inspectedArtifact) (string, error) {
+	return payloadDigest(ctx, artifact.ordered, artifact.reader.Open)
 }
 
-func inputTreeDigest(ctx context.Context, entries []artifactEntry, open func(context.Context, string) (io.ReadCloser, error)) (string, error) {
+func payloadDigest(ctx context.Context, entries []artifactEntry, open func(context.Context, string) (io.ReadCloser, error)) (string, error) {
 	ordered := append([]artifactEntry(nil), entries...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
 	hash := sha256.New()
-	_, _ = io.WriteString(hash, "helmr.program-input-tree.v0\n")
+	_, _ = io.WriteString(hash, "helmr.program-payload.v0\n")
 	for _, entry := range ordered {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if entry.Path == "helmr" || strings.HasPrefix(entry.Path, "helmr/") {
+		if entry.Path == "helmr" || (strings.HasPrefix(entry.Path, "helmr/") && entry.Path != "helmr/app" && !strings.HasPrefix(entry.Path, "helmr/app/")) {
 			continue
 		}
 		record := map[string]any{"path": entry.Path, "kind": entry.Kind, "mode": entry.Mode}

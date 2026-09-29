@@ -25,15 +25,17 @@ let
     cp -a ${runtimeRelease}/tree "$out/opt/helmr/runtime"
     cp ${runtimeRelease}/runtime.descriptor.json "$out/opt/helmr/release/runtime.descriptor.json"
     cp -a ${compiler}/tree/helmr/. "$out/nix/helmr/"
-    cp -a ${compiler}/tree/moduleexecution "$out/nix/moduleexecution"
-    cp -a ${compiler}/tree/share "$out/nix/share"
     chmod u+w "$out/nix/helmr"
     cp ${compiler}/compiler.descriptor.json "$out/nix/helmr/compiler.descriptor.json"
     chmod u-w "$out/nix/helmr"
 
     ln -s ${lib.getBin substrateGenerator}/bin/mke2fs "$out/opt/helmr/bin/mke2fs"
     cp ${./mke2fs.conf} "$out/opt/helmr/release/mke2fs.conf"
-    ln -s ${bundleBuilder}/bin/bundle-builder "$out/opt/helmr/bin/bundle-builder"
+    cp ${bundleBuilder}/bin/bundle-builder "$out/opt/helmr/bin/bundle-builder"
+    mkdir -p "$out/opt/helmr/empty" "$TMPDIR/npm-node"
+    tar -xJf ${nodeArchive} --strip-components=1 --directory "$TMPDIR/npm-node"
+    cp -a "$TMPDIR/npm-node/lib/node_modules/npm" "$out/opt/helmr/npm"
+    grep -q '"version": "11.19.0"' "$out/opt/helmr/npm/package.json"
     ln -s ${squashfsTools}/bin/mksquashfs "$out/opt/helmr/bin/mksquashfs"
     ln -s /computer/project "$out/opt/helmr/program"
   '';
@@ -58,8 +60,13 @@ dockerTools.buildLayeredImage {
 
   contents = [ platform ];
 
-  # Real files, not store links: /usr/local stays an ordinary writable prefix.
+  # Exported compiler/runtime paths must be real files so the scratch bundling
+  # stage can copy only that closure. Native filesystem tools keep store links.
   extraCommands = ''
+    rm -rf opt/helmr nix/helmr
+    mkdir -p opt/helmr nix/helmr
+    cp -a ${platform}/opt/helmr/. opt/helmr/
+    cp -a ${platform}/nix/helmr/. nix/helmr/
     mkdir -p usr/local
     cp -a ${userTools}/usr/local/. usr/local/
     chmod -R u+w usr/local

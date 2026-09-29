@@ -34,10 +34,16 @@ export async function analyzeProject(options: {root: string; architecture: "x86_
   const output = await mkdtemp(resolve(tmpdir(), "helmr-source-result-"))
   try {
     const configPath = resolve(output,"config.json")
-    await writeFile(configPath, JSON.stringify(options.config))
-    const verification = runEntry("program-compiler", [options.root,configPath,nodeVersion,`sha256:${"1".repeat(64)}`,output])
+    await writeFile(configPath, JSON.stringify({ ...options.config, external: options.config.external ?? [], assets: options.config.assets ?? [] }))
+    const bundle = resolve(output,"bundle")
+    const child = spawnSync("node", ["--no-strip-types", "--no-global-search-paths", new URL("../../../internal/compiler/program-compiler.mjs",import.meta.url).pathname,"--bundle",options.root,configPath,nodeVersion,bundle], {encoding:"utf8",env:{PATH:process.env["PATH"]}})
+    if (child.status !== 0) throw new Error(child.stderr)
+    const dependencies = JSON.parse(await readFile(resolve(bundle,"install/package.json"),"utf8")).dependencies
+    if (Object.keys(dependencies).length !== 0) throw new Error("analyzeProject fixture requires explicit runtime-install qualification for external packages")
+    const payload = resolve(bundle,"payload")
+    const verification = runEntry("program-compiler", ["--analyze",payload,configPath,nodeVersion,`sha256:${"1".repeat(64)}`,resolve(bundle,"bundle.json"),output])
     if (verification.outcome !== "succeeded") throw new Error(verification.error.message)
     const result = JSON.parse(await readFile(resolve(output,"helmr/compiler-result.json"),"utf8"))
-    return {buildPlan: JSON.parse(verification.files[0].content),declarationLocator:JSON.parse(verification.files[1]?.content ?? '{"declarations":[]}'),programDeclarations:verification.declarations,modules:result.discoveryCandidates,result}
+    return {buildPlan: JSON.parse(verification.files[0].content),declarationLocator:JSON.parse(verification.files[1]?.content ?? '{"declarations":[]}'),programDeclarations:verification.declarations,modules:JSON.parse(await readFile(resolve(bundle,"bundle.json"),"utf8")).entries.map((entry: {sourcePath:string})=>entry.sourcePath),result}
   } finally {await rm(output,{recursive:true,force:true})}
 }

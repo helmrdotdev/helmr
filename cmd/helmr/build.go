@@ -35,6 +35,7 @@ type dockerBuildxRequest struct {
 	OutputAttributes map[string]string
 	BuildContexts    map[string]string
 	SecretIDs        []string
+	NoCacheFilters   []string
 }
 
 func bundleBuildCommand() *cobra.Command {
@@ -129,8 +130,11 @@ func buildDeploymentBundleAt(
 	if err != nil {
 		return err
 	}
-	emptyContext := filepath.Join(stage, "empty-context")
-	if err := os.Mkdir(emptyContext, 0o755); err != nil {
+	// Buildx keys local synchronization by the main context basename. Keep it
+	// unique so epoch-stamped outputs cannot reuse stale same-size metadata
+	// from another preparation; content-based build layers remain reusable.
+	emptyContext, err := os.MkdirTemp(stage, "empty-context-")
+	if err != nil {
 		return err
 	}
 	configContext := filepath.Join(stage, "config")
@@ -195,19 +199,20 @@ func buildDeploymentBundleAt(
 		return fmt.Errorf("validate installed project tree: %w", err)
 	}
 	projectContexts := map[string]string{"helmr_installed": installedContext}
-	analysisDockerfile, err := builder.AnalysisDockerfile()
+	preparationDockerfile, err := builder.PreparationDockerfile()
 	if err != nil {
 		return err
 	}
-	analysisDockerfilePath, err := writeGraph(stage, "Dockerfile.analysis", analysisDockerfile)
+	preparationDockerfilePath, err := writeGraph(stage, "Dockerfile.preparation", preparationDockerfile)
 	if err != nil {
 		return err
 	}
-	analysisOutput := filepath.Join(stage, "analysis")
+	preparationOutput := filepath.Join(stage, "preparation")
 	if err := runDockerBuildx(ctx, command, dockerBuildxRequest{
 		Runner:     runner,
-		Dockerfile: analysisDockerfilePath, ContextDirectory: emptyContext,
-		Target: "analysis", Output: analysisOutput, OutputType: "local",
+		Dockerfile: preparationDockerfilePath, ContextDirectory: emptyContext,
+		NoCacheFilters: []string{"runtime-installed", "analyzed"},
+		Target:         "preparation", Output: preparationOutput, OutputType: "local",
 		BuildContexts: map[string]string{
 			builder.BuilderContextName:     builderContext,
 			builder.EnvironmentContextName: environmentContext,
@@ -217,7 +222,7 @@ func buildDeploymentBundleAt(
 	}); err != nil {
 		return err
 	}
-	planRaw, err := os.ReadFile(filepath.Join(analysisOutput, "build-plan.json"))
+	planRaw, err := os.ReadFile(filepath.Join(preparationOutput, "build-plan.json"))
 	if err != nil {
 		return fmt.Errorf("read analyzed build plan: %w", err)
 	}
@@ -270,11 +275,9 @@ func buildDeploymentBundleAt(
 		Dockerfile: finalDockerfilePath, ContextDirectory: emptyContext,
 		Target: "bundle", Output: buildOutput, OutputType: "local",
 		BuildContexts: map[string]string{
-			builder.BuilderContextName:     builderContext,
-			builder.EnvironmentContextName: environmentContext,
-			builder.ConfigContextName:      configContext,
-			"helmr_images":                 computerContext,
-			"helmr_installed":              installedContext,
+			builder.BuilderContextName: builderContext,
+			"helmr_images":             computerContext,
+			"helmr_prepared":           preparationOutput,
 		},
 	}); err != nil {
 		return err
@@ -383,6 +386,9 @@ func executeDockerBuildx(
 		"--build-arg", "SOURCE_DATE_EPOCH=0",
 		"--provenance=false",
 		"--progress", "plain",
+	}
+	if len(request.NoCacheFilters) > 0 {
+		arguments = append(arguments, "--no-cache-filter", strings.Join(request.NoCacheFilters, ","))
 	}
 	contextNames := make([]string, 0, len(request.BuildContexts))
 	for name := range request.BuildContexts {

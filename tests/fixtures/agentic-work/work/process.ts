@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process"
 import { readFile, readdir } from "node:fs/promises"
-import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { run } from "./run.ts"
 
-const tool = join(dirname(fileURLToPath(import.meta.url)), "tool.mjs")
+const tool = fileURLToPath(import.meta.resolve("#project/work/tool.mjs"))
 const marker = "agentic-hang-marker"
 
 async function markedProcesses(): Promise<number> {

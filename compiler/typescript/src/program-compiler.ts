@@ -13,6 +13,8 @@ import {
   compileProgram,
   compilerContract,
 } from "./source"
+import { bundleProgram } from "./bundle"
+import { assembleRuntime, installRuntimePackages } from "./runtime-packages"
 import { inspectCanonicalConfig } from "./config"
 
 async function main(): Promise<void> {
@@ -20,31 +22,25 @@ async function main(): Promise<void> {
     process.stdout.write(canonicalizeJsonValue(compilerContract()))
     return
   }
-  if (
-    process.argv.length !== 7 ||
-    process.argv[2] === undefined ||
-    process.argv[3] === undefined ||
-    process.argv[4] === undefined ||
-    process.argv[5] === undefined ||
-    process.argv[6] === undefined
-  ) {
-    throw new Error(
-      "Program Compiler requires a Program root, canonical config path, exact Node version, input tree digest, and output root",
-    )
+  const [mode, ...args] = process.argv.slice(2)
+  if (mode === "--bundle" && args.length === 4) {
+    if (args[2] !== process.versions.node) throw new Error("bundler Node version does not match the Runtime")
+    await bundleProgram({ root: args[0]!, config: inspectCanonicalConfig(JSON.parse(await readFile(args[1]!, "utf8"))), nodeVersion: args[2]!, output: args[3]! })
+    return
   }
-  const root = resolve(process.argv[2])
-  const config = inspectCanonicalConfig(
-    JSON.parse(await readFile(process.argv[3], "utf8")),
-  )
+  if (mode === "--install-runtime" && args.length === 0) { await installRuntimePackages(); return }
+  if (mode === "--assemble" && args.length === 3) {
+    await assembleRuntime({ bundle: args[0]!, installed: args[1]!, output: args[2]! })
+    return
+  }
+  if (mode !== "--analyze" || args.length !== 6) throw new Error("Program Compiler requires --bundle, --assemble or --analyze with complete inputs")
+  const config = inspectCanonicalConfig(JSON.parse(await readFile(args[1]!, "utf8")))
   const compiled = await compileProgram({
-    architecture: "x86_64",
-    config,
-    nodeVersion: process.argv[4],
-    inputTreeDigest: process.argv[5],
-    root,
+    architecture: "x86_64", root: resolve(args[0]!), config,
+    nodeVersion: args[2]!, payloadDigest: args[3]!, bundlePath: args[4]!,
   })
   for (const [path, contents] of compiled.files) {
-    const target = resolve(process.argv[6], path)
+    const target = resolve(args[5]!, path)
     await mkdir(dirname(target), { recursive: true })
     await writeFile(target, contents)
   }
@@ -68,7 +64,7 @@ async function writeResult(result: VerificationResultFrame): Promise<void> {
 try {
   await main()
 } catch (error) {
-  if (process.argv[2] === "--describe") throw error
+  if (process.argv[2] !== "--analyze") throw error
   const message = error instanceof Error ? error.message : String(error)
   await writeResult(failedVerificationResult(message))
 }

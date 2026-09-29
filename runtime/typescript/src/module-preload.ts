@@ -1,6 +1,6 @@
-import { installModuleExecution } from "@helmr/module-execution"
+import { installModulePolicy } from "./module-policy"
 
-installModuleExecution({
+installModulePolicy({
   root: "/opt/helmr/program",
-  platformRoot: "/opt/helmr/runtime",
+  platformEntries: ["/opt/helmr/runtime/helmr/entry.mjs"],
 })

@@ -122,6 +122,8 @@ export default defineConfig({
 	want := Document{}
 	want.Discovery.Dirs = []string{"checks", "src"}
 	want.Discovery.IgnorePatterns = []string{}
+	want.Discovery.External = []string{}
+	want.Discovery.Assets = []string{}
 	want.Build = Build{
 		Builder: Builder{Steps: []Step{
 			{Kind: "copy", Source: "build/setup.sh", Destination: "/opt/setup.sh"},
@@ -194,7 +196,7 @@ func TestEvaluateExplainsHostPreparationFailures(t *testing.T) {
 		"unknown step from a newer sdk": {"current", `import { builder } from "@helmr/sdk"; export default { dirs: ["src"], build: { builder: builder().mount("/cache") } }`,
 			[]string{"builder step 1", "align their versions"}},
 		"unknown key": {"current", `export default { dirs: ["src"], build: { packages: ["jq"] } }`,
-			[]string{"accepts only builder, installCommand and secrets"}},
+			[]string{"accepts only builder, installCommand, secrets, external and assets"}},
 		"typescript error": {"current", "export default { dirs: [\"src\" }", []string{"helmr.config.ts"}},
 	} {
 		t.Run(name, func(t *testing.T) {
