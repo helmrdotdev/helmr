@@ -116,8 +116,13 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 		return fmt.Errorf("checkout computer mount runtime: %w", err)
 	}
 	rawSession := checkout.Machine()
-	instance := newInstanceMount(rawSession)
+	instance := checkout.mount
 	defer func() {
+		if !checkout.beginTeardown() {
+			// The claim has passed to checkpoint capture or to physical
+			// cleanup, which excludes the source and reports the Instance.
+			return
+		}
 		if closeErr := m.closeSession(instance); closeErr != nil {
 			failure := computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
@@ -175,7 +180,7 @@ func (m Server) Serve(ctx context.Context, mount workerapi.ComputerInstanceAssig
 		select {
 		case failure := <-saveFailure:
 			cause := computerMountFailure{code: "computer_preservation_failed", err: fmt.Errorf("computer preservation failed: %w", failure)}
-			if ctx.Err() == nil {
+			if ctx.Err() == nil && checkout.beginTeardown() {
 				reportErr := m.failComputerMount(client, renewal.authority(mount), cause)
 				cause.reported = reportErr == nil
 				runErr = errors.Join(runErr, reportErr)
@@ -223,8 +228,10 @@ func (m Server) serveComputerMount(
 	go func() {
 		sessionExited <- instance.Wait(renewal.ctx)
 	}()
+	// Reporting a failure commits the Server to its own teardown; once capture
+	// or physical cleanup owns the claim, that owner reports the Instance.
 	failAndReturn := func(cause error) error {
-		if ctx.Err() == nil {
+		if ctx.Err() == nil && checkout.beginTeardown() {
 			_ = m.failComputerMount(client, renewal.authority(mount), cause)
 		}
 		return cause
@@ -249,7 +256,9 @@ func (m Server) serveComputerMount(
 	checkpointReleased := func() error {
 		_, releaseErr := instance.CheckpointReleaseResult(context.Background())
 		_ = renewal.stopAndWait()
-		if releaseErr != nil {
+		// Once the Server no longer owns its claim, the claim's owner handles a
+		// failed release.
+		if releaseErr != nil && checkout.beginTeardown() {
 			failure := computerMountFailure{
 				code: "computer_mount_checkpoint_release_failed",
 				err:  fmt.Errorf("release checkpoint source: %w", releaseErr),
@@ -290,6 +299,12 @@ func (m Server) serveComputerMount(
 			if released, _ := instance.CheckpointReleaseResult(context.Background()); released {
 				return checkpointReleased()
 			}
+			if !checkout.beginTeardown() {
+				// The claim passed to capture or physical cleanup, which
+				// reports the Instance.
+				_ = renewal.stopAndWait()
+				return nil
+			}
 			if renewal.ctx.Err() != nil {
 				continue
 			}
@@ -304,6 +319,10 @@ func (m Server) serveComputerMount(
 				err:  fmt.Errorf("computer mount VM exited: %w", err),
 			})
 		case request := <-instance.failureRequests:
+			if !checkout.beginTeardown() {
+				request.result <- errors.New("computer source is no longer owned by this server")
+				return nil
+			}
 			failure := computerMountFailure{
 				code: "computer_mount_program_start_failed",
 				err:  errors.New("program process failed before start proof"),
@@ -804,7 +823,7 @@ func (m Server) materializeSession(ctx context.Context, mount *workerapi.Compute
 		return nil, key, computerMountFailure{code: "computer_runtime_not_prepared", err: err}
 	}
 	releaseFailedCheckout := func(err error) error {
-		if closeErr := m.closeSession(session); closeErr != nil {
+		if closeErr := m.closeSession(checkout.mount); closeErr != nil {
 			checkout.Relinquish()
 			return errors.Join(err, computerMountFailure{
 				code: "computer_mount_runtime_close_failed",
@@ -1233,6 +1252,10 @@ func (m Server) registerComputerMountContext(ctx context.Context, session vm.Mac
 func (m Server) stopControlledComputerMount(ctx context.Context, session vm.Machine, checkout *machineCheckout, mount workerapi.ComputerInstanceAssignment, client workerapi.ComputerServerControlPlaneClient) error {
 	// Persistence is completed by Instance save/checkpoint publication before
 	// its owner requests physical closure. Member completion cannot publish here.
+	if !checkout.beginTeardown() {
+		// The claim's current owner excludes the source and reports closure.
+		return nil
+	}
 	if err := m.closeSession(session); err != nil {
 		_ = m.failComputerMount(client, mount, computerMountFailure{
 			code: "computer_mount_runtime_close_failed",

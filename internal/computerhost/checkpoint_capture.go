@@ -170,8 +170,14 @@ func (c *computerCheckpointer) CreateCheckpoint(ctx context.Context, request com
 		return result, err
 	}
 	started := time.Now()
-	// Capture intentionally does not quiesce Computer saves here; whether it
-	// must is a separate correctness question for the physical capture owner.
+	// Computer saves are not quiesced before the freeze. The Control Plane
+	// owns that exclusion: BeginComputerCheckpoint
+	// (internal/db/query/computer_checkpoints.sql) admits a checkpoint only
+	// while the Instance has no pending save (save_disk_version_id IS NULL)
+	// and moves admission to checkpointing, which save admission rejects.
+	// Source release still joins the mount's save owner before the machine
+	// closes, since a save's local completion can outlive its committed
+	// acknowledgement.
 	point, err := guestControl{machine: c.session}.freeze(ctx, request.Target)
 	if err != nil {
 		return result, err

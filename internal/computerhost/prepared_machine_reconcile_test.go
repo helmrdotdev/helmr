@@ -305,9 +305,11 @@ func TestStopRuntimeTargetRequiresExclusiveMatchingLocalEpoch(t *testing.T) {
 
 func TestStopRuntimeTargetDefersToCheckedOutComputerRuntime(t *testing.T) {
 	machines := NewPreparedMachines(nil, nil, 1, nil)
+	ref := preparedMachineRef{id: "runtime-1", epoch: 7}
 	machines.mu.Lock()
-	machines.markRuntimeCheckedOutLocked("runtime-1", 7)
+	claim := machines.claimLocked(ref, serverClaim, preparedMachineEntry{})
 	machines.mu.Unlock()
+	checkout := &machineCheckout{machines: machines, ref: ref, gen: claim.gen}
 	client := &typedRuntimeClient{}
 	target := workerapi.RuntimeReconcileTarget{ID: "runtime-1", WorkerEpoch: 7, DesiredVersion: 2, ObservedVersion: 1}
 	if err := machines.stopRuntimeTarget(context.Background(), client, target); err != nil {
@@ -316,7 +318,7 @@ func TestStopRuntimeTargetDefersToCheckedOutComputerRuntime(t *testing.T) {
 	if len(client.closed) != 0 {
 		t.Fatalf("checked-out runtime was closed by the machines reconciler: %+v", client.closed)
 	}
-	if err := machines.releaseCheckout(preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}); err != nil {
+	if err := checkout.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if err := machines.stopRuntimeTarget(context.Background(), client, target); err == nil {
@@ -789,8 +791,8 @@ func TestReclaimFailedCheckedOutRuntimeClearsExactCheckoutAfterPhysicalCleanup(t
 		t.Fatal(err)
 	}
 	machines.mu.Lock()
-	machines.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
-	machines.markRuntimeCheckedOutLocked("019c10d5-a6f7-7af1-8f5f-000000000516", target.WorkerEpoch)
+	machines.claimLocked(preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}, serverClaim, preparedMachineEntry{})
+	machines.claimLocked(preparedMachineRef{id: "019c10d5-a6f7-7af1-8f5f-000000000516", epoch: target.WorkerEpoch}, serverClaim, preparedMachineEntry{})
 	machines.mu.Unlock()
 	client := &typedRuntimeClient{}
 
@@ -824,7 +826,7 @@ func TestReclaimFailedCheckedOutRuntimeRetainsCheckoutWhenPhysicalCleanupFails(t
 		t.Fatal(err)
 	}
 	machines.mu.Lock()
-	machines.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
+	machines.claimLocked(preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}, serverClaim, preparedMachineEntry{})
 	machines.mu.Unlock()
 	client := &typedRuntimeClient{}
 
@@ -853,7 +855,7 @@ func TestReclaimFailedCheckedOutRuntimeRetriesProofAfterLocalRelease(t *testing.
 		t.Fatal(err)
 	}
 	machines.mu.Lock()
-	machines.markRuntimeCheckedOutLocked(target.ID, target.WorkerEpoch)
+	machines.claimLocked(preparedMachineRef{id: target.ID, epoch: target.WorkerEpoch}, serverClaim, preparedMachineEntry{})
 	machines.mu.Unlock()
 	client := &typedRuntimeClient{failedErrors: []error{errors.New("proof response lost")}}
 

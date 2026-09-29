@@ -62,10 +62,8 @@ type runtimeReconcileResult struct {
 }
 
 type PreparedMachines struct {
-	captureCleanup        map[preparedMachineRef]*computerCheckpointer
 	ComputerCaptures      *CaptureRuns
 	Checkpoints           ComputerCheckpointClient
-	checkedOutEntries     map[preparedMachineRef]preparedMachineEntry
 	Backend               vm.Backend
 	CAS                   cas.Store
 	ComputerObjects       cas.ImmutableStore
@@ -87,12 +85,17 @@ type PreparedMachines struct {
 	RuntimeArchitecture   definition.RuntimeArchitecture
 	VerifierCgroupRoot    string
 
+	// sourceReleaseTimeout bounds each release attempt of a capture-owned
+	// source; zero means the prepared-machine control timeout.
+	sourceReleaseTimeout time.Duration
+
 	computerDevices   map[preparedMachineRef]vm.ComputerDevice
 	mu                sync.Mutex
 	closeMu           sync.Mutex
 	entries           map[string][]preparedMachineEntry
 	filling           map[string]int
-	checkedOut        map[preparedMachineRef]struct{}
+	claims            map[preparedMachineRef]*machineClaim
+	claimGen          uint64
 	ctx               context.Context
 	cancel            context.CancelFunc
 	activity          int
@@ -116,6 +119,55 @@ type preparedMachineEntry struct {
 type preparedMachineRef struct {
 	id    string
 	epoch int64
+}
+
+// machineClaimKind names the holder of a checked-out prepared machine.
+type machineClaimKind uint8
+
+const (
+	// serverClaim is held by a Server through its machineCheckout.
+	serverClaim machineClaimKind = iota + 1
+	// captureClaim is held by checkpoint capture, which then owns source
+	// exclusion and the Instance's closure report.
+	captureClaim
+	// orphanClaim has no holder: its Server gave it up, or physical cleanup
+	// took it over, while the mount's save owner had not joined. It keeps the
+	// mount so that only physical cleanup, which joins that save owner before
+	// finalizing, ends it.
+	orphanClaim
+)
+
+// machineClaim is one exclusive claim on a checked-out prepared machine. Each
+// holder gets a fresh gen; a handle acts only while its gen is current, so a
+// stale handle never affects a later claim on the same key.
+type machineClaim struct {
+	gen   uint64
+	kind  machineClaimKind
+	entry preparedMachineEntry
+	// mount is a served machine's managed mount. Capture releases the source
+	// through it so Computer saves are joined before the machine closes.
+	mount *instanceMount
+	// checkpointer is retained from the start of physical capture until source
+	// exclusion and checkpoint staging cleanup have succeeded.
+	checkpointer *computerCheckpointer
+	// teardown marks a Server claim whose holder has committed to closing the
+	// machine, releasing the claim and reporting the Instance itself. Capture
+	// may not take it over.
+	teardown bool
+	// release is the claim's single active resource release. Every other
+	// releaser joins it instead of releasing the same resources again.
+	release *claimRelease
+}
+
+type claimRelease struct {
+	done chan struct{}
+	err  error
+}
+
+// beginReleaseLocked makes the caller the claim's release owner.
+func (c *machineClaim) beginReleaseLocked() *claimRelease {
+	c.release = &claimRelease{done: make(chan struct{})}
+	return c.release
 }
 
 type preparedMachineSignal struct {
@@ -180,7 +232,7 @@ func NewPreparedMachines(backend vm.Backend, store cas.Store, size int, log *slo
 		Log:          log,
 		entries:      map[string][]preparedMachineEntry{},
 		filling:      map[string]int{},
-		checkedOut:   map[preparedMachineRef]struct{}{},
+		claims:       map[preparedMachineRef]*machineClaim{},
 		ctx:          ctx,
 		cancel:       cancel,
 		activityWake: make(chan struct{}),
@@ -281,13 +333,10 @@ func (p *PreparedMachines) checkout(ctx context.Context, mount workerapi.Compute
 	}
 	p.removeReadyEntryAtLocked(key, entries, index)
 	ref := preparedMachineRef{id: computerInstanceID, epoch: mount.RuntimeEpoch}
-	p.markRuntimeCheckedOutLocked(ref.id, ref.epoch)
-	if p.checkedOutEntries == nil {
-		p.checkedOutEntries = map[preparedMachineRef]preparedMachineEntry{}
-	}
-	p.checkedOutEntries[ref] = entry
+	claim := p.claimLocked(ref, serverClaim, entry)
+	claim.mount = newInstanceMount(entry.session)
 	checkout := &machineCheckout{
-		machines: p, ref: ref, machine: entry.session,
+		machines: p, ref: ref, gen: claim.gen, machine: entry.session, mount: claim.mount,
 		writerGeneration: entry.target.Source.WriterGeneration,
 	}
 	if entry.target.Source.Restore != nil {
@@ -446,7 +495,25 @@ func (p *PreparedMachines) reclaimFailedRuntimeTarget(ctx context.Context, clien
 	if p.Backend == nil {
 		return errors.New("runtime connector does not support exact failed-runtime cleanup")
 	}
-	entry, ready := p.claimReadyEntry(computerInstanceID, target.WorkerEpoch)
+	// One critical section decides who owns the runtime before it is stopped:
+	// a ready entry is taken, a live Server claim is orphaned, and a committed
+	// Server teardown is left alone. A checkout cannot slip in between.
+	p.mu.Lock()
+	if claim := p.claims[preparedMachineRef{id: computerInstanceID, epoch: target.WorkerEpoch}]; claim != nil && claim.kind == serverClaim {
+		if claim.teardown || claim.release != nil {
+			// The Server has committed to closing, releasing and reporting
+			// this runtime itself, within its bounded teardown. Racing it would
+			// duplicate that work, so this attempt does nothing; a later one
+			// finds the claim ended, or orphaned if the Server's close failed.
+			p.mu.Unlock()
+			return errors.New("runtime is being torn down by its server")
+		}
+		// Revoke the Server's claim before stopping its machine, so the Server
+		// cannot observe the exit and then report or release the runtime.
+		p.orphanLocked(claim)
+	}
+	entry, ready := p.claimReadyEntryLocked(computerInstanceID, target.WorkerEpoch)
+	p.mu.Unlock()
 	var closeErr error
 	if ready && entry.session != nil {
 		closeCtx, cancel := preparedMachineControlContext(ctx)
@@ -459,7 +526,7 @@ func (p *PreparedMachines) reclaimFailedRuntimeTarget(ctx context.Context, clien
 	if err != nil {
 		return fmt.Errorf("reconcile failed runtime physical cleanup: %w", errors.Join(closeErr, err))
 	}
-	if err := p.releaseRuntimeAfterPhysicalCleanup(computerInstanceID, target.WorkerEpoch); err != nil {
+	if err := p.releaseRuntimeAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
 		return err
 	}
 	request := runtimeTargetStatusRequest(target, errors.New("runtime physical cleanup reconciled"))
@@ -482,18 +549,44 @@ func (p *PreparedMachines) stopRuntimeTarget(ctx context.Context, client Prepare
 		return errors.New("runtime stop target worker_epoch is required")
 	}
 	p.mu.Lock()
-	capture := p.captureCleanup[preparedMachineRef{id: computerInstanceID, epoch: target.WorkerEpoch}]
+	var capture *computerCheckpointer
+	orphaned := false
+	if claim := p.claims[preparedMachineRef{id: computerInstanceID, epoch: target.WorkerEpoch}]; claim != nil {
+		capture = claim.checkpointer
+		orphaned = claim.kind == orphanClaim
+	}
 	p.mu.Unlock()
 	if capture != nil {
-		if err := capture.ReleaseCheckpointSource(ctx); err != nil {
+		proofMethod, err := p.excludeCaptureSource(ctx, computerInstanceID, capture)
+		if err != nil {
 			return err
 		}
-		if err := p.releaseRuntimeAfterPhysicalCleanup(computerInstanceID, target.WorkerEpoch); err != nil {
+		if err := p.releaseRuntimeAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
 			return err
 		}
 		request := runtimeTargetStatusRequest(target, nil)
-		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupSessionClosed, CompletedAt: time.Now().UTC()}
-		_, err := client.MarkComputerInstanceClosed(ctx, request)
+		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: proofMethod, CompletedAt: time.Now().UTC()}
+		_, err = client.MarkComputerInstanceClosed(ctx, request)
+		return err
+	}
+	if orphaned {
+		// No holder will close this runtime; stop it physically and finalize
+		// once its save owner has joined.
+		if p.Backend == nil {
+			return errors.New("runtime connector does not support exact runtime cleanup")
+		}
+		cleanupCtx, cancel := preparedMachineControlContext(ctx)
+		err := p.Backend.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: computerInstanceID})
+		cancel()
+		if err != nil {
+			return fmt.Errorf("reconcile runtime physical cleanup: %w", err)
+		}
+		if err := p.releaseRuntimeAfterPhysicalCleanup(ctx, computerInstanceID, target.WorkerEpoch); err != nil {
+			return err
+		}
+		request := runtimeTargetStatusRequest(target, nil)
+		request.CleanupProof = &workerapi.RuntimeCleanupProof{Method: workerapi.RuntimeCleanupHostReconciled, CompletedAt: time.Now().UTC()}
+		_, err = client.MarkComputerInstanceClosed(ctx, request)
 		return err
 	}
 	stoppedEntry, ok := p.claimReadyEntry(computerInstanceID, target.WorkerEpoch)
@@ -1189,14 +1282,18 @@ func (p *PreparedMachines) decrementFillingLocked(key string) {
 }
 
 func (p *PreparedMachines) reservedCountLocked() int {
-	return p.readyCountLocked() + p.fillingCountLocked() + len(p.checkedOut)
+	return p.readyCountLocked() + p.fillingCountLocked() + len(p.claims)
 }
 
-func (p *PreparedMachines) markRuntimeCheckedOutLocked(computerInstanceID string, runtimeEpoch int64) {
-	if p.checkedOut == nil {
-		p.checkedOut = map[preparedMachineRef]struct{}{}
+// claimLocked records a new claim on ref with a fresh generation.
+func (p *PreparedMachines) claimLocked(ref preparedMachineRef, kind machineClaimKind, entry preparedMachineEntry) *machineClaim {
+	if p.claims == nil {
+		p.claims = map[preparedMachineRef]*machineClaim{}
 	}
-	p.checkedOut[preparedMachineRef{id: computerInstanceID, epoch: runtimeEpoch}] = struct{}{}
+	p.claimGen++
+	claim := &machineClaim{gen: p.claimGen, kind: kind, entry: entry}
+	p.claims[ref] = claim
+	return claim
 }
 
 func (p *PreparedMachines) runtimeCheckedOut(computerInstanceID string, runtimeEpoch int64) bool {
@@ -1205,20 +1302,23 @@ func (p *PreparedMachines) runtimeCheckedOut(computerInstanceID string, runtimeE
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, ok := p.checkedOut[preparedMachineRef{id: computerInstanceID, epoch: runtimeEpoch}]
-	return ok
+	return p.claims[preparedMachineRef{id: computerInstanceID, epoch: runtimeEpoch}] != nil
 }
 
-// machineCheckout is a Server's exclusive claim on a prepared machine taken
+// machineCheckout is a Server's handle on its claim of a prepared machine taken
 // from PreparedMachines. While the claim is held, runtime reconciliation
 // (stopRuntimeTarget) leaves the runtime to its holder. The holder closes the
-// machine and then ends the claim with Release when the close succeeded, or with
-// Relinquish when it failed. The writer generation and restore provenance are
-// those the runtime was prepared with.
+// machine through its mount and then ends the claim with Release when the close
+// succeeded, or with Relinquish when it failed. Checkpoint capture may take the
+// claim over, and forced reclaim may orphan it; from then on the handle is
+// stale and every operation on it is a no-op. The writer generation and restore
+// provenance are those the runtime was prepared with.
 type machineCheckout struct {
 	machines            *PreparedMachines
 	ref                 preparedMachineRef
+	gen                 uint64
 	machine             liveCaptureMachine
+	mount               *instanceMount
 	writerGeneration    int64
 	restoreCheckpointID string
 }
@@ -1232,56 +1332,102 @@ func (c *machineCheckout) Machine() liveCaptureMachine {
 	return c.machine
 }
 
+// beginTeardown commits the holder to closing the machine, ending the claim and
+// reporting the Instance itself; capture can no longer take the claim over. It
+// reports false when the claim is no longer this handle's: capture took it
+// over, forced reclaim orphaned it, physical cleanup is releasing it, or it has
+// ended. Repeated calls by the holder report true. A nil checkout holds no
+// prepared machine, so its Server always owns its teardown.
+func (c *machineCheckout) beginTeardown() bool {
+	if c == nil {
+		return true
+	}
+	p := c.machines
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	claim := p.claims[c.ref]
+	if claim == nil || claim.gen != c.gen || claim.release != nil {
+		return false
+	}
+	claim.teardown = true
+	return true
+}
+
 // Release returns the runtime's capacity reservations, preparation directories
 // and Computer device after its machine has been closed. The claim ends even when
 // a release step fails: the remaining resources stay recorded against the
 // runtime, and ending the claim is what lets runtime reconciliation clean them
 // up, since stopRuntimeTarget skips runtimes that are still checked out.
-// Releasing a claim that has already ended returns nil. A nil checkout holds
-// nothing, so releasing it returns nil; this serves a mount without prepared machines.
+// Releasing a claim that has ended, been taken over or is already being
+// released by physical cleanup returns nil. A nil checkout holds nothing, so
+// releasing it returns nil; this serves a mount without prepared machines.
 func (c *machineCheckout) Release() error {
 	if c == nil {
 		return nil
 	}
-	return c.machines.releaseCheckout(c.ref)
+	p := c.machines
+	p.mu.Lock()
+	claim := p.claims[c.ref]
+	if claim == nil || claim.gen != c.gen || claim.release != nil {
+		p.mu.Unlock()
+		return nil
+	}
+	release := claim.beginReleaseLocked()
+	p.mu.Unlock()
+	err := p.releaseRuntimeCapacity(c.ref.id, c.ref.epoch)
+	p.finishRelease(c.ref, claim, release, err, true)
+	return err
 }
 
-// Relinquish ends the claim without releasing anything, for a runtime whose
-// machine could not be closed. Capacity and device ownership stay reserved until
-// runtime reconciliation proves physical cleanup. A nil checkout holds nothing,
-// so relinquishing it does nothing.
+// Relinquish gives up the claim without releasing anything, for a runtime
+// whose machine could not be closed. Capacity and device ownership stay
+// reserved until runtime reconciliation proves physical cleanup. If the
+// mount's save owner has not joined, the claim stays as an orphan that keeps
+// the mount, so reconciliation joins that save owner before finalizing;
+// otherwise the claim ends. Relinquishing a claim that has ended, been taken
+// over or is being released does nothing, and so does relinquishing a nil
+// checkout.
 func (c *machineCheckout) Relinquish() {
 	if c == nil {
 		return
 	}
-	c.machines.relinquishCheckout(c.ref)
-}
-
-func (p *PreparedMachines) relinquishCheckout(ref preparedMachineRef) {
-	if p == nil {
-		return
-	}
+	p := c.machines
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.checkedOut, ref)
-	delete(p.checkedOutEntries, ref)
+	claim := p.claims[c.ref]
+	if claim == nil || claim.gen != c.gen || claim.release != nil {
+		return
+	}
+	if claim.mount != nil && !claim.mount.saves.joined() {
+		p.orphanLocked(claim)
+		return
+	}
+	delete(p.claims, c.ref)
 }
 
-func (p *PreparedMachines) releaseCheckout(ref preparedMachineRef) error {
-	if p == nil {
-		return nil
-	}
+// orphanLocked leaves claim without a holder: every handle on it becomes stale
+// and only physical cleanup can end it.
+func (p *PreparedMachines) orphanLocked(claim *machineClaim) {
+	p.claimGen++
+	claim.gen = p.claimGen
+	claim.kind = orphanClaim
+}
+
+// finishRelease publishes the release result to joined releasers and ends the
+// claim, unless end is false and the claim is kept for a retry.
+func (p *PreparedMachines) finishRelease(ref preparedMachineRef, claim *machineClaim, release *claimRelease, err error, end bool) {
 	p.mu.Lock()
-	_, checkedOut := p.checkedOut[ref]
-	p.mu.Unlock()
-	if !checkedOut {
-		return nil
+	defer p.mu.Unlock()
+	release.err = err
+	close(release.done)
+	if p.claims[ref] != claim {
+		return
 	}
-	defer p.relinquishCheckout(ref)
-	if err := p.releaseRuntimeCapacity(ref.id, ref.epoch); err != nil {
-		return err
+	if end {
+		delete(p.claims, ref)
+		return
 	}
-	return nil
+	claim.release = nil
 }
 
 func (p *PreparedMachines) removeReadyEntryAndFail(key string, entry preparedMachineEntry, cause error, closeSession bool) error {
@@ -1361,6 +1507,10 @@ func (p *PreparedMachines) forgetReadyEntry(key string, entry preparedMachineEnt
 func (p *PreparedMachines) claimReadyEntry(computerInstanceID string, runtimeEpoch int64) (preparedMachineEntry, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	return p.claimReadyEntryLocked(computerInstanceID, runtimeEpoch)
+}
+
+func (p *PreparedMachines) claimReadyEntryLocked(computerInstanceID string, runtimeEpoch int64) (preparedMachineEntry, bool) {
 	for key, entries := range p.entries {
 		for i, entry := range entries {
 			if entry.computerInstanceID != computerInstanceID || entry.runtimeEpoch != runtimeEpoch {
@@ -1586,25 +1736,72 @@ func (p *PreparedMachines) releaseRuntimeCapacity(computerInstanceID string, run
 	return nil
 }
 
-func (p *PreparedMachines) releaseRuntimeAfterPhysicalCleanup(computerInstanceID string, runtimeEpoch int64) error {
+// releaseRuntimeAfterPhysicalCleanup finalizes a runtime whose machine has
+// been stopped physically and ends whatever claim holds it.
+//
+// Resource finalization (releasing reservations, staging and restore
+// directories, device records and the claim) happens only after the claim's
+// mount save owner has joined. Physical teardown (VM stop, device close) may
+// precede the join on forced paths, because it is what terminates a producer
+// blocked on the VM; the producer then fails on the closed resources and
+// exits. The join is bounded: if the save owner still runs, the claim and its
+// resources are kept, nothing is final, and the caller retries. Callers never
+// pass a live Server claim: forced cleanup orphans it before stopping the
+// machine, so the Server neither reports the stop nor takes release ownership.
+//
+// The caller becomes the claim's single release owner; if another release of
+// the claim is already running, the caller joins it and returns its result. A
+// failed release keeps only a capture claim that retains checkpoint cleanup,
+// for a retry; any other claim ends, leaving its resources recorded for
+// unclaimed reconciliation.
+func (p *PreparedMachines) releaseRuntimeAfterPhysicalCleanup(ctx context.Context, computerInstanceID string, runtimeEpoch int64) error {
 	ref := preparedMachineRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch}
-	p.mu.Lock()
-	capture := p.captureCleanup[ref]
-	p.mu.Unlock()
-	if capture != nil {
-		if err := capture.cleanupAfterSourceStopped(); err != nil {
-			return err
+	for {
+		p.mu.Lock()
+		claim := p.claims[ref]
+		if claim == nil {
+			p.mu.Unlock()
+			return p.releaseRuntimeCapacity(ref.id, ref.epoch)
 		}
-	}
-
-	if err := p.releaseRuntimeCapacity(computerInstanceID, runtimeEpoch); err != nil {
+		if active := claim.release; active != nil {
+			p.mu.Unlock()
+			<-active.done
+			return active.err
+		}
+		if mount := claim.mount; mount != nil && !mount.saves.joined() {
+			p.mu.Unlock()
+			if err := p.joinSaveOwner(ctx, ref.id, mount); err != nil {
+				return err
+			}
+			continue
+		}
+		release := claim.beginReleaseLocked()
+		capture := claim.checkpointer
+		p.mu.Unlock()
+		var err error
+		if capture != nil {
+			err = capture.cleanupAfterSourceStopped()
+		}
+		if err == nil {
+			err = p.releaseRuntimeCapacity(ref.id, ref.epoch)
+		}
+		p.finishRelease(ref, claim, release, err, err == nil || capture == nil)
 		return err
 	}
-	p.mu.Lock()
-	delete(p.checkedOut, preparedMachineRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch})
-	delete(p.checkedOutEntries, preparedMachineRef{id: strings.TrimSpace(computerInstanceID), epoch: runtimeEpoch})
-	delete(p.captureCleanup, ref)
-	p.mu.Unlock()
+}
+
+// joinSaveOwner quiesces and joins a mount's save owner within the source
+// release bound, after its machine has been stopped physically.
+func (p *PreparedMachines) joinSaveOwner(ctx context.Context, computerInstanceID string, mount *instanceMount) error {
+	joinCtx, cancel := p.sourceReleaseContext(ctx)
+	settleErr := mount.saves.Quiesce(joinCtx)
+	cancel()
+	if !mount.saves.joined() {
+		return fmt.Errorf("Computer save owner still runs after physical cleanup: %w", settleErr)
+	}
+	if settleErr != nil {
+		p.logInfo("Computer save settlement failed after physical cleanup", "computer_instance_id", computerInstanceID, "error", settleErr.Error())
+	}
 	return nil
 }
 

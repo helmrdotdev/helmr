@@ -202,9 +202,12 @@ func (s *instanceMount) Close(ctx context.Context) error {
 }
 
 func (s *instanceMount) close(ctx context.Context) error {
-	// A failed handoff still requires physical exclusion. Keep its error visible
-	// so callers cannot mistake cleanup for a successfully settled save.
 	saveErr := s.saves.Quiesce(ctx)
+	if saveErr != nil && !s.saves.joined() {
+		// The save owner may still use the machine. Physical close waits until
+		// it has finished; the caller retries or reconciliation reclaims.
+		return fmt.Errorf("join Computer saves before close: %w", saveErr)
+	}
 
 	s.mu.Lock()
 	if attempt := s.closeAttempt; attempt != nil {
@@ -220,6 +223,9 @@ func (s *instanceMount) close(ctx context.Context) error {
 	s.closeAttempt = attempt
 	s.mu.Unlock()
 
+	// A joined save whose handoff failed still requires physical exclusion.
+	// Keep its error visible so callers cannot mistake cleanup for a
+	// successfully settled save.
 	stopCtx := ctx
 	cancelStop := func() {}
 	if saveErr != nil {
@@ -242,6 +248,12 @@ func (s *instanceMount) close(ctx context.Context) error {
 	return err
 }
 
+// ReleaseCheckpointSource quiesces the mount's Computer saves and closes the
+// machine once. The first result is retained for CheckpointReleaseResult. After
+// a failed release, a later call retries through close: it quiesces again and
+// closes the machine if the save owner had not yet finished, re-attempts a
+// physical close whose join timed out, and otherwise returns the physical
+// close's first result.
 func (s *instanceMount) ReleaseCheckpointSource(ctx context.Context) error {
 	s.mu.Lock()
 	if s.releaseForCheckpointStarted {
@@ -253,8 +265,12 @@ func (s *instanceMount) ReleaseCheckpointSource(ctx context.Context) error {
 			return ctx.Err()
 		}
 		s.mu.RLock()
-		defer s.mu.RUnlock()
-		return s.releaseForCheckpointErr
+		err := s.releaseForCheckpointErr
+		s.mu.RUnlock()
+		if err == nil {
+			return nil
+		}
+		return s.close(ctx)
 	}
 	s.releaseForCheckpointStarted = true
 	done := s.releaseForCheckpointDone

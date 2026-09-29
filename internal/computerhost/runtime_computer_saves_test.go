@@ -147,11 +147,46 @@ type saveStopSession struct {
 
 func (s saveStopSession) Close(ctx context.Context) error { return s.stop(ctx) }
 
-func TestManagedMountStopsAfterSaveSettlementDeadline(t *testing.T) {
+// A save producer still running when the release deadline expires keeps the
+// machine running; a later release closes it once the producer has finished.
+func TestManagedMountDefersPhysicalReleaseUntilSaveOwnerJoins(t *testing.T) {
 	f, pending := newSaveHostFixture(t, "blocked")
 	<-f.blocked
+	stops := 0
+	session := newInstanceMount(saveStopSession{stop: func(context.Context) error {
+		stops++
+		return nil
+	}})
+	session.saves.pending = pending
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	if err := session.ReleaseCheckpointSource(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("release before the save owner joined = %v", err)
+	}
+	if stops != 0 {
+		t.Fatal("machine closed while its save producer was still running")
+	}
+	if released, err := session.CheckpointReleaseResult(t.Context()); !released || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("recorded release = %v, %v", released, err)
+	}
+	close(f.joined)
+	if err := session.ReleaseCheckpointSource(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if stops != 1 {
+		t.Fatalf("physical stops = %d, want 1", stops)
+	}
+}
+
+// A joined save whose settlement ran out of time still gets a bounded
+// physical stop, and the settlement error stays visible.
+func TestManagedMountStopsAfterJoinedSaveSettlementDeadline(t *testing.T) {
+	_, pending := newSaveHostFixture(t, "capture")
+	if err := pending.Wait(t.Context()); err == nil {
+		t.Fatal("expected capture failure")
+	}
 	stopped := false
-	physical := saveStopSession{stop: func(ctx context.Context) error {
+	session := newInstanceMount(saveStopSession{stop: func(ctx context.Context) error {
 		if ctx.Err() != nil {
 			t.Fatal("physical stop inherited expired settlement deadline")
 		}
@@ -159,21 +194,16 @@ func TestManagedMountStopsAfterSaveSettlementDeadline(t *testing.T) {
 			t.Fatal("physical stop unbounded")
 		}
 		stopped = true
-		close(f.joined)
 		return nil
-	}}
-	session := newInstanceMount(physical)
+	}})
 	session.saves.pending = pending
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
-	defer cancel()
-	if err := session.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("lost settlement error: %v", err)
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := session.Close(ctx); err == nil {
+		t.Fatal("lost settlement error")
 	}
 	if !stopped {
-		t.Fatal("source not stopped")
-	}
-	if err := session.saves.Quiesce(t.Context()); err != nil {
-		t.Fatal(err)
+		t.Fatal("joined source not stopped")
 	}
 }
 
