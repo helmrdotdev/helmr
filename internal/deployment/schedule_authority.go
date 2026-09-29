@@ -8,7 +8,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 )
 
 type ScheduleAuthority struct{}
@@ -23,15 +22,15 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 	raw []byte,
 	expectedDigest []byte,
 	queueConfigRaw []byte,
-) (schedule.TaskRun, error) {
+) (ScheduledTaskAdmission, error) {
 	manifest, err := ParseTaskManifest(manifestVersion, raw, expectedDigest)
 	if err != nil {
-		return schedule.TaskRun{}, err
+		return ScheduledTaskAdmission{}, err
 	}
 
 	queueConfig, err := parseQueueConfig(queueConfigRaw)
 	if err != nil {
-		return schedule.TaskRun{}, err
+		return ScheduledTaskAdmission{}, err
 	}
 	if err := ValidateBuildPlan(BuildPlan{
 		FormatVersion: BuildPlanFormatVersion,
@@ -42,13 +41,13 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 		}},
 		Queues: queueConfig.Queues,
 	}); err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("validate scheduled task manifest: %w", err)
+		return ScheduledTaskAdmission{}, fmt.Errorf("validate scheduled task manifest: %w", err)
 	}
 	if manifest.Payload.Kind != SchemaKindStandard {
-		return schedule.TaskRun{}, errors.New("scheduled task payload kind must be standard_schema")
+		return ScheduledTaskAdmission{}, errors.New("scheduled task payload kind must be standard_schema")
 	}
 	if manifest.Schedule == nil {
-		return schedule.TaskRun{}, errors.New("scheduled task manifest has no schedule")
+		return ScheduledTaskAdmission{}, errors.New("scheduled task manifest has no schedule")
 	}
 	var queueLimit *int64
 	for _, queue := range queueConfig.Queues {
@@ -62,11 +61,11 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 	}
 	retryPolicy, err := json.Marshal(manifest.Run.Retry)
 	if err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("encode scheduled task retry authority: %w", err)
+		return ScheduledTaskAdmission{}, fmt.Errorf("encode scheduled task retry authority: %w", err)
 	}
 	retryPolicy, err = jsoncanon.Transform(retryPolicy)
 	if err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("canonicalize scheduled task retry authority: %w", err)
+		return ScheduledTaskAdmission{}, fmt.Errorf("canonicalize scheduled task retry authority: %w", err)
 	}
 	var queuedTTL *int64
 	if manifest.Run.TTLMs != nil {
@@ -85,9 +84,9 @@ func (a *ScheduleAuthority) ResolveScheduledTask(
 	}
 	secretPlacements, err = computer.NormalizeSecretPlacements(secretPlacements)
 	if err != nil {
-		return schedule.TaskRun{}, fmt.Errorf("normalize scheduled Computer Secrets: %w", err)
+		return ScheduledTaskAdmission{}, fmt.Errorf("normalize scheduled Computer Secrets: %w", err)
 	}
-	return schedule.TaskRun{
+	return ScheduledTaskAdmission{
 		QueueName:             manifest.Run.Queue,
 		QueueConcurrencyLimit: queueLimit,
 		QueuedTTLMS:           queuedTTL,

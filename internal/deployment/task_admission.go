@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -14,6 +15,16 @@ type TaskRunAdmission struct {
 	MaxActiveDurationMS   int64
 	QueuedTTLMS           *int64
 	RetryPolicy           []byte
+}
+
+type ScheduledTaskAdmission struct {
+	QueueName             string
+	QueueConcurrencyLimit *int64
+	QueuedTTLMS           *int64
+	MaxActiveDurationMS   int64
+	RetryPolicy           []byte
+	SandboxDeclaredID     string
+	SecretPlacements      []computer.SecretPlacement
 }
 
 func ResolveTaskRunAdmission(

@@ -18,7 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/outbox"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/schedule"
+	"github.com/helmrdotdev/helmr/internal/scheduler"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -139,11 +139,11 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure scheduled Computer CA encryption: %w", err)
 	}
-	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority, secretStore.GenerateProxyTrust)
+	scheduleAdmitter, err := scheduler.NewDBAdmitter(pool, scheduleAuthority, secretStore.GenerateProxyTrust)
 	if err != nil {
 		return fmt.Errorf("configure schedule admission: %w", err)
 	}
-	scheduleWorker, err := schedule.NewWorker(log, queries, scheduleAdmitter)
+	scheduleWorker, err := scheduler.NewWorker(log, queries, scheduleAdmitter)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
 	}
