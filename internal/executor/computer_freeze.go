@@ -6,42 +6,37 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/frameio"
 	computerv0 "github.com/helmrdotdev/helmr/internal/proto/computer/v0"
-	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// freezeComputerOnSession returns the complete captured identity only after the
-// guest confirms every member. The physical owner must exclude the source on an
-// uncertain response; this function never thaws it or closes the whole VM.
-func freezeComputerOnSession(ctx context.Context, session vm.Machine, target workerapi.RuntimeReconcileTarget) (workerapi.CheckpointRecoveryPoint, error) {
+// freeze returns the complete captured identity only after the guest confirms
+// every member. The physical owner must exclude the source on an uncertain
+// response; freeze never thaws it or closes the whole VM. Cancellation closes
+// only the freeze stream, at any step of the exchange.
+func (g guestControl) freeze(ctx context.Context, target workerapi.RuntimeReconcileTarget) (workerapi.CheckpointRecoveryPoint, error) {
 	request, err := computerFreezeRequest(target)
 	if err != nil {
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
-	if session == nil {
+	if g.machine == nil {
 		return workerapi.CheckpointRecoveryPoint{}, errors.New("computer capture session is required")
 	}
 	if err = ctx.Err(); err != nil {
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
-	stream, err := session.OpenStream(ctx)
-	if err != nil {
-		return workerapi.CheckpointRecoveryPoint{}, fmt.Errorf("open computer freeze stream: %w", err)
-	}
-	defer stream.Close()
-	stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
-	defer stop()
-	if err = wire.WriteStreamFrameHeader(stream, wire.StreamHeader{Type: wire.StreamTypeComputerFreeze, ComputerID: request.ComputerId, CheckpointID: request.CheckpointId}, 0); err != nil {
-		return workerapi.CheckpointRecoveryPoint{}, err
-	}
-	if err = frameio.WriteProtoFrame(stream, request); err != nil {
-		return workerapi.CheckpointRecoveryPoint{}, err
-	}
 	var response computerv0.FreezeComputerResponse
-	if err = frameio.ReadProtoFrame(stream, &response); err != nil {
+	step, err := g.exchange(ctx, guestControlExchange{
+		header:       wire.StreamHeader{Type: wire.StreamTypeComputerFreeze, ComputerID: request.ComputerId, CheckpointID: request.CheckpointId},
+		request:      request,
+		response:     &response,
+		cancellation: guestControlCancelCloseStream,
+	})
+	if err != nil {
+		if step == guestControlOpen {
+			return workerapi.CheckpointRecoveryPoint{}, fmt.Errorf("open computer freeze stream: %w", err)
+		}
 		return workerapi.CheckpointRecoveryPoint{}, err
 	}
 	return computerFrozenRecoveryPoint(target, request, &response)

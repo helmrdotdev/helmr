@@ -11,6 +11,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
+// releaseComputerCommand owns its guest stream beyond the guest response: the
+// control plane reconciles the release while that stream is still open, and
+// cancellation closes the stream at any point and is awaited before returning.
 func (m ComputerMaterializer) releaseComputerCommand(ctx context.Context, session vm.Machine, mount workerapi.ComputerInstanceAssignment, release workerapi.ComputerCommandRelease, client workerapi.ComputerMaterializerControlPlaneClient) error {
 	r := release.Completion
 	if release.ComputerID != mount.ComputerID || r.ComputerInstanceID != mount.ComputerInstanceID || r.WriterGeneration != mount.WriterGeneration || r.OrgID != mount.OrgID || release.RequestFingerprint == "" {
@@ -28,10 +31,7 @@ func (m ComputerMaterializer) releaseComputerCommand(ctx context.Context, sessio
 			<-closed
 		}
 	}()
-	if err := wire.WriteStreamFrameHeader(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, 0); err != nil {
-		return err
-	}
-	if err := frameio.WriteProtoFrame(conn, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
+	if _, err := writeGuestControlRequest(conn, wire.StreamHeader{Type: wire.StreamTypeComputerCommandRelease, OperationID: r.CommandID}, &computerv0.ComputerCommandReleaseRequest{Authority: &computerv0.ComputerCommandAuthority{OperationId: r.CommandID, ComputerId: release.ComputerID, ComputerInstanceId: r.ComputerInstanceID, WriterGeneration: r.WriterGeneration, ChannelToken: m.channelToken(mount), RequestFingerprint: release.RequestFingerprint}}); err != nil {
 		return err
 	}
 	var response computerv0.ComputerCommandReleaseResponse

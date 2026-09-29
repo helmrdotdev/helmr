@@ -1,9 +1,11 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -98,6 +100,79 @@ func TestCommandReleaseCancelsSilentPeer(t *testing.T) {
 		t.Fatal("silent Guest prevented shutdown")
 	}
 	if err := <-observed; err != nil {
+		t.Fatal(err)
+	}
+}
+
+type commandReleaseOrderClient struct {
+	computerMaterializerTestClient
+	record func(string)
+}
+
+func (c *commandReleaseOrderClient) ReconcileComputerCommand(context.Context, workerapi.ComputerCommandCompleteRequest) error {
+	c.record("reconcile")
+	return nil
+}
+
+// commandReleaseOrderStream answers one release and records when its Close
+// starts; Close blocks until releaseClose is closed.
+type commandReleaseOrderStream struct {
+	response     *bytes.Reader
+	record       func(string)
+	closeStarted chan struct{}
+	releaseClose chan struct{}
+	once         sync.Once
+}
+
+func (s *commandReleaseOrderStream) Write(p []byte) (int, error) { return len(p), nil }
+func (s *commandReleaseOrderStream) Read(p []byte) (int, error)  { return s.response.Read(p) }
+func (s *commandReleaseOrderStream) Close() error {
+	s.once.Do(func() {
+		s.record("close")
+		close(s.closeStarted)
+	})
+	<-s.releaseClose
+	return nil
+}
+
+func TestCommandReleaseReconcilesBeforeClosingGuestStream(t *testing.T) {
+	var response bytes.Buffer
+	if err := frameio.WriteProtoFrame(&response, &computerv0.ComputerCommandReleaseResponse{Released: true}); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var events []string
+	record := func(event string) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, event)
+	}
+	stream := &commandReleaseOrderStream{response: bytes.NewReader(response.Bytes()), record: record, closeStarted: make(chan struct{}), releaseClose: make(chan struct{})}
+	client := &commandReleaseOrderClient{record: record}
+	mount := workerapi.ComputerInstanceAssignment{OrgID: "org", ComputerID: "computer", ComputerInstanceID: "instance", WriterGeneration: 2, GuestdChannelToken: "token"}
+	receipt := workerapi.ComputerCommandRelease{ComputerID: "computer", RequestFingerprint: "fingerprint", Completion: workerapi.ComputerCommandCompleteRequest{OrgID: "org", CommandID: "command", ComputerInstanceID: "instance", WriterGeneration: 2, Outcome: "exited"}}
+	result := make(chan error, 1)
+	go func() {
+		result <- (ComputerMaterializer{}).releaseComputerCommand(t.Context(), &guestControlTestMachine{stream: testVMStream(stream)}, mount, receipt, client)
+	}()
+	select {
+	case <-stream.closeStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("release did not close its guest stream")
+	}
+	mu.Lock()
+	got := append([]string(nil), events...)
+	mu.Unlock()
+	if len(got) != 2 || got[0] != "reconcile" || got[1] != "close" {
+		t.Fatalf("events = %v, want [reconcile close]", got)
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("release returned before its stream closed: %v", err)
+	default:
+	}
+	close(stream.releaseClose)
+	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
 }

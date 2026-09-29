@@ -99,7 +99,7 @@ func (s *Mounts) OpenChannel(ctx context.Context, computerInstanceID string) (Mo
 		Channel:       newBorrowedChannel(entry.instance, stream),
 		ReleaseSource: entry.instance.ReleaseCheckpointSource,
 		GrantProgramResume: func(ctx context.Context, request *computerv0.GrantProgramResumeRequest) (*programv0.ResumeAttach, error) {
-			return grantProgramResumeOnMachine(ctx, entry.instance, request)
+			return guestControl{machine: entry.instance}.grantProgramResume(ctx, request)
 		},
 		ChannelToken: entry.channelToken,
 		Mount:        entry.mount,
@@ -141,7 +141,7 @@ func (s *Mounts) RenewComputerAuthority(ctx context.Context, request *computerv0
 	if err := validateComputerMountPhysicalAuthority(fence, entry.mount); err != nil {
 		return nil, err
 	}
-	return renewComputerAuthorityOnMachine(ctx, entry.instance, request)
+	return guestControl{machine: entry.instance}.renewAuthority(ctx, request)
 }
 
 func validateComputerMountPhysicalAuthority(
