@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -87,11 +88,7 @@ type Server struct {
 	mailer                email.Sender
 	magicLinkDelivery     *MagicLinkDelivery
 	magicLinkDebugURLs    bool
-	adminEmails           map[string]struct{}
-	sessionTTL            time.Duration
-	magicLinkTTL          time.Duration
-	deviceCodeTTL         time.Duration
-	devicePollEvery       time.Duration
+	identity              identity.Config
 
 	deploymentFinalizePingEvery time.Duration
 	deploymentVerifierSlots     chan struct{}
@@ -216,13 +213,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if workerTokenTTL <= 0 {
 		workerTokenTTL = defaultWorkerTokenTTL
 	}
-	adminEmails := make(map[string]struct{}, len(cfg.AdminEmails))
-	for _, address := range cfg.AdminEmails {
-		address = normalizeEmailAddress(address)
-		if address != "" {
-			adminEmails[address] = struct{}{}
-		}
-	}
 	apiOrigin := cfg.APIOrigin
 	if apiOrigin == nil {
 		apiOrigin = cfg.PublicURL
@@ -266,11 +256,12 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		mailer:                mailer,
 		magicLinkDelivery:     cfg.MagicLinkDelivery,
 		magicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
-		adminEmails:           adminEmails,
-		sessionTTL:            cfg.SessionTTL,
-		magicLinkTTL:          cfg.MagicLinkTTL,
-		deviceCodeTTL:         cfg.DeviceCodeTTL,
-		devicePollEvery:       cfg.DevicePollEvery,
+		identity: identity.NewConfig(authKeys, identity.Lifetimes{
+			Session:            cfg.SessionTTL,
+			MagicLink:          cfg.MagicLinkTTL,
+			DeviceCode:         cfg.DeviceCodeTTL,
+			DevicePollInterval: cfg.DevicePollEvery,
+		}, cfg.AdminEmails),
 
 		deploymentFinalizePingEvery: 10 * time.Second,
 		deploymentVerifierSlots:     make(chan struct{}, 1),
@@ -782,34 +773,6 @@ func (s *Server) userAuthConfigured() error {
 		return errors.New("public URL is not configured")
 	}
 	return nil
-}
-
-func (s *Server) effectiveSessionTTL() time.Duration {
-	if s.sessionTTL > 0 {
-		return s.sessionTTL
-	}
-	return 30 * 24 * time.Hour
-}
-
-func (s *Server) effectiveMagicLinkTTL() time.Duration {
-	if s.magicLinkTTL > 0 {
-		return s.magicLinkTTL
-	}
-	return 15 * time.Minute
-}
-
-func (s *Server) effectiveDeviceCodeTTL() time.Duration {
-	if s.deviceCodeTTL > 0 {
-		return s.deviceCodeTTL
-	}
-	return 10 * time.Minute
-}
-
-func (s *Server) effectiveDevicePollEvery() time.Duration {
-	if s.devicePollEvery > 0 {
-		return s.devicePollEvery
-	}
-	return 5 * time.Second
 }
 
 func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {

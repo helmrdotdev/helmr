@@ -33,6 +33,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -201,7 +202,7 @@ func main() {
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,
-		Auth:                  controlplane.NewDBAuthenticator(queries),
+		Auth:                  identity.NewAPIKeyAuthenticator(queries),
 		CAS:                   casStore,
 		BundleAdmission:       bundleAdmission,
 		PlatformStore:         platformStore,

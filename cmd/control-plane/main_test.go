@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
@@ -50,7 +51,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		Log:                   log,
 		DB:                    store,
 		TX:                    panicDatabase{},
-		Auth:                  controlplane.NewDBAuthenticator(store),
+		Auth:                  identity.NewAPIKeyAuthenticator(store),
 		CAS:                   unusedUploadStore{},
 		BundleAdmission:       bundle.Admission{Runtime: smokeRuntimeDescriptor()},
 		PlatformStore:         unusedUploadStore{},

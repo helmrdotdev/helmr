@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"uuid"
@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -30,26 +31,21 @@ type apiKeyListCursor struct {
 }
 
 func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
-	filter := r.URL.Query().Get("filter")
-	if filter == "" {
-		filter = "active"
-	}
-	if !validAPIKeyFilter(filter) {
-		writeError(w, badRequest(errors.New("filter must be active, expired, revoked, or all")))
+	filter, err := identity.ParseAPIKeyFilter(r.URL.Query().Get("filter"))
+	if err != nil {
+		writeError(w, identityError(err))
 		return
 	}
 	actor := actorFromContext(r.Context())
-	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	var afterCreatedAt pgtype.Timestamptz
-	var afterID pgtype.UUID
+	var after *identity.APIKeyPosition
 	if rawCursor := r.URL.Query().Get("cursor"); rawCursor != "" {
 		cursor, err := decodeAPIKeyListCursor(rawCursor)
-		if err != nil || cursor.ProjectID != pgvalue.UUIDString(projectUUID) ||
-			cursor.EnvironmentID != pgvalue.UUIDString(environmentUUID) || cursor.Filter != filter {
+		if err != nil || cursor.ProjectID != scope.ProjectID || cursor.EnvironmentID != scope.EnvironmentID || cursor.Filter != string(filter) {
 			writeError(w, badRequest(errors.New("api key cursor is invalid")))
 			return
 		}
@@ -58,25 +54,12 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 			writeError(w, badRequest(errors.New("api key cursor is invalid")))
 			return
 		}
-		afterCreatedAt = pgvalue.Timestamptz(createdAt)
-		afterID = pgvalue.UUID(uuid.MustParse(cursor.ID))
+		after = &identity.APIKeyPosition{CreatedAt: createdAt, ID: uuid.MustParse(cursor.ID)}
 	}
-	rows, err := s.db.ListAPIKeys(r.Context(), db.ListAPIKeysParams{
-		OrgID:          pgvalue.UUID(actor.OrgID),
-		ProjectID:      projectUUID,
-		EnvironmentID:  environmentUUID,
-		StatusFilter:   filter,
-		AfterCreatedAt: afterCreatedAt,
-		AfterID:        afterID,
-		RowLimit:       apiKeyListLimit + 1,
-	})
+	rows, hasMore, err := identity.ListAPIKeys(r.Context(), s.db, actor, scope, filter, apiKeyListLimit, after)
 	if err != nil {
-		writeError(w, errors.New("list api keys"))
+		writeError(w, identityError(err))
 		return
-	}
-	hasMore := len(rows) > apiKeyListLimit
-	if hasMore {
-		rows = rows[:apiKeyListLimit]
 	}
 	items := make([]api.APIKeySummary, 0, len(rows))
 	for _, row := range rows {
@@ -92,7 +75,7 @@ func (s *Server) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	if hasMore {
 		last := rows[len(rows)-1]
 		response.NextCursor, err = encodeAPIKeyListCursor(apiKeyListCursor{
-			ProjectID: pgvalue.UUIDString(projectUUID), EnvironmentID: pgvalue.UUIDString(environmentUUID), Filter: filter,
+			ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, Filter: string(filter),
 			CreatedAt: last.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ID: pgvalue.UUIDString(last.ID),
 		})
 		if err != nil {
@@ -130,13 +113,8 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid API key request JSON: %w", err))
 		return
 	}
-	name := strings.TrimSpace(input.Name)
-	if !validAPIKeyName(name) {
-		writeError(w, badRequest(errors.New("name must be 1-64 characters and contain no control characters")))
-		return
-	}
 	actor := actorFromContext(r.Context())
-	scope, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -146,45 +124,22 @@ func (s *Server) issueAPIKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	expiresAt := pgtype.Timestamptz{}
-	if input.ExpiresInDays != nil {
-		if !validAPIKeyExpiryDays(*input.ExpiresInDays) {
-			writeError(w, badRequest(errors.New("expires_in_days must be 30, 90, or 365")))
-			return
-		}
-		expiresAt = pgvalue.Timestamptz(time.Now().AddDate(0, 0, *input.ExpiresInDays))
-	}
-	generated, err := auth.GenerateAPIKey()
-	if err != nil {
-		writeError(w, errors.New("generate api key"))
-		return
-	}
-	record, err := s.db.IssueAPIKey(r.Context(), db.IssueAPIKeyParams{
-		ID:              pgvalue.UUID(uuid.NewV7()),
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		ProjectID:       projectUUID,
-		EnvironmentID:   environmentUUID,
-		CreatedByUserID: pgvalue.UUID(actor.UserID),
-		Role:            db.OrgMemberRole(actor.Role),
-		Permissions:     permissions,
-		Name:            name,
-		KeyPrefix:       generated.KeyPrefix,
-		TokenHash:       generated.TokenHash,
-		ExpiresAt:       expiresAt,
+	issued, err := identity.IssueAPIKey(r.Context(), s.db, actor, scope, identity.APIKeyInput{
+		Name:          input.Name,
+		Permissions:   permissions,
+		ExpiresInDays: input.ExpiresInDays,
 	})
 	if err != nil {
-		writeError(w, errors.New("create api key"))
+		writeError(w, identityError(err))
 		return
 	}
-	summary, err := apiKeySummaryFromRecord(record)
+	summary, err := apiKeySummaryFromRecord(issued.Record)
 	if err != nil {
 		writeError(w, errors.New("format api key"))
 		return
 	}
-	summary.ProjectID = scope.ProjectID
-	summary.EnvironmentID = scope.EnvironmentID
 	summary.Permissions = permissionGrants
-	writeJSON(w, http.StatusCreated, api.APIKeyIssued{APIKeySummary: summary, RawKey: generated.Raw})
+	writeJSON(w, http.StatusCreated, api.APIKeyIssued{APIKeySummary: summary, RawKey: issued.Raw})
 }
 
 func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
@@ -194,58 +149,26 @@ func (s *Server) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	_, projectUUID, environmentUUID, err := s.requestEnvironmentScopeFromRequest(r, actor)
+	scope, _, _, err := s.requestEnvironmentScopeFromRequest(r, actor)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	rows, err := s.db.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectUUID,
-		EnvironmentID: environmentUUID,
-		ID:            pgvalue.UUID(id),
-	})
-	if err != nil {
-		writeError(w, errors.New("revoke api key"))
-		return
-	}
-	if rows == 0 {
-		writeError(w, notFound(errors.New("api key not found")))
+	if err := identity.RevokeAPIKey(r.Context(), s.db, actor, scope, id); err != nil {
+		writeError(w, identityError(err))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func validAPIKeyName(name string) bool {
-	return name != "" && len(name) <= 64 && !strings.ContainsFunc(name, func(r rune) bool {
-		return r < 0x20 || r == 0x7f
-	})
-}
-
-func validAPIKeyExpiryDays(days int) bool {
-	switch days {
-	case 30, 90, 365:
-		return true
-	default:
-		return false
-	}
-}
-
-func validAPIKeyFilter(filter string) bool {
-	switch filter {
-	case "active", "expired", "revoked", "all":
-		return true
-	default:
-		return false
-	}
-}
-
-func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.APIKeyPermissionGrant, []string, error) {
+// normalizeAPIKeyPermissionGrants maps requested permission grants to the
+// sorted, deduplicated permissions they name and the single canonical grant
+// that lists them.
+func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.APIKeyPermissionGrant, []auth.Permission, error) {
 	if len(grants) == 0 {
 		return nil, nil, errors.New("permissions must include at least one grant")
 	}
-	permissions := make([]string, 0, len(grants))
-	seen := map[string]struct{}{}
+	permissions := make([]auth.Permission, 0, len(grants))
 	for _, grant := range grants {
 		if len(grant.Scopes) == 0 {
 			return nil, nil, errors.New("permission grants must include at least one scope")
@@ -259,21 +182,15 @@ func normalizeAPIKeyPermissionGrants(grants []api.APIKeyPermissionGrant) ([]api.
 			if !ok {
 				return nil, nil, fmt.Errorf("unsupported permission scope %q", scope)
 			}
-			value := string(permission)
-			if _, ok := seen[value]; ok {
-				continue
+			if !slices.Contains(permissions, permission) {
+				permissions = append(permissions, permission)
 			}
-			seen[value] = struct{}{}
-			permissions = append(permissions, value)
 		}
 	}
-	if len(permissions) == 0 {
-		return nil, nil, errors.New("permissions must include at least one supported scope")
-	}
-	sort.Strings(permissions)
+	slices.Sort(permissions)
 	scopes := make([]api.APIKeyScope, 0, len(permissions))
 	for _, permission := range permissions {
-		scope, ok := apiKeyPermissionScope(permission)
+		scope, ok := apiKeyPermissionScope(string(permission))
 		if !ok {
 			return nil, nil, fmt.Errorf("unsupported permission %q", permission)
 		}

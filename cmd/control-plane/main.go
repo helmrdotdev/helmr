@@ -36,6 +36,7 @@ import (
 	emailresend "github.com/helmrdotdev/helmr/internal/email/resend"
 	"github.com/helmrdotdev/helmr/internal/eventstream"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/version"
@@ -198,7 +199,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	}
 	var authProvider controlplane.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
-		authProvider = controlplane.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
+		authProvider = controlplane.NewGitHubOAuthProvider(log, cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
 	runRetryReady, err := run.NewRetryReadyWorker(log, run.NewRetryReconciler(pool))
 	if err != nil {
@@ -219,7 +220,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 		DB:                    queries,
 		TX:                    pool,
 		ReadinessDB:           pool,
-		Auth:                  controlplane.NewDBAuthenticator(queries),
+		Auth:                  identity.NewAPIKeyAuthenticator(queries),
 		CAS:                   casStore,
 		BundleAdmission:       bundleAdmission,
 		PlatformStore:         platformStore,

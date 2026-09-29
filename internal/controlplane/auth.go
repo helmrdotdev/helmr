@@ -12,6 +12,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -68,7 +69,7 @@ func (s *Server) requireActorWithErrorWriter(
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
-		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.effectiveSessionTTL())
+		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
@@ -162,7 +163,7 @@ func (s *Server) requireSessionWithErrorWriter(
 			return
 		}
 		r = r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor))
-		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.effectiveSessionTTL())
+		recorder := newSessionRefreshResponseWriter(w, r, rawSession, s.identity.Lifetimes().Session)
 		next.ServeHTTP(recorder, r)
 		recorder.finish()
 	})
@@ -226,53 +227,13 @@ func (s *Server) sessionActor(r *http.Request) (auth.Actor, string, error) {
 }
 
 func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth.Actor, error) {
-	rawSession = strings.TrimSpace(rawSession)
-	if rawSession == "" {
+	if strings.TrimSpace(rawSession) == "" {
 		return auth.Actor{}, auth.ErrUnauthenticated
 	}
 	if err := s.userAuthConfigured(); err != nil {
 		return auth.Actor{}, err
 	}
-	tokenHash, err := auth.HashToken(s.authKeys.Session, rawSession)
-	if err != nil {
-		return auth.Actor{}, err
-	}
-	row, err := s.db.GetAuthSessionByTokenHash(r.Context(), tokenHash)
-	if err != nil {
-		if isNoRows(err) {
-			return auth.Actor{}, auth.ErrUnauthenticated
-		}
-		return auth.Actor{}, err
-	}
-	sessionID, err := pgvalue.UUIDValue(row.ID)
-	if err != nil {
-		return auth.Actor{}, err
-	}
-	userID, err := pgvalue.UUIDValue(row.UserID)
-	if err != nil {
-		return auth.Actor{}, err
-	}
-	if err := s.db.RefreshAuthSession(r.Context(), db.RefreshAuthSessionParams{
-		ID:        row.ID,
-		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(s.effectiveSessionTTL())),
-	}); err != nil {
-		return auth.Actor{}, err
-	}
-	actor := auth.Actor{
-		UserID:    userID,
-		SessionID: sessionID,
-		Kind:      auth.ActorKindSession,
-		Admin:     row.Admin,
-	}
-	if row.OrgID.Valid {
-		orgID, err := pgvalue.UUIDValue(row.OrgID)
-		if err != nil {
-			return auth.Actor{}, err
-		}
-		actor.OrgID = orgID
-		actor.Role = auth.Role(row.Role)
-	}
-	return actor, nil
+	return identity.AuthenticateLoginSession(r.Context(), s.db, s.identity, rawSession)
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {

@@ -4,89 +4,50 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
-	"uuid"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/identity"
 )
 
-type browserAuthQuerier struct {
-	db.Querier
-	sessionHash    []byte
-	invitationHash []byte
-}
-
-func (q *browserAuthQuerier) CreateAuthSession(_ context.Context, arg db.CreateAuthSessionParams) (db.AuthSession, error) {
-	q.sessionHash = append([]byte(nil), arg.TokenHash...)
-	return db.AuthSession{}, nil
-}
-
-func (q *browserAuthQuerier) GetActiveInvitation(_ context.Context, tokenHash []byte) (db.GetActiveInvitationRow, error) {
-	q.invitationHash = append([]byte(nil), tokenHash...)
-	return db.GetActiveInvitationRow{}, nil
-}
-
-func TestBrowserAuthUsesSessionDomainForIssuedSession(t *testing.T) {
-	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	queries := &browserAuthQuerier{}
-	server := &Server{authKeys: keys}
-
-	raw, err := server.issueSessionForOrg(
-		httptest.NewRequest("POST", "/", nil),
-		queries,
-		pgtype.UUID{Bytes: uuid.NewV7(), Valid: true},
-		pgtype.UUID{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := auth.HashToken(keys.Session, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(queries.sessionHash, want) {
-		t.Fatal("issued session was not hashed with the session key")
-	}
-}
-
-func TestBrowserAuthUsesInvitationDomainForInvitationValidation(t *testing.T) {
-	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
-	if err != nil {
-		t.Fatal(err)
-	}
-	queries := &browserAuthQuerier{}
-	publicURL, err := url.Parse("https://helmr.example.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{
-		db:        queries,
-		authKeys:  keys,
-		publicURL: publicURL,
-	}
-
-	raw := "invite-token"
-	got, err := server.validateInvitationToken(
-		httptest.NewRequest("POST", "/", nil),
-		raw,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := auth.HashToken(keys.Invitation, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, want) || !bytes.Equal(queries.invitationHash, want) {
-		t.Fatal("invitation was not validated with the invitation key")
+func TestIdentityErrorMapsHTTPContract(t *testing.T) {
+	_, input := identity.ParseAPIKeyFilter("pending")
+	for _, test := range []struct {
+		err     error
+		status  int
+		code    string
+		message string
+	}{
+		{input, http.StatusBadRequest, "bad_request", input.Error()},
+		{identity.ErrInvalidDeviceCode, http.StatusBadRequest, "bad_request", "invalid device code"},
+		{identity.ErrInvalidToken, http.StatusBadRequest, "invalid_token", "token is invalid or expired"},
+		{identity.ErrWrongAccount, http.StatusBadRequest, "wrong_account", "verified email does not match invitation"},
+		{identity.ErrAlreadyMember, http.StatusConflict, "already_member", "identity is already a member of this organization"},
+		{identity.ErrInactiveMember, http.StatusConflict, "disabled_member", "membership is no longer active"},
+		{identity.ErrUserNotFound, http.StatusUnauthorized, "unauthorized", "authentication is required"},
+		{identity.ErrOrganizationRequired, http.StatusForbidden, "forbidden", "organization is required"},
+		{identity.ErrAPIKeyManagementRequired, http.StatusForbidden, "forbidden", identity.ErrAPIKeyManagementRequired.Error()},
+		{identity.ErrDeviceCodeNotFound, http.StatusNotFound, "not_found", "device code not found"},
+		{identity.ErrAPIKeyNotFound, http.StatusNotFound, "not_found", "api key not found"},
+		{identity.ErrDeviceApproverChanged, http.StatusConflict, "device_identity_changed", "Your signed-in account or organization changed. Review the current account before approving."},
+		{fmt.Errorf("record auth identity: %w", errors.New("connection reset")), http.StatusInternalServerError, "internal_error", "internal server error"},
+	} {
+		t.Run(test.err.Error(), func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeError(recorder, identityError(test.err))
+			var body api.HTTPErrorResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if recorder.Code != test.status || body.Error.Code != test.code || body.Error.Message != test.message {
+				t.Fatalf("response = %d %+v, want %d %s %q", recorder.Code, body.Error, test.status, test.code, test.message)
+			}
+		})
 	}
 }
 
@@ -95,23 +56,32 @@ type continuationAuthProvider struct{}
 func (continuationAuthProvider) RedirectURL(state, verifier string) string {
 	return "https://github.example.test/authorize?state=" + url.QueryEscape(state)
 }
-func (continuationAuthProvider) Resolve(context.Context, string, string) (authIdentity, error) {
-	return authIdentity{Provider: "github", Subject: "continuation", DisplayName: "Fixture user", Email: "fixture@example.test", EmailVerified: true}, nil
+
+func (continuationAuthProvider) Resolve(context.Context, string, string) (identity.ExternalIdentity, error) {
+	return identity.ExternalIdentity{Provider: "github", Subject: "continuation", DisplayName: "Fixture user", Email: "fixture@example.test", EmailVerified: true}, nil
 }
 
 func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
-	keys, err := auth.NewKeys(bytes.Repeat([]byte{1}, auth.RootKeySize))
+	cfg := completeServerConfig(t)
+	cfg.PublicURL = &url.URL{Scheme: "https", Host: "helmr.example.test"}
+	cfg.AuthProvider = continuationAuthProvider{}
+	handler, err := NewServer(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publicURL, _ := url.Parse("https://helmr.example.test")
-	s := &Server{db: &browserAuthQuerier{}, authKeys: keys, publicURL: publicURL, authProvider: continuationAuthProvider{}}
-	flow := browserAuthFlow{Kind: browserAuthGitHubLogin, State: "newer-state", Verifier: "verifier", RedirectAfter: "/auth/device?code=NEW"}
-	encoded, err := s.encodeAuthFlow(flow)
+	payload, _ := json.Marshal(api.GitHubAuthStartRequest{Next: "/auth/device?code=NEW"})
+	start := httptest.NewRecorder()
+	handler.ServeHTTP(start, httptest.NewRequest("POST", "https://helmr.example.test/api/auth/github/start", bytes.NewReader(payload)))
+	var started api.GitHubAuthStartResponse
+	if start.Code != http.StatusOK || json.Unmarshal(start.Body.Bytes(), &started) != nil {
+		t.Fatalf("start: %d %s", start.Code, start.Body.String())
+	}
+	redirect, err := url.Parse(started.RedirectURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, state := range []string{"older-state", "", "newer-state"} {
+	newerState := redirect.Query().Get("state")
+	for _, state := range []string{"older-state", "", newerState} {
 		for _, denied := range []bool{false, true} {
 			body := map[string]string{"state": state}
 			if denied {
@@ -119,10 +89,12 @@ func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
 			}
 			raw, _ := json.Marshal(body)
 			r := httptest.NewRequest("POST", "https://helmr.example.test/api/auth/github/finish", bytes.NewReader(raw))
-			r.AddCookie(authFlowCookie(r, encoded, 600))
+			for _, cookie := range start.Result().Cookies() {
+				r.AddCookie(cookie)
+			}
 			w := httptest.NewRecorder()
-			s.githubFinish(w, r)
-			if w.Code != 400 {
+			handler.ServeHTTP(w, r)
+			if w.Code != http.StatusBadRequest {
 				t.Fatalf("state=%q denied=%v status=%d", state, denied, w.Code)
 			}
 			cleared := false
@@ -131,7 +103,7 @@ func TestBrowserAuthSupersededCallbackKeepsNewerFlow(t *testing.T) {
 					cleared = true
 				}
 			}
-			if cleared != (state == flow.State) {
+			if cleared != (state == newerState) {
 				t.Fatalf("state=%q denied=%v cleared=%v", state, denied, cleared)
 			}
 		}

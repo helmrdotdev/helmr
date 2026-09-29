@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
@@ -33,7 +34,7 @@ func completeServerConfig(t *testing.T) ServerConfig {
 		Log:                   discardTestLogger(),
 		DB:                    routeWorkerAuthStore{},
 		TX:                    constructionDB{},
-		Auth:                  NewDBAuthenticator(routeWorkerAuthStore{}),
+		Auth:                  identity.NewAPIKeyAuthenticator(routeWorkerAuthStore{}),
 		CAS:                   store,
 		BundleAdmission:       bundle.Admission{Runtime: claimResponseRuntimeDescriptor()},
 		PlatformStore:         store,

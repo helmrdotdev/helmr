@@ -1,19 +1,13 @@
 package controlplane
 
-import "context"
+import (
+	"context"
 
-type authIdentity struct {
-	Provider        string
-	Subject         string
-	DisplayName     string
-	ProfileImageURL string
-	Email           string
-	EmailVerified   bool
-	VerifiedEmails  []string
-	EmailLookupErr  string
-}
+	"github.com/helmrdotdev/helmr/internal/identity"
+)
 
+// AuthProvider signs users in through an external identity provider.
 type AuthProvider interface {
 	RedirectURL(state string, verifier string) string
-	Resolve(ctx context.Context, code string, verifier string) (authIdentity, error)
+	Resolve(ctx context.Context, code string, verifier string) (identity.ExternalIdentity, error)
 }

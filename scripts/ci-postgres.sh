@@ -90,6 +90,7 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/eventstream \
 	./internal/dispatch \
 	./internal/idempotency \
+	./internal/identity \
 	./internal/org \
 	./internal/run \
 	./internal/scheduler \

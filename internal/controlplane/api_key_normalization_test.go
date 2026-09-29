@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 )
 
 func TestNormalizeAPIKeyPermissionGrantsCanonicalizes(t *testing.T) {
@@ -15,7 +16,7 @@ func TestNormalizeAPIKeyPermissionGrantsCanonicalizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantPermissions := []string{"actors.start", "runs.read", "tokens.read"}
+	wantPermissions := []auth.Permission{auth.PermissionActorsStart, auth.PermissionRunsRead, auth.PermissionTokensRead}
 	if !reflect.DeepEqual(permissions, wantPermissions) {
 		t.Fatalf("permissions = %v, want %v", permissions, wantPermissions)
 	}

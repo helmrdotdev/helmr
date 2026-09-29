@@ -7,38 +7,26 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http/httptest"
+	"net/http"
 	"net/url"
 	"testing"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/email"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestMagicLinkDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T) {
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
 	sender := &blockingMagicLinkSender{started: make(chan email.Message, magicLinkDeliveryWorkers)}
 	delivery := NewMagicLinkDelivery(discardMagicLinkLog(), 10*time.Second)
-	server := newMagicLinkDeliveryPostgresServer(t, database, sender, delivery, false)
+	fixture := newMagicLinkDeliveryPostgresFixture(t, sender, delivery, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- delivery.Run(ctx) }()
 
-	request := httptest.NewRequest("POST", "/api/auth/magic-link/start", nil)
 	for index := range magicLinkDeliveryWorkers {
-		address := fmt.Sprintf("active-%d@example.test", index)
-		if _, err := server.sendMagicLink(request, db.MagicLinkPurposeLogin, address, pgtype.UUID{}, pgtype.UUID{}, "/"); err != nil {
-			t.Fatal(err)
-		}
+		startLoginMagicLink(t, fixture, fmt.Sprintf("active-%d@example.test", index))
 	}
 	for range magicLinkDeliveryWorkers {
 		select {
@@ -48,10 +36,7 @@ func TestMagicLinkDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T)
 		}
 	}
 	for index := range magicLinkDeliveryQueue {
-		address := fmt.Sprintf("queued-%d@example.test", index)
-		if _, err := server.sendMagicLink(request, db.MagicLinkPurposeLogin, address, pgtype.UUID{}, pgtype.UUID{}, "/"); err != nil {
-			t.Fatal(err)
-		}
+		startLoginMagicLink(t, fixture, fmt.Sprintf("queued-%d@example.test", index))
 	}
 	shutdownStarted := time.Now()
 	cancel()
@@ -62,7 +47,7 @@ func TestMagicLinkDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T)
 		t.Fatalf("shutdown duration = %s, want <= 10s", elapsed)
 	}
 	var failed, sent int
-	if err := database.Pool.QueryRow(t.Context(), `
+	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT count(*) FILTER (WHERE delivery_failed_at IS NOT NULL),
 		       count(*) FILTER (WHERE sent_at IS NOT NULL)
 		  FROM magic_links
@@ -76,43 +61,26 @@ func TestMagicLinkDeliveryPostgresShutdownFailsActiveAndQueuedRows(t *testing.T)
 }
 
 func TestMagicLinkLoginQueueSaturationRemainsNonEnumerating(t *testing.T) {
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
 	sender := &blockingMagicLinkSender{started: make(chan email.Message, 1)}
 	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 1, 1, time.Second)
-	server := newMagicLinkDeliveryPostgresServer(t, database, sender, delivery, false)
+	fixture := newMagicLinkDeliveryPostgresFixture(t, sender, delivery, false)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- delivery.Run(ctx) }()
-	request := httptest.NewRequest("POST", "/api/auth/magic-link/start", nil)
-	if _, err := server.sendMagicLink(request, db.MagicLinkPurposeLogin, "active@example.test", pgtype.UUID{}, pgtype.UUID{}, "/"); err != nil {
-		t.Fatal(err)
-	}
+	startLoginMagicLink(t, fixture, "active@example.test")
 	select {
 	case <-sender.started:
 	case <-time.After(time.Second):
 		t.Fatal("active delivery did not start")
 	}
-	if _, err := server.sendMagicLink(request, db.MagicLinkPurposeLogin, "queued@example.test", pgtype.UUID{}, pgtype.UUID{}, "/"); err != nil {
-		t.Fatal(err)
-	}
+	startLoginMagicLink(t, fixture, "queued@example.test")
 
-	recorder := httptest.NewRecorder()
-	server.magicLinkLoginStart(recorder, request, api.MagicLinkStartRequest{Email: "saturated@example.test"})
-	if recorder.Code != 200 {
-		t.Fatalf("status = %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var response api.MagicLinkStartResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
+	response := startLoginMagicLink(t, fixture, "saturated@example.test")
 	if !response.Sent || response.Email != "" || response.DebugURL != "" {
 		t.Fatalf("response = %+v, want non-enumerating sent response", response)
 	}
 	var failed bool
-	if err := database.Pool.QueryRow(t.Context(), `
+	if err := fixture.pool.QueryRow(t.Context(), `
 		SELECT delivery_failed_at IS NOT NULL
 		  FROM magic_links
 		 WHERE email = 'saturated@example.test'
@@ -129,21 +97,13 @@ func TestMagicLinkLoginQueueSaturationRemainsNonEnumerating(t *testing.T) {
 }
 
 func TestMagicLinkDebugDeliveryUsesBoundedWorker(t *testing.T) {
-	database := dbtest.Open(t)
-	if err := schema.Up(t.Context(), database.DSN); err != nil {
-		t.Fatal(err)
-	}
 	sender := &recordingMagicLinkSender{sent: make(chan email.Message, 1)}
 	delivery := newMagicLinkDelivery(discardMagicLinkLog(), 1, 1, time.Second)
-	server := newMagicLinkDeliveryPostgresServer(t, database, sender, delivery, true)
+	fixture := newMagicLinkDeliveryPostgresFixture(t, sender, delivery, true)
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { done <- delivery.Run(ctx) }()
-	request := httptest.NewRequest("POST", "/api/auth/magic-link/start", nil)
-	debugURL, err := server.sendMagicLink(request, db.MagicLinkPurposeLogin, "debug@example.test", pgtype.UUID{}, pgtype.UUID{}, "/")
-	if err != nil {
-		t.Fatal(err)
-	}
+	debugURL := startLoginMagicLink(t, fixture, "debug@example.test").DebugURL
 	if debugURL == "" {
 		t.Fatal("debug URL was not returned")
 	}
@@ -156,11 +116,11 @@ func TestMagicLinkDebugDeliveryUsesBoundedWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tokenHash, err := auth.HashToken(server.authKeys.MagicLink, parsedURL.Query().Get("token"))
+	tokenHash, err := auth.HashToken(fixture.keys.MagicLink, parsedURL.Query().Get("token"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := server.db.GetActiveMagicLinkByTokenHash(t.Context(), tokenHash); err != nil {
+	if _, err := fixture.queries.GetActiveMagicLinkByTokenHash(t.Context(), tokenHash); err != nil {
 		t.Fatalf("debug URL was not immediately usable after return: %v", err)
 	}
 	cancel()
@@ -192,30 +152,27 @@ func (s *recordingMagicLinkSender) SendEmail(_ context.Context, message email.Me
 	return nil
 }
 
-func newMagicLinkDeliveryPostgresServer(
-	t *testing.T,
-	database dbtest.Database,
-	sender email.Sender,
-	delivery *MagicLinkDelivery,
-	debug bool,
-) *Server {
+func newMagicLinkDeliveryPostgresFixture(t *testing.T, sender email.Sender, delivery *MagicLinkDelivery, debug bool) httpPostgresFixture {
 	t.Helper()
-	publicURL, err := url.Parse("https://helmr.example.test")
+	return newHTTPPostgresFixture(t, func(cfg *ServerConfig) {
+		cfg.Log = slog.New(slog.NewTextHandler(io.Discard, nil))
+		cfg.Mailer = sender
+		cfg.MagicLinkDelivery = delivery
+		cfg.MagicLinkDebugURLs = debug
+	})
+}
+
+// startLoginMagicLink requests a login magic link, which always answers 200.
+func startLoginMagicLink(t *testing.T, fixture httpPostgresFixture, address string) api.MagicLinkStartResponse {
+	t.Helper()
+	body, err := json.Marshal(api.MagicLinkStartRequest{Email: address, Next: "/"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, err := auth.NewKeys(make([]byte, auth.RootKeySize))
-	if err != nil {
-		t.Fatal(err)
+	recorder := fixture.request(t, http.MethodPost, "/api/auth/magic-link/start", "", string(body))
+	var response api.MagicLinkStartResponse
+	if recorder.Code != http.StatusOK || json.Unmarshal(recorder.Body.Bytes(), &response) != nil {
+		t.Fatalf("magic link start = %d %s", recorder.Code, recorder.Body.String())
 	}
-	return &Server{
-		log:                slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:                 db.New(database.Pool),
-		tx:                 database.Pool,
-		authKeys:           keys,
-		publicURL:          publicURL,
-		mailer:             sender,
-		magicLinkDelivery:  delivery,
-		magicLinkDebugURLs: debug,
-	}
+	return response
 }

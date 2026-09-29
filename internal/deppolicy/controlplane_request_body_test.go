@@ -70,7 +70,7 @@ var controlPlaneDecodersOutsideOwner = map[string]string{
 	"decodeSessionListCursor":                 "opaque cursor, fixed message",
 	"decodeStartTaskRequest":                  "canonical request member, fixed message",
 	"decodeTokenListCursor":                   "opaque cursor, fixed message",
-	"githubOAuthProvider.ResolveWithToken":    "identity provider response",
+	"githubOAuthProvider.Resolve":             "identity provider response",
 	"githubOAuthProvider.verifiedEmails":      "identity provider response",
 	"jsonObject":                              "owner-decoded value, boolean result",
 	"loadInspectedComputerChild":              "stored object inspection",

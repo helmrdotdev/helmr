@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -15,7 +16,7 @@ import (
 
 func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	actor := actorFromContext(r.Context())
-	if actor.UserID == uuidNil {
+	if actor.UserID == uuid.Nil() {
 		writeError(w, unauthorized(errors.New("session authentication is required")))
 		return
 	}

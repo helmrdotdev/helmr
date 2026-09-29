@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -211,4 +212,100 @@ func insertUser(t *testing.T, pool *pgxpool.Pool, name string, email string) uui
 		t.Fatal(err)
 	}
 	return userID
+}
+
+func TestAcceptInvitationPostgres(t *testing.T) {
+	fixture := newMemberFixture(t)
+	ctx := t.Context()
+	q := fixture.queries
+	invite := func(email string, role string) PendingInvitation {
+		t.Helper()
+		_, rawToken, err := CreateInvitation(ctx, q, fixture.tokenKey, fixture.owner, InvitationInput{Email: email, Role: role})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokenHash, err := auth.HashToken(fixture.tokenKey, rawToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invitation, err := PendingInvitationByTokenHash(ctx, q, tokenHash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		byID, err := PendingInvitationByID(ctx, q, invitation.ID)
+		if err != nil || byID != invitation {
+			t.Fatalf("invitation by id = %+v, err = %v", byID, err)
+		}
+		return invitation
+	}
+	activeSessions := func(userID uuid.UUID) int {
+		t.Helper()
+		var count int
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM auth_sessions WHERE user_id = $1 AND revoked_at IS NULL`, userID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	session := func(userID uuid.UUID) {
+		t.Helper()
+		if _, err := fixture.pool.Exec(ctx, `INSERT INTO auth_sessions (id, user_id, token_hash, expires_at) VALUES ($1, $2, $3, now() + interval '1 hour')`, uuid.NewV7(), userID, uuid.NewV7().String()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The membership write satisfies the deferred invitation acceptance
+	// constraint, so acceptance runs on a transaction.
+	accept := func(invitation PendingInvitation, userID uuid.UUID, displayName string) error {
+		return db.RunTx(ctx, fixture.pool, func(tx pgx.Tx) error {
+			return AcceptInvitation(ctx, db.New(tx), invitation, userID, displayName)
+		})
+	}
+	if _, err := PendingInvitationByTokenHash(ctx, q, []byte("unknown")); !errors.Is(err, ErrInvitationNotFound) {
+		t.Fatalf("unknown invitation error = %v", err)
+	}
+	joiner := insertUser(t, fixture.pool, "Joiner", "joiner@example.test")
+	session(joiner)
+	invitation := invite("joiner@example.test", "developer")
+	if err := accept(invitation, joiner, "Joiner"); err != nil {
+		t.Fatal(err)
+	}
+	member, err := activeMember(ctx, q, fixture.owner.OrgID, joiner)
+	if err != nil || member.Role != db.OrgMemberRoleDeveloper || member.DisplayName.String != "Joiner" {
+		t.Fatalf("member = %+v, err = %v", member, err)
+	}
+	if activeSessions(joiner) != 0 {
+		t.Fatal("acceptance kept earlier login sessions")
+	}
+	if err := accept(invitation, joiner, "Joiner"); !errors.Is(err, ErrAlreadyMember) {
+		t.Fatalf("active member error = %v", err)
+	}
+
+	// An accepted or revoked invitation cannot be accepted again, and a
+	// rejected acceptance leaves sessions alone.
+	outsider := insertUser(t, fixture.pool, "Outsider", "outsider@example.test")
+	session(outsider)
+	if err := accept(invitation, outsider, "Outsider"); !errors.Is(err, ErrInvitationNotFound) {
+		t.Fatalf("accepted invitation error = %v", err)
+	}
+	if activeSessions(outsider) != 1 {
+		t.Fatal("rejected acceptance revoked sessions")
+	}
+
+	// A disabled membership is re-enabled with the invited role; a disabled
+	// user with an active membership is reported as disabled.
+	if _, err := fixture.pool.Exec(ctx, `UPDATE org_members SET disabled_at = now() WHERE org_id = $1 AND user_id = $2`, fixture.owner.OrgID, joiner); err != nil {
+		t.Fatal(err)
+	}
+	if err := accept(invite("second@example.test", "viewer"), joiner, ""); err != nil {
+		t.Fatal(err)
+	}
+	if member, err := activeMember(ctx, q, fixture.owner.OrgID, joiner); err != nil || member.Role != db.OrgMemberRoleViewer {
+		t.Fatalf("re-enabled member = %+v, err = %v", member, err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, joiner); err != nil {
+		t.Fatal(err)
+	}
+	if err := accept(invite("third@example.test", "viewer"), joiner, ""); !errors.Is(err, ErrUserDisabled) {
+		t.Fatalf("disabled user error = %v", err)
+	}
 }
