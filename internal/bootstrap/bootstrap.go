@@ -7,6 +7,7 @@ import (
 	"strings"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -71,7 +72,7 @@ func Apply(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("get bootstrap worker group: %w", err)
 	}
-	tokenHash, err := workergroup.ParseEnrollmentToken(cfg.WorkerToken)
+	tokenHash, err := auth.ParseEnrollmentToken(cfg.WorkerToken)
 	if err != nil {
 		return err
 	}

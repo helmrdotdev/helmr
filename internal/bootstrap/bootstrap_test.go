@@ -5,10 +5,10 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestApplyCreatesOneRegionGroupAndToken(t *testing.T) {
@@ -17,7 +17,7 @@ func TestApplyCreatesOneRegionGroupAndToken(t *testing.T) {
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestApplyPreservesExistingRowsWithoutParsingToken(t *testing.T) {
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestApplyCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	firstToken, err := workergroup.GenerateEnrollmentToken()
+	firstToken, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestApplyCreatesAnotherSeedWithoutChangingTheExistingSeed(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	secondToken, err := workergroup.GenerateEnrollmentToken()
+	secondToken, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestApplySerializesConcurrentBootstrap(t *testing.T) {
 	if err := schema.Up(ctx, database.DSN); err != nil {
 		t.Fatal(err)
 	}
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		t.Fatal(err)
 	}

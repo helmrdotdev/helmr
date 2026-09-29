@@ -10,11 +10,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pglock"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -165,7 +167,7 @@ func (s *Server) adminCreateWorkerGroup(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	description := strings.TrimSpace(request.Description)
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		writeError(w, errors.New("generate worker group token"))
 		return
@@ -289,7 +291,7 @@ func (s *Server) adminRotateWorkerGroupToken(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	token, err := workergroup.GenerateEnrollmentToken()
+	token, err := auth.GenerateEnrollmentToken()
 	if err != nil {
 		writeError(w, errors.New("generate worker group token"))
 		return
@@ -343,7 +345,7 @@ func (s *Server) adminCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker pool request JSON: %w", err)))
 		return
 	}
-	if err := workergroup.ValidatePoolName(request.Name); err != nil {
+	if err := workerapi.ValidatePoolName(request.Name); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}

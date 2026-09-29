@@ -1,4 +1,4 @@
-package capacity
+package workergroup
 
 import (
 	"bytes"
@@ -43,7 +43,7 @@ const (
 	reasonProviderSaturated    = "provider_capacity_saturated"
 )
 
-type Store interface {
+type PlanStore interface {
 	GetWorkerGroup(context.Context, pgtype.UUID) (db.WorkerGroup, error)
 	ListCapacityWorkerPools(context.Context, db.ListCapacityWorkerPoolsParams) ([]db.ListCapacityWorkerPoolsRow, error)
 	ListWorkerCapacityBins(context.Context, db.ListWorkerCapacityBinsParams) ([]db.ListWorkerCapacityBinsRow, error)
@@ -118,7 +118,7 @@ type poolPlan struct {
 	result   PoolPlan
 }
 
-func Plan(ctx context.Context, store Store, workerGroupID uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
+func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request PlanRequest, now time.Time) (PlanResponse, error) {
 	if len(request.Pools) == 0 || len(request.Pools) > maximumPlanningPools {
 		return PlanResponse{}, fmt.Errorf("%w: pools must contain between 1 and %d entries", ErrInvalidPlanRequest, maximumPlanningPools)
 	}
@@ -395,7 +395,7 @@ func candidateMatchesBin(candidate item, target bin) bool {
 	return candidate.targetPoolID.Valid && candidate.targetPoolID == target.workerPoolID
 }
 
-func discoverItems(ctx context.Context, store Store, group db.WorkerGroup, scanSeed string) ([]item, map[[16]byte]struct{}, bool, error) {
+func discoverItems(ctx context.Context, store PlanStore, group db.WorkerGroup, scanSeed string) ([]item, map[[16]byte]struct{}, bool, error) {
 	result := make([]item, 0, maximumPlanningCandidates)
 	accountedPoolIDs := make(map[[16]byte]struct{}, maximumPlanningPools)
 	complete := true
@@ -626,7 +626,7 @@ func freshExecutionItem(key string, configJSON []byte) item {
 	return result
 }
 
-func currentBins(ctx context.Context, store Store, workerGroupID uuid.UUID) ([]bin, bool, error) {
+func currentBins(ctx context.Context, store PlanStore, workerGroupID uuid.UUID) ([]bin, bool, error) {
 	rows, err := store.ListWorkerCapacityBins(ctx, db.ListWorkerCapacityBinsParams{
 		WorkerGroupID: pgvalue.UUID(workerGroupID), ObservationFreshnessSeconds: workerapi.WorkerObservationFreshnessSeconds,
 		RowLimit: maximumPlanningWorkers + 1,

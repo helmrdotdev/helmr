@@ -12,7 +12,6 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -41,7 +40,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("resource_id is required and must not exceed 512 bytes")))
 		return
 	}
-	if err := workergroup.ValidatePoolName(request.PoolName); err != nil {
+	if err := workerapi.ValidatePoolName(request.PoolName); err != nil {
 		writeError(w, badRequest(fmt.Errorf("worker pool name: %w", err)))
 		return
 	}
@@ -92,7 +91,7 @@ func strictWorkerEnrollmentBearer(values []string) ([]byte, error) {
 	if raw == "" || strings.ContainsAny(raw, " \t\r\n") {
 		return nil, errors.New("worker enrollment bearer is invalid")
 	}
-	return workergroup.ParseEnrollmentToken(raw)
+	return auth.ParseEnrollmentToken(raw)
 }
 
 func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
@@ -621,7 +620,7 @@ func vmPlatformParams(profile vmplatform.Profile) db.UpsertVMPlatformParams {
 	}
 }
 
-func sealWorkerPoolParams(groupID uuid.UUID, poolID pgtype.UUID, template capacity.WorkerTemplate) db.SealWorkerPoolParams {
+func sealWorkerPoolParams(groupID uuid.UUID, poolID pgtype.UUID, template workergroup.Template) db.SealWorkerPoolParams {
 	return db.SealWorkerPoolParams{
 		VMPlatformID:                    pgtype.Text{String: template.Runtime.ID, Valid: true},
 		CapacityCPUMillis:               pgtype.Int8{Int64: template.Capacity.CPUMillis, Valid: true},
@@ -635,7 +634,7 @@ func sealWorkerPoolParams(groupID uuid.UUID, poolID pgtype.UUID, template capaci
 	}
 }
 
-func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template capacity.WorkerTemplate) bool {
+func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, template workergroup.Template) bool {
 	if !pool.SealedAt.Valid ||
 		!pool.VMPlatformID.Valid || pool.VMPlatformID.String != template.Runtime.ID ||
 		!pool.CapacityCPUMillis.Valid || pool.CapacityCPUMillis.Int64 != template.Capacity.CPUMillis ||
@@ -657,16 +656,16 @@ func workerPoolMatches(pool db.WorkerPool, shapes []db.WorkerPoolCpuShape, templ
 	return true
 }
 
-func workerTemplate(capabilities workerapi.Capabilities) capacity.WorkerTemplate {
-	return capacity.WorkerTemplate{
-		Schema: capacity.WorkerTemplateSchema, Runtime: capabilities.Runtime,
+func workerTemplate(capabilities workerapi.Capabilities) workergroup.Template {
+	return workergroup.Template{
+		Schema: workergroup.TemplateSchema, Runtime: capabilities.Runtime,
 		CPUShapes: append([]vmplatform.CPUShape(nil), capabilities.CPUShapes...),
-		Capacity: capacity.ResourceVector{
+		Capacity: workergroup.ResourceVector{
 			CPUMillis: capabilities.MaxVCPUs * 1000, MemoryBytes: capabilities.MaxMemoryMiB * 1024 * 1024,
 			GuestEphemeralDiskBytes: capabilities.GuestEphemeralDiskBytes,
 			VMSlots:                 int64(capabilities.ExecutionSlotsAvailable),
 		},
-		PerVM: capacity.ResourceVector{
+		PerVM: workergroup.ResourceVector{
 			CPUMillis: capabilities.VMMilliCPU, MemoryBytes: capabilities.VMMemoryMiB * 1024 * 1024,
 			GuestEphemeralDiskBytes: capabilities.VMGuestEphemeralDiskBytes,
 		},

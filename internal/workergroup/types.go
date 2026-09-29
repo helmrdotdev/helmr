@@ -1,4 +1,4 @@
-package capacity
+package workergroup
 
 import (
 	"errors"
@@ -44,9 +44,9 @@ type ResourceVector struct {
 	VMSlots                 int64 `json:"vm_slots,omitempty"`
 }
 
-const WorkerTemplateSchema = "helmr.worker-template.v0"
+const TemplateSchema = "helmr.worker-template.v0"
 
-type WorkerTemplate struct {
+type Template struct {
 	Schema    string                `json:"schema"`
 	Runtime   vmplatform.Profile    `json:"runtime"`
 	CPUShapes []vmplatform.CPUShape `json:"cpu_shapes"`
@@ -54,10 +54,10 @@ type WorkerTemplate struct {
 	PerVM     ResourceVector        `json:"per_vm"`
 }
 
-func (t WorkerTemplate) Validate() error {
+func (t Template) Validate() error {
 	var problems []error
-	if t.Schema != WorkerTemplateSchema {
-		problems = append(problems, fmt.Errorf("schema must be %q", WorkerTemplateSchema))
+	if t.Schema != TemplateSchema {
+		problems = append(problems, fmt.Errorf("schema must be %q", TemplateSchema))
 	}
 	if err := t.Runtime.Validate(); err != nil {
 		problems = append(problems, err)
@@ -115,7 +115,7 @@ type PoolRequest struct {
 	MaxAdditionalWorkers int32  `json:"max_additional_workers"`
 }
 
-type WorkerGroup struct {
+type Group struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name"`
 	RegionID      string            `json:"region_id"`
@@ -124,14 +124,14 @@ type WorkerGroup struct {
 	PrimaryPoolID string            `json:"primary_pool_id,omitempty"`
 }
 
-type ReconcileWorkerGroupPrimaryPoolsRequest struct {
+type ReconcilePrimaryPoolsRequest struct {
 	ExpectedGroupClaimVersion int64  `json:"expected_group_claim_version"`
 	PoolID                    string `json:"pool_id"`
 }
 
-type ReconcileWorkerGroupPrimaryPoolsResponse struct {
-	WorkerGroup WorkerGroup `json:"worker_group"`
-	Applied     bool        `json:"applied"`
+type ReconcilePrimaryPoolsResponse struct {
+	WorkerGroup Group `json:"worker_group"`
+	Applied     bool  `json:"applied"`
 }
 
 type WorkerPool struct {

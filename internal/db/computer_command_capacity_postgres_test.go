@@ -6,12 +6,12 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 type computerCommandInterleavedPlanStore struct {
@@ -117,7 +117,7 @@ func TestComputerCommandCapacityPlanPreservesDiscoveryAcrossReclamation(t *testi
 SELECT $2,org_id,project_id,environment_id,region_id,worker_group_id,worker_host_id,worker_epoch,vm_platform_id,computer_spec_id,vm_vcpu_count,cpu_config_digest,reserved_cpu_millis,reserved_memory_bytes,reserved_guest_ephemeral_disk_bytes,reserved_execution_slots,computer_id,program_deployment_id,now()+interval '5 minutes','prepare',writer_generation+1,decode(repeat('03',32),'hex'),now()+interval '10 minutes',source_disk_version_id FROM computer_instances WHERE id=$1`, instanceID, uuid.NewV7())
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET writer_generation=writer_generation+1 WHERE id=$1`, computerID)
 			}}
-			plan, err := capacity.Plan(t.Context(), store, runtest.WorkerGroupID, capacity.PlanRequest{Pools: []capacity.PoolRequest{{PoolID: f.WorkerPoolID.String(), MaxAdditionalWorkers: 1}}}, time.Now())
+			plan, err := workergroup.Plan(t.Context(), store, runtest.WorkerGroupID, workergroup.PlanRequest{Pools: []workergroup.PoolRequest{{PoolID: f.WorkerPoolID.String(), MaxAdditionalWorkers: 1}}}, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

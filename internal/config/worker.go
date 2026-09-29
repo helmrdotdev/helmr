@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
 func LoadWorker() (Worker, error) {
@@ -48,7 +48,7 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkerResourceID == "" || len(cfg.WorkerResourceID) > 512 {
 		return cfg, errors.New("WORKER_RESOURCE_ID is required and must not exceed 512 bytes")
 	}
-	if err := workergroup.ValidatePoolName(cfg.WorkerPoolName); err != nil {
+	if err := workerapi.ValidatePoolName(cfg.WorkerPoolName); err != nil {
 		return cfg, fmt.Errorf("WORKER_POOL_NAME: %w", err)
 	}
 	if cfg.WorkerEnrollmentTokenFile == "" {

@@ -16,10 +16,10 @@ import (
 	"uuid"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -282,7 +282,7 @@ func (s *capacityPlanStore) ListPendingComputerCommandCapacityCandidates(context
 	return nil, nil
 }
 
-func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
+func capacityHTTPTemplate(t *testing.T) workergroup.Template {
 	t.Helper()
 	runtime := vmplatform.Profile{
 		Arch: "x86_64", Contract: vmplatform.Contract,
@@ -297,15 +297,15 @@ func capacityHTTPTemplate(t *testing.T) capacity.WorkerTemplate {
 		RootfsDigest:              "sha256:" + strings.Repeat("3", 64),
 	}
 	runtime.ID, _ = runtime.ExpectedID()
-	template := capacity.WorkerTemplate{
-		Schema:  capacity.WorkerTemplateSchema,
+	template := workergroup.Template{
+		Schema:  workergroup.TemplateSchema,
 		Runtime: runtime,
 		CPUShapes: []vmplatform.CPUShape{
 			{VCPUCount: 1, CPUConfigDigest: "sha256:" + strings.Repeat("4", 64)},
 			{VCPUCount: 2, CPUConfigDigest: "sha256:" + strings.Repeat("5", 64)},
 		},
-		Capacity: capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
-		PerVM:    capacity.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
+		Capacity: workergroup.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 64 << 30, VMSlots: 1},
+		PerVM:    workergroup.ResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30, GuestEphemeralDiskBytes: 32 << 30},
 	}
 	return template
 }

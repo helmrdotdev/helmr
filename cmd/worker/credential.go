@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"golang.org/x/sys/unix"
 )
 
@@ -185,7 +185,7 @@ func readWorkerEnrollmentToken(path string) (string, error) {
 		return "", errors.New("WORKER_ENROLLMENT_TOKEN_FILE is too large")
 	}
 	secret := string(secretBytes)
-	if _, err := workergroup.ParseEnrollmentToken(secret); err != nil {
+	if _, err := auth.ParseEnrollmentToken(secret); err != nil {
 		return "", fmt.Errorf("WORKER_ENROLLMENT_TOKEN_FILE: %w", err)
 	}
 	return secret, nil
