@@ -28,7 +28,7 @@ func CompleteComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	instance, cp := source.Instance, source.Checkpoint
+	instance, cp := source.Instance(), source.Checkpoint()
 	if cp.Status == "ready" {
 		return cp, nil
 	}
@@ -75,8 +75,7 @@ func CompleteComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 	if err = inspection.Pack.CheckRoot(locator, runtimeComputer.LogicalBytes); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	publicationKey := computer.CheckpointPublicationKey(pgvalue.MustUUIDValue(cp.ID))
-	if _, err = q.RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: instance.ID, PublicationKey: publicationKey, InstanceDesiredVersion: request.DesiredVersion, Digest: root.Digest}); err != nil {
+	if err = source.RequireRootPinned(ctx, request.DesiredVersion, root.Digest); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	version, err := q.CreatePrivateCheckpointComputerDiskVersion(ctx, db.CreatePrivateCheckpointComputerDiskVersionParams{ID: pgvalue.NewUUIDv7(), EnvironmentID: instance.EnvironmentID, CheckpointID: cp.ID, RootPackDigest: pgvalue.Text(runtimeComputer.Root.Pack.Digest), LogicalBytes: runtimeComputer.LogicalBytes})
@@ -103,7 +102,7 @@ func CompleteComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 		artifacts = append(artifacts, a)
 	}
 	// Blocking storage rows may have outlived execution authority.
-	if err = computer.CheckCheckpointMembers(ctx, tx, instance, cp, len(candidate.RecoveryPoint.Runs)); err != nil {
+	if err = source.CheckMembers(ctx, len(candidate.RecoveryPoint.Runs)); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	if _, err = q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}); err != nil {
@@ -151,10 +150,10 @@ func CheckComputerCheckpointReady(ctx context.Context, tx pgx.Tx, worker Compute
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	if source.Checkpoint.Status == "creating" {
-		_, err = db.New(tx).GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: source.Instance.ID, EnvironmentID: source.Instance.EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
+	if source.Checkpoint().Status == "creating" {
+		_, err = db.New(tx).GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: source.Instance().ID, EnvironmentID: source.Instance().EnvironmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 	}
-	return source.Checkpoint, err
+	return source.Checkpoint(), err
 }
 
 func prepareComputerCheckpointReady(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest) (computer.CheckpointSource, []byte, string, error) {
@@ -162,7 +161,7 @@ func prepareComputerCheckpointReady(ctx context.Context, tx pgx.Tx, worker Compu
 	if err != nil {
 		return computer.CheckpointSource{}, nil, "", err
 	}
-	cp := source.Checkpoint
+	cp := source.Checkpoint()
 	candidate := request.Manifest
 	candidate.Phases = nil
 	// Registration sorted the sealed member set. Normalize without mutating input.

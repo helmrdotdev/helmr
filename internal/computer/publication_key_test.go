@@ -21,7 +21,6 @@ func TestPublicationKeysAreStable(t *testing.T) {
 		{"save", savePublicationKey(owner, 7, operation), "ccde7eee3146453f009cae98874c839348286516e693847d9ab5f5a8689272bb"},
 		{"initial", initialPublicationKey(owner), hex.EncodeToString(derivePublicationKey("initial", owner, owner))},
 		{"checkpoint", checkpointPublicationKey(owner), hex.EncodeToString(derivePublicationKey("checkpoint", owner, owner))},
-		{"exported checkpoint", CheckpointPublicationKey(owner), hex.EncodeToString(derivePublicationKey("checkpoint", owner, owner))},
 	} {
 		if got := hex.EncodeToString(test.key); got != test.want {
 			t.Errorf("%s key = %s, want %s", test.name, got, test.want)

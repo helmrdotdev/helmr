@@ -48,7 +48,7 @@ func RegisterComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, source computer.CheckpointSource) (db.ComputerCheckpoint, error) {
 	var err error
 	q := db.New(tx)
-	instance, cp := source.Instance, source.Checkpoint
+	instance, cp := source.Instance(), source.Checkpoint()
 	environmentID, computerID := instance.EnvironmentID, instance.ComputerID
 	validateLive := func() error {
 		_, err := q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: environmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
@@ -93,7 +93,7 @@ func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 		}
 		manifest.RecoveryPoint.Runs = append(manifest.RecoveryPoint.Runs, supplied)
 	}
-	validateMembers := func() error { return computer.CheckCheckpointMembers(ctx, tx, instance, cp, len(members)) }
+	validateMembers := func() error { return source.CheckMembers(ctx, len(members)) }
 	if err = validateMembers(); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}

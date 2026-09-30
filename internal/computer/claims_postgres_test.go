@@ -95,3 +95,32 @@ type unavailableObjects struct{}
 func (unavailableObjects) Stat(context.Context, string) (cas.Object, error) {
 	return cas.Object{}, errors.New("object storage is not configured")
 }
+
+// Certification reports unavailable object storage as ErrStorageUnavailable
+// after verifying the registration, so the worker is told to retry.
+func TestInitialObjectCertificationReportsUnavailableStorage(t *testing.T) {
+	f := newPreparationFixture(t)
+	key := f.initialKey(t)
+	defer clear(key.Key)
+	local, err := cas.NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := blockformat.Writer{Source: local, Sink: local, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
+	locator, err := writer.Empty(t.Context(), f.logicalBytes, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspected, err := blockformat.InspectPack(t.Context(), local, key.Scope, writer.Keys, locator.Pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := blockformat.ObjectInspection{Pack: &inspected}
+	if err = f.publisher.RegisterInitialObject(t.Context(), f.principal, f.ref, inspection); err != nil {
+		t.Fatal(err)
+	}
+	unavailable := savePublisher(t, f.Fixture)
+	if err = unavailable.CertifyInitialObject(t.Context(), f.principal, f.ref, inspection); !errors.Is(err, ErrStorageUnavailable) {
+		t.Fatalf("certification with unavailable storage: %v", err)
+	}
+}

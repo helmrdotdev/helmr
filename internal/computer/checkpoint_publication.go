@@ -23,12 +23,16 @@ type CheckpointRef struct {
 	CheckpointID   uuid.UUID
 }
 
-// CheckpointSource is a capture source whose locks hold in the caller's
-// transaction: the Computer, the Instance and its capture checkpoint.
+// CheckpointSource is the fence of a capture source: the worker Group and
+// Host, the Computer, the Instance, its resident members and its capture
+// checkpoint are locked in the owning transaction. Checkpoint registration,
+// readiness and failure build on it. A CheckpointSource is valid only inside
+// the transaction that locked it.
 type CheckpointSource struct {
-	Computer   db.Computer
-	Instance   db.ComputerInstance
-	Checkpoint db.ComputerCheckpoint
+	tx         pgx.Tx
+	computer   db.Computer
+	instance   db.ComputerInstance
+	checkpoint db.ComputerCheckpoint
 }
 
 // LockCheckpointSource locks the capture source of a checkpoint without
@@ -82,17 +86,32 @@ func LockCheckpointSource(ctx context.Context, tx pgx.Tx, ref CheckpointRef) (Ch
 	if cp.ID != pgvalue.UUID(ref.CheckpointID) {
 		return CheckpointSource{}, pgx.ErrNoRows
 	}
-	return CheckpointSource{Computer: c, Instance: instance, Checkpoint: cp}, nil
+	return CheckpointSource{tx: tx, computer: c, instance: instance, checkpoint: cp}, nil
 }
 
-// CheckCheckpointMembers checks, under the checkpoint source and all resident
-// member locks, that the Instance's unreconciled leases are exactly the
-// checkpoint's memberCount members and that each is still checkpointing its
-// Run, Attempt and Wait for this checkpoint. A changed member set returns
-// pgx.ErrNoRows.
-func CheckCheckpointMembers(ctx context.Context, tx pgx.Tx, instance db.ComputerInstance, cp db.ComputerCheckpoint, memberCount int) error {
+// Computer is the locked Computer.
+func (s CheckpointSource) Computer() db.Computer {
+	return s.computer
+}
+
+// Instance is the locked source Instance.
+func (s CheckpointSource) Instance() db.ComputerInstance {
+	return s.instance
+}
+
+// Checkpoint is the locked capture checkpoint.
+func (s CheckpointSource) Checkpoint() db.ComputerCheckpoint {
+	return s.checkpoint
+}
+
+// CheckMembers checks, under the source's resident member locks, that the
+// Instance's unreconciled leases are exactly the checkpoint's memberCount
+// members and that each is still checkpointing its Run, Attempt and Wait for
+// this checkpoint. A changed member set returns pgx.ErrNoRows.
+func (s CheckpointSource) CheckMembers(ctx context.Context, memberCount int) error {
+	instance, cp := s.instance, s.checkpoint
 	var live bool
-	err := tx.QueryRow(ctx, `SELECT
+	err := s.tx.QueryRow(ctx, `SELECT
  (SELECT count(*) FROM run_leases WHERE computer_instance_id=$1 AND process_reconciled_at IS NULL)=$2
  AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_runs m
  LEFT JOIN run_leases l ON l.id=m.source_run_lease_id
@@ -114,6 +133,14 @@ func CheckCheckpointMembers(ctx context.Context, tx pgx.Tx, instance db.Computer
 	return nil
 }
 
+// RequireRootPinned requires the disk root digest pinned for the checkpoint's
+// publication by the source Instance at desiredVersion. A missing pin returns
+// pgx.ErrNoRows.
+func (s CheckpointSource) RequireRootPinned(ctx context.Context, desiredVersion int64, digest string) error {
+	_, err := db.New(s.tx).RequireComputerObjectPin(ctx, db.RequireComputerObjectPinParams{ComputerInstanceID: s.instance.ID, PublicationKey: checkpointPublicationKey(pgvalue.MustUUIDValue(s.checkpoint.ID)), InstanceDesiredVersion: desiredVersion, Digest: digest})
+	return err
+}
+
 // checkpointPublication is the authority that records a capture's disk
 // objects: its checkpoint source is locked and fresh, its manifest is
 // registered and its members are still checkpointing. It compares no claim
@@ -131,7 +158,7 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointRef
 	if err != nil {
 		return checkpointPublication{}, err
 	}
-	instance, cp := source.Instance, source.Checkpoint
+	instance, cp := source.instance, source.checkpoint
 	q := db.New(tx)
 	if _, err = q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: instance.EnvironmentID, WorkerGroupID: pgvalue.UUID(ref.Host.GroupID), WorkerHostID: pgvalue.UUID(ref.Host.HostID), WorkerEpoch: ref.Host.Epoch, DesiredVersion: ref.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds}); err != nil {
 		return checkpointPublication{}, err
@@ -143,7 +170,7 @@ func lockCheckpointPublication(ctx context.Context, tx pgx.Tx, ref CheckpointRef
 	if err != nil {
 		return checkpointPublication{}, err
 	}
-	if err = CheckCheckpointMembers(ctx, tx, instance, cp, len(members)); err != nil {
+	if err = source.CheckMembers(ctx, len(members)); err != nil {
 		return checkpointPublication{}, err
 	}
 	return checkpointPublication{tx: tx, ref: ref, source: source}, nil
@@ -159,7 +186,7 @@ func (p checkpointPublication) recheck(ctx context.Context) error {
 // objects is the checkpoint's object scope: the Instance's retained source
 // keys and its pinned write key.
 func (p checkpointPublication) objects(ctx context.Context) (objectScope, error) {
-	instance := p.source.Instance
+	instance := p.source.instance
 	q := db.New(p.tx)
 	keys, err := q.ListInstanceComputerSourceKeys(ctx, instance.ID)
 	if err != nil {
@@ -178,7 +205,7 @@ func (p checkpointPublication) objects(ctx context.Context) (objectScope, error)
 	}
 	allowed[pgvalue.UUIDString(write.ID)] = true
 	return objectScope{
-		objectRetention: objectRetention{environmentID: instance.EnvironmentID, computerID: instance.ComputerID, instanceID: instance.ID, desiredVersion: instance.DesiredVersion, key: checkpointPublicationKey(pgvalue.MustUUIDValue(p.source.Checkpoint.ID))},
+		objectRetention: objectRetention{environmentID: instance.EnvironmentID, computerID: instance.ComputerID, instanceID: instance.ID, desiredVersion: instance.DesiredVersion, key: checkpointPublicationKey(pgvalue.MustUUIDValue(p.source.checkpoint.ID))},
 		orgID:           instance.OrgID, projectID: instance.ProjectID, logicalBytes: instance.ReservedGuestEphemeralDiskBytes, allowedKeys: allowed,
 	}, nil
 }

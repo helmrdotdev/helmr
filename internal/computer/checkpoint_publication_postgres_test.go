@@ -211,3 +211,27 @@ func TestAbandonedSaveRetainsObjectsForLaterCheckpoint(t *testing.T) {
 		t.Fatalf("reclaimed candidate still retained: %v %v", retired, err)
 	}
 }
+
+type unavailableObjects struct{}
+
+func (unavailableObjects) Stat(context.Context, string) (cas.Object, error) {
+	return cas.Object{}, errors.New("object storage timed out")
+}
+
+// Checkpoint certification reports unavailable object storage as
+// ErrStorageUnavailable after verifying the registration.
+func TestCheckpointObjectCertificationReportsUnavailableStorage(t *testing.T) {
+	f, member, _, instance := residentInstance(t)
+	_, ref := registerEmptyCapture(t, f, member, instance)
+	publisher, err := computer.NewPublisher(f.Pool, unavailableObjects{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := blockformat.ObjectInspection{Segment: &blockformat.Ref{Digest: sha256.Sum256([]byte("unavailable checkpoint object")), Key: pgvalue.UUIDString(instance.WriteKeyID), Kind: blockformat.SegmentKind, Count: 1, Size: 64}}
+	if err = publisher.RegisterCheckpointObject(t.Context(), ref, inspection); err != nil {
+		t.Fatal(err)
+	}
+	if err = publisher.CertifyCheckpointObject(t.Context(), ref, inspection); !errors.Is(err, computer.ErrStorageUnavailable) {
+		t.Fatalf("certification with unavailable storage: %v", err)
+	}
+}

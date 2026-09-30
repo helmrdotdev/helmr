@@ -15,17 +15,17 @@ import (
 )
 
 // retainedTestGeneration uploads real authenticated root bytes for a
-// Runtime's retained writer key and records them as a certified root pinned
-// under publicationKey. It supplies certified database state for the
-// checkpoint and outcome fixtures, which exercise their own live commit
-// fences; object recording and its authority are tested by the computer
-// owner.
-func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, objects cas.Store, runtimeID string, publicationKey []byte) disk.GenerationRoot {
+// Runtime's retained writer key and records them as a certified root of its
+// Computer, returning the root and its inspection. It supplies certified
+// database state for the checkpoint fixtures, which pin it through the
+// owner's object reuse and exercise their own live commit fences; object
+// recording and its authority are tested by the computer owner.
+func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, objects cas.Store, runtimeID string) (disk.GenerationRoot, blockformat.ObjectInspection) {
 	t.Helper()
 	ctx := t.Context()
 	var orgID, projectID, environmentID, computerID, pinned pgtype.UUID
-	var logicalBytes, desired int64
-	if err := pool.QueryRow(ctx, `SELECT org_id,project_id,environment_id,computer_id,reserved_guest_ephemeral_disk_bytes,desired_version,write_key_id FROM computer_instances WHERE id=$1`, runtimeID).Scan(&orgID, &projectID, &environmentID, &computerID, &logicalBytes, &desired, &pinned); err != nil {
+	var logicalBytes int64
+	if err := pool.QueryRow(ctx, `SELECT org_id,project_id,environment_id,computer_id,reserved_guest_ephemeral_disk_bytes,write_key_id FROM computer_instances WHERE id=$1`, runtimeID).Scan(&orgID, &projectID, &environmentID, &computerID, &logicalBytes, &pinned); err != nil {
 		t.Fatal(err)
 	}
 	if !pinned.Valid {
@@ -51,7 +51,8 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, objects cas.Store,
 	if len(inspected.Pages) != 1 || len(inspected.Pages[0].Children) != 0 || len(inspected.Pages[0].Segments) != 0 {
 		t.Fatal("empty root references other objects")
 	}
-	inspection, err := json.Marshal(blockformat.ObjectInspection{Pack: &inspected})
+	evidence := blockformat.ObjectInspection{Pack: &inspected}
+	inspection, err := json.Marshal(evidence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +84,8 @@ func retainedTestGeneration(t *testing.T, pool *pgxpool.Pool, objects cas.Store,
 	if n, err := q.CertifyComputerObject(ctx, db.CertifyComputerObjectParams{EnvironmentID: environmentID, ComputerID: computerID, Digest: uploaded.Digest}); err != nil || n != 1 {
 		t.Fatalf("certify root n=%d err=%v", n, err)
 	}
-	dbtest.MustExec(t, ctx, tx, `INSERT INTO computer_object_pins(computer_instance_id,digest,environment_id,computer_id,instance_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)`, runtimeID, uploaded.Digest, environmentID, computerID, desired, publicationKey)
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	return root, evidence
 }

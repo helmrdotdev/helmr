@@ -101,11 +101,9 @@ type publishedSave struct{ lockedSave }
 
 // lockSave locks the Computer's Secrets, which must be active, the
 // principal's Group and Host with current claims, the Computer and then the
-// Instance, and checks the save writer fence.
+// Instance, and checks the save writer fence. Its caller validated the
+// reference before any database access.
 func lockSave(ctx context.Context, tx pgx.Tx, principal workergroup.HostPrincipal, ref SaveRef) (lockedSave, error) {
-	if err := ref.validate(); err != nil {
-		return lockedSave{}, err
-	}
 	params := ref.receipt(principal)
 	q := db.New(tx)
 	locator, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{ID: params.ComputerInstanceID, EnvironmentID: params.EnvironmentID})
@@ -248,6 +246,9 @@ type SaveBegun struct {
 // admission that already holds it. It outlives the Runs of the Instance: only
 // the writer fence and deadline bound it.
 func (p Publisher) BeginSave(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef) (SaveBegun, error) {
+	if err := ref.validate(); err != nil {
+		return SaveBegun{}, err
+	}
 	var begun SaveBegun
 	err := db.RunTx(ctx, p.db, func(tx pgx.Tx) error {
 		s, err := lockSaveBegin(ctx, tx, principal, ref)
@@ -268,6 +269,9 @@ func (p Publisher) BeginSave(ctx context.Context, principal workergroup.HostPrin
 
 // RegisterSaveObject registers a save's disk object before its upload.
 func (p Publisher) RegisterSaveObject(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, inspection blockformat.ObjectInspection) error {
+	if err := ref.validate(); err != nil {
+		return err
+	}
 	if _, err := describeObject(inspection); err != nil {
 		return err
 	}
@@ -283,6 +287,9 @@ func (p Publisher) RegisterSaveObject(ctx context.Context, principal workergroup
 // ReuseSaveObject pins an already certified object of the Computer for the
 // save.
 func (p Publisher) ReuseSaveObject(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, inspection blockformat.ObjectInspection) error {
+	if err := ref.validate(); err != nil {
+		return err
+	}
 	if _, err := describeObject(inspection); err != nil {
 		return err
 	}
@@ -302,6 +309,9 @@ func (p Publisher) ReuseSaveObject(ctx context.Context, principal workergroup.Ho
 // certifies them. Only the exact save may certify its retained bytes. A
 // storage failure reports ErrStorageUnavailable.
 func (p Publisher) CertifySaveObject(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, inspection blockformat.ObjectInspection) error {
+	if err := ref.validate(); err != nil {
+		return err
+	}
 	object, err := describeObject(inspection)
 	if err != nil {
 		return err
@@ -346,15 +356,15 @@ func (p Publisher) inUnpublishedSave(ctx context.Context, principal workergroup.
 // prove that the worker host adopted its durable source. An exact committed
 // publication replays, before the transaction and again after it fails.
 func (p Publisher) PublishSave(ctx context.Context, principal workergroup.HostPrincipal, ref SaveRef, root disk.GenerationRoot) (Publication, error) {
+	if err := ref.validate(); err != nil {
+		return Publication{}, err
+	}
 	locator, err := root.Locator(root.LogicalBytes)
 	if err != nil {
 		return Publication{}, err
 	}
 	fingerprint, err := saveFingerprint(ref, root)
 	if err != nil {
-		return Publication{}, err
-	}
-	if err = ref.validate(); err != nil {
 		return Publication{}, err
 	}
 	receipt := ref.receipt(principal)

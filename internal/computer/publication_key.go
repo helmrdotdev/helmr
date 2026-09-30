@@ -37,10 +37,3 @@ func checkpointPublicationKey(checkpointID uuid.UUID) publicationKey {
 func savePublicationKey(instanceID uuid.UUID, sequence int64, saveID uuid.UUID) publicationKey {
 	return derivePublicationKey("save/"+strconv.FormatInt(sequence, 10), instanceID, saveID)
 }
-
-// CheckpointPublicationKey is the retention identity under which a
-// checkpoint's disk objects are pinned: the checkpoint ready transaction
-// requires its root pinned under it.
-func CheckpointPublicationKey(checkpointID uuid.UUID) []byte {
-	return checkpointPublicationKey(checkpointID)
-}
