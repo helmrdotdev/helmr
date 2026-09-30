@@ -66,7 +66,7 @@ func TestWorkerSessionControlReciprocalInterruptPostgres(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				receipt, err := session.InterruptTurn(ctx, work.q, pgvalue.MustUUIDValue(source.EnvironmentID), pair.target.sessionID, pair.turn, "", graph)
+				receipt, err := session.InterruptTurn(ctx, work.tx, pgvalue.MustUUIDValue(source.EnvironmentID()), pair.target.sessionID, pair.turn, "", graph)
 				if err == nil && receipt.Code != "" {
 					return &session.OperationError{Code: receipt.Code}
 				}
@@ -288,7 +288,7 @@ func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 			q := db.New(tx)
 			source, graph, _, err := lockWorkerSessionControl(ctx, &txWork{q: q, tx: tx}, pair.source.worker, pair.source.fence(), pgvalue.UUID(pair.target.sessionID), true)
 			if err == nil {
-				receipt, applyErr := session.InterruptTurn(ctx, q, pgvalue.MustUUIDValue(source.EnvironmentID), pair.target.sessionID, pair.turn, "", graph)
+				receipt, applyErr := session.InterruptTurn(ctx, tx, pgvalue.MustUUIDValue(source.EnvironmentID()), pair.target.sessionID, pair.turn, "", graph)
 				err = applyErr
 				if err == nil && receipt.Code != "" {
 					err = &session.OperationError{Code: receipt.Code}

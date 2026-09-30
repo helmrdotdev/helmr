@@ -42,14 +42,14 @@ func TestLiveExecutionLocksAddressedSessionAndComputer(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer tx.Rollback(context.Background())
-			var a ExecutionAuthority
+			var a Execution
 			if kind == "session" {
 				a, err = LockLiveExecutionForSession(t.Context(), tx, fence, pgvalue.UUID(targetID))
 			} else {
 				a, err = LockLiveExecutionForComputer(t.Context(), tx, fence, targetComputer)
 			}
-			if err != nil || a.Run.ID != pgvalue.UUID(source.RunID) {
-				t.Fatalf("source=%s error=%v", pgvalue.UUIDString(a.Run.ID), err)
+			if err != nil || a.Run().ID != pgvalue.UUID(source.RunID) {
+				t.Fatalf("source=%s error=%v", pgvalue.UUIDString(a.Run().ID), err)
 			}
 			probe, err := f.Pool.Begin(t.Context())
 			if err != nil {

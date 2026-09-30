@@ -31,13 +31,13 @@ func registerChildCall(
 	ctx context.Context,
 	store db.Querier,
 	input childCallRegistration,
-	authority run.ExecutionAuthority,
+	authority run.Execution,
 	claim db.IdempotencyClaim,
 	fingerprint idempotency.TaskChildInvokeFingerprint,
 	childRunID uuid.UUID,
 	childComputerID uuid.UUID,
 ) (workerapi.CreateRunWaitResponse, error) {
-	existing, waitErr := store.GetChildCallAttemptWait(ctx, db.GetChildCallAttemptWaitParams{EnvironmentID: authority.Run.EnvironmentID, RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number, ChildClaimID: claim.ID})
+	existing, waitErr := store.GetChildCallAttemptWait(ctx, db.GetChildCallAttemptWaitParams{EnvironmentID: authority.Run().EnvironmentID, RunID: authority.Run().ID, AttemptNumber: authority.Attempt().Number, ChildClaimID: claim.ID})
 	if waitErr != nil && !errors.Is(waitErr, pgx.ErrNoRows) {
 		return workerapi.CreateRunWaitResponse{}, waitErr
 	}
@@ -64,19 +64,19 @@ func registerChildCall(
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("encode child task call request: %w", err)
 	}
 	response := workerapi.CreateRunWaitResponse{
-		RunID: pgvalue.UUIDString(authority.Run.ID), RunWaitID: waitID.String(),
+		RunID: pgvalue.UUIDString(authority.Run().ID), RunWaitID: waitID.String(),
 		ResumeAttachID:     resumeAttachID.String(),
-		ComputerInstanceID: pgvalue.UUIDString(authority.Instance.ID),
-		RuntimeEpoch:       authority.Instance.WorkerEpoch,
+		ComputerInstanceID: pgvalue.UUIDString(authority.Instance().ID),
+		RuntimeEpoch:       authority.Instance().WorkerEpoch,
 	}
 	replayed, err := store.GetChildCallRunWaitReplay(ctx, db.GetChildCallRunWaitReplayParams{
-		EnvironmentID: authority.Run.EnvironmentID, RunID: authority.Run.ID,
-		AttemptNumber: authority.Attempt.Number, ID: pgvalue.UUID(waitID),
+		EnvironmentID: authority.Run().EnvironmentID, RunID: authority.Run().ID,
+		AttemptNumber: authority.Attempt().Number, ID: pgvalue.UUID(waitID),
 		ChildRunID: pgvalue.UUID(childRunID), ChildClaimID: claim.ID,
 		RegistrationRequestFingerprint: pgvalue.Text(requestFingerprint),
 	})
 	if err == nil {
-		if err := validateChildWaitScope(authority, replayed); err != nil {
+		if err := validateChildWaitScope(childWaitScopeOf(authority), replayed); err != nil {
 			return workerapi.CreateRunWaitResponse{}, err
 		}
 		if replayed.SuspensionStatus == db.RunWaitStatusReleased {
@@ -92,19 +92,19 @@ func registerChildCall(
 		return workerapi.CreateRunWaitResponse{}, fmt.Errorf("load child task call replay: %w", err)
 	}
 	childRun, err := store.GetRun(ctx, db.GetRunParams{
-		EnvironmentID: authority.Run.EnvironmentID, ID: pgvalue.UUID(childRunID),
+		EnvironmentID: authority.Run().EnvironmentID, ID: pgvalue.UUID(childRunID),
 	})
-	if err != nil || childRun.ParentRunID != authority.Run.ID ||
+	if err != nil || childRun.ParentRunID != authority.Run().ID ||
 		!childRun.ParentOwnsLifecycle.Valid || !childRun.ParentOwnsLifecycle.Bool ||
 		childRun.ComputerID != pgvalue.UUID(childComputerID) ||
 		childRun.ClaimID != claim.ID {
 		return workerapi.CreateRunWaitResponse{}, staleChildTaskInvoke(err)
 	}
 	params := db.RegisterChildCallParams{
-		RunID: authority.Run.ID, EnvironmentID: authority.Run.EnvironmentID,
-		ExpectedRunningRevision: authority.Run.Revision,
-		AttemptNumber:           authority.Attempt.Number,
-		CurrentRunLeaseID:       authority.Lease.ID,
+		RunID: authority.Run().ID, EnvironmentID: authority.Run().EnvironmentID,
+		ExpectedRunningRevision: authority.Run().Revision,
+		AttemptNumber:           authority.Attempt().Number,
+		CurrentRunLeaseID:       authority.Lease().ID,
 		ChildComputerID:         pgvalue.UUID(childComputerID), ID: pgvalue.UUID(waitID),
 		ChildRunID: pgvalue.UUID(childRunID), ChildTargetDeclaredID: pgvalue.Text(input.TaskDeclaredID),
 		ChildClaimID: claim.ID, ChildRequest: childRequest,
@@ -199,20 +199,20 @@ func staleChildTaskInvoke(err error) error {
 	return err
 }
 
-func bindOrCheckChildWaitTurn(ctx context.Context, q db.Querier, a run.ExecutionAuthority, input childCallRegistration) error {
-	wait, err := q.GetRunWait(ctx, db.GetRunWaitParams{AttemptNumber: a.Attempt.Number, RunID: a.Run.ID, ID: pgvalue.UUID(input.RunWaitID)})
+func bindOrCheckChildWaitTurn(ctx context.Context, q db.Querier, a run.Execution, input childCallRegistration) error {
+	wait, err := q.GetRunWait(ctx, db.GetRunWaitParams{AttemptNumber: a.Attempt().Number, RunID: a.Run().ID, ID: pgvalue.UUID(input.RunWaitID)})
 	if err != nil {
 		return err
 	}
 	if wait.TurnID.Valid {
-		return validateChildWaitScope(a, wait)
+		return validateChildWaitScope(childWaitScopeOf(a), wait)
 	}
 	wait.TurnID = input.TurnID
 	wait.TurnRunGeneration = input.RunGeneration
 	if input.TurnID.Valid {
-		wait.TurnSessionID = a.Session.ID
+		wait.TurnSessionID = a.Session().ID
 	}
-	if err := validateChildWaitScope(a, wait); err != nil {
+	if err := validateChildWaitScope(childWaitScopeOf(a), wait); err != nil {
 		return err
 	}
 	return bindWorkerWaitTurn(ctx, q, a, wait.ID, input.TurnID, input.RunGeneration)

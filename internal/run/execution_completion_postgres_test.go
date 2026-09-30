@@ -447,7 +447,7 @@ func TestSeparateChildCompletionDoesNotRevivePreviousParentAttempt(t *testing.T)
 	if _, err = StartExecution(t.Context(), tx, fence); err != nil {
 		t.Fatal(err)
 	}
-	if err = EnterExecution(t.Context(), tx, fence, a.Run.EntrypointKind, a.Run.EntrypointDeclaredID); err != nil {
+	if err = EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {

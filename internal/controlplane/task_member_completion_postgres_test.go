@@ -41,7 +41,7 @@ func taskHTTPExecutionFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, 
 	if _, err = run.StartExecution(t.Context(), tx, fence); err != nil {
 		t.Fatal(err)
 	}
-	if err = run.EnterExecution(t.Context(), tx, fence, a.Run.EntrypointKind, a.Run.EntrypointDeclaredID); err != nil {
+	if err = run.EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {

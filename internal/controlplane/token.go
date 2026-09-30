@@ -402,8 +402,7 @@ func lockTokenCreateAuthority(
 	if err != nil {
 		return db.GetLiveRunLeaseLocatorsRow{}, err
 	}
-	authority, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, lease))
-	_, err = run.CheckLiveSource(authority, err)
+	_, err = run.LockLiveSource(ctx, tx, workerExecutionFence(worker, parsed, lease))
 	if errors.Is(err, run.ErrStaleSource) {
 		return db.GetLiveRunLeaseLocatorsRow{}, errTokenCreateAuthority
 	}

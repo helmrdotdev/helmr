@@ -50,7 +50,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if err != nil {
 			return actor, false, err
 		}
-		if err = FailExecution(ctx, q, actor, repairFailure, "", now); err != nil {
+		if err = FailExecution(ctx, tx, actor, repairFailure, "", now); err != nil {
 			return actor, false, err
 		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
@@ -69,7 +69,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		if actor.CancelRequestedAt.Valid {
 			return settleCancelledFailedExecution(ctx, tx, actor, current.Failure)
 		}
-		if err = FailExecution(ctx, q, actor, current.Failure, "", now); err != nil {
+		if err = FailExecution(ctx, tx, actor, current.Failure, "", now); err != nil {
 			return actor, false, err
 		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
@@ -95,7 +95,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		failure, _ := json.Marshal(map[string]any{"code": reason, "message": "Execution could not be resumed within the recovery limit", "details": map[string]any{}})
 		now, err := q.GetTaskCompletionTime(ctx)
 		if err == nil {
-			err = FailExecution(ctx, q, actor, failure, "", now)
+			err = FailExecution(ctx, tx, actor, failure, "", now)
 		}
 		if err != nil {
 			return actor, false, err
@@ -159,7 +159,7 @@ func reconcileLostExecution(ctx context.Context, tx pgx.Tx, actor db.Session, bi
 		return actor, false, err
 	}
 	if actor.Status == "open" && !interrupted && actor.CommittedInputSequence < actor.NextInputSequence-1 {
-		if _, err = CreateContinuation(ctx, q, actor, db.Computer{ID: actor.ComputerID}, bindings); err != nil {
+		if _, err = CreateContinuation(ctx, tx, actor, db.Computer{ID: actor.ComputerID}, bindings); err != nil {
 			return actor, false, err
 		}
 	}
@@ -208,7 +208,7 @@ func reconcileStoppedExecution(ctx context.Context, tx pgx.Tx, actor db.Session)
 	if actor.ActiveTurnID.Valid && !versionID.Valid {
 		return actor, true, nil
 	}
-	if err = CompleteInterruption(ctx, q, actor, versionID, ""); err != nil {
+	if err = CompleteInterruption(ctx, tx, actor, versionID, ""); err != nil {
 		return actor, false, err
 	}
 	actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})

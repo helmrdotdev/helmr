@@ -39,14 +39,14 @@ func actorMemberCompletionFixture(t *testing.T, kind string) (runtest.Fixture, r
 	if _, err = run.StartExecution(t.Context(), tx, fence); err != nil {
 		t.Fatal(err)
 	}
-	if err = run.EnterExecution(t.Context(), tx, fence, a.Run.EntrypointKind, a.Run.EntrypointDeclaredID); err != nil {
+	if err = run.EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	operation := uuid.NewV7()
-	request := workerapi.CompleteActorRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, OperationID: operation.String(), Outcome: workerapi.ActorOutcome{RunGeneration: a.Session.RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}}
+	request := workerapi.CompleteActorRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, OperationID: operation.String(), Outcome: workerapi.ActorOutcome{RunGeneration: a.Session().RunGeneration, Succeeded: &workerapi.ActorSucceeded{}}}
 	if kind != "no progress" {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET committed_input_sequence=2 WHERE id=$1`, sid)
 	}
@@ -302,7 +302,7 @@ func TestActorContinuationWaitsForOwnedScopeCleanup(t *testing.T) {
 				if err != nil {
 					return false, err
 				}
-				if _, err = session.CreateContinuation(t.Context(), q, a, c, nil); errors.Is(err, pgx.ErrNoRows) {
+				if _, err = session.CreateContinuation(t.Context(), tx, a, c, nil); errors.Is(err, pgx.ErrNoRows) {
 					return true, nil
 				} else if err != nil {
 					return false, err

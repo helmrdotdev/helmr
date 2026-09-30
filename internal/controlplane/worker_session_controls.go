@@ -46,7 +46,7 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergr
 	if err != nil {
 		return fail(err)
 	}
-	var authority run.ExecutionAuthority
+	var authority run.Execution
 	if interrupt {
 		authority, graph, err = run.LockLiveExecutionForSessionInterruption(ctx, work.tx, workerExecutionFence(worker, parsed, lease), targetID)
 	} else {
@@ -55,7 +55,13 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergr
 	if errors.Is(err, run.ErrExecutionTargetNotFound) {
 		return fail(&session.OperationError{Code: "session_not_found"})
 	}
-	source, err := run.CheckLiveSource(authority, err)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fail(run.ErrStaleSource)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	source, err := authority.LiveSource()
 	if err != nil {
 		return fail(err)
 	}
@@ -171,7 +177,7 @@ func (s *Server) workerInterruptSessionTurn(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return err
 		}
-		receipt, err = session.InterruptTurn(r.Context(), work.q, pgvalue.MustUUIDValue(source.EnvironmentID), pgvalue.MustUUIDValue(sessionID), turnID, request.IdempotencyKey, graph)
+		receipt, err = session.InterruptTurn(r.Context(), work.tx, pgvalue.MustUUIDValue(source.EnvironmentID()), pgvalue.MustUUIDValue(sessionID), turnID, request.IdempotencyKey, graph)
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -206,11 +212,11 @@ func (s *Server) workerResumeSession(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		target, err := work.q.GetActor(r.Context(), db.GetActorParams{EnvironmentID: source.EnvironmentID, ID: sessionID})
+		target, err := work.q.GetActor(r.Context(), db.GetActorParams{EnvironmentID: source.EnvironmentID(), ID: sessionID})
 		if err != nil {
 			return err
 		}
-		receipt, err = session.ResumeWithLockedSecrets(r.Context(), work.q, session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(sessionID)}, IdempotencyKey: request.IdempotencyKey}, HoldID: holdID}, target.ComputerID, bindings)
+		receipt, err = session.ResumeWithLockedSecrets(r.Context(), work.tx, session.ResumeRequest{ControlRequest: session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(sessionID)}, IdempotencyKey: request.IdempotencyKey}, HoldID: holdID}, target.ComputerID, bindings)
 		return err
 	})
 	if err == nil && receipt.Code != "" {

@@ -17,9 +17,9 @@ import (
 // lineage and the target's owned graph before either side is validated. This
 // permits reciprocal controls without acquiring a second Computer out of order.
 // The caller locks the Secret union first and owns the transaction.
-func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fence ExecutionFence, targetID pgtype.UUID) (ExecutionAuthority, OwnedFinalization, error) {
-	fail := func(err error) (ExecutionAuthority, OwnedFinalization, error) {
-		return ExecutionAuthority{}, OwnedFinalization{}, err
+func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fence ExecutionFence, targetID pgtype.UUID) (Execution, OwnedFinalization, error) {
+	fail := func(err error) (Execution, OwnedFinalization, error) {
+		return Execution{}, OwnedFinalization{}, err
 	}
 	q := db.New(tx)
 	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: fence.LeaseID, LeaseSequence: fence.LeaseSequence, WorkerGroupID: fence.WorkerGroupID, WorkerHostID: fence.WorkerHostID, WorkerEpoch: fence.WorkerEpoch})

@@ -110,12 +110,12 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		if authority.Run.EnvironmentID != replayContext.EnvironmentID ||
-			authority.Run.ID != replayContext.RunID ||
-			authority.Attempt.Number != replayContext.AttemptNumber {
+		if authority.Run().EnvironmentID != replayContext.EnvironmentID ||
+			authority.Run().ID != replayContext.RunID ||
+			authority.Attempt().Number != replayContext.AttemptNumber {
 			return errStaleRunLeaseClaim
 		}
-		next, err := applyRunMetadataMutation(authority.Run.Metadata, mutation)
+		next, err := applyRunMetadataMutation(authority.Run().Metadata, mutation)
 		if err != nil {
 			return err
 		}
@@ -126,9 +126,9 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		revision, err := work.q.UpdateRunMetadata(
 			r.Context(),
 			db.UpdateRunMetadataParams{
-				Metadata: next, RunID: authority.Run.ID,
-				AttemptNumber: authority.Attempt.Number,
-				RunLeaseID:    authority.Lease.ID,
+				Metadata: next, RunID: authority.Run().ID,
+				AttemptNumber: authority.Attempt().Number,
+				RunLeaseID:    authority.Lease().ID,
 			},
 		)
 		if err != nil {
@@ -148,13 +148,13 @@ func (s *Server) workerUpdateRunMetadata(w http.ResponseWriter, r *http.Request)
 		if _, err := work.q.CreateRunMetadataEvent(
 			r.Context(),
 			db.CreateRunMetadataEventParams{
-				OrgID: authority.Run.OrgID, RunID: authority.Run.ID,
+				OrgID: authority.Run().OrgID, RunID: authority.Run().ID,
 				IdempotencyKey: pgvalue.Text("metadata:" + operationID.String()),
-				ProjectID:      authority.Run.ProjectID, EnvironmentID: authority.Run.EnvironmentID,
-				RunLeaseID:    authority.Lease.ID,
-				AttemptNumber: pgtype.Int4{Int32: authority.Attempt.Number, Valid: true},
-				TraceID:       authority.Lease.TraceID, SpanID: authority.Lease.SpanID,
-				ParentSpanID: authority.Lease.ParentSpanID, Traceparent: authority.Lease.Traceparent,
+				ProjectID:      authority.Run().ProjectID, EnvironmentID: authority.Run().EnvironmentID,
+				RunLeaseID:    authority.Lease().ID,
+				AttemptNumber: pgtype.Int4{Int32: authority.Attempt().Number, Valid: true},
+				TraceID:       authority.Lease().TraceID, SpanID: authority.Lease().SpanID,
+				ParentSpanID: authority.Lease().ParentSpanID, Traceparent: authority.Lease().Traceparent,
 				Payload:         payload,
 				SnapshotVersion: pgtype.Int8{Int64: revision, Valid: true},
 			},
@@ -298,10 +298,10 @@ func (s *Server) parseWorkerRunMutation(
 	return parsed, worker, nil
 }
 
-func lockReceiptRunMutation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, parsed parsedRunLeaseFence) (run.ExecutionAuthority, error) {
+func lockReceiptRunMutation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, parsed parsedRunLeaseFence) (run.Execution, error) {
 	authority, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
 	if err != nil {
-		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
+		return run.Execution{}, staleRunLeaseClaim(err)
 	}
 	return authority, nil
 }

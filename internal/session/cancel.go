@@ -8,17 +8,19 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Cancel escalates closure without starting any remaining customer work. The
 // caller acquires the owned Run graph before entering Session authority.
-func Cancel(ctx context.Context, q db.Querier, request ControlRequest, graph run.OwnedFinalization) (ControlReceipt, error) {
+func Cancel(ctx context.Context, tx pgx.Tx, request ControlRequest, graph run.OwnedFinalization) (ControlReceipt, error) {
+	q := db.New(tx)
 	actor, err := lockSession(ctx, q, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	claim, err := claimOperation(ctx, q, request, "session.cancel", struct{}{})
+	claim, err := claimOperation(ctx, tx, request, "session.cancel", struct{}{})
 	if err != nil {
 		return ControlReceipt{}, err
 	}
@@ -29,11 +31,11 @@ func Cancel(ctx context.Context, q db.Querier, request ControlRequest, graph run
 	}
 	receipt = ControlReceipt{ID: pgvalue.MustUUIDValue(claim.ID), SessionID: request.SessionID, Status: "accepted"}
 	if actor.Status == "closed" {
-		return receipt, finishOperation(ctx, q, claim, receipt)
+		return receipt, finishOperation(ctx, tx, claim, receipt)
 	}
 	if actor.Status != "open" && actor.Status != "closing" {
 		receipt.Code = "session_not_open"
-		return receipt, finishOperation(ctx, q, claim, receipt)
+		return receipt, finishOperation(ctx, tx, claim, receipt)
 	}
 	if !actor.CancelRequestedAt.Valid {
 		actor, err = q.BeginSessionCancellation(ctx, db.BeginSessionCancellationParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})
@@ -91,5 +93,5 @@ func Cancel(ctx context.Context, q db.Querier, request ControlRequest, graph run
 	if err != nil {
 		return receipt, err
 	}
-	return receipt, finishOperation(ctx, q, claim, receipt)
+	return receipt, finishOperation(ctx, tx, claim, receipt)
 }

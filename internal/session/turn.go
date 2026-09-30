@@ -31,7 +31,8 @@ type TurnScope struct {
 }
 
 // ActivateTurn is part of input delivery's transaction. It does not acknowledge input.
-func ActivateTurn(ctx context.Context, q db.Querier, scope TurnScope) (db.SessionTurn, error) {
+func ActivateTurn(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
+	q := db.New(tx)
 	actor, input, err := lockTurn(ctx, q, scope)
 	if err != nil {
 		return db.SessionTurn{}, err
@@ -76,7 +77,8 @@ func lockTurn(ctx context.Context, q db.Querier, scope TurnScope) (db.Session, d
 	return actor, input, turnError(err)
 }
 
-func ValidateTurn(ctx context.Context, q db.Querier, scope TurnScope) (db.SessionTurn, error) {
+func ValidateTurn(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
+	q := db.New(tx)
 	actor, input, err := lockTurn(ctx, q, scope)
 	if err != nil {
 		return input, err
@@ -111,7 +113,8 @@ type InterruptReceipt struct {
 // InterruptTurn admits exact stop intent under the pre-acquired owned graph.
 // A parked execution is retired by that same graph; a live Lease converges later.
 // Historical receipts admit no new retirement and prove no native quiescence.
-func InterruptTurn(ctx context.Context, q db.Querier, environmentID, sessionID, turnID uuid.UUID, key string, graph run.OwnedFinalization) (InterruptReceipt, error) {
+func InterruptTurn(ctx context.Context, tx pgx.Tx, environmentID, sessionID, turnID uuid.UUID, key string, graph run.OwnedFinalization) (InterruptReceipt, error) {
+	q := db.New(tx)
 	actor, err := lockSession(ctx, q, Target{EnvironmentID: environmentID, SessionID: sessionID})
 	if err != nil {
 		return InterruptReceipt{}, err
@@ -130,7 +133,7 @@ func InterruptTurn(ctx context.Context, q db.Querier, environmentID, sessionID, 
 	if err != nil {
 		return InterruptReceipt{}, err
 	}
-	claims, err := idempotency.TransactionForQueries(q)
+	claims, err := idempotency.TransactionFor(tx)
 	if err != nil {
 		return InterruptReceipt{}, err
 	}
@@ -190,7 +193,8 @@ type OutputReceipt struct {
 	Event   db.SessionEvent `json:"-"`
 }
 
-func AppendTurnOutput(ctx context.Context, q db.Querier, scope TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
+func AppendTurnOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
+	q := db.New(tx)
 	// New Turn operations lock Session/input before their disjoint claim namespaces.
 	// No code may acquire a turn.output.write or turn.interrupt claim before Session.
 	actor, input, err := lockTurn(ctx, q, scope)
@@ -201,7 +205,7 @@ func AppendTurnOutput(ctx context.Context, q db.Querier, scope TurnScope, key st
 	if err != nil {
 		return OutputReceipt{}, err
 	}
-	claims, err := idempotency.TransactionForQueries(q)
+	claims, err := idempotency.TransactionFor(tx)
 	if err != nil {
 		return OutputReceipt{}, err
 	}
@@ -263,11 +267,12 @@ func AppendTurnOutput(ctx context.Context, q db.Querier, scope TurnScope, key st
 
 // SettleTurn commits the logical result and input cursor under execution authority.
 // Computer persistence has a separate lifecycle.
-func SettleTurn(ctx context.Context, q db.Querier, scope TurnScope, status string, data json.RawMessage, fingerprint string) (db.SessionEvent, error) {
+func SettleTurn(ctx context.Context, tx pgx.Tx, scope TurnScope, status string, data json.RawMessage, fingerprint string) (db.SessionEvent, error) {
+	q := db.New(tx)
 	if (status != "completed" && status != "failed") || (len(data) != 0 && !json.Valid(data)) || (status == "failed" && len(data) == 0) {
 		return db.SessionEvent{}, ErrTurnScope
 	}
-	input, err := ValidateTurn(ctx, q, scope)
+	input, err := ValidateTurn(ctx, tx, scope)
 	if err != nil {
 		return db.SessionEvent{}, err
 	}

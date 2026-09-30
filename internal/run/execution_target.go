@@ -17,32 +17,32 @@ var ErrExecutionTargetNotFound = errors.New("execution target not found")
 // LockLiveExecutionForSession locks the addressed Session together with the
 // source lineage. Reciprocal sends acquire Computers and Sessions in UUID order.
 // Secret locks, when needed, must precede this operation; the caller owns the tx.
-func LockLiveExecutionForSession(ctx context.Context, tx pgx.Tx, fence ExecutionFence, target pgtype.UUID) (ExecutionAuthority, error) {
+func LockLiveExecutionForSession(ctx context.Context, tx pgx.Tx, fence ExecutionFence, target pgtype.UUID) (Execution, error) {
 	if !target.Valid {
-		return ExecutionAuthority{}, pgx.ErrNoRows
+		return Execution{}, pgx.ErrNoRows
 	}
 	a, err := lockExecution(ctx, tx, fence, executionLive, executionTarget{session: target})
 	if err != nil {
-		return ExecutionAuthority{}, err
+		return Execution{}, err
 	}
-	if a.Lease.Status != db.RunLeaseStatusRunning {
-		return ExecutionAuthority{}, pgx.ErrNoRows
+	if a.lease.Status != db.RunLeaseStatusRunning {
+		return Execution{}, pgx.ErrNoRows
 	}
 	return a, nil
 }
 
 type executionTarget struct{ computer, session pgtype.UUID }
 
-func LockLiveExecutionForComputer(ctx context.Context, tx pgx.Tx, fence ExecutionFence, target pgtype.UUID) (ExecutionAuthority, error) {
+func LockLiveExecutionForComputer(ctx context.Context, tx pgx.Tx, fence ExecutionFence, target pgtype.UUID) (Execution, error) {
 	if !target.Valid {
-		return ExecutionAuthority{}, pgx.ErrNoRows
+		return Execution{}, pgx.ErrNoRows
 	}
 	a, err := lockExecution(ctx, tx, fence, executionLive, executionTarget{computer: target})
 	if err != nil {
-		return ExecutionAuthority{}, err
+		return Execution{}, err
 	}
-	if a.Lease.Status != db.RunLeaseStatusRunning {
-		return ExecutionAuthority{}, pgx.ErrNoRows
+	if a.lease.Status != db.RunLeaseStatusRunning {
+		return Execution{}, pgx.ErrNoRows
 	}
 	return a, nil
 }

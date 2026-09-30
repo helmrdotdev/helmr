@@ -245,7 +245,7 @@ func TestIdleSessionClosesOnStoppedComputer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	closed, deferred, err := session.ReconcileClose(t.Context(), q, actor, nil)
+	closed, deferred, err := session.ReconcileClose(t.Context(), tx, actor, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

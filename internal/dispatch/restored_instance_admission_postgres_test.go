@@ -66,8 +66,8 @@ func TestNewMembersJoinPreviouslyRestoredInstance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if claimed.Instance.ID != instance.ID || claimed.Instance.SourceCheckpointID != checkpoint.ID || claimed.Lease.Status != "starting" || claimed.Attempt.Number != 1 {
-			t.Fatalf("fresh claim treated as captured member: %+v", claimed.Lease)
+		if claimed.Instance().ID != instance.ID || claimed.Instance().SourceCheckpointID != checkpoint.ID || claimed.Lease().Status != "starting" || claimed.Attempt().Number != 1 {
+			t.Fatalf("fresh claim treated as captured member: %+v", claimed.Lease())
 		}
 		if err = tx.Commit(t.Context()); err != nil {
 			t.Fatal(err)

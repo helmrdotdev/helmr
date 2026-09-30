@@ -16,7 +16,7 @@ func AcknowledgeWaitResume(ctx context.Context, tx pgx.Tx, fence ExecutionFence,
 	if err != nil {
 		return db.RunWait{}, err
 	}
-	if a.Lease.Status != db.RunLeaseStatusRunning || !a.Attempt.EntrypointEnteredAt.Valid || a.Lease.FinalizationOperationID.Valid {
+	if a.lease.Status != db.RunLeaseStatusRunning || !a.attempt.EntrypointEnteredAt.Valid || a.lease.FinalizationOperationID.Valid {
 		return db.RunWait{}, pgx.ErrNoRows
 	}
 	wait, err := lockRestoredWait(ctx, tx, a, waitID, checkpointID)
@@ -27,7 +27,7 @@ func AcknowledgeWaitResume(ctx context.Context, tx pgx.Tx, fence ExecutionFence,
 	if wait.SuspensionStatus != db.RunWaitStatusResuming {
 		return wait, nil
 	}
-	wait, err = q.AcknowledgeRunWaitResume(ctx, db.AcknowledgeRunWaitResumeParams{WaitID: waitID, EnvironmentID: a.Run.EnvironmentID, RunLeaseID: a.Lease.ID, LeaseSequence: a.Lease.LeaseSequence})
+	wait, err = q.AcknowledgeRunWaitResume(ctx, db.AcknowledgeRunWaitResumeParams{WaitID: waitID, EnvironmentID: a.run.EnvironmentID, RunLeaseID: a.lease.ID, LeaseSequence: a.lease.LeaseSequence})
 	if err != nil {
 		return db.RunWait{}, err
 	}
@@ -41,13 +41,13 @@ func AcknowledgeWaitResume(ctx context.Context, tx pgx.Tx, fence ExecutionFence,
 	return wait, nil
 }
 
-func lockRestoredWait(ctx context.Context, tx pgx.Tx, a ExecutionAuthority, waitID, checkpointID pgtype.UUID) (db.RunWait, error) {
+func lockRestoredWait(ctx context.Context, tx pgx.Tx, a Execution, waitID, checkpointID pgtype.UUID) (db.RunWait, error) {
 	q := db.New(tx)
 	var err error
 	// Checkpoints retain captured membership after the wait clears its suspension
 	// pointer, allowing an exact acknowledgement to be retried after a lost reply.
 	var locked pgtype.UUID
-	if err = tx.QueryRow(ctx, `SELECT id FROM run_waits WHERE id=$1 AND run_id=$2 AND attempt_number=$3 FOR UPDATE`, waitID, a.Run.ID, a.Attempt.Number).Scan(&locked); err != nil {
+	if err = tx.QueryRow(ctx, `SELECT id FROM run_waits WHERE id=$1 AND run_id=$2 AND attempt_number=$3 FOR UPDATE`, waitID, a.run.ID, a.attempt.Number).Scan(&locked); err != nil {
 		return db.RunWait{}, err
 	}
 	var valid bool
@@ -62,7 +62,7 @@ func lockRestoredWait(ctx context.Context, tx pgx.Tx, a ExecutionAuthority, wait
  AND i.writer_expires_at>clock_timestamp() AND l.expires_at>clock_timestamp()
  AND w.current_run_lease_id=l.id AND w.suspension_status IN ('resuming','hot','released')
  AND ((w.suspension_status='resuming' AND w.suspend_checkpoint_id=c.id AND w.prior_run_lease_id=m.source_run_lease_id)
- OR (w.suspension_status IN ('hot','released') AND w.suspend_checkpoint_id IS NULL AND w.prior_run_lease_id IS NULL)))`, checkpointID, waitID, a.Run.ID, a.Lease.ID, a.Instance.ID).Scan(&valid)
+ OR (w.suspension_status IN ('hot','released') AND w.suspend_checkpoint_id IS NULL AND w.prior_run_lease_id IS NULL)))`, checkpointID, waitID, a.run.ID, a.lease.ID, a.Instance().ID).Scan(&valid)
 	if err != nil {
 		return db.RunWait{}, err
 	}
@@ -82,7 +82,7 @@ func lockRestoredWait(ctx context.Context, tx pgx.Tx, a ExecutionAuthority, wait
 			return db.RunWait{}, pgx.ErrNoRows
 		}
 	}
-	wait, err := q.GetRunWait(ctx, db.GetRunWaitParams{ID: waitID, RunID: a.Run.ID, AttemptNumber: a.Attempt.Number})
+	wait, err := q.GetRunWait(ctx, db.GetRunWaitParams{ID: waitID, RunID: a.run.ID, AttemptNumber: a.attempt.Number})
 	if err != nil {
 		return db.RunWait{}, err
 	}
@@ -91,25 +91,25 @@ func lockRestoredWait(ctx context.Context, tx pgx.Tx, a ExecutionAuthority, wait
 
 // ClaimRestoredExecution attaches to an already-activated captured Program.
 // It never admits a new Program or starts another attempt.
-func ClaimRestoredExecution(ctx context.Context, tx pgx.Tx, fence ExecutionFence) (ExecutionAuthority, db.RunWait, error) {
+func ClaimRestoredExecution(ctx context.Context, tx pgx.Tx, fence ExecutionFence) (Execution, db.RunWait, error) {
 	a, err := lockExecution(ctx, tx, fence, executionResume, executionTarget{})
 	if err != nil {
-		return ExecutionAuthority{}, db.RunWait{}, err
+		return Execution{}, db.RunWait{}, err
 	}
-	if (a.Instance.AdmissionState != "open" && a.Instance.AdmissionState != "draining") || a.Lease.Status != db.RunLeaseStatusRunning || !a.Attempt.EntrypointEnteredAt.Valid || a.Lease.FinalizationOperationID.Valid {
-		return ExecutionAuthority{}, db.RunWait{}, pgx.ErrNoRows
+	if (a.Instance().AdmissionState != "open" && a.Instance().AdmissionState != "draining") || a.lease.Status != db.RunLeaseStatusRunning || !a.attempt.EntrypointEnteredAt.Valid || a.lease.FinalizationOperationID.Valid {
+		return Execution{}, db.RunWait{}, pgx.ErrNoRows
 	}
 	var waitID pgtype.UUID
-	err = tx.QueryRow(ctx, `SELECT m.run_wait_id FROM computer_checkpoint_runs m JOIN run_waits w ON w.id=m.run_wait_id WHERE m.checkpoint_id=$1 AND m.run_id=$2 AND m.attempt_number=$3 AND w.current_run_lease_id=$4 AND w.suspension_status='resuming'`, a.Instance.SourceCheckpointID, a.Run.ID, a.Attempt.Number, a.Lease.ID).Scan(&waitID)
+	err = tx.QueryRow(ctx, `SELECT m.run_wait_id FROM computer_checkpoint_runs m JOIN run_waits w ON w.id=m.run_wait_id WHERE m.checkpoint_id=$1 AND m.run_id=$2 AND m.attempt_number=$3 AND w.current_run_lease_id=$4 AND w.suspension_status='resuming'`, a.Instance().SourceCheckpointID, a.run.ID, a.attempt.Number, a.lease.ID).Scan(&waitID)
 	if err != nil {
-		return ExecutionAuthority{}, db.RunWait{}, err
+		return Execution{}, db.RunWait{}, err
 	}
-	wait, err := lockRestoredWait(ctx, tx, a, waitID, a.Instance.SourceCheckpointID)
+	wait, err := lockRestoredWait(ctx, tx, a, waitID, a.Instance().SourceCheckpointID)
 	if err != nil {
-		return ExecutionAuthority{}, db.RunWait{}, err
+		return Execution{}, db.RunWait{}, err
 	}
 	if wait.SuspensionStatus != db.RunWaitStatusResuming {
-		return ExecutionAuthority{}, db.RunWait{}, pgx.ErrNoRows
+		return Execution{}, db.RunWait{}, pgx.ErrNoRows
 	}
 	return a, wait, nil
 }

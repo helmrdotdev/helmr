@@ -56,13 +56,13 @@ func (s *Server) beginRunFinalization(
 		// from logical finalization; no other member's process is reconciled.
 		if _, err := work.tx.Exec(ctx, `UPDATE run_leases SET process_reconciled_at=COALESCE(process_reconciled_at,clock_timestamp())
  WHERE id=$1 AND computer_instance_id=$2 AND writer_generation=$3`,
-			authority.Lease.ID, authority.Lease.ComputerInstanceID, authority.Lease.WriterGeneration); err != nil {
+			authority.Lease().ID, authority.Lease().ComputerInstanceID, authority.Lease().WriterGeneration); err != nil {
 			return fmt.Errorf("record Program quiescence: %w", err)
 		}
 		response = workerapi.BeginRunFinalizationResponse{
 			Lease:     request.Lease,
-			ExpiresAt: authority.Lease.ExpiresAt.Time.UTC(), OperationID: parsed.operationID.String(),
-			StartedAt: authority.Lease.FinalizationStartedAt.Time.UTC(),
+			ExpiresAt: authority.Lease().ExpiresAt.Time.UTC(), OperationID: parsed.operationID.String(),
+			StartedAt: authority.Lease().FinalizationStartedAt.Time.UTC(),
 		}
 		return nil
 	})

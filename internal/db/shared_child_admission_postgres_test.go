@@ -53,16 +53,16 @@ func TestSharedChildAdmissionRetainsParentWriter(t *testing.T) {
 				}
 				q := db.New(tx)
 				child, err := q.CreateChildRunFromParentDeployment(t.Context(), db.CreateChildRunFromParentDeploymentParams{
-					EntrypointDeclaredID: "test-task", ComputerID: computer, BaseComputerDiskVersionID: head, ClaimID: claim, EnvironmentID: a.Run.EnvironmentID, ParentRunID: a.Run.ID, ID: pgvalue.UUID(uuid.NewV7()), ParentOwnsLifecycle: pgtype.Bool{Bool: call, Valid: true}, Payload: []byte(`{}`), Metadata: []byte(`{}`), Tags: []string{}, QueueName: "default", QueueOriginAt: a.Run.QueueOriginAt, QueueScoreAt: a.Run.QueueScoreAt, MaxActiveDurationMs: 300000, RetryPolicy: []byte(`{"enabled":false}`), TraceID: a.Run.TraceID, RootSpanID: "3333333333333333",
+					EntrypointDeclaredID: "test-task", ComputerID: computer, BaseComputerDiskVersionID: head, ClaimID: claim, EnvironmentID: a.Run().EnvironmentID, ParentRunID: a.Run().ID, ID: pgvalue.UUID(uuid.NewV7()), ParentOwnsLifecycle: pgtype.Bool{Bool: call, Valid: true}, Payload: []byte(`{}`), Metadata: []byte(`{}`), Tags: []string{}, QueueName: "default", QueueOriginAt: a.Run().QueueOriginAt, QueueScoreAt: a.Run().QueueScoreAt, MaxActiveDurationMs: 300000, RetryPolicy: []byte(`{"enabled":false}`), TraceID: a.Run().TraceID, RootSpanID: "3333333333333333",
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if child.ComputerID != computer || child.DeploymentID != a.Run.DeploymentID || child.ParentOwnsLifecycle.Bool != call {
+				if child.ComputerID != computer || child.DeploymentID != a.Run().DeploymentID || child.ParentOwnsLifecycle.Bool != call {
 					t.Fatalf("child binding=%+v", child)
 				}
 				if call {
-					wait, err := q.RegisterChildCall(t.Context(), db.RegisterChildCallParams{ChildRunID: child.ID, EnvironmentID: a.Run.EnvironmentID, RunID: a.Run.ID, ChildComputerID: computer, ExpectedRunningRevision: a.Run.Revision, AttemptNumber: a.Attempt.Number, CurrentRunLeaseID: a.Lease.ID, ID: pgvalue.UUID(uuid.NewV7()), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildClaimID: claim, ChildRequest: []byte(`{}`), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("shared-call"))})
+					wait, err := q.RegisterChildCall(t.Context(), db.RegisterChildCallParams{ChildRunID: child.ID, EnvironmentID: a.Run().EnvironmentID, RunID: a.Run().ID, ChildComputerID: computer, ExpectedRunningRevision: a.Run().Revision, AttemptNumber: a.Attempt().Number, CurrentRunLeaseID: a.Lease().ID, ID: pgvalue.UUID(uuid.NewV7()), ChildTargetDeclaredID: pgvalue.Text("test-task"), ChildClaimID: claim, ChildRequest: []byte(`{}`), RegistrationRequestFingerprint: pgvalue.Text(dbtest.Digest("shared-call"))})
 					if err != nil {
 						t.Fatal(err)
 					}

@@ -293,8 +293,8 @@ func (s *Server) invokeChildTask(
 		if err != nil {
 			return staleChildTaskInvoke(err)
 		}
-		if (authority.Run.Status != db.RunStatusRunning && (input.Request.Method != "call" || authority.Run.Status != db.RunStatusWaiting)) ||
-			!authority.Run.ActiveStartedAt.Valid || !authority.Attempt.EntrypointEnteredAt.Valid || authority.Lease.FinalizationOperationID.Valid {
+		if (authority.Run().Status != db.RunStatusRunning && (input.Request.Method != "call" || authority.Run().Status != db.RunStatusWaiting)) ||
+			!authority.Run().ActiveStartedAt.Valid || !authority.Attempt().EntrypointEnteredAt.Valid || authority.Lease().FinalizationOperationID.Valid {
 			return errChildTaskInvokeStale
 		}
 		defer func() {
@@ -307,9 +307,9 @@ func (s *Server) invokeChildTask(
 			}
 		}()
 		cursor := input.Request.ActorSpeculativeInputSequence
-		if authority.Run.EntrypointKind == "actor" {
-			want := authority.Session.CommittedInputSequence
-			if authority.Session.ActiveTurnID.Valid {
+		if authority.Run().EntrypointKind == "actor" {
+			want := authority.Session().CommittedInputSequence
+			if authority.Session().ActiveTurnID.Valid {
 				want++
 			}
 			if cursor == nil || *cursor != want {
@@ -318,7 +318,7 @@ func (s *Server) invokeChildTask(
 		} else if cursor != nil {
 			return errChildTaskInvokeStale
 		}
-		if err := validateWorkerWaitTurn(ctx, work.q, authority, input.turnID, input.runGeneration); err != nil {
+		if err := validateWorkerWaitTurn(ctx, work.tx, authority, input.turnID, input.runGeneration); err != nil {
 			return err
 		}
 		if !childTaskInvokeScopeMatches(authority, input) {
@@ -347,7 +347,7 @@ func (s *Server) invokeChildTask(
 			return nil
 		}
 
-		admission, err := loadChildTaskAdmission(ctx, work.q, authority.Run, input.Normalized)
+		admission, err := loadChildTaskAdmission(ctx, work.q, authority.Run(), input.Normalized)
 		if err != nil {
 			return err
 		}
@@ -357,7 +357,7 @@ func (s *Server) invokeChildTask(
 			}
 		}
 		admitted, err := work.q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{
-			EnvironmentID: authority.Run.EnvironmentID, ID: pgvalue.UUID(targetComputerID),
+			EnvironmentID: authority.Run().EnvironmentID, ID: pgvalue.UUID(targetComputerID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errTaskComputerUnavailable
@@ -365,14 +365,14 @@ func (s *Server) invokeChildTask(
 		if err != nil {
 			return fmt.Errorf("lock child task computer authority: %w", err)
 		}
-		if admitted.OrgID != authority.Run.OrgID || admitted.ProjectID != authority.Run.ProjectID ||
+		if admitted.OrgID != authority.Run().OrgID || admitted.ProjectID != authority.Run().ProjectID ||
 			admitted.Status != db.ComputerStatusActive ||
 			(admitted.DesiredState != db.ComputerDesiredStateActive &&
 				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
 			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed || admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost || !admitted.HeadDiskVersionID.Valid || len(admitted.PreparationFailure) > 0 || len(admitted.RecoveryFailure) > 0 {
 			return errTaskComputerUnavailable
 		}
-		compatible, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID, admitted.ComputerSpecID, authority.Run.DeploymentID)
+		compatible, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID, admitted.ComputerSpecID, authority.Run().DeploymentID)
 		if err != nil {
 			return err
 		}
@@ -400,7 +400,7 @@ func (s *Server) invokeChildTask(
 		parentOwnsLifecycle := input.Request.Method == "call"
 		queueOriginAt := pgvalue.Timestamptz(now)
 		if parentOwnsLifecycle {
-			queueOriginAt = authority.Run.QueueOriginAt
+			queueOriginAt = authority.Run().QueueOriginAt
 		}
 		queueScoreAt := pgvalue.Timestamptz(
 			queueOriginAt.Time.Add(-time.Duration(input.Normalized.Priority) * time.Second),
@@ -408,7 +408,7 @@ func (s *Server) invokeChildTask(
 		run, err := work.q.CreateChildRunFromParentDeployment(ctx, db.CreateChildRunFromParentDeploymentParams{
 			EntrypointDeclaredID: input.Normalized.TaskDeclaredID,
 			ComputerID:           pgvalue.UUID(targetComputerID), BaseComputerDiskVersionID: admitted.HeadDiskVersionID,
-			ClaimID: claimID, EnvironmentID: authority.Run.EnvironmentID, ParentRunID: authority.Run.ID,
+			ClaimID: claimID, EnvironmentID: authority.Run().EnvironmentID, ParentRunID: authority.Run().ID,
 			ID:                  pgvalue.UUID(runID),
 			ParentOwnsLifecycle: pgtype.Bool{Bool: parentOwnsLifecycle, Valid: true},
 			Payload:             input.Normalized.Payload, Metadata: input.Normalized.Metadata, Tags: input.Normalized.Tags,
@@ -417,7 +417,7 @@ func (s *Server) invokeChildTask(
 			QueueOriginAt:   queueOriginAt,
 			QueueScoreAt:    queueScoreAt,
 			QueuedExpiresAt: queuedExpiresAt, MaxActiveDurationMs: admission.MaxActiveDurationMS,
-			RetryPolicy: admission.RetryPolicy, TraceID: authority.Run.TraceID, RootSpanID: rootSpanID,
+			RetryPolicy: admission.RetryPolicy, TraceID: authority.Run().TraceID, RootSpanID: rootSpanID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errChildTaskInvokeStale
@@ -541,13 +541,13 @@ func loadChildTaskInvokeLocators(
 }
 
 func childTaskInvokeScopeMatches(
-	authority run.ExecutionAuthority,
+	authority run.Execution,
 	input childTaskInvokeInput,
 ) bool {
-	return authority.Run.OrgID == pgvalue.UUID(input.Normalized.OrgID) &&
-		authority.Run.ProjectID == pgvalue.UUID(input.Normalized.ProjectID) &&
-		authority.Run.EnvironmentID == pgvalue.UUID(input.Normalized.EnvironmentID) &&
-		authority.Run.ComputerID == pgvalue.UUID(input.SourceComputerID)
+	return authority.Run().OrgID == pgvalue.UUID(input.Normalized.OrgID) &&
+		authority.Run().ProjectID == pgvalue.UUID(input.Normalized.ProjectID) &&
+		authority.Run().EnvironmentID == pgvalue.UUID(input.Normalized.EnvironmentID) &&
+		authority.Run().ComputerID == pgvalue.UUID(input.SourceComputerID)
 }
 
 func decodeChildTaskReceipt(raw []byte) (childTaskReceipt, error) {

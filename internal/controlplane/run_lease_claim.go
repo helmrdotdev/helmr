@@ -27,7 +27,7 @@ type runLeaseClaimAuthority struct {
 
 func (s *Server) claimRunLease(ctx context.Context, worker workergroup.HostPrincipal, leaseID pgtype.UUID, leaseSequence int64) (runLeaseClaimAuthority, []secret.DeliveryEnvelope, error) {
 	fence := run.ExecutionFence{LeaseID: leaseID, LeaseSequence: leaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}
-	var claimed run.ExecutionAuthority
+	var claimed run.Execution
 	var resumeWait *db.RunWait
 	err := s.inTx(ctx, func(work *txWork) error {
 		tx := work.tx
@@ -51,7 +51,7 @@ func (s *Server) claimRunLease(ctx context.Context, worker workergroup.HostPrinc
 	if err != nil {
 		return runLeaseClaimAuthority{}, nil, err
 	}
-	return runLeaseClaimAuthority{resumeWait: resumeWait, actor: claimed.Session, run: claimed.Run, computer: claimed.Computer, attempt: claimed.Attempt, runtime: claimed.Instance, runLease: claimed.Lease}, claimed.Secrets, nil
+	return runLeaseClaimAuthority{resumeWait: resumeWait, actor: claimed.Session(), run: claimed.Run(), computer: claimed.Computer(), attempt: claimed.Attempt(), runtime: claimed.Instance(), runLease: claimed.Lease()}, claimed.DeliverySecrets(), nil
 }
 
 func staleRunLeaseClaim(err error) error {

@@ -18,7 +18,7 @@ func (s *Server) applySessionAdmission(ctx context.Context, request session.Admi
 	var receipt session.AdmissionReceipt
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		receipt, err = session.Admit(ctx, work.q, request)
+		receipt, err = session.Admit(ctx, work.tx, request)
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -31,7 +31,7 @@ func (s *Server) applySessionClose(ctx context.Context, request session.ControlR
 	var receipt session.ControlReceipt
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		receipt, err = session.Close(ctx, work.q, request)
+		receipt, err = session.Close(ctx, work.tx, request)
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -44,7 +44,7 @@ func (s *Server) applySessionResume(ctx context.Context, request session.ResumeR
 	var receipt session.ControlReceipt
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		receipt, err = session.Resume(ctx, work.q, request)
+		receipt, err = session.Resume(ctx, work.tx, request)
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -60,7 +60,7 @@ func (s *Server) applySessionCancel(ctx context.Context, request session.Control
 		if err != nil {
 			return err
 		}
-		receipt, err = session.Cancel(ctx, work.q, request, graph)
+		receipt, err = session.Cancel(ctx, work.tx, request, graph)
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -76,7 +76,7 @@ func (s *Server) applySessionInterrupt(ctx context.Context, request session.Inte
 		if err != nil {
 			return err
 		}
-		receipt, err = session.InterruptTurn(ctx, work.q, request.EnvironmentID, request.SessionID, request.TurnID, request.IdempotencyKey, graph)
+		receipt, err = session.InterruptTurn(ctx, work.tx, request.EnvironmentID, request.SessionID, request.TurnID, request.IdempotencyKey, graph)
 		return err
 	})
 	result := session.ControlReceipt{ID: receipt.ID, SessionID: request.SessionID, TurnID: &request.TurnID, Status: receipt.Status, Code: receipt.Code}
