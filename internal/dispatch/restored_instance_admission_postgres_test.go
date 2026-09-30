@@ -26,10 +26,10 @@ func TestNewMembersJoinPreviouslyRestoredInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	var generation int64
-	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.RuntimeID).Scan(&generation); err != nil {
+	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	instance, err := db.New(tx).OpenRestoredComputerInstance(t.Context(), db.OpenRestoredComputerInstanceParams{ComputerInstanceID: fence.RuntimeID, EnvironmentID: pgvalue.UUID(f.EnvironmentID), WriterGeneration: generation, DesiredVersion: fence.DesiredVersion, WorkerHostID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch})
+	instance, err := db.New(tx).OpenRestoredComputerInstance(t.Context(), db.OpenRestoredComputerInstanceParams{ComputerInstanceID: pgvalue.UUID(fence.ID), EnvironmentID: pgvalue.UUID(f.EnvironmentID), WriterGeneration: generation, DesiredVersion: fence.DesiredVersion, WorkerHostID: pgvalue.UUID(fence.Host.HostID), WorkerEpoch: fence.Host.Epoch})
 	if err != nil {
 		t.Fatal(err)
 	}

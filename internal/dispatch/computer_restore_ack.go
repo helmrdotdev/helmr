@@ -2,9 +2,8 @@ package dispatch
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"strconv"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -18,14 +17,15 @@ type ComputerRestoreGrant struct {
 }
 
 // AcknowledgeComputerRestore records installation of the entire destination's
-// grants before opening admission. Logical wait outcomes are acknowledged by each
-// member separately. The caller owns rollback on error and commit on success.
-func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence, checkpointID pgtype.UUID, writerGeneration int64, grants []ComputerRestoreGrant) (db.ComputerInstance, error) {
-	p, err := lockComputerRestoreObservation(ctx, tx, fence)
+// grants on the computer.Restore fence before opening admission. Logical wait
+// outcomes are acknowledged by each member separately. The caller owns
+// rollback on error and commit on success.
+func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef, checkpointID pgtype.UUID, writerGeneration int64, grants []ComputerRestoreGrant) (db.ComputerInstance, error) {
+	restore, err := computer.LockRestore(ctx, tx, destination)
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i := p.instance
+	i := restore.Instance()
 	if i.SourceCheckpointID != checkpointID || i.WriterGeneration != writerGeneration || i.ObservedState != "ready" || i.MountState != "mounted" || i.ObservedDesiredVersion != i.DesiredVersion {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
@@ -87,7 +87,7 @@ func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, fence ComputerPr
 		return i, nil
 	}
 	// Opening a restored Instance starts its Runs, so it needs admitting supply.
-	if !p.admitting || i.AdmissionState != "restoring" {
+	if !restore.Admitting() || i.AdmissionState != "restoring" {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	for _, m := range members {
@@ -127,35 +127,11 @@ func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, fence ComputerPr
 			return db.ComputerInstance{}, pgx.ErrNoRows
 		}
 	}
-	i, err = q.OpenRestoredComputerInstance(ctx, db.OpenRestoredComputerInstanceParams{ComputerInstanceID: i.ID, EnvironmentID: i.EnvironmentID, WriterGeneration: i.WriterGeneration, DesiredVersion: i.DesiredVersion, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch})
-	if err != nil {
+	if i, err = restore.Open(ctx); err != nil {
 		return db.ComputerInstance{}, err
-	}
-	var pending bool
-	if err = tx.QueryRow(ctx, `SELECT coalesce(preparation_instance_id=$2,false) FROM computers WHERE id=$1`, i.ComputerID, i.ID).Scan(&pending); err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if pending {
-		if _, err = q.CompleteComputerPreparation(ctx, db.CompleteComputerPreparationParams{EnvironmentID: i.EnvironmentID, ComputerID: i.ComputerID, InstanceID: i.ID, DesiredVersion: i.DesiredVersion}); err != nil {
-			return db.ComputerInstance{}, err
-		}
-	}
-	// The authenticated installation receipt completes this exact physical intent,
-	// independently of a delivery worker's claim lifetime. Opening admission and
-	// recording delivery must commit together; an open Instance is replay evidence
-	// even after the delivered outbox row is pruned.
-	delivered, err := tx.Exec(ctx, `UPDATE control_outbox SET status='delivered',claimed_by=NULL,claim_expires_at=NULL,last_error=NULL,delivered_at=clock_timestamp()
- WHERE topic=$1 AND status IN ('pending','claimed')
- AND payload->>'checkpoint_id'=$2 AND payload->>'computer_instance_id'=$3
- AND payload->>'desired_version'=$4 AND payload->>'writer_generation'=$5`, ComputerRestoreActivationTopic, pgvalue.UUIDString(checkpointID), pgvalue.UUIDString(i.ID), strconv.FormatInt(i.DesiredVersion, 10), strconv.FormatInt(i.WriterGeneration, 10))
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if delivered.RowsAffected() != 1 {
-		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	// Blocking writes above may consume the remaining preparation or lease budget.
-	if _, err = LockComputerReadyObservation(ctx, tx, fence); err != nil {
+	if err = restore.RecheckReady(ctx); err != nil {
 		return db.ComputerInstance{}, err
 	}
 	var live bool

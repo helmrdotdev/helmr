@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 
@@ -17,15 +18,10 @@ func claimCommandCancellation(ctx context.Context, tx pgx.Tx, worker workergroup
 	if err != nil {
 		return result, err
 	}
-	locked, err := workergroup.LockHost(ctx, q, worker)
-	if err != nil {
+	if _, err := workergroup.LockHost(ctx, q, worker); err != nil {
 		return commandClaimAuthority{}, err
 	}
-	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
-	if err != nil {
-		return commandClaimAuthority{}, err
-	}
-	i, err := q.LockComputerCommandInstance(ctx, db.LockComputerCommandInstanceParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: request.CommandID})
+	i, err := computer.LockInstanceForCommand(ctx, tx, request.instance(target, worker))
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
@@ -33,10 +29,7 @@ func claimCommandCancellation(ctx context.Context, tx pgx.Tx, worker workergroup
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	if i.ID != request.ComputerInstanceID || i.WorkerHostID != locked.Host.ID || i.WorkerGroupID != locked.Group.ID || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
-		return commandClaimAuthority{}, pgx.ErrNoRows
-	}
-	if computer.Status != "active" || computer.DesiredState != "active" || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.WriterGeneration != computer.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
+	if command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
 		return commandClaimAuthority{}, pgx.ErrNoRows
 	}
 	if command.Status != "stopping" || !command.CancelRequestedAt.Valid || command.TerminalAt.Valid {

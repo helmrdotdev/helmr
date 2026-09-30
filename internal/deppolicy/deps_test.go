@@ -45,7 +45,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"definition":        {"api", "artifact", "artifact/snapshot", "artifact/verify", "builder", "bundle", "compute", "computerhost", "controlplane", "db", "deployment", "disk", "executor", "frameio", "guestd", "nbd", "scheduler", "vm", "wire"},
 		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "computerhost", "controlplane", "db", "executor", "vm"},
 		"disk":              {"api", "computerhost", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
-		"computer":          {"api", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
+		"computer":          {"api", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token", "workerapi"},
 		"computerhost":      {"controlplane", "db", "executor", "guestd", "worker"},
 		"controlplane":      {"computerhost", "eventstream", "executor", "firecracker", "guestd", "pglock"},
 		"region":            {"controlplane", "org", "workergroup"},

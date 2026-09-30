@@ -7,17 +7,14 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
-	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 )
 
 const workerRuntimeReconcileLimit int32 = 64
@@ -29,224 +26,160 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		return
 	}
 	worker := workerFromContext(r.Context())
-	rows, err := s.db.ListComputerInstanceReconcileTargets(r.Context(), db.ListComputerInstanceReconcileTargetsParams{
-		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
-		RowLimit: workerRuntimeReconcileLimit,
-	})
+	targets, err := computer.ReconcileTargets(r.Context(), s.db, computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch}, workerRuntimeReconcileLimit)
 	if err != nil {
-		writeError(w, errors.New("list runtime reconcile targets"))
+		writeError(w, err)
 		return
 	}
-	items := make([]workerapi.RuntimeReconcileTarget, 0, len(rows))
-	for _, row := range rows {
-		action := computerInstanceReconcileAction(row)
-		var capture *workerapi.RuntimeCapture
-		if action == workerapi.RuntimeReconcileCapture {
-			capture, err = loadComputerInstanceCapture(r.Context(), s.db, row)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
+	items := make([]workerapi.RuntimeReconcileTarget, 0, len(targets))
+	for _, target := range targets {
+		item, err := runtimeReconcileTarget(r.Context(), s.platformStore, target)
+		if err != nil {
+			writeError(w, err)
+			return
 		}
-		source := computerInstanceSourceMetadata(row)
-		if action == workerapi.RuntimeReconcilePrepare {
-			source, err = projectComputerInstancePreparation(r.Context(), s.platformStore, row)
-			if err != nil {
-				writeError(w, err)
-				return
-			}
-			if row.AdmissionState == "restoring" {
-				if err := populateRuntimeRestoreSource(r.Context(), s.db, &source, row); err != nil {
-					writeError(w, err)
-					return
-				}
-			}
-		}
-		items = append(items, workerapi.RuntimeReconcileTarget{
-			ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
-			DesiredVersion: row.DesiredVersion, ObservedVersion: row.ObservedVersion,
-			Action: action, Source: source, Capture: capture, PreparationExpiresAt: row.PreparationExpiresAt.Time,
-		})
+		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, workerapi.RuntimeReconcileResponse{Items: items})
 }
 
-func (s *Server) workerMarkComputerInstanceReady(w http.ResponseWriter, r *http.Request) {
-	s.workerMarkComputerInstance(w, r, "ready")
-}
-func (s *Server) workerMarkComputerInstanceClosed(w http.ResponseWriter, r *http.Request) {
-	s.workerMarkComputerInstance(w, r, "closed")
-}
-func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http.Request) {
-	s.workerMarkComputerInstance(w, r, "failed")
+var runtimeReconcileActions = map[computer.ReconcileAction]string{
+	computer.ReconcilePrepare: workerapi.RuntimeReconcilePrepare,
+	computer.ReconcileCapture: workerapi.RuntimeReconcileCapture,
+	computer.ReconcileClose:   workerapi.RuntimeReconcileClose,
+	computer.ReconcileReclaim: workerapi.RuntimeReconcileReclaim,
 }
 
-func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Request, state string) {
+// runtimeReconcileTarget projects a reconcile target onto the worker
+// contract: its action, the capture it takes, and for preparation the
+// Computer and Program sources and the checkpoint it restores.
+func runtimeReconcileTarget(ctx context.Context, platform cas.Reader, target computer.ReconcileTarget) (workerapi.RuntimeReconcileTarget, error) {
+	row := target.Instance
+	var capture *workerapi.RuntimeCapture
+	if target.Capture != nil {
+		var err error
+		if capture, err = projectComputerInstanceCapture(target.Capture.Checkpoint, target.Capture.Members); err != nil {
+			return workerapi.RuntimeReconcileTarget{}, err
+		}
+	}
+	source := computerInstanceSourceMetadata(row)
+	if target.Action == computer.ReconcilePrepare {
+		var err error
+		if source, err = projectComputerInstancePreparation(ctx, platform, row); err != nil {
+			return workerapi.RuntimeReconcileTarget{}, err
+		}
+		if target.Restore != nil {
+			restore, err := projectComputerInstanceRestore(target.Restore.Checkpoint, target.Restore.Members)
+			if err != nil {
+				return workerapi.RuntimeReconcileTarget{}, err
+			}
+			source.Restore = &restore
+		}
+	}
+	return workerapi.RuntimeReconcileTarget{
+		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch,
+		DesiredVersion: row.DesiredVersion, ObservedVersion: row.ObservedVersion,
+		Action: runtimeReconcileActions[target.Action], Source: source, Capture: capture, PreparationExpiresAt: row.PreparationExpiresAt.Time,
+	}, nil
+}
+
+func (s *Server) workerMarkComputerInstanceReady(w http.ResponseWriter, r *http.Request) {
+	request, observation, ok := decodeComputerInstanceObservation(w, r, "ready")
+	if !ok {
+		return
+	}
+	if request.VMVCPUCount <= 0 {
+		writeError(w, badRequest(errors.New("vm_vcpu_count must be positive")))
+		return
+	}
+	if !sha256sum.ValidDigest(request.CPUConfigDigest) {
+		writeError(w, badRequest(errors.New("cpu_config_digest must be a canonical SHA-256 digest")))
+		return
+	}
+	row, err := computer.RecordInstanceReady(r.Context(), s.tx, computer.Readiness{Observation: observation, VCPUCount: request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest})
+	writeComputerInstanceObservation(w, row, err)
+}
+
+func (s *Server) workerMarkComputerInstanceClosed(w http.ResponseWriter, r *http.Request) {
+	request, observation, ok := decodeComputerInstanceObservation(w, r, "closed")
+	if !ok {
+		return
+	}
+	reason := strings.TrimSpace(request.ReasonCode)
+	if reason == "" {
+		reason = "desired_state_reconciled"
+	}
+	row, err := computer.RecordInstanceClosed(r.Context(), s.tx, computer.Closure{Observation: observation, Reason: reason, CleanupProof: computerCleanupProof(request.CleanupProof)})
+	writeComputerInstanceObservation(w, row, err)
+}
+
+func (s *Server) workerMarkComputerInstanceFailed(w http.ResponseWriter, r *http.Request) {
+	request, observation, ok := decodeComputerInstanceObservation(w, r, "failed")
+	if !ok {
+		return
+	}
+	reason := strings.TrimSpace(request.ReasonCode)
+	if reason == "" {
+		reason = "runtime_reconcile_failed"
+	}
+	kind := computer.FailureRuntime
+	switch reason {
+	case workerapi.RuntimeFailureWorkerInvalid:
+		kind = computer.FailureWorkerInvalid
+	case workerapi.RuntimeFailureComputerSource:
+		kind = computer.FailureSourceUnavailable
+	}
+	row, err := computer.RecordInstanceFailure(r.Context(), s.tx, computer.Failure{
+		Observation: observation, Kind: kind, Reason: reason, Error: normalizedJSONRawMessage(request.Error),
+		CleanupProof: computerCleanupProof(request.CleanupProof),
+	})
+	writeComputerInstanceObservation(w, row, err)
+}
+
+// decodeComputerInstanceObservation decodes an Instance observation and
+// checks its fences against the authenticated host epoch.
+func decodeComputerInstanceObservation(w http.ResponseWriter, r *http.Request, state string) (workerapi.ComputerInstanceStateRequest, computer.Observation, bool) {
 	var request workerapi.ComputerInstanceStateRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker runtime instance %s request JSON: %w", state, err))
-		return
+		return request, computer.Observation{}, false
 	}
 	id, err := ids.Parse(request.ID)
 	if err != nil {
 		writeError(w, badRequest(errors.New("id must be a canonical UUIDv7")))
-		return
+		return request, computer.Observation{}, false
 	}
 	if request.WorkerEpoch <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
 		writeError(w, badRequest(errors.New("runtime epoch, desired version, and observed version fences are required")))
-		return
+		return request, computer.Observation{}, false
 	}
 	worker := workerFromContext(r.Context())
 	if request.WorkerEpoch != worker.Epoch {
 		writeError(w, forbidden(errors.New("runtime instance belongs to another worker epoch")))
-		return
+		return request, computer.Observation{}, false
 	}
-	var row db.ComputerInstance
-	switch state {
-	case "ready":
-		if request.VMVCPUCount <= 0 {
-			writeError(w, badRequest(errors.New("vm_vcpu_count must be positive")))
-			return
-		}
-		if !sha256sum.ValidDigest(request.CPUConfigDigest) {
-			writeError(w, badRequest(errors.New("cpu_config_digest must be a canonical SHA-256 digest")))
-			return
-		}
-		row, err = s.markComputerInstanceReady(r.Context(), pgvalue.UUID(worker.GroupID), db.MarkComputerInstanceReadyParams{
-			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID),
-			WorkerEpoch:             worker.Epoch,
-			ExpectedObservedVersion: request.ExpectedObservedVersion,
-			VMVCPUCount:             request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,
-		})
-	case "closed":
-		if request.CleanupProof == nil {
-			writeError(w, badRequest(errors.New("runtime cleanup proof is required when marking a runtime closed")))
-			return
-		}
-		if proofErr := validateRuntimeClosedCleanupProof(*request.CleanupProof, time.Now()); proofErr != nil {
-			writeError(w, badRequest(proofErr))
-			return
-		}
-		proof, proofErr := json.Marshal(request.CleanupProof)
-		if proofErr != nil {
-			writeError(w, badRequest(errors.New("encode runtime cleanup proof")))
-			return
-		}
-		reason := strings.TrimSpace(request.ReasonCode)
-		if reason == "" {
-			reason = "desired_state_reconciled"
-		}
-		row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{
-			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
-			DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion,
-			Reason: pgvalue.Text(reason), Evidence: proof,
-		})
-	case "failed":
-		reason := strings.TrimSpace(request.ReasonCode)
-		if reason == "" {
-			reason = "runtime_reconcile_failed"
-		}
-		if reason == workerapi.RuntimeFailureWorkerInvalid {
-			if err = workergroup.DrainInvalidEpoch(r.Context(), s.tx, worker.GroupID, worker.HostID, worker.Epoch); err != nil {
-				writeError(w, err)
-				return
-			}
-		}
-		if request.CleanupProof != nil {
-			if proofErr := validateRuntimeCleanupProof(*request.CleanupProof, time.Now()); proofErr != nil {
-				writeError(w, badRequest(proofErr))
-				return
-			}
-			proof, proofErr := json.Marshal(request.CleanupProof)
-			if proofErr != nil {
-				writeError(w, badRequest(proofErr))
-				return
-			}
-			row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
-				ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
-				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion, Reason: pgvalue.Text(reason), Evidence: proof,
-			})
-			if err == nil {
-				writeJSON(w, http.StatusOK, computerInstanceResponse(row))
-				return
-			}
-			if !errors.Is(err, pgx.ErrNoRows) {
-				writeError(w, errors.New("reclaim failed Computer Instance"))
-				return
-			}
-		}
-		row, err = s.markComputerInstanceFailed(r.Context(), worker.GroupID, db.MarkComputerInstanceFailedParams{
-			ReasonCode: pgvalue.Text(reason), Error: normalizedJSONRawMessage(request.Error),
-			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
-			DesiredVersion:          request.DesiredVersion,
-			ExpectedObservedVersion: request.ExpectedObservedVersion,
-		})
-		if err == nil && request.CleanupProof != nil {
-			proof, _ := json.Marshal(request.CleanupProof)
-			row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
-				ID: row.ID, WorkerHostID: row.WorkerHostID, WorkerEpoch: row.WorkerEpoch, DesiredVersion: row.DesiredVersion,
-				ExpectedObservedVersion: row.ObservedVersion, Reason: row.TerminalReasonCode, Evidence: proof,
-			})
-		}
-	default:
-		writeError(w, errors.New("unsupported runtime instance state"))
-		return
+	return request, computer.Observation{
+		Instance: computer.InstanceRef{
+			Host: computer.Host{GroupID: worker.GroupID, HostID: worker.HostID, Epoch: worker.Epoch},
+			ID:   id, DesiredVersion: request.DesiredVersion,
+		},
+		ExpectedObservedVersion: request.ExpectedObservedVersion,
+	}, true
+}
+
+func computerCleanupProof(proof *workerapi.RuntimeCleanupProof) *computer.CleanupProof {
+	if proof == nil {
+		return nil
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("runtime instance fence is stale")))
-		return
-	}
+	return &computer.CleanupProof{Method: proof.Method, CompletedAt: proof.CompletedAt}
+}
+
+func writeComputerInstanceObservation(w http.ResponseWriter, row db.ComputerInstance, err error) {
 	if err != nil {
-		writeError(w, errors.New("mark runtime instance "+state))
+		writeError(w, computerError(err, computerInstanceObservationOperation))
 		return
 	}
 	writeJSON(w, http.StatusOK, computerInstanceResponse(row))
-}
-
-func (s *Server) markComputerInstanceFailed(ctx context.Context, workerGroupID uuid.UUID, params db.MarkComputerInstanceFailedParams) (db.ComputerInstance, error) {
-	var row db.ComputerInstance
-	err := s.inTx(ctx, func(work *txWork) error {
-		tx := work.tx
-		var err error
-		row, err = dispatch.RecordComputerInstanceFailure(ctx, tx, workerGroupID, params)
-		return err
-	})
-	if errors.Is(err, pgx.ErrNoRows) && params.ReasonCode.String == workerapi.RuntimeFailureWorkerInvalid {
-		if fenceErr := workergroup.DrainInvalidEpoch(ctx, s.tx, workerGroupID, pgvalue.MustUUIDValue(params.WorkerHostID), params.WorkerEpoch); fenceErr != nil {
-			return row, fenceErr
-		}
-	}
-	return row, err
-}
-
-func (s *Server) reclaimComputerInstance(ctx context.Context, groupID uuid.UUID, params db.ReclaimComputerInstanceParams) (db.ComputerInstance, error) {
-	var row db.ComputerInstance
-	err := s.inTx(ctx, func(work *txWork) error {
-		tx := work.tx
-		var err error
-		row, err = dispatch.RecordComputerInstanceReclaim(ctx, tx, groupID, params)
-		return err
-	})
-	return row, err
-}
-
-func validateRuntimeCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {
-	switch proof.Method {
-	case workerapi.RuntimeCleanupSessionClosed, workerapi.RuntimeCleanupHostReconciled, workerapi.RuntimeCleanupNotMaterialized:
-	default:
-		return errors.New("runtime cleanup proof method is unsupported")
-	}
-	if proof.CompletedAt.IsZero() || proof.CompletedAt.After(now.Add(time.Minute)) {
-		return errors.New("runtime cleanup proof completed_at is required and cannot be in the future")
-	}
-	return nil
-}
-
-func validateRuntimeClosedCleanupProof(proof workerapi.RuntimeCleanupProof, now time.Time) error {
-	if proof.Method != workerapi.RuntimeCleanupSessionClosed && proof.Method != workerapi.RuntimeCleanupHostReconciled {
-		return errors.New("closed runtime cleanup proof must confirm a closed session or exact host reconciliation")
-	}
-	return validateRuntimeCleanupProof(proof, now)
 }
 
 func normalizedJSONRawMessage(raw json.RawMessage) []byte {

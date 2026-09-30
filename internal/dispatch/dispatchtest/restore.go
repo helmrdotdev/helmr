@@ -3,6 +3,7 @@ package dispatchtest
 import (
 	"encoding/json"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
@@ -17,13 +18,13 @@ import (
 	"uuid"
 )
 
-func Restore(t *testing.T, idle bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, *dispatch.Authority, dispatch.ComputerPreparationFence) {
+func Restore(t *testing.T, idle bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, *dispatch.Authority, computer.InstanceRef) {
 	t.Helper()
 	f, worker, request, uploaded := ReadyCapture(t, idle, setup...)
 	return RestoreReadyCapture(t, f, worker, request, uploaded)
 }
 
-func RestoreReadyCapture(t *testing.T, f runtest.Fixture, worker dispatch.ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, uploaded []cas.Object) (runtest.Fixture, *dispatch.Authority, dispatch.ComputerPreparationFence) {
+func RestoreReadyCapture(t *testing.T, f runtest.Fixture, worker dispatch.ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, uploaded []cas.Object) (runtest.Fixture, *dispatch.Authority, computer.InstanceRef) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
@@ -51,7 +52,7 @@ func RestoreReadyCapture(t *testing.T, f runtest.Fixture, worker dispatch.Comput
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f, authority, dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(instance), WorkerID: pgvalue.UUID(f.WorkerID), WorkerGroupID: pgvalue.UUID(runtest.WorkerGroupID), WorkerEpoch: 1, DesiredVersion: 1}
+	return f, authority, computer.InstanceRef{Host: computer.Host{GroupID: runtest.WorkerGroupID, HostID: f.WorkerID, Epoch: 1}, ID: instance, DesiredVersion: 1}
 }
 
 func ReadyCapture(t *testing.T, idle bool, setup ...func(runtest.Fixture, runtest.RunLease)) (runtest.Fixture, dispatch.ComputerCaptureWorker, workerapi.RegisterCheckpointRequest, []cas.Object) {

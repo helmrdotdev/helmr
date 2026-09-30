@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -64,7 +65,7 @@ var nonAdmittingSupply = []struct{ name, sql string }{
 type restoreHarness struct {
 	f         runtest.Fixture
 	authority *dispatch.Authority
-	fence     dispatch.ComputerPreparationFence
+	fence     computer.InstanceRef
 	cp        db.ComputerCheckpoint
 	grants    []dispatch.ComputerRestoreGrant
 }
@@ -100,7 +101,7 @@ func (h *restoreHarness) acknowledge(t *testing.T) (db.ComputerInstance, error) 
 func (h *restoreHarness) admission(t *testing.T) string {
 	t.Helper()
 	var state string
-	if err := h.f.Pool.QueryRow(t.Context(), `SELECT admission_state FROM computer_instances WHERE id=$1`, h.fence.RuntimeID).Scan(&state); err != nil {
+	if err := h.f.Pool.QueryRow(t.Context(), `SELECT admission_state FROM computer_instances WHERE id=$1`, h.fence.ID).Scan(&state); err != nil {
 		t.Fatal(err)
 	}
 	return state
@@ -170,12 +171,12 @@ func TestComputerRestoreFirstCommitRequiresAdmittingSupply(t *testing.T) {
 			if _, err := h.commit(t); !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("first commit: %v", err)
 			}
-			tx, err := f.Pool.Begin(t.Context())
+			i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(fence.ID)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer tx.Rollback(t.Context())
-			if _, err = dispatch.LockComputerReadyObservation(t.Context(), tx, fence); !errors.Is(err, pgx.ErrNoRows) {
+			readiness := computer.Readiness{Observation: computer.Observation{Instance: fence, ExpectedObservedVersion: i.ObservedVersion}, VCPUCount: i.VMVCPUCount, CPUConfigDigest: i.CPUConfigDigest}
+			if _, err = computer.RecordInstanceReady(t.Context(), f.Pool, readiness); !errors.Is(err, computer.ErrAuthorityChanged) {
 				t.Fatalf("restoring readiness: %v", err)
 			}
 		})

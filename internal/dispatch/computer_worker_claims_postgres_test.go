@@ -14,8 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Capture and restore acknowledgement carry no claim versions. Their Worker
-// authority is the locked host epoch and status; a claim-only change is benign.
+// Capture carries no claim versions. Its Worker authority is the locked host
+// epoch and status; a claim-only change is benign.
 var workerAuthorityTransitions = []struct {
 	name     string
 	apply    func(context.Context, runtest.Fixture) error
@@ -63,58 +63,6 @@ func TestComputerCaptureRegistrationFencesEpochAndStatusNotClaims(t *testing.T) 
 			}
 			if err = tx.Commit(t.Context()); err != nil {
 				t.Fatal(err)
-			}
-		})
-	}
-}
-
-func TestComputerRestoreAcknowledgementFencesEpochAndStatusNotClaims(t *testing.T) {
-	for _, transition := range workerAuthorityTransitions {
-		t.Run(transition.name, func(t *testing.T) {
-			f, authority, fence := dispatchtest.Restore(t, false)
-			tx, err := f.Pool.Begin(t.Context())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer tx.Rollback(t.Context())
-			cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = tx.Commit(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			grants := installedRestoreGrants(t, f, fence)
-			acknowledge := func() error {
-				tx, err := f.Pool.Begin(t.Context())
-				if err != nil {
-					return err
-				}
-				defer tx.Rollback(t.Context())
-				if _, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, cp.WriterGeneration+1, grants); err != nil {
-					return err
-				}
-				return tx.Commit(t.Context())
-			}
-			if err = acknowledge(); err != nil {
-				t.Fatal(err)
-			}
-			if err = transition.apply(t.Context(), f); err != nil {
-				t.Fatal(err)
-			}
-			err = acknowledge()
-			if transition.rejected {
-				if !errors.Is(err, pgx.ErrNoRows) {
-					t.Fatalf("acknowledgement replay after %s: %v", transition.name, err)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("acknowledgement replay after %s: %v", transition.name, err)
-			}
-			var open bool
-			if err = f.Pool.QueryRow(t.Context(), `SELECT admission_state IN ('open','draining') FROM computer_instances WHERE id=$1`, fence.RuntimeID).Scan(&open); err != nil || !open {
-				t.Fatalf("acknowledged admission=%v err=%v", open, err)
 			}
 		})
 	}

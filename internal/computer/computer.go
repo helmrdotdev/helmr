@@ -2,13 +2,19 @@
 // secret placements and proxy CA, reads, lists, members and deletion, the
 // secret authority ceiling between Computers, program admission, the
 // protected environment delivered to guests, the Instance write capability,
-// and Retention of unreferenced Computer storage. Operations take domain
-// inputs and return the errors declared here; callers map them to their
-// transport.
+// and Retention of unreferenced Computer storage. It also owns the physical
+// Instance lifecycle a worker host reports and holds: readiness, close and
+// failure observations, the guest channel claim, writer renewal, Run process
+// cleanup, the restore plan, reconcile targets, expiry and preparation
+// settlement, the restore fence and the member fences other owners compose.
+// Operations take domain inputs and return the errors declared here; callers
+// map them to their transport.
 //
 // Operations that another owner composes with its own locks take the
-// caller's transaction and document which locks must already be held;
-// pglock documents the resulting order.
+// caller's transaction, document which locks must already be held and report
+// a fence that no longer holds as pgx.ErrNoRows; pglock documents the
+// resulting order. Operations that own their transactions report it as
+// ErrAuthorityChanged.
 package computer
 
 import (

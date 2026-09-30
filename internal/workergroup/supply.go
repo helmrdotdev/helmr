@@ -3,6 +3,7 @@ package workergroup
 import (
 	"context"
 	"fmt"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -185,4 +186,43 @@ func (l LockedHost) Continues() bool {
 	return l.Host.CurrentEpoch.Valid && l.Host.CurrentEpoch.Int64 == l.epoch &&
 		(l.Host.Status == db.WorkerHostStatusActive || l.Host.Status == db.WorkerHostStatusDraining) &&
 		(l.Group.Status == db.WorkerGroupStatusActive || l.Group.Status == db.WorkerGroupStatusPaused || l.Group.Status == db.WorkerGroupStatusDraining)
+}
+
+// LockHostWithPool update-locks the Group, the host's Pool and the Host at the
+// epoch, in that order, without comparing claim versions. The Group must be
+// active, paused or draining, and the Pool and Host active or draining, as for
+// continuing admitted work; otherwise it returns pgx.ErrNoRows.
+func LockHostWithPool(ctx context.Context, q db.Querier, groupID, poolID, hostID uuid.UUID, epoch int64) (LockedHost, error) {
+	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(groupID))
+	if err != nil {
+		return LockedHost{}, err
+	}
+	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
+		return LockedHost{}, pgx.ErrNoRows
+	}
+	pool, err := q.LockWorkerPool(ctx, db.LockWorkerPoolParams{WorkerGroupID: group.ID, WorkerPoolID: pgvalue.UUID(poolID)})
+	if err != nil {
+		return LockedHost{}, err
+	}
+	if pool.Status != "active" && pool.Status != "draining" {
+		return LockedHost{}, pgx.ErrNoRows
+	}
+	host, err := q.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{WorkerHostID: pgvalue.UUID(hostID), WorkerGroupID: group.ID, WorkerPoolID: pool.ID, WorkerEpoch: pgtype.Int8{Int64: epoch, Valid: true}})
+	if err != nil {
+		return LockedHost{}, err
+	}
+	if host.Status != db.WorkerHostStatusActive && host.Status != db.WorkerHostStatusDraining {
+		return LockedHost{}, pgx.ErrNoRows
+	}
+	return LockedHost{Group: group, Host: host, epoch: epoch}, nil
+}
+
+// DrainLockedHost drains a locked active Host at its locked epoch and claim
+// version; a Host that is already draining is left unchanged.
+func DrainLockedHost(ctx context.Context, q db.Querier, locked LockedHost) error {
+	if locked.Host.Status != db.WorkerHostStatusActive {
+		return nil
+	}
+	_, err := q.DrainWorkerHost(ctx, db.DrainWorkerHostParams{ID: locked.Host.ID, WorkerGroupID: locked.Group.ID, ExpectedEpoch: locked.Host.CurrentEpoch, ExpectedClaimVersion: locked.Host.ClaimVersion})
+	return err
 }

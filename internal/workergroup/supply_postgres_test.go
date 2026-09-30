@@ -211,6 +211,59 @@ func TestLockHostReportsStaleClaimsAndContinuation(t *testing.T) {
 	}
 }
 
+// LockHostWithPool ignores claim versions and accepts supply that continues
+// admitted work; DrainLockedHost drains only an active host.
+func TestLockHostWithPoolContinuesAndDrainsActiveHost(t *testing.T) {
+	for _, test := range []struct {
+		name, sql string
+		locked    bool
+	}{
+		{"active", ``, true},
+		{"host claims", `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, true},
+		{"group claims", `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, true},
+		{"draining host", `UPDATE worker_hosts SET status='draining',draining_at=now() WHERE id=$1`, true},
+		{"paused group", `UPDATE worker_groups SET status='paused' WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, true},
+		{"draining pool", `UPDATE worker_pools SET status='draining' WHERE id=(SELECT worker_pool_id FROM worker_hosts WHERE id=$1)`, true},
+		{"new epoch", `UPDATE worker_hosts SET current_epoch=2 WHERE id=$1`, false},
+		{"lost host", `UPDATE worker_hosts SET status='lost',lost_at=now() WHERE id=$1`, false},
+		{"disabled group", `UPDATE worker_groups SET status='disabled',primary_pool_id=NULL WHERE id=(SELECT worker_group_id FROM worker_hosts WHERE id=$1)`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newSupplyFixture(t)
+			pool := f.activePool(t, "default")
+			hostID := f.activeHost(t, pool, "host-1")
+			if test.sql != "" {
+				dbtest.MustExec(t, t.Context(), f.pool, test.sql, hostID)
+			}
+			_, claimsBefore := f.hostState(t, hostID)
+			tx := f.begin(t)
+			locked, err := LockHostWithPool(t.Context(), db.New(tx), f.groupID(), pgvalue.MustUUIDValue(pool.ID), hostID, 1)
+			if !test.locked {
+				if !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("lock host with pool error = %v, want pgx.ErrNoRows", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if locked.Host.ID != pgvalue.UUID(hostID) || locked.Group.ID != f.group.ID || !locked.Continues() {
+				t.Fatalf("locked host = %v group = %v continues = %v", locked.Host.ID, locked.Group.ID, locked.Continues())
+			}
+			if err = DrainLockedHost(t.Context(), db.New(tx), locked); err != nil {
+				t.Fatal(err)
+			}
+			if err = tx.Commit(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			status, claimsAfter := f.hostState(t, hostID)
+			if status != db.WorkerHostStatusDraining || (locked.Host.Status == db.WorkerHostStatusDraining) != (claimsAfter == claimsBefore) {
+				t.Fatalf("host after drain = %s claims %d -> %d", status, claimsBefore, claimsAfter)
+			}
+		})
+	}
+}
+
 func waitForBlockedQuery(t *testing.T, pool *pgxpool.Pool, marker string, count int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)

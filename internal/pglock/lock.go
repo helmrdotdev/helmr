@@ -40,6 +40,30 @@
 //     rows before it locks the Computer instance.
 //   - Worker host credential authentication locks the credential, host, group
 //     and pool rows in one FOR UPDATE statement rather than in separate steps.
+//   - Computer Instance operations take the order above through the computer
+//     owner. Channel claim, writer renewal and the restore plan lock secrets,
+//     worker_groups, worker_hosts, the Computer and then its Instance; the
+//     restore plan then locks the restored members' Run leases. Run cleanup
+//     omits secrets. Readiness and the restore fence share worker_groups and
+//     worker_pools like placement. A failure report locks worker_groups,
+//     worker_pools and worker_hosts FOR UPDATE; an invalid-epoch drain runs in
+//     its own transaction before and, when the Instance fence no longer holds,
+//     after it. Close, expiry and preparation settlement lock only the
+//     Computer and its Instance.
+//   - A restore commit takes its queue-scope advisory locks and then the
+//     restored members' Secret locks before the restore fence, and locks the
+//     restored members after it: Session, Run, Attempt, Wait, then the
+//     checkpoint. A restore acknowledgement adds the Run leases after the
+//     Attempts and the Session turns after the Waits, before the checkpoint.
+//   - Run lease operations lock the execution host (a lease claim first locks
+//     its attempt's Secrets through secret.LockAttemptDelivery), then every
+//     Computer the Run lineage reaches in id order (with an addressed target
+//     Computer in the same statement), then those Computers' unreclaimed
+//     Instances in id order, before re-locking the lease's own Computer and
+//     Instance and the Session, Run, Attempt and lease. Run cancellation takes
+//     the same ordered Computer and Instance locks before any member lock.
+//   - Computer Command operations lock the Command after its Computer and
+//     Instance.
 //   - Session-level singleton locks are acquired before, and held around, the
 //     transactions their holder runs. The stale worker fencer runs its
 //     transaction on the guard's connection. A dispatcher run placement lane

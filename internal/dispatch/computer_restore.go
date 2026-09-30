@@ -6,6 +6,7 @@ import (
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -13,18 +14,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const ComputerRestoreActivationTopic = "computer.restore.activate"
-
 // CommitComputerRestore grants activation to exactly one destination and all
-// captured members. The caller owns rollback on failure and commit on success.
-func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, fence ComputerPreparationFence) (db.ComputerCheckpoint, error) {
+// captured members on the computer.Restore fence. The caller owns rollback on
+// failure and commit on success.
+func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef) (db.ComputerCheckpoint, error) {
 	q := db.New(tx)
 	var checkpoint db.ComputerCheckpoint
 	var environmentID pgtype.UUID
-	if err := tx.QueryRow(ctx, `SELECT environment_id FROM computer_instances WHERE id=$1`, fence.RuntimeID).Scan(&environmentID); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT environment_id FROM computer_instances WHERE id=$1`, pgvalue.UUID(destination.ID)).Scan(&environmentID); err != nil {
 		return checkpoint, err
 	}
-	i, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{EnvironmentID: environmentID, ID: fence.RuntimeID})
+	i, err := q.GetComputerInstance(ctx, db.GetComputerInstanceParams{EnvironmentID: environmentID, ID: pgvalue.UUID(destination.ID)})
 	if err != nil {
 		return checkpoint, err
 	}
@@ -59,11 +59,11 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, fence 
 			return checkpoint, err
 		}
 	}
-	preparation, err := lockComputerRestoreObservation(ctx, tx, fence)
+	restore, err := computer.LockRestore(ctx, tx, destination)
 	if err != nil {
 		return checkpoint, err
 	}
-	i = preparation.instance
+	i = restore.Instance()
 	if !i.SourceCheckpointID.Valid || i.ObservedState != "ready" || i.MountState != "mounted" || i.ObservedDesiredVersion != i.DesiredVersion {
 		return checkpoint, pgx.ErrNoRows
 	}
@@ -89,7 +89,7 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, fence 
 		return q.LockComputerCheckpoint(ctx, db.LockComputerCheckpointParams{EnvironmentID: environmentID, ComputerID: i.ComputerID, CheckpointID: i.SourceCheckpointID})
 	}
 	// A first commit starts Runs, so it needs admitting supply.
-	if !preparation.admitting || i.AdmissionState != "restoring" {
+	if !restore.Admitting() || i.AdmissionState != "restoring" {
 		return checkpoint, pgx.ErrNoRows
 	}
 	if _, err = q.GetComputerInstanceRestoreCheckpoint(ctx, db.GetComputerInstanceRestoreCheckpointParams{ComputerInstanceID: i.ID, EnvironmentID: environmentID, WorkerGroupID: i.WorkerGroupID, WorkerHostID: i.WorkerHostID, WorkerEpoch: i.WorkerEpoch, DesiredVersion: i.DesiredVersion}); err != nil {
@@ -147,11 +147,11 @@ func (d *Authority) CommitComputerRestore(ctx context.Context, tx pgx.Tx, fence 
 	if err != nil {
 		return checkpoint, err
 	}
-	_, err = q.CreateControlOutbox(ctx, db.CreateControlOutboxParams{ID: pgvalue.UUID(uuid.NewV7()), Topic: ComputerRestoreActivationTopic, Payload: payload, AvailableAt: now})
+	_, err = q.CreateControlOutbox(ctx, db.CreateControlOutboxParams{ID: pgvalue.UUID(uuid.NewV7()), Topic: computer.RestoreActivationTopic, Payload: payload, AvailableAt: now})
 	if err != nil {
 		return checkpoint, err
 	}
-	if _, err = LockComputerReadyObservation(ctx, tx, fence); err != nil {
+	if err = restore.RecheckReady(ctx); err != nil {
 		return checkpoint, err
 	}
 	var live bool

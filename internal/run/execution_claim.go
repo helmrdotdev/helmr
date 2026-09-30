@@ -6,6 +6,7 @@ import (
 	"slices"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -81,18 +82,23 @@ func lockExecution(ctx context.Context, tx pgx.Tx, request ExecutionFence, opera
 	if err = lockExecutionPlacement(ctx, tx, lineage, loc.EnvironmentID, target); err != nil {
 		return ExecutionAuthority{}, err
 	}
-	result.Computer, err = q.LockRunLeaseClaimComputer(ctx, db.LockRunLeaseClaimComputerParams{ID: loc.ComputerID, OrgID: loc.OrgID, ProjectID: loc.ProjectID, EnvironmentID: loc.EnvironmentID, RegionID: loc.RegionID})
-	if err != nil {
-		return ExecutionAuthority{}, err
+	access := computer.RunAdmission
+	switch operation {
+	case executionLive:
+		access = computer.RunLive
+	case executionResume:
+		access = computer.RunResume
 	}
-	result.Instance, err = q.LockRunLeaseClaimInstance(ctx, db.LockRunLeaseClaimInstanceParams{ID: loc.ComputerInstanceID, OrgID: loc.OrgID, ProjectID: loc.ProjectID, EnvironmentID: loc.EnvironmentID, RegionID: loc.RegionID, WorkerGroupID: request.WorkerGroupID, WorkerHostID: request.WorkerHostID, WorkerEpoch: request.WorkerEpoch, ComputerID: loc.ComputerID})
+	result.Computer, result.Instance, err = computer.LockInstanceForRun(ctx, tx, computer.RunInstanceRef{
+		OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RegionID: loc.RegionID,
+		ComputerID: pgvalue.MustUUIDValue(loc.ComputerID), InstanceID: pgvalue.MustUUIDValue(loc.ComputerInstanceID),
+		Host:             computer.Host{GroupID: pgvalue.MustUUIDValue(request.WorkerGroupID), HostID: pgvalue.MustUUIDValue(request.WorkerHostID), Epoch: request.WorkerEpoch},
+		WriterGeneration: loc.WriterGeneration,
+	}, access)
 	if err != nil {
 		return ExecutionAuthority{}, err
 	}
 	c, i := result.Computer, result.Instance
-	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" || i.WriterGeneration != c.WriterGeneration || i.WriterGeneration != loc.WriterGeneration || (i.AdmissionState != "open" && !(operation == executionLive && (i.AdmissionState == "draining" || i.AdmissionState == "checkpointing")) && !(operation == executionResume && (i.AdmissionState == "restoring" || i.AdmissionState == "draining"))) || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.ReclaimedAt.Valid || i.TerminalAt.Valid {
-		return ExecutionAuthority{}, pgx.ErrNoRows
-	}
 	scope := CancellationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID)}
 	if err = lockExecutionSessions(ctx, tx, scope, lineage, target.session); err != nil {
 		return ExecutionAuthority{}, err
