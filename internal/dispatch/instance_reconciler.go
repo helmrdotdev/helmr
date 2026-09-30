@@ -37,7 +37,7 @@ type instanceReconciliationGuard interface {
 // that pool.
 func NewInstanceReconciler(authority *Authority, log *slog.Logger) (*InstanceReconciler, error) {
 	if authority == nil {
-		return nil, errors.New("Computer instance reconciliation authority is required")
+		return nil, errors.New("computer instance reconciliation authority is required")
 	}
 	if log == nil {
 		log = slog.Default()
