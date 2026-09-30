@@ -22,7 +22,8 @@ import (
 // holds its lock on one connection, so three connections leave the two
 // runners one working connection to share. Settling the failed checkpoint's
 // residents needs Run lease recovery before instance reconciliation, so both
-// runners must progress on that pool.
+// runners must progress on that pool. Cancellation then arrives while both
+// hold their guards and wait for the working connection the test holds.
 func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T) {
 	f, ref, _ := computertest.RegisteredCapture(t, false)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_started_at=clock_timestamp(),max_active_duration_ms=3600000,retry_policy='{"enabled":true,"maxAttempts":2,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}'`)
@@ -102,6 +103,28 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 		time.Sleep(20 * time.Millisecond)
 	}
 
+	// Take the one working connection, then wait until both runners hold
+	// their singleton locks, so cancellation reaches both while they wait for
+	// capacity with their guards held.
+	acquireCtx, acquireCancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer acquireCancel()
+	working, err := pool.Acquire(acquireCtx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer working.Release()
+	lockNames := []string{"helmr.dispatcher.run_resume_recovery", instanceReconciliationLockName}
+	heldDeadline := time.Now().Add(30 * time.Second)
+	for heldGuards(t, f.Pool, lockNames) != 2 {
+		if time.Now().After(heldDeadline) {
+			t.Fatalf("held singleton locks=%d", heldGuards(t, f.Pool, lockNames))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if acquired := pool.Stat().AcquiredConns(); acquired != 3 {
+		t.Fatalf("acquired connections with both guards and the working connection held: %d", acquired)
+	}
+
 	cancel()
 	timeout := time.After(30 * time.Second)
 	for joined < 2 {
@@ -115,6 +138,7 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 			t.Fatalf("%d of 2 runners joined after cancellation", joined)
 		}
 	}
+	working.Release()
 	// A connection closed by cancellation is destroyed asynchronously.
 	released := time.Now().Add(5 * time.Second)
 	for pool.Stat().AcquiredConns() != 0 {
@@ -123,7 +147,7 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	for _, name := range []string{"helmr.dispatcher.run_resume_recovery", instanceReconciliationLockName} {
+	for _, name := range lockNames {
 		guard, locked, err := pglock.TryAcquire(t.Context(), f.Pool, pglock.Key(name))
 		if err != nil || !locked {
 			t.Fatalf("%s after join: locked=%v err=%v", name, locked, err)
@@ -132,4 +156,22 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 			t.Fatal(err)
 		}
 	}
+}
+
+func heldGuards(t *testing.T, observer *pgxpool.Pool, names []string) int {
+	t.Helper()
+	held := 0
+	for _, name := range names {
+		key := uint64(pglock.Key(name))
+		var granted bool
+		if err := observer.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND granted
+ AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND classid=$1::bigint::oid AND objid=$2::bigint::oid AND objsubid=1)`,
+			int64(key>>32), int64(key&0xffffffff)).Scan(&granted); err != nil {
+			t.Fatal(err)
+		}
+		if granted {
+			held++
+		}
+	}
+	return held
 }

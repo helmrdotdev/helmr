@@ -29,11 +29,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The dispatcher's connection budget is 44 = 12 + 32. Besides dispatch work,
-// the run dispatch pool carries the Run lease and Computer instance
-// reconcilers, each holding its singleton lock on one connection while its
-// work takes others; default demand on that pool is about 31 of its 32
-// connections.
+// The dispatcher's connection budget is 44 = 12 + 32. On the run dispatch
+// pool, session-lock holders (the run placement lane workers plus the Run
+// lease and Computer instance reconcilers) are at most 10 connections, below
+// its cap of 32; each holder's work takes further connections. Default demand
+// is about 31 of 32, so exhaustion only queues acquisitions within each
+// cycle's timeout.
 const (
 	baseMaxConns        = int32(12)
 	runDispatchMaxConns = int32(32)
