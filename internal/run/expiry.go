@@ -48,7 +48,7 @@ func ExpireParentOwnedChild(
 	if len(lineage) > maxCancellationGraphSize {
 		return false, cancellationAuthority("queued child expiry lineage exceeds the transaction bound", nil)
 	}
-	if err := lockCancellationPlacement(ctx, tx, lineage, nil); err != nil {
+	if err := lockCancellationComputers(ctx, tx, lineage, nil); err != nil {
 		return false, err
 	}
 	lockOrder := slices.Clone(lineage)

@@ -19,7 +19,7 @@ func newDispatchIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 	return database.Pool
 }
 
-func placementTestUUID(last byte) pgtype.UUID {
+func dispatchTestUUID(last byte) pgtype.UUID {
 	value := pgtype.UUID{Valid: true}
 	value.Bytes[15] = last
 	return value

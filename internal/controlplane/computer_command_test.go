@@ -33,12 +33,12 @@ func TestCommandOutcomeSeparatesFailureExitAndReconciliation(t *testing.T) {
 	}
 }
 
-func TestPreparationExhaustedCommandIsPlacementFailure(t *testing.T) {
-	info, err := publicCommandInfo(db.ComputerCommand{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text("computer_preparation_exhausted"), FailureReason: pgvalue.Text("placement_failed")})
+func TestPreparationExhaustedCommandIsDispatchFailure(t *testing.T) {
+	info, err := publicCommandInfo(db.ComputerCommand{ID: pgvalue.NewUUIDv7(), ComputerID: pgvalue.NewUUIDv7(), Status: db.ComputerCommandStatusFailed, TerminalAt: pgvalue.Timestamptz(time.Now()), TerminalReasonCode: pgvalue.Text("computer_preparation_exhausted"), FailureReason: pgvalue.Text("dispatch_failed")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Outcome == nil || info.Outcome.Failure == nil || info.Outcome.Failure.Reason != "placement_failed" || info.Outcome.ExitCode != nil || !info.ProcessReconciled {
+	if info.Outcome == nil || info.Outcome.Failure == nil || info.Outcome.Failure.Reason != "dispatch_failed" || info.Outcome.ExitCode != nil || !info.ProcessReconciled {
 		t.Fatalf("outcome=%+v", info)
 	}
 }
@@ -58,7 +58,7 @@ func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 		{"timed_out", db.ComputerCommand{Status: db.ComputerCommandStatusTimedOut, TerminalAt: pgvalue.Timestamptz(time.Now())}},
 		{"cancelled", db.ComputerCommand{Status: db.ComputerCommandStatusCancelled, TerminalAt: pgvalue.Timestamptz(time.Now())}},
 		{"lost", db.ComputerCommand{Status: db.ComputerCommandStatusLost, FailureReason: pgvalue.Text("guest_failure"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
-		{"failed", db.ComputerCommand{Status: db.ComputerCommandStatusFailed, FailureReason: pgvalue.Text("placement_failed"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
+		{"failed", db.ComputerCommand{Status: db.ComputerCommandStatusFailed, FailureReason: pgvalue.Text("dispatch_failed"), TerminalAt: pgvalue.Timestamptz(time.Now())}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			test.command.ID, test.command.ComputerID = pgvalue.NewUUIDv7(), pgvalue.NewUUIDv7()
@@ -72,7 +72,7 @@ func TestPublicCommandInfoProjectsEveryState(t *testing.T) {
 			if test.name == "exited" && (info.Outcome.Kind != "exited" || *info.Outcome.ExitCode != 17) {
 				t.Fatalf("exited outcome = %+v", info.Outcome)
 			}
-			if test.name == "failed" && (info.Outcome.Failure == nil || info.Outcome.Failure.Reason != "placement_failed") {
+			if test.name == "failed" && (info.Outcome.Failure == nil || info.Outcome.Failure.Reason != "dispatch_failed") {
 				t.Fatalf("failed outcome = %+v", info.Outcome)
 			}
 		})

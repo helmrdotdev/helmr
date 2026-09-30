@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type runPlacementCandidateCursor struct {
+type runDispatchCandidateCursor struct {
 	score        pgtype.Timestamptz
 	runID        pgtype.UUID
 	set          bool
@@ -17,21 +17,21 @@ type runPlacementCandidateCursor struct {
 	pendingUntil time.Time
 }
 
-type runPlacementOrganizationCursor struct {
-	after      runPlacementScopeCursor
-	seen       map[runPlacementScope]struct{}
-	candidates map[runPlacementScope]runPlacementCandidateCursor
+type runDispatchOrganizationCursor struct {
+	after      runDispatchScopeCursor
+	seen       map[runDispatchScope]struct{}
+	candidates map[runDispatchScope]runDispatchCandidateCursor
 }
 
-type runPlacementCursor struct {
+type runDispatchCursor struct {
 	afterOrganization pgtype.UUID
-	afterPending      runPlacementScope
+	afterPending      runDispatchScope
 	afterPendingSet   bool
 	seen              map[pgtype.UUID]struct{}
-	organizations     map[pgtype.UUID]*runPlacementOrganizationCursor
+	organizations     map[pgtype.UUID]*runDispatchOrganizationCursor
 }
 
-func (c *runPlacementCursor) chooseOrganizations(rows []pgtype.UUID, limit int) []pgtype.UUID {
+func (c *runDispatchCursor) chooseOrganizations(rows []pgtype.UUID, limit int) []pgtype.UUID {
 	c.init()
 	count := min(len(rows), limit)
 	selected := rows[:count]
@@ -53,31 +53,31 @@ func (c *runPlacementCursor) chooseOrganizations(rows []pgtype.UUID, limit int) 
 	return selected
 }
 
-func (c *runPlacementCursor) scopeParams(
+func (c *runDispatchCursor) scopeParams(
 	organizations []pgtype.UUID,
 	limit int32,
-) runPlacementScopeParams {
+) runDispatchScopeParams {
 	c.init()
-	after := make([]runPlacementScopeCursor, 0, len(organizations))
+	after := make([]runDispatchScopeCursor, 0, len(organizations))
 	for _, organizationID := range organizations {
 		after = append(after, c.organization(organizationID).after)
 	}
-	return runPlacementScopeParams{organizations: organizations, after: after, limit: limit}
+	return runDispatchScopeParams{organizations: organizations, after: after, limit: limit}
 }
 
-func (c *runPlacementCursor) chooseScopes(
-	rows []runPlacementScopeRow,
+func (c *runDispatchCursor) chooseScopes(
+	rows []runDispatchScopeRow,
 	organizations []pgtype.UUID,
 	limit int,
 	fetchLimit int,
-) ([]runPlacementScope, map[pgtype.UUID]bool) {
+) ([]runDispatchScope, map[pgtype.UUID]bool) {
 	c.init()
 	returned := make(map[pgtype.UUID]int, len(organizations))
 	for _, row := range rows {
 		returned[row.scope.orgID]++
 	}
 	count := min(len(rows), limit)
-	selected := make([]runPlacementScope, 0, count)
+	selected := make([]runDispatchScope, 0, count)
 	selectedByOrganization := make(map[pgtype.UUID]int, len(organizations))
 	for _, row := range rows[:count] {
 		selected = append(selected, row.scope)
@@ -97,9 +97,9 @@ func (c *runPlacementCursor) chooseScopes(
 	return selected, ends
 }
 
-func (c *runPlacementCursor) advanceScopes(
+func (c *runDispatchCursor) advanceScopes(
 	organizationID pgtype.UUID,
-	scopes []runPlacementScopeCandidates,
+	scopes []runDispatchScopeCandidates,
 	examined int,
 	end bool,
 ) {
@@ -115,28 +115,28 @@ func (c *runPlacementCursor) advanceScopes(
 		return
 	}
 	scope := scopes[examined-1].scope
-	state.after = runPlacementScopeCursor{
+	state.after = runDispatchScopeCursor{
 		environmentID: scope.environmentID,
 		queueName:     scope.queueName, concurrencyKey: scope.concurrencyKey, set: true,
 	}
 }
 
-func (c *runPlacementOrganizationCursor) finishScopePass() {
+func (c *runDispatchOrganizationCursor) finishScopePass() {
 	for scope := range c.candidates {
 		if _, ok := c.seen[scope]; !ok {
 			delete(c.candidates, scope)
 		}
 	}
 	clear(c.seen)
-	c.after = runPlacementScopeCursor{}
+	c.after = runDispatchScopeCursor{}
 }
 
-func (c *runPlacementCursor) candidateParams(
-	scopes []runPlacementScope,
+func (c *runDispatchCursor) candidateParams(
+	scopes []runDispatchScope,
 	limits []int32,
-) db.ListQueuedRunPlacementCandidatesParams {
+) db.ListQueuedRunDispatchCandidatesParams {
 	c.init()
-	params := db.ListQueuedRunPlacementCandidatesParams{
+	params := db.ListQueuedRunDispatchCandidatesParams{
 		CandidateLimits: limits,
 		OrgIds:          make([]pgtype.UUID, 0, len(scopes)), EnvironmentIds: make([]pgtype.UUID, 0, len(scopes)),
 		ConcurrencyKeys: make([]string, 0, len(scopes)), QueueNames: make([]string, 0, len(scopes)),
@@ -156,7 +156,7 @@ func (c *runPlacementCursor) candidateParams(
 	return params
 }
 
-func (c *runPlacementCursor) beginCycle() {
+func (c *runDispatchCursor) beginCycle() {
 	c.init()
 	for _, organization := range c.organizations {
 		for scope, candidate := range organization.candidates {
@@ -166,10 +166,10 @@ func (c *runPlacementCursor) beginCycle() {
 	}
 }
 
-func (c *runPlacementCursor) readyCandidateScopes(
-	scopes []runPlacementScope,
-) []runPlacementScope {
-	ready := make([]runPlacementScope, 0, len(scopes))
+func (c *runDispatchCursor) readyCandidateScopes(
+	scopes []runDispatchScope,
+) []runDispatchScope {
+	ready := make([]runDispatchScope, 0, len(scopes))
 	for _, scope := range scopes {
 		candidate := c.organization(scope.orgID).candidates[scope]
 		if candidate.exhausted || !candidate.pendingUntil.IsZero() {
@@ -180,12 +180,12 @@ func (c *runPlacementCursor) readyCandidateScopes(
 	return ready
 }
 
-func (c *runPlacementCursor) duePendingScopes(now time.Time, limit int) []runPlacementScope {
+func (c *runDispatchCursor) duePendingScopes(now time.Time, limit int) []runDispatchScope {
 	c.init()
 	if limit <= 0 {
 		return nil
 	}
-	var due []runPlacementScope
+	var due []runDispatchScope
 	for _, organization := range c.organizations {
 		for scope, candidate := range organization.candidates {
 			if candidate.pendingUntil.IsZero() || candidate.pendingUntil.After(now) {
@@ -198,19 +198,19 @@ func (c *runPlacementCursor) duePendingScopes(now time.Time, limit int) []runPla
 		return nil
 	}
 	sort.Slice(due, func(i, j int) bool {
-		return compareRunPlacementScopes(due[i], due[j]) < 0
+		return compareRunDispatchScopes(due[i], due[j]) < 0
 	})
 	start := 0
 	if c.afterPendingSet {
 		start = sort.Search(len(due), func(i int) bool {
-			return compareRunPlacementScopes(due[i], c.afterPending) > 0
+			return compareRunDispatchScopes(due[i], c.afterPending) > 0
 		})
 		if start == len(due) {
 			start = 0
 		}
 	}
 	count := min(limit, len(due))
-	selected := make([]runPlacementScope, 0, count)
+	selected := make([]runDispatchScope, 0, count)
 	for offset := range count {
 		selected = append(selected, due[(start+offset)%len(due)])
 	}
@@ -219,7 +219,7 @@ func (c *runPlacementCursor) duePendingScopes(now time.Time, limit int) []runPla
 	return selected
 }
 
-func compareRunPlacementScopes(left, right runPlacementScope) int {
+func compareRunDispatchScopes(left, right runDispatchScope) int {
 	if compared := bytes.Compare(left.orgID.Bytes[:], right.orgID.Bytes[:]); compared != 0 {
 		return compared
 	}
@@ -241,52 +241,52 @@ func compareRunPlacementScopes(left, right runPlacementScope) int {
 	return 0
 }
 
-func (c *runPlacementCursor) advanceCandidate(
-	scope runPlacementScope,
-	row db.ListQueuedRunPlacementCandidatesRow,
+func (c *runDispatchCursor) advanceCandidate(
+	scope runDispatchScope,
+	row db.ListQueuedRunDispatchCandidatesRow,
 	end bool,
 ) {
 	state := c.organization(scope.orgID)
 	if end {
-		state.candidates[scope] = runPlacementCandidateCursor{exhausted: true}
+		state.candidates[scope] = runDispatchCandidateCursor{exhausted: true}
 		return
 	}
-	state.candidates[scope] = runPlacementCandidateCursor{
+	state.candidates[scope] = runDispatchCandidateCursor{
 		score: row.QueueScoreAt, runID: row.RunID, set: true,
 	}
 }
 
-func (c *runPlacementCursor) deferCandidate(scope runPlacementScope, until time.Time) {
+func (c *runDispatchCursor) deferCandidate(scope runDispatchScope, until time.Time) {
 	state := c.organization(scope.orgID)
 	candidate := state.candidates[scope]
 	candidate.pendingUntil = until
 	state.candidates[scope] = candidate
 }
 
-func (c *runPlacementCursor) resetCandidate(scope runPlacementScope) {
-	c.organization(scope.orgID).candidates[scope] = runPlacementCandidateCursor{exhausted: true}
+func (c *runDispatchCursor) resetCandidate(scope runDispatchScope) {
+	c.organization(scope.orgID).candidates[scope] = runDispatchCandidateCursor{exhausted: true}
 }
 
-func (c *runPlacementCursor) organization(
+func (c *runDispatchCursor) organization(
 	organizationID pgtype.UUID,
-) *runPlacementOrganizationCursor {
+) *runDispatchOrganizationCursor {
 	c.init()
 	state := c.organizations[organizationID]
 	if state == nil {
-		state = &runPlacementOrganizationCursor{
-			seen:       make(map[runPlacementScope]struct{}),
-			candidates: make(map[runPlacementScope]runPlacementCandidateCursor),
+		state = &runDispatchOrganizationCursor{
+			seen:       make(map[runDispatchScope]struct{}),
+			candidates: make(map[runDispatchScope]runDispatchCandidateCursor),
 		}
 		c.organizations[organizationID] = state
 	}
 	return state
 }
 
-func (c *runPlacementCursor) init() {
+func (c *runDispatchCursor) init() {
 	if c.seen == nil {
 		c.seen = make(map[pgtype.UUID]struct{})
 	}
 	if c.organizations == nil {
-		c.organizations = make(map[pgtype.UUID]*runPlacementOrganizationCursor)
+		c.organizations = make(map[pgtype.UUID]*runDispatchOrganizationCursor)
 	}
 }

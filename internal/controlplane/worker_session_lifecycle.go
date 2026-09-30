@@ -211,7 +211,7 @@ func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	// This is an advisory observation. Finalization separately locks and proves
-	// the exact hold; polling must not contend with shared worker placement locks.
+	// the exact hold; polling must not contend with shared worker dispatch locks.
 	state, err := s.db.ReadWorkerSessionControl(r.Context(), db.ReadWorkerSessionControlParams{
 		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
 		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, RunGeneration: request.RunGeneration,

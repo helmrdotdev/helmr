@@ -38,7 +38,7 @@ type ConsumerSpec struct {
 	Name        string
 	Concurrency int
 	Admission   string
-	// ContinueDuringDrain keeps the claim loop open after placement has been
+	// ContinueDuringDrain keeps the claim loop open after dispatch has been
 	// durably closed. The consumer must only return work already bound to this
 	// Worker.
 	ContinueDuringDrain bool
@@ -552,7 +552,7 @@ func (s *Supervisor) consume(
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
-		// Cleanup may bypass host admission after placement is durably closed.
+		// Cleanup may bypass host admission after dispatch is durably closed.
 		// Bound execution continuation still evaluates every hard host fence.
 		if s.cfg.AdmissionEvaluator != nil && !(spec.BypassAdmissionDuringDrain && state == StatusDraining) {
 			decision := s.cfg.AdmissionEvaluator.Evaluate(claimCtx, AdmissionCheck{

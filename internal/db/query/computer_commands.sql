@@ -42,7 +42,7 @@ SELECT command.* FROM computer_commands command
  WHERE command.environment_id=sqlc.arg(environment_id) AND command.computer_id=sqlc.arg(computer_id)
  AND command.id=sqlc.arg(command_id) FOR UPDATE;
 
--- Placement is assigned once; reconnect never moves a potentially started command.
+-- Assignment is made once; reconnect never moves a potentially started command.
 -- name: BindComputerCommandInstance :one
 WITH admitted AS (
  UPDATE computer_instances i SET membership_revision=membership_revision+1,updated_at=clock_timestamp()
@@ -101,8 +101,8 @@ UPDATE computer_commands SET process_reconciled_at=COALESCE(process_reconciled_a
  AND writer_generation=sqlc.arg(writer_generation) AND terminal_at IS NOT NULL
  RETURNING *;
 
--- A pending cancellation conclusively never launched. Placed work is cancelled by
--- its existing process scope, retaining placement until physical reconciliation.
+-- A pending cancellation conclusively never launched. Assigned work is cancelled by
+-- its existing process scope, retaining its assignment until physical reconciliation.
 -- name: RequestComputerCommandCancellation :one
 UPDATE computer_commands SET cancel_requested_at=COALESCE(cancel_requested_at,clock_timestamp()),
  status=CASE WHEN computer_instance_id IS NULL THEN 'cancelled' ELSE 'stopping' END,
@@ -114,7 +114,7 @@ UPDATE computer_commands SET cancel_requested_at=COALESCE(cancel_requested_at,cl
  RETURNING *;
 
 -- name: FailPendingComputerCommand :one
-UPDATE computer_commands SET status='failed',failure_reason='placement_failed',
+UPDATE computer_commands SET status='failed',failure_reason='dispatch_failed',
  error=sqlc.arg(error),terminal_at=clock_timestamp(),terminal_reason_code=sqlc.arg(reason_code),
  result_expires_at=clock_timestamp()+interval '30 days',revision=revision+1,updated_at=clock_timestamp()
  WHERE id=sqlc.arg(command_id) AND environment_id=sqlc.arg(environment_id)
@@ -131,7 +131,7 @@ UPDATE computer_commands c SET argv=NULL,cwd=NULL,env=NULL,stdin=NULL,error=NULL
  result_pruned_at=clock_timestamp(),updated_at=clock_timestamp()
  FROM expired WHERE c.id=expired.id;
 
--- A pending Command has no process. A placed Command must acknowledge stopping
+-- A pending Command has no process. An assigned Command must acknowledge stopping
 -- before its receipt becomes terminal; revocation does not retire its peers.
 -- name: StopSecretRevokedComputerCommand :one
 UPDATE computer_commands SET
@@ -176,7 +176,7 @@ WHERE c.region_id=sqlc.arg(region_id) AND c.status='active' AND c.desired_state=
    AND cmd.status='pending' AND cmd.computer_instance_id IS NULL)
 ORDER BY c.created_at,c.id LIMIT sqlc.arg(row_limit);
 
--- Computer lock precedes this exact historical placement lock. A newer instance
+-- Computer lock precedes this exact historical assignment lock. A newer instance
 -- is never substituted for the command's original process scope.
 -- name: LockComputerCommandInstance :one
 SELECT i.* FROM computer_instances i JOIN computer_commands c ON c.computer_instance_id=i.id

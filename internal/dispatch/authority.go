@@ -12,7 +12,7 @@ import (
 var (
 	ErrNilPool             = errors.New("dispatch: nil pgx pool")
 	ErrCapacityUnavailable = errors.New("dispatch: ready capacity unavailable")
-	ErrCandidateChanged    = errors.New("dispatch: placement candidate changed while locking")
+	ErrCandidateChanged    = errors.New("dispatch: candidate changed while locking")
 )
 
 const runtimeArchitecture = "x86_64"

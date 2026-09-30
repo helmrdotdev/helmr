@@ -115,7 +115,7 @@ func TestLeaseAndInstanceReconcilersProgressOnConstrainedSharedPool(t *testing.T
 	if _, err := blocker.Exec(t.Context(), `LOCK TABLE computer_instances IN ACCESS EXCLUSIVE MODE`); err != nil {
 		t.Fatal(err)
 	}
-	lockNames := []string{"helmr.dispatcher.run_resume_recovery", instanceReconciliationLockName}
+	lockNames := []string{"helmr.run.lease_recovery", instanceReconciliationLockName}
 	heldDeadline := time.Now().Add(30 * time.Second)
 	for heldGuards(t, f.Pool, lockNames) != 2 || pool.Stat().AcquiredConns() != 3 {
 		if time.Now().After(heldDeadline) {

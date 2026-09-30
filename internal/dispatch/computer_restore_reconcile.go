@@ -68,7 +68,7 @@ func (d *Authority) commitReadyComputerRestore(ctx context.Context, destination 
 		return err
 	}
 	defer rollback(ctx, tx)
-	if _, err = d.CommitComputerRestore(ctx, tx, destination); err != nil {
+	if _, err = d.CommitRestore(ctx, tx, destination); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

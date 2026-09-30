@@ -40,7 +40,7 @@ func TestComputerRestoreRejectsCheckpointExpiryAfterLockWait(t *testing.T) {
 				t.Fatal(err)
 			}
 			done := make(chan error, 1)
-			go func() { _, e := a.CommitComputerRestore(ctx, tx, fence); done <- e }()
+			go func() { _, e := a.CommitRestore(ctx, tx, fence); done <- e }()
 			for {
 				var blocked, expired bool
 				if err = f.Pool.QueryRow(ctx, `SELECT coalesce((SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1),false),cp.expires_at<clock_timestamp() FROM computer_checkpoints cp JOIN computer_instances i ON i.source_checkpoint_id=cp.id WHERE i.id=$2`, pid, fence.ID).Scan(&blocked, &expired); err != nil {

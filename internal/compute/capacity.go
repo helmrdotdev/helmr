@@ -3,7 +3,7 @@ package compute
 import "errors"
 
 // WorkerDiskCapacity keeps a single-VM shape separate from the aggregate host
-// pools consumed by placement. This prevents a worker with N VM slots from
+// pools consumed by dispatch. This prevents a worker with N VM slots from
 // advertising only one VM's disk as its total capacity.
 type WorkerDiskCapacity struct {
 	VMGuestEphemeralDiskBytes   int64

@@ -8,10 +8,10 @@ import (
 )
 
 // The dispatcher's failure documents for pending Commands keep their exact
-// encoding: a permanent rejection carries its code and message, a placement
+// encoding: a permanent rejection carries its code and message, an assignment
 // timeout only its code.
 func TestPendingCommandFailureDocumentsKeepTheirEncoding(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	failure := func(id uuid.UUID) (string, string) {
 		t.Helper()
 		var status, document string
@@ -22,10 +22,10 @@ func TestPendingCommandFailureDocumentsKeepTheirEncoding(t *testing.T) {
 	}
 
 	timedOut := pendingSharedCommand(t, f, work)
-	if err := a.FailPendingComputerCommand(t.Context(), timedOut, "computer_command_placement_timed_out"); err != nil {
+	if err := a.FailPendingComputerCommand(t.Context(), timedOut, "computer_command_assignment_timed_out"); err != nil {
 		t.Fatal(err)
 	}
-	if status, document := failure(uuid.UUID(timedOut.CommandID.Bytes)); status != "failed" || document != `{"code": "computer_command_placement_timed_out"}` {
+	if status, document := failure(uuid.UUID(timedOut.CommandID.Bytes)); status != "failed" || document != `{"code": "computer_command_assignment_timed_out"}` {
 		t.Fatalf("timeout status=%s error=%s", status, document)
 	}
 
@@ -43,7 +43,7 @@ func TestPendingCommandFailureDocumentsKeepTheirEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	rejected := pendingSharedCommand(t, f, work)
-	if _, err := a.PlaceComputerCommand(t.Context(), rejected); err != nil {
+	if _, err := a.AssignCommand(t.Context(), rejected); err != nil {
 		t.Fatal(err)
 	}
 	if status, document := failure(uuid.UUID(rejected.CommandID.Bytes)); status != "failed" || document != `{"code": "computer_command_secret_unavailable", "message": "command secret resolution is revoked or incomplete"}` {

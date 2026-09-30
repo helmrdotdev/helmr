@@ -115,7 +115,7 @@ func ParseComputerSpec(raw []byte, seed cas.Descriptor) (ComputerSpec, error) {
 }
 
 // ParseComputerConfig validates the immutable launch requirements independently of
-// seed materialization. Placement consumes these requirements directly.
+// seed materialization. Dispatch consumes these requirements directly.
 func ParseComputerConfig(raw []byte) (ComputerConfig, error) {
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {

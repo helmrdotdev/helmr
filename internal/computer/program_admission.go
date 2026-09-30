@@ -10,7 +10,7 @@ import (
 
 // CanAdmitProgram reports whether the Computer's spec and pinned program
 // admit a new member from deploymentID with specID. The caller holds the
-// Computer lock through creation of the logical member; physical placement
+// Computer lock through creation of the logical member; Instance assignment
 // may follow later and must recheck the Instance barrier.
 func CanAdmitProgram(ctx context.Context, q db.Querier, environmentID, computerID, specID, deploymentID pgtype.UUID) (bool, error) {
 	admission, err := q.GetComputerProgramAdmission(ctx, db.GetComputerProgramAdmissionParams{

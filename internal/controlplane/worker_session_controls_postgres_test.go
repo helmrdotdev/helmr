@@ -230,23 +230,23 @@ func workerControlChild(t *testing.T, parent *actorExecutionFixture, detached bo
 	if err = f.Pool.QueryRow(t.Context(), `SELECT revision FROM runs WHERE id=$1`, f.runID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	candidate := dispatch.ReadyRunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}
-	placed, err := authority.PlaceReadyRun(t.Context(), candidate)
+	candidate := dispatch.RunCandidate{OrgID: pgvalue.UUID(f.OrgID), RunID: pgvalue.UUID(f.runID), ExpectedRunRevision: revision}
+	assigned, err := authority.AssignRun(t.Context(), candidate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !placed.LeaseCreated {
+	if !assigned.LeaseCreated {
 		// Supply a mounted Instance for this database-only control test.
-		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',observed_version=observed_version+1,observed_desired_version=desired_version,ready_at=clock_timestamp(),mount_state='mounted',mounted_at=clock_timestamp() WHERE id=$1`, placed.ComputerInstanceID)
-		placed, err = authority.PlaceReadyRun(t.Context(), candidate)
+		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET observed_state='ready',observed_version=observed_version+1,observed_desired_version=desired_version,ready_at=clock_timestamp(),mount_state='mounted',mounted_at=clock_timestamp() WHERE id=$1`, assigned.ComputerInstanceID)
+		assigned, err = authority.AssignRun(t.Context(), candidate)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if !placed.LeaseCreated {
+	if !assigned.LeaseCreated {
 		t.Fatal("child execution was not assigned")
 	}
-	f.leaseID = pgvalue.MustUUIDValue(placed.Lease.ID)
+	f.leaseID = pgvalue.MustUUIDValue(assigned.Lease.ID)
 	f.claimLease(t)
 	f.workerCall(t, f.server.workerStart, workerapi.RunStartRequest{Lease: f.fence()}, nil)
 	f.workerCall(t, f.server.workerEnterRunEntrypoint, workerapi.RunEntrypointRequest{Lease: f.fence(), EntrypointKind: "task", EntrypointDeclaredID: "test-task"}, nil)

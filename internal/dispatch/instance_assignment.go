@@ -19,9 +19,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Placement discovery acquires no authority. Supply is locked before Computer,
+// Assignment discovery acquires no authority. Supply is locked before Computer,
 // Instance and member rows; the discovery receipt is revalidated under those locks.
-type computerPlacement struct {
+type instanceAssignment struct {
 	computer            db.Computer
 	instance            db.ComputerInstance
 	worker              db.SelectComputerInstanceCapacityRow
@@ -32,8 +32,8 @@ type computerPlacement struct {
 	cpu, memory, disk   int64
 }
 
-func discoverComputerPlacement(ctx context.Context, tx pgx.Tx, environmentID, computerID pgtype.UUID) (computerPlacement, error) {
-	var p computerPlacement
+func discoverInstanceAssignment(ctx context.Context, tx pgx.Tx, environmentID, computerID pgtype.UUID) (instanceAssignment, error) {
+	var p instanceAssignment
 	var err error
 	err = tx.QueryRow(ctx, `SELECT id,environment_id,region_id,revision,computer_spec_id FROM computers WHERE environment_id=$1 AND id=$2`, environmentID, computerID).Scan(&p.computer.ID, &p.computer.EnvironmentID, &p.computer.RegionID, &p.computer.Revision, &p.computer.ComputerSpecID)
 	if err != nil {
@@ -82,11 +82,11 @@ func discoverComputerPlacement(ctx context.Context, tx pgx.Tx, environmentID, co
 	return p, err
 }
 
-func lockComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) (computerPlacement, error) {
+func lockInstanceAssignment(ctx context.Context, tx pgx.Tx, p instanceAssignment) (instanceAssignment, error) {
 	if !p.worker.WorkerEpoch.Valid || !p.worker.VMPlatformID.Valid {
 		return p, ErrCapacityUnavailable
 	}
-	if _, err := workergroup.LockPlacementSupply(ctx, tx, workergroup.PlacementSupply{GroupID: p.worker.WorkerGroupID, RegionID: p.computer.RegionID, HostID: p.worker.WorkerHostID, Epoch: p.worker.WorkerEpoch.Int64, RunArchitecture: runtimeArchitecture, RequirePrimary: !p.instance.ID.Valid && !p.checkpoint.Valid}); err != nil {
+	if _, err := workergroup.LockDispatchSupply(ctx, tx, workergroup.DispatchSupply{GroupID: p.worker.WorkerGroupID, RegionID: p.computer.RegionID, HostID: p.worker.WorkerHostID, Epoch: p.worker.WorkerEpoch.Int64, RunArchitecture: runtimeArchitecture, RequirePrimary: !p.instance.ID.Valid && !p.checkpoint.Valid}); err != nil {
 		return p, err
 	}
 	c, err := db.New(tx).LockComputer(ctx, db.LockComputerParams{EnvironmentID: p.computer.EnvironmentID, ID: p.computer.ID})
@@ -148,7 +148,7 @@ func lockComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) 
 }
 
 // The caller has locked the member and checked its admission before allocating.
-func (d *Authority) allocateComputerPlacement(ctx context.Context, tx pgx.Tx, p computerPlacement) (db.ComputerInstance, error) {
+func (d *Authority) allocateInstanceAssignment(ctx context.Context, tx pgx.Tx, p instanceAssignment) (db.ComputerInstance, error) {
 	if p.computer.WriterGeneration == math.MaxInt64 {
 		return db.ComputerInstance{}, errors.New("computer writer generation exhausted")
 	}

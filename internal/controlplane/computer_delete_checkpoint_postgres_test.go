@@ -51,7 +51,7 @@ func TestComputerDeleteRetiresConsumedCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := authority.CommitComputerRestore(t.Context(), tx, fence)
+	cp, err := authority.CommitRestore(t.Context(), tx, fence)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestComputerDeleteRetiresConsumedCheckpoint(t *testing.T) {
 	if err = tx.QueryRow(t.Context(), `SELECT writer_generation FROM computer_instances WHERE id=$1`, fence.ID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = dispatch.AcknowledgeComputerRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
+	if _, err = dispatch.AcknowledgeRestore(t.Context(), tx, fence, cp.ID, generation, nil); err != nil {
 		t.Fatal(err)
 	}
 	dbtest.MustExec(t, t.Context(), tx, `UPDATE runs SET status='cancelled',terminal_at=now(),failure='{"code":"cancelled","message":"Cancelled","details":{}}',current_run_lease_id=NULL,active_started_at=NULL WHERE computer_id=$1`, cp.ComputerID)

@@ -760,16 +760,16 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("fixed guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
 	logicalTables := []string{"idempotency_claims", "schedules", "computers", "sessions", "session_turns", "session_messages", "session_events", "runs", "run_attempts", "run_waits", "computer_checkpoints", "telemetry_outbox"}
-	var placementLeaks int
+	var assignmentLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns
 		 WHERE table_schema = 'public' AND table_name = ANY($1::text[])
 		   AND column_name = 'worker_group_id'
-	`, logicalTables).Scan(&placementLeaks); err != nil {
+	`, logicalTables).Scan(&assignmentLeaks); err != nil {
 		t.Fatal(err)
 	}
-	if placementLeaks != 0 {
-		t.Fatalf("logical worker_group_id columns = %d, want 0", placementLeaks)
+	if assignmentLeaks != 0 {
+		t.Fatalf("logical worker_group_id columns = %d, want 0", assignmentLeaks)
 	}
 
 	requiredIndexes := []string{
@@ -826,7 +826,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("artifacts_cas_scope_idx definition = %q", casScopeIndexDefinition)
 	}
 
-	var placementColumns int
+	var assignmentColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM information_schema.columns
@@ -842,11 +842,11 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"writer_token_hash",
 		"writer_expires_at",
 		"membership_revision",
-	}).Scan(&placementColumns); err != nil {
+	}).Scan(&assignmentColumns); err != nil {
 		t.Fatal(err)
 	}
-	if placementColumns != 8 {
-		t.Fatalf("runtime placement columns = %d, want 8", placementColumns)
+	if assignmentColumns != 8 {
+		t.Fatalf("instance assignment columns = %d, want 8", assignmentColumns)
 	}
 
 }

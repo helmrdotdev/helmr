@@ -30,7 +30,7 @@ func TestFailPendingRecordsFailureOnce(t *testing.T) {
 	f := runtest.New(t)
 	lease := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	id, revision := commandtest.Pending(t, f, lease.LeaseID)
-	failure := Failure{Code: "computer_command_placement_timed_out", Detail: []byte(`{"code":"computer_command_placement_timed_out"}`)}
+	failure := Failure{Code: "computer_command_assignment_timed_out", Detail: []byte(`{"code":"computer_command_assignment_timed_out"}`)}
 	for name, pending := range map[string]Pending{
 		"foreign organization": {OrgID: uuid.NewV7(), CommandID: id, ExpectedRevision: revision},
 		"unknown command":      {OrgID: f.OrgID, CommandID: uuid.NewV7(), ExpectedRevision: revision},
@@ -48,7 +48,7 @@ func TestFailPendingRecordsFailureOnce(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status,terminal_reason_code,error::text,failure_reason FROM computer_commands WHERE id=$1`, id).Scan(&status, &reason, &detail, &failed); err != nil {
 		t.Fatal(err)
 	}
-	if status != "failed" || reason != failure.Code || detail != `{"code": "computer_command_placement_timed_out"}` || failed != "placement_failed" {
+	if status != "failed" || reason != failure.Code || detail != `{"code": "computer_command_assignment_timed_out"}` || failed != "dispatch_failed" {
 		t.Fatalf("failed Command status=%s reason=%s error=%s failure=%s", status, reason, detail, failed)
 	}
 	pending.ExpectedRevision++

@@ -29,7 +29,7 @@ const (
 )
 
 // ObservationFreshnessSeconds bounds how old a Worker Host observation may be
-// for admission (placement, preparation, Run claim and start) and capture.
+// for admission (dispatch, preparation, Run claim and start) and capture.
 // Operations continuing an already started Run do not require freshness; stale
 // fencing revokes them instead.
 const ObservationFreshnessSeconds = int64(120)

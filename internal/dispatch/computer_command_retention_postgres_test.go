@@ -133,11 +133,11 @@ func TestCommandPayloadCollectionRequiresExpiredReconciledScope(t *testing.T) {
 
 func commandRetentionFixture(t *testing.T) (runtest.Fixture, pgtype.UUID, pgtype.UUID, func(bool)) {
 	t.Helper()
-	f, work, a := commandPlacementFixture(t)
+	f, work, a := commandAssignmentFixture(t)
 	candidate := pendingSharedCommand(t, f, work)
-	placed, err := a.PlaceComputerCommand(t.Context(), candidate)
-	if err != nil || !placed.ProcessBound {
-		t.Fatalf("place Command: %+v %v", placed, err)
+	assigned, err := a.AssignCommand(t.Context(), candidate)
+	if err != nil || !assigned.ProcessBound {
+		t.Fatalf("assign Command: %+v %v", assigned, err)
 	}
 	var computerID pgtype.UUID
 	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM computer_commands WHERE id=$1`, candidate.CommandID).Scan(&computerID); err != nil {

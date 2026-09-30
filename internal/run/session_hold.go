@@ -31,9 +31,9 @@ func acceptActorRunCancellation(ctx context.Context, tx pgx.Tx, request Cancella
 	if err != nil {
 		return ActorCancellationReceipt{}, err
 	}
-	// Placement and Run lifecycle mutation share this Session lock. Reload the
+	// Dispatch and Run lifecycle mutation share this Session lock. Reload the
 	// attempt/Lease after acquiring it so pre-lock observations cannot orphan a
-	// stopped Run that just parked or completed a placement transition.
+	// stopped Run that just parked or completed an assignment transition.
 	run, err = q.GetRun(ctx, db.GetRunParams{EnvironmentID: run.EnvironmentID, ID: run.ID})
 	if err != nil {
 		return ActorCancellationReceipt{}, err

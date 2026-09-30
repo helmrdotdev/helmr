@@ -15,7 +15,7 @@ import (
 func TestComputerRecoveryPreparationBudget(t *testing.T) {
 	for _, member := range []string{"Run", "Command"} {
 		t.Run(member, func(t *testing.T) {
-			f, work, a := commandPlacementFixture(t)
+			f, work, a := commandAssignmentFixture(t)
 			runCandidate := queuedSharedRun(t, f, work)
 			commandCandidate := pendingSharedCommand(t, f, work)
 			var computerID, root pgtype.UUID
@@ -25,20 +25,20 @@ func TestComputerRecoveryPreparationBudget(t *testing.T) {
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=2,observed_state='closed',observed_desired_version=2,terminal_at=now(),terminal_reason_code='test_exclusion',reclaimed_at=now(),reclaim_evidence='{"method":"host_reconciled"}',admission_state='closed',mount_state='unmounted',unmounted_at=now() WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, work.LeaseID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET epoch_guest_ephemeral_disk_bytes=68719476736,per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, f.WorkerID)
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET recovery_id=$2,recovery_disk_version_id=head_disk_version_id,recovery_reason='worker_lost',recovery_started_at=now() WHERE id=$1`, computerID, uuid.NewV7())
-			place := func() (pgtype.UUID, error) {
+			assign := func() (pgtype.UUID, error) {
 				if member == "Run" {
-					p, e := a.PlaceReadyRun(t.Context(), runCandidate)
+					p, e := a.AssignRun(t.Context(), runCandidate)
 					return p.ComputerInstanceID, e
 				}
-				p, e := a.PlaceComputerCommand(t.Context(), commandCandidate)
+				p, e := a.AssignCommand(t.Context(), commandCandidate)
 				return p.ComputerInstanceID, e
 			}
 			for count := 1; count <= 8; count++ {
-				id, err := place()
+				id, err := assign()
 				if err != nil {
 					t.Fatalf("attempt %d: %v", count, err)
 				}
-				replay, err := place()
+				replay, err := assign()
 				if err != nil || replay != id {
 					t.Fatalf("allocation replay=%v %v", replay, err)
 				}
@@ -54,7 +54,7 @@ func TestComputerRecoveryPreparationBudget(t *testing.T) {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET next_preparation_at=now()-interval '1 second' WHERE id=$1`, computerID)
 				}
 				// Closing authority must not release capacity or allow a replacement until physical exclusion is recorded.
-				if next, e := place(); e == nil && next != id {
+				if next, e := assign(); e == nil && next != id {
 					t.Fatalf("replacement admitted before reclaim: %v", next)
 				}
 				i, err := db.New(f.Pool).GetComputerInstance(t.Context(), db.GetComputerInstanceParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: id})
@@ -70,7 +70,7 @@ func TestComputerRecoveryPreparationBudget(t *testing.T) {
 				}
 				if count < 8 {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET next_preparation_at=now()+interval '1 hour' WHERE id=$1`, computerID)
-					if _, err = place(); err == nil {
+					if _, err = assign(); err == nil {
 						t.Fatal("preparation backoff bypassed")
 					}
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET next_preparation_at=now()-interval '1 second' WHERE id=$1`, computerID)
@@ -83,7 +83,7 @@ func TestComputerRecoveryPreparationBudget(t *testing.T) {
 			// Fresh members isolate the Computer budget from terminal member guards.
 			runCandidate = queuedSharedRun(t, f, work)
 			commandCandidate = pendingSharedCommand(t, f, work)
-			if _, err := place(); err == nil {
+			if _, err := assign(); err == nil {
 				t.Fatal("ninth preparation admitted")
 			}
 			var attempts, live int

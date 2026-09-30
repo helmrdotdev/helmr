@@ -29,11 +29,11 @@ func newReconcileMetrics() reconcileMetrics {
 	)
 	runDecisions, _ := meter.Int64Counter(
 		"helmr.dispatch.run.decisions",
-		metric.WithDescription("Run placement decisions by classified outcome."),
+		metric.WithDescription("Run dispatch decisions by classified outcome."),
 	)
 	runBatchSize, _ := meter.Int64Histogram(
 		"helmr.dispatch.run.batch.attempts",
-		metric.WithDescription("Candidates examined by each Run placement lane batch."),
+		metric.WithDescription("Candidates examined by each Run dispatch lane batch."),
 	)
 	return reconcileMetrics{
 		cycles: cycles, duration: duration,
@@ -41,7 +41,7 @@ func newReconcileMetrics() reconcileMetrics {
 	}
 }
 
-func (m reconcileMetrics) observeRunBatch(ctx context.Context, batch runPlacementBatch) {
+func (m reconcileMetrics) observeRunBatch(ctx context.Context, batch runDispatchBatch) {
 	if m.runBatchSize != nil {
 		m.runBatchSize.Record(ctx, int64(batch.attempted))
 	}
@@ -52,11 +52,11 @@ func (m reconcileMetrics) observeRunBatch(ctx context.Context, batch runPlacemen
 		name  string
 		count int
 	}{
-		{name: "placed", count: batch.placed},
+		{name: "assigned", count: batch.assigned},
 		{name: "pending", count: batch.pending},
 		{name: "changed", count: batch.changed},
 		{name: "capacity_unavailable", count: batch.unavailable},
-		{name: "failure", count: batch.attempted - batch.placed - batch.pending - batch.changed - batch.unavailable},
+		{name: "failure", count: batch.attempted - batch.assigned - batch.pending - batch.changed - batch.unavailable},
 	}
 	for _, outcome := range outcomes {
 		if outcome.count == 0 {

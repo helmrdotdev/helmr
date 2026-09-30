@@ -70,7 +70,7 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 	if err = workergroup.LockExecutionHost(ctx, q, fence.host(loc.RegionID, false)); err != nil {
 		return fail(err)
 	}
-	if err = lockExecutionPlacement(ctx, tx, order, loc.EnvironmentID, executionTarget{session: targetID}); err != nil {
+	if err = lockExecutionComputers(ctx, tx, order, loc.EnvironmentID, executionTarget{session: targetID}); err != nil {
 		return fail(err)
 	}
 	if err = lockExecutionSessions(ctx, tx, scope, order, targetID); err != nil {
@@ -110,8 +110,9 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 			return fail(pgx.ErrNoRows)
 		}
 	}
-	// Re-locking below cannot expand placement: target admission and every
-	// discovered Run are now locked, and the source operation verifies its lineage.
+	// Re-locking below cannot expand the locked Computer set: target admission
+	// and every discovered Run are now locked, and the source operation verifies
+	// its lineage.
 	graph, err := LockOwnedFinalization(ctx, tx, OwnedFinalizationRequest{OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID, RunID: pgvalue.MustUUIDValue(target.CurrentRunID)})
 	if err != nil {
 		return fail(err)

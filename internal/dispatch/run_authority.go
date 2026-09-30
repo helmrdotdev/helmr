@@ -13,7 +13,7 @@ import (
 func discoverRunQueueScope(
 	ctx context.Context,
 	tx pgx.Tx,
-	candidate ReadyRunCandidate,
+	candidate RunCandidate,
 ) (pgtype.UUID, string, pgtype.Text, error) {
 	var environmentID pgtype.UUID
 	var queueName string
@@ -37,7 +37,7 @@ SELECT environment_id, queue_name, concurrency_key
 func lockRunQueueScope(
 	ctx context.Context,
 	tx pgx.Tx,
-	candidate ReadyRunCandidate,
+	candidate RunCandidate,
 ) (pgtype.UUID, string, pgtype.Text, error) {
 	environmentID, queueName, concurrencyKey, err := discoverRunQueueScope(
 		ctx,
@@ -60,7 +60,7 @@ func lockRunQueueScope(
 func lockRunSecrets(
 	ctx context.Context,
 	tx pgx.Tx,
-	candidate ReadyRunCandidate,
+	candidate RunCandidate,
 ) error {
 	secretRows, err := tx.Query(ctx, `
 SELECT secrets.status = 'active'
@@ -110,7 +110,7 @@ SELECT secrets.status = 'active'
 }
 
 // Computer and Instance locks must precede Session and Run admission locks.
-func lockRunPlacementAuthority(ctx context.Context, tx pgx.Tx, candidate ReadyRunCandidate, environmentID, computerID pgtype.UUID) (db.Run, error) {
+func lockRunAssignment(ctx context.Context, tx pgx.Tx, candidate RunCandidate, environmentID, computerID pgtype.UUID) (db.Run, error) {
 	var sessionID pgtype.UUID
 	err := tx.QueryRow(ctx, `SELECT session_id FROM runs WHERE org_id=$1 AND id=$2 AND revision=$3 AND environment_id=$4 AND computer_id=$5`, candidate.OrgID, candidate.RunID, candidate.ExpectedRunRevision, environmentID, computerID).Scan(&sessionID)
 	if err != nil {

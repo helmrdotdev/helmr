@@ -9,13 +9,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 )
 
-func TestRunPlacementRejectsQueueDeadlineAfterAuthorityLockWait(t *testing.T) {
-	for _, placement := range []string{"new Instance", "shared Instance"} {
+func TestRunAssignmentRejectsQueueDeadlineAfterAuthorityLockWait(t *testing.T) {
+	for _, assignment := range []string{"new Instance", "shared Instance"} {
 		for _, lock := range []string{"Worker", "Computer"} {
-			t.Run(placement+"/"+lock, func(t *testing.T) {
-				f, work, a := commandPlacementFixture(t)
+			t.Run(assignment+"/"+lock, func(t *testing.T) {
+				f, work, a := commandAssignmentFixture(t)
 				candidate := queuedSharedRun(t, f, work)
-				if placement == "new Instance" {
+				if assignment == "new Instance" {
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=2,observed_state='closed',observed_desired_version=2,terminal_at=now(),terminal_reason_code='test_exclusion',reclaimed_at=now(),reclaim_evidence='{"method":"host_reconciled"}',admission_state='closed',mount_state='unmounted',unmounted_at=now() WHERE id=(SELECT computer_instance_id FROM run_leases WHERE id=$1)`, work.LeaseID)
 					dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET epoch_guest_ephemeral_disk_bytes=68719476736,per_vm_guest_ephemeral_disk_bytes=34359738368 WHERE id=$1`, f.WorkerID)
 				}
@@ -46,7 +46,7 @@ func TestRunPlacementRejectsQueueDeadlineAfterAuthorityLockWait(t *testing.T) {
 				}
 				dbtest.MustExec(t, ctx, f.Pool, `UPDATE runs SET queued_expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, candidate.RunID)
 				done := make(chan error, 1)
-				go func() { _, e := a.PlaceReadyRun(ctx, candidate); done <- e }()
+				go func() { _, e := a.AssignRun(ctx, candidate); done <- e }()
 				for {
 					var blocked, expired bool
 					if err = f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity a WHERE $1=ANY(pg_blocking_pids(a.pid))), queued_expires_at<clock_timestamp() FROM runs WHERE id=$2`, blockerPID, candidate.RunID).Scan(&blocked, &expired); err != nil {
@@ -57,7 +57,7 @@ func TestRunPlacementRejectsQueueDeadlineAfterAuthorityLockWait(t *testing.T) {
 					}
 					select {
 					case e := <-done:
-						t.Fatalf("placement did not wait: %v", e)
+						t.Fatalf("assignment did not wait: %v", e)
 					case <-ctx.Done():
 						t.Fatal(ctx.Err())
 					case <-time.After(10 * time.Millisecond):
@@ -69,25 +69,25 @@ func TestRunPlacementRejectsQueueDeadlineAfterAuthorityLockWait(t *testing.T) {
 				select {
 				case err = <-done:
 					if !errors.Is(err, ErrCandidateChanged) {
-						t.Fatalf("expired placement=%v", err)
+						t.Fatalf("expired assignment=%v", err)
 					}
 				case <-ctx.Done():
 					t.Fatal(ctx.Err())
 				}
 				if after := snapshot(); after != before {
-					t.Fatalf("rejected placement mutated physical authority or granted execution\nbefore=%s\nafter=%s", before, after)
+					t.Fatalf("rejected assignment mutated physical authority or granted execution\nbefore=%s\nafter=%s", before, after)
 				}
 			})
 		}
 	}
 }
 
-func TestRunPlacementKeepsAlreadyStartedRunEligible(t *testing.T) {
-	f, work, a := commandPlacementFixture(t)
+func TestRunAssignmentKeepsAlreadyStartedRunEligible(t *testing.T) {
+	f, work, a := commandAssignmentFixture(t)
 	candidate := queuedSharedRun(t, f, work)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET first_lease_at=clock_timestamp(),queued_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, candidate.RunID)
-	placed, err := a.PlaceReadyRun(t.Context(), candidate)
-	if err != nil || !placed.LeaseCreated {
-		t.Fatalf("already started Run blocked by queue deadline: %+v %v", placed, err)
+	assigned, err := a.AssignRun(t.Context(), candidate)
+	if err != nil || !assigned.LeaseCreated {
+		t.Fatalf("already started Run blocked by queue deadline: %+v %v", assigned, err)
 	}
 }

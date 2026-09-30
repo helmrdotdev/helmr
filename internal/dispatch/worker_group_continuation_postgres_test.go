@@ -31,7 +31,7 @@ type restoreHarness struct {
 	authority *dispatch.Authority
 	fence     computer.InstanceRef
 	cp        db.ComputerCheckpoint
-	grants    []dispatch.ComputerRestoreGrant
+	grants    []dispatch.RestoreGrant
 }
 
 func (h *restoreHarness) commit(t *testing.T) (db.ComputerCheckpoint, error) {
@@ -41,7 +41,7 @@ func (h *restoreHarness) commit(t *testing.T) (db.ComputerCheckpoint, error) {
 		return db.ComputerCheckpoint{}, err
 	}
 	defer tx.Rollback(t.Context())
-	cp, err := h.authority.CommitComputerRestore(t.Context(), tx, h.fence)
+	cp, err := h.authority.CommitRestore(t.Context(), tx, h.fence)
 	if err == nil {
 		err = tx.Commit(t.Context())
 	}
@@ -55,7 +55,7 @@ func (h *restoreHarness) acknowledge(t *testing.T) (db.ComputerInstance, error) 
 		return db.ComputerInstance{}, err
 	}
 	defer tx.Rollback(t.Context())
-	i, err := dispatch.AcknowledgeComputerRestore(t.Context(), tx, h.fence, h.cp.ID, h.cp.WriterGeneration+1, h.grants)
+	i, err := dispatch.AcknowledgeRestore(t.Context(), tx, h.fence, h.cp.ID, h.cp.WriterGeneration+1, h.grants)
 	if err == nil {
 		err = tx.Commit(t.Context())
 	}

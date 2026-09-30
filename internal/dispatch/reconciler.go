@@ -16,29 +16,29 @@ import (
 )
 
 const (
-	defaultRunPlacementIdleInterval      = time.Second
-	defaultRunPlacementFailureBackoff    = time.Second
-	defaultRunPlacementTimeout           = 15 * time.Second
-	defaultRunPlacementWorkers           = 8
-	defaultRunPlacementOrganizationLimit = int32(32)
-	defaultRunPlacementAttemptLimit      = int32(32)
-	defaultRunPlacementParallelism       = 16
-	defaultRunPlacementPendingInterval   = time.Second
-	defaultComputerCommandPlacementLimit = int32(32)
+	defaultRunDispatchIdleInterval       = time.Second
+	defaultRunDispatchFailureBackoff     = time.Second
+	defaultRunDispatchTimeout            = 15 * time.Second
+	defaultRunDispatchWorkers            = 8
+	defaultRunDispatchOrganizationLimit  = int32(32)
+	defaultRunDispatchAttemptLimit       = int32(32)
+	defaultRunDispatchParallelism        = 16
+	defaultRunDispatchPendingInterval    = time.Second
+	defaultCommandDispatchLimit          = int32(32)
 	defaultComputerCommandPendingTimeout = 10 * time.Minute
 )
 
-type RunPlacementDiscovery interface {
+type RunDiscovery interface {
 	ListOrganizations(context.Context, int16, pgtype.UUID, int32) ([]pgtype.UUID, error)
-	ListScopes(context.Context, runPlacementScopeParams) ([]runPlacementScopeRow, error)
-	ListCandidates(context.Context, db.ListQueuedRunPlacementCandidatesParams) ([]db.ListQueuedRunPlacementCandidatesRow, error)
+	ListScopes(context.Context, runDispatchScopeParams) ([]runDispatchScopeRow, error)
+	ListCandidates(context.Context, db.ListQueuedRunDispatchCandidatesParams) ([]db.ListQueuedRunDispatchCandidatesRow, error)
 }
 
-type RunPlacementAuthority interface {
-	PlaceReadyRun(context.Context, ReadyRunCandidate) (ReadyRunPlacement, error)
+type RunAssigner interface {
+	AssignRun(context.Context, RunCandidate) (RunAssignment, error)
 }
 
-type ComputerCommandPlacementDiscovery interface {
+type CommandDiscovery interface {
 	ListPendingComputerCommandCandidates(
 		context.Context,
 		int32,
@@ -49,46 +49,46 @@ type ComputerCommandPlacementDiscovery interface {
 	) ([]db.ListRecoverableComputerCommandCandidatesRow, error)
 }
 
-type ComputerCommandPlacementAuthority interface {
-	PlaceComputerCommand(
+type CommandAuthority interface {
+	AssignCommand(
 		context.Context,
-		ReadyComputerCommandCandidate,
-	) (ComputerCommandPlacement, error)
+		CommandCandidate,
+	) (CommandAssignment, error)
 	RecoverComputerCommand(
 		context.Context,
 		RecoverableComputerCommandCandidate,
 	) error
 	FailPendingComputerCommand(
 		context.Context,
-		ReadyComputerCommandCandidate,
+		CommandCandidate,
 		string,
 	) error
 }
 
-type PlacementReconciler struct {
-	runDiscovery             RunPlacementDiscovery
-	runLaneLocker            RunPlacementLaneLocker
-	runAuthority             RunPlacementAuthority
-	computerCommandDiscovery ComputerCommandPlacementDiscovery
-	computerCommandAuthority ComputerCommandPlacementAuthority
-	runPolicy                runPlacementPolicy
-	computerCommandPolicy    placementLoopPolicy
-	runCursors               [runPlacementLaneCount]runPlacementCursor
-	runLaneMutexes           [runPlacementLaneCount]sync.Mutex
+type Reconciler struct {
+	runDiscovery             RunDiscovery
+	runLaneLocker            RunLaneLocker
+	runAuthority             RunAssigner
+	computerCommandDiscovery CommandDiscovery
+	computerCommandAuthority CommandAuthority
+	runPolicy                runDispatchPolicy
+	computerCommandPolicy    loopPolicy
+	runCursors               [runLaneCount]runDispatchCursor
+	runLaneMutexes           [runLaneCount]sync.Mutex
 	runNextLane              atomic.Uint32
 	runParallel              chan struct{}
 	metrics                  reconcileMetrics
 	log                      *slog.Logger
 }
 
-type placementLoopPolicy struct {
+type loopPolicy struct {
 	interval       time.Duration
 	failureBackoff time.Duration
 	timeout        time.Duration
 	limit          int32
 }
 
-type runPlacementPolicy struct {
+type runDispatchPolicy struct {
 	idleInterval      time.Duration
 	failureBackoff    time.Duration
 	timeout           time.Duration
@@ -99,68 +99,68 @@ type runPlacementPolicy struct {
 	pendingInterval   time.Duration
 }
 
-type runPlacementOutcome uint8
+type runDispatchOutcome uint8
 
 const (
-	runPlacementPlaced runPlacementOutcome = iota
-	runPlacementPending
-	runPlacementChanged
-	runPlacementUnavailable
+	runDispatchAssigned runDispatchOutcome = iota
+	runDispatchPending
+	runDispatchChanged
+	runDispatchUnavailable
 )
 
-type runPlacementBatch struct {
+type runDispatchBatch struct {
 	attempted                 int
-	placed                    int
+	assigned                  int
 	pending                   int
 	changed                   int
 	unavailable               int
 	completedOrganizationPass bool
 }
 
-type runPlacementResult struct {
-	work    runPlacementWork
-	outcome runPlacementOutcome
+type runDispatchResult struct {
+	work    runDispatchWork
+	outcome runDispatchOutcome
 	err     error
 }
 
-type runPlacementWork struct {
-	scope     runPlacementScope
-	candidate db.ListQueuedRunPlacementCandidatesRow
+type runDispatchWork struct {
+	scope     runDispatchScope
+	candidate db.ListQueuedRunDispatchCandidatesRow
 	end       bool
 	examined  int
 }
 
-func (b runPlacementBatch) capacityBlocked() bool {
+func (b runDispatchBatch) capacityBlocked() bool {
 	return b.attempted > 0 && b.unavailable == b.attempted
 }
 
-func (b *runPlacementBatch) add(page runPlacementBatch) {
+func (b *runDispatchBatch) add(page runDispatchBatch) {
 	b.attempted += page.attempted
-	b.placed += page.placed
+	b.assigned += page.assigned
 	b.pending += page.pending
 	b.changed += page.changed
 	b.unavailable += page.unavailable
 	b.completedOrganizationPass = b.completedOrganizationPass || page.completedOrganizationPass
 }
 
-type runPlacementScopeCandidates struct {
-	scope runPlacementScope
-	rows  []db.ListQueuedRunPlacementCandidatesRow
+type runDispatchScopeCandidates struct {
+	scope runDispatchScope
+	rows  []db.ListQueuedRunDispatchCandidatesRow
 	next  int
 	limit int
 }
 
-type runPlacementOrganizationCandidates struct {
-	scopes   []runPlacementScopeCandidates
+type runDispatchOrganizationCandidates struct {
+	scopes   []runDispatchScopeCandidates
 	next     int
 	seen     int
 	examined int
 	end      bool
 }
 
-func (c *runPlacementOrganizationCandidates) take(
-	blocked map[runPlacementScope]struct{},
-) (runPlacementScope, db.ListQueuedRunPlacementCandidatesRow, bool, int, bool) {
+func (c *runDispatchOrganizationCandidates) take(
+	blocked map[runDispatchScope]struct{},
+) (runDispatchScope, db.ListQueuedRunDispatchCandidatesRow, bool, int, bool) {
 	for range len(c.scopes) {
 		index := c.next
 		c.next = (c.next + 1) % len(c.scopes)
@@ -179,53 +179,53 @@ func (c *runPlacementOrganizationCandidates) take(
 		end := len(scope.rows) < scope.limit && scope.next == len(scope.rows)
 		return scope.scope, row, end, c.seen, true
 	}
-	return runPlacementScope{}, db.ListQueuedRunPlacementCandidatesRow{}, false, c.seen, false
+	return runDispatchScope{}, db.ListQueuedRunDispatchCandidatesRow{}, false, c.seen, false
 }
 
-func NewPlacementReconciler(runDiscovery RunPlacementDiscovery, runLaneLocker RunPlacementLaneLocker,
-	runAuthority RunPlacementAuthority,
-	computerCommandDiscovery ComputerCommandPlacementDiscovery,
-	computerCommandAuthority ComputerCommandPlacementAuthority,
+func NewReconciler(runDiscovery RunDiscovery, runLaneLocker RunLaneLocker,
+	runAuthority RunAssigner,
+	computerCommandDiscovery CommandDiscovery,
+	computerCommandAuthority CommandAuthority,
 	log *slog.Logger,
-) (*PlacementReconciler, error) {
+) (*Reconciler, error) {
 	if runDiscovery == nil || runLaneLocker == nil || runAuthority == nil ||
 		computerCommandDiscovery == nil || computerCommandAuthority == nil {
-		return nil, errors.New("run placement and computer exec placement dependencies are required")
+		return nil, errors.New("run and command dispatch dependencies are required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	reconciler := &PlacementReconciler{
+	reconciler := &Reconciler{
 		runDiscovery: runDiscovery, runLaneLocker: runLaneLocker, runAuthority: runAuthority,
 		computerCommandDiscovery: computerCommandDiscovery,
 		computerCommandAuthority: computerCommandAuthority,
 		log:                      log, metrics: newReconcileMetrics(),
-		runPolicy: runPlacementPolicy{
-			idleInterval:      defaultRunPlacementIdleInterval,
-			failureBackoff:    defaultRunPlacementFailureBackoff,
-			timeout:           defaultRunPlacementTimeout,
-			workers:           defaultRunPlacementWorkers,
-			organizationLimit: defaultRunPlacementOrganizationLimit,
-			attemptLimit:      defaultRunPlacementAttemptLimit,
-			parallelism:       defaultRunPlacementParallelism,
-			pendingInterval:   defaultRunPlacementPendingInterval,
+		runPolicy: runDispatchPolicy{
+			idleInterval:      defaultRunDispatchIdleInterval,
+			failureBackoff:    defaultRunDispatchFailureBackoff,
+			timeout:           defaultRunDispatchTimeout,
+			workers:           defaultRunDispatchWorkers,
+			organizationLimit: defaultRunDispatchOrganizationLimit,
+			attemptLimit:      defaultRunDispatchAttemptLimit,
+			parallelism:       defaultRunDispatchParallelism,
+			pendingInterval:   defaultRunDispatchPendingInterval,
 		},
-		computerCommandPolicy: placementLoopPolicy{
-			interval: defaultRunPlacementIdleInterval, failureBackoff: defaultRunPlacementFailureBackoff,
-			timeout: defaultRunPlacementTimeout, limit: defaultComputerCommandPlacementLimit,
+		computerCommandPolicy: loopPolicy{
+			interval: defaultRunDispatchIdleInterval, failureBackoff: defaultRunDispatchFailureBackoff,
+			timeout: defaultRunDispatchTimeout, limit: defaultCommandDispatchLimit,
 		},
 	}
 	reconciler.runParallel = make(chan struct{}, reconciler.runPolicy.parallelism)
 	return reconciler, nil
 }
 
-func (r *PlacementReconciler) Run(ctx context.Context) error {
+func (r *Reconciler) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	loops := r.runPolicy.workers + 1
 	errC := make(chan error, loops)
 	for range r.runPolicy.workers {
-		go func() { errC <- r.runPlacementLoop(runCtx) }()
+		go func() { errC <- r.runLaneLoop(runCtx) }()
 	}
 	go func() {
 		errC <- r.runLoop(
@@ -251,17 +251,17 @@ func (r *PlacementReconciler) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (r *PlacementReconciler) runPlacementLoop(ctx context.Context) error {
+func (r *Reconciler) runLaneLoop(ctx context.Context) error {
 	idleLanes := 0
 	for {
-		lane := int16((r.runNextLane.Add(1) - 1) % uint32(runPlacementLaneCount))
+		lane := int16((r.runNextLane.Add(1) - 1) % uint32(runLaneCount))
 		started := time.Now()
 		cycleCtx, cancel := context.WithTimeout(ctx, r.runPolicy.timeout)
 		guard, locked, err := r.runLaneLocker.TryLock(cycleCtx, lane)
 		if err != nil {
 			cancel()
-			r.metrics.observe(ctx, "placement", "run", "failure", time.Since(started))
-			r.log.Warn("run placement lane failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
+			r.metrics.observe(ctx, "dispatch", "run", "failure", time.Since(started))
+			r.log.Warn("run dispatch lane failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
 			if err := waitFor(ctx, r.runPolicy.failureBackoff); err != nil {
 				return err
 			}
@@ -280,7 +280,7 @@ func (r *PlacementReconciler) runPlacementLoop(ctx context.Context) error {
 		if reconcileErr == nil && batch.capacityBlocked() && batch.completedOrganizationPass {
 			// After a complete Organization pass, keep the lane guard while cooling
 			// down so another dispatcher cannot immediately repeat the same known-
-			// unplaceable work. The guard and delay are bounded and carry no durable
+			// unassignable work. The guard and delay are bounded and carry no durable
 			// scheduling state.
 			reconcileErr = waitFor(ctx, r.runPolicy.idleInterval)
 		}
@@ -290,9 +290,9 @@ func (r *PlacementReconciler) runPlacementLoop(ctx context.Context) error {
 		outcome := "success"
 		if err != nil {
 			outcome = "failure"
-			r.log.Warn("run placement reconciliation failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
+			r.log.Warn("run dispatch reconciliation failed", "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		}
-		r.metrics.observe(ctx, "placement", "run", outcome, time.Since(started))
+		r.metrics.observe(ctx, "dispatch", "run", outcome, time.Since(started))
 		r.metrics.observeRunBatch(ctx, batch)
 		if err != nil {
 			if err := waitFor(ctx, r.runPolicy.failureBackoff); err != nil {
@@ -311,9 +311,9 @@ func (r *PlacementReconciler) runPlacementLoop(ctx context.Context) error {
 	}
 }
 
-func (r *PlacementReconciler) waitAfterRunLane(ctx context.Context, idleLanes *int) error {
+func (r *Reconciler) waitAfterRunLane(ctx context.Context, idleLanes *int) error {
 	workers := max(1, r.runPolicy.workers)
-	idleLimit := (runPlacementLaneCount + workers - 1) / workers
+	idleLimit := (runLaneCount + workers - 1) / workers
 	if *idleLanes < idleLimit {
 		return nil
 	}
@@ -332,7 +332,7 @@ func waitFor(ctx context.Context, delay time.Duration) error {
 	}
 }
 
-func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) error {
+func (r *Reconciler) ReconcileComputerCommands(ctx context.Context) error {
 	recoverable, err := r.computerCommandDiscovery.ListRecoverableComputerCommandCandidates(
 		ctx,
 		r.computerCommandPolicy.limit,
@@ -367,7 +367,7 @@ func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) err
 	}
 	expiredBefore := time.Now().UTC().Add(-defaultComputerCommandPendingTimeout)
 	for _, row := range rows {
-		candidate := ReadyComputerCommandCandidate{
+		candidate := CommandCandidate{
 			OrgID:            row.OrgID,
 			CommandID:        row.ID,
 			ExpectedRevision: row.Revision,
@@ -376,7 +376,7 @@ func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) err
 			err := r.computerCommandAuthority.FailPendingComputerCommand(
 				ctx,
 				candidate,
-				"computer_command_placement_timed_out",
+				"computer_command_assignment_timed_out",
 			)
 			if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
 				continue
@@ -386,7 +386,7 @@ func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) err
 			}
 			continue
 		}
-		_, err := r.computerCommandAuthority.PlaceComputerCommand(
+		_, err := r.computerCommandAuthority.AssignCommand(
 			ctx,
 			candidate,
 		)
@@ -403,7 +403,7 @@ func (r *PlacementReconciler) ReconcileComputerCommands(ctx context.Context) err
 	return errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy placementLoopPolicy, reconcile func(context.Context) error) error {
+func (r *Reconciler) runLoop(ctx context.Context, domain string, policy loopPolicy, reconcile func(context.Context) error) error {
 	for {
 		started := time.Now()
 		cycleCtx, cancel := context.WithTimeout(ctx, policy.timeout)
@@ -419,7 +419,7 @@ func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy
 			delay = policy.failureBackoff
 			r.log.Warn("reconciliation failed", "domain", domain, "duration_ms", time.Since(started).Milliseconds(), "error", err)
 		}
-		r.metrics.observe(ctx, "placement", domain, outcome, time.Since(started))
+		r.metrics.observe(ctx, "dispatch", domain, outcome, time.Since(started))
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -430,27 +430,27 @@ func (r *PlacementReconciler) runLoop(ctx context.Context, domain string, policy
 	}
 }
 
-func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
+func (r *Reconciler) ReconcileRuns(ctx context.Context) error {
 	_, err := r.reconcileRunLane(ctx, 0, r.runDiscovery)
 	return err
 }
 
-func (r *PlacementReconciler) reconcileRunLane(
+func (r *Reconciler) reconcileRunLane(
 	ctx context.Context,
 	lane int16,
-	discovery RunPlacementDiscovery,
-) (runPlacementBatch, error) {
-	if lane < 0 || lane >= runPlacementLaneCount {
-		return runPlacementBatch{}, errors.New("run placement lane is out of range")
+	discovery RunDiscovery,
+) (runDispatchBatch, error) {
+	if lane < 0 || lane >= runLaneCount {
+		return runDispatchBatch{}, errors.New("run dispatch lane is out of range")
 	}
 	if discovery == nil {
-		return runPlacementBatch{}, errors.New("run placement discovery is required")
+		return runDispatchBatch{}, errors.New("run dispatch discovery is required")
 	}
 	r.runLaneMutexes[lane].Lock()
 	defer r.runLaneMutexes[lane].Unlock()
 	r.runCursors[lane].beginCycle()
 	remaining := r.runPolicy.attemptLimit
-	var batch runPlacementBatch
+	var batch runDispatchBatch
 	var problems []error
 	for remaining > 0 {
 		page, err := r.reconcileRunLanePage(ctx, lane, discovery, remaining)
@@ -467,15 +467,15 @@ func (r *PlacementReconciler) reconcileRunLane(
 	return batch, errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) reconcileRunLanePage(
+func (r *Reconciler) reconcileRunLanePage(
 	ctx context.Context,
 	lane int16,
-	discovery RunPlacementDiscovery,
+	discovery RunDiscovery,
 	attemptLimit int32,
-) (runPlacementBatch, error) {
+) (runDispatchBatch, error) {
 	cursor := &r.runCursors[lane]
 	remaining := attemptLimit
-	var batch runPlacementBatch
+	var batch runDispatchBatch
 	var problems []error
 
 	pendingLimit := int(attemptLimit) / 2
@@ -492,7 +492,7 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 	organizationFetchLimit := r.runPolicy.organizationLimit + 1
 	rows, err := discovery.ListOrganizations(ctx, lane, cursor.afterOrganization, organizationFetchLimit)
 	if err != nil {
-		problems = append(problems, fmt.Errorf("list run placement organizations: %w", err))
+		problems = append(problems, fmt.Errorf("list run dispatch organizations: %w", err))
 		return batch, errors.Join(problems...)
 	}
 	organizations := cursor.chooseOrganizations(rows, int(r.runPolicy.organizationLimit))
@@ -500,35 +500,35 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 		return batch, errors.Join(problems...)
 	}
 	scopeShare := (int(remaining) + len(organizations) - 1) / len(organizations)
-	scopeFetchLimit := int32(min(scopeShare, runPlacementCandidateScopeLimit) + 1)
+	scopeFetchLimit := int32(min(scopeShare, runDispatchCandidateScopeLimit) + 1)
 	scopeRows, err := discovery.ListScopes(
 		ctx,
 		cursor.scopeParams(organizations, scopeFetchLimit),
 	)
 	if err != nil {
-		problems = append(problems, fmt.Errorf("list run placement scopes: %w", err))
+		problems = append(problems, fmt.Errorf("list run dispatch scopes: %w", err))
 		return batch, errors.Join(problems...)
 	}
-	scopeLimit := min(int(remaining), runPlacementCandidateScopeLimit)
+	scopeLimit := min(int(remaining), runDispatchCandidateScopeLimit)
 	scopes, ends := cursor.chooseScopes(scopeRows, organizations, scopeLimit, int(scopeFetchLimit))
 	if len(scopes) == 0 {
 		batch.completedOrganizationPass = len(rows) <= int(r.runPolicy.organizationLimit)
 		return batch, errors.Join(problems...)
 	}
-	rowsByScope := make([][]db.ListQueuedRunPlacementCandidatesRow, len(scopes))
+	rowsByScope := make([][]db.ListQueuedRunDispatchCandidatesRow, len(scopes))
 	queriedScopes := cursor.readyCandidateScopes(scopes)
 	scopesPerOrganization := make(map[pgtype.UUID]int, len(organizations))
 	for _, scope := range scopes {
 		scopesPerOrganization[scope.orgID]++
 	}
-	scopeCandidateLimits := make(map[runPlacementScope]int32, len(scopes))
+	scopeCandidateLimits := make(map[runDispatchScope]int32, len(scopes))
 	for _, scope := range scopes {
 		count := scopesPerOrganization[scope.orgID]
 		limit := (scopeShare + count - 1) / count
-		scopeCandidateLimits[scope] = int32(min(limit, runPlacementCandidateScopeLimit))
+		scopeCandidateLimits[scope] = int32(min(limit, runDispatchCandidateScopeLimit))
 	}
-	queried := make(map[runPlacementScope]struct{}, len(queriedScopes))
-	scopeIndexes := make(map[runPlacementScope]int, len(scopes))
+	queried := make(map[runDispatchScope]struct{}, len(queriedScopes))
+	scopeIndexes := make(map[runDispatchScope]int, len(scopes))
 	for index, scope := range scopes {
 		scopeIndexes[scope] = index
 	}
@@ -540,7 +540,7 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 		params := cursor.candidateParams(queriedScopes, limits)
 		candidates, err := discovery.ListCandidates(ctx, params)
 		if err != nil {
-			problems = append(problems, fmt.Errorf("list run placement candidates: %w", err))
+			problems = append(problems, fmt.Errorf("list run dispatch candidates: %w", err))
 			return batch, errors.Join(problems...)
 		}
 		for _, scope := range queriedScopes {
@@ -549,7 +549,7 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 		for _, candidate := range candidates {
 			if candidate.ScopeOrdinal < 1 || candidate.ScopeOrdinal > int64(len(queriedScopes)) {
 				problems = append(problems, fmt.Errorf(
-					"run placement candidate scope ordinal out of range: %d",
+					"run dispatch candidate scope ordinal out of range: %d",
 					candidate.ScopeOrdinal,
 				))
 				return batch, errors.Join(problems...)
@@ -566,7 +566,7 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 		}
 	}
 	orgIndex := make(map[pgtype.UUID]int, len(organizations))
-	candidatesByOrganization := make([]runPlacementOrganizationCandidates, len(organizations))
+	candidatesByOrganization := make([]runDispatchOrganizationCandidates, len(organizations))
 	for i, orgID := range organizations {
 		orgIndex[orgID] = i
 		candidatesByOrganization[i].end = ends[orgID]
@@ -574,28 +574,28 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 	for i, scope := range scopes {
 		org, ok := orgIndex[scope.orgID]
 		if !ok {
-			problems = append(problems, errors.New("run placement scope belongs to an unselected organization"))
+			problems = append(problems, errors.New("run dispatch scope belongs to an unselected organization"))
 			return batch, errors.Join(problems...)
 		}
 		organization := &candidatesByOrganization[org]
-		organization.scopes = append(organization.scopes, runPlacementScopeCandidates{
+		organization.scopes = append(organization.scopes, runDispatchScopeCandidates{
 			scope: scope,
 			rows:  rowsByScope[i],
 			limit: int(scopeCandidateLimits[scope]),
 		})
 	}
 
-	blockedScopes := make(map[runPlacementScope]struct{})
+	blockedScopes := make(map[runDispatchScope]struct{})
 	failed := false
 	for remaining > 0 {
-		var work []runPlacementWork
+		var work []runDispatchWork
 		for i := range candidatesByOrganization {
 			scope, candidate, end, examined, ok := candidatesByOrganization[i].take(blockedScopes)
 			if !ok {
 				continue
 			}
 			remaining--
-			work = append(work, runPlacementWork{
+			work = append(work, runDispatchWork{
 				scope: scope, candidate: candidate, end: end, examined: examined,
 			})
 			if remaining <= 0 {
@@ -605,7 +605,7 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 		if len(work) == 0 {
 			break
 		}
-		page, results, err := r.placeRunCandidates(ctx, work)
+		page, results, err := r.assignRunCandidates(ctx, work)
 		batch.add(page)
 		for _, result := range results {
 			org := &candidatesByOrganization[orgIndex[result.work.scope.orgID]]
@@ -615,7 +615,7 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 				blockedScopes[result.work.scope] = struct{}{}
 				continue
 			}
-			if result.outcome == runPlacementPending {
+			if result.outcome == runDispatchPending {
 				cursor.deferCandidate(result.work.scope, time.Now().Add(r.runPolicy.pendingInterval))
 				blockedScopes[result.work.scope] = struct{}{}
 				continue
@@ -639,15 +639,15 @@ func (r *PlacementReconciler) reconcileRunLanePage(
 	return batch, errors.Join(problems...)
 }
 
-func (r *PlacementReconciler) reconcilePendingRunScopes(
+func (r *Reconciler) reconcilePendingRunScopes(
 	ctx context.Context,
-	discovery RunPlacementDiscovery,
-	cursor *runPlacementCursor,
+	discovery RunDiscovery,
+	cursor *runDispatchCursor,
 	limit int,
-) (runPlacementBatch, error) {
+) (runDispatchBatch, error) {
 	scopes := cursor.duePendingScopes(time.Now(), limit)
 	if len(scopes) == 0 {
-		return runPlacementBatch{}, nil
+		return runDispatchBatch{}, nil
 	}
 	limits := make([]int32, len(scopes))
 	for i := range limits {
@@ -655,29 +655,29 @@ func (r *PlacementReconciler) reconcilePendingRunScopes(
 	}
 	candidates, err := discovery.ListCandidates(ctx, cursor.candidateParams(scopes, limits))
 	if err != nil {
-		return runPlacementBatch{}, fmt.Errorf("list pending run placement candidates: %w", err)
+		return runDispatchBatch{}, fmt.Errorf("list pending run dispatch candidates: %w", err)
 	}
-	work := make([]runPlacementWork, 0, len(candidates))
+	work := make([]runDispatchWork, 0, len(candidates))
 	seen := make([]bool, len(scopes))
 	for _, candidate := range candidates {
 		if candidate.ScopeOrdinal < 1 || candidate.ScopeOrdinal > int64(len(scopes)) {
-			return runPlacementBatch{}, fmt.Errorf(
-				"pending run placement candidate scope ordinal out of range: %d",
+			return runDispatchBatch{}, fmt.Errorf(
+				"pending run dispatch candidate scope ordinal out of range: %d",
 				candidate.ScopeOrdinal,
 			)
 		}
 		index := int(candidate.ScopeOrdinal - 1)
 		seen[index] = true
-		work = append(work, runPlacementWork{scope: scopes[index], candidate: candidate})
+		work = append(work, runDispatchWork{scope: scopes[index], candidate: candidate})
 	}
 	for index, found := range seen {
 		if !found {
 			cursor.resetCandidate(scopes[index])
 		}
 	}
-	batch, results, err := r.placeRunCandidates(ctx, work)
+	batch, results, err := r.assignRunCandidates(ctx, work)
 	for _, result := range results {
-		if result.err != nil || result.outcome == runPlacementPending {
+		if result.err != nil || result.outcome == runDispatchPending {
 			cursor.deferCandidate(result.work.scope, time.Now().Add(r.runPolicy.pendingInterval))
 			continue
 		}
@@ -686,19 +686,19 @@ func (r *PlacementReconciler) reconcilePendingRunScopes(
 	return batch, err
 }
 
-func (r *PlacementReconciler) placeRunCandidates(
+func (r *Reconciler) assignRunCandidates(
 	ctx context.Context,
-	work []runPlacementWork,
-) (runPlacementBatch, []runPlacementResult, error) {
+	work []runDispatchWork,
+) (runDispatchBatch, []runDispatchResult, error) {
 	if len(work) == 0 {
-		return runPlacementBatch{}, nil, nil
+		return runDispatchBatch{}, nil, nil
 	}
 	if r.runParallel == nil {
-		var batch runPlacementBatch
-		results := make([]runPlacementResult, 0, len(work))
+		var batch runDispatchBatch
+		results := make([]runDispatchResult, 0, len(work))
 		var problems []error
 		for _, item := range work {
-			result := r.placeRunCandidate(ctx, item)
+			result := r.assignRunCandidate(ctx, item)
 			results = append(results, result)
 			batch.record(result.outcome, result.err)
 			if result.err != nil {
@@ -707,7 +707,7 @@ func (r *PlacementReconciler) placeRunCandidates(
 		}
 		return batch, results, errors.Join(problems...)
 	}
-	results := make(chan runPlacementResult, len(work))
+	results := make(chan runDispatchResult, len(work))
 	var wg sync.WaitGroup
 	for _, item := range work {
 		select {
@@ -715,17 +715,17 @@ func (r *PlacementReconciler) placeRunCandidates(
 		case <-ctx.Done():
 			wg.Wait()
 			close(results)
-			return collectRunPlacementResults(results, ctx.Err())
+			return collectRunDispatchResults(results, ctx.Err())
 		}
 		wg.Go(func() {
 			defer func() { <-r.runParallel }()
-			results <- r.placeRunCandidate(ctx, item)
+			results <- r.assignRunCandidate(ctx, item)
 		})
 	}
 	wg.Wait()
 	close(results)
-	var batch runPlacementBatch
-	completed := make([]runPlacementResult, 0, len(work))
+	var batch runDispatchBatch
+	completed := make([]runDispatchResult, 0, len(work))
 	var problems []error
 	for result := range results {
 		completed = append(completed, result)
@@ -737,12 +737,12 @@ func (r *PlacementReconciler) placeRunCandidates(
 	return batch, completed, errors.Join(problems...)
 }
 
-func collectRunPlacementResults(
-	results <-chan runPlacementResult,
+func collectRunDispatchResults(
+	results <-chan runDispatchResult,
 	problem error,
-) (runPlacementBatch, []runPlacementResult, error) {
-	var batch runPlacementBatch
-	var completed []runPlacementResult
+) (runDispatchBatch, []runDispatchResult, error) {
+	var batch runDispatchBatch
+	var completed []runDispatchResult
 	problems := []error{problem}
 	for result := range results {
 		completed = append(completed, result)
@@ -754,43 +754,43 @@ func collectRunPlacementResults(
 	return batch, completed, errors.Join(problems...)
 }
 
-func (b *runPlacementBatch) record(outcome runPlacementOutcome, err error) {
+func (b *runDispatchBatch) record(outcome runDispatchOutcome, err error) {
 	b.attempted++
 	if err != nil {
 		return
 	}
 	switch outcome {
-	case runPlacementPlaced:
-		b.placed++
-	case runPlacementPending:
+	case runDispatchAssigned:
+		b.assigned++
+	case runDispatchPending:
 		b.pending++
-	case runPlacementChanged:
+	case runDispatchChanged:
 		b.changed++
-	case runPlacementUnavailable:
+	case runDispatchUnavailable:
 		b.unavailable++
 	}
 }
 
-func (r *PlacementReconciler) placeRunCandidate(
+func (r *Reconciler) assignRunCandidate(
 	ctx context.Context,
-	work runPlacementWork,
-) runPlacementResult {
-	candidate := ReadyRunCandidate{
+	work runDispatchWork,
+) runDispatchResult {
+	candidate := RunCandidate{
 		OrgID: work.candidate.OrgID, RunID: work.candidate.RunID,
 		ExpectedRunRevision: work.candidate.Revision,
 	}
-	placement, err := r.runAuthority.PlaceReadyRun(ctx, candidate)
+	assignment, err := r.runAuthority.AssignRun(ctx, candidate)
 	if err != nil {
 		if errors.Is(err, ErrCandidateChanged) || errors.Is(err, pgx.ErrNoRows) {
-			return runPlacementResult{work: work, outcome: runPlacementChanged}
+			return runDispatchResult{work: work, outcome: runDispatchChanged}
 		}
 		if errors.Is(err, ErrCapacityUnavailable) {
-			return runPlacementResult{work: work, outcome: runPlacementUnavailable}
+			return runDispatchResult{work: work, outcome: runDispatchUnavailable}
 		}
-		return runPlacementResult{work: work, outcome: runPlacementChanged, err: err}
+		return runDispatchResult{work: work, outcome: runDispatchChanged, err: err}
 	}
-	if !placement.LeaseCreated {
-		return runPlacementResult{work: work, outcome: runPlacementPending}
+	if !assignment.LeaseCreated {
+		return runDispatchResult{work: work, outcome: runDispatchPending}
 	}
-	return runPlacementResult{work: work, outcome: runPlacementPlaced}
+	return runDispatchResult{work: work, outcome: runDispatchAssigned}
 }

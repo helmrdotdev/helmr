@@ -25,7 +25,7 @@
 //  14. Run lease
 //  15. Wait and checkpoint
 //
-// Placement locks worker_groups and worker_pools FOR SHARE; other worker
+// Dispatch locks worker_groups and worker_pools FOR SHARE; other worker
 // supply operations lock them FOR UPDATE. Named exceptions:
 //
 //   - Fresh Run admission and Computer restore take run queue-scope advisory
@@ -49,14 +49,14 @@
 //     worker_groups, worker_hosts, the Computer and then its Instance; the
 //     restore plan then locks the restored members' Run leases. Run cleanup
 //     omits secrets. Readiness and the restore fence share worker_groups and
-//     worker_pools like placement. A failure report locks worker_groups,
+//     worker_pools like dispatch. A failure report locks worker_groups,
 //     worker_pools and worker_hosts FOR UPDATE; an invalid-epoch drain runs in
 //     its own transaction before and, when the Instance fence no longer holds,
 //     after it. Close, expiry and preparation settlement lock only the
 //     Computer and its Instance.
 //   - Computer preparation (initial and source key delivery, initial object
 //     recording and initial version publication) locks worker_groups and
-//     worker_pools FOR SHARE like placement, then worker_hosts, the Computer
+//     worker_pools FOR SHARE like dispatch, then worker_hosts, the Computer
 //     and its Instance, and reads the disk version last; it then compares the
 //     worker's claim versions with the locked worker_hosts and worker_groups
 //     rows.
@@ -70,7 +70,7 @@
 //     versions, the Computer, its Instance) before the capture's member
 //     locks. When only a ready checkpoint remains, it locks the Computer,
 //     the checkpoint's source Instance and then the checkpoint, and it
-//     commits the checkpoint's disk version after the Run placement locks.
+//     commits the checkpoint's disk version after the Run assignment locks.
 //   - Checkpoint object recording locks worker_groups, worker_hosts, the
 //     Computer and its Instance, then the Session, Run, Attempt, Run lease and
 //     Wait rows of the Instance's unreconciled leases, then the checkpoint,
@@ -106,9 +106,9 @@
 //     retention prunes Command rows directly.
 //   - Session-level singleton locks are acquired before, and held around, the
 //     transactions their holder runs. The stale worker fencer runs its
-//     transaction on the guard's connection. A dispatcher run placement lane
-//     (helmr.dispatcher.run_placement_lane.<n>) runs only lane discovery on the
-//     guard's connection; the placements it starts open their transactions on
+//     transaction on the guard's connection. A dispatcher run lane
+//     (helmr.dispatcher.run_lane.<n>) runs only lane discovery on the
+//     guard's connection; the assignments it starts open their transactions on
 //     other pooled connections.
 package pglock
 

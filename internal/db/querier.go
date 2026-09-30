@@ -56,7 +56,7 @@ type Querier interface {
 	BeginRunLeaseFinalization(ctx context.Context, arg BeginRunLeaseFinalizationParams) (RunLease, error)
 	BeginSessionCancellation(ctx context.Context, arg BeginSessionCancellationParams) (Session, error)
 	BeginSessionTurnSettlement(ctx context.Context, arg BeginSessionTurnSettlementParams) (SessionTurn, error)
-	// Placement is assigned once; reconnect never moves a potentially started command.
+	// Assignment is made once; reconnect never moves a potentially started command.
 	BindComputerCommandInstance(ctx context.Context, arg BindComputerCommandInstanceParams) (ComputerCommand, error)
 	BindRunWaitTurn(ctx context.Context, arg BindRunWaitTurnParams) (BindRunWaitTurnRow, error)
 	CancelQueuedSessionTurn(ctx context.Context, arg CancelQueuedSessionTurnParams) (SessionTurn, error)
@@ -426,8 +426,8 @@ type Querier interface {
 	// Unreclaimed instances already consume capacity, even while fenced or draining.
 	ListPendingComputerCommandCapacityCandidates(ctx context.Context, arg ListPendingComputerCommandCapacityCandidatesParams) ([]ListPendingComputerCommandCapacityCandidatesRow, error)
 	ListProjects(ctx context.Context, arg ListProjectsParams) ([]Project, error)
+	ListQueuedRunDispatchCandidates(ctx context.Context, arg ListQueuedRunDispatchCandidatesParams) ([]ListQueuedRunDispatchCandidatesRow, error)
 	ListQueuedRunEligibleScopes(ctx context.Context, arg ListQueuedRunEligibleScopesParams) ([]ListQueuedRunEligibleScopesRow, error)
-	ListQueuedRunPlacementCandidates(ctx context.Context, arg ListQueuedRunPlacementCandidatesParams) ([]ListQueuedRunPlacementCandidatesRow, error)
 	ListQueuedRunPlanningCandidatesForScopes(ctx context.Context, arg ListQueuedRunPlanningCandidatesForScopesParams) ([]ListQueuedRunPlanningCandidatesForScopesRow, error)
 	ListQueuedRunPlanningUsage(ctx context.Context, arg ListQueuedRunPlanningUsageParams) ([]ListQueuedRunPlanningUsageRow, error)
 	ListRecoverableComputerCommandCandidates(ctx context.Context, rowLimit int32) ([]ListRecoverableComputerCommandCandidatesRow, error)
@@ -494,7 +494,7 @@ type Querier interface {
 	LockComputerCheckpoint(ctx context.Context, arg LockComputerCheckpointParams) (ComputerCheckpoint, error)
 	// Computer and instance locks precede this member lock in admission and cleanup.
 	LockComputerCommand(ctx context.Context, arg LockComputerCommandParams) (ComputerCommand, error)
-	// Computer lock precedes this exact historical placement lock. A newer instance
+	// Computer lock precedes this exact historical assignment lock. A newer instance
 	// is never substituted for the command's original process scope.
 	LockComputerCommandInstance(ctx context.Context, arg LockComputerCommandInstanceParams) (ComputerInstance, error)
 	LockComputerCommandWorkerAuthority(ctx context.Context, arg LockComputerCommandWorkerAuthorityParams) (LockComputerCommandWorkerAuthorityRow, error)
@@ -520,8 +520,8 @@ type Querier interface {
 	LockQueuedRunExpiry(ctx context.Context, id pgtype.UUID) (LockQueuedRunExpiryRow, error)
 	LockQueuedSessionTurns(ctx context.Context, arg LockQueuedSessionTurnsParams) ([]SessionTurn, error)
 	LockReadyComputerCheckpoint(ctx context.Context, arg LockReadyComputerCheckpointParams) (ComputerCheckpoint, error)
-	// Worker Host fence for placement and Computer preparation. The caller
-	// (workergroup.LockPlacementSupply) must already hold the Worker Group and Pool share
+	// Worker Host fence for dispatch and Computer preparation. The caller
+	// (workergroup.LockDispatchSupply) must already hold the Worker Group and Pool share
 	// locks and have validated their status. This query locks the Worker Host and
 	// checks epoch, observation freshness and platform. Admission also requires an
 	// active host without a Run pause; continuation of admitted work accepts a
@@ -644,8 +644,8 @@ type Querier interface {
 	ReleaseReclaimedComputerObjects(ctx context.Context, rowLimit int32) (int64, error)
 	RenewComputerInstanceWriter(ctx context.Context, arg RenewComputerInstanceWriterParams) (ComputerInstance, error)
 	RenewRunLeaseExpiry(ctx context.Context, arg RenewRunLeaseExpiryParams) (RunLease, error)
-	// A pending cancellation conclusively never launched. Placed work is cancelled by
-	// its existing process scope, retaining placement until physical reconciliation.
+	// A pending cancellation conclusively never launched. Assigned work is cancelled by
+	// its existing process scope, retaining its assignment until physical reconciliation.
 	RequestComputerCommandCancellation(ctx context.Context, arg RequestComputerCommandCancellationParams) (ComputerCommand, error)
 	// Logical completion cannot call this operation. Its owner must establish idle,
 	// deletion, loss or whole-instance failure under the Computer and instance locks.
@@ -709,7 +709,7 @@ type Querier interface {
 	SettleSessionTurn(ctx context.Context, arg SettleSessionTurnParams) (SessionTurn, error)
 	StartComputerCommand(ctx context.Context, arg StartComputerCommandParams) (ComputerCommand, error)
 	StopLostRunActiveInterval(ctx context.Context, arg StopLostRunActiveIntervalParams) (Run, error)
-	// A pending Command has no process. A placed Command must acknowledge stopping
+	// A pending Command has no process. An assigned Command must acknowledge stopping
 	// before its receipt becomes terminal; revocation does not retire its peers.
 	StopSecretRevokedComputerCommand(ctx context.Context, arg StopSecretRevokedComputerCommandParams) (ComputerCommand, error)
 	TerminalizeRun(ctx context.Context, arg TerminalizeRunParams) (int64, error)

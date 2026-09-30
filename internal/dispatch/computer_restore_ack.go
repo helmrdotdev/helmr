@@ -9,18 +9,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// ComputerRestoreGrant is the exact grant installed by the Worker for a member.
+// RestoreGrant is the exact grant installed by the Worker for a member.
 // Run identity alone is insufficient: a receipt must not activate a replacement lease.
-type ComputerRestoreGrant struct {
+type RestoreGrant struct {
 	RunID, LeaseID pgtype.UUID
 	LeaseSequence  int64
 }
 
-// AcknowledgeComputerRestore records installation of the entire destination's
+// AcknowledgeRestore records installation of the entire destination's
 // grants on the computer.Restore fence before opening admission. Logical wait
 // outcomes are acknowledged by each member separately. The caller owns
 // rollback on error and commit on success.
-func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef, checkpointID pgtype.UUID, writerGeneration int64, grants []ComputerRestoreGrant) (db.ComputerInstance, error) {
+func AcknowledgeRestore(ctx context.Context, tx pgx.Tx, destination computer.InstanceRef, checkpointID pgtype.UUID, writerGeneration int64, grants []RestoreGrant) (db.ComputerInstance, error) {
 	restore, err := computer.LockRestore(ctx, tx, destination)
 	if err != nil {
 		return db.ComputerInstance{}, err
@@ -37,7 +37,7 @@ func AcknowledgeComputerRestore(ctx context.Context, tx pgx.Tx, destination comp
 	if len(grants) != len(members) {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
-	installed := make(map[pgtype.UUID]ComputerRestoreGrant, len(grants))
+	installed := make(map[pgtype.UUID]RestoreGrant, len(grants))
 	for _, g := range grants {
 		if !g.RunID.Valid || !g.LeaseID.Valid || g.LeaseSequence <= 0 {
 			return db.ComputerInstance{}, pgx.ErrNoRows

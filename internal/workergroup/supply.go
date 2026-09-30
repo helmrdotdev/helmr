@@ -12,15 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// Worker supply lifecycle rule, applied by LockPlacementSupply,
+// Worker supply lifecycle rule, applied by LockDispatchSupply,
 // LockExecutionHost, LockHostIgnoringClaims and LockedHost.Continues
 // (LockHostUnchecked leaves it to Continues):
-//   - A paused Group holds: no placements, claims, starts or restore
+//   - A paused Group holds: no assignments, claims, starts or restore
 //     activations; work that is already running continues.
 //   - A draining Group, Pool or Host lets already dispatched work finish,
 //     including claim and start of leases assigned before the drain.
 //   - Any operation that opens admission requires admitting supply (active
-//     Group, Pool and Host without Run or VM pauses): placement, preparation,
+//     Group, Pool and Host without Run or VM pauses): dispatch, preparation,
 //     the first allocated-to-ready transition, and the first restore commit and
 //     activation that opens an Instance. Starting an assigned lease on an
 //     already open Instance does not open admission; host drain already blocks
@@ -30,13 +30,13 @@ import (
 //     paused or draining supply and ignores Run and VM pauses, keeping epoch,
 //     status and freshness checks.
 //
-// Each fence keeps its own lock strength and check order: placement shares the
+// Each fence keeps its own lock strength and check order: dispatch shares the
 // Group and Pool so independent hosts proceed concurrently, while execution and
 // host-authenticated operations update-lock the Group and Host.
 
-// PlacementSupply identifies the worker host a placement or Computer
+// DispatchSupply identifies the worker host an assignment or Computer
 // preparation locks.
-type PlacementSupply struct {
+type DispatchSupply struct {
 	GroupID         pgtype.UUID
 	RegionID        string
 	HostID          pgtype.UUID
@@ -49,13 +49,13 @@ type PlacementSupply struct {
 	Continuation bool
 }
 
-// LockPlacementSupply takes a shared worker-group lock before the worker host
-// lock, matching the global execution lock order. Placements in the same group
+// LockDispatchSupply takes a shared worker-group lock before the worker host
+// lock, matching the global execution lock order. Assignments in the same group
 // may proceed on independent hosts, while a group lifecycle change waits for
-// all in-flight placements. Observation freshness is rechecked while those
+// all in-flight assignments. Observation freshness is rechecked while those
 // authority rows remain locked. It reports whether the locked supply could
 // admit new work: active Group, Pool and Host without a Run or VM pause.
-func LockPlacementSupply(ctx context.Context, tx pgx.Tx, supply PlacementSupply) (bool, error) {
+func LockDispatchSupply(ctx context.Context, tx pgx.Tx, supply DispatchSupply) (bool, error) {
 	var groupActive bool
 	err := tx.QueryRow(ctx, `
 SELECT status = 'active'
@@ -191,7 +191,7 @@ func (l LockedHost) Continues() bool {
 
 // CheckClaims compares the principal's authenticated claim versions with its
 // Host and Group rows, which the caller's transaction must already hold
-// locked (for example through LockPlacementSupply). A changed claim version
+// locked (for example through LockDispatchSupply). A changed claim version
 // returns ErrStaleClaims.
 func CheckClaims(ctx context.Context, q db.DBTX, principal HostPrincipal) error {
 	var host, group int64
