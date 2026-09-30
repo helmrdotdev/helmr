@@ -16,30 +16,19 @@ type ResourceVector struct {
 	Slots     int32 `json:"execution_slots"`
 }
 
-func (r ResourceVector) Validate(requirePositive bool) error {
+func (r ResourceVector) Validate() error {
 	var problems []error
-	if requirePositive {
-		if r.MilliCPU <= 0 {
-			problems = append(problems, errors.New("milli_cpu must be positive"))
-		}
-		if r.MemoryMiB <= 0 {
-			problems = append(problems, errors.New("memory_mib must be positive"))
-		}
-		if r.Slots <= 0 {
-			problems = append(problems, errors.New("slots must be positive"))
-		}
+	if r.MilliCPU <= 0 {
+		problems = append(problems, errors.New("milli_cpu must be positive"))
 	}
-	if r.MilliCPU < 0 {
-		problems = append(problems, errors.New("milli_cpu must not be negative"))
-	}
-	if r.MemoryMiB < 0 {
-		problems = append(problems, errors.New("memory_mib must not be negative"))
+	if r.MemoryMiB <= 0 {
+		problems = append(problems, errors.New("memory_mib must be positive"))
 	}
 	if r.DiskMiB < 0 {
 		problems = append(problems, errors.New("disk_mib must not be negative"))
 	}
-	if r.Slots < 0 {
-		problems = append(problems, errors.New("slots must not be negative"))
+	if r.Slots <= 0 {
+		problems = append(problems, errors.New("slots must be positive"))
 	}
 	return errors.Join(problems...)
 }
