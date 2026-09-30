@@ -42,7 +42,24 @@ func TestTaskAndCommandAdmissionShareSecretLockOrder(t *testing.T) {
 		_, err := f.server.startTask(ctx, taskStartRequest{OrgID: f.orgID, ProjectID: f.projectID, EnvironmentID: f.environmentID, TaskDeclaredID: "resize-image", PayloadPresent: true, Payload: json.RawMessage(`{"imageId":"lock-order"}`), ComputerID: f.computerIDs[0], IdempotencyKey: "task-secret-order"})
 		taskDone <- err
 	}()
-	waitForBlockedBackend(ctx, t, f, commandPID, taskDone)
+	taskPID := waitForBlockedBackend(ctx, t, f, commandPID, taskDone)
+	// The task waits for the Command's transaction while it holds the tuple
+	// lock of a Secret row; it holds and waits for nothing on the Computer.
+	var waitsForCommand, holdsSecretTuple, touchesComputer bool
+	if err := f.pool.QueryRow(ctx, `WITH command AS (
+ SELECT transactionid FROM pg_locks WHERE pid=$2 AND locktype='transactionid' AND granted AND mode='ExclusiveLock'
+), task AS (SELECT * FROM pg_locks WHERE pid=$1)
+SELECT
+ EXISTS(SELECT 1 FROM task WHERE locktype='transactionid' AND NOT granted AND transactionid IN (SELECT transactionid FROM command)),
+ EXISTS(SELECT 1 FROM task WHERE locktype='tuple' AND relation='secrets'::regclass AND granted),
+ EXISTS(SELECT 1 FROM task WHERE (locktype='tuple' AND relation='computers'::regclass)
+  OR (locktype='transactionid' AND NOT granted AND transactionid NOT IN (SELECT transactionid FROM command)))`,
+		taskPID, commandPID).Scan(&waitsForCommand, &holdsSecretTuple, &touchesComputer); err != nil {
+		t.Fatal(err)
+	}
+	if !waitsForCommand || !holdsSecretTuple || touchesComputer {
+		t.Fatalf("task start waits for Command=%v holds Secret tuple=%v touches Computer=%v", waitsForCommand, holdsSecretTuple, touchesComputer)
+	}
 	if err := holder.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}

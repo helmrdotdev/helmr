@@ -17,9 +17,9 @@ func commandRef(f runtest.Fixture, commandID uuid.UUID) Ref {
 	return Ref{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, CommandID: commandID}
 }
 
-// The cancellation receipt is the stored idempotency receipt a replay reads;
-// its encoding is pinned.
-func TestCancelReceiptEncoding(t *testing.T) {
+// Cancel stores its receipt on the idempotency claim, and a replay rejects a
+// stored receipt that differs from its claim.
+func TestCancelStoresAndValidatesReceipt(t *testing.T) {
 	f, computerID := computerFixture(t)
 	created, err := Create(t.Context(), f.Pool, createRequest(f, computerID, "cancel-receipt"))
 	if err != nil {

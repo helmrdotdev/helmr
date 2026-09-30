@@ -88,9 +88,10 @@ func TestCreateReceiptEncoding(t *testing.T) {
 	}
 }
 
-// A Computer that lost its dirty state or failed recovery reports recovery
-// before deletion; any other state that may clear is busy, and an admitting
-// Computer that reached its preparation limit is exhausted.
+// A Computer that failed a capture or recovery, or is in recovery, reports
+// recovery before deletion; any other state that does not admit, including
+// lost dirty state, is busy, and an admitting Computer that reached its
+// preparation limit is exhausted.
 func TestAdmitsReportsComputerState(t *testing.T) {
 	orgID, projectID := uuid.NewV7(), uuid.NewV7()
 	request := CreateRequest{OrgID: orgID, ProjectID: projectID}
@@ -121,5 +122,14 @@ func TestAdmitsReportsComputerState(t *testing.T) {
 				t.Fatalf("admits = %v, want %v", err, test.want)
 			}
 		})
+	}
+}
+
+// The cancellation receipt is the stored idempotency receipt a replay reads;
+// its encoding is pinned.
+func TestCancelReceiptEncoding(t *testing.T) {
+	encoded, err := json.Marshal(CancelReceipt{ID: "0190b5c2-0000-7000-8000-000000000002", TargetID: "0190b5c2-0000-7000-8000-000000000001", Status: "accepted"})
+	if err != nil || string(encoded) != `{"id":"0190b5c2-0000-7000-8000-000000000002","target_id":"0190b5c2-0000-7000-8000-000000000001","status":"accepted"}` {
+		t.Fatalf("receipt = %s, %v", encoded, err)
 	}
 }

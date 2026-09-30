@@ -41,8 +41,8 @@ var (
 	// ErrDeleting reports that the Computer is being deleted and admits no
 	// new work.
 	ErrDeleting = errors.New("computer is deleting")
-	// ErrRecoveryRequired reports that the Computer lost its dirty state or
-	// failed a capture or recovery, and admits no new work until it is
+	// ErrRecoveryRequired reports that the Computer failed a capture or
+	// recovery, or is in recovery, and admits no new work until it is
 	// recovered.
 	ErrRecoveryRequired = errors.New("computer requires recovery")
 	// ErrPreparationExhausted reports that the Computer reached its

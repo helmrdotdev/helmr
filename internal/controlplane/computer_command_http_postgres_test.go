@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -211,4 +212,45 @@ func TestGetComputerCommandHTTPPostgres(t *testing.T) {
 		t.Fatalf("prune result=%d, %v", pruned, err)
 	}
 	c.expect(t, c.key, http.MethodGet, path, "", http.StatusGone, "command_result_expired")
+}
+
+// A Command is found only with credentials for its organization, project
+// and Environment: every other scope reads, cancels and lists logs of no
+// Command.
+func TestCommandHTTPIsolatesEveryScopeCoordinate(t *testing.T) {
+	c := newCommandHTTP(t)
+	admitted := c.exec(t, `{"command":["true"],"idempotency_key":"isolated"}`)
+	environment := func(orgID, projectID uuid.UUID) uuid.UUID {
+		t.Helper()
+		id := uuid.NewV7()
+		dbtest.MustExec(t, t.Context(), c.pool, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex) VALUES ($1, $2, $3, $4, 'Other', '#3366ff')`, id, orgID, projectID, "other-"+id.String())
+		return id
+	}
+	project := func(orgID uuid.UUID) uuid.UUID {
+		t.Helper()
+		id := uuid.NewV7()
+		dbtest.MustExec(t, t.Context(), c.pool, `INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, 'us-east-1', $3, 'Other')`, id, orgID, "other-"+id.String())
+		return id
+	}
+	otherOrg := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), c.pool, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Other', $2)`, otherOrg, "other-"+otherOrg.String())
+	orgProject := project(otherOrg)
+	otherProject := project(c.orgID)
+	for name, scope := range map[string][3]uuid.UUID{
+		"organization": {otherOrg, orgProject, environment(otherOrg, orgProject)},
+		"project":      {c.orgID, otherProject, environment(c.orgID, otherProject)},
+		"environment":  {c.orgID, c.projectID, environment(c.orgID, c.projectID)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			key := issueEnvironmentAPIKey(t, c.pool, scope[0], scope[1], scope[2], auth.PermissionComputerCommandCreate)
+			path := "/v1/commands/" + admitted.CommandID
+			c.expect(t, key, http.MethodGet, path, "", http.StatusNotFound, "computer_command_not_found")
+			c.expect(t, key, http.MethodPost, path+"/cancel", "", http.StatusNotFound, "computer_command_not_found")
+			c.expect(t, key, http.MethodGet, path+"/logs", "", http.StatusNotFound, "command_not_found")
+		})
+	}
+	var status string
+	if err := c.pool.QueryRow(t.Context(), `SELECT status FROM computer_commands WHERE id=$1`, admitted.CommandID).Scan(&status); err != nil || status != "pending" {
+		t.Fatalf("isolated Command status = %s, %v", status, err)
+	}
 }
