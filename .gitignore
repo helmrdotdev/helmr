@@ -16,7 +16,6 @@ images/*/out/
 .idea/
 .vscode/
 .helmr*/
-.codex-audits/
 .bin/
 **/.terraform/
 **/.terraform.lock.hcl

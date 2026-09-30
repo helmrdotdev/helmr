@@ -137,7 +137,7 @@ func TestCreateOrganizationPostgresInitialSetupAdmitsOneOrganization(t *testing.
 		t.Fatal(err)
 	}
 	queries := db.New(database.Pool)
-	userID := insertUser(t, database.Pool, "Founder", "founder@example.test")
+	userID := insertUser(t, database.Pool, "Owner", "owner@example.test")
 	created, err := CreateOrganization(t.Context(), database.Pool, OrganizationInput{Slug: "Acme", OwnerUserID: userID, InitialSetup: true})
 	if err != nil || created.Slug != "acme" || created.Name != "acme" {
 		t.Fatalf("organization = %+v, err = %v", created, err)

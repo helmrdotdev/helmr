@@ -114,8 +114,7 @@ binds the exact live native operation and is awaited before allow. Failed or
 ambiguous writes never grant. A separate permission primitive would need to provide
 an additional guarantee beyond that fence; merely hiding provider-specific pending
 request state would not do so. Native cancellation and native response formats remain
-application responsibilities. Any proposed public primitive change needs Founder
-review before implementation, even though prerelease compatibility is unnecessary.
+application responsibilities.
 
 ## Local validation and remaining proof
 
