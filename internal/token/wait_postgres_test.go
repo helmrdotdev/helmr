@@ -8,10 +8,10 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -997,8 +997,8 @@ func startTaskCompletionWork(
 
 func captureTokenWait(t *testing.T, f runLeaseClaimFixture, work runLeaseWork, park bool) db.ComputerCheckpoint {
 	t.Helper()
-	params := db.BeginComputerCheckpointParams{CheckpointID: pgvalue.NewUUIDv7(), EnvironmentID: pgvalue.UUID(f.environmentID)}
-	if err := f.pool.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,i.membership_revision,i.desired_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.leaseID).Scan(&params.ComputerInstanceID, &params.WriterGeneration, &params.MembershipRevision, &params.DesiredVersion); err != nil {
+	capture := computer.Capture{CheckpointID: uuid.NewV7(), EnvironmentID: f.environmentID}
+	if err := f.pool.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,i.membership_revision,i.desired_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, work.leaseID).Scan(&capture.InstanceID, &capture.WriterGeneration, &capture.MembershipRevision, &capture.DesiredVersion); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.pool.Begin(t.Context())
@@ -1006,7 +1006,7 @@ func captureTokenWait(t *testing.T, f runLeaseClaimFixture, work runLeaseWork, p
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	cp, err := dispatch.BeginComputerCapture(t.Context(), tx, params)
+	cp, err := computer.BeginCapture(t.Context(), tx, capture)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1016,19 +1016,6 @@ func captureTokenWait(t *testing.T, f runLeaseClaimFixture, work runLeaseWork, p
 	if !park {
 		return cp
 	}
-	worker, request := dispatchtest.CaptureRequest(t, f.base, cp)
-	uploaded := dispatchtest.PrepareCapture(t, f.base, worker, request)
-	tx, err = f.pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(context.Background())
-	cp, err = dispatch.CompleteComputerCheckpoint(t.Context(), tx, worker, request, uploaded)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	return cp
+	ref, manifest := computertest.CaptureRequest(t, f.base, cp)
+	return computertest.Complete(t, f.base, ref, manifest, computertest.PrepareCapture(t, f.base, ref, manifest))
 }

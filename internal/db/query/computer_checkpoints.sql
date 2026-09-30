@@ -210,7 +210,7 @@ WHERE instance.id=sqlc.arg(computer_instance_id) AND instance.environment_id=sql
  AND worker.status IN ('active','draining') AND worker_group.status IN ('active','paused','draining')
  AND worker.observed_at>=clock_timestamp()-sqlc.arg(worker_freshness_seconds)::bigint*interval '1 second';
 
--- Post-lock time check only. The caller (dispatch.BeginComputerCapture) must
+-- Post-lock time check only. The caller (computer.BeginCapture) must
 -- already hold the Worker Group, Worker Host, Computer, Instance and resident
 -- owner locks and have validated Group/Host status and epoch. Run and VM pauses
 -- do not apply: capture continues resident work. A host that was never

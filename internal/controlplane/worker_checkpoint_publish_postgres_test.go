@@ -4,18 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/jackc/pgx/v5"
-
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -29,7 +24,7 @@ import (
 func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest, func(), func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	root, inspection := retainedTestGeneration(t, f.Pool, f.server.cas, req.ComputerInstanceID)
+	root, inspection := retainedTestGeneration(t, f.Pool, f.store, req.ComputerInstanceID)
 	req.Manifest.RuntimeState.Computer.Root = root
 	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
@@ -40,23 +35,13 @@ func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, wor
 	}
 	register := func() {
 		t.Helper()
-		f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
-		publisher, err := computer.NewPublisher(f.Pool, f.server.cas)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ref := computer.CheckpointRef{
-			Host:       computer.Host{GroupID: f.worker.GroupID, HostID: f.worker.HostID, Epoch: f.worker.Epoch},
-			InstanceID: uuid.MustParse(req.ComputerInstanceID), WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: uuid.MustParse(req.CheckpointID),
-		}
-		if err = publisher.ReuseCheckpointObject(t.Context(), ref, inspection); err != nil {
-			t.Fatalf("pin checkpoint root: %v", err)
-		}
+		f.worker.post(t, checkpointRegisterPath, req, http.StatusOK, nil)
+		f.worker.post(t, "/worker/v1/computer/checkpoints/objects/reuse", workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: req.ComputerInstanceID, WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: req.CheckpointID, Inspection: inspection}, http.StatusOK, nil)
 	}
 	return f, req, register, func(i int) {
 		t.Helper()
 		a := artifacts[i]
-		if _, err := f.server.cas.Put(t.Context(), a.MediaType, strings.NewReader(data[i])); err != nil {
+		if _, err := f.store.Put(t.Context(), a.MediaType, strings.NewReader(data[i])); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -68,15 +53,7 @@ func readyFromRegistration(req workerapi.RegisterCheckpointRequest) workerapi.Ch
 
 func checkpointReadyStatus(t *testing.T, f *computerCheckpointFixture, req workerapi.CheckpointReadyRequest) int {
 	t.Helper()
-	raw, err := json.Marshal(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(raw))
-	r = r.WithContext(context.WithValue(t.Context(), workerContextKey{}, f.worker))
-	w := httptest.NewRecorder()
-	f.server.workerMarkCheckpointReady(w, r)
-	return w.Code
+	return f.worker.send(t, checkpointReadyPath, req).Code
 }
 
 func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
@@ -89,7 +66,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	// Upload timings were unavailable during registration; they are not identity.
 	ready.Manifest.Phases = []workerapi.CheckpointPhase{{Name: "upload", DurationMs: 5}}
 	var receipt workerapi.ComputerCheckpointResponse
-	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &receipt)
+	f.worker.post(t, checkpointReadyPath, ready, http.StatusOK, &receipt)
 	if receipt.ComputerDiskVersionID == "" {
 		t.Fatal("no private Computer version")
 	}
@@ -124,7 +101,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 	if err := json.Unmarshal(phases, &observed); err != nil || len(observed) != 1 || observed[0].Name != "upload" || observed[0].DurationMs != 5 {
 		t.Fatalf("phase timings=%s: %v", phases, err)
 	}
-	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+	rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +109,7 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		if row.CheckpointStatus != "ready" || row.AvailabilityRequired.Valid {
 			t.Fatalf("candidate not committed: %+v", row)
 		}
-		if n, err := f.server.db.RetireAbandonedCasBlob(t.Context(), row.Digest); err != nil || n != 0 {
+		if n, err := f.queries.RetireAbandonedCasBlob(t.Context(), row.Digest); err != nil || n != 0 {
 			t.Fatalf("live member retired: %d %v", n, err)
 		}
 	}
@@ -141,12 +118,12 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 		t.Fatalf("memberships=%d %v", memberships, err)
 	}
 	var replay workerapi.ComputerCheckpointResponse
-	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &replay)
+	f.worker.post(t, checkpointReadyPath, ready, http.StatusOK, &replay)
 	if replay != receipt {
 		t.Fatal("lost reply created a different publication")
 	}
 	ready.Manifest.Phases = []workerapi.CheckpointPhase{{Name: "upload", DurationMs: 6}}
-	f.workerCall(t, f.server.workerMarkCheckpointReady, ready, &replay)
+	f.worker.post(t, checkpointReadyPath, ready, http.StatusOK, &replay)
 	if replay != receipt {
 		t.Fatal("changed timing created a different publication")
 	}
@@ -217,7 +194,7 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 	if err := f.Pool.QueryRow(t.Context(), `SELECT status='ready' OR private_computer_disk_version_id IS NOT NULL FROM computer_checkpoints WHERE id=$1`, req.CheckpointID).Scan(&ready); err != nil || ready {
 		t.Fatalf("partial ready=%v %v", ready, err)
 	}
-	rows, err := f.server.db.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
+	rows, err := f.queries.ListCheckpointObjects(t.Context(), pgvalue.UUID(uuid.MustParse(req.CheckpointID)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +207,7 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 		t.Fatal(err)
 	}
 	// Retry the very same candidate; no new capture, registration or identity.
-	f.workerCall(t, f.server.workerMarkCheckpointReady, readyFromRegistration(req), nil)
+	f.worker.post(t, checkpointReadyPath, readyFromRegistration(req), http.StatusOK, nil)
 }
 
 func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
@@ -274,8 +251,8 @@ func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	ready := readyFromRegistration(req)
-	result := make(chan error, 1)
-	go func() { _, err := f.server.commitCheckpointReady(ctx, f.worker, ready); result <- err }()
+	result := make(chan int, 1)
+	go func() { result <- checkpointReadyStatus(t, f, ready) }()
 	for {
 		var blocked bool
 		if err := f.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, locker.Conn().PgConn().PID()).Scan(&blocked); err != nil {
@@ -285,8 +262,8 @@ func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 			break
 		}
 		select {
-		case err := <-result:
-			t.Fatalf("did not reach membership lock: %v", err)
+		case status := <-result:
+			t.Fatalf("did not reach membership lock: %d", status)
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
 		case <-time.After(time.Millisecond):
@@ -300,8 +277,8 @@ func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
 	if err := locker.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-result; !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("expired publication=%v", err)
+	if status := <-result; status != http.StatusConflict {
+		t.Fatalf("expired publication=%d", status)
 	}
 	var n int
 	if err := f.Pool.QueryRow(ctx, `SELECT count(*) FROM artifacts a JOIN computer_checkpoint_objects o ON o.digest=a.digest WHERE o.checkpoint_id=$1`, req.CheckpointID).Scan(&n); err != nil || n != 0 {

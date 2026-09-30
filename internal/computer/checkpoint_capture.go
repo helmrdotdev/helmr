@@ -1,19 +1,48 @@
-package dispatch
+package computer
 
 import (
 	"context"
+	"time"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// BeginComputerCapture seals the complete resident set, including an empty set.
-// The caller must commit on success and roll back on any error. The changed
-// Instance desired version is the durable physical capture intent.
-func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComputerCheckpointParams) (db.ComputerCheckpoint, error) {
-	var groupID, workerID, computerID pgtype.UUID
+// IdleCaptureDelay is how long an Instance without resident members stays
+// warm after the Computer's last activity before idle capture parks it.
+const IdleCaptureDelay = 30 * time.Second
+
+// Capture addresses the Instance incarnation a capture seals: its writer
+// generation, membership revision and desired version as the caller observed
+// them, and the id of the new checkpoint.
+type Capture struct {
+	CheckpointID       uuid.UUID
+	EnvironmentID      uuid.UUID
+	InstanceID         uuid.UUID
+	WriterGeneration   int64
+	MembershipRevision int64
+	DesiredVersion     int64
+}
+
+// BeginCapture seals the complete resident set of the Instance, including an
+// empty set, into a new creating checkpoint. It locks the worker Group and
+// Host at the Instance's epoch without comparing claim versions, the
+// Computer, the Instance, then the Sessions, Runs, Attempts, Run leases,
+// Waits and Session turns of the Instance's unreconciled leases in stable
+// order, and checks deadlines after the last lock. The caller must commit on
+// success and roll back on any error. The changed Instance desired version is
+// the durable physical capture intent. A fence that no longer holds, or a
+// member that cannot be captured, returns pgx.ErrNoRows.
+func BeginCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerCheckpoint, error) {
+	// A capture has no request deadline: the checkpoint and the freshness check
+	// take an explicit NULL expiry.
+	request := db.BeginComputerCheckpointParams{CheckpointID: pgvalue.UUID(capture.CheckpointID), ExpiresAt: pgtype.Timestamptz{}, ComputerInstanceID: pgvalue.UUID(capture.InstanceID), EnvironmentID: pgvalue.UUID(capture.EnvironmentID), WriterGeneration: capture.WriterGeneration, MembershipRevision: capture.MembershipRevision, DesiredVersion: capture.DesiredVersion}
+	var groupID, workerID uuid.UUID
+	var computerID pgtype.UUID
 	var region string
 	var epoch int64
 	err := tx.QueryRow(ctx, `SELECT worker_group_id,worker_host_id,computer_id,region_id,worker_epoch
@@ -22,20 +51,11 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
 		return db.ComputerCheckpoint{}, err
 	}
 	q := db.New(tx)
-	group, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: groupID, RegionID: region})
+	host, err := workergroup.LockHostIgnoringClaims(ctx, q, groupID, region, workerID, epoch)
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	if group.Status != "active" && group.Status != "paused" && group.Status != "draining" {
-		return db.ComputerCheckpoint{}, pgx.ErrNoRows
-	}
-	worker, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: workerID, WorkerGroupID: groupID})
-	if err != nil {
-		return db.ComputerCheckpoint{}, err
-	}
-	if (worker.Status != "active" && worker.Status != "draining") || !worker.CurrentEpoch.Valid || worker.CurrentEpoch.Int64 != epoch {
-		return db.ComputerCheckpoint{}, pgx.ErrNoRows
-	}
+	worker := host.Host
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: request.EnvironmentID, ID: computerID})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
@@ -45,7 +65,7 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
 		return db.ComputerCheckpoint{}, err
 	}
 	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || len(c.RecoveryFailure) > 0 || len(c.PreparationFailure) > 0 || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" ||
-		i.ID != request.ComputerInstanceID || i.WorkerHostID != workerID || i.WorkerGroupID != groupID || i.WorkerEpoch != epoch || !worker.VMPlatformID.Valid || i.VMPlatformID != worker.VMPlatformID.String || i.WriterGeneration != c.WriterGeneration {
+		i.ID != request.ComputerInstanceID || i.WorkerHostID != pgvalue.UUID(workerID) || i.WorkerGroupID != pgvalue.UUID(groupID) || i.WorkerEpoch != epoch || !worker.VMPlatformID.Valid || i.VMPlatformID != worker.VMPlatformID.String || i.WriterGeneration != c.WriterGeneration {
 		return db.ComputerCheckpoint{}, pgx.ErrNoRows
 	}
 	// Admissions and detachments take the Computer lock. Lock all resident owners
@@ -63,7 +83,7 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
 		}
 	}
 	// Evaluate wall-clock deadlines only after the final potentially blocking lock.
-	fresh, err := q.GetComputerCaptureWorkerFresh(ctx, db.GetComputerCaptureWorkerFreshParams{ID: workerID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, ExpiresAt: request.ExpiresAt})
+	fresh, err := q.GetComputerCaptureWorkerFresh(ctx, db.GetComputerCaptureWorkerFreshParams{ID: worker.ID, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds, ExpiresAt: pgtype.Timestamptz{}})
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
@@ -137,4 +157,32 @@ func BeginComputerCapture(ctx context.Context, tx pgx.Tx, request db.BeginComput
 		}
 	}
 	return checkpoint, nil
+}
+
+// BeginIdleCapture is BeginCapture under the idle policy, checked under the
+// capture's locks: every sealed member's Wait has passed its idle timeout,
+// an Instance without members has been inactive for IdleCaptureDelay, and
+// the Computer has no queued Run or pending Command. A capture that is not
+// due returns pgx.ErrNoRows and the caller must roll back.
+func BeginIdleCapture(ctx context.Context, tx pgx.Tx, capture Capture) (db.ComputerCheckpoint, error) {
+	cp, err := BeginCapture(ctx, tx, capture)
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	var due bool
+	err = tx.QueryRow(ctx, `SELECT
+ NOT EXISTS(SELECT 1 FROM computer_checkpoint_runs m JOIN run_waits w ON w.id=m.run_wait_id
+  WHERE m.checkpoint_id=$1 AND (w.idle_timeout_ms IS NULL OR w.created_at+w.idle_timeout_ms*interval '1 millisecond'>clock_timestamp()))
+ AND (EXISTS(SELECT 1 FROM computer_checkpoint_runs WHERE checkpoint_id=$1)
+  OR c.last_activity_at<=clock_timestamp()-$3*interval '1 millisecond')
+ AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.computer_id=c.id AND r.status IN ('queued','retry_delayed'))
+ AND NOT EXISTS(SELECT 1 FROM computer_commands p WHERE p.computer_id=c.id AND p.status='pending')
+ FROM computers c WHERE c.id=$2`, cp.ID, cp.ComputerID, IdleCaptureDelay.Milliseconds()).Scan(&due)
+	if err != nil {
+		return db.ComputerCheckpoint{}, err
+	}
+	if !due {
+		return db.ComputerCheckpoint{}, pgx.ErrNoRows
+	}
+	return cp, nil
 }

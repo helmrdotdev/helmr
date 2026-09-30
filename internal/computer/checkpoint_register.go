@@ -1,4 +1,4 @@
-package dispatch
+package computer
 
 import (
 	"context"
@@ -6,55 +6,57 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// ComputerCaptureWorker is supplied by authenticated transport, not the payload.
-type ComputerCaptureWorker struct {
-	GroupID pgtype.UUID
-	HostID  pgtype.UUID
-	Epoch   int64
-}
-
+// ErrCheckpointCandidate reports a checkpoint candidate or failure report
+// whose content the capture source rejects: a manifest that does not match
+// the sealed checkpoint, its runtime platform or its disk, or an invalid
+// failure message.
 var ErrCheckpointCandidate = errors.New("invalid Computer checkpoint candidate")
+
+// RegisterCheckpoint pins a complete immutable capture candidate before its
+// upload, in one transaction under the checkpoint source fence. It claims no
+// remote object existence, moves no Computer head and grants no restored Run
+// execution authority. An exact registered candidate replays, including with
+// members reordered or different timings. A fence that no longer holds, or a
+// different registered candidate, reports ErrAuthorityChanged.
+func RegisterCheckpoint(ctx context.Context, txb db.TxBeginner, ref CheckpointRef, manifest CheckpointManifest) (db.ComputerCheckpoint, error) {
+	var checkpoint db.ComputerCheckpoint
+	err := db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		source, err := lockCheckpointSource(ctx, tx, ref)
+		if err != nil {
+			return err
+		}
+		checkpoint, err = source.register(ctx, ref, manifest)
+		return err
+	})
+	if err != nil {
+		return db.ComputerCheckpoint{}, authorityChanged(err)
+	}
+	return checkpoint, nil
+}
 
 type checkpointObject struct {
 	role, media string
-	artifact    workerapi.CheckpointArtifact
+	artifact    CheckpointArtifact
 }
 
-// RegisterComputerCheckpoint pins a complete immutable candidate before upload.
-// The caller owns commit/rollback. Nothing here claims remote object existence,
-// moves the Computer head, or grants a restored Run execution authority.
-func RegisterComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest) (db.ComputerCheckpoint, error) {
-	source, err := lockComputerCheckpointSource(ctx, tx, worker, computerCheckpointFence{request.ComputerInstanceID, request.WorkerEpoch, request.DesiredVersion, request.CheckpointID})
-	if err != nil {
-		return db.ComputerCheckpoint{}, err
-	}
-	return registerComputerCheckpoint(ctx, tx, worker, request, source)
-}
-
-func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, source computer.CheckpointSource) (db.ComputerCheckpoint, error) {
-	var err error
-	q := db.New(tx)
-	instance, cp := source.Instance(), source.Checkpoint()
+// register validates the candidate against the sealed checkpoint, its members,
+// the VM platform and the Instance's disk, and records its canonical manifest
+// and runtime objects. It rechecks the live source and the member set after
+// the blocking object writes.
+func (s checkpointSource) register(ctx context.Context, ref CheckpointRef, manifest CheckpointManifest) (db.ComputerCheckpoint, error) {
+	q := db.New(s.tx)
+	instance, cp := s.instance, s.checkpoint
 	environmentID, computerID := instance.EnvironmentID, instance.ComputerID
-	validateLive := func() error {
-		_, err := q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: environmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
-		return err
-	}
-	if err = validateLive(); err != nil {
+	if err := s.checkLive(ctx, ref); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	members, err := q.ListComputerCheckpointRuns(ctx, db.ListComputerCheckpointRunsParams{EnvironmentID: environmentID, CheckpointID: cp.ID})
@@ -65,27 +67,26 @@ func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 	if err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	manifest := request.Manifest
 	point := manifest.RecoveryPoint
-	if point.ID != request.CheckpointID || point.ComputerID != pgvalue.UUIDString(computerID) || point.ComputerInstanceID != request.ComputerInstanceID || point.WriterGeneration != cp.WriterGeneration || point.MembershipRevision != cp.MembershipRevision || point.ComputerSpecID != pgvalue.UUIDString(cp.ComputerSpecID) || point.ProgramDeploymentID != pgvalue.UUIDString(cp.ProgramDeploymentID) || len(point.Runs) != len(members) || point.Runs == nil {
+	if point.ID != ref.CheckpointID.String() || point.ComputerID != pgvalue.UUIDString(computerID) || point.ComputerInstanceID != ref.InstanceID.String() || point.WriterGeneration != cp.WriterGeneration || point.MembershipRevision != cp.MembershipRevision || point.ComputerSpecID != pgvalue.UUIDString(cp.ComputerSpecID) || point.ProgramDeploymentID != pgvalue.UUIDString(cp.ProgramDeploymentID) || len(point.Runs) != len(members) || point.Runs == nil {
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
 	identity := point.Runtime
 	if identity.Backend != "firecracker" || identity.ID != platform.ID || identity.Arch != platform.Arch || identity.Contract != platform.Contract || identity.KernelDigest != platform.KernelDigest || identity.InitramfsDigest != platform.InitramfsDigest || identity.RootfsDigest != platform.RootfsDigest || !sha256sum.ValidDigest(identity.ConfigDigest) || identity.VMVCPUCount != instance.VMVCPUCount || identity.CPUConfigDigest != instance.CPUConfigDigest {
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
-	disk := manifest.RuntimeState.Computer
-	if disk == nil || disk.ComputerID != point.ComputerID || disk.LogicalBytes != instance.ReservedGuestEphemeralDiskBytes || disk.Root.Validate(disk.LogicalBytes) != nil || manifest.ComputerState.Base.MountPath != "/workspace" {
+	captured := manifest.RuntimeState.Computer
+	if captured == nil || captured.ComputerID != point.ComputerID || captured.LogicalBytes != instance.ReservedGuestEphemeralDiskBytes || captured.Root.Validate(captured.LogicalBytes) != nil || manifest.ComputerState.Base.MountPath != "/workspace" {
 		return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 	}
-	byRun := make(map[string]workerapi.CheckpointRun, len(point.Runs))
+	byRun := make(map[string]CheckpointRun, len(point.Runs))
 	for _, member := range point.Runs {
 		if _, exists := byRun[member.RunID]; exists || strings.TrimSpace(member.CorrelationID) == "" {
 			return db.ComputerCheckpoint{}, ErrCheckpointCandidate
 		}
 		byRun[member.RunID] = member
 	}
-	manifest.RecoveryPoint.Runs = make([]workerapi.CheckpointRun, 0, len(members))
+	manifest.RecoveryPoint.Runs = make([]CheckpointRun, 0, len(members))
 	for _, member := range members {
 		supplied, exists := byRun[pgvalue.UUIDString(member.RunID)]
 		if !exists || supplied.AttemptNumber != member.AttemptNumber || supplied.RunLeaseID != pgvalue.UUIDString(member.SourceRunLeaseID) || supplied.RunWaitID != pgvalue.UUIDString(member.RunWaitID) || (supplied.ActorSpeculativeInputSequence != nil) != member.ActorSpeculativeInputSequence.Valid || (supplied.ActorSpeculativeInputSequence != nil && *supplied.ActorSpeculativeInputSequence != member.ActorSpeculativeInputSequence.Int64) {
@@ -93,8 +94,7 @@ func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 		}
 		manifest.RecoveryPoint.Runs = append(manifest.RecoveryPoint.Runs, supplied)
 	}
-	validateMembers := func() error { return source.CheckMembers(ctx, len(members)) }
-	if err = validateMembers(); err != nil {
+	if err = s.checkMembers(ctx, len(members)); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 
@@ -132,33 +132,12 @@ func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 			return db.ComputerCheckpoint{}, err
 		}
 	}
-	if err = validateLive(); err != nil {
+	if err = s.checkLive(ctx, ref); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
-	if err = validateMembers(); err != nil {
+	if err = s.checkMembers(ctx, len(members)); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
 	cp.Manifest = encoded
 	return cp, nil
-}
-
-type computerCheckpointFence struct {
-	ComputerInstanceID string
-	WorkerEpoch        int64
-	DesiredVersion     int64
-	CheckpointID       string
-}
-
-// lockComputerCheckpointSource locks the capture source a worker request
-// names through the computer owner's checkpoint source fence.
-func lockComputerCheckpointSource(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request computerCheckpointFence) (computer.CheckpointSource, error) {
-	instanceID, instanceErr := uuid.Parse(request.ComputerInstanceID)
-	checkpointID, checkpointErr := uuid.Parse(request.CheckpointID)
-	if instanceErr != nil || checkpointErr != nil || instanceID.String() != request.ComputerInstanceID || checkpointID.String() != request.CheckpointID || !worker.GroupID.Valid || !worker.HostID.Valid {
-		return computer.CheckpointSource{}, pgx.ErrNoRows
-	}
-	return computer.LockCheckpointSource(ctx, tx, computer.CheckpointRef{
-		Host:       computer.Host{GroupID: pgvalue.MustUUIDValue(worker.GroupID), HostID: pgvalue.MustUUIDValue(worker.HostID), Epoch: worker.Epoch},
-		InstanceID: instanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: checkpointID,
-	})
 }

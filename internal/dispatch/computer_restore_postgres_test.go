@@ -2,6 +2,7 @@ package dispatch_test
 
 import (
 	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"testing"
 	"time"
@@ -655,9 +656,9 @@ func TestComputerRestoreReconciliationExpiryIntentFailureRollsBack(t *testing.T)
 }
 
 func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
-	f, worker, request, uploaded := dispatchtest.ReadyCapture(t, false)
+	f, ref, manifest, objects := computertest.ReadyCapture(t, false)
 	var wake db.ResolveCheckpointingTokenWaitParams
-	err := f.Pool.QueryRow(t.Context(), `SELECT w.id,w.run_id,w.expected_run_revision,w.current_run_lease_id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id LIMIT 1`, request.CheckpointID).Scan(&wake.WaitID, &wake.RunID, &wake.ExpectedRunRevision, &wake.CurrentRunLeaseID)
+	err := f.Pool.QueryRow(t.Context(), `SELECT w.id,w.run_id,w.expected_run_revision,w.current_run_lease_id FROM run_waits w JOIN computer_checkpoint_runs m ON m.run_wait_id=w.id WHERE m.checkpoint_id=$1 ORDER BY w.run_id LIMIT 1`, ref.CheckpointID).Scan(&wake.WaitID, &wake.RunID, &wake.ExpectedRunRevision, &wake.CurrentRunLeaseID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -666,7 +667,7 @@ func TestComputerRestoreAfterWakeDuringCapture(t *testing.T) {
 	if _, err := db.New(f.Pool).ResolveCheckpointingTokenWait(t.Context(), wake); err != nil {
 		t.Fatal(err)
 	}
-	f, authority, fence := dispatchtest.RestoreReadyCapture(t, f, worker, request, uploaded)
+	f, authority, fence := dispatchtest.RestoreReadyCapture(t, f, ref, manifest, objects)
 	var parked bool
 	if err := f.Pool.QueryRow(t.Context(), `SELECT r.status='waiting' AND w.suspension_status='resume_pending' FROM runs r JOIN run_waits w ON w.run_id=r.id WHERE w.id=$1`, wake.WaitID).Scan(&parked); err != nil || !parked {
 		t.Fatalf("waiting wakeup=%v err=%v", parked, err)

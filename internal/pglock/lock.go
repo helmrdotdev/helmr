@@ -56,12 +56,21 @@
 //     and its Instance, and reads the disk version last; it then compares the
 //     worker's claim versions with the locked worker_hosts and worker_groups
 //     rows.
+//   - Checkpoint capture, which the computer owner begins for explicit, idle
+//     and program-replacement captures, locks worker_groups and worker_hosts
+//     without comparing claim versions, the Computer and its Instance, then
+//     the Session, Run, Attempt, Run lease, Wait and Session turn rows of the
+//     Instance's unreconciled leases, and checks deadlines after the last
+//     lock. Program replacement takes worker_groups, worker_hosts, the
+//     Computer and the Instance before it begins that capture.
 //   - Checkpoint object recording locks worker_groups, worker_hosts, the
 //     Computer and its Instance, then the Session, Run, Attempt, Run lease and
 //     Wait rows of the Instance's unreconciled leases, then the checkpoint,
 //     without comparing claim versions, and repeats the whole fence before
 //     commit. Checkpoint registration, readiness and failure take the same
-//     checkpoint source locks.
+//     checkpoint source locks; readiness takes them in a checking transaction
+//     and again in the completing transaction, and reads object storage
+//     between the two.
 //   - Saves (admission, object recording, publication, adoption and
 //     abandonment) lock the Computer's secrets, worker_groups, worker_hosts,
 //     the Computer and then its Instance.

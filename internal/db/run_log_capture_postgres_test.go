@@ -1,18 +1,18 @@
 package db_test
 
 import (
+	"github.com/helmrdotdev/helmr/internal/computer/computertest"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"testing"
 	"uuid"
 )
 
 func TestAppendRunLogChunkDuringComputerCapture(t *testing.T) {
-	f, worker, request := dispatchtest.RegisteredCapture(t, false)
+	f, ref, manifest := computertest.RegisteredCapture(t, false)
 	q := db.New(f.Pool)
-	for _, member := range request.Manifest.RecoveryPoint.Runs {
-		params := db.AppendRunLogChunkParams{Kind: "log.stdout", Payload: []byte(`{"stream":"stdout"}`), LeaseFenceFingerprint: "capture-log-receipt", RunLeaseID: pgvalue.UUID(uuid.MustParse(member.RunLeaseID)), LeaseSequence: 1, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, Stream: "stdout", ObservedSeq: 1, Content: []byte("before pause")}
+	for _, member := range manifest.RecoveryPoint.Runs {
+		params := db.AppendRunLogChunkParams{Kind: "log.stdout", Payload: []byte(`{"stream":"stdout"}`), LeaseFenceFingerprint: "capture-log-receipt", RunLeaseID: pgvalue.UUID(uuid.MustParse(member.RunLeaseID)), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(ref.Host.GroupID), WorkerHostID: pgvalue.UUID(ref.Host.HostID), WorkerEpoch: ref.Host.Epoch, Stream: "stdout", ObservedSeq: 1, Content: []byte("before pause")}
 		first, err := q.AppendRunLogChunk(t.Context(), params)
 		if err != nil {
 			t.Fatal(err)
