@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -17,7 +18,7 @@ import (
 func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	leaseID := uuid.MustParse("00000000-0000-0000-0000-000000000002")
-	worker := workerActor{WorkerHostID: workerID, WorkerGroupID: controlplaneTestWorkerGroupID}
+	worker := workergroup.HostPrincipal{HostID: workerID, GroupID: controlplaneTestWorkerGroupID}
 	request := workerapi.CompleteTaskRequest{Lease: workerapi.RunLeaseFence{
 		ID:            leaseID.String(),
 		LeaseSequence: 7,
@@ -34,7 +35,7 @@ func TestTaskCompletionReplayUsesOnlyTerminalReceipt(t *testing.T) {
 	}
 	if store.last.RunLeaseID != pgvalue.UUID(leaseID) ||
 		store.last.LeaseSequence != 7 ||
-		store.last.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) ||
+		store.last.WorkerGroupID != pgvalue.UUID(worker.GroupID) ||
 		store.last.WorkerHostID != pgvalue.UUID(workerID) {
 		t.Fatalf("unexpected replay selector: %+v", store.last)
 	}
@@ -45,7 +46,7 @@ func TestTaskCompletionReplayRejectsChangedFingerprint(t *testing.T) {
 	_, err := taskCompletionWasReplayed(
 		context.Background(),
 		store,
-		workerActor{},
+		workergroup.HostPrincipal{},
 		workerapi.CompleteTaskRequest{},
 		parsedTaskCompletion{fingerprint: "sha256:changed"},
 	)
@@ -78,7 +79,7 @@ func TestTaskCompletionReplayAfterAmbiguousError(t *testing.T) {
 	if err := taskCompletionReplayAfterError(
 		context.Background(),
 		&taskCompletionReplayFixture{fingerprint: pgvalue.Text(completion.fingerprint)},
-		workerActor{},
+		workergroup.HostPrincipal{},
 		workerapi.CompleteTaskRequest{},
 		completion,
 		operationErr,
@@ -88,7 +89,7 @@ func TestTaskCompletionReplayAfterAmbiguousError(t *testing.T) {
 	if err := taskCompletionReplayAfterError(
 		context.Background(),
 		&taskCompletionReplayFixture{err: pgx.ErrNoRows},
-		workerActor{},
+		workergroup.HostPrincipal{},
 		workerapi.CompleteTaskRequest{},
 		completion,
 		operationErr,

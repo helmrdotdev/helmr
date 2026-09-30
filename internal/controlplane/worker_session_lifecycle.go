@@ -13,19 +13,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Secret locks precede Computer/Instance and logical scope locks. Stop remains
 // observable so admitted callback acknowledgements can settle their durable work.
-func lockWorkerSessionExecution(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence) (run.ExecutionAuthority, error) {
+func lockWorkerSessionExecution(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (run.ExecutionAuthority, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return run.ExecutionAuthority{}, err
 	}
 	q := db.New(tx)
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
+	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return run.ExecutionAuthority{}, staleActorOutputAppend(err)
 	}
@@ -35,9 +36,9 @@ func lockWorkerSessionExecution(ctx context.Context, tx pgx.Tx, worker workerAct
 	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
 		return run.ExecutionAuthority{}, err
 	}
-	a, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+	a, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
 	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return run.ExecutionAuthority{}, errStaleWorkerClaims
+		return run.ExecutionAuthority{}, workergroup.ErrStaleClaims
 	}
 	if err != nil {
 		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
@@ -216,7 +217,7 @@ func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 	// the exact hold; polling must not contend with shared worker placement locks.
 	state, err := s.db.ReadWorkerSessionControl(r.Context(), db.ReadWorkerSessionControlParams{
 		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, RunGeneration: request.RunGeneration,
+		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, RunGeneration: request.RunGeneration,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

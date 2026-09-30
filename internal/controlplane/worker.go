@@ -193,7 +193,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, conflict(errors.New("worker activation is stale")))
 		return
 	} else if err != nil {
-		s.log.Error("worker activate failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("worker activate failed", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("activate worker"))
 		return
 	}
@@ -217,13 +217,13 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.CompleteWorkerStartupRecovery(r.Context(), db.CompleteWorkerStartupRecoveryParams{
-		WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}, RecoveryEvidence: evidence,
+		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true}, RecoveryEvidence: evidence,
 	}); isNoRows(err) {
 		writeError(w, conflict(errors.New("worker startup recovery fence is stale")))
 		return
 	} else if err != nil {
-		s.log.Error("record worker startup recovery failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("record worker startup recovery failed", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("record worker startup recovery"))
 		return
 	}
@@ -301,15 +301,15 @@ func (s *Server) workerObserve(w http.ResponseWriter, r *http.Request) {
 func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.DrainWorkerHost(r.Context(), db.DrainWorkerHostParams{
-		ID:                   pgvalue.UUID(worker.WorkerHostID),
-		WorkerGroupID:        pgvalue.UUID(worker.WorkerGroupID),
-		ExpectedEpoch:        pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-		ExpectedClaimVersion: worker.ClaimVersion,
+		ID:                   pgvalue.UUID(worker.HostID),
+		WorkerGroupID:        pgvalue.UUID(worker.GroupID),
+		ExpectedEpoch:        pgtype.Int8{Int64: worker.Epoch, Valid: true},
+		ExpectedClaimVersion: worker.HostClaimVersion,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
 	} else if err != nil {
-		s.log.Error("worker drain failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("worker drain failed", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("drain worker"))
 		return
 	}
@@ -342,10 +342,10 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	completed, err := s.completeWorkerDrain(r.Context(), db.CompleteWorkerDrainParams{
-		WorkerHostID:         pgvalue.UUID(worker.WorkerHostID),
-		WorkerGroupID:        pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch:          pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-		ExpectedClaimVersion: worker.ClaimVersion,
+		WorkerHostID:         pgvalue.UUID(worker.HostID),
+		WorkerGroupID:        pgvalue.UUID(worker.GroupID),
+		WorkerEpoch:          pgtype.Int8{Int64: worker.Epoch, Valid: true},
+		ExpectedClaimVersion: worker.HostClaimVersion,
 		ObservedAt:           pgvalue.Timestamptz(request.ObservedAt),
 	})
 	if isNoRows(err) {
@@ -353,7 +353,7 @@ func (s *Server) workerCompleteDrain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.log.Error("worker drain completion failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("worker drain completion failed", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("complete worker drain"))
 		return
 	}
@@ -399,16 +399,16 @@ func (s *Server) workerFence(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.FenceWorkerHost(r.Context(), db.FenceWorkerHostParams{
-		ID:                   pgvalue.UUID(worker.WorkerHostID),
-		WorkerGroupID:        pgvalue.UUID(worker.WorkerGroupID),
-		ExpectedEpoch:        pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
-		ExpectedClaimVersion: worker.ClaimVersion,
+		ID:                   pgvalue.UUID(worker.HostID),
+		WorkerGroupID:        pgvalue.UUID(worker.GroupID),
+		ExpectedEpoch:        pgtype.Int8{Int64: worker.Epoch, Valid: true},
+		ExpectedClaimVersion: worker.HostClaimVersion,
 		ReasonCode:           pgtype.Text{String: reasonCode, Valid: true},
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
 	} else if err != nil {
-		s.log.Error("worker fence failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("worker fence failed", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("fence worker"))
 		return
 	}
@@ -419,10 +419,10 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 	s.writeWorkerStatus(w, r, workerFromContext(r.Context()))
 }
 
-func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
+func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workergroup.HostPrincipal) {
 	state, err := s.db.GetWorkerHostStatus(r.Context(), db.GetWorkerHostStatusParams{
-		ID:                          pgvalue.UUID(worker.WorkerHostID),
-		WorkerGroupID:               pgvalue.UUID(worker.WorkerGroupID),
+		ID:                          pgvalue.UUID(worker.HostID),
+		WorkerGroupID:               pgvalue.UUID(worker.GroupID),
 		ObservationFreshnessSeconds: workergroup.ObservationFreshnessSeconds,
 	})
 	if isNoRows(err) {
@@ -430,7 +430,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		return
 	}
 	if err != nil {
-		s.log.Error("get worker status failed", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("get worker status failed", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("get worker status"))
 		return
 	}
@@ -440,7 +440,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	}
 	status, err := workerPublicStatus(state.Status)
 	if err != nil {
-		s.log.Error("project worker status", "worker_host_id", worker.WorkerHostID.String(), "error", err)
+		s.log.Error("project worker status", "worker_host_id", worker.HostID.String(), "error", err)
 		writeError(w, errors.New("project worker status"))
 		return
 	}
@@ -488,7 +488,7 @@ func workerRoleReadiness(
 	return result
 }
 
-func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor, observation workerapi.Observation) error {
+func (s *Server) recordWorkerObservation(ctx context.Context, worker workergroup.HostPrincipal, observation workerapi.Observation) error {
 	if _, err := s.db.RecordWorkerObservation(
 		ctx,
 		workerObservationParams(worker, observation),
@@ -500,17 +500,17 @@ func (s *Server) recordWorkerObservation(ctx context.Context, worker workerActor
 	return nil
 }
 
-func workerObservationParams(worker workerActor, observation workerapi.Observation) db.RecordWorkerObservationParams {
+func workerObservationParams(worker workergroup.HostPrincipal, observation workerapi.Observation) db.RecordWorkerObservationParams {
 	return db.RecordWorkerObservationParams{
 		RunPausedReason: pgtype.Text{String: observation.RunPausedReason, Valid: observation.RunPausedReason != ""},
 		VMPausedReason:  pgtype.Text{String: observation.VMPausedReason, Valid: observation.VMPausedReason != ""},
-		WorkerHostID:    pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		WorkerHostID:    pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true},
 	}
 }
 
 func workerActivationParams(
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	c workerapi.Capabilities,
 	cpuEnvironment []byte,
 ) db.ActivateWorkerHostParams {
@@ -523,41 +523,41 @@ func workerActivationParams(
 		MaxVMSlots:                   c.ExecutionSlotsAvailable,
 		MaxVMStarts:                  c.ExecutionSlotsAvailable,
 		CPUEnvironment:               cpuEnvironment, CPUEnvironmentDigest: pgtype.Text{String: c.CPUEnvironment.Digest, Valid: true},
-		WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerEpoch: pgtype.Int8{Int64: worker.Epoch, Valid: true},
 	}
 }
 
-func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabilities workerapi.Capabilities) error {
+func (s *Server) activateWorker(ctx context.Context, worker workergroup.HostPrincipal, capabilities workerapi.Capabilities) error {
 	cpuEnvironment, err := json.Marshal(capabilities.CPUEnvironment)
 	if err != nil {
 		return fmt.Errorf("encode Worker CPU environment: %w", err)
 	}
 	template := workerTemplate(capabilities)
 	return s.inTx(ctx, func(work *txWork) error {
-		group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.WorkerGroupID))
+		group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
 		if err != nil {
 			return err
 		}
 		if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
 			return pgx.ErrNoRows
 		}
-		epoch := pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}
+		epoch := pgtype.Int8{Int64: worker.Epoch, Valid: true}
 		poolID, err := work.q.GetWorkerHostPoolID(ctx, db.GetWorkerHostPoolIDParams{
-			WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+			WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
 			WorkerEpoch: epoch,
 		})
 		if err != nil {
 			return err
 		}
 		pool, err := work.q.LockWorkerPool(ctx, db.LockWorkerPoolParams{
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerPoolID: poolID,
+			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerPoolID: poolID,
 		})
 		if err != nil {
 			return err
 		}
 		if _, err := work.q.LockWorkerHostForActivation(ctx, db.LockWorkerHostForActivationParams{
-			WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+			WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
 			WorkerPoolID: poolID, WorkerEpoch: epoch,
 		}); err != nil {
 			return err
@@ -581,12 +581,12 @@ func (s *Server) activateWorker(ctx context.Context, worker workerActor, capabil
 					return pgx.ErrNoRows
 				}
 			}
-			pool, err = work.q.SealWorkerPool(ctx, sealWorkerPoolParams(worker.WorkerGroupID, poolID, template))
+			pool, err = work.q.SealWorkerPool(ctx, sealWorkerPoolParams(worker.GroupID, poolID, template))
 			if err != nil {
 				return err
 			}
 			if _, err := work.q.SetInitialWorkerGroupPrimaryPool(ctx, db.SetInitialWorkerGroupPrimaryPoolParams{
-				WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerPoolID: poolID,
+				WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerPoolID: poolID,
 			}); err != nil {
 				return err
 			}

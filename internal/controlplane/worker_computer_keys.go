@@ -26,11 +26,11 @@ func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request
 	worker := workerFromContext(r.Context())
 	material, err := s.computerKeys.initial(r.Context(), computerKeyFence{
 		ComputerPreparationFence: dispatch.ComputerPreparationFence{
-			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch,
+			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.HostID),
+			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch,
 			DesiredVersion: request.DesiredVersion,
 		},
-		ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
+		ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 	})
 	if writeStaleWorkerClaims(w, err) {
 		return
@@ -62,11 +62,11 @@ func (s *Server) workerComputerSource(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	material, err := s.computerKeys.source(r.Context(), computerKeyFence{
 		ComputerPreparationFence: dispatch.ComputerPreparationFence{
-			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch,
+			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.HostID),
+			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch,
 			DesiredVersion: request.DesiredVersion,
 		},
-		ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
+		ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 	})
 	if writeStaleWorkerClaims(w, err) {
 		return

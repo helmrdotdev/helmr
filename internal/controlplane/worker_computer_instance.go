@@ -30,7 +30,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	rows, err := s.db.ListComputerInstanceReconcileTargets(r.Context(), db.ListComputerInstanceReconcileTargetsParams{
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 		RowLimit: workerRuntimeReconcileLimit,
 	})
 	if err != nil {
@@ -97,7 +97,7 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.WorkerEpoch != worker.WorkerEpoch {
+	if request.WorkerEpoch != worker.Epoch {
 		writeError(w, forbidden(errors.New("runtime instance belongs to another worker epoch")))
 		return
 	}
@@ -112,9 +112,9 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 			writeError(w, badRequest(errors.New("cpu_config_digest must be a canonical SHA-256 digest")))
 			return
 		}
-		row, err = s.markComputerInstanceReady(r.Context(), pgvalue.UUID(worker.WorkerGroupID), db.MarkComputerInstanceReadyParams{
-			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerEpoch:             worker.WorkerEpoch,
+		row, err = s.markComputerInstanceReady(r.Context(), pgvalue.UUID(worker.GroupID), db.MarkComputerInstanceReadyParams{
+			DesiredVersion: request.DesiredVersion, ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID),
+			WorkerEpoch:             worker.Epoch,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 			VMVCPUCount:             request.VMVCPUCount, CPUConfigDigest: request.CPUConfigDigest,
 		})
@@ -136,8 +136,8 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 		if reason == "" {
 			reason = "desired_state_reconciled"
 		}
-		row, err = s.reclaimComputerInstance(r.Context(), worker.WorkerGroupID, db.ReclaimComputerInstanceParams{
-			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+		row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{
+			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 			DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion,
 			Reason: pgvalue.Text(reason), Evidence: proof,
 		})
@@ -147,7 +147,7 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 			reason = "runtime_reconcile_failed"
 		}
 		if reason == workerapi.RuntimeFailureWorkerInvalid {
-			if err = s.fenceInvalidWorkerEpoch(r.Context(), worker.WorkerGroupID, pgvalue.UUID(worker.WorkerHostID), worker.WorkerEpoch); err != nil {
+			if err = s.fenceInvalidWorkerEpoch(r.Context(), worker.GroupID, pgvalue.UUID(worker.HostID), worker.Epoch); err != nil {
 				writeError(w, err)
 				return
 			}
@@ -162,8 +162,8 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 				writeError(w, badRequest(proofErr))
 				return
 			}
-			row, err = s.reclaimComputerInstance(r.Context(), worker.WorkerGroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
-				ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+			row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
+				ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion, Reason: pgvalue.Text(reason), Evidence: proof,
 			})
 			if err == nil {
@@ -175,15 +175,15 @@ func (s *Server) workerMarkComputerInstance(w http.ResponseWriter, r *http.Reque
 				return
 			}
 		}
-		row, err = s.markComputerInstanceFailed(r.Context(), worker.WorkerGroupID, db.MarkComputerInstanceFailedParams{
+		row, err = s.markComputerInstanceFailed(r.Context(), worker.GroupID, db.MarkComputerInstanceFailedParams{
 			ReasonCode: pgvalue.Text(reason), Error: normalizedJSONRawMessage(request.Error),
-			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch,
+			ID: pgvalue.UUID(id), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch,
 			DesiredVersion:          request.DesiredVersion,
 			ExpectedObservedVersion: request.ExpectedObservedVersion,
 		})
 		if err == nil && request.CleanupProof != nil {
 			proof, _ := json.Marshal(request.CleanupProof)
-			row, err = s.reclaimComputerInstance(r.Context(), worker.WorkerGroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
+			row, err = s.reclaimComputerInstance(r.Context(), worker.GroupID, db.ReclaimComputerInstanceParams{RequireFailure: true,
 				ID: row.ID, WorkerHostID: row.WorkerHostID, WorkerEpoch: row.WorkerEpoch, DesiredVersion: row.DesiredVersion,
 				ExpectedObservedVersion: row.ObservedVersion, Reason: row.TerminalReasonCode, Evidence: proof,
 			})

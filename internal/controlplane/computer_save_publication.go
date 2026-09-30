@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -25,7 +26,7 @@ func computerSavePublicationKey(r db.ComputerInstance) []byte {
 
 // recordComputerSaveObject revalidates live authority on both sides of remote
 // storage I/O. Only the exact operation may certify or reuse its retained bytes.
-func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest, inspection blockformat.ObjectInspection, operation string) error {
+func (s *Server) recordComputerSaveObject(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.ComputerSaveBeginRequest, inspection blockformat.ObjectInspection, operation string) error {
 	descriptor, err := describeComputerObject(inspection)
 	if err != nil {
 		return err
@@ -89,7 +90,7 @@ func (s *Server) recordComputerSaveObject(ctx context.Context, worker workerActo
 // publishComputerSave atomically records the exact receipt, retained generation
 // and saved head. It deliberately leaves the pending slot and object pins intact:
 // upload success does not prove that the host has adopted its durable source.
-func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest, root disk.GenerationRoot) (computerPublicationResult, error) {
+func (s *Server) publishComputerSave(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.ComputerSaveBeginRequest, root disk.GenerationRoot) (computerPublicationResult, error) {
 	var zero computerPublicationResult
 	locator, err := root.Locator(root.LogicalBytes)
 	if err != nil {
@@ -171,7 +172,7 @@ func (s *Server) publishComputerSave(ctx context.Context, worker workerActor, re
 // retention to the existing physical Runtime reclamation path. Abandonment keeps
 // object pins until that reclamation: the live disk can still reuse the same
 // ciphertext in a later save or checkpoint, even after this producer has joined.
-func (s *Server) abandonComputerSave(ctx context.Context, worker workerActor, request workerapi.ComputerSaveBeginRequest) error {
+func (s *Server) abandonComputerSave(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.ComputerSaveBeginRequest) error {
 	receipt, err := computerSaveReceiptParams(worker, request)
 	if err != nil {
 		return badRequest(err)

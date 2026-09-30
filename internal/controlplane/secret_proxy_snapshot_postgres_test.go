@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -34,7 +35,7 @@ type snapshotFixture struct {
 	q                 *db.Queries
 	store             *secret.Store
 	server            *Server
-	worker            workerActor
+	worker            workergroup.HostPrincipal
 	computer, runtime uuid.UUID
 	run               runtest.RunLease
 	markers           []string
@@ -54,7 +55,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	if err := f.fixture.Pool.QueryRow(t.Context(), "SELECT r.computer_id,r.id FROM computer_instances r JOIN run_leases l ON l.computer_instance_id=r.id WHERE l.id=$1", f.run.LeaseID).Scan(&f.computer, &f.runtime); err != nil {
 		t.Fatal(err)
 	}
-	f.worker = workerActor{WorkerHostID: f.fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	f.worker = workergroup.HostPrincipal{HostID: f.fixture.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	f.server = &Server{db: f.q, tx: f.fixture.Pool, secretProxy: f.store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computer_instances SET guest_channel_token_hash=decode(repeat('01',32),'hex'),guest_channel_token_expires_at=now()+interval '10 minutes' WHERE id=$1", f.runtime)
 	for i := 0; i < count; i++ {
@@ -75,7 +76,7 @@ func newSnapshotFixture(t *testing.T, count int, root bool) *snapshotFixture {
 	return f
 }
 func (f *snapshotFixture) params() db.CaptureProtectedSecretEnvelopesParams {
-	return db.CaptureProtectedSecretEnvelopesParams{ComputerInstanceID: pgvalue.UUID(f.runtime), WorkerHostID: pgvalue.UUID(f.worker.WorkerHostID), WorkerEpoch: 1, WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), ClaimVersion: 1, GroupClaimVersion: 1, Origin: "https://example.com", Placeholders: f.markers}
+	return db.CaptureProtectedSecretEnvelopesParams{ComputerInstanceID: pgvalue.UUID(f.runtime), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: 1, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), ClaimVersion: 1, GroupClaimVersion: 1, Origin: "https://example.com", Placeholders: f.markers}
 }
 func (f *snapshotFixture) invoke(ctx context.Context, resolve bool) *httptest.ResponseRecorder {
 	body, _ := json.Marshal(workerapi.SecretProxyRequest{ComputerInstanceID: f.runtime.String()})
@@ -125,11 +126,11 @@ func TestProtectedSnapshotBeforeAndAfterTransitions(t *testing.T) {
 							t.Fatal(err)
 						}
 					case "epoch":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_hosts SET current_epoch=2 WHERE id=$1", f.worker.WorkerHostID)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_hosts SET current_epoch=2 WHERE id=$1", f.worker.HostID)
 					case "claims":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_hosts SET claim_version=2 WHERE id=$1", f.worker.WorkerHostID)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_hosts SET claim_version=2 WHERE id=$1", f.worker.HostID)
 					case "group":
-						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_groups SET claim_version=2 WHERE id=$1", f.worker.WorkerGroupID)
+						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE worker_groups SET claim_version=2 WHERE id=$1", f.worker.GroupID)
 					case "computer":
 						dbtest.MustExec(t, t.Context(), f.fixture.Pool, "UPDATE computers SET desired_state='deleted' WHERE id=$1", f.computer)
 					case "runtime":
@@ -405,7 +406,7 @@ func TestProtectedGuestIngressCeilingsBeforeReplay(t *testing.T) {
 			target, _ := json.Marshal(api.ComputerIDTarget{ID: targetID.String()})
 			request := workerapi.InvokeChildTaskRequest{Lease: fence, CorrelationID: uuid.NewV7().String(), TaskDeclaredID: "test-task", Method: "start", Computer: target, Options: json.RawMessage("{}"), IdempotencyKey: key}
 			if replay {
-				loc, err := f.q.GetLiveRunLeaseLocators(t.Context(), db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(f.run.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.worker.WorkerHostID), WorkerEpoch: 1})
+				loc, err := f.q.GetLiveRunLeaseLocators(t.Context(), db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(f.run.LeaseID), LeaseSequence: 1, WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID), WorkerEpoch: 1})
 				if err != nil {
 					t.Fatal(err)
 				}

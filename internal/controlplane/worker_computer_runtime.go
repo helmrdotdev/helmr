@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -63,7 +64,7 @@ func (s *Server) workerCreateComputer(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerComputerSourceError(w, "create", request.Lease.ID, err)
 			return
 		}
@@ -195,7 +196,7 @@ func (s *Server) workerDeleteComputer(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, errStaleWorkerClaims) {
+		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerComputerSourceError(w, "delete", request.Lease.ID, err)
 			return
 		}

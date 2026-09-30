@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -67,7 +68,7 @@ func TestInstanceWriterRenewalRejectsStaleAuthority(t *testing.T) {
 			w, r := instanceRenewalFixture(t, f, work)
 			dbtest.MustExec(t, t.Context(), f.Pool, test.sql)
 			_, err := applyInstanceRenewal(t, f, w, r)
-			if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, errStaleWorkerClaims) {
+			if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, workergroup.ErrStaleClaims) {
 				t.Fatalf("stale renewal=%v", err)
 			}
 		})
@@ -85,7 +86,7 @@ func TestInstanceWriterRenewalRechecksExpiryAfterLockWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer blocker.Rollback(context.Background())
-	if _, err := blocker.Exec(ctx, `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, w.WorkerGroupID); err != nil {
+	if _, err := blocker.Exec(ctx, `SELECT id FROM worker_groups WHERE id=$1 FOR UPDATE`, w.GroupID); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := f.Pool.Begin(ctx)
@@ -137,18 +138,18 @@ func TestInstanceWriterRenewalRechecksExpiryAfterLockWait(t *testing.T) {
 	}
 }
 
-func instanceRenewalFixture(t *testing.T, f runtest.Fixture, work runtest.RunLease) (workerActor, workerapi.ComputerInstanceRenewRequest) {
+func instanceRenewalFixture(t *testing.T, f runtest.Fixture, work runtest.RunLease) (workergroup.HostPrincipal, workerapi.ComputerInstanceRenewRequest) {
 	t.Helper()
-	w := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1}
+	w := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1}
 	r := workerapi.ComputerInstanceRenewRequest{EnvironmentID: f.EnvironmentID.String()}
 	var instance uuid.UUID
-	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,w.claim_version,g.claim_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id JOIN worker_hosts w ON w.id=i.worker_host_id JOIN worker_groups g ON g.id=w.worker_group_id WHERE l.id=$1`, work.LeaseID).Scan(&instance, &r.WriterGeneration, &w.ClaimVersion, &w.GroupClaimVersion); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id,i.writer_generation,w.claim_version,g.claim_version FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id JOIN worker_hosts w ON w.id=i.worker_host_id JOIN worker_groups g ON g.id=w.worker_group_id WHERE l.id=$1`, work.LeaseID).Scan(&instance, &r.WriterGeneration, &w.HostClaimVersion, &w.GroupClaimVersion); err != nil {
 		t.Fatal(err)
 	}
 	r.ComputerInstanceID = instance.String()
 	return w, r
 }
-func applyInstanceRenewal(t *testing.T, f runtest.Fixture, w workerActor, r workerapi.ComputerInstanceRenewRequest) (db.ComputerInstance, error) {
+func applyInstanceRenewal(t *testing.T, f runtest.Fixture, w workergroup.HostPrincipal, r workerapi.ComputerInstanceRenewRequest) (db.ComputerInstance, error) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {

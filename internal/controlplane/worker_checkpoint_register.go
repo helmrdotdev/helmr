@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -41,7 +42,7 @@ func (s *Server) workerRegisterCheckpoint(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) registerCheckpoint(ctx context.Context, worker workerActor, request workerapi.RegisterCheckpointRequest) (workerapi.ComputerCheckpointResponse, error) {
+func (s *Server) registerCheckpoint(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.RegisterCheckpointRequest) (workerapi.ComputerCheckpointResponse, error) {
 	for name, value := range map[string]string{"computer_instance_id": request.ComputerInstanceID, "checkpoint_id": request.CheckpointID} {
 		if _, err := parseCanonicalUUID(name, value); err != nil {
 			return workerapi.ComputerCheckpointResponse{}, badRequest(err)
@@ -51,7 +52,7 @@ func (s *Server) registerCheckpoint(ctx context.Context, worker workerActor, req
 		return workerapi.ComputerCheckpointResponse{}, badRequest(errors.New("checkpoint source versions must be positive"))
 	}
 	err := s.inTx(ctx, func(work *txWork) error {
-		_, err := dispatch.RegisterComputerCheckpoint(ctx, work.tx, dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.WorkerGroupID), HostID: pgvalue.UUID(worker.WorkerHostID), Epoch: worker.WorkerEpoch}, request)
+		_, err := dispatch.RegisterComputerCheckpoint(ctx, work.tx, dispatch.ComputerCaptureWorker{GroupID: pgvalue.UUID(worker.GroupID), HostID: pgvalue.UUID(worker.HostID), Epoch: worker.Epoch}, request)
 		return err
 	})
 	if errors.Is(err, dispatch.ErrCheckpointCandidate) {

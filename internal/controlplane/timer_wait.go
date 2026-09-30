@@ -147,7 +147,7 @@ func (s *Server) workerCreateTimerRunWait(
 		RunID: pgvalue.UUIDString(registrationLocators.RunID), RunWaitID: waitID.String(),
 		ResumeAttachID:     resumeAttachID.String(),
 		ComputerInstanceID: pgvalue.UUIDString(registrationLocators.ComputerInstanceID),
-		RuntimeEpoch:       worker.WorkerEpoch,
+		RuntimeEpoch:       worker.Epoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = timerWaitDecision(registered)

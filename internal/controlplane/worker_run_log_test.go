@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -140,8 +141,8 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerHostID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID: workerID, GroupID: uuid.MustParse(lease.WorkerGroupID), Epoch: lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -171,8 +172,8 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerHostID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID), WorkerEpoch: lease.WorkerEpoch,
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID: workerID, GroupID: uuid.MustParse(lease.WorkerGroupID), Epoch: lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 
@@ -223,9 +224,9 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerHostID: workerID, WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch: lease.WorkerEpoch}))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID: workerID, GroupID: uuid.MustParse(lease.WorkerGroupID),
+		Epoch: lease.WorkerEpoch}))
 	recorder := httptest.NewRecorder()
 
 	server.workerAppendRunLogs(recorder, request)
@@ -257,10 +258,10 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerHostID:  uuid.NewV7(),
-		WorkerGroupID: uuid.MustParse(lease.WorkerGroupID),
-		WorkerEpoch:   lease.WorkerEpoch,
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID:  uuid.NewV7(),
+		GroupID: uuid.MustParse(lease.WorkerGroupID),
+		Epoch:   lease.WorkerEpoch,
 	}))
 	recorder := httptest.NewRecorder()
 

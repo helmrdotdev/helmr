@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -22,7 +23,7 @@ const (
 	computerSaveAbandon
 )
 
-func computerSaveReceiptParams(worker workerActor, request workerapi.ComputerSaveBeginRequest) (db.GetWorkerComputerSaveParams, error) {
+func computerSaveReceiptParams(worker workergroup.HostPrincipal, request workerapi.ComputerSaveBeginRequest) (db.GetWorkerComputerSaveParams, error) {
 	if err := validateComputerSaveRequest(request); err != nil {
 		return db.GetWorkerComputerSaveParams{}, err
 	}
@@ -32,8 +33,8 @@ func computerSaveReceiptParams(worker workerActor, request workerapi.ComputerSav
 	return db.GetWorkerComputerSaveParams{
 		EnvironmentID: pgvalue.UUID(environment), ComputerInstanceID: pgvalue.UUID(instance),
 		SaveID: pgvalue.UUID(save), Sequence: pgtype.Int8{Int64: request.Sequence, Valid: true},
-		WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerEpoch: worker.WorkerEpoch, WriterGeneration: request.WriterGeneration,
+		WorkerHostID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerEpoch: worker.Epoch, WriterGeneration: request.WriterGeneration,
 	}, nil
 }
 
@@ -50,7 +51,7 @@ func validateComputerSaveRequest(request workerapi.ComputerSaveBeginRequest) err
 }
 
 // applyComputerSave owns the save mutation within the caller transaction.
-func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workerActor, request workerapi.ComputerSaveBeginRequest, operation computerSaveOperation, apply func(pgx.Tx, *db.Queries, db.ComputerInstance) error) (workerapi.ComputerSaveBeginResponse, error) {
+func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, request workerapi.ComputerSaveBeginRequest, operation computerSaveOperation, apply func(pgx.Tx, *db.Queries, db.ComputerInstance) error) (workerapi.ComputerSaveBeginResponse, error) {
 	var result workerapi.ComputerSaveBeginResponse
 	params, err := computerSaveReceiptParams(worker, request)
 	if err != nil {
@@ -78,7 +79,7 @@ func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workerActor, reque
 	if err != nil {
 		return result, err
 	}
-	if err = worker.checkLockedClaims(host, group); err != nil {
+	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return result, err
 	}
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: params.EnvironmentID, ID: locator.ComputerID})
@@ -123,7 +124,7 @@ func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workerActor, reque
 	var authorized bool
 	err = tx.QueryRow(ctx, `SELECT w.current_epoch=$3 AND w.status IN ('active','draining')
  AND g.status IN ('active','paused','draining') AND clock_timestamp()<$4
- FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, params.WorkerHostID, params.WorkerGroupID, worker.WorkerEpoch, instance.WriterExpiresAt).Scan(&authorized)
+ FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, params.WorkerHostID, params.WorkerGroupID, worker.Epoch, instance.WriterExpiresAt).Scan(&authorized)
 	if err != nil {
 		return result, err
 	}

@@ -18,9 +18,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
-func checkpointFailureFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workerapi.CheckpointFailedRequest, workerActor) {
+func checkpointFailureFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workerapi.CheckpointFailedRequest, workergroup.HostPrincipal) {
 	t.Helper()
 	f := runtest.New(t)
 	run := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
@@ -42,10 +43,10 @@ func checkpointFailureFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, 
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	return f, run, workerapi.CheckpointFailedRequest{ComputerInstanceID: pgvalue.UUIDString(begin.ComputerInstanceID), WorkerEpoch: 1, DesiredVersion: begin.DesiredVersion + 1, CheckpointID: pgvalue.UUIDString(begin.CheckpointID), Error: "snapshot failed"}, workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1}
+	return f, run, workerapi.CheckpointFailedRequest{ComputerInstanceID: pgvalue.UUIDString(begin.ComputerInstanceID), WorkerEpoch: 1, DesiredVersion: begin.DesiredVersion + 1, CheckpointID: pgvalue.UUIDString(begin.CheckpointID), Error: "snapshot failed"}, workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1}
 }
 
-func callCheckpointFailure(t *testing.T, f runtest.Fixture, receipt workerapi.CheckpointFailedRequest, worker workerActor) *httptest.ResponseRecorder {
+func callCheckpointFailure(t *testing.T, f runtest.Fixture, receipt workerapi.CheckpointFailedRequest, worker workergroup.HostPrincipal) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(receipt)
 	if err != nil {
@@ -87,7 +88,7 @@ func TestWorkerCheckpointFailureRequestsSourceExclusion(t *testing.T) {
 func TestWorkerCheckpointFailureRejectsInvalidSource(t *testing.T) {
 	f, _, request, worker := checkpointFailureFixture(t)
 	wrongWorker := worker
-	wrongWorker.WorkerHostID = uuid.NewV7()
+	wrongWorker.HostID = uuid.NewV7()
 	if response := callCheckpointFailure(t, f, request, wrongWorker); response.Code != http.StatusConflict {
 		t.Fatalf("wrong host=%d %s", response.Code, response.Body.String())
 	}

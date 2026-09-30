@@ -10,12 +10,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 // Cleanup follows physical ownership, independently of an expired or terminal
 // member lease. It cannot grant execution authority or close another member.
-func lockRunCleanupInstance(ctx context.Context, work *txWork, worker workerActor, request workerapi.ComputerRunCleanupRequest) (db.ComputerInstance, error) {
+func lockRunCleanupInstance(ctx context.Context, work *txWork, worker workergroup.HostPrincipal, request workerapi.ComputerRunCleanupRequest) (db.ComputerInstance, error) {
 	instance, e1 := ids.Parse(request.ComputerInstanceID)
 	environment, e2 := ids.Parse(request.EnvironmentID)
 	if e1 != nil || e2 != nil || request.WriterGeneration <= 0 {
@@ -25,25 +26,25 @@ func lockRunCleanupInstance(ctx context.Context, work *txWork, worker workerActo
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.WorkerGroupID))
+	group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	host, err := work.q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: group.ID})
+	host, err := work.q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: group.ID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if err = worker.checkLockedClaims(host, group); err != nil {
+	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return db.ComputerInstance{}, err
 	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.WorkerEpoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
+	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.Epoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	computer, err := work.q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i, err := work.q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.WorkerEpoch})
+	i, err := work.q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
@@ -57,7 +58,7 @@ func lockRunCleanupInstance(ctx context.Context, work *txWork, worker workerActo
 	return i, nil
 }
 
-func (s *Server) getComputerRunCleanup(ctx context.Context, worker workerActor, request workerapi.ComputerRunCleanupRequest) (workerapi.ComputerRunCleanupResponse, error) {
+func (s *Server) getComputerRunCleanup(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.ComputerRunCleanupRequest) (workerapi.ComputerRunCleanupResponse, error) {
 	var response workerapi.ComputerRunCleanupResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		i, err := lockRunCleanupInstance(ctx, work, worker, request)
@@ -80,7 +81,7 @@ func (s *Server) getComputerRunCleanup(ctx context.Context, worker workerActor, 
 	return response, err
 }
 
-func (s *Server) reconcileComputerRun(ctx context.Context, worker workerActor, request workerapi.ComputerRunReconcileRequest) error {
+func (s *Server) reconcileComputerRun(ctx context.Context, worker workergroup.HostPrincipal, request workerapi.ComputerRunReconcileRequest) error {
 	return s.inTx(ctx, func(work *txWork) error {
 		i, err := lockRunCleanupInstance(ctx, work, worker, request.ComputerRunCleanupRequest)
 		if err != nil {

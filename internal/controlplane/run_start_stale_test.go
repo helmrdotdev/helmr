@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -59,7 +60,7 @@ func TestStaleRunStartKeepsInnermostFailurePoint(t *testing.T) {
 func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T) {
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "starting", time.Now())
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	const secretSentinel = "https://signed.invalid/object?credential=secret-sentinel"
 	store := &staleRunStartStore{
 		pool:    f.Pool,
@@ -110,7 +111,7 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 		`"failure_point":"execution"`,
 		`"run_lease_id":"` + pgvalue.UUIDString(pgvalue.UUID(work.LeaseID)) + `"`,
 		`"lease_sequence":1`,
-		fmt.Sprintf(`"worker_epoch":%d`, worker.WorkerEpoch),
+		fmt.Sprintf(`"worker_epoch":%d`, worker.Epoch),
 	} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("structured log missing %s: %s", want, logs.String())

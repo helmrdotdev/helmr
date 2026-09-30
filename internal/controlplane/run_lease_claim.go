@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -24,8 +25,8 @@ type runLeaseClaimAuthority struct {
 	runLease   db.RunLease
 }
 
-func (s *Server) claimRunLease(ctx context.Context, worker workerActor, leaseID pgtype.UUID, leaseSequence int64) (runLeaseClaimAuthority, []secret.DeliveryEnvelope, error) {
-	fence := run.ExecutionFence{LeaseID: leaseID, LeaseSequence: leaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}
+func (s *Server) claimRunLease(ctx context.Context, worker workergroup.HostPrincipal, leaseID pgtype.UUID, leaseSequence int64) (runLeaseClaimAuthority, []secret.DeliveryEnvelope, error) {
+	fence := run.ExecutionFence{LeaseID: leaseID, LeaseSequence: leaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}
 	var claimed run.ExecutionAuthority
 	var resumeWait *db.RunWait
 	err := s.inTx(ctx, func(work *txWork) error {
@@ -43,7 +44,7 @@ func (s *Server) claimRunLease(ctx context.Context, worker workerActor, leaseID 
 			claimed, err = run.ClaimExecution(ctx, tx, fence)
 		}
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if err != nil {
 			return staleRunLeaseClaim(err)

@@ -20,7 +20,7 @@ import (
 )
 
 func TestWorkerActivationDerivesRuntimeStartsFromRunSlots(t *testing.T) {
-	worker := workerActor{WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 1}
+	worker := workergroup.HostPrincipal{GroupID: controlplaneTestWorkerGroupID, Epoch: 1}
 	capabilities := validWorkerCapabilities(t)
 	if got := workerActivationParams(worker, capabilities, []byte(`{}`)).MaxVMStarts; got != capabilities.ExecutionSlotsAvailable {
 		t.Fatalf("max runtime starts = %d, want %d", got, capabilities.ExecutionSlotsAvailable)

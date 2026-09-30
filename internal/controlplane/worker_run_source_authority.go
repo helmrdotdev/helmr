@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,7 +26,7 @@ type workerRunSourceAuthority struct {
 	AttemptNumber int32
 }
 
-func authorizeWorkerRunSource(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence) (workerRunSourceAuthority, error) {
+func authorizeWorkerRunSource(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence) (workerRunSourceAuthority, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return workerRunSourceAuthority{}, fmt.Errorf("%w: invalid receipt", errStaleWorkerRunSource)
@@ -34,7 +35,7 @@ func authorizeWorkerRunSource(ctx context.Context, tx pgx.Tx, worker workerActor
 	return validateWorkerRunSource(authority, err)
 }
 
-func authorizeWorkerRunSourceForComputer(ctx context.Context, tx pgx.Tx, worker workerActor, lease workerapi.RunLeaseFence, target pgtype.UUID) (workerRunSourceAuthority, error) {
+func authorizeWorkerRunSourceForComputer(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, target pgtype.UUID) (workerRunSourceAuthority, error) {
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return workerRunSourceAuthority{}, fmt.Errorf("%w: invalid receipt", errStaleWorkerRunSource)
@@ -46,13 +47,13 @@ func authorizeWorkerRunSourceForComputer(ctx context.Context, tx pgx.Tx, worker 
 	return validateWorkerRunSource(authority, err)
 }
 
-func workerExecutionFence(worker workerActor, parsed parsedRunLeaseFence, lease workerapi.RunLeaseFence) run.ExecutionFence {
-	return run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion}
+func workerExecutionFence(worker workergroup.HostPrincipal, parsed parsedRunLeaseFence, lease workerapi.RunLeaseFence) run.ExecutionFence {
+	return run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}
 }
 
 func validateWorkerRunSource(authority run.ExecutionAuthority, err error) (workerRunSourceAuthority, error) {
 	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return workerRunSourceAuthority{}, errStaleWorkerClaims
+		return workerRunSourceAuthority{}, workergroup.ErrStaleClaims
 	}
 	if err != nil {
 		return workerRunSourceAuthority{}, staleWorkerRunSource(err)

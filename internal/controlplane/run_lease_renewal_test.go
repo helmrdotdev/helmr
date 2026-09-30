@@ -11,10 +11,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func renewalFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workerActor, workerapi.RunLeaseFence, time.Time) {
+func renewalFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, workergroup.HostPrincipal, workerapi.RunLeaseFence, time.Time) {
 	t.Helper()
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
@@ -24,7 +25,7 @@ func renewalFixture(t *testing.T) (*Server, runtest.Fixture, runtest.RunLease, w
 	if err := f.Pool.QueryRow(t.Context(), `SELECT expires_at FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&expiry); err != nil {
 		t.Fatal(err)
 	}
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	fence := workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}
 	return &Server{tx: f.Pool}, f, work, worker, fence, expiry
 }
@@ -84,7 +85,7 @@ func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.ClaimVersion = drained.ClaimVersion
+	w.HostClaimVersion = drained.ClaimVersion
 	renewed, err := s.renewRunLease(t.Context(), w, pgvalue.UUID(work.LeaseID), fence, expiry)
 	if err != nil || !renewed.ExpiresAt.After(expiry) {
 		t.Fatalf("draining renewal=%+v %v", renewed, err)
@@ -99,7 +100,7 @@ func TestRenewRunLeaseRejectsStaleAuthorityWithoutWriting(t *testing.T) {
 			case "sequence":
 				fence.LeaseSequence++
 			case "epoch":
-				w.WorkerEpoch++
+				w.Epoch++
 			case "elapsed budget":
 				dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET active_elapsed_ms=max_active_duration_ms WHERE id=$1`, work.RunID)
 			case "active deadline":

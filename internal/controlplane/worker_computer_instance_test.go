@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 type runtimeReconcileTargetStore struct {
@@ -53,10 +54,10 @@ func TestWorkerRuntimeReconcileTargetRoundTripsActionComputerAuthority(t *testin
 			row.PreparationDiskVersionID = baseComputerDiskVersionID
 			server := &Server{log: discardTestLogger(), db: &runtimeReconcileTargetStore{rows: []db.ListComputerInstanceReconcileTargetsRow{row}}}
 			request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/computer-instances/reconcile", strings.NewReader(`{}`))
-			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-				WorkerHostID:  workerID,
-				WorkerGroupID: controlplaneTestWorkerGroupID,
-				WorkerEpoch:   7,
+			request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+				HostID:  workerID,
+				GroupID: controlplaneTestWorkerGroupID,
+				Epoch:   7,
 			}))
 			response := httptest.NewRecorder()
 
@@ -85,8 +86,8 @@ func TestWorkerRuntimeReconcileReturnsBoundedBatch(t *testing.T) {
 	}}
 	server := &Server{log: discardTestLogger(), db: store}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/computer-instances/reconcile", strings.NewReader(`{}`))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
-		WorkerHostID: workerID, WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 7,
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
+		HostID: workerID, GroupID: controlplaneTestWorkerGroupID, Epoch: 7,
 	}))
 	response := httptest.NewRecorder()
 
@@ -169,7 +170,7 @@ func TestWorkerReconcileDoesNotReplayOpenedCheckpoint(t *testing.T) {
 	store := &runtimeReconcileTargetStore{rows: []db.ListComputerInstanceReconcileTargetsRow{row}}
 	server := &Server{log: discardTestLogger(), db: store}
 	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/computer-instances/reconcile", strings.NewReader(`{}`))
-	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{WorkerHostID: uuid.NewV7(), WorkerGroupID: controlplaneTestWorkerGroupID, WorkerEpoch: 7}))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{HostID: uuid.NewV7(), GroupID: controlplaneTestWorkerGroupID, Epoch: 7}))
 	response := httptest.NewRecorder()
 	server.workerNextRuntimeReconcileTarget(response, request)
 	if response.Code != http.StatusOK {

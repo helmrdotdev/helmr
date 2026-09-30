@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 const maxActorOutputBytes = 1 << 20
@@ -119,7 +120,7 @@ func parseWorkerActorOutputAppend(
 
 func (s *Server) appendActorOutput(
 	ctx context.Context,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	request workerapi.WriteTurnOutputRequest,
 	parsed parsedWorkerActorOutputAppend,
 ) (api.SessionEvent, error) {
@@ -129,9 +130,9 @@ func (s *Server) appendActorOutput(
 	locatorParams := db.GetLiveRunLeaseLocatorsParams{
 		ID:            pgvalue.UUID(parsed.lease.leaseID),
 		LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerHostID:  pgvalue.UUID(worker.WorkerHostID),
-		WorkerEpoch:   worker.WorkerEpoch,
+		WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerHostID:  pgvalue.UUID(worker.HostID),
+		WorkerEpoch:   worker.Epoch,
 	}
 	discovered, err := s.db.GetLiveRunLeaseLocators(ctx, locatorParams)
 	if err != nil || !discovered.SessionID.Valid {
@@ -161,7 +162,7 @@ func (s *Server) appendActorOutput(
 		}
 		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if err != nil || !authority.Session.ID.Valid {
 			return staleActorOutputAppend(err)

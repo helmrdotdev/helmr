@@ -11,10 +11,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-func instanceSaveFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workerActor, workerapi.ComputerSaveBeginRequest) {
+func instanceSaveFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, workergroup.HostPrincipal, workerapi.ComputerSaveBeginRequest) {
 	t.Helper()
 	f := runtest.New(t)
 	run := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
@@ -22,7 +23,7 @@ func instanceSaveFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, worke
 	if err := f.Pool.QueryRow(t.Context(), `SELECT i.id::text,i.writer_generation FROM computer_instances i JOIN run_leases l ON l.computer_instance_id=i.id WHERE l.id=$1`, run.LeaseID).Scan(&request.ComputerInstanceID, &request.WriterGeneration); err != nil {
 		t.Fatal(err)
 	}
-	worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+	worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 	return f, run, worker, request
 }
 
@@ -67,11 +68,11 @@ func TestComputerInstanceSaveOutlivesRunAuthority(t *testing.T) {
 	if _, err = save(wrong); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("wrong environment=%v", err)
 	}
-	worker.ClaimVersion++
-	if _, err = save(request); !errors.Is(err, errStaleWorkerClaims) {
+	worker.HostClaimVersion++
+	if _, err = save(request); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale host claim=%v", err)
 	}
-	worker.ClaimVersion--
+	worker.HostClaimVersion--
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, request.ComputerInstanceID)
 	if _, err = save(request); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("expired replay=%v", err)

@@ -29,8 +29,8 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 	}
 	worker := workerFromContext(r.Context())
 	fence := computerKeyFence{ComputerPreparationFence: dispatch.ComputerPreparationFence{
-		RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion,
-	}, ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
+		RuntimeID: pgvalue.UUID(id), WorkerID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion,
+	}, ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion}
 	result, err := s.publishInitialComputerGeneration(r.Context(), fence, initialComputerPublication{Root: request.Root, Config: request.Config})
 	if writeStaleWorkerClaims(w, err) {
 		return

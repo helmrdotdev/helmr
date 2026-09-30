@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -20,7 +21,7 @@ import (
 // Both controls lock the complete Secret union before the ordered source-ancestor and target Sessions.
 // Secret bindings are read again after the Session and Computer fences; a new
 // binding invalidates this attempt rather than acquiring a Secret out of order.
-func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerActor, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
+func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
 	var graph run.OwnedFinalization
 	fail := func(err error) (workerRunSourceAuthority, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
 		return workerRunSourceAuthority{}, graph, nil, err
@@ -29,7 +30,7 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workerAc
 	if err != nil {
 		return fail(err)
 	}
-	loc, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
+	loc, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return fail(staleWorkerRunSource(err))
 	}

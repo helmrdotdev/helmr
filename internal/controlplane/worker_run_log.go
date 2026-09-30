@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -88,7 +89,7 @@ func (s *Server) workerAppendRunLogs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) appendRunLog(
 	ctx context.Context,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 	input db.AppendRunLogChunkParams,
@@ -128,9 +129,9 @@ func (s *Server) appendRunLog(
 	}
 	input.RunLeaseID = pgvalue.UUID(parsed.leaseID)
 	input.LeaseSequence = lease.LeaseSequence
-	input.WorkerGroupID = pgvalue.UUID(worker.WorkerGroupID)
-	input.WorkerHostID = pgvalue.UUID(worker.WorkerHostID)
-	input.WorkerEpoch = worker.WorkerEpoch
+	input.WorkerGroupID = pgvalue.UUID(worker.GroupID)
+	input.WorkerHostID = pgvalue.UUID(worker.HostID)
+	input.WorkerEpoch = worker.Epoch
 	input.LeaseFenceFingerprint = fenceFingerprint
 	return s.db.AppendRunLogChunk(ctx, input)
 }
@@ -138,13 +139,13 @@ func (s *Server) appendRunLog(
 func runMetadataClaimScopeParams(
 	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 ) db.GetRunMetadataClaimScopeParams {
 	return db.GetRunMetadataClaimScopeParams{
 		RunLeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-		WorkerHostID:  pgvalue.UUID(worker.WorkerHostID),
-		WorkerEpoch:   worker.WorkerEpoch,
+		WorkerGroupID: pgvalue.UUID(worker.GroupID),
+		WorkerHostID:  pgvalue.UUID(worker.HostID),
+		WorkerEpoch:   worker.Epoch,
 	}
 }
 

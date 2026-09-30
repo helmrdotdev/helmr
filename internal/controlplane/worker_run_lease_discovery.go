@@ -20,14 +20,14 @@ func (s *Server) workerDiscoverRunLeases(w http.ResponseWriter, r *http.Request)
 	response, err := discoverWorkerRunLeases(
 		r.Context(),
 		s.db,
-		worker.WorkerGroupID,
-		pgvalue.UUID(worker.WorkerHostID),
-		worker.WorkerEpoch,
+		worker.GroupID,
+		pgvalue.UUID(worker.HostID),
+		worker.Epoch,
 	)
 	if err != nil {
 		s.log.Error("discover worker run leases failed",
-			"worker_host_id", worker.WorkerHostID.String(),
-			"worker_epoch", worker.WorkerEpoch,
+			"worker_host_id", worker.HostID.String(),
+			"worker_epoch", worker.Epoch,
 			"error", err,
 		)
 		writeError(w, errors.New("discover worker run leases"))

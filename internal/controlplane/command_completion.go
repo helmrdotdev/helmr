@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -76,15 +77,15 @@ func parseCommandCompletion(r workerapi.ComputerCommandCompleteRequest) (command
 
 // Completion records one member's result after output acknowledgement. It never
 // saves, closes, or releases the Computer. Uncertain process scopes stay attached.
-func completeCommand(ctx context.Context, tx pgx.Tx, worker workerActor, r workerapi.ComputerCommandCompleteRequest) error {
+func completeCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, r workerapi.ComputerCommandCompleteRequest) error {
 	return applyCommandCompletion(ctx, tx, worker, r, false)
 }
 
-func reconcileCommand(ctx context.Context, tx pgx.Tx, worker workerActor, r workerapi.ComputerCommandCompleteRequest) error {
+func reconcileCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, r workerapi.ComputerCommandCompleteRequest) error {
 	return applyCommandCompletion(ctx, tx, worker, r, true)
 }
 
-func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workerActor, r workerapi.ComputerCommandCompleteRequest, reconcile bool) error {
+func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, r workerapi.ComputerCommandCompleteRequest, reconcile bool) error {
 	p, err := parseCommandCompletion(r)
 	if err != nil {
 		return err
@@ -97,15 +98,15 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workerActor, 
 	if err != nil {
 		return err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.WorkerGroupID))
+	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
 	if err != nil {
 		return err
 	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID)})
+	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID)})
 	if err != nil {
 		return err
 	}
-	if err = worker.checkLockedClaims(host, group); err != nil {
+	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return err
 	}
 	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
@@ -120,7 +121,7 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workerActor, 
 	if err != nil {
 		return err
 	}
-	if i.ID != p.instance || i.WorkerHostID != pgvalue.UUID(worker.WorkerHostID) || i.WorkerGroupID != pgvalue.UUID(worker.WorkerGroupID) || i.WorkerEpoch != worker.WorkerEpoch || i.WriterGeneration != r.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
+	if i.ID != p.instance || i.WorkerHostID != pgvalue.UUID(worker.HostID) || i.WorkerGroupID != pgvalue.UUID(worker.GroupID) || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != r.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
 		return pgx.ErrNoRows
 	}
 	if reconcile && !command.TerminalAt.Valid {
@@ -176,7 +177,7 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workerActor, 
 	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.WorkerEpoch, ExpiresAt: i.WriterExpiresAt})
+	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.Epoch, ExpiresAt: i.WriterExpiresAt})
 	if err != nil {
 		return err
 	}

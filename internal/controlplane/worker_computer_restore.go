@@ -50,7 +50,7 @@ func (s *Server) workerAcknowledgeComputerRestore(w http.ResponseWriter, r *http
 	}
 	worker := workerFromContext(r.Context())
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		_, err := dispatch.AcknowledgeComputerRestore(r.Context(), work.tx, dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(instance), WorkerID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerEpoch: worker.WorkerEpoch, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
+		_, err := dispatch.AcknowledgeComputerRestore(r.Context(), work.tx, dispatch.ComputerPreparationFence{RuntimeID: pgvalue.UUID(instance), WorkerID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion}, pgvalue.UUID(checkpoint), request.WriterGeneration, grants)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {

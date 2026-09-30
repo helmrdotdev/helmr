@@ -69,7 +69,7 @@ func TestAbandonedSaveRetainsObjectsForLaterCheckpoint(t *testing.T) {
 	if _, err = s.registerCheckpoint(t.Context(), worker, registered); err != nil {
 		t.Fatal(err)
 	}
-	capture := workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: worker.WorkerEpoch, DesiredVersion: instance.DesiredVersion + 1, CheckpointID: pgvalue.UUIDString(cp.ID), Inspection: inspection}
+	capture := workerapi.CheckpointComputerObjectRequest{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: worker.Epoch, DesiredVersion: instance.DesiredVersion + 1, CheckpointID: pgvalue.UUIDString(cp.ID), Inspection: inspection}
 	if err = s.recordCheckpointComputerObject(t.Context(), worker, capture, nil, "register"); err != nil {
 		t.Fatalf("later checkpoint could not register the retained bytes: %v", err)
 	}

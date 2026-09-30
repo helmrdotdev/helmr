@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -149,8 +150,8 @@ func (s *Server) workerCreateTokenRunWait(
 		TurnID: turnID, RunGeneration: generation,
 		TokenID: tokenID, WaitID: waitID,
 		RunLeaseID: parsed.leaseID, LeaseSequence: request.Lease.LeaseSequence,
-		WorkerGroupID: worker.WorkerGroupID, WorkerHostID: worker.WorkerHostID,
-		WorkerEpoch: worker.WorkerEpoch, RequestFingerprint: fingerprint,
+		WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID,
+		WorkerEpoch: worker.Epoch, RequestFingerprint: fingerprint,
 		ActorSpeculativeInputSequence: actorCursor,
 		TimeoutAt:                     timeoutAt, IdleTimeoutMS: idleTimeout,
 		Metadata: metadata, Tags: tags,
@@ -167,7 +168,7 @@ func (s *Server) workerCreateTokenRunWait(
 	response := workerapi.CreateRunWaitResponse{
 		RunID: pgvalue.UUIDString(locators.RunID), RunWaitID: registered.WaitID.String(),
 		ResumeAttachID: resumeAttachID.String(), ComputerInstanceID: pgvalue.UUIDString(locators.ComputerInstanceID),
-		RuntimeEpoch: worker.WorkerEpoch,
+		RuntimeEpoch: worker.Epoch,
 	}
 	if registered.SuspensionStatus == db.RunWaitStatusReleased {
 		response.ResolutionKind, response.Resolution, err = tokenWaitDecision(
@@ -294,7 +295,7 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 		return err
 	})
 	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		writeStaleWorkerClaims(w, errStaleWorkerClaims)
+		writeStaleWorkerClaims(w, workergroup.ErrStaleClaims)
 		return
 	}
 	if isNoRows(err) {
@@ -311,10 +312,10 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 func (s *Server) loadRunWaitRegistrationAuthority(
 	ctx context.Context,
 	receipt workerapi.RunLeaseFence,
-) (parsedRunLeaseFence, workerActor, db.GetLiveRunLeaseLocatorsRow, db.Run, error) {
+) (parsedRunLeaseFence, workergroup.HostPrincipal, db.GetLiveRunLeaseLocatorsRow, db.Run, error) {
 	parsed, worker, locators, err := s.loadRunWaitLeaseAuthority(ctx, receipt)
 	if err != nil {
-		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, err
+		return parsedRunLeaseFence{}, workergroup.HostPrincipal{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, err
 	}
 	run, err := s.db.GetRun(ctx, db.GetRunParams{EnvironmentID: locators.EnvironmentID, ID: locators.RunID})
 	if err != nil || (run.Status != db.RunStatusRunning && run.Status != db.RunStatusWaiting) ||
@@ -323,7 +324,7 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 		if err == nil {
 			err = errors.New("run is not an active task or actor")
 		}
-		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, conflict(err)
+		return parsedRunLeaseFence{}, workergroup.HostPrincipal{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, conflict(err)
 	}
 	return parsed, worker, locators, run, nil
 }
@@ -339,21 +340,21 @@ func childRunWaitDecision(wait db.RunWait) (string, json.RawMessage, error) {
 func (s *Server) loadRunWaitLeaseAuthority(
 	ctx context.Context,
 	receipt workerapi.RunLeaseFence,
-) (parsedRunLeaseFence, workerActor, db.GetLiveRunLeaseLocatorsRow, error) {
+) (parsedRunLeaseFence, workergroup.HostPrincipal, db.GetLiveRunLeaseLocatorsRow, error) {
 	parsed, err := parseRunLeaseFence(receipt)
 	if err != nil {
-		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, badRequest(err)
+		return parsedRunLeaseFence{}, workergroup.HostPrincipal{}, db.GetLiveRunLeaseLocatorsRow{}, badRequest(err)
 	}
 	worker := workerFromContext(ctx)
 	locators, err := s.db.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-		WorkerEpoch: worker.WorkerEpoch})
+		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
+		WorkerEpoch: worker.Epoch})
 	if isNoRows(err) {
-		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker run wait receipt is stale"))
+		return parsedRunLeaseFence{}, workergroup.HostPrincipal{}, db.GetLiveRunLeaseLocatorsRow{}, conflict(errors.New("worker run wait receipt is stale"))
 	}
 	if err != nil {
-		return parsedRunLeaseFence{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, errors.New("load worker run wait authority")
+		return parsedRunLeaseFence{}, workergroup.HostPrincipal{}, db.GetLiveRunLeaseLocatorsRow{}, errors.New("load worker run wait authority")
 	}
 	return parsed, worker, locators, nil
 }

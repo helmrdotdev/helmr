@@ -10,13 +10,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type initialPublicationFixture struct {
 	runtest.Fixture
 	server       *Server
-	worker       workerActor
+	worker       workergroup.HostPrincipal
 	logicalBytes int64
 	runtime      pgtype.UUID
 }
@@ -50,7 +51,7 @@ func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
 	}
 	store := newTestUploadStore(t)
 	return initialPublicationFixture{Fixture: f, runtime: instance.ID, server: &Server{db: db.New(f.Pool), tx: f.Pool, cas: store},
-		worker: workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1}, logicalBytes: diskBytes}
+		worker: workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1}, logicalBytes: diskBytes}
 }
 
 func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
@@ -77,8 +78,8 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	read := func() workerapi.RuntimeComputerSource {
 		t.Helper()
 		rows, err := f.server.db.ListComputerInstanceReconcileTargets(t.Context(), db.ListComputerInstanceReconcileTargetsParams{
-			WorkerGroupID: pgvalue.UUID(f.worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(f.worker.WorkerHostID),
-			WorkerEpoch: f.worker.WorkerEpoch, RowLimit: 64,
+			WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID),
+			WorkerEpoch: f.worker.Epoch, RowLimit: 64,
 		})
 		if err != nil {
 			t.Fatal(err)

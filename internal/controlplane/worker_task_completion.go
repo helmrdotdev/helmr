@@ -31,9 +31,9 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 					"failure_point", point,
 					"run_lease_id", request.Lease.ID,
 					"lease_sequence", request.Lease.LeaseSequence,
-					"worker_host_id", worker.WorkerHostID,
-					"worker_group_id", worker.WorkerGroupID,
-					"worker_epoch", worker.WorkerEpoch,
+					"worker_host_id", worker.HostID,
+					"worker_group_id", worker.GroupID,
+					"worker_epoch", worker.Epoch,
 				)
 			}
 			writeError(w, conflict(err))

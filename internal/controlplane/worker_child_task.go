@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -55,7 +56,7 @@ type childTaskInvokeInput struct {
 	runGeneration    pgtype.Int8
 	Request          workerapi.InvokeChildTaskRequest
 	Parsed           parsedRunLeaseFence
-	Worker           workerActor
+	Worker           workergroup.HostPrincipal
 	SourceComputerID uuid.UUID
 	Normalized       normalizedTaskStart
 	RunWaitID        uuid.UUID
@@ -139,7 +140,7 @@ func (s *Server) workerInvokeChildTask(w http.ResponseWriter, r *http.Request) {
 			"failure_point", childTaskInvokePointLoadLease,
 			"run_lease_id", request.Lease.ID,
 			"lease_sequence", request.Lease.LeaseSequence,
-			"worker_host_id", worker.WorkerHostID,
+			"worker_host_id", worker.HostID,
 		)
 		writeError(w, conflict(stale))
 		return
@@ -286,7 +287,7 @@ func (s *Server) invokeChildTask(
 		}
 		authority, err := run.LockLiveExecutionForComputer(ctx, work.tx, workerExecutionFence(input.Worker, input.Parsed, input.Request.Lease), pgvalue.UUID(targetComputerID))
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if errors.Is(err, run.ErrExecutionTargetNotFound) {
 			return errTaskComputerNotFound
@@ -527,14 +528,14 @@ func loadChildTaskAdmission(
 func loadChildTaskInvokeLocators(
 	ctx context.Context,
 	q db.Querier,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	lease workerapi.RunLeaseFence,
 	parsed parsedRunLeaseFence,
 ) (db.GetLiveRunLeaseLocatorsRow, error) {
 	locators, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 		ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-		WorkerEpoch: worker.WorkerEpoch})
+		WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
+		WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return db.GetLiveRunLeaseLocatorsRow{}, staleChildTaskInvoke(err)
 	}

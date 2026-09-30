@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -38,9 +39,9 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 					"failure_point", point,
 					"run_lease_id", request.Lease.ID,
 					"lease_sequence", request.Lease.LeaseSequence,
-					"worker_group_id", workerFromContext(r.Context()).WorkerGroupID,
-					"worker_host_id", workerFromContext(r.Context()).WorkerHostID,
-					"worker_epoch", workerFromContext(r.Context()).WorkerEpoch,
+					"worker_group_id", workerFromContext(r.Context()).GroupID,
+					"worker_host_id", workerFromContext(r.Context()).HostID,
+					"worker_epoch", workerFromContext(r.Context()).Epoch,
 				)
 			}
 			writeError(w, conflict(err))
@@ -53,11 +54,11 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, workerapi.RunStartResponse{Lease: receipt})
 }
 
-func (s *Server) startRun(ctx context.Context, worker workerActor, leaseID pgtype.UUID, expected workerapi.RunLeaseFence) (workerapi.RunLeaseFence, error) {
+func (s *Server) startRun(ctx context.Context, worker workergroup.HostPrincipal, leaseID pgtype.UUID, expected workerapi.RunLeaseFence) (workerapi.RunLeaseFence, error) {
 	err := s.inTx(ctx, func(work *txWork) error {
-		_, err := run.StartExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.ClaimVersion})
+		_, err := run.StartExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: expected.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if err != nil {
 			return staleAuthority(staleAuthorityRunStart, "execution", staleRunLeaseClaim(err))

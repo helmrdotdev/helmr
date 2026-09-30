@@ -5,27 +5,28 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 
 	"github.com/jackc/pgx/v5"
 )
 
 // Cancellation grants no launch or Secret authority and never changes physical state.
-func claimCommandCancellation(ctx context.Context, tx pgx.Tx, worker workerActor, request commandClaim) (commandClaimAuthority, error) {
+func claimCommandCancellation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, request commandClaim) (commandClaimAuthority, error) {
 	q := db.New(tx)
 	result := commandClaimAuthority{}
 	target, err := q.GetComputerCommandTarget(ctx, db.GetComputerCommandTargetParams{OrgID: request.OrgID, CommandID: request.CommandID})
 	if err != nil {
 		return result, err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.WorkerGroupID))
+	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.WorkerHostID), WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID)})
+	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID)})
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	if err = worker.checkLockedClaims(host, group); err != nil {
+	if err = worker.CheckLockedClaims(host, group); err != nil {
 		return commandClaimAuthority{}, err
 	}
 	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
@@ -40,7 +41,7 @@ func claimCommandCancellation(ctx context.Context, tx pgx.Tx, worker workerActor
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}
-	if i.ID != request.ComputerInstanceID || i.WorkerHostID != host.ID || i.WorkerGroupID != group.ID || i.WorkerEpoch != worker.WorkerEpoch || i.WriterGeneration != request.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
+	if i.ID != request.ComputerInstanceID || i.WorkerHostID != host.ID || i.WorkerGroupID != group.ID || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
 		return commandClaimAuthority{}, pgx.ErrNoRows
 	}
 	if computer.Status != "active" || computer.DesiredState != "active" || i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.WriterGeneration != computer.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
@@ -50,7 +51,7 @@ func claimCommandCancellation(ctx context.Context, tx pgx.Tx, worker workerActor
 		return commandClaimAuthority{}, pgx.ErrNoRows
 	}
 	result.Command = command
-	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.WorkerEpoch, ExpiresAt: i.WriterExpiresAt})
+	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.Epoch, ExpiresAt: i.WriterExpiresAt})
 	if err != nil {
 		return commandClaimAuthority{}, err
 	}

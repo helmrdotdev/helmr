@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestWorkerDeleteComputerReplaysAfterTombstone(t *testing.T) {
@@ -66,9 +67,9 @@ SELECT worker_hosts.claim_version, worker_groups.claim_version
 	); err != nil {
 		t.Fatal(err)
 	}
-	worker := workerActor{
-		WorkerHostID: fixture.WorkerID, WorkerGroupID: runtest.WorkerGroupID,
-		WorkerEpoch: 1, ClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
+	worker := workergroup.HostPrincipal{
+		HostID: fixture.WorkerID, GroupID: runtest.WorkerGroupID,
+		Epoch: 1, HostClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
 	}
 	request := workerapi.DeleteComputerRequest{
 		RetrieveComputerRequest: workerapi.RetrieveComputerRequest{

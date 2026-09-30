@@ -9,12 +9,13 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
-func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workerActor, parsed parsedRunLeaseFence, receipt workerapi.RunLeaseFence) (run.ExecutionAuthority, error) {
+func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, parsed parsedRunLeaseFence, receipt workerapi.RunLeaseFence) (run.ExecutionAuthority, error) {
 	q := db.New(tx)
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID), WorkerEpoch: worker.WorkerEpoch})
+	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
 	}
@@ -23,7 +24,7 @@ func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workerActor,
 	}
 	a, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, receipt))
 	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return run.ExecutionAuthority{}, errStaleWorkerClaims
+		return run.ExecutionAuthority{}, workergroup.ErrStaleClaims
 	}
 	if err != nil {
 		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)

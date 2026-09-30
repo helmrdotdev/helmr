@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -342,17 +343,17 @@ func (s *Server) requireWorkerStatus(state workerAuthState, next http.Handler) h
 			writeError(w, unavailable(errors.New("worker authentication is unavailable")))
 			return
 		}
-		worker := workerActor{
-			WorkerHostID:      workerHostID,
-			WorkerGroupID:     pgvalue.MustUUIDValue(row.WorkerGroupID),
-			ClaimVersion:      row.ClaimVersion,
+		worker := workergroup.HostPrincipal{
+			HostID:            workerHostID,
+			GroupID:           pgvalue.MustUUIDValue(row.WorkerGroupID),
+			HostClaimVersion:  row.ClaimVersion,
 			GroupClaimVersion: payload.GroupClaimVersion,
 			ResourceID:        strings.TrimSpace(row.ResourceID),
-			WorkerEpoch:       payload.WorkerEpoch,
+			Epoch:             payload.WorkerEpoch,
 			Status:            row.WorkerStatus,
 			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
-		if pgvalue.MustUUIDValue(row.WorkerHostID) != workerHostID || worker.WorkerGroupID != workerGroupID || payload.ClaimVersion != worker.ClaimVersion {
+		if pgvalue.MustUUIDValue(row.WorkerHostID) != workerHostID || worker.GroupID != workerGroupID || payload.ClaimVersion != worker.HostClaimVersion {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
@@ -365,8 +366,8 @@ func principalFromContext(ctx context.Context) auth.Principal {
 	return principal
 }
 
-func workerFromContext(ctx context.Context) workerActor {
-	worker, _ := ctx.Value(workerContextKey{}).(workerActor)
+func workerFromContext(ctx context.Context) workergroup.HostPrincipal {
+	worker, _ := ctx.Value(workerContextKey{}).(workergroup.HostPrincipal)
 	return worker
 }
 
@@ -472,7 +473,7 @@ func isSecureRequest(r *http.Request) bool {
 }
 
 func writeStaleWorkerClaims(w http.ResponseWriter, err error) bool {
-	if !errors.Is(err, errStaleWorkerClaims) {
+	if !errors.Is(err, workergroup.ErrStaleClaims) {
 		return false
 	}
 	writeError(w, unauthorized(errors.New("worker authentication is required")))

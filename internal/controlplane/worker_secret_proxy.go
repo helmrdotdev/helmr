@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func (s *Server) workerPrepareSecretProxy(w http.ResponseWriter, r *http.Request) {
@@ -60,13 +61,13 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 		if err = secret.ValidateProtectedSelectors(request.Placeholders); err == nil {
 			var captured []db.CaptureProtectedSecretEnvelopesRow
 			captured, err = s.db.CaptureProtectedSecretEnvelopes(r.Context(), db.CaptureProtectedSecretEnvelopesParams{
-				ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-				WorkerEpoch: worker.WorkerEpoch, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-				ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
+				ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.HostID),
+				WorkerEpoch: worker.Epoch, WorkerGroupID: pgvalue.UUID(worker.GroupID),
+				ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 				Origin: request.Origin, Placeholders: request.Placeholders,
 			})
 			if err == nil && slices.ContainsFunc(captured, func(row db.CaptureProtectedSecretEnvelopesRow) bool { return !row.ClaimsCurrent }) {
-				err = errStaleWorkerClaims
+				err = workergroup.ErrStaleClaims
 			}
 			if err == nil {
 				resolution.Values, err = s.secretProxy.OpenProtected(captured, request.Placeholders)
@@ -75,12 +76,12 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	} else {
 		var captured db.CaptureSecretProxyPreparationRow
 		captured, err = s.db.CaptureSecretProxyPreparation(r.Context(), db.CaptureSecretProxyPreparationParams{
-			ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerEpoch: worker.WorkerEpoch, WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
-			ClaimVersion: worker.ClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
+			ComputerInstanceID: pgvalue.UUID(runtimeID), WorkerHostID: pgvalue.UUID(worker.HostID),
+			WorkerEpoch: worker.Epoch, WorkerGroupID: pgvalue.UUID(worker.GroupID),
+			ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
 		})
 		if err == nil && !captured.ClaimsCurrent {
-			err = errStaleWorkerClaims
+			err = workergroup.ErrStaleClaims
 		}
 		if err == nil && len(captured.Origins) != 0 {
 			hosts := []string{}
@@ -102,7 +103,7 @@ func (s *Server) workerSecretProxy(w http.ResponseWriter, r *http.Request, resol
 	}
 	// The store refuses stale captures too; both answer re-authentication.
 	if errors.Is(err, secret.ErrWorkerClaimsStale) {
-		err = errStaleWorkerClaims
+		err = workergroup.ErrStaleClaims
 	}
 	if writeStaleWorkerClaims(w, err) {
 		return

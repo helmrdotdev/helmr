@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -45,7 +46,7 @@ func TestCommandCompletionPreservesSharedComputer(t *testing.T) {
 				code := int32(17)
 				request.ExitCode = &code
 			}
-			worker := workerActor{WorkerHostID: f.WorkerID, WorkerGroupID: runtest.WorkerGroupID, WorkerEpoch: 1, ClaimVersion: 1, GroupClaimVersion: 1}
+			worker := workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1, HostClaimVersion: 1, GroupClaimVersion: 1}
 			execute := func(r workerapi.ComputerCommandCompleteRequest) error {
 				tx, err := f.Pool.Begin(t.Context())
 				if err != nil {

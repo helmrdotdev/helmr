@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -84,7 +85,7 @@ func parseActorTurnCommitRequest(request workerapi.CommitActorTurnRequest) (pars
 
 func (s *Server) commitActorTurn(
 	ctx context.Context,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	request workerapi.CommitActorTurnRequest,
 	commit parsedActorTurnCommit,
 ) (workerapi.CommitActorTurnResponse, error) {
@@ -92,8 +93,8 @@ func (s *Server) commitActorTurn(
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(commit.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerEpoch: worker.WorkerEpoch})
+			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
+			WorkerEpoch: worker.Epoch})
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
@@ -105,7 +106,7 @@ func (s *Server) commitActorTurn(
 		}
 		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if err != nil || !authority.Session.ID.Valid {
 			return staleActorTurnCommit(err)
@@ -225,7 +226,7 @@ func staleActorTurnCommit(err error) error {
 	if errors.As(err, &operation) {
 		return errors.Join(errStaleActorTurnCommit, err)
 	}
-	if errors.Is(err, errStaleWorkerClaims) {
+	if errors.Is(err, workergroup.ErrStaleClaims) {
 		return err
 	}
 	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||

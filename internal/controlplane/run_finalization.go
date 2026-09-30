@@ -10,13 +10,14 @@ import (
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 var errStaleRunFinalization = errors.New("run finalization authority is stale")
 
 func (s *Server) beginRunFinalization(
 	ctx context.Context,
-	worker workerActor,
+	worker workergroup.HostPrincipal,
 	request workerapi.BeginRunFinalizationRequest,
 	parsed parsedRunFinalization,
 ) (workerapi.BeginRunFinalizationResponse, error) {
@@ -24,8 +25,8 @@ func (s *Server) beginRunFinalization(
 	err := s.inTx(ctx, func(work *txWork) error {
 		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID), WorkerHostID: pgvalue.UUID(worker.WorkerHostID),
-			WorkerEpoch: worker.WorkerEpoch})
+			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
+			WorkerEpoch: worker.Epoch})
 		if err != nil {
 			return staleRunFinalization(err)
 		}
@@ -48,7 +49,7 @@ func (s *Server) beginRunFinalization(
 			OperationID: pgvalue.UUID(parsed.operationID), Fingerprint: parsed.fingerprint,
 		})
 		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return errStaleWorkerClaims
+			return workergroup.ErrStaleClaims
 		}
 		if err != nil {
 			return staleRunFinalization(err)
