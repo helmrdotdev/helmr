@@ -13,7 +13,7 @@ func TestCommandCompletionRequiresCanonicalUUIDv7(t *testing.T) {
 	valid := "019c10d5-a6f7-7af1-8f5f-bb97bcc0dc31"
 	exitCode := int32(0)
 	base := workerapi.ComputerCommandCompleteRequest{OrgID: valid, CommandID: valid, ComputerInstanceID: valid, WriterGeneration: 1, Outcome: "exited", ExitCode: &exitCode}
-	if _, err := parseCommandCompletion(base); err != nil {
+	if report, err := completionReport(base); err != nil || report.Validate() != nil {
 		t.Fatal(err)
 	}
 	for _, field := range []string{"org", "command", "instance"} {
@@ -28,7 +28,7 @@ func TestCommandCompletionRequiresCanonicalUUIDv7(t *testing.T) {
 				case "instance":
 					request.ComputerInstanceID = value
 				}
-				if _, err := parseCommandCompletion(request); err == nil {
+				if _, err := completionReport(request); err == nil {
 					t.Fatalf("accepted %s ID %q", field, value)
 				}
 			}

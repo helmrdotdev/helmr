@@ -1,20 +1,39 @@
-package controlplane
+package command
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type commandCompletion struct {
+// CompletionReport is a worker host's report of one Command result on the
+// Instance incarnation and writer generation it acts for. Outcome is
+// "exited" with an ExitCode, or a computer_command_* reason with an optional
+// JSON object Error.
+type CompletionReport struct {
+	OrgID            uuid.UUID
+	CommandID        uuid.UUID
+	InstanceID       uuid.UUID
+	WriterGeneration int64
+	Outcome          string
+	ExitCode         *int32
+	Error            []byte
+}
+
+// completionError is an ErrInvalidCompletion that keeps its specific message.
+type completionError string
+
+func (e completionError) Error() string        { return string(e) }
+func (e completionError) Is(target error) bool { return target == ErrInvalidCompletion }
+
+type completion struct {
 	org, command, instance  pgtype.UUID
 	status, reason, failure string
 	exit                    pgtype.Int4
@@ -22,20 +41,24 @@ type commandCompletion struct {
 	exited, releaseSafe     bool
 }
 
-func parseCommandCompletion(r workerapi.ComputerCommandCompleteRequest) (commandCompletion, error) {
-	var p commandCompletion
-	org, e1 := ids.Parse(r.OrgID)
-	command, e2 := ids.Parse(r.CommandID)
-	instance, e3 := ids.Parse(r.ComputerInstanceID)
-	if e1 != nil || e2 != nil || e3 != nil || r.WriterGeneration <= 0 {
-		return p, errors.New("canonical command, organization and instance IDs and a positive writer generation are required")
+// Validate reports an ErrInvalidCompletion unless the report describes one
+// unambiguous result.
+func (r CompletionReport) Validate() error {
+	_, err := r.parse()
+	return err
+}
+
+func (r CompletionReport) parse() (completion, error) {
+	var p completion
+	if !validID(r.OrgID) || !validID(r.CommandID) || !validID(r.InstanceID) || r.WriterGeneration <= 0 {
+		return p, completionError("canonical command, organization and instance IDs and a positive writer generation are required")
 	}
-	p.org, p.command, p.instance = pgvalue.UUID(org), pgvalue.UUID(command), pgvalue.UUID(instance)
+	p.org, p.command, p.instance = pgvalue.UUID(r.OrgID), pgvalue.UUID(r.CommandID), pgvalue.UUID(r.InstanceID)
 	p.reason = r.Outcome
 	p.releaseSafe = true
 	if r.Outcome == "exited" {
 		if r.ExitCode == nil || len(r.Error) != 0 {
-			return p, errors.New("exited command requires exit_code and no error")
+			return p, completionError("exited command requires exit_code and no error")
 		}
 		p.status = "exited"
 		p.reason = "computer_command_completed"
@@ -44,7 +67,7 @@ func parseCommandCompletion(r workerapi.ComputerCommandCompleteRequest) (command
 		return p, nil
 	}
 	if r.ExitCode != nil {
-		return p, errors.New("failed command must not include exit_code")
+		return p, completionError("failed command must not include exit_code")
 	}
 	p.status, p.failure = "failed", "guest_failure"
 	switch r.Outcome {
@@ -60,12 +83,12 @@ func parseCommandCompletion(r workerapi.ComputerCommandCompleteRequest) (command
 		p.status, p.releaseSafe = "lost", false
 	case "computer_command_failed", "computer_command_secret_delivery_failed", "computer_command_launch_failed", "computer_command_output_capture_failed":
 	default:
-		return p, errors.New("unsupported command outcome")
+		return p, completionError("unsupported command outcome")
 	}
 	detail := map[string]json.RawMessage{}
 	if len(r.Error) > 0 {
 		if err := json.Unmarshal(r.Error, &detail); err != nil || detail == nil {
-			return p, errors.New("command error must be a JSON object")
+			return p, completionError("command error must be a JSON object")
 		}
 	}
 	if len(detail) == 0 {
@@ -75,21 +98,39 @@ func parseCommandCompletion(r workerapi.ComputerCommandCompleteRequest) (command
 	return p, nil
 }
 
-// Completion records one member's result after output acknowledgement. It never
-// saves, closes, or releases the Computer. Uncertain process scopes stay attached.
-func completeCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, r workerapi.ComputerCommandCompleteRequest) error {
-	return applyCommandCompletion(ctx, tx, worker, r, false)
+// validID reports whether id is a UUIDv7, the only identity form Commands,
+// Organizations and Instances carry.
+func validID(id uuid.UUID) bool {
+	_, err := ids.Parse(id.String())
+	return err == nil
 }
 
-func reconcileCommand(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, r workerapi.ComputerCommandCompleteRequest) error {
-	return applyCommandCompletion(ctx, tx, worker, r, true)
+// Complete records one Command result after its output was acknowledged. It
+// never saves, closes or releases the Computer, and an uncertain process
+// scope stays attached to its Instance. Replaying the recorded result is
+// accepted even after the Instance's writer expired or was reclaimed.
+func Complete(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport) error {
+	return settle(ctx, txb, worker, report, false)
 }
 
-func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, r workerapi.ComputerCommandCompleteRequest, reconcile bool) error {
-	p, err := parseCommandCompletion(r)
+// Reconcile records that the worker host released the process scope of a
+// terminal Command whose result is safe to release, completing it first when
+// it is not yet terminal.
+func Reconcile(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport) error {
+	return settle(ctx, txb, worker, report, true)
+}
+
+func settle(ctx context.Context, txb db.TxBeginner, worker workergroup.HostPrincipal, report CompletionReport, reconcile bool) error {
+	p, err := report.parse()
 	if err != nil {
 		return err
 	}
+	return changed(db.RunTx(ctx, txb, func(tx pgx.Tx) error {
+		return applyCompletion(ctx, tx, worker, p, report.WriterGeneration, reconcile)
+	}))
+}
+
+func applyCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, p completion, writerGeneration int64, reconcile bool) error {
 	if reconcile && !p.releaseSafe {
 		return pgx.ErrNoRows
 	}
@@ -101,19 +142,19 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.H
 	if _, err = workergroup.LockHost(ctx, q, worker); err != nil {
 		return err
 	}
-	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
+	locked, err := lockCommandInstance(ctx, tx, target, p.command)
 	if err != nil {
 		return err
 	}
-	i, err := q.LockComputerCommandInstance(ctx, db.LockComputerCommandInstanceParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: p.command})
-	if err != nil {
-		return err
+	if !locked.Bound() {
+		return pgx.ErrNoRows
 	}
+	i := locked.Instance()
 	command, err := q.LockComputerCommand(ctx, db.LockComputerCommandParams{EnvironmentID: target.EnvironmentID, ComputerID: target.ComputerID, CommandID: p.command})
 	if err != nil {
 		return err
 	}
-	if i.ID != p.instance || i.WorkerHostID != pgvalue.UUID(worker.HostID) || i.WorkerGroupID != pgvalue.UUID(worker.GroupID) || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != r.WriterGeneration || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
+	if !locked.On(host(worker), pgvalue.MustUUIDValue(p.instance), writerGeneration) || command.ComputerInstanceID != i.ID || !command.WriterGeneration.Valid || command.WriterGeneration.Int64 != i.WriterGeneration {
 		return pgx.ErrNoRows
 	}
 	if reconcile && !command.TerminalAt.Valid {
@@ -141,7 +182,9 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.H
 	if !command.TerminalAt.Valid && command.Status != "running" && command.Status != "stopping" {
 		return pgx.ErrNoRows
 	}
-	if i.ReclaimedAt.Valid || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.WriterGeneration != computer.WriterGeneration || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
+	// Liveness checks no Computer status: a member may finish on a Computer
+	// whose deletion or recovery began.
+	if !locked.Serving() || (i.AdmissionState != "open" && i.AdmissionState != "draining") {
 		return pgx.ErrNoRows
 	}
 	if !command.TerminalAt.Valid {
@@ -163,23 +206,16 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.H
 			return err
 		}
 	}
-	if _, err := q.TouchRunComputerActivity(ctx, db.TouchRunComputerActivityParams{
-		ID: computer.ID, EnvironmentID: computer.EnvironmentID,
-		OrgID: target.OrgID, ProjectID: target.ProjectID, WriterGeneration: i.WriterGeneration,
-	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err = locked.TouchActivity(ctx, pgvalue.MustUUIDValue(target.OrgID), pgvalue.MustUUIDValue(target.ProjectID)); err != nil {
 		return err
 	}
-	authorized, err := q.CommandLogProducerStillAuthorized(ctx, db.CommandLogProducerStillAuthorizedParams{WorkerHostID: i.WorkerHostID, WorkerGroupID: i.WorkerGroupID, WorkerEpoch: worker.Epoch, ExpiresAt: i.WriterExpiresAt})
-	if err != nil {
-		return err
-	}
-	if !authorized.Valid || !authorized.Bool {
-		return pgx.ErrNoRows
-	}
-	return nil
+	return producerStillAuthorized(ctx, q, worker, i)
 }
 
-func commandRelease(command db.ComputerCommand, org string, fingerprint string) (*workerapi.ComputerCommandRelease, error) {
+// release is the completion a worker host replays to release the process
+// scope of a terminal Command it no longer runs, or nil when the scope needs
+// recovery evidence instead.
+func release(command db.ComputerCommand, org uuid.UUID) (*CompletionReport, error) {
 	if !command.TerminalAt.Valid || command.ProcessReconciledAt.Valid || command.Status == "lost" || command.FailureReason.String == "scope_termination_failed" {
 		return nil, nil
 	}
@@ -188,14 +224,15 @@ func commandRelease(command db.ComputerCommand, org string, fingerprint string) 
 	default:
 		return nil, nil
 	}
-	completion := workerapi.ComputerCommandCompleteRequest{OrgID: org, CommandID: pgvalue.UUIDString(command.ID), ComputerInstanceID: pgvalue.UUIDString(command.ComputerInstanceID), WriterGeneration: command.WriterGeneration.Int64, Outcome: command.TerminalReasonCode.String, Error: command.Error}
+	// A null identity reads as the nil UUID, which Validate rejects.
+	report := CompletionReport{OrgID: org, CommandID: uuid.UUID(command.ID.Bytes), InstanceID: uuid.UUID(command.ComputerInstanceID.Bytes), WriterGeneration: command.WriterGeneration.Int64, Outcome: command.TerminalReasonCode.String, Error: command.Error}
 	if command.Status == "exited" {
-		completion.Outcome = "exited"
+		report.Outcome = "exited"
 		code := command.ExitCode.Int32
-		completion.ExitCode = &code
+		report.ExitCode = &code
 	}
-	if _, err := parseCommandCompletion(completion); err != nil {
+	if err := report.Validate(); err != nil {
 		return nil, err
 	}
-	return &workerapi.ComputerCommandRelease{ComputerID: pgvalue.UUIDString(command.ComputerID), RequestFingerprint: fingerprint, Completion: completion}, nil
+	return &report, nil
 }

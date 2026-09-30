@@ -12,6 +12,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/command/commandtest"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -121,16 +122,8 @@ func runningComputerCommand(t *testing.T, f runtest.Fixture) (uuid.UUID, uuid.UU
 	t.Helper()
 	member := f.AddRunLease(t, "running", time.Now().Add(-time.Minute))
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='running',started_at=now(),active_started_at=now() WHERE id=$1`, member.RunID)
-	id, claim := uuid.NewV7(), uuid.NewV7()
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'computer.command.start',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(claim.String()))
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_commands(id,environment_id,computer_id,claim_id,argv,env,stdin,timeout_ms,created_by_subject_type,created_by_subject_id,computer_instance_id,writer_generation,status,started_at)
- SELECT $2,environment_id,computer_id,$3,ARRAY['true'],'{}',''::bytea,60000,'api_key',run_id::text,computer_instance_id,writer_generation,'running',now() FROM run_leases WHERE id=$1`, member.LeaseID, id, claim)
-	var instance uuid.UUID
-	var generation int64
-	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_instance_id,writer_generation FROM computer_commands WHERE id=$1`, id).Scan(&instance, &generation); err != nil {
-		t.Fatal(err)
-	}
-	return id, instance, generation
+	command := commandtest.Bound(t, f, member.LeaseID, "running")
+	return command.ID, command.InstanceID, command.WriterGeneration
 }
 
 func TestComputerCommandOperationsReauthenticateAcrossDrain(t *testing.T) {

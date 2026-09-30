@@ -9,8 +9,10 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -163,20 +165,20 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	}
 	secretRevocationReconciler, err := secret.NewRevocationReconciler(
 		runDispatchPool,
+		// Temporary: secret stops revoked Commands itself and reaches the
+		// command owner through this callback, because command imports
+		// secret. The revocation fan-out moves to its outer owners in step 9.
 		secret.ComputerCommandRecoverer(func(
 			ctx context.Context,
 			candidate secret.ComputerCommandCandidate,
 		) error {
-			err := runDispatchAuthority.RecoverComputerCommand(
-				ctx,
-				dispatch.RecoverableComputerCommandCandidate{
-					OrgID:            candidate.OrgID,
-					CommandID:        candidate.CommandID,
-					ComputerID:       candidate.ComputerID,
-					ExpectedRevision: candidate.ExpectedRevision,
-				},
-			)
-			if errors.Is(err, dispatch.ErrCandidateChanged) {
+			err := command.Recover(ctx, runDispatchPool, command.RecoveryCandidate{
+				OrgID:            uuid.UUID(candidate.OrgID.Bytes),
+				CommandID:        uuid.UUID(candidate.CommandID.Bytes),
+				ComputerID:       uuid.UUID(candidate.ComputerID.Bytes),
+				ExpectedRevision: candidate.ExpectedRevision,
+			})
+			if errors.Is(err, command.ErrChanged) {
 				return nil
 			}
 			return err

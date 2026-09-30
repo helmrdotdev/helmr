@@ -83,6 +83,7 @@ if [ "$#" -gt 0 ]; then
 fi
 CGO_ENABLED=1 go test -race -count=1 \
 	./cmd/internal/dev-controlplane \
+	./internal/command \
 	./internal/computer \
 	./internal/controlplane \
 	./internal/db \

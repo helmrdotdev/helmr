@@ -2,20 +2,21 @@ package controlplane
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"slices"
+	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/command"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Request) {
@@ -31,93 +32,32 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(errors.New("canonical organization, environment, Instance and positive writer generation are required")))
 		return
 	}
-	worker := workerFromContext(r.Context())
-	var authority commandClaimAuthority
-	var fingerprint []byte
-	var release *workerapi.ComputerCommandRelease
-	var cancellation *workerapi.ComputerCommandCancellation
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		i, err := work.q.GetComputerInstance(r.Context(), db.GetComputerInstanceParams{ID: pgvalue.UUID(instance), EnvironmentID: pgvalue.UUID(environment)})
-		if err != nil {
-			return err
-		}
-		if i.OrgID != pgvalue.UUID(org) || i.WorkerHostID != pgvalue.UUID(worker.HostID) || i.WorkerGroupID != pgvalue.UUID(worker.GroupID) || i.WorkerEpoch != worker.Epoch || i.WriterGeneration != request.WriterGeneration {
-			return pgx.ErrNoRows
-		}
-		commands, err := work.q.ListInstanceCommands(r.Context(), db.ListInstanceCommandsParams{ComputerInstanceID: i.ID, WriterGeneration: pgtype.Int8{Int64: request.WriterGeneration, Valid: true}})
-		if err != nil {
-			return err
-		}
-		for _, candidate := range commands {
-			if candidate.Status == "stopping" && !slices.Contains(request.ActiveCancellationIDs, pgvalue.UUIDString(candidate.ID)) {
-				receipt, err := work.q.GetIdempotencyClaim(r.Context(), db.GetIdempotencyClaimParams{EnvironmentID: candidate.EnvironmentID, ID: candidate.ClaimID})
-				if err != nil {
-					return err
-				}
-				grant, err := claimCommandCancellation(r.Context(), work.tx, worker, commandClaim{OrgID: pgvalue.UUID(org), CommandID: candidate.ID, ComputerInstanceID: i.ID, WriterGeneration: request.WriterGeneration})
-				if err != nil {
-					return err
-				}
-				cancellation = &workerapi.ComputerCommandCancellation{CommandID: pgvalue.UUIDString(candidate.ID), ComputerID: pgvalue.UUIDString(candidate.ComputerID), ComputerInstanceID: pgvalue.UUIDString(i.ID), WriterGeneration: grant.Instance.WriterGeneration, RequestFingerprint: hex.EncodeToString(receipt.RequestFingerprint), ExpiresAt: grant.Instance.WriterExpiresAt.Time}
-				return nil
-			}
-
-			if slices.Contains(request.ActiveCommandIDs, pgvalue.UUIDString(candidate.ID)) {
-				continue
-			}
-			if candidate.TerminalAt.Valid && !candidate.ProcessReconciledAt.Valid {
-				receipt, err := work.q.GetIdempotencyClaim(r.Context(), db.GetIdempotencyClaimParams{EnvironmentID: candidate.EnvironmentID, ID: candidate.ClaimID})
-				if err != nil {
-					return err
-				}
-				release, err = commandRelease(candidate, request.OrgID, hex.EncodeToString(receipt.RequestFingerprint))
-				if err != nil {
-					return err
-				}
-				if release != nil {
-					return completeCommand(r.Context(), work.tx, worker, release.Completion)
-				}
-			}
-			if candidate.Status != "starting" && candidate.Status != "running" {
-				continue
-			}
-			claim, err := work.q.GetIdempotencyClaim(r.Context(), db.GetIdempotencyClaimParams{EnvironmentID: candidate.EnvironmentID, ID: candidate.ClaimID})
-			if err != nil {
-				return err
-			}
-			authority, err = claimCommand(r.Context(), work.tx, worker, commandClaim{OrgID: pgvalue.UUID(org), CommandID: candidate.ID, ComputerInstanceID: i.ID, WriterGeneration: request.WriterGeneration})
-			if err != nil {
-				return err
-			}
-
-			fingerprint = claim.RequestFingerprint
-			return nil
-		}
-		return nil
+	claimed, err := command.Claim(r.Context(), s.tx, workerFromContext(r.Context()), command.ClaimRequest{
+		OrgID: org, EnvironmentID: environment, InstanceID: instance, WriterGeneration: request.WriterGeneration,
+		ActiveCommandIDs: activeCommandIDs(request.ActiveCommandIDs), ActiveCancellationIDs: activeCommandIDs(request.ActiveCancellationIDs),
 	})
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("command claim is stale")))
-		return
-	}
 	if err != nil {
-		writeError(w, errors.New("claim computer command"))
+		writeError(w, commandError(err, commandClaimOperation))
 		return
 	}
-	if cancellation != nil {
-		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Cancellation: cancellation})
+	if cancellation := claimed.Cancellation; cancellation != nil {
+		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Cancellation: &workerapi.ComputerCommandCancellation{
+			CommandID: cancellation.CommandID.String(), ComputerID: cancellation.ComputerID.String(), ComputerInstanceID: cancellation.InstanceID.String(),
+			WriterGeneration: cancellation.WriterGeneration, RequestFingerprint: hex.EncodeToString(cancellation.RequestFingerprint), ExpiresAt: cancellation.ExpiresAt,
+		}})
 		return
 	}
-	if release != nil {
-		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Release: release})
+	if release := claimed.Release; release != nil {
+		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Release: &workerapi.ComputerCommandRelease{
+			ComputerID: release.ComputerID.String(), RequestFingerprint: hex.EncodeToString(release.RequestFingerprint), Completion: completionRequest(release.Completion),
+		}})
 		return
 	}
-	if !authority.Command.ID.Valid {
+	if claimed.Start == nil {
 		writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{})
 		return
 	}
+	authority := claimed.Start
 	stdin := bytes.Clone(authority.Command.Stdin)
 	if len(stdin) > computerCommandStdinMaxBytes {
 		clear(stdin)
@@ -163,8 +103,20 @@ func (s *Server) workerClaimComputerCommand(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerCommandClaimResponse{Command: &workerapi.ComputerCommand{
-		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: pgvalue.UUIDString(authority.Instance.ID), RequestFingerprint: hex.EncodeToString(fingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Instance.WriterGeneration, ExpiresAt: authority.Instance.WriterExpiresAt.Time,
+		CommandID: pgvalue.UUIDString(authority.Command.ID), ComputerID: pgvalue.UUIDString(authority.Command.ComputerID), ComputerInstanceID: pgvalue.UUIDString(authority.Instance.ID), RequestFingerprint: hex.EncodeToString(authority.RequestFingerprint), Request: launchRequest, Stdin: stdin, Secrets: deliveries, ProtectedEnv: protected, WriterGeneration: authority.Instance.WriterGeneration, ExpiresAt: authority.Instance.WriterExpiresAt.Time,
 	}})
+}
+
+// activeCommandIDs are the canonical Command IDs a worker host reports it
+// already runs or cancels; any other value names no Command and is skipped.
+func activeCommandIDs(values []string) []uuid.UUID {
+	result := make([]uuid.UUID, 0, len(values))
+	for _, value := range values {
+		if id, err := uuid.Parse(value); err == nil && id.String() == value {
+			result = append(result, id)
+		}
+	}
+	return result
 }
 
 func clearComputerSecretDeliveries(deliveries []workerapi.SecretDelivery) {
@@ -186,34 +138,48 @@ func clearComputerCommandBytes(value []byte) {
 }
 
 func (s *Server) workerCompleteComputerCommand(w http.ResponseWriter, r *http.Request) {
-	s.workerCommandCompletion(w, r, false)
+	s.workerCommandCompletion(w, r, command.Complete)
 }
 func (s *Server) workerReconcileComputerCommand(w http.ResponseWriter, r *http.Request) {
-	s.workerCommandCompletion(w, r, true)
+	s.workerCommandCompletion(w, r, command.Reconcile)
 }
-func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request, reconcile bool) {
+func (s *Server) workerCommandCompletion(w http.ResponseWriter, r *http.Request, settle func(context.Context, db.TxBeginner, workergroup.HostPrincipal, command.CompletionReport) error) {
 	var request workerapi.ComputerCommandCompleteRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, err)
 		return
 	}
-	if _, err := parseCommandCompletion(request); err != nil {
+	report, err := completionReport(request)
+	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	err := s.inTx(r.Context(), func(work *txWork) error {
-		return applyCommandCompletion(r.Context(), work.tx, workerFromContext(r.Context()), request, reconcile)
-	})
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(errors.New("command completion is stale or differs from its receipt")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("complete computer command"))
+	if err = settle(r.Context(), s.tx, workerFromContext(r.Context()), report); err != nil {
+		writeError(w, commandError(err, commandCompletionOperation))
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})
+}
+
+// completionReport reads the canonical identities of a completion request;
+// the command owner validates the reported result.
+func completionReport(request workerapi.ComputerCommandCompleteRequest) (command.CompletionReport, error) {
+	org, e1 := ids.Parse(request.OrgID)
+	commandID, e2 := ids.Parse(request.CommandID)
+	instance, e3 := ids.Parse(request.ComputerInstanceID)
+	if e1 != nil || e2 != nil || e3 != nil || request.WriterGeneration <= 0 {
+		return command.CompletionReport{}, errors.New("canonical command, organization and instance IDs and a positive writer generation are required")
+	}
+	return command.CompletionReport{
+		OrgID: org, CommandID: commandID, InstanceID: instance, WriterGeneration: request.WriterGeneration,
+		Outcome: request.Outcome, ExitCode: request.ExitCode, Error: request.Error,
+	}, nil
+}
+
+// completionRequest is the wire form of a recorded completion.
+func completionRequest(report command.CompletionReport) workerapi.ComputerCommandCompleteRequest {
+	return workerapi.ComputerCommandCompleteRequest{
+		OrgID: report.OrgID.String(), CommandID: report.CommandID.String(), ComputerInstanceID: report.InstanceID.String(),
+		WriterGeneration: report.WriterGeneration, Outcome: report.Outcome, ExitCode: report.ExitCode, Error: report.Error,
+	}
 }

@@ -94,8 +94,16 @@
 //     Instances in id order, before re-locking the lease's own Computer and
 //     Instance and the Session, Run, Attempt and lease. Run cancellation takes
 //     the same ordered Computer and Instance locks before any member lock.
-//   - Computer Command operations lock the Command after its Computer and
-//     Instance.
+//   - Command operations, through the command owner, lock Secrets first when
+//     they deliver or validate them (claim, recovery). Worker-reported
+//     operations then lock worker_groups and worker_hosts, comparing claim
+//     versions. All of them then lock the Computer and the Command's
+//     Instance, then the Command. A pending-Command failure also locks an
+//     Instance that was bound after discovery before it rejects. Command
+//     creation acquires its idempotency claim before secrets, then locks the
+//     Computer. Public cancellation acquires its idempotency claim and then
+//     updates the Command without Computer or Instance locks. Result
+//     retention prunes Command rows directly.
 //   - Session-level singleton locks are acquired before, and held around, the
 //     transactions their holder runs. The stale worker fencer runs its
 //     transaction on the guard's connection. A dispatcher run placement lane
