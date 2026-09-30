@@ -224,7 +224,9 @@ func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, boo
 	case errors.As(err, &operation):
 		return runtimeOperationFailure(operation.Code, operation.Error(), false), true
 	case errors.Is(err, run.ErrTurnUnsettled):
-		return runtimeOperationFailure("turn_unsettled", err.Error(), false), true
+		// The operation code is also the message, as for the equivalent
+		// OperationError.
+		return runtimeOperationFailure("turn_unsettled", "turn_unsettled", false), true
 	case errors.Is(err, run.ErrTurnStopped):
 		return workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: err.Error()}, true
 	case errors.Is(err, run.ErrTurnNotActive):

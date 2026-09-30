@@ -67,6 +67,10 @@ func rolledBackTx(t *testing.T, f runtest.Fixture, fn func(pgx.Tx)) {
 
 func TestLiveExecutionPrologueStages(t *testing.T) {
 	f, source, fence, _, _ := startedSourceFixture(t, true)
+	var sourceComputer pgtype.UUID
+	if err := f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM runs WHERE id=$1`, source.RunID).Scan(&sourceComputer); err != nil {
+		t.Fatal(err)
+	}
 	missing := fence
 	missing.LeaseID = pgvalue.UUID(uuid.NewV7())
 	rolledBackTx(t, f, func(tx pgx.Tx) {
@@ -79,7 +83,7 @@ func TestLiveExecutionPrologueStages(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if locator.RunID() != pgvalue.UUID(source.RunID) || locator.AttemptNumber() != 1 || locator.EnvironmentID() != pgvalue.UUID(f.EnvironmentID) || locator.SessionID().Valid || !locator.ComputerID().Valid {
+		if locator.RunID() != pgvalue.UUID(source.RunID) || locator.AttemptNumber() != 1 || locator.EnvironmentID() != pgvalue.UUID(f.EnvironmentID) || locator.SessionID().Valid {
 			t.Fatalf("locator Run=%s attempt=%d", pgvalue.UUIDString(locator.RunID()), locator.AttemptNumber())
 		}
 		secrets, err := locator.LockSecrets(t.Context())
@@ -87,7 +91,7 @@ func TestLiveExecutionPrologueStages(t *testing.T) {
 			t.Fatal(err)
 		}
 		execution, err := secrets.LockExecution(t.Context())
-		if err != nil || execution.Run().ID != pgvalue.UUID(source.RunID) || execution.Computer().ID != locator.ComputerID() {
+		if err != nil || execution.Run().ID != pgvalue.UUID(source.RunID) || execution.Computer().ID != sourceComputer {
 			t.Fatalf("execution Run=%s err=%v", pgvalue.UUIDString(execution.Run().ID), err)
 		}
 		if execution.DeliverySecrets() == nil {

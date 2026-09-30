@@ -102,14 +102,28 @@
 //     source Computer's Secrets, plus an addressed Computer's (never an
 //     addressed Session's Computer's), then the execution fence with the
 //     target in the same ordered statements, then the source attempt's
-//     delivery Secrets (already held).
-//   - Session controls (cancel, interrupt, resume) lock the sorted union of
-//     the source Computer's and the target Session's Computer's Secrets, then
-//     the execution fence, then re-read the union after the Session and
-//     Computer fences and fail if a binding changed, re-locking only the same
-//     Secrets.
-//   - Public Session controls lock the current Run's attempt Secrets, then
-//     its owned finalization graph, then the Session.
+//     delivery Secrets. That delivery lock reads the source Computer's
+//     bindings again without comparing them with the first lock, so a
+//     binding added before the execution fence locks the source Computer is
+//     locked after the fence; these operations have no re-read check.
+//   - Worker Session controls (cancel, interrupt, resume) lock the sorted
+//     union of the source Computer's and the target Session's Computer's
+//     Secrets, then the execution fence, then re-read the union after the
+//     Session and Computer fences and fail if a binding changed, re-locking
+//     only the same Secrets.
+//   - Public Session cancel and interrupt with a current Run lock that Run's
+//     attempt Secrets, then its owned finalization graph, then re-lock the
+//     Session's Computer (already locked by the graph) and its Instance, then
+//     the Session. With no current Run they lock the Session before its
+//     Computer and Instance, an inversion of the order above. Public resume
+//     takes its own admission path: it locks the Session's Computer's
+//     Secrets, then the Computer, its Instance and the Session, then its
+//     idempotency claim, and then re-locks the already-held Computer through
+//     the Session predicate.
+//   - Session timeout reconciliation locks the Computer's Secrets, the
+//     Computer and its Instance, then the Session and Run, re-locks the
+//     already-held Computer through the open-Session predicate, then locks
+//     the Attempt and Wait.
 //   - Command operations, through the command owner, lock Secrets first when
 //     they deliver or validate them (claim, recovery). Worker-reported
 //     operations then lock worker_groups and worker_hosts, comparing claim

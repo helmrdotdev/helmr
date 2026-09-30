@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -137,6 +138,50 @@ func TestWorkerSessionControlSelfInterruptRejectsResumePostgres(t *testing.T) {
 	var hold string
 	if err := f.Pool.QueryRow(t.Context(), `SELECT dispatch_hold_id::text FROM sessions WHERE id=$1`, f.sessionID).Scan(&hold); err != nil || hold != interrupted.Completed.HoldID {
 		t.Fatalf("hold=%s err=%v", hold, err)
+	}
+}
+
+// lockWorkerSessionControl re-reads the Secret union through run's Recheck:
+// a binding added while the control waits on the execution host is rejected
+// as unavailable instead of being locked after the fence.
+func TestWorkerSessionControlRejectsBindingAddedMidControlPostgres(t *testing.T) {
+	f := newActorExecutionFixture(t, json.RawMessage(`{"sequence":1}`), true)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	hostBlocker, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hostBlocker.Rollback(context.Background())
+	dbtest.MustExec(t, ctx, hostBlocker, `SELECT id FROM worker_hosts WHERE id=$1 FOR UPDATE`, f.worker.HostID)
+	control, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Rollback(context.Background())
+	var pid int32
+	if err = control.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := lockWorkerSessionControl(ctx, &txWork{q: db.New(control), tx: control}, f.worker, f.fence(), pgvalue.UUID(f.sessionID), true)
+		done <- err
+	}()
+	// The control holds the Secret union and waits on the execution host.
+	waitForPostgresBlock(t, f.Pool, pid)
+	addWorkerControlSecret(t, f)
+	secretBlocker, err := f.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secretBlocker.Rollback(context.Background())
+	dbtest.MustExec(t, ctx, secretBlocker, `SELECT id FROM secrets WHERE id IN(SELECT secret_id FROM computer_secrets WHERE computer_id=$1) FOR UPDATE`, f.computerID)
+	if err = hostBlocker.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; !errors.Is(err, secret.ErrDeliveryUnavailable) {
+		t.Fatalf("changed binding must reject without waiting for the new Secret: %v", err)
 	}
 }
 

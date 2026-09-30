@@ -47,9 +47,6 @@ func (l LiveLocator) AttemptNumber() int32 { return l.located.AttemptNumber }
 // SessionID is the located Run's Session; it is invalid for a Task Run.
 func (l LiveLocator) SessionID() pgtype.UUID { return l.located.SessionID }
 
-// ComputerID is the located Run's Computer.
-func (l LiveLocator) ComputerID() pgtype.UUID { return l.located.ComputerID }
-
 // LiveSecrets is a located live lease whose attempt's Secret deliveries are
 // locked.
 type LiveSecrets struct {
