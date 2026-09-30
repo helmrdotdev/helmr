@@ -3,6 +3,7 @@ dist/
 coverage/
 __pycache__/
 **/.astro/
+.cloudflare/
 internal/console/out/
 images/*/out/
 .DS_Store
