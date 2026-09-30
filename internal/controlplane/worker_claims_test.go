@@ -59,7 +59,6 @@ func TestWorkerClaimsSurviveFinalizationErrorTranslation(t *testing.T) {
 		"actor":        func(err error) error { return staleActorCompletion(staleRunFinalization(err)) },
 		"actor turn":   func(err error) error { return staleActorTurnCommit(staleRunFinalization(err)) },
 		"actor output": staleActorOutputAppend,
-		"run source":   staleWorkerRunSource,
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := httptest.NewRecorder()

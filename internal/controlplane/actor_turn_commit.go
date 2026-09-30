@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -91,20 +90,15 @@ func (s *Server) commitActorTurn(
 ) (workerapi.CommitActorTurnResponse, error) {
 	var response workerapi.CommitActorTurnResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(commit.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
-			WorkerEpoch: worker.Epoch})
+		locator, err := run.LocateLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
-		if _, err := secret.LockAttemptDelivery(
-			ctx, work.q, locators.RunID, locators.AttemptNumber,
-			locators.ComputerID,
-		); err != nil {
+		secrets, err := locator.LockSecrets(ctx)
+		if err != nil {
 			return fmt.Errorf("lock actor turn secret authority: %w", err)
 		}
-		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
+		authority, err := secrets.LockExecution(ctx)
 		runRow, attempt, actor, lease, instance := authority.Run(), authority.Attempt(), authority.Session(), authority.Lease(), authority.Instance()
 		if err != nil || !actor.ID.Valid {
 			return staleActorTurnCommit(err)
@@ -125,8 +119,8 @@ func (s *Server) commitActorTurn(
 			}
 			return errStaleActorTurnCommit
 		}
-		scope := session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(runRow.EnvironmentID), SessionID: pgvalue.MustUUIDValue(actor.ID), TurnID: commit.turnID, RunID: pgvalue.MustUUIDValue(runRow.ID), AttemptNumber: attempt.Number, RunGeneration: commit.generation}
-		input, err := session.ValidateTurn(ctx, work.tx, scope)
+		scope := run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(runRow.EnvironmentID), SessionID: pgvalue.MustUUIDValue(actor.ID), TurnID: commit.turnID, RunID: pgvalue.MustUUIDValue(runRow.ID), AttemptNumber: attempt.Number, RunGeneration: commit.generation}
+		input, err := run.ValidateTurn(ctx, work.tx, scope)
 		if err != nil {
 			return staleActorTurnCommit(err)
 		}
@@ -230,7 +224,7 @@ func staleActorTurnCommit(err error) error {
 	}
 	if err == nil || errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errStaleRunLeaseClaim) ||
 		errors.Is(err, errStaleRunFinalization) || errors.Is(err, errStaleActorCompletion) ||
-		errors.Is(err, session.ErrTurnStopped) || errors.Is(err, session.ErrTurnNotActive) || errors.Is(err, session.ErrTurnScope) {
+		errors.Is(err, run.ErrTurnStopped) || errors.Is(err, run.ErrTurnNotActive) || errors.Is(err, run.ErrTurnScope) {
 		return errStaleActorTurnCommit
 	}
 	return err

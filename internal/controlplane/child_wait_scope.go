@@ -6,7 +6,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,25 +24,25 @@ func childWaitScopeOf(execution run.Execution) childWaitScope {
 func validateChildWaitScope(scope childWaitScope, wait db.RunWait) error {
 	if scope.run.EntrypointKind == "task" {
 		if scope.run.SessionID.Valid || wait.TurnID.Valid || wait.TurnSessionID.Valid || wait.TurnRunGeneration.Valid {
-			return session.ErrTurnScope
+			return run.ErrTurnScope
 		}
 		return nil
 	}
 	actor := scope.session
 	if scope.run.EntrypointKind != "actor" || !actor.ID.Valid || scope.run.SessionID != actor.ID || actor.CurrentRunID != scope.run.ID || actor.ComputerID != scope.run.ComputerID || (actor.Status != "open" && actor.Status != "closing") {
-		return session.ErrTurnScope
+		return run.ErrTurnScope
 	}
 	if actor.DispatchHoldID.Valid {
-		return session.ErrTurnStopped
+		return run.ErrTurnStopped
 	}
 	if actor.ActiveTurnID != wait.TurnID {
-		return session.ErrTurnScope
+		return run.ErrTurnScope
 	}
 	if wait.TurnID.Valid && (wait.TurnSessionID != actor.ID || !wait.TurnRunGeneration.Valid || wait.TurnRunGeneration.Int64 != actor.RunGeneration) {
-		return session.ErrTurnScope
+		return run.ErrTurnScope
 	}
 	if !wait.TurnID.Valid && (wait.TurnSessionID.Valid || wait.TurnRunGeneration.Valid) {
-		return session.ErrTurnScope
+		return run.ErrTurnScope
 	}
 	return nil
 }
@@ -51,21 +50,20 @@ func validateChildWaitScope(scope childWaitScope, wait db.RunWait) error {
 func validateWorkerWaitTurn(ctx context.Context, tx pgx.Tx, a run.Execution, turnID pgtype.UUID, gen pgtype.Int8) error {
 	if a.Run().EntrypointKind != "actor" {
 		if turnID.Valid {
-			return session.ErrTurnScope
+			return run.ErrTurnScope
 		}
 		return nil
 	}
 	if a.Session().DispatchHoldID.Valid {
-		return session.ErrTurnStopped
+		return run.ErrTurnStopped
 	}
 	if a.Session().ActiveTurnID != turnID {
-		return session.ErrTurnScope
+		return run.ErrTurnScope
 	}
 	if !turnID.Valid {
 		return nil
 	}
-	_, err := session.ValidateTurnWork(ctx, tx, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.Session().EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.Session().ID), RunID: pgvalue.MustUUIDValue(a.Run().ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: a.Attempt().Number, RunGeneration: gen.Int64})
-	return err
+	return a.ValidateTurnWork(ctx, tx, pgvalue.MustUUIDValue(turnID), gen.Int64)
 }
 
 // Registration already validated the parsed binding under the Session lock;

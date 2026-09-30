@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -113,7 +114,7 @@ func (f *actorExecutionFixture) fence() workerapi.RunLeaseFence {
 	return workerapi.RunLeaseFence{ID: pgvalue.UUIDString(f.claim.runLease.ID), LeaseSequence: f.claim.runLease.LeaseSequence}
 }
 
-func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) session.TurnScope {
+func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) run.TurnScope {
 	t.Helper()
 	var input db.SessionTurn
 	input, err := f.server.db.GetSessionTurnAtSequenceForUpdate(t.Context(), db.GetSessionTurnAtSequenceForUpdateParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), SessionID: pgvalue.UUID(f.sessionID), Sequence: sequence})
@@ -132,7 +133,7 @@ func (f *actorExecutionFixture) receiveTurn(t *testing.T, sequence int64) sessio
 	if input.Status != "running" || !input.RunGeneration.Valid {
 		t.Fatalf("input was not activated: %+v", input)
 	}
-	return session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.runID, AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
+	return run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: pgvalue.MustUUIDValue(input.ID), RunID: f.runID, AttemptNumber: input.AttemptNumber.Int32, RunGeneration: input.RunGeneration.Int64}
 }
 
 func (f *actorExecutionFixture) turn(t *testing.T, sequence int64) workerapi.CommitActorTurnResponse {

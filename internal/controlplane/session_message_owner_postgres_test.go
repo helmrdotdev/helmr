@@ -7,14 +7,15 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func turnCommand(f *actorExecutionFixture, s session.TurnScope) workerapi.TurnExecutionRequest {
+func turnCommand(f *actorExecutionFixture, s run.TurnScope) workerapi.TurnExecutionRequest {
 	return workerapi.TurnExecutionRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: s.TurnID.String(), RunGeneration: s.RunGeneration}
 }
-func readyMessages(t *testing.T, f *actorExecutionFixture, s session.TurnScope) {
+func readyMessages(t *testing.T, f *actorExecutionFixture, s run.TurnScope) {
 	t.Helper()
 	var result workerapi.TurnCommandResponse
 	f.workerCall(t, f.server.workerTurnMessagesReady, turnCommand(f, s), &result)
@@ -30,7 +31,7 @@ func admitMessage(t *testing.T, f *actorExecutionFixture, key string) session.Ad
 	}
 	return r
 }
-func claimMessage(t *testing.T, f *actorExecutionFixture, s session.TurnScope) workerapi.TurnMessageDelivery {
+func claimMessage(t *testing.T, f *actorExecutionFixture, s run.TurnScope) workerapi.TurnMessageDelivery {
 	t.Helper()
 	var r workerapi.ClaimTurnMessageResponse
 	f.workerCall(t, f.server.workerClaimTurnMessage, workerapi.ClaimTurnMessageRequest{TurnExecutionRequest: turnCommand(f, s), DeliveryID: uuid.NewV7().String()}, &r)
@@ -39,7 +40,7 @@ func claimMessage(t *testing.T, f *actorExecutionFixture, s session.TurnScope) w
 	}
 	return *r.Delivery
 }
-func finishDelivery(t *testing.T, f *actorExecutionFixture, s session.TurnScope, d workerapi.TurnMessageDelivery, status, code string) {
+func finishDelivery(t *testing.T, f *actorExecutionFixture, s run.TurnScope, d workerapi.TurnMessageDelivery, status, code string) {
 	t.Helper()
 	var r workerapi.TurnCommandResponse
 	f.workerCall(t, f.server.workerCompleteTurnMessage, workerapi.CompleteTurnMessageRequest{TurnExecutionRequest: turnCommand(f, s), MessageID: d.MessageID, DeliveryID: d.DeliveryID, Status: status, Code: code}, &r)

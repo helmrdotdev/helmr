@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -90,18 +89,19 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: request.Fence.LeaseID, LeaseSequence: request.Fence.LeaseSequence, WorkerGroupID: request.Fence.WorkerGroupID, WorkerHostID: request.Fence.WorkerHostID, WorkerEpoch: request.Fence.WorkerEpoch})
+	locator, err := LocateLiveExecution(ctx, tx, request.Fence)
 	if err != nil {
 		return fmt.Errorf("task completion locate: %w", err)
 	}
-	secrets, err := secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID)
+	locked, err := locator.LockSecrets(ctx)
 	if err != nil {
 		if errors.Is(err, secret.ErrDeliveryUnavailable) {
 			return errors.Join(ErrTaskCompletionAdmission, err)
 		}
 		return fmt.Errorf("task completion Secrets: %w", err)
 	}
-	graph, err := LockOwnedFinalizationWithInstanceFence(ctx, tx, OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(loc.OrgID), ProjectID: pgvalue.MustUUIDValue(loc.ProjectID), EnvironmentID: pgvalue.MustUUIDValue(loc.EnvironmentID), RunID: pgvalue.MustUUIDValue(loc.RunID)}, func() error { return workergroup.LockExecutionHost(ctx, q, request.Fence.host(loc.RegionID, false)) })
+	secrets := locked.secrets
+	graph, err := locator.lockOwnedFinalization(ctx)
 	if err != nil {
 		return fmt.Errorf("task completion graph: %w", err)
 	}

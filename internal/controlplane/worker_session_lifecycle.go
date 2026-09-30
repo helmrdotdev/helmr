@@ -10,7 +10,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -25,36 +24,36 @@ func lockWorkerSessionExecution(ctx context.Context, tx pgx.Tx, worker workergro
 	if err != nil {
 		return run.Execution{}, err
 	}
-	q := db.New(tx)
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
+	locator, err := run.LocateLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, lease))
 	if err != nil {
 		return run.Execution{}, staleActorOutputAppend(err)
 	}
-	if !loc.SessionID.Valid {
-		return run.Execution{}, session.ErrTurnScope
+	if !locator.SessionID().Valid {
+		return run.Execution{}, run.ErrTurnScope
 	}
-	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
+	secrets, err := locator.LockSecrets(ctx)
+	if err != nil {
 		return run.Execution{}, err
 	}
-	a, err := run.LockLiveExecution(ctx, tx, run.ExecutionFence{LeaseID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion})
+	a, err := secrets.LockExecution(ctx)
 	if err != nil {
 		return run.Execution{}, staleRunLeaseClaim(err)
 	}
 	if !a.Session().ID.Valid || a.Run().EntrypointKind != "actor" || !a.Attempt().EntrypointEnteredAt.Valid || a.Lease().FinalizationOperationID.Valid {
-		return run.Execution{}, session.ErrTurnScope
+		return run.Execution{}, run.ErrTurnScope
 	}
 	return a, nil
 }
 
-func workerTurnScope(authority run.Execution, request workerapi.TurnExecutionRequest) (session.TurnScope, error) {
+func workerTurnScope(authority run.Execution, request workerapi.TurnExecutionRequest) (run.TurnScope, error) {
 	turnID, err := parseCanonicalUUID("turn_id", request.TurnID)
 	if err != nil {
-		return session.TurnScope{}, err
+		return run.TurnScope{}, err
 	}
 	if request.RunGeneration <= 0 {
-		return session.TurnScope{}, session.ErrTurnScope
+		return run.TurnScope{}, run.ErrTurnScope
 	}
-	return session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Session().EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session().ID), TurnID: turnID, RunID: pgvalue.MustUUIDValue(authority.Run().ID), AttemptNumber: authority.Attempt().Number, RunGeneration: request.RunGeneration}, nil
+	return run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Session().EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session().ID), TurnID: turnID, RunID: pgvalue.MustUUIDValue(authority.Run().ID), AttemptNumber: authority.Attempt().Number, RunGeneration: request.RunGeneration}, nil
 }
 func projectWorkerSessionEvent(event db.SessionEvent, deploymentID pgtype.UUID) api.SessionEvent {
 	result := api.SessionEvent{ID: pgvalue.UUIDString(event.ID), SessionID: pgvalue.UUIDString(event.SessionID), Sequence: event.Sequence, CreatedAt: event.CreatedAt.Time.UTC(), Kind: event.Kind, Data: event.Data}
@@ -104,7 +103,7 @@ func (s *Server) workerTurnMessagesReady(w http.ResponseWriter, r *http.Request)
 			return err
 		}
 		if a.Run().Status != db.RunStatusRunning || a.Lease().Status != db.RunLeaseStatusRunning {
-			return session.ErrTurnScope
+			return run.ErrTurnScope
 		}
 		_, err = session.DeclareMessageReady(r.Context(), work.tx, scope, pgvalue.MustUUIDValue(a.Lease().ID))
 		return err
@@ -218,7 +217,7 @@ func (s *Server) workerSessionControl(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			err = session.ErrTurnScope
+			err = run.ErrTurnScope
 		}
 		s.writeWorkerSessionCommand(w, request.CorrelationID, err)
 		return
@@ -249,13 +248,13 @@ func (s *Server) workerWriteSessionOutput(w http.ResponseWriter, r *http.Request
 			return err
 		}
 		if a.Run().Status != db.RunStatusRunning || a.Lease().Status != db.RunLeaseStatusRunning {
-			return session.ErrTurnScope
+			return run.ErrTurnScope
 		}
 		key := request.IdempotencyKey
 		if key == "" {
 			key = request.CorrelationID
 		}
-		receipt, err := session.AppendSessionOutput(r.Context(), work.tx, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.Session().EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.Session().ID), RunID: pgvalue.MustUUIDValue(a.Run().ID), AttemptNumber: a.Attempt().Number, RunGeneration: request.RunGeneration}, key, request.Data)
+		receipt, err := session.AppendSessionOutput(r.Context(), work.tx, run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.Session().EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.Session().ID), RunID: pgvalue.MustUUIDValue(a.Run().ID), AttemptNumber: a.Attempt().Number, RunGeneration: request.RunGeneration}, key, request.Data)
 		if err != nil {
 			return err
 		}

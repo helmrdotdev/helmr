@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/secret"
 )
@@ -19,7 +20,25 @@ func TestExecutionAccessorsReturnIsolatedCopies(t *testing.T) {
 	for n := range execution.secrets {
 		dbtest.FillSlices(t, &execution.secrets[n])
 	}
+	var turn LockedTurn
+	dbtest.FillSlices(t, &turn.session)
+	dbtest.FillSlices(t, &turn.turn)
+	var controls ControlSecrets
+	dbtest.FillSlices(t, &controls.target)
+	controls.locked = make([]db.LockWorkerControlSecretsRow, 2)
+	for n := range controls.locked {
+		dbtest.FillSlices(t, &controls.locked[n])
+		controls.locked[n].ComputerID = controls.target.ComputerID
+	}
 	for name, accessor := range map[string]func() any{
+		"LockedTurn.Session":    func() any { return turn.Session() },
+		"LockedTurn.Turn":       func() any { return turn.Turn() },
+		"ControlSecrets.Target": func() any { return controls.Target() },
+		"ControlSecrets.TargetBindings": func() any {
+			return struct {
+				Bindings []db.LockComputerSecretsForAdmissionRow
+			}{controls.TargetBindings()}
+		},
 		"Run":             func() any { return execution.Run() },
 		"Attempt":         func() any { return execution.Attempt() },
 		"Session":         func() any { return execution.Session() },

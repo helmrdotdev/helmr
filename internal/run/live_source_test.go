@@ -32,18 +32,24 @@ func TestLiveSourceRequiresEnteredRunningExecution(t *testing.T) {
 	} {
 		a := valid
 		mutate(&a)
-		if _, err := checkLiveSource(a, nil); !errors.Is(err, ErrStaleSource) {
+		if _, _, err := checkLiveSource(a, nil); !errors.Is(err, ErrStaleSource) {
 			t.Fatalf("inactive execution=%v", err)
 		}
 	}
-	if _, err := checkLiveSource(valid, workergroup.ErrStaleClaims); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, _, err := checkLiveSource(valid, workergroup.ErrStaleClaims); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("worker claims=%v", err)
 	}
-	if _, err := checkLiveSource(valid, pgx.ErrNoRows); !errors.Is(err, ErrStaleSource) {
+	if _, _, err := checkLiveSource(valid, pgx.ErrNoRows); !errors.Is(err, ErrStaleSource) {
 		t.Fatalf("missing source=%v", err)
 	}
+	if _, _, err := checkLiveSource(valid, ErrExecutionTargetNotFound); err != ErrExecutionTargetNotFound {
+		t.Fatalf("missing target=%v", err)
+	}
+	if execution, _, err := checkLiveSource(valid, nil); err != nil || execution.run.ID != valid.run.ID {
+		t.Fatalf("live execution=%v err=%v", execution.run.ID, err)
+	}
 	failure := errors.New("database unavailable")
-	if _, err := checkLiveSource(valid, failure); !errors.Is(err, failure) {
+	if _, _, err := checkLiveSource(valid, failure); !errors.Is(err, failure) {
 		t.Fatalf("storage error hidden: %v", err)
 	}
 }

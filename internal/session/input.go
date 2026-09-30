@@ -31,7 +31,7 @@ func CanStartContinuation(actor db.Session) bool {
 func CompleteWait(ctx context.Context, tx pgx.Tx, wait db.RunWait, turn db.SessionTurn) (db.RunWait, error) {
 	store := db.New(tx)
 	var err error
-	turn, err = ActivateTurn(ctx, tx, TurnScope{EnvironmentID: pgvalue.MustUUIDValue(turn.EnvironmentID), SessionID: pgvalue.MustUUIDValue(turn.SessionID), TurnID: pgvalue.MustUUIDValue(turn.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
+	turn, err = ActivateTurn(ctx, tx, run.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(turn.EnvironmentID), SessionID: pgvalue.MustUUIDValue(turn.SessionID), TurnID: pgvalue.MustUUIDValue(turn.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
 	if err != nil {
 		return db.RunWait{}, err
 	}

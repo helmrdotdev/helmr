@@ -45,7 +45,8 @@ func (s LiveSource) RunID() pgtype.UUID { return s.runID }
 // LockLiveSource locks the fenced execution as LockLiveExecution does and
 // requires a live source. Secret locks, when needed, precede it.
 func LockLiveSource(ctx context.Context, tx pgx.Tx, fence ExecutionFence) (LiveSource, error) {
-	return checkLiveSource(LockLiveExecution(ctx, tx, fence))
+	_, source, err := checkLiveSource(LockLiveExecution(ctx, tx, fence))
+	return source, err
 }
 
 // LockLiveSourceForComputer locks the fenced execution together with the
@@ -56,7 +57,8 @@ func LockLiveSourceForComputer(ctx context.Context, tx pgx.Tx, fence ExecutionFe
 	if errors.Is(err, ErrExecutionTargetNotFound) {
 		return LiveSource{}, computer.ErrNotFound
 	}
-	return checkLiveSource(execution, err)
+	_, source, err := checkLiveSource(execution, err)
+	return source, err
 }
 
 // LiveSource requires the locked execution to be a live source: its Run and
@@ -72,14 +74,15 @@ func (e Execution) LiveSource() (LiveSource, error) {
 // checkLiveSource validates the result of a live execution lock as a live
 // source. A missing execution is ErrStaleSource; other lock failures,
 // including stale worker claims, are returned unchanged.
-func checkLiveSource(execution Execution, err error) (LiveSource, error) {
-	if errors.Is(err, pgx.ErrNoRows) {
-		return LiveSource{}, ErrStaleSource
-	}
+func checkLiveSource(execution Execution, err error) (Execution, LiveSource, error) {
 	if err != nil {
-		return LiveSource{}, err
+		return Execution{}, LiveSource{}, staleSource(err)
 	}
-	return execution.LiveSource()
+	source, err := execution.LiveSource()
+	if err != nil {
+		return Execution{}, LiveSource{}, err
+	}
+	return execution, source, nil
 }
 
 func lockLiveSourceTx(ctx context.Context, txb db.TxBeginner, fence ExecutionFence) (LiveSource, error) {

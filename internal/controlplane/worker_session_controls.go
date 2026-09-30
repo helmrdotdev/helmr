@@ -10,11 +10,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -22,55 +20,34 @@ import (
 // Secret bindings are read again after the Session and Computer fences; a new
 // binding invalidates this attempt rather than acquiring a Secret out of order.
 func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID pgtype.UUID, interrupt bool) (run.LiveSource, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
-	var graph run.OwnedFinalization
 	fail := func(err error) (run.LiveSource, run.OwnedFinalization, []db.LockComputerSecretsForAdmissionRow, error) {
-		return run.LiveSource{}, graph, nil, err
+		return run.LiveSource{}, run.OwnedFinalization{}, nil, err
 	}
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
 		return fail(err)
 	}
-	loc, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
+	controls, err := run.LockControlSecrets(ctx, work.tx, workerExecutionFence(worker, parsed, lease), targetID)
 	if err != nil {
-		return fail(staleWorkerRunSource(err))
+		return fail(workerControlTargetError(err))
 	}
-	target, err := work.q.GetActor(ctx, db.GetActorParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fail(&session.OperationError{Code: "session_not_found"})
-	}
-	if err != nil {
-		return fail(err)
-	}
-	computerIDs := []pgtype.UUID{loc.ComputerID, target.ComputerID}
-	lockedSecrets, err := work.q.LockWorkerControlSecrets(ctx, computerIDs)
-	if err != nil {
-		return fail(err)
-	}
-	var authority run.Execution
+	var source run.LiveSource
+	var graph run.OwnedFinalization
 	if interrupt {
-		authority, graph, err = run.LockLiveExecutionForSessionInterruption(ctx, work.tx, workerExecutionFence(worker, parsed, lease), targetID)
+		_, source, graph, err = controls.LockInterruptionLiveSource(ctx)
 	} else {
-		authority, err = run.LockLiveExecutionForSession(ctx, work.tx, workerExecutionFence(worker, parsed, lease), targetID)
-	}
-	if errors.Is(err, run.ErrExecutionTargetNotFound) {
-		return fail(&session.OperationError{Code: "session_not_found"})
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return fail(run.ErrStaleSource)
+		_, source, err = controls.LockLiveSource(ctx)
 	}
 	if err != nil {
-		return fail(err)
-	}
-	source, err := authority.LiveSource()
-	if err != nil {
-		return fail(err)
+		return fail(workerControlTargetError(err))
 	}
 	// The union operation has already locked all source-ancestor and target
 	// Sessions. This validation cannot add a differently ordered Session lock.
-	if err = lockWorkerControlActors(ctx, work.q, loc, targetID); err != nil {
+	if err = lockWorkerControlActors(ctx, work.q, source, targetID); err != nil {
 		return fail(err)
 	}
-	lockedTarget, err := work.q.GetActor(ctx, db.GetActorParams{EnvironmentID: loc.EnvironmentID, ID: targetID})
+	target := controls.Target()
+	lockedTarget, err := work.q.GetActor(ctx, db.GetActorParams{EnvironmentID: source.EnvironmentID(), ID: targetID})
 	if err != nil {
 		return fail(err)
 	}
@@ -83,51 +60,26 @@ func lockWorkerSessionControl(ctx context.Context, work *txWork, worker workergr
 			return fail(err)
 		}
 	}
-	reread, err := work.q.ReadWorkerControlSecrets(ctx, computerIDs)
-	if err != nil {
+	if err = controls.Recheck(ctx, interrupt); err != nil {
 		return fail(err)
 	}
-	if len(reread) != len(lockedSecrets) {
-		return fail(secret.ErrDeliveryUnavailable)
+	return source, graph, controls.TargetBindings(), nil
+}
+
+// workerControlTargetError reports a control target outside the source's
+// environment as a missing Session.
+func workerControlTargetError(err error) error {
+	if errors.Is(err, run.ErrExecutionTargetNotFound) {
+		return &session.OperationError{Code: "session_not_found"}
 	}
-	for i := range reread {
-		if reread[i].ComputerID != lockedSecrets[i].ComputerID || reread[i].SecretID != lockedSecrets[i].SecretID || reread[i].PlacementKind != lockedSecrets[i].PlacementKind || reread[i].PlacementTarget != lockedSecrets[i].PlacementTarget {
-			return fail(secret.ErrDeliveryUnavailable)
-		}
-	}
-	// Computer FOR UPDATE locks block new binding insertion through the
-	// computer_secrets foreign key. After checking the binding identities,
-	// ordinary delivery validation can only re-lock the original Secret union.
-	validateDelivery := func(runID pgtype.UUID, attempt int32, computerID pgtype.UUID) error {
-		_, err := secret.LockAttemptDelivery(ctx, work.q, runID, attempt, computerID)
-		return err
-	}
-	if err = validateDelivery(loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
-		return fail(err)
-	}
-	if interrupt && target.CurrentRunID.Valid && target.CurrentRunID != loc.RunID {
-		current, err := work.q.GetRun(ctx, db.GetRunParams{EnvironmentID: loc.EnvironmentID, ID: target.CurrentRunID})
-		if err != nil {
-			return fail(err)
-		}
-		if err = validateDelivery(current.ID, current.CurrentAttemptNumber, target.ComputerID); err != nil {
-			return fail(err)
-		}
-	}
-	var bindings []db.LockComputerSecretsForAdmissionRow
-	for _, row := range lockedSecrets {
-		if row.ComputerID == target.ComputerID {
-			bindings = append(bindings, db.LockComputerSecretsForAdmissionRow(row))
-		}
-	}
-	return source, graph, bindings, nil
+	return err
 }
 
 // Owned Tasks retain their ancestor Actor's lifecycle fence even in a different
 // Computer. Locking only the source Computer's Session would let reciprocal
 // child controls each hold the other's graph root while waiting on its child.
-func lockWorkerControlActors(ctx context.Context, q db.Querier, loc db.GetLiveRunLeaseLocatorsRow, targetID pgtype.UUID) error {
-	actors, err := q.LockWorkerControlActors(ctx, db.LockWorkerControlActorsParams{EnvironmentID: loc.EnvironmentID, SourceRunID: loc.RunID, TargetSessionID: targetID})
+func lockWorkerControlActors(ctx context.Context, q db.Querier, source run.LiveSource, targetID pgtype.UUID) error {
+	actors, err := q.LockWorkerControlActors(ctx, db.LockWorkerControlActorsParams{EnvironmentID: source.EnvironmentID(), SourceRunID: source.RunID(), TargetSessionID: targetID})
 	if err != nil {
 		return err
 	}

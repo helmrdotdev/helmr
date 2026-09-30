@@ -44,7 +44,7 @@ func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 	if err := f.Pool.QueryRow(t.Context(), `SELECT run_generation FROM sessions WHERE id=$1`, actorID).Scan(&generation); err != nil {
 		t.Fatal(err)
 	}
-	scope := TurnScope{EnvironmentID: f.EnvironmentID, SessionID: actorID, TurnID: turnID, RunID: work.RunID, AttemptNumber: 1, RunGeneration: generation}
+	scope := run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: actorID, TurnID: turnID, RunID: work.RunID, AttemptNumber: 1, RunGeneration: generation}
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_turns (id,environment_id,session_id,sequence,data,status,run_generation,run_id,attempt_number,ready_run_lease_id) VALUES ($1,$2,$3,2,'{}','running',$4,$5,1,$6)`, turnID, f.EnvironmentID, actorID, generation, work.RunID, work.LeaseID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE sessions SET active_turn_id=$2 WHERE id=$1`, actorID, turnID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO session_messages (id,environment_id,session_id,turn_id,run_id,attempt_number,run_generation,data,accepted_sequence,status,delivery_id,delivery_run_lease_id,handling_at) VALUES ($1,$2,$3,$4,$5,1,$6,'{}',1,'handling',$7,$8,clock_timestamp())`, messageID, f.EnvironmentID, actorID, turnID, work.RunID, generation, deliveryID, work.LeaseID)
@@ -82,7 +82,7 @@ func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 			if _, err := run.LockLiveExecution(t.Context(), tx, fence); err != nil {
 				return err
 			}
-			if _, err := ValidateTurnWork(t.Context(), tx, scope); !errors.Is(err, ErrTurnStopped) {
+			if _, err := run.ValidateTurnWork(t.Context(), tx, scope); !errors.Is(err, run.ErrTurnStopped) {
 				t.Fatalf("new work admitted under hold: %v", err)
 			}
 			message, err := CompleteMessage(t.Context(), tx, scope, work.LeaseID, messageID, deliveryID, MessageOutcome{Status: "handled"})

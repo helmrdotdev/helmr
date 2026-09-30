@@ -13,7 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -149,18 +148,17 @@ func (s *Server) appendActorOutput(
 	var response api.SessionEvent
 	var rejected error
 	err = s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetLiveRunLeaseLocators(ctx, locatorParams)
+		locator, err := run.LocateLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
 		if err != nil ||
-			locators.EnvironmentID != discovered.EnvironmentID ||
-			locators.SessionID != discovered.SessionID {
+			locator.EnvironmentID() != discovered.EnvironmentID ||
+			locator.SessionID() != discovered.SessionID {
 			return staleActorOutputAppend(err)
 		}
-		if _, err := secret.LockAttemptDelivery(
-			ctx, work.q, locators.RunID, locators.AttemptNumber, locators.ComputerID,
-		); err != nil {
+		secrets, err := locator.LockSecrets(ctx)
+		if err != nil {
 			return fmt.Errorf("lock actor output secret authority: %w", err)
 		}
-		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
+		authority, err := secrets.LockExecution(ctx)
 		if err != nil || !authority.Session().ID.Valid {
 			return staleActorOutputAppend(err)
 		}
@@ -182,7 +180,7 @@ func (s *Server) appendActorOutput(
 		if key == "" {
 			key = parsed.correlationID.String()
 		}
-		receipt, err := session.AppendTurnOutput(ctx, work.tx, session.TurnScope{
+		receipt, err := session.AppendTurnOutput(ctx, work.tx, run.TurnScope{
 			EnvironmentID: environmentID, SessionID: actorID, TurnID: parsed.turnID,
 			RunID: pgvalue.MustUUIDValue(authority.Run().ID), AttemptNumber: authority.Attempt().Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
 		}, key, parsed.data)
@@ -225,11 +223,13 @@ func actorOutputAppendFailure(err error) (workerapi.RuntimeOperationFailure, boo
 	switch {
 	case errors.As(err, &operation):
 		return runtimeOperationFailure(operation.Code, operation.Error(), false), true
-	case errors.Is(err, session.ErrTurnStopped):
+	case errors.Is(err, run.ErrTurnUnsettled):
+		return runtimeOperationFailure("turn_unsettled", err.Error(), false), true
+	case errors.Is(err, run.ErrTurnStopped):
 		return workerapi.RuntimeOperationFailure{Code: "turn_stopping", Message: err.Error()}, true
-	case errors.Is(err, session.ErrTurnNotActive):
+	case errors.Is(err, run.ErrTurnNotActive):
 		return workerapi.RuntimeOperationFailure{Code: "turn_not_active", Message: err.Error()}, true
-	case errors.Is(err, session.ErrTurnScope):
+	case errors.Is(err, run.ErrTurnScope):
 		return workerapi.RuntimeOperationFailure{Code: "stale_execution", Message: err.Error()}, true
 	case errors.As(err, &conflictError):
 		return workerapi.RuntimeOperationFailure{

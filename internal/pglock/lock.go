@@ -88,12 +88,28 @@
 //     checkpoint. A restore acknowledgement adds the Run leases after the
 //     Attempts and the Session turns after the Waits, before the checkpoint.
 //   - Run lease operations lock the execution host (a lease claim first locks
-//     its attempt's Secrets through secret.LockAttemptDelivery), then every
-//     Computer the Run lineage reaches in id order (with an addressed target
-//     Computer in the same statement), then those Computers' unreclaimed
-//     Instances in id order, before re-locking the lease's own Computer and
-//     Instance and the Session, Run, Attempt and lease. Run cancellation takes
-//     the same ordered Computer and Instance locks before any member lock.
+//     its attempt's Secrets through the run owner), then every Computer the
+//     Run lineage reaches in id order (with an addressed target Computer in
+//     the same statement), then those Computers' unreclaimed Instances in id
+//     order, before re-locking the lease's own Computer and Instance and the
+//     Session, Run, Attempt and lease. Run cancellation takes the same ordered
+//     Computer and Instance locks before any member lock.
+//   - Run lease operations that deliver Secrets (live operations with
+//     Secrets, finalization begin, task completion and waits) lock the source
+//     attempt's Secrets through the run owner before the execution host.
+//   - Worker Session operations that address another Session or Computer
+//     (send, enqueue, close, event reads, run-sourced Actor start) lock the
+//     source Computer's Secrets, plus an addressed Computer's (never an
+//     addressed Session's Computer's), then the execution fence with the
+//     target in the same ordered statements, then the source attempt's
+//     delivery Secrets (already held).
+//   - Session controls (cancel, interrupt, resume) lock the sorted union of
+//     the source Computer's and the target Session's Computer's Secrets, then
+//     the execution fence, then re-read the union after the Session and
+//     Computer fences and fail if a binding changed, re-locking only the same
+//     Secrets.
+//   - Public Session controls lock the current Run's attempt Secrets, then
+//     its owned finalization graph, then the Session.
 //   - Command operations, through the command owner, lock Secrets first when
 //     they deliver or validate them (claim, recovery). Worker-reported
 //     operations then lock worker_groups and worker_hosts, comparing claim

@@ -4,24 +4,22 @@ import (
 	"context"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 )
 
 func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, parsed parsedRunLeaseFence, receipt workerapi.RunLeaseFence) (run.Execution, error) {
-	q := db.New(tx)
-	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
+	locator, err := run.LocateLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, receipt))
 	if err != nil {
 		return run.Execution{}, staleRunLeaseClaim(err)
 	}
-	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
+	secrets, err := locator.LockSecrets(ctx)
+	if err != nil {
 		return run.Execution{}, err
 	}
-	a, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, receipt))
+	a, err := secrets.LockExecution(ctx)
 	if err != nil {
 		return run.Execution{}, staleRunLeaseClaim(err)
 	}

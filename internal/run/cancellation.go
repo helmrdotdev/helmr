@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -162,6 +163,30 @@ func LockOwnedFinalization(
 	request OwnedFinalizationRequest,
 ) (OwnedFinalization, error) {
 	return lockOwnedFinalization(ctx, tx, request, nil)
+}
+
+// SessionRunSecrets addresses a Session's current Run and the Session's
+// Computer, whose bindings that Run's current attempt resolved.
+type SessionRunSecrets struct {
+	EnvironmentID uuid.UUID
+	RunID         uuid.UUID
+	ComputerID    uuid.UUID
+}
+
+// LockOwnedFinalizationWithSecrets reads the Session's current Run, locks its
+// current attempt's Secret deliveries and then its owned finalization graph.
+// A missing Run is pgx.ErrNoRows; Secret errors are
+// secret.LockAttemptDelivery's.
+func LockOwnedFinalizationWithSecrets(ctx context.Context, tx pgx.Tx, request SessionRunSecrets) (OwnedFinalization, error) {
+	q := db.New(tx)
+	current, err := q.GetRun(ctx, db.GetRunParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(request.RunID)})
+	if err != nil {
+		return OwnedFinalization{}, err
+	}
+	if _, err = secret.LockAttemptDelivery(ctx, q, current.ID, current.CurrentAttemptNumber, pgvalue.UUID(request.ComputerID)); err != nil {
+		return OwnedFinalization{}, err
+	}
+	return LockOwnedFinalization(ctx, tx, OwnedFinalizationRequest{OrgID: pgvalue.MustUUIDValue(current.OrgID), ProjectID: pgvalue.MustUUIDValue(current.ProjectID), EnvironmentID: request.EnvironmentID, RunID: pgvalue.MustUUIDValue(current.ID)})
 }
 
 // LockOwnedFinalizationWithInstanceFence fences Worker dispatch before acquiring

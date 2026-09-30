@@ -10,24 +10,31 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func ValidateTurnWork(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
-	turn, err := ValidateTurn(ctx, tx, scope)
-	if err == nil && turn.SettlementStartedAt.Valid {
-		err = &OperationError{Code: "turn_unsettled"}
-	}
-	return turn, err
+// validateTurnWork is run.ValidateTurnWork with a Turn that began settlement
+// reported as the turn_unsettled operation code.
+func validateTurnWork(ctx context.Context, tx pgx.Tx, scope run.TurnScope) error {
+	_, err := run.ValidateTurnWork(ctx, tx, scope)
+	return turnWorkError(err)
 }
 
-func DeclareMessageReady(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID uuid.UUID) (db.SessionTurn, error) {
+func turnWorkError(err error) error {
+	if errors.Is(err, run.ErrTurnUnsettled) {
+		return &OperationError{Code: "turn_unsettled"}
+	}
+	return err
+}
+
+func DeclareMessageReady(ctx context.Context, tx pgx.Tx, scope run.TurnScope, leaseID uuid.UUID) (db.SessionTurn, error) {
 	q := db.New(tx)
 	if leaseID == uuid.Nil() {
-		return db.SessionTurn{}, ErrTurnScope
+		return db.SessionTurn{}, run.ErrTurnScope
 	}
-	if _, err := ValidateTurnWork(ctx, tx, scope); err != nil {
+	if err := validateTurnWork(ctx, tx, scope); err != nil {
 		return db.SessionTurn{}, err
 	}
 	return q.SetSessionTurnMessageReady(ctx, db.SetSessionTurnMessageReadyParams{EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), TurnID: pgvalue.UUID(scope.TurnID), RunLeaseID: pgvalue.UUID(leaseID)})
@@ -35,18 +42,18 @@ func DeclareMessageReady(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseI
 
 // Delivery IDs are immutable operation identities. A lost claim response is
 // reconciled by the same ID, never by admitting the next callback.
-func ClaimMessage(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID, deliveryID uuid.UUID) (db.SessionMessage, error) {
+func ClaimMessage(ctx context.Context, tx pgx.Tx, scope run.TurnScope, leaseID, deliveryID uuid.UUID) (db.SessionMessage, error) {
 	q := db.New(tx)
 	if leaseID == uuid.Nil() || deliveryID == uuid.Nil() {
-		return db.SessionMessage{}, ErrTurnScope
+		return db.SessionMessage{}, run.ErrTurnScope
 	}
-	if _, err := ValidateTurnWork(ctx, tx, scope); err != nil {
+	if err := validateTurnWork(ctx, tx, scope); err != nil {
 		return db.SessionMessage{}, err
 	}
 	existing, err := q.GetSessionMessageDelivery(ctx, db.GetSessionMessageDeliveryParams{EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), DeliveryID: pgvalue.UUID(deliveryID)})
 	if err == nil {
 		if existing.TurnID != pgvalue.UUID(scope.TurnID) || existing.RunID != pgvalue.UUID(scope.RunID) || existing.AttemptNumber != scope.AttemptNumber || existing.RunGeneration != scope.RunGeneration || existing.DeliveryRunLeaseID != pgvalue.UUID(leaseID) {
-			return db.SessionMessage{}, ErrTurnScope
+			return db.SessionMessage{}, run.ErrTurnScope
 		}
 		if existing.Status != "handling" {
 			return db.SessionMessage{}, &OperationError{Code: "delivery_settled"}
@@ -72,7 +79,7 @@ type MessageOutcome struct {
 	Details json.RawMessage `json:"details,omitempty"`
 }
 
-func CompleteMessage(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID, messageID, deliveryID uuid.UUID, outcome MessageOutcome) (db.SessionMessage, error) {
+func CompleteMessage(ctx context.Context, tx pgx.Tx, scope run.TurnScope, leaseID, messageID, deliveryID uuid.UUID, outcome MessageOutcome) (db.SessionMessage, error) {
 	q := db.New(tx)
 	switch outcome.Status {
 	case "handled":
@@ -93,21 +100,22 @@ func CompleteMessage(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID, m
 	if len(outcome.Details) > 0 && !json.Valid(outcome.Details) {
 		return db.SessionMessage{}, &OperationError{Code: "invalid_request"}
 	}
-	actor, turn, err := lockTurn(ctx, q, scope)
+	locked, err := run.LockTurn(ctx, tx, scope)
 	if err != nil {
 		return db.SessionMessage{}, err
 	}
+	actor, turn := locked.Session(), locked.Turn()
 	// An already admitted callback may acknowledge completion during stop or
 	// settlement. That acknowledgment admits no output or new native operation.
 	if actor.CurrentRunID != pgvalue.UUID(scope.RunID) || actor.RunGeneration != scope.RunGeneration || actor.ActiveTurnID != turn.ID || turn.Status != "running" {
-		return db.SessionMessage{}, ErrTurnScope
+		return db.SessionMessage{}, run.ErrTurnScope
 	}
 	message, err := q.LockSessionMessage(ctx, db.LockSessionMessageParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: pgvalue.UUID(messageID)})
 	if err != nil {
 		return message, err
 	}
 	if message.TurnID != turn.ID || message.RunID != pgvalue.UUID(scope.RunID) || message.AttemptNumber != scope.AttemptNumber || message.RunGeneration != scope.RunGeneration || message.DeliveryID != pgvalue.UUID(deliveryID) || message.DeliveryRunLeaseID != pgvalue.UUID(leaseID) {
-		return message, ErrTurnScope
+		return message, run.ErrTurnScope
 	}
 	raw, _ := json.Marshal(outcome)
 	if message.Status != "handling" {
@@ -169,13 +177,14 @@ func rejectQueuedMessages(ctx context.Context, q db.Querier, actor db.Session, t
 	return nil
 }
 
-func BeginSettlement(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
+func BeginSettlement(ctx context.Context, tx pgx.Tx, scope run.TurnScope) (db.SessionTurn, error) {
 	q := db.New(tx)
-	actor, turn, err := lockTurn(ctx, q, scope)
+	locked, err := run.LockTurn(ctx, tx, scope)
 	if err != nil {
-		return turn, err
+		return db.SessionTurn{}, err
 	}
-	if _, err = validateTurn(actor, turn, scope); err != nil {
+	actor, turn := locked.Session(), locked.Turn()
+	if _, err = locked.Validate(); err != nil {
 		return turn, err
 	}
 	turn, err = q.BeginSessionTurnSettlement(ctx, db.BeginSessionTurnSettlementParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: turn.ID})

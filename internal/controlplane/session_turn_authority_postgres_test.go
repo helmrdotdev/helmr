@@ -16,16 +16,17 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func turnCommitRequest(t *testing.T, f *actorExecutionFixture, scope session.TurnScope) workerapi.CommitActorTurnRequest {
+func turnCommitRequest(t *testing.T, f *actorExecutionFixture, scope run.TurnScope) workerapi.CommitActorTurnRequest {
 	t.Helper()
 	f.beginSettlement(t, scope)
 	return workerapi.CommitActorTurnRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Disposition: "completed", Result: json.RawMessage(`{"answer":42}`), TargetInputSequence: 1}
 }
-func interruptTurn(ctx context.Context, f *actorExecutionFixture, scope session.TurnScope, key string) (session.InterruptReceipt, error) {
+func interruptTurn(ctx context.Context, f *actorExecutionFixture, scope run.TurnScope, key string) (session.InterruptReceipt, error) {
 	var receipt session.InterruptReceipt
 	err := f.server.inTx(ctx, func(w *txWork) error {
 		graph, err := lockSessionControlGraph(ctx, w, session.Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID})
@@ -37,7 +38,7 @@ func interruptTurn(ctx context.Context, f *actorExecutionFixture, scope session.
 	})
 	return receipt, err
 }
-func assertTurnStopped(t *testing.T, f *actorExecutionFixture, scope session.TurnScope) {
+func assertTurnStopped(t *testing.T, f *actorExecutionFixture, scope run.TurnScope) {
 	t.Helper()
 	var status, hold, runStatus string
 	var active, head uuid.UUID
@@ -163,7 +164,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 	})
 }
 
-func outputRequest(f *actorExecutionFixture, scope session.TurnScope) workerapi.WriteTurnOutputRequest {
+func outputRequest(f *actorExecutionFixture, scope run.TurnScope) workerapi.WriteTurnOutputRequest {
 	return workerapi.WriteTurnOutputRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration, Data: json.RawMessage(`{"type":"permission_granted","requestId":"native-1","actionBinding":"command-1"}`), IdempotencyKey: "permission-1"}
 }
 func outputHTTP(t *testing.T, f *actorExecutionFixture, req workerapi.WriteTurnOutputRequest, w http.ResponseWriter) {
@@ -293,7 +294,7 @@ func TestSessionTurnIdentityAndRejectedReceiptPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := session.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: queued.TurnID, RunID: f.runID, AttemptNumber: first.AttemptNumber, RunGeneration: first.RunGeneration}
+	second := run.TurnScope{EnvironmentID: f.EnvironmentID, SessionID: f.sessionID, TurnID: queued.TurnID, RunID: f.runID, AttemptNumber: first.AttemptNumber, RunGeneration: first.RunGeneration}
 	receipt, err := interruptTurn(t.Context(), f, second, "queued-stop")
 	if err != nil || receipt.Status != "rejected" || receipt.Code != "turn_not_active" {
 		t.Fatalf("queued stop: %+v %v", receipt, err)
@@ -353,7 +354,7 @@ func TestSessionTurnCompletionResultPresencePostgres(t *testing.T) {
 	}
 }
 
-func (f *actorExecutionFixture) beginSettlement(t *testing.T, scope session.TurnScope) {
+func (f *actorExecutionFixture) beginSettlement(t *testing.T, scope run.TurnScope) {
 	t.Helper()
 	f.workerCall(t, f.server.workerBeginTurnSettlement, workerapi.TurnExecutionRequest{Lease: f.fence(), CorrelationID: uuid.NewV7().String(), TurnID: scope.TurnID.String(), RunGeneration: scope.RunGeneration}, nil)
 }

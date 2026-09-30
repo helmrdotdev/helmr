@@ -51,9 +51,12 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"computerhost":      {"controlplane", "db", "executor", "guestd", "worker"},
 		"controlplane":      {"computerhost", "eventstream", "executor", "firecracker", "guestd", "pglock"},
 		"region":            {"controlplane", "org", "workergroup"},
-		"secret":            {"run"},
+		"run":               {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "session", "telemetry", "token", "workerapi"},
+		"secret":            {"command", "computer", "dispatch", "run", "session", "token"},
 		"secretbinding":     {"api", "db", "definition", "deployment", "disk"},
+		"session":           {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "telemetry", "token", "workerapi"},
 		"telemetry":         {"clickhouse"},
+		"token":             {"api", "command", "controlplane", "deployment", "dispatch", "identity", "org", "scheduler", "telemetry", "workerapi"},
 		"workerapi":         {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
 		"workerclient":      {"client"},
 		// Worker supply sits beneath the Computer owner, which run composes

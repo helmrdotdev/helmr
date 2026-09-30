@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
@@ -23,24 +21,15 @@ func (s *Server) beginRunFinalization(
 ) (workerapi.BeginRunFinalizationResponse, error) {
 	var response workerapi.BeginRunFinalizationResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
-			ID: pgvalue.UUID(parsed.lease.leaseID), LeaseSequence: request.Lease.LeaseSequence,
-			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID),
-			WorkerEpoch: worker.Epoch})
+		locator, err := run.LocateLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
 		if err != nil {
 			return staleRunFinalization(err)
 		}
-		if locators.RunID != pgvalue.UUID(parsed.runID) ||
-			locators.AttemptNumber != parsed.attempt {
+		if locator.RunID() != pgvalue.UUID(parsed.runID) ||
+			locator.AttemptNumber() != parsed.attempt {
 			return errStaleRunFinalization
 		}
-		if _, err := secret.LockAttemptDelivery(
-			ctx,
-			work.q,
-			locators.RunID,
-			locators.AttemptNumber,
-			locators.ComputerID,
-		); err != nil {
+		if _, err := locator.LockSecrets(ctx); err != nil {
 			return fmt.Errorf("lock run finalization secret authority: %w", err)
 		}
 		authority, err := run.BeginExecutionFinalization(ctx, work.tx, run.ExecutionFinalization{
