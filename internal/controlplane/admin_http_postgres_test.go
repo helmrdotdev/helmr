@@ -168,6 +168,8 @@ func TestAdminHTTPRegions(t *testing.T) {
 	}
 	assertAdminError(t, f.request(t, http.MethodPatch, "/admin/api/v1/regions/us-east", admin, `{"display_name":""}`), http.StatusBadRequest, "bad_request")
 	assertAdminError(t, f.request(t, http.MethodPatch, "/admin/api/v1/regions/missing", admin, `{"location":"x"}`), http.StatusNotFound, "not_found")
+	// Supplied values are validated before the region is looked up.
+	assertAdminError(t, f.request(t, http.MethodPatch, "/admin/api/v1/regions/missing", admin, `{"display_name":" "}`), http.StatusBadRequest, "bad_request")
 	listed := decodeAdmin[api.AdminRegionsResponse](t, f.request(t, http.MethodGet, "/admin/api/v1/regions", admin, ""), http.StatusOK)
 	if len(listed.Regions) != 1 || listed.Regions[0] != updated {
 		t.Fatalf("regions = %+v", listed.Regions)
