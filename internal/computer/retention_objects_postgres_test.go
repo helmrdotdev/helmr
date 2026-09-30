@@ -1,4 +1,4 @@
-package artifactgc
+package computer
 
 import (
 	"context"
@@ -48,7 +48,7 @@ func TestComputerCollectorsSerializeSharedPhysicalLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 	pid := blocker.Conn().PgConn().PID()
-	collector := &Reclaimer{pool: f.Pool, queries: q}
+	collector := &Retention{pool: f.Pool, queries: q}
 	done := make(chan error, 2)
 	for _, c := range selected {
 		go func() { done <- collector.collectComputerObject(ctx, c) }()
@@ -107,7 +107,7 @@ func TestComputerCollectionDrainsOrphanGraph(t *testing.T) {
  SELECT environment_id,computer_id,$2,$3,$4,$4-1 FROM runs WHERE id=$1`, work.RunID, digest, digests[rank-1], rank)
 		}
 	}
-	collector := &Reclaimer{pool: f.Pool, queries: q}
+	collector := &Retention{pool: f.Pool, queries: q}
 	for pass := range 3 {
 		if err := collector.collectComputerObjects(t.Context()); err != nil {
 			t.Fatal(err)

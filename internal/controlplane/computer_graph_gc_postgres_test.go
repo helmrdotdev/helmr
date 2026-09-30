@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/artifactgc"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -49,7 +49,7 @@ func TestComputerGraphCollectionRetainsRootsAndLivePublishers(t *testing.T) {
 				}
 			}
 			store := &computerGraphReclaimStore{t: t, q: f.server.db}
-			collector, err := artifactgc.New(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			collector, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -97,7 +97,7 @@ func TestComputerGraphCollectionRetainsOtherOrganizationAndStorageRetry(t *testi
 			}
 			dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET desired_state='closed',desired_version=desired_version+1,observed_state='failed',terminal_at=clock_timestamp(),terminal_reason_code='fixture',admission_state='closed',mount_state='lost',reclaimed_at=clock_timestamp(),reclaim_evidence='{"proof":"fixture"}' WHERE id=$1`, f.runtime)
 			store := &computerGraphReclaimStore{t: t, q: f.server.db, fail: true}
-			collector, err := artifactgc.New(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			collector, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			if err != nil {
 				t.Fatal(err)
 			}

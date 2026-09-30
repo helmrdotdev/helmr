@@ -1,73 +1,19 @@
-// Package artifactgc owns retirement and repeated physical reclamation of failed
-// uploads. Storage adapters never decide whether a referenced key may be deleted.
-package artifactgc
+package computer
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Store interface {
-	RetiredUploads(context.Context, string) ([]string, error)
-	ReclaimUpload(context.Context, string, string) error
-	ReclaimVersions(context.Context, string) error
-}
-
-type Reclaimer struct {
-	pool    *pgxpool.Pool
-	queries *db.Queries
-	store   Store
-	log     *slog.Logger
-}
-
-func New(pool *pgxpool.Pool, store Store, log *slog.Logger) (*Reclaimer, error) {
-	if pool == nil || store == nil || log == nil {
-		return nil, errors.New("artifact reclamation requires database, storage and logger")
-	}
-	return &Reclaimer{pool: pool, queries: db.New(pool), store: store, log: log}, nil
-}
-
-func (r *Reclaimer) Run(ctx context.Context) error {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		if err := r.Reconcile(ctx); err != nil && ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "artifact reclamation failed", "error", err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
-}
-
-// Reconcile commits retirement before remote I/O. Database connection loss or
-// storage uncertainty leaves the permanent tombstone discoverable for retry.
-func (r *Reclaimer) Reconcile(ctx context.Context) error {
-	if _, err := r.queries.AbandonReclaimedComputerSaves(ctx, 100); err != nil {
-		return err
-	}
-	if _, err := r.queries.ReleaseReclaimedComputerObjects(ctx, 1000); err != nil {
-		return err
-	}
-	if err := r.collectComputerDiskVersions(ctx); err != nil {
-		return err
-	}
-	if err := r.collectComputerObjects(ctx); err != nil {
-		return err
-	}
-	if err := r.collectComputerKeys(ctx); err != nil {
-		return err
-	}
+// reclaimCasBlobs retires abandoned CAS blobs, then sweeps retired blobs'
+// remote storage. Retirement always commits before any remote I/O.
+func (r *Retention) reclaimCasBlobs(ctx context.Context) error {
 	candidates, err := r.queries.ListAbandonedCasBlobs(ctx, 100)
 	if err != nil {
 		return err
@@ -112,7 +58,7 @@ func (r *Reclaimer) Reconcile(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (r *Reclaimer) sweep(ctx context.Context, digest string) error {
+func (r *Retention) sweep(ctx context.Context, digest string) error {
 	discoveryCtx, cancelDiscovery := context.WithTimeout(ctx, 15*time.Second)
 	discovered, discoveryErr := r.store.RetiredUploads(discoveryCtx, digest)
 	cancelDiscovery()
