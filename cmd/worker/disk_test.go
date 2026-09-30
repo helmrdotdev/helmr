@@ -31,15 +31,12 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	capacity := compute.WorkerDiskCapacity{
-		VMGuestEphemeralDiskBytes:   8192 << 20,
-		HostGuestEphemeralDiskBytes: hostMiB << 20,
+	capacity, err := compute.PartitionWorkerDiskCapacity(hostMiB, 8192, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !capacity.FitsVMs(4) {
-		t.Fatal("explicit reserve was not removed before four-slot exact fit")
-	}
-	if capacity.FitsVMs(5) {
-		t.Fatal("N+1 VM fit past net aggregate host capacity")
+	if got := capacity.HostGuestEphemeralDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 4 {
+		t.Fatalf("aggregate holds %d VMs, want four-slot exact fit without N+1", got)
 	}
 }
 

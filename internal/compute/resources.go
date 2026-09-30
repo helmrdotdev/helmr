@@ -5,8 +5,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 )
 
-var ErrNoCapacity = errors.New("no compute capacity available")
-
 const (
 	ComputerGuestEphemeralDiskMiB = disk.SeedCapacity >> 20
 )
@@ -44,11 +42,4 @@ func (r ResourceVector) Validate(requirePositive bool) error {
 		problems = append(problems, errors.New("slots must not be negative"))
 	}
 	return errors.Join(problems...)
-}
-
-func (r ResourceVector) Fits(request ResourceVector) bool {
-	return r.MilliCPU >= request.MilliCPU &&
-		r.MemoryMiB >= request.MemoryMiB &&
-		r.DiskMiB >= request.DiskMiB &&
-		r.Slots >= request.Slots
 }

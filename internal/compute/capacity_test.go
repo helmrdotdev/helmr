@@ -2,7 +2,7 @@ package compute
 
 import "testing"
 
-func TestWorkerDiskCapacityExactFitAndNPlusOne(t *testing.T) {
+func TestWorkerDiskCapacityValidatesSingleVMShapeAgainstAggregate(t *testing.T) {
 	capacity := WorkerDiskCapacity{
 		VMGuestEphemeralDiskBytes:   8192 << 20,
 		HostGuestEphemeralDiskBytes: 4 * (8192 << 20),
@@ -10,11 +10,12 @@ func TestWorkerDiskCapacityExactFitAndNPlusOne(t *testing.T) {
 	if err := capacity.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if !capacity.FitsVMs(4) {
-		t.Fatal("four exact-fit VMs were rejected")
+	if got := capacity.HostGuestEphemeralDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 4 {
+		t.Fatalf("aggregate holds %d VMs, want exact fit of 4", got)
 	}
-	if capacity.FitsVMs(5) {
-		t.Fatal("N+1 VM exceeded aggregate host capacity")
+	capacity.HostGuestEphemeralDiskBytes = capacity.VMGuestEphemeralDiskBytes - 1
+	if err := capacity.Validate(); err == nil {
+		t.Fatal("single-VM disk shape larger than aggregate host capacity was accepted")
 	}
 }
 
@@ -27,7 +28,7 @@ func TestPartitionWorkerDiskCapacityDoesNotDoubleCountPhysicalDisk(t *testing.T)
 	if accounted > 80*1024*1024*1024 {
 		t.Fatalf("accounted bytes %d exceed host", accounted)
 	}
-	if !capacity.FitsVMs(8) {
-		t.Fatal("one disk dimension should retain eight-slot exact fit")
+	if got := capacity.HostGuestEphemeralDiskBytes / capacity.VMGuestEphemeralDiskBytes; got != 8 {
+		t.Fatalf("aggregate holds %d VMs, want eight-slot exact fit", got)
 	}
 }
