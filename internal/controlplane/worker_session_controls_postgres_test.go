@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func secondWorkerControlActor(t *testing.T, first *actorExecutionFixture) *actorExecutionFixture {
@@ -398,4 +399,21 @@ func TestWorkerSessionControlChildToParentFinalizationOrderPostgres(t *testing.T
 type workerControlSecretRaceQueries struct {
 	db.Querier
 	afterUnion func() error
+}
+
+func waitForPostgresBlock(t *testing.T, pool *pgxpool.Pool, backendPID int32) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked bool
+		if err := pool.QueryRow(t.Context(), `
+SELECT cardinality(pg_blocking_pids($1)) > 0`, backendPID).Scan(&blocked); err != nil {
+			t.Fatal(err)
+		}
+		if blocked {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for the concurrent transaction to block")
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -139,6 +140,9 @@ func Plan(ctx context.Context, store PlanStore, workerGroupID uuid.UUID, request
 		poolIDs = append(poolIDs, pgvalue.UUID(id))
 	}
 	group, err := store.GetWorkerGroup(ctx, pgvalue.UUID(workerGroupID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PlanResponse{}, ErrGroupNotFound
+	}
 	if err != nil {
 		return PlanResponse{}, err
 	}

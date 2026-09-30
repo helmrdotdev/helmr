@@ -418,36 +418,20 @@ func TestWorkerRouteRejectsMalformedJWTGroupBeforeDatabase(t *testing.T) {
 	}
 }
 
-func TestMachineRoutesPreserveRequestBodyLimits(t *testing.T) {
-	capacityTokenHash, err := hashCapacityToken(capacityTestToken())
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{capacityTokenHash: capacityTokenHash}
+// Capacity route limits are covered through NewServer in
+// TestCapacityHTTPPreservesRequestBodyLimits.
+func TestWorkerRoutesPreserveRequestBodyLimits(t *testing.T) {
+	server := &Server{}
 	router := chi.NewRouter()
 	server.mountRoutes(router)
-
-	for _, test := range []struct {
-		name   string
-		path   string
-		length int64
-	}{
-		{name: "Capacity common limit", path: "/capacity/v1/worker-hosts/01900000-0000-7000-8000-000000000000/lost", length: apiRequestBodyLimit + 1},
-		{name: "Worker common limit", path: "/worker/v1/instance/observations", length: apiRequestBodyLimit + 1},
-		{name: "Capacity mutation limit", path: "/capacity/v1/worker-groups/01900000-0000-7000-8000-000000000000/plan", length: capacityRequestBodyLimit + 1},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader("x"))
-			request.ContentLength = test.length
-			request.Header.Set("Authorization", "Bearer "+capacityTestToken())
-			response := httptest.NewRecorder()
-			router.ServeHTTP(response, request)
-			if response.Code != http.StatusRequestEntityTooLarge {
-				t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusRequestEntityTooLarge, response.Body.String())
-			}
-			if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != "request_too_large" {
-				t.Fatalf("code = %q, want request_too_large", got)
-			}
-		})
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/observations", strings.NewReader("x"))
+	request.ContentLength = apiRequestBodyLimit + 1
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d: %s", response.Code, http.StatusRequestEntityTooLarge, response.Body.String())
+	}
+	if got := decodeHTTPError(t, response.Body.Bytes()).Code; got != "request_too_large" {
+		t.Fatalf("code = %q, want request_too_large", got)
 	}
 }

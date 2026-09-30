@@ -84,7 +84,6 @@ fi
 CGO_ENABLED=1 go test -race -count=1 \
 	./cmd/internal/dev-controlplane \
 	./internal/controlplane \
-	./internal/bootstrap \
 	./internal/db \
 	./internal/db/schema \
 	./internal/deployment \
@@ -97,6 +96,7 @@ CGO_ENABLED=1 go test -race -count=1 \
 	./internal/scheduler \
 	./internal/secret \
 	./internal/pglock \
+	./internal/region \
 	./internal/token \
 	./internal/workergroup \
 	./cmd/control-plane \

@@ -29,7 +29,7 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"artifact":          {"artifact/snapshot", "artifact/verify", "builder", "bundle", "cas", "computerhost", "controlplane", "db", "executor"},
 		"artifact/snapshot": {"artifact/verify", "builder", "bundle", "db"},
 		"artifact/verify":   {"builder", "bundle", "controlplane", "db"},
-		"auth":              {"db", "deployment", "identity", "org", "token"},
+		"auth":              {"db", "deployment", "identity", "org", "token", "workergroup"},
 		"builder":           {"compute", "computerhost", "controlplane", "db", "dispatch", "executor", "scheduler", "vm", "wire", "worker"},
 		"bundle":            {"artifact/snapshot", "artifact/verify", "builder", "controlplane", "db", "deployment"},
 		"cas":               {"cas/s3"},
@@ -46,13 +46,17 @@ func TestInternalPackageForbiddenDependencies(t *testing.T) {
 		"guestd":            {"artifact/snapshot", "artifact/verify", "bundle", "computerhost", "controlplane", "db", "executor", "vm"},
 		"disk":              {"api", "computerhost", "controlplane", "db", "executor", "guestd", "pgvalue", "wire"},
 		"computerhost":      {"controlplane", "db", "executor", "guestd", "worker"},
-		"controlplane":      {"computerhost", "eventstream", "executor", "firecracker", "guestd"},
-		"region":            {"org"},
+		"controlplane":      {"computerhost", "eventstream", "executor", "firecracker", "guestd", "pglock"},
+		"region":            {"controlplane", "org", "workergroup"},
 		"secret":            {"run"},
 		"secretbinding":     {"api", "db", "definition", "deployment", "disk"},
 		"telemetry":         {"clickhouse"},
 		"workerapi":         {"controlplane", "db", "deployment", "firecracker", "identity", "org"},
 		"workerclient":      {"client"},
+		// Direct imports only: workergroup imports workerapi solely for
+		// ValidatePoolName, so api still arrives transitively through
+		// workerapi's wire contract.
+		"workergroup": {"api", "controlplane", "deployment", "dispatch", "identity", "org", "run", "scheduler", "session", "token"},
 	} {
 		if _, ok := actual[source]; !ok {
 			t.Fatalf("dependency rule source package does not exist: %s", source)
