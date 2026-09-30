@@ -102,6 +102,7 @@ func parseApplicationDatabaseConfig(rawURL string) (*pgxpool.Config, error) {
 }
 
 func bootstrapDatabase(ctx context.Context, cfg databaseBootstrapConfig) error {
+	// Administrative connection for role and database DDL.
 	adminPool, err := pgxpool.New(ctx, cfg.adminURL)
 	if err != nil {
 		return fmt.Errorf("configure administrative database connection: %w", err)

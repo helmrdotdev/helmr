@@ -8,6 +8,7 @@ import (
 	"testing"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -112,6 +113,7 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 		t.Skip("HELMR_TEST_DATABASE_URL is required")
 	}
 	ctx := context.Background()
+	// Administrative connection for role and database DDL.
 	adminPool, err := pgxpool.New(ctx, adminBaseURL)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +167,7 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 	if err := dbschema.Up(ctx, applicationURL); err != nil {
 		t.Fatalf("application role cannot run the complete schema migration: %v", err)
 	}
-	markerPool, err := pgxpool.New(ctx, applicationURL)
+	markerPool, err := dbpool.New(ctx, applicationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +183,7 @@ func TestBootstrapDatabasePostgres(t *testing.T) {
 		t.Fatalf("application role cannot migrate after reset: %v", err)
 	}
 
-	applicationPool, err := pgxpool.New(ctx, applicationURL)
+	applicationPool, err := dbpool.New(ctx, applicationConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

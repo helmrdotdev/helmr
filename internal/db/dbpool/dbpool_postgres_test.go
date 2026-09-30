@@ -3,6 +3,7 @@ package dbpool_test
 import (
 	"context"
 	"crypto/rand"
+	"maps"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/dbpool"
@@ -19,7 +20,9 @@ func TestNewPinsReadCommittedOverRoleDefault(t *testing.T) {
 	roleIdentifier := pgx.Identifier{role}.Sanitize()
 	dbtest.MustExec(t, ctx, database.Pool, "CREATE ROLE "+roleIdentifier+" LOGIN PASSWORD '"+password+"'")
 	t.Cleanup(func() {
-		_, _ = database.Pool.Exec(context.Background(), "DROP ROLE IF EXISTS "+roleIdentifier)
+		if _, err := database.Pool.Exec(context.Background(), "DROP ROLE IF EXISTS "+roleIdentifier); err != nil {
+			t.Errorf("drop role: %v", err)
+		}
 	})
 	dbtest.MustExec(t, ctx, database.Pool, "ALTER ROLE "+roleIdentifier+" SET default_transaction_isolation = 'repeatable read'")
 
@@ -29,6 +32,10 @@ func TestNewPinsReadCommittedOverRoleDefault(t *testing.T) {
 	}
 	config.ConnConfig.User = role
 	config.ConnConfig.Password = password
+	// The role default is the baseline, so drop any isolation the test DSN sets.
+	delete(config.ConnConfig.RuntimeParams, "default_transaction_isolation")
+	delete(config.ConnConfig.RuntimeParams, "options")
+	before := config.Copy()
 
 	unpinned, err := pgxpool.NewWithConfig(ctx, config.Copy())
 	if err != nil {
@@ -47,8 +54,8 @@ func TestNewPinsReadCommittedOverRoleDefault(t *testing.T) {
 	if got := transactionIsolation(t, pool); got != "read committed" {
 		t.Fatalf("pool transaction isolation = %q, want read committed", got)
 	}
-	if _, ok := config.ConnConfig.RuntimeParams["default_transaction_isolation"]; ok {
-		t.Fatal("New modified the caller's config")
+	if !maps.Equal(config.ConnConfig.RuntimeParams, before.ConnConfig.RuntimeParams) {
+		t.Fatalf("New modified the caller's runtime parameters: %v, want %v", config.ConnConfig.RuntimeParams, before.ConnConfig.RuntimeParams)
 	}
 }
 

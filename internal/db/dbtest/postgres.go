@@ -40,6 +40,7 @@ func Open(t *testing.T) Database {
 
 func openIsolatedDatabase(t *testing.T, dsn string) Database {
 	t.Helper()
+	// Administrative connection for database DDL.
 	admin, err := pgxpool.New(t.Context(), dsn)
 	if err != nil {
 		t.Fatal(err)
