@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/db/dbpool"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/text/secure/precis"
@@ -243,7 +244,7 @@ func formattedDatabaseStatement(ctx context.Context, tx pgx.Tx, format string, a
 }
 
 func verifyApplicationDatabase(ctx context.Context, config *pgxpool.Config) error {
-	pool, err := pgxpool.NewWithConfig(ctx, config.Copy())
+	pool, err := dbpool.New(ctx, config)
 	if err != nil {
 		return errors.New("configure application database connection")
 	}

@@ -270,19 +270,15 @@ func (f *StaleHostFencer) ReconcileOnce(ctx context.Context) (StaleHostFenceCycl
 	return cycle, nil
 }
 
-type pgxStaleHostFenceBeginner interface {
-	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
-}
-
 type pgxStaleHostFenceTransactions struct {
-	beginner pgxStaleHostFenceBeginner
+	beginner db.TxBeginner
 }
 
 func (transactions pgxStaleHostFenceTransactions) withinStaleHostFenceTransaction(
 	ctx context.Context,
 	fn func(staleHostFenceQueries) error,
 ) error {
-	tx, err := transactions.beginner.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := transactions.beginner.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin stale worker fence transaction: %w", err)
 	}

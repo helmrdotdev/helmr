@@ -16,7 +16,7 @@ import (
 
 func (f supplyFixture) begin(t *testing.T) pgx.Tx {
 	t.Helper()
-	tx, err := f.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	tx, err := f.pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
