@@ -32,7 +32,7 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker enrollment JSON: %w", err))
 		return
 	}
-	if err := checkWorkerContract(request.Contract); err != nil {
+	if err := checkWorkerAPIVersion(request.APIVersion); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -74,7 +74,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker token request JSON: %w", err))
 		return
 	}
-	if err := checkWorkerContract(request.Contract); err != nil {
+	if err := checkWorkerAPIVersion(request.APIVersion); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -98,7 +98,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker activate request JSON: %w", err))
 		return
 	}
-	if err := checkWorkerContract(request.Contract); err != nil {
+	if err := checkWorkerAPIVersion(request.APIVersion); err != nil {
 		writeError(w, err)
 		return
 	}

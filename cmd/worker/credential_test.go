@@ -71,16 +71,16 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 	}
 }
 
-// A control plane on another worker contract rejects the stored credential's
+// A control plane on another worker API version rejects the stored credential's
 // token exchange with a 409, not a 401: the worker keeps its credential and
 // neither re-enrolls nor retries.
-func TestWorkerCredentialSurvivesContractMismatch(t *testing.T) {
+func TestWorkerCredentialSurvivesAPIVersionMismatch(t *testing.T) {
 	requests := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests[r.URL.Path]++
 		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"contract mismatch"}}`, workerapi.ContractMismatchCode)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"version mismatch"}}`, workerapi.APIVersionMismatchCode)
 	}))
 	defer server.Close()
 	workDir := t.TempDir()
@@ -99,8 +99,8 @@ func TestWorkerCredentialSurvivesContractMismatch(t *testing.T) {
 		return client.AuthenticateWorker(t.Context())
 	})
 	var mismatch *httpclient.Error
-	if !errors.As(err, &mismatch) || mismatch.Code != workerapi.ContractMismatchCode {
-		t.Fatalf("error = %v, want contract mismatch", err)
+	if !errors.As(err, &mismatch) || mismatch.Code != workerapi.APIVersionMismatchCode {
+		t.Fatalf("error = %v, want version mismatch", err)
 	}
 	if kept, err := readWorkerHostCredential(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
 		t.Fatalf("stored credential = %+v, err = %v; want it kept", kept, err)

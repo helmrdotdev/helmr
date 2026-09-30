@@ -9,25 +9,25 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-func TestWorkerConnectionContract(t *testing.T) {
+func TestWorkerConnectionAPIVersion(t *testing.T) {
 	router, err := NewServer(completeServerConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"/worker/v1/enrollment", "/worker/v1/instance/token"} {
-		for _, body := range []string{`{}`, `{"contract":"different"}`} {
+		for _, body := range []string{`{}`, `{"api_version":"different"}`} {
 			req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 			out := httptest.NewRecorder()
 			router.ServeHTTP(out, req)
-			assertAdminError(t, out, http.StatusConflict, workerapi.ContractMismatchCode)
-			if !strings.Contains(out.Body.String(), workerapi.Contract) {
-				t.Fatal("missing expected contract diagnostic")
+			assertAdminError(t, out, http.StatusConflict, workerapi.APIVersionMismatchCode)
+			if !strings.Contains(out.Body.String(), workerapi.APIVersion) {
+				t.Fatal("missing expected version diagnostic")
 			}
 		}
 	}
 }
 
-func TestWorkerOrdinaryRoutesDoNotRequireContract(t *testing.T) {
+func TestWorkerOrdinaryRoutesDoNotRequireAPIVersion(t *testing.T) {
 	router, err := NewServer(completeServerConfig(t))
 	if err != nil {
 		t.Fatal(err)

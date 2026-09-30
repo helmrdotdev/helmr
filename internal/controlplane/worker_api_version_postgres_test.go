@@ -14,17 +14,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestWorkerConnectionContractLeavesLifecycleStateUnchanged(t *testing.T) {
+func TestWorkerConnectionAPIVersionLeavesLifecycleStateUnchanged(t *testing.T) {
 	f := runtest.New(t)
 	f.AddRunLease(t, "running", time.Now())
 	handler := newPostgresServer(t, f.Pool)
 	credential := seedHostCredential(t, f.Pool, f.WorkerID)
 	token := exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, credential.serviceID.String())
 	before := workerHostState(t, f.Pool, f.WorkerID)
-	for _, contract := range []string{"", "helmr.worker-api.v1.r0"} {
+	for _, version := range []string{"", "helmr.worker-api.v1.r0"} {
 		for path, body := range map[string]any{
-			"/worker/v1/instance/token":    workerapi.TokenRequest{Contract: contract, WorkerHostID: credential.hostID.String(), WorkerHostSecret: credential.secret, ServiceID: uuid.NewV7().String()},
-			"/worker/v1/instance/activate": workerapi.ActivateRequest{Contract: contract, Capabilities: validWorkerCapabilities(t)},
+			"/worker/v1/instance/token":    workerapi.TokenRequest{APIVersion: version, WorkerHostID: credential.hostID.String(), WorkerHostSecret: credential.secret, ServiceID: uuid.NewV7().String()},
+			"/worker/v1/instance/activate": workerapi.ActivateRequest{APIVersion: version, Capabilities: validWorkerCapabilities(t)},
 		} {
 			raw, err := json.Marshal(body)
 			if err != nil {
@@ -34,13 +34,13 @@ func TestWorkerConnectionContractLeavesLifecycleStateUnchanged(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 			out := httptest.NewRecorder()
 			handler.ServeHTTP(out, req)
-			assertAdminError(t, out, http.StatusConflict, workerapi.ContractMismatchCode)
+			assertAdminError(t, out, http.StatusConflict, workerapi.APIVersionMismatchCode)
 			if after := workerHostState(t, f.Pool, f.WorkerID); after != before {
 				t.Fatalf("%s changed lifecycle state", path)
 			}
 		}
 	}
-	// Matching authentication advances the epoch without a contract header.
+	// Matching authentication advances the epoch without a version header.
 	restarted := uuid.NewV7().String()
 	token = exchangeWorkerToken(t, handler, credential.hostID.String(), credential.secret, restarted)
 	if workerHostState(t, f.Pool, f.WorkerID) == before {

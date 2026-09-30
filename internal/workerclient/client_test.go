@@ -694,14 +694,14 @@ func workerClientCapabilities() workerapi.Capabilities {
 	}
 }
 
-// Only connection requests carry the contract; ordinary API calls keep their
+// Only connection requests carry the version; ordinary API calls keep their
 // existing request bodies and need no version header.
-func TestWorkerConnectionContract(t *testing.T) {
+func TestWorkerConnectionAPIVersion(t *testing.T) {
 	seen := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen[r.URL.Path]++
 		if r.Header.Get("Helmr-Worker-Contract") != "" {
-			t.Error("unexpected contract header")
+			t.Error("unexpected version header")
 		}
 		var body map[string]json.RawMessage
 		if r.Method == http.MethodPost {
@@ -711,13 +711,13 @@ func TestWorkerConnectionContract(t *testing.T) {
 		}
 		switch r.URL.Path {
 		case "/worker/v1/enrollment", "/worker/v1/instance/token", "/worker/v1/instance/activate":
-			var contract string
-			if err := json.Unmarshal(body["contract"], &contract); err != nil || contract != workerapi.Contract {
-				t.Errorf("%s contract = %q, error = %v", r.URL.Path, contract, err)
+			var version string
+			if err := json.Unmarshal(body["api_version"], &version); err != nil || version != workerapi.APIVersion {
+				t.Errorf("%s version = %q, error = %v", r.URL.Path, version, err)
 			}
 		default:
-			if _, ok := body["contract"]; ok {
-				t.Errorf("unexpected contract on %s", r.URL.Path)
+			if _, ok := body["api_version"]; ok {
+				t.Errorf("unexpected version on %s", r.URL.Path)
 			}
 		}
 		switch r.URL.Path {
@@ -736,7 +736,7 @@ func TestWorkerConnectionContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = client.EnrollWorker(t.Context(), "token", workerapi.EnrollmentRequest{Contract: "caller-value"}); err != nil {
+	if _, err = client.EnrollWorker(t.Context(), "token", workerapi.EnrollmentRequest{APIVersion: "caller-value"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = client.AuthenticateWorker(t.Context()); err != nil {
@@ -759,7 +759,7 @@ func TestWorkerConnectionContract(t *testing.T) {
 	}
 }
 
-func TestWorkerContractMismatchPreservesHTTPError(t *testing.T) {
+func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
 	for _, phase := range []string{"enrollment", "token", "activation"} {
 		t.Run(phase, func(t *testing.T) {
 			calls := 0
@@ -770,7 +770,7 @@ func TestWorkerContractMismatchPreservesHTTPError(t *testing.T) {
 				}
 				calls++
 				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": workerapi.ContractMismatchCode, "message": "worker contract differs from control plane contract"}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": workerapi.APIVersionMismatchCode, "message": "worker version differs from control plane version"}})
 			}))
 			defer server.Close()
 			client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
@@ -786,7 +786,7 @@ func TestWorkerContractMismatchPreservesHTTPError(t *testing.T) {
 				_, err = client.ActivateWorker(t.Context(), workerClientCapabilities())
 			}
 			var got *httpclient.Error
-			if !errors.As(err, &got) || got.StatusCode != http.StatusConflict || got.Code != workerapi.ContractMismatchCode || calls != 1 {
+			if !errors.As(err, &got) || got.StatusCode != http.StatusConflict || got.Code != workerapi.APIVersionMismatchCode || calls != 1 {
 				t.Fatalf("calls=%d error=%v", calls, err)
 			}
 		})

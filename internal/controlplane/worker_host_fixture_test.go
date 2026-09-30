@@ -113,7 +113,7 @@ func (c seededHostCredential) token(t *testing.T, handler http.Handler) string {
 // served token route.
 func exchangeWorkerToken(t *testing.T, handler http.Handler, hostID string, secret string, serviceID string) string {
 	t.Helper()
-	body, err := json.Marshal(workerapi.TokenRequest{Contract: workerapi.Contract, WorkerHostID: hostID, WorkerHostSecret: secret, ServiceID: serviceID})
+	body, err := json.Marshal(workerapi.TokenRequest{APIVersion: workerapi.APIVersion, WorkerHostID: hostID, WorkerHostSecret: secret, ServiceID: serviceID})
 	if err != nil {
 		t.Fatal(err)
 	}
