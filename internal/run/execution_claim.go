@@ -1,6 +1,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"slices"
@@ -35,14 +36,14 @@ type Execution struct {
 }
 
 // Run is the locked Run.
-func (e Execution) Run() db.Run { return e.run }
+func (e Execution) Run() db.Run { return cloneRun(e.run) }
 
 // Attempt is the locked current Attempt.
-func (e Execution) Attempt() db.RunAttempt { return e.attempt }
+func (e Execution) Attempt() db.RunAttempt { return cloneAttempt(e.attempt) }
 
 // Session is the locked Session of an Actor Run; it is the zero value for a
 // Task Run.
-func (e Execution) Session() db.Session { return e.session }
+func (e Execution) Session() db.Session { return cloneSession(e.session) }
 
 // Computer is the locked Computer of the Run.
 func (e Execution) Computer() db.LockRunLeaseClaimComputerRow { return e.instance.Computer() }
@@ -51,11 +52,53 @@ func (e Execution) Computer() db.LockRunLeaseClaimComputerRow { return e.instanc
 func (e Execution) Instance() db.ComputerInstance { return e.instance.Instance() }
 
 // Lease is the locked Run lease.
-func (e Execution) Lease() db.RunLease { return e.lease }
+func (e Execution) Lease() db.RunLease { return cloneLease(e.lease) }
 
 // DeliverySecrets are the attempt's Secret deliveries locked by the fence, or
 // nil when the fence locks none.
-func (e Execution) DeliverySecrets() []secret.DeliveryEnvelope { return slices.Clone(e.secrets) }
+func (e Execution) DeliverySecrets() []secret.DeliveryEnvelope {
+	if e.secrets == nil {
+		return nil
+	}
+	secrets := make([]secret.DeliveryEnvelope, len(e.secrets))
+	for n, envelope := range e.secrets {
+		envelope.Version.Nonce = bytes.Clone(envelope.Version.Nonce)
+		envelope.Version.Ciphertext = bytes.Clone(envelope.Version.Ciphertext)
+		secrets[n] = envelope
+	}
+	return secrets
+}
+
+// The clone helpers copy every slice of a row, so a caller cannot change what
+// an accessor returns next through a returned row.
+
+func cloneRun(r db.Run) db.Run {
+	r.Payload = bytes.Clone(r.Payload)
+	r.Output = bytes.Clone(r.Output)
+	r.Failure = bytes.Clone(r.Failure)
+	r.Metadata = bytes.Clone(r.Metadata)
+	r.Tags = slices.Clone(r.Tags)
+	r.RetryPolicy = bytes.Clone(r.RetryPolicy)
+	return r
+}
+
+func cloneAttempt(a db.RunAttempt) db.RunAttempt {
+	a.TerminalError = bytes.Clone(a.TerminalError)
+	return a
+}
+
+func cloneSession(s db.Session) db.Session {
+	s.Failure = bytes.Clone(s.Failure)
+	s.RunRetryPolicy = bytes.Clone(s.RunRetryPolicy)
+	s.RunMetadata = bytes.Clone(s.RunMetadata)
+	s.RunTags = slices.Clone(s.RunTags)
+	return s
+}
+
+func cloneLease(l db.RunLease) db.RunLease {
+	l.TerminalError = bytes.Clone(l.TerminalError)
+	return l
+}
 
 type executionOperation uint8
 

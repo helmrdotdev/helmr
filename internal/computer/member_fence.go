@@ -1,6 +1,7 @@
 package computer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"uuid"
@@ -84,7 +85,18 @@ func (r RunInstance) Computer() db.LockRunLeaseClaimComputerRow {
 
 // Instance is the locked Instance.
 func (r RunInstance) Instance() db.ComputerInstance {
-	return r.instance
+	return cloneInstance(r.instance)
+}
+
+// cloneInstance copies every slice of an Instance row, so a caller cannot
+// change what an accessor returns next through a returned row.
+func cloneInstance(i db.ComputerInstance) db.ComputerInstance {
+	i.ReclaimEvidence = bytes.Clone(i.ReclaimEvidence)
+	i.TerminalError = bytes.Clone(i.TerminalError)
+	i.WriterTokenHash = bytes.Clone(i.WriterTokenHash)
+	i.GuestChannelTokenHash = bytes.Clone(i.GuestChannelTokenHash)
+	i.FinalizationError = bytes.Clone(i.FinalizationError)
+	return i
 }
 
 // RecordStart records a Run start as activity on the locked Computer. It
