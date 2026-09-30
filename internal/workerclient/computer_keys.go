@@ -29,7 +29,7 @@ func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.Initi
 		if err != nil {
 			return workerapi.ComputerKeyMaterial{}, errors.New("computer key authentication failed")
 		}
-		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), token)
+		req, err := c.request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), token)
 		if err != nil {
 			return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key endpoint")
 		}
@@ -78,7 +78,7 @@ func (c *Client) ComputerSource(ctx context.Context, request workerapi.ComputerS
 		if err != nil {
 			return workerapi.ComputerSourceMaterial{}, errors.New("computer key authentication failed")
 		}
-		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), token)
+		req, err := c.request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), token)
 		if err != nil {
 			return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key endpoint")
 		}

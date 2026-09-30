@@ -1,12 +1,20 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
 
 func TestReadWorkerEnrollmentToken(t *testing.T) {
@@ -59,5 +67,45 @@ func TestReadWorkerEnrollmentTokenRejectsUnsafeFiles(t *testing.T) {
 				t.Fatal("unsafe token file accepted")
 			}
 		})
+	}
+}
+
+// A control plane on another worker contract rejects the stored credential's
+// token exchange with a 409, not a 401: the worker keeps its credential and
+// neither re-enrolls nor retries.
+func TestWorkerCredentialSurvivesContractMismatch(t *testing.T) {
+	requests := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests[r.URL.Path]++
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"contract mismatch","details":{%q:%q}}}`,
+			workerapi.ContractMismatchCode, workerapi.ContractMismatchControlPlaneDetail, "helmr.worker-api.v1.r0")
+	}))
+	defer server.Close()
+	workDir := t.TempDir()
+	stored := workerCredentialFile{WorkerHostID: "host", WorkerHostSecret: "hlmr_wi_secret", CreatedAt: time.Now().UTC()}
+	path := workerCredentialPath(workDir, "")
+	if err := writeWorkerHostSecret(path, stored); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Worker{ControlPlaneURL: server.URL}
+	_, err := resolveAuthenticatedWorkerCredential(t.Context(), cfg, workDir, func(credential workerCredentialFile) error {
+		client, err := workerclient.New(server.URL, workerclient.WithHTTPClient(server.Client()),
+			workerclient.WithAuth(credential.WorkerHostID, credential.WorkerHostSecret), workerclient.WithService("service"))
+		if err != nil {
+			return err
+		}
+		return client.AuthenticateWorker(t.Context())
+	})
+	var mismatch workerapi.ContractMismatchError
+	if !errors.As(err, &mismatch) || mismatch.ControlPlane != "helmr.worker-api.v1.r0" {
+		t.Fatalf("error = %v, want contract mismatch", err)
+	}
+	if kept, err := readWorkerHostCredential(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {
+		t.Fatalf("stored credential = %+v, err = %v; want it kept", kept, err)
+	}
+	if len(requests) != 1 || requests["/worker/v1/instance/token"] != 1 {
+		t.Fatalf("requests = %v, want one token exchange", requests)
 	}
 }

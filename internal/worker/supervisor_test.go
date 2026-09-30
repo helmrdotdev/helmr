@@ -25,9 +25,14 @@ type testControlPlane struct {
 	completeErr    error
 	activateErr    error
 	activateCalls  atomic.Int32
+	authErr        error
+	recoveryErr    error
 }
 
 func (c *testControlPlane) AuthenticateWorker(context.Context) error {
+	if c.authErr != nil {
+		return c.authErr
+	}
 	c.authenticated.Store(true)
 	return nil
 }
@@ -51,6 +56,9 @@ func (c *testControlPlane) ActivateWorker(_ context.Context, capabilities worker
 
 func (c *testControlPlane) ReportWorkerStartupRecovery(_ context.Context, request workerapi.StartupRecoveryRequest) error {
 	c.recoveryCalls.Add(1)
+	if c.recoveryErr != nil {
+		return c.recoveryErr
+	}
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("incomplete startup recovery proof")
 	}
@@ -457,18 +465,55 @@ func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
 	}
 }
 
-func TestSupervisorStopsOnWorkerContractMismatch(t *testing.T) {
-	mismatch := workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: "helmr.worker-api.v0"}
-	controlPlane := &testControlPlane{activateErr: mismatch}
+var testContractMismatch = workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: "helmr.worker-api.v1.r0"}
+
+func assertSupervisorContractMismatch(t *testing.T, err error) {
+	t.Helper()
+	var got workerapi.ContractMismatchError
+	if !errors.As(err, &got) || got != testContractMismatch {
+		t.Fatalf("run error = %v, want contract mismatch", err)
+	}
+}
+
+// A mismatch at the worker's first request stops it before local recovery.
+func TestSupervisorStopsOnContractMismatchBeforeLocalRecovery(t *testing.T) {
+	controlPlane := &testControlPlane{authErr: testContractMismatch}
+	var recovered atomic.Bool
+	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond, Recover: func(context.Context) (RecoveryEvidence, error) {
+		recovered.Store(true)
+		return RecoveryEvidence{ObservedAt: time.Now().UTC()}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSupervisorContractMismatch(t, s.Run(context.Background()))
+	if recovered.Load() || controlPlane.recoveryCalls.Load() != 0 || controlPlane.activateCalls.Load() != 0 {
+		t.Fatalf("local recovery = %v, recovery reports = %d, activations = %d after rejected authentication",
+			recovered.Load(), controlPlane.recoveryCalls.Load(), controlPlane.activateCalls.Load())
+	}
+}
+
+// The startup recovery retry for prior-epoch 409 conflicts does not retry a
+// contract mismatch.
+func TestSupervisorDoesNotRetryStartupRecoveryContractMismatch(t *testing.T) {
+	controlPlane := &testControlPlane{recoveryErr: testContractMismatch}
 	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = s.Run(context.Background())
-	var got workerapi.ContractMismatchError
-	if !errors.As(err, &got) || got != mismatch {
-		t.Fatalf("run error = %v, want contract mismatch", err)
+	assertSupervisorContractMismatch(t, s.Run(context.Background()))
+	if calls := controlPlane.recoveryCalls.Load(); calls != 1 || controlPlane.activateCalls.Load() != 0 {
+		t.Fatalf("recovery calls = %d, activations = %d; want 1, 0", calls, controlPlane.activateCalls.Load())
 	}
+}
+
+func TestSupervisorStopsOnActivationContractMismatch(t *testing.T) {
+	controlPlane := &testControlPlane{activateErr: testContractMismatch}
+	s, err := New(Config{ControlPlane: controlPlane, PollEvery: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSupervisorContractMismatch(t, s.Run(context.Background()))
 	if calls := controlPlane.activateCalls.Load(); calls != 1 {
 		t.Fatalf("activation calls = %d, want 1", calls)
 	}

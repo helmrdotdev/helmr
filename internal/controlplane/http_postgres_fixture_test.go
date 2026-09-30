@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/identity"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -114,11 +115,15 @@ func (f httpPostgresFixture) session(t *testing.T, userID uuid.UUID, orgID uuid.
 	return token
 }
 
-// request serves a request authenticated by a bearer session token, or
-// unauthenticated when token is empty.
+// request serves a request authenticated by a bearer token, or
+// unauthenticated when token is empty. A /worker/v1 request names this
+// build's worker contract, as the worker client does.
 func (f httpPostgresFixture) request(t *testing.T, method string, path string, token string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	if strings.HasPrefix(path, "/worker/v1/") {
+		request.Header.Set(workerapi.ContractHeader, workerapi.Contract)
+	}
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}

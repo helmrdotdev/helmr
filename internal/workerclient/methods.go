@@ -13,14 +13,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// EnrollWorker enrolls under workerapi.Contract, the contract this build
-// speaks; a control plane on another contract fails with
-// workerapi.ContractMismatchError.
 func (c *Client) EnrollWorker(ctx context.Context, token string, request workerapi.EnrollmentRequest) (workerapi.EnrollmentResponse, error) {
-	request.Contract = workerapi.Contract
 	var response workerapi.EnrollmentResponse
 	if err := c.postJSON(ctx, "/worker/v1/enrollment", token, request, &response); err != nil {
-		return workerapi.EnrollmentResponse{}, contractMismatch(err)
+		return workerapi.EnrollmentResponse{}, err
 	}
 	return response, nil
 }
@@ -122,14 +118,10 @@ func (c *Client) WriteTurnOutput(ctx context.Context, request workerapi.WriteTur
 	return response, nil
 }
 
-// ActivateWorker activates under workerapi.Contract; a control plane on
-// another contract fails with workerapi.ContractMismatchError.
 func (c *Client) ActivateWorker(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.StatusResponse, error) {
 	var response workerapi.StatusResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/activate", workerapi.ActivateRequest{
-		Contract: workerapi.Contract, Capabilities: capabilities,
-	}, &response); err != nil {
-		return workerapi.StatusResponse{}, contractMismatch(err)
+	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/activate", workerapi.ActivateRequest{Capabilities: capabilities}, &response); err != nil {
+		return workerapi.StatusResponse{}, err
 	}
 	return response, nil
 }

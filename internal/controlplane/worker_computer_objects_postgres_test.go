@@ -86,7 +86,7 @@ func TestInitialComputerObjectAuthenticatedPublication(t *testing.T) {
 	}
 	payload, _ := json.Marshal(request)
 	for _, suffix := range []string{"register", "certify"} {
-		r := httptest.NewRequest("POST", "/worker/v1/run/computer-instances/initialization/objects/"+suffix, bytes.NewReader(payload))
+		r := newWorkerRequest("POST", "/worker/v1/run/computer-instances/initialization/objects/"+suffix, bytes.NewReader(payload))
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, r)
 		if w.Code != 401 {

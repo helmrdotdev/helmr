@@ -62,7 +62,7 @@ func TestTaskCompletionHTTPPreservesReceiptAndStaleDiagnostics(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		req := httptest.NewRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
+		req := newWorkerRequest(http.MethodPost, "/worker/v1/run/tasks/complete", bytes.NewReader(body))
 		req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, worker))
 		out := httptest.NewRecorder()
 		s.workerCompleteTask(out, req)

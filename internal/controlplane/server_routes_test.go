@@ -316,7 +316,7 @@ func TestRouterFallbacksUseHTTPErrorEnvelope(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := httptest.NewRecorder()
-			router.ServeHTTP(response, httptest.NewRequest(test.method, test.path, nil))
+			router.ServeHTTP(response, newWorkerRequest(test.method, test.path, nil))
 			if response.Code != test.status {
 				t.Fatalf("status = %d, want %d", response.Code, test.status)
 			}
@@ -359,7 +359,7 @@ func TestMachineRoutesPreserveAuthenticationBoundaries(t *testing.T) {
 		{name: "Worker enrollment bootstrap", path: "/worker/v1/enrollment", status: http.StatusBadRequest},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, test.path, nil)
+			request := newWorkerRequest(http.MethodPost, test.path, nil)
 			if test.path == "/worker/v1/instance" || test.path == "/capacity/v1/worker-hosts" {
 				request.Method = http.MethodGet
 			}
@@ -380,7 +380,7 @@ func TestWorkerRouteRejectsMalformedJWTGroupBeforeDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	claims := rawWorkerJWTClaims("01900000-0000-7000-8000-000000000711", "not-a-uuid", "01900000-0000-7000-8000-000000000712")
-	request := httptest.NewRequest(http.MethodGet, "/worker/v1/instance", nil)
+	request := newWorkerRequest(http.MethodGet, "/worker/v1/instance", nil)
 	request.Header.Set("Authorization", "Bearer "+signRawWorkerJWT(t, claims))
 	response := httptest.NewRecorder()
 
@@ -398,7 +398,7 @@ func TestWorkerRoutesPreserveRequestBodyLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/observations", strings.NewReader("x"))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/instance/observations", strings.NewReader("x"))
 	request.ContentLength = apiRequestBodyLimit + 1
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)

@@ -609,6 +609,7 @@ func (s *Server) mountDeveloperRoutes(r chi.Router) {
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
 	r.Route("/worker/v1", func(r chi.Router) {
+		r.Use(requireWorkerContract)
 		r.Post("/enrollment", s.workerEnroll)
 		r.Post("/instance/token", s.workerAuthToken)
 		r.With(s.requireRecoveringWorker).Post("/instance/recover", s.workerStartupRecovery)

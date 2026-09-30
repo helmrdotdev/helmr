@@ -98,7 +98,7 @@ func TestMountedWorkerRunLogRouteAcceptsExactMaximumAndRejectsOneByteOver(t *tes
 		return body
 	}
 	request := func(body []byte) *http.Request {
-		req := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
+		req := newWorkerRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 		req.Header.Set("authorization", "Bearer "+token)
 		return req
 	}
@@ -134,7 +134,7 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 		db:  workerLogReplayStore{replayMatches: false},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
 		HostID: workerID, GroupID: uuid.MustParse(lease.WorkerGroupID), Epoch: lease.WorkerEpoch,
 	}))
@@ -165,7 +165,7 @@ func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 		db:  workerLogReplayStore{replayMatches: true, params: &params},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
 		HostID: workerID, GroupID: uuid.MustParse(lease.WorkerGroupID), Epoch: lease.WorkerEpoch,
 	}))
@@ -217,7 +217,7 @@ func TestWorkerAppendLogsReplaysAfterLeaseIsNoLongerLive(t *testing.T) {
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
 		HostID: workerID, GroupID: uuid.MustParse(lease.WorkerGroupID),
 		Epoch: lease.WorkerEpoch}))
@@ -251,7 +251,7 @@ func TestWorkerAppendLogsRejectsAnotherWorkersFence(t *testing.T) {
 		},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/logs/append", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
 		HostID:  uuid.NewV7(),
 		GroupID: uuid.MustParse(lease.WorkerGroupID),

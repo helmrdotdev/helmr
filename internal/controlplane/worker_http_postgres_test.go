@@ -48,7 +48,7 @@ func (f workerHTTPFixture) enrollRequest(t *testing.T, enrollmentToken string, b
 // enroll enrolls a worker host in the named pool of the fixture's group.
 func (f workerHTTPFixture) enroll(t *testing.T, pool string, resourceID string) workerapi.EnrollmentResponse {
 	t.Helper()
-	response := f.enrollRequest(t, f.enrollmentToken, enrollmentBody(t, workerapi.Contract, resourceID, pool))
+	response := f.enrollRequest(t, f.enrollmentToken, `{"resource_id":"`+resourceID+`","pool_name":"`+pool+`"}`)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("enrollment status = %d: %s", response.Code, response.Body.String())
 	}
@@ -118,10 +118,10 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	f := newWorkerHTTPFixture(t)
 
 	// The request is validated before the enrollment token.
-	assertAdminError(t, f.enrollRequest(t, "not-a-token", enrollmentBody(t, workerapi.Contract, " padded", "default")), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.enrollRequest(t, f.enrollmentToken, enrollmentBody(t, workerapi.Contract, "i-1", "Default")), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.enrollRequest(t, "not-a-token", enrollmentBody(t, workerapi.Contract, "i-1", "default")), http.StatusUnauthorized, "unauthorized")
-	assertAdminError(t, f.enrollRequest(t, "", enrollmentBody(t, workerapi.Contract, "i-1", "default")), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"resource_id":" padded","pool_name":"default"}`), http.StatusBadRequest, "bad_request")
+	assertAdminError(t, f.enrollRequest(t, f.enrollmentToken, `{"resource_id":"i-1","pool_name":"Default"}`), http.StatusBadRequest, "bad_request")
+	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.enrollRequest(t, "", `{"resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
 
 	enrolled := f.enroll(t, "default", "i-lifecycle")
 	service := uuid.NewV7().String()
@@ -221,41 +221,4 @@ func TestWorkerHostActivationAndFenceHTTP(t *testing.T) {
 		t.Fatalf("fence replay status = %d: %s", response.Code, response.Body.String())
 	}
 	assertAdminError(t, f.request(t, http.MethodGet, "/worker/v1/instance", token, ""), http.StatusUnauthorized, "unauthorized")
-}
-
-func TestWorkerContractMismatchHTTP(t *testing.T) {
-	f := newWorkerHTTPFixture(t)
-	const foreign = "helmr.worker-api.v0"
-
-	// A worker on another contract, or one that sends none, is not enrolled.
-	// Like the rest of the request, the contract is checked before the token.
-	for name, test := range map[string]struct {
-		token    string
-		contract string
-	}{
-		"foreign contract": {token: f.enrollmentToken, contract: foreign},
-		"missing contract": {token: f.enrollmentToken},
-		"before the token": {token: "not-a-token", contract: foreign},
-	} {
-		t.Run(name, func(t *testing.T) {
-			response := f.enrollRequest(t, test.token, enrollmentBody(t, test.contract, "i-mismatch", "default"))
-			assertWorkerContractMismatch(t, response, test.contract)
-		})
-	}
-
-	// A matching worker is enrolled; activation on another contract is
-	// rejected and the same host is then admitted on the matching contract.
-	host := f.host(t, f.enroll(t, "default", "i-contract"))
-	host.recover(t)
-	for _, contract := range []string{foreign, ""} {
-		body, err := json.Marshal(workerapi.ActivateRequest{Contract: contract, Capabilities: validWorkerCapabilities(t)})
-		if err != nil {
-			t.Fatal(err)
-		}
-		response := f.request(t, http.MethodPost, "/worker/v1/instance/activate", host.token(t, f), string(body))
-		assertWorkerContractMismatch(t, response, contract)
-	}
-	if activated, err := host.client.ActivateWorker(t.Context(), validWorkerCapabilities(t)); err != nil || activated.Status != workerapi.StatusActive {
-		t.Fatalf("matching activation = %+v, err = %v", activated, err)
-	}
 }

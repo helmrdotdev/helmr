@@ -117,7 +117,7 @@ func exchangeWorkerToken(t *testing.T, handler http.Handler, hostID string, secr
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/instance/token", strings.NewReader(string(body)))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/instance/token", strings.NewReader(string(body)))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

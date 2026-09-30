@@ -30,6 +30,9 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	workerToken := "worker-token"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
+		if got := r.Header.Values(workerapi.ContractHeader); len(got) != 1 || got[0] != workerapi.Contract {
+			t.Fatalf("%s worker contract = %q", r.URL.Path, got)
+		}
 		switch r.URL.Path {
 		case "/worker/v1/instance/token":
 			if got := r.Header.Get("authorization"); got != "" {
@@ -68,8 +71,8 @@ func TestWorkerLifecycleClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Contract != workerapi.Contract || request.Capabilities.Runtime.Arch != "arm64" {
-				t.Fatalf("activate request = %+v", request)
+			if request.Capabilities.Runtime.Arch != "arm64" {
+				t.Fatalf("activate capabilities = %+v", request.Capabilities)
 			}
 			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{WorkerHostID: "00000000-0000-0000-0000-000000000401", Status: workerapi.StatusActive})
 		case "/worker/v1/instance/drain":
@@ -696,15 +699,8 @@ func workerClientCapabilities() workerapi.Capabilities {
 
 func TestWorkerClientSendsContractAtEnrollment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/worker/v1/enrollment" || r.Header.Get("authorization") != "Bearer enrollment-token" {
-			t.Fatalf("request = %s %s", r.URL.Path, r.Header.Get("authorization"))
-		}
-		var request workerapi.EnrollmentRequest
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if request != (workerapi.EnrollmentRequest{Contract: workerapi.Contract, ResourceID: "i-1", PoolName: "default"}) {
-			t.Fatalf("enrollment request = %+v", request)
+		if r.URL.Path != "/worker/v1/enrollment" || r.Header.Get(workerapi.ContractHeader) != workerapi.Contract {
+			t.Fatalf("request = %s, contract %q", r.URL.Path, r.Header.Get(workerapi.ContractHeader))
 		}
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{WorkerHostID: "host"})
@@ -714,64 +710,87 @@ func TestWorkerClientSendsContractAtEnrollment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The client speaks the contract it was built with, whatever the caller set.
-	enrolled, err := client.EnrollWorker(context.Background(), "enrollment-token", workerapi.EnrollmentRequest{
-		Contract: "caller-contract", ResourceID: "i-1", PoolName: "default",
-	})
+	enrolled, err := client.EnrollWorker(context.Background(), "enrollment-token", workerapi.EnrollmentRequest{ResourceID: "i-1", PoolName: "default"})
 	if err != nil || enrolled.WorkerHostID != "host" {
 		t.Fatalf("enrolled = %+v, err = %v", enrolled, err)
 	}
 }
 
+const testControlPlaneContract = "helmr.worker-api.v1.r0"
+
+// writeContractMismatch rejects a request as a control plane on
+// testControlPlaneContract does.
+func writeContractMismatch(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("content-type", "application/json")
+	w.WriteHeader(http.StatusConflict)
+	_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"contract mismatch","details":{%q:%q,%q:%q}}}`,
+		workerapi.ContractMismatchCode,
+		workerapi.ContractMismatchWorkerDetail, r.Header.Get(workerapi.ContractHeader),
+		workerapi.ContractMismatchControlPlaneDetail, testControlPlaneContract)
+}
+
+func assertContractMismatch(t *testing.T, operation string, err error) {
+	t.Helper()
+	want := workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: testControlPlaneContract}
+	var got workerapi.ContractMismatchError
+	if !errors.As(err, &got) || got != want {
+		t.Fatalf("%s error = %v, want %v", operation, err, want)
+	}
+	if !strings.Contains(err.Error(), testControlPlaneContract) || !strings.Contains(err.Error(), workerapi.Contract) {
+		t.Fatalf("%s error %q does not name both contracts", operation, err)
+	}
+}
+
+// Every request path surfaces the rejection once: token exchange neither
+// retries nor treats it as a stale credential.
 func TestWorkerClientSurfacesContractMismatchWithoutRetry(t *testing.T) {
-	const controlPlaneContract = "helmr.worker-api.v0"
 	requests := map[string]int{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests[r.URL.Path]++
-		switch r.URL.Path {
-		case "/worker/v1/instance/token":
-			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
-			return
-		case "/worker/v1/enrollment", "/worker/v1/instance/activate":
-		default:
-			t.Fatalf("unexpected path %s", r.URL.Path)
-		}
-		var request struct {
-			Contract string `json:"contract"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatal(err)
-		}
-		if request.Contract != workerapi.Contract {
-			t.Fatalf("%s contract = %q", r.URL.Path, request.Contract)
-		}
-		w.Header().Set("content-type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"contract mismatch","details":{%q:%q,%q:%q}}}`,
-			workerapi.ContractMismatchCode,
-			workerapi.ContractMismatchWorkerDetail, request.Contract,
-			workerapi.ContractMismatchControlPlaneDetail, controlPlaneContract)
+		writeContractMismatch(w, r)
 	}))
 	defer server.Close()
 	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: controlPlaneContract}
 	_, err = client.EnrollWorker(context.Background(), "enrollment-token", workerapi.EnrollmentRequest{ResourceID: "i-1", PoolName: "default"})
-	var got workerapi.ContractMismatchError
-	if !errors.As(err, &got) || got != want {
-		t.Fatalf("enrollment error = %v, want %v", err, want)
-	}
+	assertContractMismatch(t, "enrollment", err)
+	assertContractMismatch(t, "token exchange", client.AuthenticateWorker(context.Background()))
+	assertContractMismatch(t, "startup recovery", client.ReportWorkerStartupRecovery(context.Background(), workerapi.StartupRecoveryRequest{}))
 	_, err = client.ActivateWorker(context.Background(), workerClientCapabilities())
-	if !errors.As(err, &got) || got != want {
-		t.Fatalf("activation error = %v, want %v", err, want)
+	assertContractMismatch(t, "activation", err)
+	_, err = client.GetWorkerStatus(context.Background())
+	assertContractMismatch(t, "status", err)
+	want := map[string]int{"/worker/v1/enrollment": 1, "/worker/v1/instance/token": 4}
+	if fmt.Sprint(requests) != fmt.Sprint(want) {
+		t.Fatalf("requests = %v, want %v", requests, want)
 	}
-	if !strings.Contains(err.Error(), controlPlaneContract) || !strings.Contains(err.Error(), workerapi.Contract) {
-		t.Fatalf("activation error %q does not name both contracts", err)
+}
+
+// A control plane replaced after the token was issued rejects the next
+// request; the client keeps its token and does not replay.
+func TestWorkerClientSurfacesContractMismatchAfterAuthentication(t *testing.T) {
+	requests := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests[r.URL.Path]++
+		if r.URL.Path == "/worker/v1/instance/token" {
+			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+			return
+		}
+		writeContractMismatch(w, r)
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithHTTPClient(server.Client()), WithAuth("worker", "secret"), WithService("service"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if requests["/worker/v1/enrollment"] != 1 || requests["/worker/v1/instance/activate"] != 1 {
-		t.Fatalf("requests = %v, want one enrollment and one activation", requests)
+	assertContractMismatch(t, "startup recovery", client.ReportWorkerStartupRecovery(context.Background(), workerapi.StartupRecoveryRequest{}))
+	_, err = client.ObserveWorker(context.Background(), workerapi.Observation{})
+	assertContractMismatch(t, "observation", err)
+	want := map[string]int{"/worker/v1/instance/token": 1, "/worker/v1/instance/recover": 1, "/worker/v1/instance/observations": 1}
+	if fmt.Sprint(requests) != fmt.Sprint(want) {
+		t.Fatalf("requests = %v, want %v", requests, want)
 	}
 }
 

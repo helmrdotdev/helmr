@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -84,12 +85,12 @@ func (c *Client) postJSON(ctx context.Context, path string, bearer string, in an
 	if err := json.NewEncoder(&body).Encode(in); err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
-	req, err := c.transport.Request(ctx, http.MethodPost, path, &body, bearer)
+	req, err := c.request(ctx, http.MethodPost, path, &body, bearer)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("content-type", "application/json")
-	return c.transport.DoJSON(req, out)
+	return c.doJSON(req, out)
 }
 
 func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out any) error {
@@ -102,12 +103,12 @@ func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out an
 		if err != nil {
 			return err
 		}
-		req, err := c.transport.Request(ctx, http.MethodPost, path, bytes.NewReader(payload), token)
+		req, err := c.request(ctx, http.MethodPost, path, bytes.NewReader(payload), token)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("content-type", "application/json")
-		err = c.transport.DoJSON(req, out)
+		err = c.doJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateToken(token)
 			continue
@@ -123,11 +124,11 @@ func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error 
 		if err != nil {
 			return err
 		}
-		req, err := c.transport.Request(ctx, http.MethodGet, path, nil, token)
+		req, err := c.request(ctx, http.MethodGet, path, nil, token)
 		if err != nil {
 			return err
 		}
-		err = c.transport.DoJSON(req, out)
+		err = c.doJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateToken(token)
 			continue
@@ -201,13 +202,13 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	}
 	tokenCtx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
 	defer cancel()
-	req, err := c.transport.Request(tokenCtx, http.MethodPost, "/worker/v1/instance/token", &body, "")
+	req, err := c.request(tokenCtx, http.MethodPost, "/worker/v1/instance/token", &body, "")
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
 	var response workerapi.TokenResponse
-	if err := c.transport.DoJSON(req, &response); err != nil {
+	if err := c.doJSON(req, &response); err != nil {
 		return "", time.Time{}, err
 	}
 	if response.Token == "" {
@@ -219,9 +220,25 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	return response.Token, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
 }
 
+// request builds a /worker/v1 request that names the contract this build
+// speaks.
+func (c *Client) request(ctx context.Context, method string, path string, body io.Reader, bearer string) (*http.Request, error) {
+	req, err := c.transport.Request(ctx, method, path, body, bearer)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(workerapi.ContractHeader, workerapi.Contract)
+	return req, nil
+}
+
+func (c *Client) doJSON(req *http.Request, out any) error {
+	return contractMismatch(c.transport.DoJSON(req, out))
+}
+
 // contractMismatch turns the control plane's worker_contract_mismatch
-// rejection into workerapi.ContractMismatchError. Retrying cannot succeed:
-// only a worker and control plane from the same release are admitted.
+// rejection into workerapi.ContractMismatchError. It is not a 401, so it
+// neither refreshes nor discards credentials, and retrying cannot succeed
+// until the worker or control plane is replaced.
 func contractMismatch(err error) error {
 	var httpErr *httpclient.Error
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || httpErr.Code != workerapi.ContractMismatchCode {

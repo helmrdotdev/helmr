@@ -28,7 +28,7 @@ func TestWorkerDiscoverRunLeasesReturnsExactTuples(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		db:  store,
 	}
-	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/discover", strings.NewReader(`{}`))
+	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/leases/discover", strings.NewReader(`{}`))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workergroup.HostPrincipal{
 		HostID:  workerID,
 		GroupID: controlplaneTestWorkerGroupID,
@@ -50,7 +50,7 @@ func TestWorkerDiscoverRunLeasesRejectsAuthorityFields(t *testing.T) {
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		db:  &runLeaseDiscoveryStore{},
 	}
-	request := httptest.NewRequest(
+	request := newWorkerRequest(
 		http.MethodPost,
 		"/worker/v1/run/leases/discover",
 		strings.NewReader(`{"lease_id":"not-authority"}`),

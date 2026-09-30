@@ -2,22 +2,25 @@ package workerapi
 
 import "fmt"
 
-// Contract identifies the /worker/v1 wire contract that this build speaks.
-// A worker sends it at enrollment and activation, and the control plane
-// admits the worker only when it equals the control plane's own value.
+// Contract identifies the /worker/v1 wire contract that this build speaks:
+// the route major followed by a revision. The worker client sends it in
+// ContractHeader on every /worker/v1 request, and the control plane admits
+// only requests whose value equals its own.
 //
-// Worker and control plane form one release cohort (decision 0026), so any
-// breaking change to a /worker/v1 request, response, route or error code
-// advances the revision here in the same change set. The route major stays
-// /worker/v1 before GA; the revision is what separates incompatible builds.
-//
-// Before GA the check is strict equality and there is no compatibility window.
-// The self-hosted worker compatibility policy (queue item R1) may relax this
-// rule after GA.
-const Contract = "helmr.worker-api.v1"
+// Worker and control plane form one release cohort (decision 0026). Before
+// GA, any breaking change to a /worker/v1 request, response, header, route or
+// error code bumps the revision in the same change set; the route major
+// stays v1. The check is strict equality with no compatibility window; the
+// self-hosted worker compatibility policy (queue item R1) may relax it after
+// GA.
+const Contract = "helmr.worker-api.v1.r1"
+
+// ContractHeader carries Contract on every /worker/v1 request.
+const ContractHeader = "Helmr-Worker-Contract"
 
 // ContractMismatchCode is the error code the control plane returns, with HTTP
-// status 409, when a worker's contract differs from its own.
+// status 409, for a /worker/v1 request whose contract differs from its own or
+// is missing.
 const ContractMismatchCode = "worker_contract_mismatch"
 
 // ContractMismatch detail keys name both contracts in the error response.
@@ -40,10 +43,18 @@ func (e ContractMismatchError) Error() string {
 	)
 }
 
-// CheckContract admits only a worker that speaks this build's Contract.
-func CheckContract(worker string) error {
-	if worker != Contract {
-		return ContractMismatchError{Worker: worker, ControlPlane: Contract}
+// ContractMismatch reports whether the ContractHeader values of a request
+// come from a worker on another contract. Only exactly one value equal to
+// Contract matches; a missing or repeated header is a mismatch.
+func ContractMismatch(values []string) (ContractMismatchError, bool) {
+	if len(values) == 1 && values[0] == Contract {
+		return ContractMismatchError{}, false
 	}
-	return nil
+	worker := ""
+	if len(values) == 1 {
+		worker = values[0]
+	} else if len(values) > 1 {
+		worker = fmt.Sprint(values)
+	}
+	return ContractMismatchError{Worker: worker, ControlPlane: Contract}, true
 }
