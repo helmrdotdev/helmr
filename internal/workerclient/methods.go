@@ -14,6 +14,7 @@ import (
 )
 
 func (c *Client) EnrollWorker(ctx context.Context, token string, request workerapi.EnrollmentRequest) (workerapi.EnrollmentResponse, error) {
+	request.Contract = workerapi.Contract
 	var response workerapi.EnrollmentResponse
 	if err := c.postJSON(ctx, "/worker/v1/enrollment", token, request, &response); err != nil {
 		return workerapi.EnrollmentResponse{}, err
@@ -120,7 +121,7 @@ func (c *Client) WriteTurnOutput(ctx context.Context, request workerapi.WriteTur
 
 func (c *Client) ActivateWorker(ctx context.Context, capabilities workerapi.Capabilities) (workerapi.StatusResponse, error) {
 	var response workerapi.StatusResponse
-	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/activate", workerapi.ActivateRequest{Capabilities: capabilities}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/worker/v1/instance/activate", workerapi.ActivateRequest{Contract: workerapi.Contract, Capabilities: capabilities}, &response); err != nil {
 		return workerapi.StatusResponse{}, err
 	}
 	return response, nil
@@ -172,10 +173,6 @@ func (c *Client) CompleteWorkerDrain(ctx context.Context, request workerapi.Drai
 
 func ambiguousWorkerTerminalMutation(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	// A control plane on another contract rejects every replay.
-	if _, ok := asContractMismatch(err); ok {
 		return false
 	}
 	var httpErr *httpclient.Error

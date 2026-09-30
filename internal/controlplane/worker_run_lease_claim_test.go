@@ -154,7 +154,7 @@ func (claimHTTPSecrets) OpenDeliveries(uuid.UUID, []secret.DeliveryEnvelope) ([]
 }
 
 func runWorkerLeaseClaimRequest(handler http.Handler, worker workergroup.HostPrincipal, body []byte) *httptest.ResponseRecorder {
-	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/leases/claim", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/leases/claim", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

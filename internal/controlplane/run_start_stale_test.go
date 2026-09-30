@@ -81,7 +81,7 @@ func TestWorkerStartLogsOnlyTypedFailurePointAndKeepsPublicConflict(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := newWorkerRequest(http.MethodPost, "/worker/v1/run/start", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/worker/v1/run/start", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
 	response := httptest.NewRecorder()
 

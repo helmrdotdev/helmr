@@ -1,42 +1,17 @@
 package controlplane
 
 import (
-	"encoding/json"
-	"net/http"
+	"fmt"
 
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
 
-// requireWorkerContract admits a /worker/v1 request only from a worker that
-// speaks this build's contract. It runs before body decoding, enrollment rate
-// accounting, authentication and database access, so a mismatched worker
-// changes no state and learns why in a stable error even after a wire change.
-// Only the shared request-size limit of the enclosing route group runs first.
-func requireWorkerContract(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if mismatch, ok := workerapi.ContractMismatch(r.Header.Values(workerapi.ContractHeader)); ok {
-			writeError(w, conflict(workerContractMismatchError{mismatch}))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// workerContractMismatchError names both contracts so that the worker can
-// report which build must change.
-type workerContractMismatchError struct {
-	workerapi.ContractMismatchError
-}
-
-func (e workerContractMismatchError) ErrorCode() string {
-	return workerapi.ContractMismatchCode
-}
-
-func (e workerContractMismatchError) ErrorDetails() map[string]json.RawMessage {
-	worker, _ := json.Marshal(e.Worker)
-	controlPlane, _ := json.Marshal(e.ControlPlane)
-	return map[string]json.RawMessage{
-		workerapi.ContractMismatchWorkerDetail:       worker,
-		workerapi.ContractMismatchControlPlaneDetail: controlPlane,
+func checkWorkerContract(contract string) error {
+	if contract != workerapi.Contract {
+		return conflict(codedError{
+			code:    workerapi.ContractMismatchCode,
+			message: fmt.Sprintf("worker API contract %q does not match control plane contract %q; run compatible worker and control plane releases", contract, workerapi.Contract),
+		})
 	}
+	return nil
 }

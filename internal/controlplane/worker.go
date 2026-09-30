@@ -32,6 +32,10 @@ func (s *Server) workerEnroll(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker enrollment JSON: %w", err))
 		return
 	}
+	if err := checkWorkerContract(request.Contract); err != nil {
+		writeError(w, err)
+		return
+	}
 	// An unparsable enrollment token is rejected by the owner after it has
 	// validated the rest of the request.
 	tokenHash, err := strictWorkerEnrollmentBearer(r.Header.Values("Authorization"))
@@ -70,6 +74,10 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid worker token request JSON: %w", err))
 		return
 	}
+	if err := checkWorkerContract(request.Contract); err != nil {
+		writeError(w, err)
+		return
+	}
 	token, err := workergroup.ExchangeCredential(r.Context(), s.db, s.hostCredentials, workergroup.CredentialExchange{
 		HostID: request.WorkerHostID, Secret: request.WorkerHostSecret, ServiceID: request.ServiceID,
 	}, time.Now)
@@ -88,6 +96,10 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 	var request workerapi.ActivateRequest
 	if err := decodeRequestJSON(r, &request); err != nil {
 		writeError(w, fmt.Errorf("invalid worker activate request JSON: %w", err))
+		return
+	}
+	if err := checkWorkerContract(request.Contract); err != nil {
+		writeError(w, err)
 		return
 	}
 	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)

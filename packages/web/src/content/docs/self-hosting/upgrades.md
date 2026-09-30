@@ -26,19 +26,13 @@ The checked-in flow establishes migration-before-service ordering, but it does n
 
 When the target release changes the worker AMI, apply the new launch template but do not assume instances will refresh automatically. Drain each exact logical worker to `termination_ready` before provider deletion, then explicitly coordinate the Auto Scaling instance refresh. Preserve enough old capacity to serve work until replacement workers authenticate and become active.
 
-The steps above apply when the target release keeps the worker API contract revision. Old and new workers then both serve the upgraded Control Plane during the replacement.
-
 ## Worker API contract changes
 
-Every worker request names the worker API contract it was built for, such as `helmr.worker-api.v1.r1`, and the Control Plane rejects any other or missing contract with `worker_contract_mismatch`. When the target release changes that revision, old workers cannot serve the upgraded Control Plane, so the Control Plane-first order above does not apply. The first release that checks the contract changes it for every existing worker; later releases change it only for incompatible worker API changes. The non-production rehearsal shows whether a target release changes it: after the Control Plane upgrade, old workers fail with `worker_contract_mismatch`.
+The rolling order above applies when both releases use the same worker API contract revision. Enrollment, token exchange (including refresh), and activation check the JSON `contract` field; ordinary requests do not check the revision. Existing tokens can therefore continue to reach ordinary routes after a Control Plane replacement. This does not make incompatible worker APIs safe to mix.
 
-For such a release, cut over in this order:
+For an incompatible release, drain the old workers to `termination_ready` against the old Control Plane, run the migration and Control Plane upgrade, then launch replacement workers from the target release's AMI. Plan the interruption until replacement capacity becomes active. The first release requiring the `contract` field also requires replacing workers that do not send it.
 
-1. Before upgrading the Control Plane, drain the old workers to `termination_ready` against the old Control Plane, so their Runs and Computers are handed over or finished under the contract they speak.
-2. Run the migration and upgrade the Control Plane as above.
-3. Launch replacement workers from the target release's AMI and wait for them to authenticate and become active.
-
-Old workers cannot keep serving while the new Control Plane runs, so plan the capacity gap explicitly: either accept an interruption between the drain and the replacements' activation, or stage separate capacity, such as a second worker group for the target release, that is ready as soon as the Control Plane changes. Workers that are still running when the Control Plane changes are rejected on their next request and fenced about two minutes later.
+A `worker_contract_mismatch` during connection or token refresh means the worker needs a compatible release. Rollback remains subject to the database and checkpoint limits below.
 
 Checkpoint restore validates runtime compatibility, including runtime and rootfs digests and resource shape. Existing checkpoints may not resume on an incompatible replacement worker; the checked-in flow does not promise cross-release checkpoint conversion.
 

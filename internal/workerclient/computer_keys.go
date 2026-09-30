@@ -27,17 +27,14 @@ func (c *Client) InitialComputerKey(ctx context.Context, request workerapi.Initi
 	for attempt := range 2 {
 		token, err := c.token(ctx)
 		if err != nil {
-			if mismatch, ok := asContractMismatch(err); ok {
-				return workerapi.ComputerKeyMaterial{}, mismatch
-			}
 			return workerapi.ComputerKeyMaterial{}, errors.New("computer key authentication failed")
 		}
-		req, err := c.request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), token)
+		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(payload), token)
 		if err != nil {
 			return workerapi.ComputerKeyMaterial{}, errors.New("invalid computer key endpoint")
 		}
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.transport.DoSensitive(req, sensitiveContractMismatch)
+		resp, err := c.transport.DoSensitive(req)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateToken(token)
 			continue
@@ -79,17 +76,14 @@ func (c *Client) ComputerSource(ctx context.Context, request workerapi.ComputerS
 	for attempt := range 2 {
 		token, err := c.token(ctx)
 		if err != nil {
-			if mismatch, ok := asContractMismatch(err); ok {
-				return workerapi.ComputerSourceMaterial{}, mismatch
-			}
 			return workerapi.ComputerSourceMaterial{}, errors.New("computer key authentication failed")
 		}
-		req, err := c.request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), token)
+		req, err := c.transport.Request(ctx, http.MethodPost, "/worker/v1/run/computer-instances/computer-source", bytes.NewReader(payload), token)
 		if err != nil {
 			return workerapi.ComputerSourceMaterial{}, errors.New("invalid computer key endpoint")
 		}
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.transport.DoSensitive(req, sensitiveContractMismatch)
+		resp, err := c.transport.DoSensitive(req)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateToken(token)
 			continue

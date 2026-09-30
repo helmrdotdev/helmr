@@ -38,7 +38,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	}
 	payload, _ := json.Marshal(request)
 	call := func(bearer string, body []byte) *httptest.ResponseRecorder {
-		r := newWorkerRequest("POST", "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(body))
+		r := httptest.NewRequest("POST", "/worker/v1/run/computer-instances/initialization/key", bytes.NewReader(body))
 		if bearer != "" {
 			r.Header.Set("Authorization", "Bearer "+bearer)
 		}
@@ -83,7 +83,7 @@ func TestInitialComputerKeyAuthenticatedHTTP(t *testing.T) {
 	}
 	// Draining the host advances its claim version: the token minted before
 	// the drain no longer authenticates.
-	drain := newWorkerRequest("POST", "/worker/v1/instance/drain", nil)
+	drain := httptest.NewRequest("POST", "/worker/v1/instance/drain", nil)
 	drain.Header.Set("Authorization", "Bearer "+token)
 	drained := httptest.NewRecorder()
 	handler.ServeHTTP(drained, drain)

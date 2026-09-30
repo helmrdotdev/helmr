@@ -667,11 +667,6 @@ func (m Server) completeComputerBasicExec(
 }
 
 func computerCommandCompletionRetryable(err error) bool {
-	// A control plane on another contract rejects every retry.
-	var mismatch workerapi.ContractMismatchError
-	if errors.As(err, &mismatch) {
-		return false
-	}
 	var statusError interface{ HTTPStatusCode() int }
 	if !errors.As(err, &statusError) {
 		return true

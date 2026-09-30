@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -85,12 +84,12 @@ func (c *Client) postJSON(ctx context.Context, path string, bearer string, in an
 	if err := json.NewEncoder(&body).Encode(in); err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
-	req, err := c.request(ctx, http.MethodPost, path, &body, bearer)
+	req, err := c.transport.Request(ctx, http.MethodPost, path, &body, bearer)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("content-type", "application/json")
-	return c.doJSON(req, out)
+	return c.transport.DoJSON(req, out)
 }
 
 func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out any) error {
@@ -103,12 +102,12 @@ func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out an
 		if err != nil {
 			return err
 		}
-		req, err := c.request(ctx, http.MethodPost, path, bytes.NewReader(payload), token)
+		req, err := c.transport.Request(ctx, http.MethodPost, path, bytes.NewReader(payload), token)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("content-type", "application/json")
-		err = c.doJSON(req, out)
+		err = c.transport.DoJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateToken(token)
 			continue
@@ -124,11 +123,11 @@ func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error 
 		if err != nil {
 			return err
 		}
-		req, err := c.request(ctx, http.MethodGet, path, nil, token)
+		req, err := c.transport.Request(ctx, http.MethodGet, path, nil, token)
 		if err != nil {
 			return err
 		}
-		err = c.doJSON(req, out)
+		err = c.transport.DoJSON(req, out)
 		if attempt == 0 && httpclient.IsStatus(err, http.StatusUnauthorized) {
 			c.invalidateToken(token)
 			continue
@@ -196,19 +195,19 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
 		WorkerHostID: c.auth.workerHostID, WorkerHostSecret: c.auth.secret,
-		ServiceID: c.auth.serviceID,
+		ServiceID: c.auth.serviceID, Contract: workerapi.Contract,
 	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)
 	}
 	tokenCtx, cancel := context.WithTimeout(ctx, tokenRequestTimeout)
 	defer cancel()
-	req, err := c.request(tokenCtx, http.MethodPost, "/worker/v1/instance/token", &body, "")
+	req, err := c.transport.Request(tokenCtx, http.MethodPost, "/worker/v1/instance/token", &body, "")
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	req.Header.Set("content-type", "application/json")
 	var response workerapi.TokenResponse
-	if err := c.doJSON(req, &response); err != nil {
+	if err := c.transport.DoJSON(req, &response); err != nil {
 		return "", time.Time{}, err
 	}
 	if response.Token == "" {
@@ -218,83 +217,4 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 		return "", time.Time{}, errors.New("worker auth response expires_in_seconds must be positive")
 	}
 	return response.Token, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
-}
-
-// request builds a /worker/v1 request that names the contract this build
-// speaks.
-func (c *Client) request(ctx context.Context, method string, path string, body io.Reader, bearer string) (*http.Request, error) {
-	req, err := c.transport.Request(ctx, method, path, body, bearer)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set(workerapi.ContractHeader, workerapi.Contract)
-	return req, nil
-}
-
-func (c *Client) doJSON(req *http.Request, out any) error {
-	return contractMismatch(c.transport.DoJSON(req, out))
-}
-
-// contractMismatch turns the control plane's worker_contract_mismatch
-// rejection into workerapi.ContractMismatchError. It is not a 401, so it
-// neither refreshes nor discards credentials, and retrying cannot succeed
-// until the worker or control plane is replaced.
-func contractMismatch(err error) error {
-	var httpErr *httpclient.Error
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict || httpErr.Code != workerapi.ContractMismatchCode {
-		return err
-	}
-	var details map[string]string
-	if len(httpErr.Details) > 0 {
-		if decodeErr := json.Unmarshal(httpErr.Details, &details); decodeErr != nil {
-			return fmt.Errorf("%w (decode contract details: %v)", err, decodeErr)
-		}
-	}
-	return workerapi.ContractMismatchError{
-		Worker:       workerapi.Contract,
-		ControlPlane: details[workerapi.ContractMismatchControlPlaneDetail],
-	}
-}
-
-func asContractMismatch(err error) (workerapi.ContractMismatchError, bool) {
-	var mismatch workerapi.ContractMismatchError
-	return mismatch, errors.As(err, &mismatch)
-}
-
-// sensitiveContractMismatch recovers the contract mismatch from the error body
-// of a sensitive request. Only the error code and the control plane's contract
-// name are read; every other response stays status-only.
-func sensitiveContractMismatch(status int, body []byte) error {
-	if status != http.StatusConflict {
-		return nil
-	}
-	var payload struct {
-		Error struct {
-			Code    string `json:"code"`
-			Details struct {
-				ControlPlane string `json:"control_plane_contract"`
-			} `json:"details"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(body, &payload) != nil || payload.Error.Code != workerapi.ContractMismatchCode {
-		return nil
-	}
-	controlPlane := payload.Error.Details.ControlPlane
-	if !contractName(controlPlane) {
-		return nil
-	}
-	return workerapi.ContractMismatchError{Worker: workerapi.Contract, ControlPlane: controlPlane}
-}
-
-// contractName accepts a short printable ASCII contract identifier.
-func contractName(value string) bool {
-	if value == "" || len(value) > 128 {
-		return false
-	}
-	for _, r := range value {
-		if r <= ' ' || r > '~' {
-			return false
-		}
-	}
-	return true
 }

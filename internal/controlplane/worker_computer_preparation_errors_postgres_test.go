@@ -334,7 +334,6 @@ func (s *preparationErrorServer) post(t *testing.T, path string) *httptest.Respo
 		t.Fatal(err)
 	}
 	request := httptest.NewRequestWithContext(s.ctx, http.MethodPost, path, bytes.NewReader(raw))
-	request.Header.Set(workerapi.ContractHeader, workerapi.Contract)
 	request.Header.Set("Authorization", "Bearer "+s.token)
 	response := httptest.NewRecorder()
 	s.handler.ServeHTTP(response, request)

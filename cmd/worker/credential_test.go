@@ -13,6 +13,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workerclient"
 )
@@ -79,8 +80,7 @@ func TestWorkerCredentialSurvivesContractMismatch(t *testing.T) {
 		requests[r.URL.Path]++
 		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"contract mismatch","details":{%q:%q}}}`,
-			workerapi.ContractMismatchCode, workerapi.ContractMismatchControlPlaneDetail, "helmr.worker-api.v1.r0")
+		_, _ = fmt.Fprintf(w, `{"error":{"code":%q,"message":"contract mismatch"}}`, workerapi.ContractMismatchCode)
 	}))
 	defer server.Close()
 	workDir := t.TempDir()
@@ -98,8 +98,8 @@ func TestWorkerCredentialSurvivesContractMismatch(t *testing.T) {
 		}
 		return client.AuthenticateWorker(t.Context())
 	})
-	var mismatch workerapi.ContractMismatchError
-	if !errors.As(err, &mismatch) || mismatch.ControlPlane != "helmr.worker-api.v1.r0" {
+	var mismatch *httpclient.Error
+	if !errors.As(err, &mismatch) || mismatch.Code != workerapi.ContractMismatchCode {
 		t.Fatalf("error = %v, want contract mismatch", err)
 	}
 	if kept, err := readWorkerHostCredential(path); err != nil || kept.WorkerHostID != stored.WorkerHostID || kept.WorkerHostSecret != stored.WorkerHostSecret {

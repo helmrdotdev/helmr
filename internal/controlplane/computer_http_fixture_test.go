@@ -52,7 +52,7 @@ func (c workerHTTPClient) send(t *testing.T, path string, body any) *httptest.Re
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := newWorkerRequest(http.MethodPost, path, bytes.NewReader(encoded))
+	request := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(encoded))
 	request.Header.Set("Authorization", "Bearer "+c.token)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
