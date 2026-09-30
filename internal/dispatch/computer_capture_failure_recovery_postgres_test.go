@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 )
 
 func TestComputerCheckpointFailureSettlesRetryingResidents(t *testing.T) {
@@ -47,7 +48,7 @@ func TestComputerCheckpointFailureSettlesRetryingResidents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, err := authority.RecoverRunExecutionLeases(t.Context(), 10); err != nil || n != 2 {
+	if n, err := run.RecoverExecutionLeases(t.Context(), f.Pool, 10); err != nil || n != 2 {
 		t.Fatalf("resident recovery=%d err=%v", n, err)
 	}
 	var retries int

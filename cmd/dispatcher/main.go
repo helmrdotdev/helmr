@@ -30,6 +30,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// The dispatcher's connection budget is 44 = 12 + 32. On the run dispatch
+// pool, session-lock holders (the run placement lane workers plus the Run
+// lease and Computer instance reconcilers) are at most 10 connections, below
+// its cap of 32; each holder's work takes further connections. Default demand
+// is about 31 of 32, so exhaustion only queues acquisitions within each
+// cycle's timeout.
 const (
 	baseMaxConns        = int32(12)
 	runDispatchMaxConns = int32(32)
@@ -117,13 +123,13 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure stale worker fencer: %w", err)
 	}
-	runLeaseRecoveryLock, err := dispatch.NewRunLeaseRecoveryAdvisoryLock(runDispatchPool)
-	if err != nil {
-		return fmt.Errorf("configure Run lease recovery lock: %w", err)
-	}
-	runLeaseReconciler, err := dispatch.NewRunLeaseReconciler(runDispatchAuthority, runLeaseRecoveryLock, log)
+	runLeaseReconciler, err := run.NewLeaseReconciler(runDispatchPool, log)
 	if err != nil {
 		return fmt.Errorf("configure Run lease reconciler: %w", err)
+	}
+	instanceReconciler, err := dispatch.NewInstanceReconciler(runDispatchAuthority, log)
+	if err != nil {
+		return fmt.Errorf("configure Computer instance reconciler: %w", err)
 	}
 	scheduleAuthority := definition.NewScheduleAuthority()
 	secretStore, err := secret.New(queries, pool, cfg.EncryptionKey)
@@ -238,6 +244,7 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 	runners := []dispatcherRunner{
 		{name: "stale host fencer", run: staleHostFencer.Run},
 		{name: "Run lease reconciler", run: runLeaseReconciler.Run},
+		{name: "Computer instance reconciler", run: instanceReconciler.Run},
 		{name: "placement reconciler", run: placementReconciler.Run},
 		{name: "schedule worker", run: scheduleWorker.Run},
 		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},
