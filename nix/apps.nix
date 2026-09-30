@@ -110,14 +110,18 @@ let
             export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
           ''}
           bun install --frozen-lockfile --ignore-scripts
-          scripts/check-e2e.sh
+          scripts/build-npm-packages.sh
+          sdk_packages=$(mktemp -d)
+          trap 'rm -rf "$sdk_packages"' EXIT
+          scripts/pack-npm-packages.sh "$sdk_packages"
+          scripts/check-e2e.sh --skip-sdk-build
           (cd examples/issue-fixer && bun install --frozen-lockfile --ignore-scripts && bun run typecheck && bun test tests)
-          scripts/check-packed-sdk-consumer.sh
+          scripts/check-packed-sdk-consumer.sh --sdk-packages "$sdk_packages"
           scripts/build-compiler-entry.sh
           scripts/build-hostconfig-entry.sh
-          node tests/build/check-fixture-analysis.mjs
+          node tests/build/check-fixture-analysis.mjs --sdk-packages "$sdk_packages"
           bun run typecheck
-          bun run test:ts
+          bun run test:ts:prepared
           bun run build:web
         '';
     ci-go-lint =

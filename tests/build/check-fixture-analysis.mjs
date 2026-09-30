@@ -6,12 +6,15 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 
 requireVersion(process.versions.node, "sample compiler interpreter")
+const args = process.argv.slice(2)
+if (args.length !== 0 && (args.length !== 2 || args[0] !== "--sdk-packages"))
+  throw new Error("usage: check-fixture-analysis.mjs [--sdk-packages DIR]")
 const output = mkdtempSync(resolve(tmpdir(), "helmr-sample-analysis-"))
 try {
   const project = resolve(output, "project")
   const prepared = spawnSync(
     "python3",
-    ["tests/e2e/prepare_project.py", project, "--fixtures", "cases"],
+    ["tests/e2e/prepare_project.py", project, "--fixtures", "cases", ...args],
     { stdio: "inherit" },
   )
   if (prepared.status !== 0) throw new Error("fixture preparation failed")

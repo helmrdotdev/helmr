@@ -65,6 +65,23 @@ Fast PR CI keeps its existing source checks. The broader Nix CI entrypoints
 compose the same checks explicitly; changing file layout does not add real-host
 or all-case execution to PRs. Absence from fast CI does not mean a test is unused.
 
+## Reusing TypeScript build inputs
+
+`nix run .#ci-typescript` builds fresh SDK/proto packages once, packs them into a
+private temporary directory, and shares those inputs across its checks. The
+archives are removed on exit. Compiler and host-config entries are also prepared
+once before their consumers. Each aggregate invocation rebuilds from its current
+checkout; there is no persistent build cache or implicit reuse of existing files.
+
+The standalone commands above and `bun run test:ts` still prepare their own inputs.
+For explicit composition, `check-e2e.sh --skip-sdk-build` requires fresh packages
+in `dist/npm`, while `check-packed-sdk-consumer.sh --sdk-packages DIR` and
+`check-fixture-analysis.mjs --sdk-packages DIR` consume the two previously packed
+SDK/proto archives. `bun run test:ts:prepared` runs the same unit tests after the
+caller has built SDK packages, compiler and host-config entries. These prepared
+forms are for a caller that owns the build and keeps its inputs unchanged until
+all consuming checks finish; they do not establish artifact freshness themselves.
+
 ## Local database verification
 
 When changing SQL, schema, transactions, constraints or persisted state
