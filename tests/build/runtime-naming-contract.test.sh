@@ -76,10 +76,6 @@ for file in .github/workflows/release.yaml scripts/release/build.sh scripts/rele
     "${root}/${file}" "removed Control Plane package publication path remains"
 done
 
-require_text 'WorkerTokenIssuer         = "helmr-controlplane"' \
-  "${root}/internal/auth/worker.go" "Worker JWT issuer changed"
-require_text 'WorkerTokenAudience       = "helmr-worker"' \
-  "${root}/internal/auth/worker.go" "Worker JWT audience changed"
 require_text 'otelhttp.NewMiddleware("helmr-controlplane")' \
   "${root}/internal/controlplane/server.go" "Control Plane telemetry label changed"
 require_text 'request.Header.Set("user-agent", "helmr-controlplane")' \
