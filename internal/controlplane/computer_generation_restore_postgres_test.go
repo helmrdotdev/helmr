@@ -19,10 +19,9 @@ import (
 // publication and authenticated source delivery. Local reopen is not host-loss
 // recovery: only the original published generation exists in remote storage.
 func TestPublishedComputerSourceLocalRestore(t *testing.T) {
-	f, broker, _ := initialKeyFixture(t)
-	remote := newTestUploadStore(t)
-	f.server.cas = remote
-	client := sourceKeyHTTPClient(t, f, broker)
+	f := newInitialPublicationFixture(t)
+	remote := f.store
+	client := f.client(t, f.serve(t))
 	runtimeID := pgvalue.UUIDString(f.runtime)
 	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtimeID, DesiredVersion: 1})
 	if err != nil {

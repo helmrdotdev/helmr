@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -41,7 +42,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
-		s.writeComputerPublicationError(w, err)
+		s.writeComputerPublicationError(w, err, computerCheckpointReadyOperation)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -74,7 +75,7 @@ func (s *Server) commitCheckpointReady(ctx context.Context, worker workergroup.H
 		for _, d := range descriptors {
 			object, e := s.cas.Stat(ctx, d.Digest)
 			if e != nil {
-				return workerapi.ComputerCheckpointResponse{}, unavailable(errors.New("checkpoint object unavailable"))
+				return workerapi.ComputerCheckpointResponse{}, fmt.Errorf("checkpoint object unavailable: %w", e)
 			}
 			observed = append(observed, object)
 		}

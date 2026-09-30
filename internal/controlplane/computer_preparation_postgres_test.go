@@ -1,8 +1,20 @@
 package controlplane
 
 import (
+	"bytes"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"uuid"
+
+	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
+	"github.com/helmrdotdev/helmr/internal/computerkey"
+	"github.com/helmrdotdev/helmr/internal/disk"
+	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
+	"github.com/helmrdotdev/helmr/internal/oci"
+	"github.com/helmrdotdev/helmr/internal/workerclient"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -14,9 +26,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+// initialPublicationFixture is a Computer whose Instance is allocated on the
+// runtest worker host and charged with its preparation, served with a local
+// Computer key provider and file object storage.
 type initialPublicationFixture struct {
 	runtest.Fixture
-	server       *Server
+	store        testUploadStore
+	keys         computer.KeyWrapper
 	worker       workergroup.HostPrincipal
 	logicalBytes int64
 	runtime      pgtype.UUID
@@ -49,13 +65,115 @@ func newInitialPublicationFixture(t *testing.T) initialPublicationFixture {
 	if _, err := q.ChargeComputerPreparation(t.Context(), db.ChargeComputerPreparationParams{ComputerID: c.ID, InstanceID: instance.ID}); err != nil {
 		t.Fatal(err)
 	}
-	store := newTestUploadStore(t)
-	return initialPublicationFixture{Fixture: f, runtime: instance.ID, server: &Server{db: db.New(f.Pool), tx: f.Pool, cas: store},
+	keys, err := computerkey.NewLocal("local-1", bytes.Repeat([]byte{0x63}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return initialPublicationFixture{Fixture: f, runtime: instance.ID, store: newTestUploadStore(t), keys: keys,
 		worker: workergroup.HostPrincipal{HostID: f.WorkerID, GroupID: runtest.WorkerGroupID, Epoch: 1}, logicalBytes: diskBytes}
 }
 
+// serve serves the control plane over the fixture's database with its
+// Computer key provider and object storage.
+func (f initialPublicationFixture) serve(t *testing.T, configure ...func(*ServerConfig)) http.Handler {
+	t.Helper()
+	return newPostgresServer(t, f.Pool, append([]func(*ServerConfig){func(cfg *ServerConfig) {
+		cfg.ComputerKeys = f.keys
+		cfg.CAS = f.store
+	}}, configure...)...)
+}
+
+// client is an authenticated worker client of the fixture's host served by
+// handler.
+func (f initialPublicationFixture) client(t *testing.T, handler http.Handler) *workerclient.Client {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	return seedHostCredential(t, f.Pool, f.worker.HostID).client(t, server.URL)
+}
+
+// inspectedPackDigest is the storage digest of an inspected pack.
+func inspectedPackDigest(inspection blockformat.ObjectInspection) string {
+	return "sha256:" + hex.EncodeToString(inspection.Pack.Pages[0].Locator.Pack.Digest[:])
+}
+
+// publishInitialGeneration prepares the Instance as its worker host does:
+// it fetches the initial key, registers an empty root, uploads and certifies
+// it, and publishes it as the initial version with config.
+func (f initialPublicationFixture) publishInitialGeneration(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.GenerationRoot, workerapi.InitialComputerGenerationResponse) {
+	t.Helper()
+	runtime := pgvalue.UUIDString(f.runtime)
+	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtime, DesiredVersion: 1})
+	if err != nil {
+		t.Fatalf("initial key: %v", err)
+	}
+	t.Cleanup(func() { clear(key.Key) })
+	local, err := cas.NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := blockformat.Writer{Source: local, Sink: local, Scope: key.Scope, ActiveKey: key.ID, Keys: map[string][]byte{key.ID: key.Key}, PackLimit: blockformat.MinPackLimit}
+	locator, err := writer.Empty(t.Context(), f.logicalBytes, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspected, err := blockformat.InspectPack(t.Context(), local, key.Scope, writer.Keys, locator.Pack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := workerapi.InitialComputerObjectRequest{ComputerInstanceID: runtime, DesiredVersion: 1, Inspection: blockformat.ObjectInspection{Pack: &inspected}}
+	if err = client.RegisterInitialComputerObject(t.Context(), object); err != nil {
+		t.Fatalf("object registration: %v", err)
+	}
+	body, err := local.Get(t.Context(), inspectedPackDigest(object.Inspection))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.store.Put(t.Context(), "application/octet-stream", body)
+	body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = client.CertifyInitialComputerObject(t.Context(), object); err != nil {
+		t.Fatalf("object certification: %v", err)
+	}
+	root, err := disk.NewGenerationRoot(locator, f.logicalBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtime, DesiredVersion: 1, Root: root, Config: config})
+	if err != nil {
+		t.Fatalf("generation publication: %v", err)
+	}
+	return key, root, published
+}
+
+// A worker host prepares an initial Instance through the authenticated
+// routes: the published version becomes the Computer's head, and the
+// Instance's source delivery returns it with the initial key.
+func TestInitialComputerPreparationOverHTTP(t *testing.T) {
+	f := newInitialPublicationFixture(t)
+	client := f.client(t, f.serve(t))
+	key, root, published := f.publishInitialGeneration(t, client, oci.RuntimeConfig{User: "root"})
+	var head string
+	if err := f.Pool.QueryRow(t.Context(), `SELECT c.head_disk_version_id::text FROM computers c JOIN computer_instances i ON i.computer_id=c.id WHERE i.id=$1`, f.runtime).Scan(&head); err != nil || head != published.VersionID {
+		t.Fatalf("published head=%s response=%s err=%v", head, published.VersionID, err)
+	}
+	source, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
+	if err != nil {
+		t.Fatalf("source delivery: %v", err)
+	}
+	defer source.Clear()
+	if source.VersionID != published.VersionID || source.Root != root || source.WriteKeyID != key.ID || len(source.Keys) != 1 || !bytes.Equal(source.Keys[0].Key, key.Key) {
+		t.Fatalf("source=%s root=%v write key=%s keys=%d", source.VersionID, source.Root == root, source.WriteKeyID, len(source.Keys))
+	}
+	if _, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 2}); err == nil {
+		t.Fatal("stale source fence accepted")
+	}
+}
+
 func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
-	f, fence, input := generationPublicationFixture(t)
+	f := newInitialPublicationFixture(t)
 	seed := initializingComputerSourceRow(t)
 	// Bind a valid admitted deployment to this reserved runtime. The existing
 	// publication fixture's opaque candidate isolates the database protocol;
@@ -65,7 +183,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	seedID := uuid.NewV7()
 	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO artifacts(id,org_id,project_id,environment_id,kind,digest,size_bytes,media_type)
  VALUES($1,$2,$3,$4,'computer_image',$5,$6,$7)`, seedID, f.OrgID, f.ProjectID, f.EnvironmentID, seed.ComputerImageDigest, seed.ComputerImageSizeBytes, seed.ComputerImageMediaType)
-	spec, err := f.server.db.RegisterComputerSpec(t.Context(), db.RegisterComputerSpecParams{
+	spec, err := db.New(f.Pool).RegisterComputerSpec(t.Context(), db.RegisterComputerSpecParams{
 		ID: pgvalue.UUID(uuid.NewV7()), EnvironmentID: pgvalue.UUID(f.EnvironmentID),
 		Config: seed.ComputerConfig, Digest: seed.ComputerSpecDigest, SeedArtifactID: pgvalue.UUID(seedID),
 		SeedDigest: seed.ComputerImageDigest, SeedSizeBytes: seed.ComputerImageSizeBytes, SeedMediaType: seed.ComputerImageMediaType,
@@ -77,7 +195,7 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `WITH target AS (SELECT computer_id FROM computer_instances WHERE id=$1), updated AS (UPDATE computers SET computer_spec_id=$2 WHERE id=(SELECT computer_id FROM target)) UPDATE computer_instances SET computer_spec_id=$2 WHERE computer_id=(SELECT computer_id FROM target)`, f.runtime, specID)
 	read := func() workerapi.RuntimeComputerSource {
 		t.Helper()
-		rows, err := f.server.db.ListComputerInstanceReconcileTargets(t.Context(), db.ListComputerInstanceReconcileTargetsParams{
+		rows, err := db.New(f.Pool).ListComputerInstanceReconcileTargets(t.Context(), db.ListComputerInstanceReconcileTargetsParams{
 			WorkerGroupID: pgvalue.UUID(f.worker.GroupID), WorkerHostID: pgvalue.UUID(f.worker.HostID),
 			WorkerEpoch: f.worker.Epoch, RowLimit: 64,
 		})
@@ -97,12 +215,9 @@ func TestComputerPreparationSourceTracksPublishedRoot(t *testing.T) {
 	if initial.Seed == nil || initial.Root != nil || initial.Config.User != "1000" {
 		t.Fatalf("initial: %+v", initial)
 	}
-	published, err := f.server.publishInitialComputerGeneration(t.Context(), fence, input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, _, published := f.publishInitialGeneration(t, f.client(t, f.serve(t)), oci.RuntimeConfig{User: "root", WorkingDir: "/workspace"})
 	continued := read()
-	if continued.Seed != nil || continued.Root == nil || continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != pgvalue.UUIDString(published.VersionID) {
+	if continued.Seed != nil || continued.Root == nil || continued.Config.User != "root" || continued.VersionID != initial.VersionID || continued.VersionID != published.VersionID {
 		t.Fatalf("published: %+v", continued)
 	}
 	// A later deployment cannot replace the Computer's initial configuration.

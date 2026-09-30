@@ -95,9 +95,24 @@ func PrepareCapture(t *testing.T, f runtest.Fixture, worker dispatch.ComputerCap
 	if n, err := db.New(f.Pool).CertifyComputerObject(t.Context(), db.CertifyComputerObjectParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ComputerID: pgvalue.UUID(uuid.MustParse(r.Manifest.RecoveryPoint.ComputerID)), Digest: root.Pack.Digest}); err != nil || n != 1 {
 		t.Fatalf("certify root n=%d err=%v", n, err)
 	}
-	id := uuid.MustParse(r.CheckpointID)
-	key := disk.PublicationKey("checkpoint", id, id)
-	dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_object_pins(computer_instance_id,digest,environment_id,computer_id,instance_desired_version,publication_key) VALUES($1,$2,$3,$4,$5,$6)`, r.ComputerInstanceID, root.Pack.Digest, f.EnvironmentID, r.Manifest.RecoveryPoint.ComputerID, r.DesiredVersion, key)
+	// The capture pins the certified root through the owner's reuse, under the
+	// Instance's write key, which encrypts the root page.
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=$2 WHERE id=$1`, r.ComputerInstanceID, root.Page.KeyID)
+	objects, err := cas.NewFile(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisher, err := computer.NewPublisher(f.Pool, objects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := computer.CheckpointRef{
+		Host:       computer.Host{GroupID: pgvalue.MustUUIDValue(worker.GroupID), HostID: pgvalue.MustUUIDValue(worker.HostID), Epoch: worker.Epoch},
+		InstanceID: uuid.MustParse(r.ComputerInstanceID), WorkerEpoch: r.WorkerEpoch, DesiredVersion: r.DesiredVersion, CheckpointID: uuid.MustParse(r.CheckpointID),
+	}
+	if err = publisher.ReuseCheckpointObject(t.Context(), ref, inspection); err != nil {
+		t.Fatalf("pin capture root: %v", err)
+	}
 	artifacts := []workerapi.CheckpointArtifact{r.Manifest.RuntimeState.ConfigArtifact, r.Manifest.RuntimeState.VMStateArtifact, r.Manifest.RuntimeState.MemoryArtifacts[0], r.Manifest.RuntimeState.ScratchDiskArtifact}
 	var uploaded []cas.Object
 	for _, a := range artifacts {

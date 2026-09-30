@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -43,10 +45,10 @@ func RegisterComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 	return registerComputerCheckpoint(ctx, tx, worker, request, source)
 }
 
-func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, source computerCheckpointSource) (db.ComputerCheckpoint, error) {
+func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request workerapi.RegisterCheckpointRequest, source computer.CheckpointSource) (db.ComputerCheckpoint, error) {
 	var err error
 	q := db.New(tx)
-	instance, cp := source.instance, source.checkpoint
+	instance, cp := source.Instance(), source.Checkpoint()
 	environmentID, computerID := instance.EnvironmentID, instance.ComputerID
 	validateLive := func() error {
 		_, err := q.GetComputerInstanceCaptureCheckpoint(ctx, db.GetComputerInstanceCaptureCheckpointParams{ComputerInstanceID: instance.ID, EnvironmentID: environmentID, WorkerGroupID: worker.GroupID, WorkerHostID: worker.HostID, WorkerEpoch: worker.Epoch, DesiredVersion: request.DesiredVersion, WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
@@ -91,7 +93,7 @@ func registerComputerCheckpoint(ctx context.Context, tx pgx.Tx, worker ComputerC
 		}
 		manifest.RecoveryPoint.Runs = append(manifest.RecoveryPoint.Runs, supplied)
 	}
-	validateMembers := func() error { return validateComputerCheckpointMembers(ctx, tx, instance, cp, len(members)) }
+	validateMembers := func() error { return source.CheckMembers(ctx, len(members)) }
 	if err = validateMembers(); err != nil {
 		return db.ComputerCheckpoint{}, err
 	}
@@ -147,90 +149,16 @@ type computerCheckpointFence struct {
 	CheckpointID       string
 }
 
-type computerCheckpointSource struct {
-	computer   db.Computer
-	instance   db.ComputerInstance
-	checkpoint db.ComputerCheckpoint
-}
-
-func lockComputerCheckpointSource(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request computerCheckpointFence) (computerCheckpointSource, error) {
-	q := db.New(tx)
-	var environmentID, computerID, orgID, instanceID pgtype.UUID
-	var region string
-	if request.WorkerEpoch != worker.Epoch || worker.Epoch <= 0 || request.DesiredVersion <= 0 {
-		return computerCheckpointSource{}, pgx.ErrNoRows
+// lockComputerCheckpointSource locks the capture source a worker request
+// names through the computer owner's checkpoint source fence.
+func lockComputerCheckpointSource(ctx context.Context, tx pgx.Tx, worker ComputerCaptureWorker, request computerCheckpointFence) (computer.CheckpointSource, error) {
+	instanceID, instanceErr := uuid.Parse(request.ComputerInstanceID)
+	checkpointID, checkpointErr := uuid.Parse(request.CheckpointID)
+	if instanceErr != nil || checkpointErr != nil || instanceID.String() != request.ComputerInstanceID || checkpointID.String() != request.CheckpointID || !worker.GroupID.Valid || !worker.HostID.Valid {
+		return computer.CheckpointSource{}, pgx.ErrNoRows
 	}
-	if err := tx.QueryRow(ctx, `SELECT environment_id,computer_id,org_id,id,region_id FROM computer_instances
- WHERE id=$1 AND worker_group_id=$2 AND worker_host_id=$3 AND worker_epoch=$4`, request.ComputerInstanceID, worker.GroupID, worker.HostID, worker.Epoch).Scan(&environmentID, &computerID, &orgID, &instanceID, &region); err != nil {
-		return computerCheckpointSource{}, err
-	}
-	group, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: worker.GroupID, RegionID: region})
-	if err != nil {
-		return computerCheckpointSource{}, err
-	}
-	if group.Status != "active" && group.Status != "paused" && group.Status != "draining" {
-		return computerCheckpointSource{}, pgx.ErrNoRows
-	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: worker.HostID, WorkerGroupID: worker.GroupID})
-	if err != nil {
-		return computerCheckpointSource{}, err
-	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.Epoch || (host.Status != "active" && host.Status != "draining") {
-		return computerCheckpointSource{}, pgx.ErrNoRows
-	}
-	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: environmentID, ID: computerID})
-	if err != nil {
-		return computerCheckpointSource{}, err
-	}
-	instance, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: instanceID, OrgID: orgID, WorkerHostID: worker.HostID, WorkerGroupID: worker.GroupID, WorkerEpoch: worker.Epoch})
-	if err != nil {
-		return computerCheckpointSource{}, err
-	}
-	if pgvalue.UUIDString(instance.ID) != request.ComputerInstanceID {
-		return computerCheckpointSource{}, pgx.ErrNoRows
-	}
-	for _, query := range []string{
-		`SELECT s.id FROM sessions s JOIN runs r ON r.session_id=s.id JOIN run_leases l ON l.run_id=r.id WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY s.id FOR UPDATE OF s`,
-		`SELECT r.id FROM runs r JOIN run_leases l ON l.run_id=r.id WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY r.id FOR UPDATE OF r`,
-		`SELECT a.run_id FROM run_attempts a JOIN run_leases l ON l.run_id=a.run_id AND l.attempt_number=a.number WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY a.run_id,a.number FOR UPDATE OF a`,
-		`SELECT id FROM run_leases WHERE computer_instance_id=$1 AND process_reconciled_at IS NULL ORDER BY run_id,id FOR UPDATE`,
-		`SELECT w.id FROM run_waits w JOIN run_leases l ON l.run_id=w.run_id AND l.attempt_number=w.attempt_number WHERE l.computer_instance_id=$1 AND l.process_reconciled_at IS NULL ORDER BY w.run_id,w.id FOR UPDATE OF w`,
-	} {
-		if _, err = tx.Exec(ctx, query, instance.ID); err != nil {
-			return computerCheckpointSource{}, err
-		}
-	}
-	cp, err := q.LockComputerCheckpoint(ctx, db.LockComputerCheckpointParams{EnvironmentID: environmentID, ComputerID: computerID, CheckpointID: instance.CaptureCheckpointID})
-	if err != nil {
-		return computerCheckpointSource{}, err
-	}
-	if pgvalue.UUIDString(cp.ID) != request.CheckpointID {
-		return computerCheckpointSource{}, pgx.ErrNoRows
-	}
-	return computerCheckpointSource{computer: computer, instance: instance, checkpoint: cp}, nil
-}
-
-// Caller holds the source and all resident member locks.
-func validateComputerCheckpointMembers(ctx context.Context, tx pgx.Tx, instance db.ComputerInstance, cp db.ComputerCheckpoint, memberCount int) error {
-	var live bool
-	err := tx.QueryRow(ctx, `SELECT
- (SELECT count(*) FROM run_leases WHERE computer_instance_id=$1 AND process_reconciled_at IS NULL)=$2
- AND NOT EXISTS(SELECT 1 FROM computer_checkpoint_runs m
- LEFT JOIN run_leases l ON l.id=m.source_run_lease_id
- LEFT JOIN runs r ON r.id=m.run_id
- LEFT JOIN run_attempts a ON a.run_id=m.run_id AND a.number=m.attempt_number
- LEFT JOIN run_waits w ON w.id=m.run_wait_id
- WHERE m.checkpoint_id=$3 AND NOT coalesce(l.status='checkpointing' AND l.expires_at>clock_timestamp()
- AND l.computer_instance_id=$1 AND l.writer_generation=$4 AND l.process_reconciled_at IS NULL
- AND r.status='waiting' AND r.current_run_lease_id=l.id AND r.current_attempt_number=m.attempt_number
- AND r.terminal_at IS NULL AND a.terminal_at IS NULL
- AND w.suspension_status='checkpointing' AND w.current_run_lease_id=l.id AND w.suspend_checkpoint_id=$3
- AND w.expected_run_revision=r.revision,false))`, instance.ID, memberCount, cp.ID, cp.WriterGeneration).Scan(&live)
-	if err != nil {
-		return err
-	}
-	if !live {
-		return pgx.ErrNoRows
-	}
-	return nil
+	return computer.LockCheckpointSource(ctx, tx, computer.CheckpointRef{
+		Host:       computer.Host{GroupID: pgvalue.MustUUIDValue(worker.GroupID), HostID: pgvalue.MustUUIDValue(worker.HostID), Epoch: worker.Epoch},
+		InstanceID: instanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: checkpointID,
+	})
 }

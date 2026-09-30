@@ -390,7 +390,7 @@ func runMigrate(log *slog.Logger, args []string) error {
 
 // Provider selection is explicit; a managed provider failure never selects local
 // wrapping material. The key ARN fixes the regional KMS endpoint.
-func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (controlplane.ComputerKeyWrapper, error) {
+func configuredComputerKeys(ctx context.Context, cfg config.ControlPlane) (computer.KeyWrapper, error) {
 	switch cfg.DeploymentMode {
 	case config.DeploymentModeSelfHosted:
 		return computerkey.NewLocal(cfg.ComputerWrappingKeyID, cfg.ComputerWrappingKey)

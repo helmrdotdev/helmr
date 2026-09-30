@@ -61,7 +61,8 @@ type SubjectEventReader interface {
 }
 
 type Server struct {
-	computerKeys          *computerKeyBroker
+	computerKeys          *computer.KeyBroker
+	publisher             computer.Publisher
 	log                   *slog.Logger
 	deploymentMode        string
 	db                    db.Querier
@@ -106,7 +107,7 @@ func (s *Server) inTx(ctx context.Context, fn func(*txWork) error) error {
 }
 
 type ServerConfig struct {
-	ComputerKeys   ComputerKeyWrapper
+	ComputerKeys   computer.KeyWrapper
 	Log            *slog.Logger
 	DeploymentMode string
 
@@ -215,7 +216,11 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if apiOrigin == nil {
 		apiOrigin = cfg.PublicURL
 	}
-	computerKeys, err := newComputerKeyBroker(cfg.TX, cfg.ComputerKeys)
+	computerKeys, err := computer.NewKeyBroker(cfg.TX, cfg.ComputerKeys)
+	if err != nil {
+		return nil, err
+	}
+	publisher, err := computer.NewPublisher(cfg.TX, cfg.CAS)
 	if err != nil {
 		return nil, err
 	}
@@ -225,6 +230,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	server := &Server{
 		computerKeys:          computerKeys,
+		publisher:             publisher,
 		log:                   log,
 		deploymentMode:        deploymentMode,
 		db:                    cfg.DB,

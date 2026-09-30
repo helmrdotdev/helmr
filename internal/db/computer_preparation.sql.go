@@ -171,7 +171,7 @@ type GetComputerPreparationDeadlinesValidParams struct {
 }
 
 // Post-lock check for an allocated Instance, repeated after object writes and
-// before commit. The caller (dispatch.lockComputerPreparation) must already
+// before commit. The caller (a computer owner fence) must already
 // hold the admission-mode Worker Group, Pool and Host fence (which pins active
 // supply, the epoch, a present observation and no Run or VM pause) and the
 // Computer and Instance locks.

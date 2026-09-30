@@ -12,6 +12,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/jackc/pgx/v5"
 
@@ -22,10 +23,14 @@ import (
 
 // The host owns encrypted bytes. These tests exercise the Control Plane's
 // descriptor, membership, lifecycle and transaction boundary using real storage.
-func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest, func(int)) {
+// checkpointPublicationFixture returns a capture whose certified disk root is
+// uploaded, the registration that also pins that root for the capture, and
+// the upload of each runtime artifact.
+func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, workerapi.RegisterCheckpointRequest, func(), func(int)) {
 	t.Helper()
 	f, req := checkpointRegistrationFixture(t)
-	req.Manifest.RuntimeState.Computer.Root = retainedTestGeneration(t, f.Pool, f.server, req.ComputerInstanceID, computerPublicationKey("checkpoint", pgvalue.UUID(uuid.MustParse(req.CheckpointID)), pgvalue.UUID(uuid.MustParse(req.CheckpointID))))
+	root, inspection := retainedTestGeneration(t, f.Pool, f.server.cas, req.ComputerInstanceID)
+	req.Manifest.RuntimeState.Computer.Root = root
 	artifacts := []*workerapi.CheckpointArtifact{&req.Manifest.RuntimeState.ConfigArtifact, &req.Manifest.RuntimeState.VMStateArtifact, &req.Manifest.RuntimeState.MemoryArtifacts[0], &req.Manifest.RuntimeState.ScratchDiskArtifact}
 	data := make([]string, len(artifacts))
 	for i, a := range artifacts {
@@ -33,7 +38,22 @@ func checkpointPublicationFixture(t *testing.T) (*computerCheckpointFixture, wor
 		a.Digest = sha256sum.DigestBytes([]byte(data[i]))
 		a.SizeBytes = int64(len(data[i]))
 	}
-	return f, req, func(i int) {
+	register := func() {
+		t.Helper()
+		f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+		publisher, err := computer.NewPublisher(f.Pool, f.server.cas)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref := computer.CheckpointRef{
+			Host:       computer.Host{GroupID: f.worker.GroupID, HostID: f.worker.HostID, Epoch: f.worker.Epoch},
+			InstanceID: uuid.MustParse(req.ComputerInstanceID), WorkerEpoch: req.WorkerEpoch, DesiredVersion: req.DesiredVersion, CheckpointID: uuid.MustParse(req.CheckpointID),
+		}
+		if err = publisher.ReuseCheckpointObject(t.Context(), ref, inspection); err != nil {
+			t.Fatalf("pin checkpoint root: %v", err)
+		}
+	}
+	return f, req, register, func(i int) {
 		t.Helper()
 		a := artifacts[i]
 		if _, err := f.server.cas.Put(t.Context(), a.MediaType, strings.NewReader(data[i])); err != nil {
@@ -60,8 +80,8 @@ func checkpointReadyStatus(t *testing.T, f *computerCheckpointFixture, req worke
 }
 
 func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
-	f, req, upload := checkpointPublicationFixture(t)
-	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+	f, req, register, upload := checkpointPublicationFixture(t)
+	register()
 	for i := 0; i < 4; i++ {
 		upload(i)
 	}
@@ -146,9 +166,9 @@ func TestCheckpointPublicationCommitsWholeMachineAndReplays(t *testing.T) {
 func TestCheckpointPublicationRejectsIncompleteOrChangedCandidate(t *testing.T) {
 	for _, scenario := range []string{"missing_registration", "missing_object", "changed_manifest"} {
 		t.Run(scenario, func(t *testing.T) {
-			f, req, upload := checkpointPublicationFixture(t)
+			f, req, register, upload := checkpointPublicationFixture(t)
 			if scenario != "missing_registration" {
-				f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+				register()
 			}
 			for i := 0; i < 4; i++ {
 				if scenario != "missing_object" || i != 3 {
@@ -176,8 +196,8 @@ func TestCheckpointPublicationRejectsIncompleteOrChangedCandidate(t *testing.T) 
 }
 
 func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T) {
-	f, req, upload := checkpointPublicationFixture(t)
-	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+	f, req, register, upload := checkpointPublicationFixture(t)
+	register()
 	for i := 0; i < 4; i++ {
 		upload(i)
 	}
@@ -214,8 +234,8 @@ func TestCheckpointPublicationRollsBackAllMembershipsOnWriteFailure(t *testing.T
 }
 
 func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
-	f, req, upload := checkpointPublicationFixture(t)
-	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+	f, req, register, upload := checkpointPublicationFixture(t)
+	register()
 	for i := 0; i < 4; i++ {
 		upload(i)
 	}
@@ -236,8 +256,8 @@ func TestCheckpointPublicationConcurrentReplay(t *testing.T) {
 }
 
 func TestCheckpointPublicationExpiresDuringMembershipWrite(t *testing.T) {
-	f, req, upload := checkpointPublicationFixture(t)
-	f.workerCall(t, f.server.workerRegisterCheckpoint, req, nil)
+	f, req, register, upload := checkpointPublicationFixture(t)
+	register()
 	for i := 0; i < 4; i++ {
 		upload(i)
 	}

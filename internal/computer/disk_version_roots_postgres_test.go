@@ -1,11 +1,10 @@
-package controlplane
+package computer
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +15,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -24,14 +22,12 @@ import (
 )
 
 func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
-	f, b, fence := initialKeyFixture(t)
-	key, err := b.initial(t.Context(), fence)
-	if err != nil {
-		t.Fatal(err)
-	}
+	f := newPreparationFixture(t)
+	b := f.broker
+	key := f.initialKey(t)
 	defer clear(key.Key)
 	var computerID, versionID pgtype.UUID
-	if err = f.Pool.QueryRow(t.Context(), `SELECT i.computer_id,c.head_disk_version_id FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, f.runtime).Scan(&computerID, &versionID); err != nil {
+	if err := f.Pool.QueryRow(t.Context(), `SELECT i.computer_id,c.head_disk_version_id FROM computer_instances i JOIN computers c ON c.id=i.computer_id WHERE i.id=$1`, f.runtime).Scan(&computerID, &versionID); err != nil {
 		t.Fatal(err)
 	}
 	env := pgvalue.UUID(f.EnvironmentID)
@@ -40,7 +36,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	root := disk.GenerationRoot{FormatVersion: 1, LogicalBytes: f.logicalBytes, Offset: 128,
 		Pack: disk.GenerationPack{Digest: digest, SizeBytes: 512, Rank: 2},
 		Page: disk.GenerationPage{Digest: dbtest.Digest("generation-root-page"), Salt: strings.Repeat("aa", 32), KeyID: key.ID, Kind: 3, Count: 1, SizeBytes: 64}}
-	if err = root.Validate(f.logicalBytes); err != nil {
+	if err := root.Validate(f.logicalBytes); err != nil {
 		t.Fatal(err)
 	}
 	encode := func(r disk.GenerationRoot) []byte {
@@ -199,7 +195,7 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback(context.Background())
-		source, parsed, sourceKeys, err := loadRuntimeComputerGeneration(t.Context(), db.New(tx), f.runtime)
+		source, parsed, sourceKeys, err := loadRetainedGeneration(t.Context(), db.New(tx), f.runtime)
 		if err != nil || source.VersionID != versionID || parsed != root || len(sourceKeys) != 2 || pgvalue.UUIDString(sourceKeys[0].ID) != key.ID {
 			t.Fatalf("retained generation mismatch: %v", err)
 		}
@@ -207,22 +203,18 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	assertRetained()
 
 	// Read-key delivery is unavailable while this version is still initializing.
-	if _, err := b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
+	if _, err := b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyUnavailable) {
 		t.Fatal("initial source key grant", err)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_disk_versions SET status='committed',published_at=clock_timestamp(),root_pack_digest=$2,logical_bytes=$3,publisher_computer_instance_id=$4,publisher_desired_version=1,publication_request_fingerprint=decode(repeat('ab',32),'hex') WHERE id=$1`, versionID, digest, root.LogicalBytes, f.runtime)
-	delivered, err := b.source(t.Context(), fence)
-	if err != nil || delivered.Root != root || len(delivered.Keys) != 2 || !bytes.Equal(delivered.Keys[0].Key, key.Key) {
+	delivered, err := b.SourceKeys(t.Context(), f.principal, f.ref)
+	if err != nil || delivered.Root != root || delivered.VersionID != pgvalue.UUIDString(versionID) || delivered.WriteKeyID != key.ID || len(delivered.Keys) != 2 || !bytes.Equal(delivered.Keys[0].Key, key.Key) {
 		t.Fatalf("source delivery: %v", err)
 	}
-	delivered.clear()
-	client := sourceKeyHTTPClient(t, f, b)
-	wire, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
-	if err != nil || wire.Root != root || wire.VersionID != pgvalue.UUIDString(versionID) || wire.WriteKeyID != key.ID || len(wire.Keys) != 2 {
-		t.Fatalf("authenticated source transport: %v", err)
-	}
-	wire.Clear()
-	if _, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 2}); err == nil {
+	delivered.Clear()
+	staleRef := f.ref
+	staleRef.DesiredVersion = 2
+	if _, err := b.SourceKeys(t.Context(), f.principal, staleRef); err == nil {
 		t.Fatal("stale source fence accepted")
 	}
 
@@ -239,15 +231,15 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET write_key_id=NULL WHERE id=$1`, f.runtime)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computers SET write_key_id=$2 WHERE id=$1`, computerID, writeID)
 	for i := range 2 {
-		wire, err := client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1})
+		delivery, err := b.SourceKeys(t.Context(), f.principal, f.ref)
 		if err != nil {
 			t.Fatal("distinct write key delivery", err)
 		}
-		if wire.Root != root || wire.WriteKeyID != writeID || len(wire.Keys) != 3 || wire.Keys[2].ID != writeID || !bytes.Equal(wire.Keys[2].Key, writePlain) {
-			wire.Clear()
+		if delivery.Root != root || delivery.WriteKeyID != writeID || len(delivery.Keys) != 3 || delivery.Keys[2].ID != writeID || !bytes.Equal(delivery.Keys[2].Key, writePlain) {
+			delivery.Clear()
 			t.Fatal("distinct write key not appended to retained closure")
 		}
-		wire.Clear()
+		delivery.Clear()
 		var pinned pgtype.UUID
 		if err := f.Pool.QueryRow(t.Context(), `SELECT write_key_id FROM computer_instances WHERE id=$1`, f.runtime).Scan(&pinned); err != nil || pgvalue.UUIDString(pinned) != writeID {
 			t.Fatal("runtime write key not pinned", err)
@@ -259,9 +251,9 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 	}
 	assertRetained()
 
-	failing := &partialSourceWrapper{ComputerKeyWrapper: b.wrapper}
+	failing := &partialSourceWrapper{KeyWrapper: b.wrapper}
 	b.wrapper = failing
-	if _, err = b.source(t.Context(), fence); !errors.Is(err, errComputerKeyUnavailable) {
+	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyUnavailable) {
 		t.Fatal("partial unwrap accepted", err)
 	}
 	if len(failing.returned) != 2 {
@@ -272,9 +264,9 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 			t.Fatal("partial plaintext retained")
 		}
 	}
-	b.wrapper = failing.ComputerKeyWrapper
+	b.wrapper = failing.KeyWrapper
 
-	observer := &observingKeyWrapper{ComputerKeyWrapper: b.wrapper}
+	observer := &observingKeyWrapper{KeyWrapper: b.wrapper}
 	bumped := false
 	observer.unwrap = func() {
 		if bumped {
@@ -284,39 +276,43 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version+1 WHERE id=$1`, f.runtimeWorker())
 	}
 	b.wrapper = observer
-	if _, err = b.source(t.Context(), fence); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatal("worker with stale claims received source keys", err)
 	}
 	if !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
 		t.Fatal("stale-claims plaintext not cleared")
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_hosts SET claim_version=claim_version-1 WHERE id=$1`, f.runtimeWorker())
-	b.wrapper = observer.ComputerKeyWrapper
+	b.wrapper = observer.KeyWrapper
 
-	// A database failure during final revalidation stays retryable unavailability.
-	f.server.computerKeys = b
+	// A database failure during final revalidation keeps its own
+	// classification, which the worker is told is retryable unavailability.
 	faulted, restore := finalClaimReadFailure(b)
-	response := invokeComputerKeyHandler(t, f.server.workerComputerSource, fence, workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	_, err = b.SourceKeys(t.Context(), f.principal, f.ref)
 	restore()
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("final source claim read failure status=%d body=%s", response.Code, response.Body.String())
+	if !errors.Is(err, errInjectedClaimRead) || errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("final source claim read failure = %v", err)
 	}
 	if len(faulted.returned) == 0 || !bytes.Equal(faulted.returned, make([]byte, len(faulted.returned))) {
 		t.Fatal("source plaintext not cleared after final claim read failure")
 	}
 
-	// A Group claim change between authentication and the source locks asks the
-	// Worker to re-authenticate; the replay receives the same source material.
-	expected, err := b.source(t.Context(), fence)
+	// A Group claim change after authentication asks the worker to
+	// re-authenticate; the replay receives the same source material.
+	expected, err := b.SourceKeys(t.Context(), f.principal, f.ref)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer expected.clear()
-	const sourcePath = "/worker/v1/run/computer-instances/computer-source"
-	race := newWorkerClaimsRace(t, f.Fixture, f.server, map[string]http.HandlerFunc{sourcePath: f.server.workerComputerSource}, map[string]func(context.Context) error{sourcePath: switchPrimaryPool(t, f.Fixture)})
-	replayed, err := race.client.ComputerSource(t.Context(), workerapi.ComputerSourceRequest{ComputerInstanceID: pgvalue.UUIDString(fence.RuntimeID), DesiredVersion: fence.DesiredVersion})
+	defer expected.Clear()
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET claim_version=claim_version+1 WHERE id=$1`, pgvalue.UUID(f.principal.GroupID))
+	if _, err = b.SourceKeys(t.Context(), f.principal, f.ref); !errors.Is(err, workergroup.ErrStaleClaims) {
+		t.Fatalf("source after a Group claim change: %v", err)
+	}
+	reauthenticated := f.principal
+	reauthenticated.GroupClaimVersion++
+	replayed, err := b.SourceKeys(t.Context(), reauthenticated, f.ref)
 	if err != nil {
-		t.Fatalf("source across primary pool switch: %v", err)
+		t.Fatalf("source after re-authentication: %v", err)
 	}
 	if replayed.VersionID != expected.VersionID || replayed.WriteKeyID != expected.WriteKeyID || len(replayed.Keys) != len(expected.Keys) {
 		t.Fatalf("replayed source differs: version=%s keys=%d", replayed.VersionID, len(replayed.Keys))
@@ -327,7 +323,6 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 		}
 	}
 	replayed.Clear()
-	race.requireReplayed(t, sourcePath)
 	keys, err := q.ListInstanceComputerSourceKeys(t.Context(), f.runtime)
 	if err != nil || len(keys) != 2 || pgvalue.UUIDString(keys[0].ID) != key.ID {
 		t.Fatalf("runtime source keys: count=%d err=%v", len(keys), err)
@@ -363,12 +358,12 @@ func TestComputerDiskVersionRootRuntimeRetention(t *testing.T) {
 }
 
 type partialSourceWrapper struct {
-	ComputerKeyWrapper
+	KeyWrapper
 	returned [][]byte
 }
 
 func (w *partialSourceWrapper) Unwrap(ctx context.Context, scope, id string, e computerkey.Envelope) ([]byte, error) {
-	key, err := w.ComputerKeyWrapper.Unwrap(ctx, scope, id, e)
+	key, err := w.KeyWrapper.Unwrap(ctx, scope, id, e)
 	w.returned = append(w.returned, key)
 	if len(w.returned) == 2 {
 		return key, errors.New("injected second unwrap failure")

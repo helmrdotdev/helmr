@@ -5,11 +5,20 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
+
+// computerPreparationRef parses the Instance preparation a worker request
+// addresses.
+func computerPreparationRef(instanceID string, desiredVersion int64) (computer.PreparationRef, error) {
+	id, err := ids.Parse(instanceID)
+	if err != nil || desiredVersion <= 0 {
+		return computer.PreparationRef{}, badRequest(errors.New("runtime identity and desired version are required"))
+	}
+	return computer.PreparationRef{InstanceID: id, DesiredVersion: desiredVersion}, nil
+}
 
 func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
@@ -18,29 +27,14 @@ func (s *Server) workerInitialComputerKey(w http.ResponseWriter, r *http.Request
 		writeError(w, fmt.Errorf("invalid initial computer key request: %w", err))
 		return
 	}
-	runtimeID, err := ids.Parse(request.ComputerInstanceID)
-	if err != nil || request.DesiredVersion <= 0 {
-		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	material, err := s.computerKeys.initial(r.Context(), computerKeyFence{
-		ComputerPreparationFence: dispatch.ComputerPreparationFence{
-			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.HostID),
-			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch,
-			DesiredVersion: request.DesiredVersion,
-		},
-		ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
-	})
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
+	ref, err := computerPreparationRef(request.ComputerInstanceID, request.DesiredVersion)
 	if err != nil {
-		if errors.Is(err, errComputerKeyUnavailable) {
-			writeError(w, conflict(errors.New("computer key authority is unavailable")))
-		} else {
-			writeError(w, unavailable(errors.New("computer key delivery is unavailable")))
-		}
+		writeError(w, err)
+		return
+	}
+	material, err := s.computerKeys.InitialKey(r.Context(), workerFromContext(r.Context()), ref)
+	if err != nil {
+		writeError(w, computerError(err, computerKeyDeliveryOperation))
 		return
 	}
 	defer clear(material.Key)
@@ -54,32 +48,17 @@ func (s *Server) workerComputerSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, fmt.Errorf("invalid computer source request: %w", err))
 		return
 	}
-	runtimeID, err := ids.Parse(request.ComputerInstanceID)
-	if err != nil || request.DesiredVersion <= 0 {
-		writeError(w, badRequest(errors.New("runtime identity and desired version are required")))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	material, err := s.computerKeys.source(r.Context(), computerKeyFence{
-		ComputerPreparationFence: dispatch.ComputerPreparationFence{
-			RuntimeID: pgvalue.UUID(runtimeID), WorkerID: pgvalue.UUID(worker.HostID),
-			WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerEpoch: worker.Epoch,
-			DesiredVersion: request.DesiredVersion,
-		},
-		ClaimVersion: worker.HostClaimVersion, GroupClaimVersion: worker.GroupClaimVersion,
-	})
-	if writeStaleWorkerClaims(w, err) {
-		return
-	}
+	ref, err := computerPreparationRef(request.ComputerInstanceID, request.DesiredVersion)
 	if err != nil {
-		if errors.Is(err, errComputerKeyUnavailable) {
-			writeError(w, conflict(errors.New("computer key authority is unavailable")))
-		} else {
-			writeError(w, unavailable(errors.New("computer key delivery is unavailable")))
-		}
+		writeError(w, err)
 		return
 	}
-	defer material.clear()
+	material, err := s.computerKeys.SourceKeys(r.Context(), workerFromContext(r.Context()), ref)
+	if err != nil {
+		writeError(w, computerError(err, computerKeyDeliveryOperation))
+		return
+	}
+	defer material.Clear()
 	response := workerapi.ComputerSourceMaterial{VersionID: material.VersionID, Root: material.Root, WriteKeyID: material.WriteKeyID}
 	for _, key := range material.Keys {
 		response.Keys = append(response.Keys, workerapi.ComputerKeyMaterial{Scope: key.Scope, ID: key.ID, Key: key.Key})

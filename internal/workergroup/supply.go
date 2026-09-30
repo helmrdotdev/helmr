@@ -13,7 +13,7 @@ import (
 )
 
 // Worker supply lifecycle rule, applied by LockPlacementSupply,
-// LockExecutionHost and LockedHost.Continues:
+// LockExecutionHost, LockHostIgnoringClaims and LockedHost.Continues:
 //   - A paused Group holds: no placements, claims, starts or restore
 //     activations; work that is already running continues.
 //   - A draining Group, Pool or Host lets already dispatched work finish,
@@ -186,6 +186,43 @@ func (l LockedHost) Continues() bool {
 	return l.Host.CurrentEpoch.Valid && l.Host.CurrentEpoch.Int64 == l.epoch &&
 		(l.Host.Status == db.WorkerHostStatusActive || l.Host.Status == db.WorkerHostStatusDraining) &&
 		(l.Group.Status == db.WorkerGroupStatusActive || l.Group.Status == db.WorkerGroupStatusPaused || l.Group.Status == db.WorkerGroupStatusDraining)
+}
+
+// CheckClaims compares the principal's authenticated claim versions with its
+// Host and Group rows, which the caller's transaction must already hold
+// locked (for example through LockPlacementSupply). A changed claim version
+// returns ErrStaleClaims.
+func CheckClaims(ctx context.Context, q db.DBTX, principal HostPrincipal) error {
+	var host, group int64
+	if err := q.QueryRow(ctx, `SELECT w.claim_version,g.claim_version FROM worker_hosts w JOIN worker_groups g ON g.id=w.worker_group_id WHERE w.id=$1 AND g.id=$2`, pgvalue.UUID(principal.HostID), pgvalue.UUID(principal.GroupID)).Scan(&host, &group); err != nil {
+		return err
+	}
+	if host != principal.HostClaimVersion || group != principal.GroupClaimVersion {
+		return ErrStaleClaims
+	}
+	return nil
+}
+
+// LockHostIgnoringClaims update-locks the Group in its region, then the Host,
+// without comparing claim versions, for operations that continue admitted
+// work on a host epoch. The Group must be active, paused or draining and the
+// Host active or draining at the epoch; otherwise it returns pgx.ErrNoRows.
+func LockHostIgnoringClaims(ctx context.Context, q db.Querier, groupID uuid.UUID, regionID string, hostID uuid.UUID, epoch int64) (LockedHost, error) {
+	group, err := q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{ID: pgvalue.UUID(groupID), RegionID: regionID})
+	if err != nil {
+		return LockedHost{}, err
+	}
+	if group.Status != db.WorkerGroupStatusActive && group.Status != db.WorkerGroupStatusPaused && group.Status != db.WorkerGroupStatusDraining {
+		return LockedHost{}, pgx.ErrNoRows
+	}
+	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(hostID), WorkerGroupID: pgvalue.UUID(groupID)})
+	if err != nil {
+		return LockedHost{}, err
+	}
+	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != epoch || (host.Status != db.WorkerHostStatusActive && host.Status != db.WorkerHostStatusDraining) {
+		return LockedHost{}, pgx.ErrNoRows
+	}
+	return LockedHost{Group: group, Host: host, epoch: epoch}, nil
 }
 
 // LockHostWithPool update-locks the Group, the host's Pool and the Host at the

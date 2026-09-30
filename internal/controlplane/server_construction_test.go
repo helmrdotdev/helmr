@@ -6,6 +6,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/identity"
@@ -15,7 +16,7 @@ import (
 
 type constructionDB struct{ db.TxDB }
 
-type constructionKeys struct{ ComputerKeyWrapper }
+type constructionKeys struct{ computer.KeyWrapper }
 
 type constructionTelemetry struct{ telemetry.Reader }
 

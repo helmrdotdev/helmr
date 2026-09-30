@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/secretbinding"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestComputerErrorPreservesPublicStatusesAndWorkerFailures(t *testing.T) {
@@ -69,11 +70,16 @@ func TestComputerErrorPreservesPublicStatusesAndWorkerFailures(t *testing.T) {
 
 // Instance operations authenticated by a worker host report stale claims as
 // 401, changed authority as 409 and rejected input as 400; other failures
-// stay internal. Run-sourced aggregate operations report stale claims through
+// stay internal. Key delivery reports only rejected authority as a conflict
+// and anything else as retryable unavailability; initial preparation reports
+// every other failure as a conflict except unavailable object storage;
+// checkpoint objects and saves keep their own storage statuses. Run-sourced aggregate operations report stale claims through
 // their Run source, never as a Computer failure.
 func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 	input := computer.ValidateKey(new(" padded "))
 	internal := errors.New("database unavailable")
+	storage := fmt.Errorf("%w: %w", computer.ErrStorageUnavailable, errors.New("stat timeout"))
+	admission := &pgconn.PgError{Code: "23514"}
 	for _, test := range []struct {
 		name      string
 		err       error
@@ -95,6 +101,33 @@ func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 		{"restore plan changed", computer.ErrAuthorityChanged, computerRestorePlanOperation, http.StatusConflict, "conflict"},
 		{"restore plan stale claims", workergroup.ErrStaleClaims, computerRestorePlanOperation, http.StatusUnauthorized, "unauthorized"},
 		{"restore plan internal", internal, computerRestorePlanOperation, http.StatusInternalServerError, "internal_error"},
+		{"key delivery stale claims", workergroup.ErrStaleClaims, computerKeyDeliveryOperation, http.StatusUnauthorized, "unauthorized"},
+		{"key delivery unavailable", computer.ErrKeyUnavailable, computerKeyDeliveryOperation, http.StatusConflict, "conflict"},
+		{"key delivery internal", internal, computerKeyDeliveryOperation, http.StatusServiceUnavailable, "service_unavailable"},
+		{"initial object stale claims", workergroup.ErrStaleClaims, computerInitialObjectOperation, http.StatusUnauthorized, "unauthorized"},
+		{"initial object storage", storage, computerInitialObjectOperation, http.StatusServiceUnavailable, "service_unavailable"},
+		{"initial object conflict", computer.ObjectConflictError{}, computerInitialObjectOperation, http.StatusConflict, "conflict"},
+		{"initial object changed", computer.ErrAuthorityChanged, computerInitialObjectOperation, http.StatusConflict, "conflict"},
+		{"initial object input", input, computerInitialObjectOperation, http.StatusConflict, "conflict"},
+		{"initial object internal", internal, computerInitialObjectOperation, http.StatusConflict, "conflict"},
+		{"initial version stale claims", workergroup.ErrStaleClaims, computerInitialVersionOperation, http.StatusUnauthorized, "unauthorized"},
+		{"initial version conflict", computer.ObjectConflictError{}, computerInitialVersionOperation, http.StatusConflict, "conflict"},
+		{"initial version internal", internal, computerInitialVersionOperation, http.StatusConflict, "conflict"},
+		{"checkpoint object changed", computer.ErrAuthorityChanged, computerCheckpointObjectOperation, http.StatusConflict, "conflict"},
+		{"checkpoint object admission", admission, computerCheckpointObjectOperation, http.StatusConflict, "conflict"},
+		{"checkpoint object conflict", computer.ObjectConflictError{}, computerCheckpointObjectOperation, http.StatusConflict, "conflict"},
+		{"checkpoint object input", input, computerCheckpointObjectOperation, http.StatusBadRequest, "bad_request"},
+		{"checkpoint object storage", storage, computerCheckpointObjectOperation, http.StatusServiceUnavailable, "service_unavailable"},
+		{"checkpoint object internal", internal, computerCheckpointObjectOperation, http.StatusInternalServerError, "internal_error"},
+		{"checkpoint ready admission", admission, computerCheckpointReadyOperation, http.StatusConflict, "conflict"},
+		{"checkpoint ready internal", internal, computerCheckpointReadyOperation, http.StatusInternalServerError, "internal_error"},
+		{"save stale claims", workergroup.ErrStaleClaims, computerSaveOperation, http.StatusUnauthorized, "unauthorized"},
+		{"save changed", computer.ErrAuthorityChanged, computerSaveOperation, http.StatusConflict, "conflict"},
+		{"save admission", admission, computerSaveOperation, http.StatusConflict, "conflict"},
+		{"save conflict", computer.ObjectConflictError{}, computerSaveOperation, http.StatusConflict, "conflict"},
+		{"save input", input, computerSaveOperation, http.StatusBadRequest, "bad_request"},
+		{"save storage", storage, computerSaveOperation, http.StatusInternalServerError, "internal_error"},
+		{"save internal", internal, computerSaveOperation, http.StatusInternalServerError, "internal_error"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
