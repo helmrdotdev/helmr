@@ -57,8 +57,16 @@ def inputs(source, env):
         result[name] = tree_digest(source, paths)
     # Non-Go runtime/build inputs must also remain unchanged for host reuse.
     prefixes = ['internal/runtime/', 'internal/compiler/', 'internal/version/', 'nix/', 'images/', 'runtime/', 'sdk/', 'proto/', 'compiler/', 'scripts/materialize-']
-    support = [str(p.relative_to(source)) for p in source.rglob('*') if p.is_file()
-               and (str(p.relative_to(source)).startswith(tuple(prefixes)) or str(p.relative_to(source)) in ['flake.nix', 'flake.lock', 'bun.lock', 'package.json'])]
+    support = []
+    for path in source.rglob('*'):
+        relative = path.relative_to(source)
+        if not path.is_file():
+            continue
+        name = str(relative)
+        if (name.startswith(tuple(prefixes)) or name.endswith('/package.json') or name in [
+                'flake.nix', 'flake.lock', 'bun.lock', 'bunfig.toml', 'package.json', 'tsconfig.json',
+                'scripts/build-platform-entries.ts', 'scripts/node-version.mjs']):
+            support.append(name)
     result['runtime-support'] = tree_digest(source, support)
     schema = [str(p.relative_to(source)) for directory in SCHEMA_DIRS for p in (source / directory).rglob('*')
               if p.is_file() and not p.name.endswith('_test.go')]

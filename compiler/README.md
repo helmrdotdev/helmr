@@ -71,6 +71,9 @@ package name, type, imports and exports are retained. Bundling does not preserve
 arbitrary source-relative `import.meta.url` paths or dynamically computed code
 entrypoints. Extra Worker entrypoints are not part of this build API.
 
-Compiler sources are in `typescript/src`. Generate the pinned entry with
-`scripts/build-compiler-entry.sh`; its `--check` mode detects stale output. Run
-compiler tests through the repository's pinned Nix development environment.
+Compiler sources are in `typescript/src`. The Linux `nix build .#compiler` package
+uses the shared `platformEntries` generation output. For local tests, install the
+locked workspace dependencies and run `make platform-entries` in the pinned Nix
+development environment. `scripts/build-compiler-entry.sh` remains available for
+focused regeneration; its output is ignored by Git. CI compares local and Nix
+generation rather than checking committed bundles for freshness.

@@ -59,20 +59,23 @@ let
       pkgsGo.go_1_27;
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
   timezoneData = pkgs.callPackage ./timezone-data.nix { };
+  platformEntries = pkgs.callPackage ./platform-entries.nix { bun = pkgsBun.bun; };
   runtimeReleaseUnchecked = pkgs.callPackage ./runtime-release.nix {
-    inherit squashfsTools;
+    inherit squashfsTools platformEntries;
     nodeVersion = nodeRelease.version;
     nodeRelease = nodeArchive "x86_64-linux";
     debianRuntimeImage = debianImage debianImages.runtimeLibraries;
   };
   compiler = pkgs.callPackage ./compiler.nix {
+    inherit platformEntries;
     nodejs_24 = nodejs;
   };
   bundleBuilder = pkgs.callPackage ./bundle-builder.nix {
+    inherit platformEntries;
     buildGoModule = buildGo127Module;
   };
   bundleBuilderImage = pkgs.callPackage ./bundle-builder-image.nix {
- inherit substrateGenerator;
+    inherit substrateGenerator;
     inherit
       bundleBuilder
       compiler
@@ -126,6 +129,7 @@ let
       assert builtins.match "[0-9a-f]{40}" selectedSource != null;
       selectedSource;
   helmr = pkgs.callPackage ./helmr.nix {
+    inherit platformEntries;
     buildGoModule = buildGo127Module;
     version = platformVersion;
     inherit sourceCommit;
@@ -199,6 +203,7 @@ in
   inherit unparam;
   inherit squashfsTools;
   inherit timezoneData;
+  inherit platformEntries;
   default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;

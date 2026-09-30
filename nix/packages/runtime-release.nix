@@ -12,6 +12,7 @@
   patchelf,
   xz,
   squashfsTools,
+  platformEntries,
 }:
 
 let
@@ -71,9 +72,9 @@ stdenvNoCC.mkDerivation {
     tar -xJf ${nodeRelease} --strip-components=1 --directory "$upstream"
     install -m0755 "$upstream/bin/node" "$tree/bin/node"
     install -m0644 "$upstream/LICENSE" "$tree/share/licenses/node/LICENSE"
-    install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
+    install -m0644 ${platformEntries}/internal/runtime/entry.mjs "$tree/helmr/entry.mjs"
 
-    install -m0644 ${../../internal/runtime/module-preload.mjs} "$tree/helmr/module-preload.mjs"
+    install -m0644 ${platformEntries}/internal/runtime/module-preload.mjs "$tree/helmr/module-preload.mjs"
     policy_digest="sha256:$(sha256sum "$tree/helmr/module-preload.mjs" | cut -d' ' -f1)"
 
     debian="$TMPDIR/debian"
@@ -122,7 +123,9 @@ stdenvNoCC.mkDerivation {
       "$(patchelf --print-interpreter "$tree/bin/node")" /opt/helmr/runtime/lib/${loader}
     require_dynamic "Node dependencies" \
       "$(patchelf --print-needed "$tree/bin/node" | sort | tr '\n' ' ')" \
-      "$(printf '%s\n' ${lib.concatStringsSep " " ([ loader ] ++ nodeLibraries ++ preloadedLibraries)} | sort | tr '\n' ' ')"
+      "$(printf '%s\n' ${
+        lib.concatStringsSep " " ([ loader ] ++ nodeLibraries ++ preloadedLibraries)
+      } | sort | tr '\n' ' ')"
     for file in bin/node ${lib.concatMapStringsSep " " (name: "lib/${name}") runtimeLibraries}; do
       require_dynamic "$file RUNPATH" "$(patchelf --print-rpath "$tree/$file")" /opt/helmr/runtime/lib
     done
