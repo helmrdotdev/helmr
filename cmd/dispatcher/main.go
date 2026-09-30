@@ -234,54 +234,66 @@ func runDispatcher(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure control outbox lifecycle: %w", err)
 	}
 
+	runners := []dispatcherRunner{
+		{name: "stale host fencer", run: staleHostFencer.Run},
+		{name: "Run lease reconciler", run: runLeaseReconciler.Run},
+		{name: "placement reconciler", run: placementReconciler.Run},
+		{name: "schedule worker", run: scheduleWorker.Run},
+		{name: "token reconciliation delivery", run: tokenReconcileDelivery.Run},
+		{name: "secret revocation delivery", run: secretRevocationDelivery.Run},
+		{name: "run wait deadline delivery", run: runWaitDeadlineDelivery.Run},
+		{name: "actor input delivery", run: actorInputDelivery.Run},
+		{name: "telemetry ingestor", run: telemetryIngestor.Run},
+		{name: "control outbox lifecycle", run: controlOutboxLifecycle.Run},
+	}
+	log.Info("Helmr dispatcher running")
+	return superviseRunners(ctx, runners)
+}
+
+type dispatcherRunner struct {
+	name string
+	run  func(context.Context) error
+}
+
+var errRunnerStoppedUnexpectedly = errors.New("stopped unexpectedly")
+
+// superviseRunners runs every runner until ctx is cancelled or any runner
+// exits. A runner that returns nil or context.Canceled while the supervisor
+// has not cancelled it is an unexpected exit. The first exit cancels the peers,
+// every runner is joined, and all failures are returned together.
+func superviseRunners(ctx context.Context, runners []dispatcherRunner) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	runners := []func() error{
-		func() error { return staleHostFencer.Run(runCtx) },
-		func() error { return runLeaseReconciler.Run(runCtx) },
-		func() error { return placementReconciler.Run(runCtx) },
-		func() error { return scheduleWorker.Run(runCtx) },
-		func() error { return tokenReconcileDelivery.Run(runCtx) },
-		func() error { return secretRevocationDelivery.Run(runCtx) },
-		func() error { return runWaitDeadlineDelivery.Run(runCtx) },
-		func() error { return actorInputDelivery.Run(runCtx) },
-		func() error { return telemetryIngestor.Run(runCtx) },
-		func() error { return controlOutboxLifecycle.Run(runCtx) },
-	}
 	errc := make(chan error, len(runners))
 	var wg sync.WaitGroup
-	wg.Add(len(runners))
 	for _, runner := range runners {
-		go func() {
-			defer wg.Done()
-			errc <- runner()
-		}()
+		wg.Go(func() {
+			err := runner.run(runCtx)
+			stopping := runCtx.Err() != nil
+			switch {
+			case stopping && (err == nil || errors.Is(err, context.Canceled)):
+				errc <- nil
+			case err == nil:
+				errc <- fmt.Errorf("%s: %w", runner.name, errRunnerStoppedUnexpectedly)
+			case errors.Is(err, context.Canceled):
+				errc <- fmt.Errorf("%s: %w: returned %v", runner.name, errRunnerStoppedUnexpectedly, err)
+			default:
+				errc <- fmt.Errorf("%s: %w", runner.name, err)
+			}
+		})
 	}
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	log.Info("Helmr dispatcher running")
-	var firstErr error
+	var runErr error
 	select {
 	case <-ctx.Done():
-		cancel()
-	case err := <-errc:
-		cancel()
-		if err != nil && !errors.Is(err, context.Canceled) {
-			firstErr = err
-		}
+	case runErr = <-errc:
 	}
-	<-done
+	cancel()
+	wg.Wait()
 	close(errc)
 	for err := range errc {
-		if firstErr == nil && err != nil && !errors.Is(err, context.Canceled) {
-			firstErr = err
-		}
+		runErr = errors.Join(runErr, err)
 	}
-	return firstErr
+	return runErr
 }
 
 func newDispatchPool(ctx context.Context, databaseURL string, maxConns int32) (*pgxpool.Pool, error) {
