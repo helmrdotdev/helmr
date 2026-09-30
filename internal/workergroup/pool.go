@@ -8,7 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerpoolname"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -36,7 +36,7 @@ func ListPools(ctx context.Context, q db.Querier, groupID uuid.UUID) (db.WorkerG
 // CreatePool adds a pending pool to an active or paused worker group fenced by
 // the group's claim version, and returns the group with the new pool.
 func CreatePool(ctx context.Context, txb db.TxBeginner, groupID uuid.UUID, name string, expectedGroupClaimVersion int64) (db.WorkerGroup, db.WorkerPool, error) {
-	if err := workerapi.ValidatePoolName(name); err != nil {
+	if err := workerpoolname.Validate(name); err != nil {
 		return db.WorkerGroup{}, db.WorkerPool{}, InputError{message: err.Error()}
 	}
 	if expectedGroupClaimVersion <= 0 {

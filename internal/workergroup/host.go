@@ -11,7 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
-	"github.com/helmrdotdev/helmr/internal/workerapi"
+	"github.com/helmrdotdev/helmr/internal/workerpoolname"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -41,7 +41,7 @@ func EnrollHost(ctx context.Context, q db.Querier, cfg CredentialConfig, enrollm
 	if enrollment.ResourceID == "" || strings.TrimSpace(enrollment.ResourceID) != enrollment.ResourceID || len(enrollment.ResourceID) > MaxResourceIDBytes {
 		return EnrolledHost{}, invalidInput("resource_id is required and must not exceed %d bytes", MaxResourceIDBytes)
 	}
-	if err := workerapi.ValidatePoolName(enrollment.PoolName); err != nil {
+	if err := workerpoolname.Validate(enrollment.PoolName); err != nil {
 		return EnrolledHost{}, invalidInput("worker pool name: %v", err)
 	}
 	if len(enrollment.TokenHash) == 0 {
