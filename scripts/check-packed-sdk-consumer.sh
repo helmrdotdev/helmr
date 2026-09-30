@@ -4,8 +4,6 @@ set -euo pipefail
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repo_root}"
 
-scripts/build-npm-packages.sh
-
 consumer="$(mktemp -d)"
 trap 'rm -rf "${consumer}"' EXIT
 mkdir -p \
@@ -13,16 +11,25 @@ mkdir -p \
   "${consumer}/node_modules/@helmr/sdk" \
   "${consumer}/node_modules/@bufbuild"
 
-proto_archive="$(
-  npm pack dist/npm/proto/package --pack-destination "${consumer}" --silent
-)"
-sdk_archive="$(
-  npm pack dist/npm/sdk/package --pack-destination "${consumer}" --silent
-)"
-tar -xzf "${consumer}/${proto_archive}" \
-  --strip-components=1 -C "${consumer}/node_modules/@helmr/proto"
-tar -xzf "${consumer}/${sdk_archive}" \
-  --strip-components=1 -C "${consumer}/node_modules/@helmr/sdk"
+if [ "$#" -eq 0 ]; then
+  scripts/build-npm-packages.sh
+  sdk_packages="${consumer}/packages"
+  scripts/pack-npm-packages.sh "$sdk_packages"
+elif [ "$#" -eq 2 ] && [ "$1" = --sdk-packages ]; then
+  sdk_packages="$2"
+else
+  echo "usage: $0 [--sdk-packages DIR]" >&2
+  exit 2
+fi
+for package in proto sdk; do
+  archives=("$sdk_packages"/helmr-"$package"-*.tgz)
+  if [ "${#archives[@]}" -ne 1 ] || [ ! -f "${archives[0]}" ]; then
+    echo "expected one $package archive in $sdk_packages" >&2
+    exit 1
+  fi
+  tar -xzf "${archives[0]}" \
+    --strip-components=1 -C "${consumer}/node_modules/@helmr/${package}"
+done
 ln -s "${repo_root}/sdk/typescript/node_modules/@bufbuild/protobuf" \
   "${consumer}/node_modules/@bufbuild/protobuf"
 
