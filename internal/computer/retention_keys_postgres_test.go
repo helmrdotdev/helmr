@@ -1,4 +1,4 @@
-package artifactgc
+package computer
 
 import (
 	"context"
@@ -16,7 +16,7 @@ func TestComputerKeyCollectionPreservesOwnersAndErasesUnownedMaterial(t *testing
 	f := runtest.New(t)
 	work := f.AddRunLease(t, "assigned", time.Now())
 	q := db.New(f.Pool)
-	collector := &Reclaimer{pool: f.Pool, queries: q}
+	collector := &Retention{pool: f.Pool, queries: q}
 	orphan, current, object := uuid.NewV7().String(), uuid.NewV7().String(), uuid.NewV7().String()
 	for _, id := range []string{orphan, current, object} {
 		dbtest.MustExec(t, t.Context(), f.Pool, `INSERT INTO computer_data_keys(id,environment_id,computer_id,wrapping_key_id,wrapped_key) SELECT $2,environment_id,computer_id,'fixture',decode('01','hex') FROM runs WHERE id=$1`, work.RunID, id)
@@ -73,7 +73,7 @@ func TestComputerKeyRetirementWaitsForConcurrentAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := make(chan error, 1)
-	collector := &Reclaimer{pool: f.Pool, queries: db.New(f.Pool)}
+	collector := &Retention{pool: f.Pool, queries: db.New(f.Pool)}
 	go func() { result <- collector.collectComputerKeys(ctx) }()
 	// Discovery cannot see the uncommitted owner. The availability FK must hold
 	// retirement until adoption commits, then reject retirement as a normal race.

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/artifactgc"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/disk/blockformat"
@@ -40,7 +40,7 @@ func TestAbandonedSaveRetainsObjectsForLaterCheckpoint(t *testing.T) {
 		}
 	}
 	store := &computerGraphReclaimStore{t: t, q: s.db}
-	collector, err := artifactgc.New(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	collector, err := computer.NewRetention(f.Pool, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}

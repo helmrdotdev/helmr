@@ -1,4 +1,4 @@
-package artifactgc
+package computer
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 // Only unrooted graph objects are eligible. Root lifetime belongs to its head,
 // checkpoint, attempt and Runtime owners; this sweep never expires that history.
-func (r *Reclaimer) collectComputerObjects(ctx context.Context) error {
+func (r *Retention) collectComputerObjects(ctx context.Context) error {
 	candidates, err := r.queries.ListUnreferencedComputerObjects(ctx, 100)
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func (r *Reclaimer) collectComputerObjects(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (r *Reclaimer) collectComputerObject(ctx context.Context, candidate db.ListUnreferencedComputerObjectsRow) error {
+func (r *Retention) collectComputerObject(ctx context.Context, candidate db.ListUnreferencedComputerObjectsRow) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ func (r *Reclaimer) collectComputerObject(ctx context.Context, candidate db.List
 
 // Keys outlive every encrypted graph owner and physical writer. Retirement only
 // erases wrapped material; historical identities remain available for audit.
-func (r *Reclaimer) collectComputerKeys(ctx context.Context) error {
+func (r *Retention) collectComputerKeys(ctx context.Context) error {
 	candidates, err := r.queries.ListUnreferencedComputerKeys(ctx, 100)
 	if err != nil {
 		return err

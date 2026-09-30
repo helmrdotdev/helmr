@@ -1,4 +1,4 @@
-package artifactgc
+package computer
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 // Retiring payload never removes immutable Version lineage or receipts. Native
 // owner FKs, rather than the discovery snapshot, decide whether it may disappear.
-func (r *Reclaimer) collectComputerDiskVersions(ctx context.Context) error {
+func (r *Retention) collectComputerDiskVersions(ctx context.Context) error {
 	candidates, err := r.queries.ListUnreferencedComputerDiskVersionRoots(ctx, 100)
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func (r *Reclaimer) collectComputerDiskVersions(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-func (r *Reclaimer) collectComputerDiskVersion(ctx context.Context, c db.ListUnreferencedComputerDiskVersionRootsRow) error {
+func (r *Retention) collectComputerDiskVersion(ctx context.Context, c db.ListUnreferencedComputerDiskVersionRootsRow) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return err

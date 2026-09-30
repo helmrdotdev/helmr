@@ -18,12 +18,12 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/helmrdotdev/helmr/internal/artifact"
-	"github.com/helmrdotdev/helmr/internal/artifactgc"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	cass3 "github.com/helmrdotdev/helmr/internal/cas/s3"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/computerkey"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/controlplane"
@@ -191,7 +191,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	artifactReclaimer, err := artifactgc.New(pool, casStore, log)
+	computerRetention, err := computer.NewRetention(pool, casStore, log)
 	if err != nil {
 		return fmt.Errorf("configure artifact reclamation: %w", err)
 	}
@@ -258,7 +258,7 @@ func runControlPlane(ctx context.Context, log *slog.Logger) error {
 	workflows := []backgroundWorkflow{
 		{name: "live telemetry publisher", run: eventStream.RunPublisher},
 		{name: "Run retry readiness", run: runRetryReady.Run},
-		{name: "artifact reclamation", run: artifactReclaimer.Run},
+		{name: "artifact reclamation", run: computerRetention.Run},
 		{name: "operation receipt retention", run: func(ctx context.Context) error {
 			return idempotency.CollectReceipts(ctx, queries, log)
 		}},
