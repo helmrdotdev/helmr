@@ -1,6 +1,7 @@
 package deppolicy
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -26,7 +27,7 @@ var (
 // sqlKeywords are words that can follow a table in a FROM or JOIN list
 // without being its alias.
 var sqlKeywords = map[string]bool{
-	"as": true, "cross": true, "except": true, "fetch": true, "for": true, "full": true, "group": true,
+	"as": true, "cross": true, "lateral": true, "except": true, "fetch": true, "for": true, "full": true, "group": true,
 	"having": true, "inner": true, "intersect": true, "join": true, "left": true, "limit": true,
 	"natural": true, "offset": true, "on": true, "order": true, "outer": true, "returning": true,
 	"right": true, "set": true, "union": true, "using": true, "where": true, "window": true,
@@ -76,77 +77,104 @@ func computerRowLockQueries(dbDir string) (map[string]bool, error) {
 // locksComputerRows reports whether a statement locks computers or
 // computer_instances rows. Identifiers are compared without case, quotes,
 // the public schema or ONLY. Each parenthesized query (a subquery or a CTE
-// body) is its own query level: a row lock clause locks only the tables of
-// the FROM and JOIN list of its own level, all of them without OF, and the
-// named tables or aliases with OF.
+// body) is its own query level. A row lock clause locks the sources of its
+// own level's FROM and JOIN lists: all of them without OF, and with OF the
+// sources it names, a source being named by its alias when it has one and
+// by its table otherwise. A locked FROM subquery locks every source inside
+// it.
 func locksComputerRows(statement string) bool {
 	statement = sqlStringLiteral.ReplaceAllString(statement, "''")
 	statement = sqlLineComment.ReplaceAllString(statement, " ")
 	statement = strings.ToLower(sqlQuotedName.ReplaceAllString(statement, "$1"))
 	statement = sqlSchemaPrefix.ReplaceAllString(statement, "")
 	statement = sqlOnlyModifier.ReplaceAllString(statement, "$1")
-	return levelLocksComputerRows(statement)
+	return levelLocksComputerRows(statement, false)
 }
 
-func levelLocksComputerRows(level string) bool {
+// levelLocksComputerRows analyzes one query level; locked is set when an
+// enclosing level locks this level as a FROM subquery.
+func levelLocksComputerRows(level string, locked bool) bool {
 	outer, nested := splitQueryLevel(level)
-	for _, query := range nested {
-		if levelLocksComputerRows(query) {
-			return true
-		}
+	sources := querySources(outer)
+	lockedSources := map[int]bool{}
+	for n := range sources {
+		lockedSources[n] = locked
 	}
-	locks := rowLockClause.FindAllStringSubmatch(outer, -1)
-	if len(locks) == 0 {
-		return false
-	}
-	names := computerRowSources(outer)
-	if len(names) == 0 {
-		return false
-	}
-	for _, lock := range locks {
-		if lock[1] == "" {
-			return true
-		}
-		for _, target := range strings.Split(lock[1], ",") {
-			if names[strings.TrimSpace(target)] {
-				return true
+	for _, lock := range rowLockClause.FindAllStringSubmatch(outer, -1) {
+		for n, source := range sources {
+			if lock[1] == "" {
+				lockedSources[n] = true
+				continue
 			}
+			for _, target := range strings.Split(lock[1], ",") {
+				if strings.TrimSpace(target) == source.name {
+					lockedSources[n] = true
+				}
+			}
+		}
+	}
+	lockedSubqueries := map[int]bool{}
+	for n, source := range sources {
+		if !lockedSources[n] {
+			continue
+		}
+		if computerRowTables[source.table] {
+			return true
+		}
+		if index, ok := subqueryIndex(source.table); ok {
+			lockedSubqueries[index] = true
+		}
+	}
+	for index, query := range nested {
+		if levelLocksComputerRows(query, lockedSubqueries[index]) {
+			return true
 		}
 	}
 	return false
 }
 
-// computerRowSources returns the computers and computer_instances tables of
-// a query level's FROM and JOIN lists with their aliases.
-func computerRowSources(level string) map[string]bool {
-	names := map[string]bool{}
+// querySource is a FROM or JOIN source of a query level: a table or a
+// subquery placeholder, and the name a row lock clause uses for it.
+type querySource struct {
+	table string
+	name  string
+}
+
+// querySources returns the sources of a query level's FROM and JOIN lists.
+func querySources(level string) []querySource {
 	from := sqlFromKeyword.FindStringIndex(level)
 	if from == nil {
-		return names
+		return nil
 	}
+	var sources []querySource
 	tokens := sqlToken.FindAllString(level[from[0]:], -1)
 	for n := 0; n+1 < len(tokens); n++ {
 		if tokens[n] != "from" && tokens[n] != "join" && tokens[n] != "," {
 			continue
 		}
-		table := tokens[n+1]
-		if !computerRowTables[table] {
+		table := n + 1
+		if tokens[table] == "lateral" && table+1 < len(tokens) {
+			table++
+		}
+		if tokens[table] == "," || sqlKeywords[tokens[table]] {
 			continue
 		}
-		names[table] = true
-		alias := n + 2
+		source := querySource{table: tokens[table], name: tokens[table]}
+		alias := table + 1
 		if alias < len(tokens) && tokens[alias] == "as" {
 			alias++
 		}
 		if alias < len(tokens) && tokens[alias] != "," && !sqlKeywords[tokens[alias]] {
-			names[tokens[alias]] = true
+			source.name = tokens[alias]
 		}
+		sources = append(sources, source)
 	}
-	return names
+	return sources
 }
 
 // splitQueryLevel replaces every top-level parenthesized group of a query
-// level with "()" and returns the groups' contents.
+// level with a placeholder word naming its index and returns the groups'
+// contents.
 func splitQueryLevel(level string) (string, []string) {
 	var outer strings.Builder
 	var nested []string
@@ -156,7 +184,7 @@ func splitQueryLevel(level string) (string, []string) {
 		case c == '(':
 			if depth == 0 {
 				start = n + 1
-				outer.WriteString("()")
+				fmt.Fprintf(&outer, " %s%d ", subqueryPrefix, len(nested))
 			}
 			depth++
 		case c == ')' && depth > 0:
@@ -169,6 +197,17 @@ func splitQueryLevel(level string) (string, []string) {
 		}
 	}
 	return outer.String(), nested
+}
+
+const subqueryPrefix = "subquery_placeholder_"
+
+func subqueryIndex(word string) (int, bool) {
+	digits, ok := strings.CutPrefix(word, subqueryPrefix)
+	if !ok {
+		return 0, false
+	}
+	index, err := strconv.Atoi(digits)
+	return index, err == nil
 }
 
 func TestComputerRowLockDerivation(t *testing.T) {
@@ -191,6 +230,11 @@ func TestComputerRowLockDerivation(t *testing.T) {
 		{"locking subquery", `SELECT * FROM runs WHERE computer_id IN (SELECT id FROM computers WHERE environment_id=$1 FOR UPDATE)`, true},
 		{"locking cte", `WITH c AS (SELECT id FROM computers WHERE id=$1 FOR UPDATE) SELECT r.* FROM runs r JOIN c ON c.id=r.computer_id FOR UPDATE OF r`, true},
 		{"reading cte", `WITH c AS (SELECT id FROM computers WHERE id=$1) SELECT r.* FROM runs r JOIN c ON c.id=r.computer_id FOR UPDATE OF r`, false},
+		{"locked from subquery", `SELECT * FROM (SELECT * FROM computers) c FOR UPDATE`, true},
+		{"from subquery named by of", `SELECT * FROM runs r JOIN (SELECT * FROM computer_instances) i ON i.computer_id=r.computer_id FOR UPDATE OF i`, true},
+		{"from subquery not named by of", `SELECT * FROM runs r JOIN (SELECT * FROM computers) c ON c.id=r.computer_id FOR UPDATE OF r`, false},
+		{"alias shadows table name", `SELECT * FROM computers c JOIN runs computers ON computers.computer_id=c.id FOR UPDATE OF computers`, false},
+		{"alias named by of", `SELECT * FROM computers c JOIN runs computers ON computers.computer_id=c.id FOR UPDATE OF c`, true},
 		{"comment and literal", `-- FROM computers FOR UPDATE
 SELECT * FROM runs WHERE note <> '(FROM computers FOR UPDATE' FOR UPDATE`, false},
 	} {
