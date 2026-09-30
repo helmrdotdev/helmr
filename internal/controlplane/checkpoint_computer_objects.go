@@ -37,7 +37,7 @@ func (s *Server) workerCheckpointComputerObject(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err = record(r.Context(), ref, request.Inspection); err != nil {
-		s.writeComputerPublicationError(w, err, computerCheckpointObjectOperation)
+		s.writeWorkerComputerError(w, err, computerCheckpointObjectOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

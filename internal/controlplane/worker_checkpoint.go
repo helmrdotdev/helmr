@@ -22,7 +22,7 @@ func (s *Server) workerRegisterCheckpoint(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if _, err = computer.RegisterCheckpoint(r.Context(), s.tx, ref, computerCheckpointManifest(request.Manifest)); err != nil {
-		s.writeComputerPublicationError(w, err, computerCheckpointRegisterOperation)
+		s.writeWorkerComputerError(w, err, computerCheckpointRegisterOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})
@@ -41,7 +41,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 	}
 	checkpoint, err := s.publisher.CompleteCheckpoint(r.Context(), ref, computerCheckpointManifest(request.Manifest))
 	if err != nil {
-		s.writeComputerPublicationError(w, err, computerCheckpointReadyOperation)
+		s.writeWorkerComputerError(w, err, computerCheckpointReadyOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID, ComputerDiskVersionID: pgvalue.UUIDString(checkpoint.PrivateComputerDiskVersionID)})
@@ -59,7 +59,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if _, err = computer.FailCheckpoint(r.Context(), s.tx, ref, request.Error); err != nil {
-		s.writeComputerPublicationError(w, err, computerCheckpointFailedOperation)
+		s.writeWorkerComputerError(w, err, computerCheckpointFailedOperation, "computer object publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerCheckpointResponse{ComputerInstanceID: request.ComputerInstanceID, WorkerEpoch: request.WorkerEpoch, DesiredVersion: request.DesiredVersion, CheckpointID: request.CheckpointID})

@@ -50,6 +50,12 @@ func (o computerOperation) publication() bool {
 	return o == computerCheckpointRegisterOperation || o == computerCheckpointObjectOperation || o == computerCheckpointReadyOperation || o == computerSaveOperation
 }
 
+// recordsObjects reports whether the operation records disk objects or
+// publishes a version from them, whose object conflicts it reports.
+func (o computerOperation) recordsObjects() bool {
+	return o.publication() || o == computerInitialObjectOperation || o == computerInitialVersionOperation
+}
+
 // computerAuthorityChanged is the conflict each Instance operation reports
 // when the authority it fences changed.
 var computerAuthorityChanged = map[computerOperation]string{
@@ -57,6 +63,9 @@ var computerAuthorityChanged = map[computerOperation]string{
 	computerInstanceRenewalOperation:     "Computer Instance writer is stale",
 	computerRunCleanupOperation:          "Run cleanup authority is stale",
 	computerRestorePlanOperation:         "Computer restore authority changed",
+	computerKeyDeliveryOperation:         "computer preparation authority changed",
+	computerInitialObjectOperation:       "computer preparation authority changed",
+	computerInitialVersionOperation:      "computer preparation authority changed",
 	computerCheckpointRegisterOperation:  "checkpoint registration is stale or differs from its candidate",
 	computerCheckpointObjectOperation:    "computer publication authority changed",
 	computerCheckpointReadyOperation:     "checkpoint ready source or candidate changed",
@@ -65,7 +74,10 @@ var computerAuthorityChanged = map[computerOperation]string{
 }
 
 // computerError maps a Computer owner error to the API error the client is
-// told about. Errors it does not describe are returned unchanged.
+// told about: stale claims first, then malformed input as 400, deterministic
+// conflicts including changed authority as 409 and recognized dependency
+// unavailability as 503. Errors it does not describe are returned unchanged
+// for the caller to log and report as internal.
 func computerError(err error, operation computerOperation) error {
 	var input computer.InputError
 	var keyConflict computer.KeyConflictError
@@ -78,34 +90,18 @@ func computerError(err error, operation computerOperation) error {
 	if errors.Is(err, computer.ErrCheckpointCandidate) {
 		return badRequest(err)
 	}
-	switch operation {
-	case computerKeyDeliveryOperation:
-		// Only a rejected authority is a conflict; any other failure leaves
-		// the delivery retryable.
-		if errors.Is(err, computer.ErrKeyUnavailable) {
-			return conflict(computer.ErrKeyUnavailable)
-		}
-		return unavailable(errors.New("computer key delivery is unavailable"))
-	case computerInitialObjectOperation:
-		switch {
-		case errors.Is(err, computer.ErrStorageUnavailable):
-			return unavailable(computer.ErrStorageUnavailable)
-		case errors.As(err, &objectConflict):
-			return conflict(objectConflict)
-		default:
-			return conflict(errors.New("computer object authority or registration changed"))
-		}
-	case computerInitialVersionOperation:
-		return conflict(errors.New("computer generation publication is unavailable"))
-	}
 	switch {
 	case errors.Is(err, computer.ErrAuthorityChanged) && computerAuthorityChanged[operation] != "",
 		operation.publication() && isDeterministicWorkerAdmission(err):
 		return conflict(errors.New(computerAuthorityChanged[operation]))
-	case operation.publication() && errors.As(err, &objectConflict):
+	case operation.recordsObjects() && errors.As(err, &objectConflict):
 		return conflict(objectConflict)
-	case operation == computerCheckpointObjectOperation && errors.Is(err, computer.ErrStorageUnavailable):
+	case (operation == computerInitialObjectOperation || operation == computerCheckpointObjectOperation) && errors.Is(err, computer.ErrStorageUnavailable):
 		return unavailable(errors.New("computer object unavailable"))
+	case operation == computerKeyDeliveryOperation && errors.Is(err, computer.ErrKeyUnavailable):
+		return conflict(computer.ErrKeyUnavailable)
+	case operation == computerKeyDeliveryOperation && errors.Is(err, computer.ErrKeyProviderUnavailable):
+		return unavailable(computer.ErrKeyProviderUnavailable)
 	case errors.As(err, &expired):
 		return gone(expired)
 	case errors.As(err, &input):
@@ -134,17 +130,17 @@ func computerError(err error, operation computerOperation) error {
 	}
 }
 
-// writeComputerPublicationError writes the failure of a worker's checkpoint,
-// disk object or publication operation. Failures the worker is not told about are logged
-// and reported as internal.
-func (s *Server) writeComputerPublicationError(w http.ResponseWriter, err error, operation computerOperation) {
+// writeWorkerComputerError writes the failure of a worker host's Computer
+// operation. Failures the worker is not told about are logged once and
+// reported as internal without their cause.
+func (s *Server) writeWorkerComputerError(w http.ResponseWriter, err error, operation computerOperation, logMessage string) {
 	mapped := computerError(err, operation)
 	if errorStatus(mapped) != http.StatusInternalServerError {
 		writeError(w, mapped)
 		return
 	}
-	s.log.Error("Computer object publication failed", "error", err)
-	writeError(w, errors.New("computer object publication failed"))
+	s.log.Error(logMessage, "error", err)
+	writeError(w, errors.New(logMessage))
 }
 
 // writeComputerError writes a public Computer operation's failure. Failures

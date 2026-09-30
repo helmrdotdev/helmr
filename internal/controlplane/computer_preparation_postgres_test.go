@@ -98,9 +98,21 @@ func inspectedPackDigest(inspection blockformat.ObjectInspection) string {
 }
 
 // publishInitialGeneration prepares the Instance as its worker host does:
-// it fetches the initial key, registers an empty root, uploads and certifies
-// it, and publishes it as the initial version with config.
+// it certifies an empty root under the initial key and publishes it as the
+// initial version with config.
 func (f initialPublicationFixture) publishInitialGeneration(t *testing.T, client *workerclient.Client, config oci.RuntimeConfig) (workerapi.ComputerKeyMaterial, disk.GenerationRoot, workerapi.InitialComputerGenerationResponse) {
+	t.Helper()
+	key, root, _ := f.certifyInitialRoot(t, client)
+	published, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: pgvalue.UUIDString(f.runtime), DesiredVersion: 1, Root: root, Config: config})
+	if err != nil {
+		t.Fatalf("generation publication: %v", err)
+	}
+	return key, root, published
+}
+
+// certifyInitialRoot fetches the initial key, registers an empty root,
+// uploads and certifies it, and returns the root with its object request.
+func (f initialPublicationFixture) certifyInitialRoot(t *testing.T, client *workerclient.Client) (workerapi.ComputerKeyMaterial, disk.GenerationRoot, workerapi.InitialComputerObjectRequest) {
 	t.Helper()
 	runtime := pgvalue.UUIDString(f.runtime)
 	key, err := client.InitialComputerKey(t.Context(), workerapi.InitialComputerKeyRequest{ComputerInstanceID: runtime, DesiredVersion: 1})
@@ -141,11 +153,7 @@ func (f initialPublicationFixture) publishInitialGeneration(t *testing.T, client
 	if err != nil {
 		t.Fatal(err)
 	}
-	published, err := client.PublishInitialComputerGeneration(t.Context(), workerapi.InitialComputerGenerationRequest{ComputerInstanceID: runtime, DesiredVersion: 1, Root: root, Config: config})
-	if err != nil {
-		t.Fatalf("generation publication: %v", err)
-	}
-	return key, root, published
+	return key, root, object
 }
 
 // A worker host prepares an initial Instance through the authenticated

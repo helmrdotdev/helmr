@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"unicode/utf8"
 	"uuid"
 
@@ -18,9 +19,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// ErrKeyUnavailable reports that the preparation no longer authorizes key
-// delivery, or that the persisted key cannot be delivered for it.
-var ErrKeyUnavailable = errors.New("computer key authority is unavailable")
+// ErrKeyUnavailable reports that the persisted key or retained source a
+// preparation needs is absent or violates its invariants, so no key can be
+// delivered for it. A preparation that no longer authorizes delivery reports
+// ErrAuthorityChanged instead.
+var ErrKeyUnavailable = errors.New("computer key is unavailable")
+
+// ErrKeyProviderUnavailable reports that the wrapping provider failed to wrap
+// or unwrap a Computer data key.
+var ErrKeyProviderUnavailable = errors.New("computer key provider is unavailable")
+
+// keyUnavailable reports ErrKeyUnavailable with its cause as text. The cause
+// is never wrapped: an absence signalled by pgx.ErrNoRows must not read as a
+// changed authority.
+func keyUnavailable(format string, args ...any) error {
+	return fmt.Errorf("%w: %s", ErrKeyUnavailable, fmt.Sprintf(format, args...))
+}
+
+func keyProviderUnavailable(operation string, err error) error {
+	return fmt.Errorf("%w: %s: %w", ErrKeyProviderUnavailable, operation, err)
+}
 
 // KeyWrapper is the provider that wraps Computer data keys. Only the key
 // broker chooses envelopes, wrapping keys, scopes and data-key identifiers;
@@ -97,102 +115,102 @@ func encryptionScope(orgID, environmentID, computerID string) (string, error) {
 // pins it to the Instance, the key is unwrapped outside it, and a third
 // transaction revalidates the preparation and pin before delivery. A racing
 // first delivery uses the winner's persisted key, and a lost reply keeps the
-// same pin for its retry. Authority rejections report ErrKeyUnavailable;
-// stale claims report workergroup.ErrStaleClaims; other failures keep their
-// own classification.
+// same pin for its retry. A preparation that no longer authorizes delivery
+// reports ErrAuthorityChanged, stale claims report workergroup.ErrStaleClaims,
+// an absent or changed key reports ErrKeyUnavailable and a failed provider
+// call reports ErrKeyProviderUnavailable; any other failure keeps its cause.
+// Plaintext is cleared on every failure.
 func (b *KeyBroker) InitialKey(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (KeyMaterial, error) {
-	row, scope, err := b.pinInitialKey(ctx, principal, ref, nil, "")
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	pin, err := b.pinInitialKey(ctx, principal, ref, nil, "")
+	if err != nil {
 		return KeyMaterial{}, err
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
+	if pin.absent {
 		// Scope discovery was authorized, but no secret leaves the control
 		// plane here. Provider work must not hold SQL locks; a second
 		// transaction revalidates before insert.
-		if scope == "" {
-			return KeyMaterial{}, ErrKeyUnavailable
-		}
 		key := make([]byte, computerkey.Size)
 		if _, err = rand.Read(key); err != nil {
-			return KeyMaterial{}, err
+			return KeyMaterial{}, fmt.Errorf("generate computer key: %w", err)
 		}
 		keyID := pgvalue.UUID(uuid.NewV7())
-		envelope, wrapErr := b.wrapper.Wrap(ctx, scope, pgvalue.UUIDString(keyID), key)
+		envelope, wrapErr := b.wrapper.Wrap(ctx, pin.scope, pgvalue.UUIDString(keyID), key)
 		clear(key)
 		if wrapErr != nil {
-			return KeyMaterial{}, errors.New("wrap computer key")
+			return KeyMaterial{}, keyProviderUnavailable("wrap computer key", wrapErr)
 		}
 		candidate := db.ComputerDataKey{ID: keyID, WrappingKeyID: envelope.WrappingKeyID, WrappedKey: envelope.Ciphertext}
-		row, scope, err = b.pinInitialKey(ctx, principal, ref, &candidate, scope)
-		if err != nil {
+		if pin, err = b.pinInitialKey(ctx, principal, ref, &candidate, pin.scope); err != nil {
 			return KeyMaterial{}, err
 		}
 	}
-	keyID := pgvalue.UUIDString(row.ID)
-	plain, err := b.wrapper.Unwrap(ctx, scope, keyID, computerkey.Envelope{WrappingKeyID: row.WrappingKeyID, Ciphertext: row.WrappedKey})
+	keyID := pgvalue.UUIDString(pin.key.ID)
+	plain, err := b.wrapper.Unwrap(ctx, pin.scope, keyID, computerkey.Envelope{WrappingKeyID: pin.key.WrappingKeyID, Ciphertext: pin.key.WrappedKey})
 	if err != nil {
 		clear(plain)
-		return KeyMaterial{}, errors.New("unwrap computer key")
+		return KeyMaterial{}, keyProviderUnavailable("unwrap computer key", err)
+	}
+	if len(plain) != computerkey.Size {
+		clear(plain)
+		return KeyMaterial{}, keyUnavailable("unwrapped computer key has %d bytes", len(plain))
 	}
 	// A successful unwrap is not a delivery grant. Revocation, expiry,
 	// cancellation or a changed reservation during provider I/O must suppress
-	// the response. Only authority rejections become unavailability; stale
-	// claims and database failures keep their own classification.
-	current, currentScope, err := b.pinInitialKey(ctx, principal, ref, nil, "")
-	if err != nil && !errors.Is(err, ErrKeyUnavailable) && !errors.Is(err, pgx.ErrNoRows) {
+	// the response.
+	current, err := b.pinInitialKey(ctx, principal, ref, nil, "")
+	if err != nil {
 		clear(plain)
 		return KeyMaterial{}, err
 	}
-	if err != nil || currentScope != scope || current.ID != row.ID || current.WrappingKeyID != row.WrappingKeyID || !bytes.Equal(current.WrappedKey, row.WrappedKey) || len(plain) != computerkey.Size {
+	if current.absent || current.scope != pin.scope || current.key.ID != pin.key.ID || current.key.WrappingKeyID != pin.key.WrappingKeyID || !bytes.Equal(current.key.WrappedKey, pin.key.WrappedKey) {
 		clear(plain)
-		return KeyMaterial{}, ErrKeyUnavailable
+		return KeyMaterial{}, keyUnavailable("pinned computer key changed during delivery")
 	}
-	return KeyMaterial{Scope: scope, ID: keyID, Key: plain}, nil
+	return KeyMaterial{Scope: pin.scope, ID: keyID, Key: plain}, nil
+}
+
+// initialKeyPin is the write key one initial-key transaction pinned, or its
+// authorized absence together with the scope a new key must be wrapped for.
+type initialKeyPin struct {
+	key    db.ComputerDataKey
+	scope  string
+	absent bool
 }
 
 // pinInitialKey runs one initial-key transaction under the preparation
-// locks. Without a candidate it pins an existing key, or reports an
-// authorized absence as pgx.ErrNoRows together with the discovered scope;
-// with a candidate it creates that key when none exists yet. No plaintext or
-// provider I/O occurs inside the transaction.
-func (b *KeyBroker) pinInitialKey(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef, candidate *db.ComputerDataKey, expectedScope string) (db.ComputerDataKey, string, error) {
-	var pinned db.ComputerDataKey
-	var pinnedScope, discoveredScope string
+// locks. Without a candidate it pins an existing key or reports its
+// authorized absence; with a candidate it creates that key when none exists
+// yet. No plaintext or provider I/O occurs inside the transaction. A fence
+// that no longer holds, including a passed deadline, reports
+// ErrAuthorityChanged.
+func (b *KeyBroker) pinInitialKey(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef, candidate *db.ComputerDataKey, expectedScope string) (initialKeyPin, error) {
+	var pin initialKeyPin
 	err := db.RunTx(ctx, b.txb, func(tx pgx.Tx) error {
-		fence, err := lockInitialFence(ctx, tx, principal, ref)
-		if err != nil {
-			return ErrKeyUnavailable
-		}
-		p, err := fence.claim(ctx, principal)
+		p, err := lockInitialPreparation(ctx, tx, principal, ref)
 		if err != nil {
 			return err
 		}
-		row, scope, err := p.pinKey(ctx, candidate, expectedScope)
-		if errors.Is(err, pgx.ErrNoRows) {
-			discoveredScope = scope
-			return err
-		}
-		if err != nil {
-			return err
-		}
-		pinned, pinnedScope = row, scope
-		return nil
+		pin, err = p.pinKey(ctx, candidate, expectedScope)
+		return err
 	})
 	if err != nil {
-		return db.ComputerDataKey{}, discoveredScope, err
+		return initialKeyPin{}, authorityChanged(err)
 	}
-	return pinned, pinnedScope, nil
+	return pin, nil
 }
 
 // pinKey pins the Instance's write key, creating the Computer's first key
 // from the candidate when neither the Computer nor the Instance has one. A
-// missing key without a candidate returns pgx.ErrNoRows with the scope the
+// missing key without a candidate is an authorized absence with the scope the
 // candidate must be wrapped for. It rechecks the preparation deadlines after
 // its writes.
-func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDataKey, expectedScope string) (db.ComputerDataKey, string, error) {
+func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDataKey, expectedScope string) (initialKeyPin, error) {
 	scope, err := p.encryptionScope()
-	if err != nil || (expectedScope != "" && expectedScope != scope) {
-		return db.ComputerDataKey{}, "", ErrKeyUnavailable
+	if err != nil {
+		return initialKeyPin{}, keyUnavailable("%v", err)
+	}
+	if expectedScope != "" && expectedScope != scope {
+		return initialKeyPin{}, keyUnavailable("computer encryption scope changed")
 	}
 	q := db.New(p.tx)
 	runtimeID := p.instance.ID
@@ -203,42 +221,42 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 		// persisted key with a fresh one.
 		var current, runtime pgtype.UUID
 		if err = p.tx.QueryRow(ctx, `SELECT c.write_key_id,r.write_key_id FROM computers c JOIN computer_instances r ON r.environment_id=c.environment_id AND r.computer_id=c.id WHERE r.id=$1`, runtimeID).Scan(&current, &runtime); err != nil {
-			return db.ComputerDataKey{}, "", err
+			return initialKeyPin{}, fmt.Errorf("read computer write key pointers: %w", err)
 		}
 		if current.Valid || runtime.Valid {
-			return db.ComputerDataKey{}, "", ErrKeyUnavailable
+			return initialKeyPin{}, keyUnavailable("persisted computer write key is unavailable")
 		}
 		if candidate == nil {
 			if err = p.checkDeadlines(ctx); err != nil {
-				return db.ComputerDataKey{}, "", ErrKeyUnavailable
+				return initialKeyPin{}, err
 			}
-			return db.ComputerDataKey{}, scope, pgx.ErrNoRows
+			return initialKeyPin{scope: scope, absent: true}, nil
 		}
 		row, err = q.CreateComputerKey(ctx, db.CreateComputerKeyParams{ID: candidate.ID, EnvironmentID: p.environmentID, ComputerID: p.computerID, WrappingKeyID: candidate.WrappingKeyID, WrappedKey: candidate.WrappedKey})
 		if err != nil {
-			return db.ComputerDataKey{}, "", err
+			return initialKeyPin{}, fmt.Errorf("create computer key: %w", err)
 		}
 		n, err := q.InitializeComputerWriteKey(ctx, db.InitializeComputerWriteKeyParams{KeyID: row.ID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
 		if err != nil {
-			return db.ComputerDataKey{}, "", err
+			return initialKeyPin{}, fmt.Errorf("initialize computer write key: %w", err)
 		}
 		if n != 1 {
-			return db.ComputerDataKey{}, "", ErrKeyUnavailable
+			return initialKeyPin{}, keyUnavailable("computer write key is already initialized")
 		}
 	} else if err != nil {
-		return db.ComputerDataKey{}, "", err
+		return initialKeyPin{}, fmt.Errorf("read computer write key: %w", err)
 	}
 	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: row.ID, ComputerInstanceID: runtimeID, EnvironmentID: row.EnvironmentID, ComputerID: row.ComputerID})
 	if err != nil {
-		return db.ComputerDataKey{}, "", err
+		return initialKeyPin{}, fmt.Errorf("pin computer write key: %w", err)
 	}
 	if n != 1 {
-		return db.ComputerDataKey{}, "", ErrKeyUnavailable
+		return initialKeyPin{}, keyUnavailable("computer write key pin was rejected")
 	}
 	if err = p.checkDeadlines(ctx); err != nil {
-		return db.ComputerDataKey{}, "", ErrKeyUnavailable
+		return initialKeyPin{}, err
 	}
-	return row, scope, nil
+	return initialKeyPin{key: row, scope: scope}, nil
 }
 
 // SourceKeys pins the Instance's write key and delivers the plaintext keys of
@@ -246,10 +264,9 @@ func (p initialPreparation) pinKey(ctx context.Context, candidate *db.ComputerDa
 // the closure lacks it. One transaction reads the envelopes under the
 // preparation locks, the keys are unwrapped outside it, and a second
 // transaction revalidates the preparation and envelopes before delivery. It
-// grants no execution or publication. Authority rejections report
-// ErrKeyUnavailable; stale claims report workergroup.ErrStaleClaims; other
-// failures keep their own classification. The caller clears the returned
-// plaintext.
+// grants no execution or publication. Errors are classified as InitialKey
+// classifies them. The caller clears the returned plaintext; it is cleared
+// on every failure.
 func (b *KeyBroker) SourceKeys(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (_ SourceMaterial, retErr error) {
 	source, rows, err := b.sourceEnvelopes(ctx, principal, ref)
 	if err != nil {
@@ -263,37 +280,42 @@ func (b *KeyBroker) SourceKeys(ctx context.Context, principal workergroup.HostPr
 	for _, row := range rows {
 		id := pgvalue.UUIDString(row.ID)
 		key, err := b.wrapper.Unwrap(ctx, source.Scope, id, computerkey.Envelope{WrappingKeyID: row.WrappingKeyID, Ciphertext: row.WrappedKey})
-		if err != nil || len(key) != computerkey.Size {
+		if err != nil {
 			clear(key)
-			return SourceMaterial{}, ErrKeyUnavailable
+			return SourceMaterial{}, keyProviderUnavailable("unwrap computer key", err)
+		}
+		if len(key) != computerkey.Size {
+			clear(key)
+			return SourceMaterial{}, keyUnavailable("unwrapped computer key has %d bytes", len(key))
 		}
 		source.Keys = append(source.Keys, KeyMaterial{Scope: source.Scope, ID: id, Key: key})
 	}
-	// Only authority rejections become unavailability; stale claims and
-	// database failures keep their own classification.
 	current, currentRows, err := b.sourceEnvelopes(ctx, principal, ref)
-	if err != nil && !errors.Is(err, ErrKeyUnavailable) {
+	if err != nil {
 		return SourceMaterial{}, err
 	}
-	if err != nil || current.VersionID != source.VersionID || current.Scope != source.Scope || current.WriteKeyID != source.WriteKeyID || current.Root != source.Root || len(currentRows) != len(rows) {
-		return SourceMaterial{}, ErrKeyUnavailable
+	if current.VersionID != source.VersionID || current.Scope != source.Scope || current.WriteKeyID != source.WriteKeyID || current.Root != source.Root || len(currentRows) != len(rows) {
+		return SourceMaterial{}, keyUnavailable("retained computer source changed during delivery")
 	}
 	for i, row := range rows {
 		now := currentRows[i]
 		if now.ID != row.ID || now.WrappingKeyID != row.WrappingKeyID || !bytes.Equal(now.WrappedKey, row.WrappedKey) {
-			return SourceMaterial{}, ErrKeyUnavailable
+			return SourceMaterial{}, keyUnavailable("retained computer source key changed during delivery")
 		}
 	}
 	return source, nil
 }
 
+// sourceEnvelopes reads the source envelopes in one transaction under the
+// source preparation authority. A fence that no longer holds, including a
+// passed deadline, reports ErrAuthorityChanged.
 func (b *KeyBroker) sourceEnvelopes(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef) (SourceMaterial, []db.ComputerDataKey, error) {
 	var source SourceMaterial
 	var envelopes []db.ComputerDataKey
 	err := db.RunTx(ctx, b.txb, func(tx pgx.Tx) error {
 		fence, err := lockSourceFence(ctx, tx, principal, ref)
 		if err != nil {
-			return ErrKeyUnavailable
+			return err
 		}
 		p, err := fence.claim(ctx, principal)
 		if err != nil {
@@ -303,7 +325,7 @@ func (b *KeyBroker) sourceEnvelopes(ctx context.Context, principal workergroup.H
 		return err
 	})
 	if err != nil {
-		return SourceMaterial{}, nil, err
+		return SourceMaterial{}, nil, authorityChanged(err)
 	}
 	return source, envelopes, nil
 }
@@ -315,16 +337,25 @@ func (p sourcePreparation) envelopes(ctx context.Context) (SourceMaterial, []db.
 	q := db.New(p.tx)
 	runtimeID := p.instance.ID
 	retained, root, keys, err := loadRetainedGeneration(ctx, q, runtimeID)
-	if err != nil || retained.VersionID != p.versionID || root.LogicalBytes != p.logicalBytes {
-		return SourceMaterial{}, nil, ErrKeyUnavailable
+	if err != nil {
+		return SourceMaterial{}, nil, err
+	}
+	if retained.VersionID != p.versionID || root.LogicalBytes != p.logicalBytes {
+		return SourceMaterial{}, nil, keyUnavailable("retained computer source differs from preparation")
 	}
 	writeKey, err := q.GetRuntimeComputerWriteKey(ctx, db.GetRuntimeComputerWriteKeyParams{ComputerInstanceID: runtimeID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SourceMaterial{}, nil, keyUnavailable("computer write key is absent")
+	}
 	if err != nil {
-		return SourceMaterial{}, nil, ErrKeyUnavailable
+		return SourceMaterial{}, nil, fmt.Errorf("read computer write key: %w", err)
 	}
 	n, err := q.PinRuntimeComputerKey(ctx, db.PinRuntimeComputerKeyParams{KeyID: writeKey.ID, ComputerInstanceID: runtimeID, EnvironmentID: p.environmentID, ComputerID: p.computerID})
-	if err != nil || n != 1 {
-		return SourceMaterial{}, nil, ErrKeyUnavailable
+	if err != nil {
+		return SourceMaterial{}, nil, fmt.Errorf("pin computer write key: %w", err)
+	}
+	if n != 1 {
+		return SourceMaterial{}, nil, keyUnavailable("computer write key pin was rejected")
 	}
 	found := false
 	for _, k := range keys {
@@ -335,10 +366,10 @@ func (p sourcePreparation) envelopes(ctx context.Context) (SourceMaterial, []db.
 	}
 	scope, err := p.encryptionScope()
 	if err != nil {
-		return SourceMaterial{}, nil, ErrKeyUnavailable
+		return SourceMaterial{}, nil, keyUnavailable("%v", err)
 	}
 	if err = p.checkDeadlines(ctx); err != nil {
-		return SourceMaterial{}, nil, ErrKeyUnavailable
+		return SourceMaterial{}, nil, err
 	}
 	return SourceMaterial{VersionID: pgvalue.UUIDString(retained.VersionID), Scope: scope, Root: root, WriteKeyID: pgvalue.UUIDString(writeKey.ID)}, keys, nil
 }
@@ -346,29 +377,33 @@ func (p sourcePreparation) envelopes(ctx context.Context) (SourceMaterial, []db.
 // loadRetainedGeneration reads one retained generation and its complete
 // certified key closure inside the caller's fenced transaction. Retention is
 // not permission: it neither authorizes delivery nor unwraps keys, and
-// callers revalidate live authority after any provider operation.
+// callers revalidate live authority after any provider operation. An absent,
+// invalid or incomplete retained generation reports ErrKeyUnavailable.
 func loadRetainedGeneration(ctx context.Context, q *db.Queries, runtimeID pgtype.UUID) (db.GetInstanceComputerSourceRootRow, disk.GenerationRoot, []db.ComputerDataKey, error) {
 	source, err := q.GetInstanceComputerSourceRoot(ctx, runtimeID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return source, disk.GenerationRoot{}, nil, keyUnavailable("computer source is not retained")
+	}
 	if err != nil {
-		return source, disk.GenerationRoot{}, nil, err
+		return source, disk.GenerationRoot{}, nil, fmt.Errorf("read retained computer source: %w", err)
 	}
 	root, err := disk.ParseGenerationRoot(source.Locator, source.LogicalBytes)
 	if err != nil {
-		return source, disk.GenerationRoot{}, nil, err
+		return source, disk.GenerationRoot{}, nil, keyUnavailable("retained computer source root is invalid: %v", err)
 	}
 	keys, err := q.ListInstanceComputerSourceKeys(ctx, runtimeID)
 	if err != nil {
-		return source, disk.GenerationRoot{}, nil, err
+		return source, disk.GenerationRoot{}, nil, fmt.Errorf("read retained computer source keys: %w", err)
 	}
 	hasRootKey := false
 	for _, key := range keys {
 		if !key.Available.Valid || !key.Available.Bool || len(key.WrappedKey) == 0 {
-			return source, disk.GenerationRoot{}, nil, errors.New("retained computer source key unavailable")
+			return source, disk.GenerationRoot{}, nil, keyUnavailable("retained computer source key is unavailable")
 		}
 		hasRootKey = hasRootKey || pgvalue.UUIDString(key.ID) == root.Page.KeyID
 	}
 	if !hasRootKey {
-		return source, disk.GenerationRoot{}, nil, errors.New("retained computer root key missing")
+		return source, disk.GenerationRoot{}, nil, keyUnavailable("retained computer root key is missing")
 	}
 	return source, root, keys, nil
 }

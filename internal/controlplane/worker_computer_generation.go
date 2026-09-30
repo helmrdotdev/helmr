@@ -1,7 +1,6 @@
 package controlplane
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 
@@ -21,13 +20,9 @@ func (s *Server) workerPublishInitialComputerGeneration(w http.ResponseWriter, r
 		writeError(w, err)
 		return
 	}
-	if err := request.Root.Validate(request.Root.LogicalBytes); err != nil {
-		writeError(w, badRequest(errors.New("invalid computer generation root")))
-		return
-	}
 	published, err := s.publisher.PublishInitialVersion(r.Context(), workerFromContext(r.Context()), ref, computer.InitialVersion{Root: request.Root, Config: request.Config})
 	if err != nil {
-		writeError(w, computerError(err, computerInitialVersionOperation))
+		s.writeWorkerComputerError(w, err, computerInitialVersionOperation, "initial computer version publication failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.InitialComputerGenerationResponse{ComputerID: published.ComputerID.String(), VersionID: published.VersionID.String()})

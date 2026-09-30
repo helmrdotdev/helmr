@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 	"uuid"
@@ -69,19 +71,22 @@ func TestComputerErrorPreservesPublicStatusesAndWorkerFailures(t *testing.T) {
 }
 
 // Instance operations authenticated by a worker host report stale claims as
-// 401, changed authority as 409 and rejected input as 400; other failures
-// stay internal. Key delivery reports only rejected authority as a conflict
-// and anything else as retryable unavailability; initial preparation reports
-// every other failure as a conflict except unavailable object storage;
-// checkpoint objects and saves keep their own storage statuses; checkpoint
+// 401, rejected input as 400, changed authority and other deterministic
+// conflicts as 409 and recognized dependency unavailability as 503; other
+// failures stay internal. Key delivery reports an absent or changed key as a
+// conflict and a failed key provider as unavailability; initial and
+// checkpoint objects report unavailable object storage as unavailability,
+// while checkpoint readiness and saves keep it internal; checkpoint
 // registration, readiness and failure report a rejected candidate as 400, and
-// only registration treats a deterministic admission failure as a conflict.
+// only publication treats a deterministic admission failure as a conflict.
 // Run-sourced aggregate operations report stale claims through their Run
 // source, never as a Computer failure.
 func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 	input := computer.ValidateKey(new(" padded "))
 	internal := errors.New("database unavailable")
 	storage := fmt.Errorf("%w: %w", computer.ErrStorageUnavailable, errors.New("stat timeout"))
+	provider := fmt.Errorf("%w: unwrap computer key: %w", computer.ErrKeyProviderUnavailable, errors.New("provider timeout"))
+	keyUnavailable := fmt.Errorf("%w: computer source is not retained", computer.ErrKeyUnavailable)
 	admission := &pgconn.PgError{Code: "23514"}
 	candidate := fmt.Errorf("%w: manifest", computer.ErrCheckpointCandidate)
 	for _, test := range []struct {
@@ -106,17 +111,27 @@ func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 		{"restore plan stale claims", workergroup.ErrStaleClaims, computerRestorePlanOperation, http.StatusUnauthorized, "unauthorized"},
 		{"restore plan internal", internal, computerRestorePlanOperation, http.StatusInternalServerError, "internal_error"},
 		{"key delivery stale claims", workergroup.ErrStaleClaims, computerKeyDeliveryOperation, http.StatusUnauthorized, "unauthorized"},
-		{"key delivery unavailable", computer.ErrKeyUnavailable, computerKeyDeliveryOperation, http.StatusConflict, "conflict"},
-		{"key delivery internal", internal, computerKeyDeliveryOperation, http.StatusServiceUnavailable, "service_unavailable"},
+		{"key delivery stale claims before provider", errors.Join(workergroup.ErrStaleClaims, provider), computerKeyDeliveryOperation, http.StatusUnauthorized, "unauthorized"},
+		{"key delivery changed", computer.ErrAuthorityChanged, computerKeyDeliveryOperation, http.StatusConflict, "conflict"},
+		{"key delivery unavailable", keyUnavailable, computerKeyDeliveryOperation, http.StatusConflict, "conflict"},
+		{"key delivery provider", provider, computerKeyDeliveryOperation, http.StatusServiceUnavailable, "service_unavailable"},
+		{"key delivery input", input, computerKeyDeliveryOperation, http.StatusBadRequest, "bad_request"},
+		{"key delivery internal", internal, computerKeyDeliveryOperation, http.StatusInternalServerError, "internal_error"},
+		{"key delivery storage", storage, computerKeyDeliveryOperation, http.StatusInternalServerError, "internal_error"},
 		{"initial object stale claims", workergroup.ErrStaleClaims, computerInitialObjectOperation, http.StatusUnauthorized, "unauthorized"},
 		{"initial object storage", storage, computerInitialObjectOperation, http.StatusServiceUnavailable, "service_unavailable"},
 		{"initial object conflict", computer.ObjectConflictError{}, computerInitialObjectOperation, http.StatusConflict, "conflict"},
 		{"initial object changed", computer.ErrAuthorityChanged, computerInitialObjectOperation, http.StatusConflict, "conflict"},
-		{"initial object input", input, computerInitialObjectOperation, http.StatusConflict, "conflict"},
-		{"initial object internal", internal, computerInitialObjectOperation, http.StatusConflict, "conflict"},
+		{"initial object input", input, computerInitialObjectOperation, http.StatusBadRequest, "bad_request"},
+		{"initial object admission", admission, computerInitialObjectOperation, http.StatusInternalServerError, "internal_error"},
+		{"initial object key unavailable", keyUnavailable, computerInitialObjectOperation, http.StatusInternalServerError, "internal_error"},
+		{"initial object internal", internal, computerInitialObjectOperation, http.StatusInternalServerError, "internal_error"},
 		{"initial version stale claims", workergroup.ErrStaleClaims, computerInitialVersionOperation, http.StatusUnauthorized, "unauthorized"},
+		{"initial version input", input, computerInitialVersionOperation, http.StatusBadRequest, "bad_request"},
+		{"initial version changed", computer.ErrAuthorityChanged, computerInitialVersionOperation, http.StatusConflict, "conflict"},
 		{"initial version conflict", computer.ObjectConflictError{}, computerInitialVersionOperation, http.StatusConflict, "conflict"},
-		{"initial version internal", internal, computerInitialVersionOperation, http.StatusConflict, "conflict"},
+		{"initial version storage", storage, computerInitialVersionOperation, http.StatusInternalServerError, "internal_error"},
+		{"initial version internal", internal, computerInitialVersionOperation, http.StatusInternalServerError, "internal_error"},
 		{"checkpoint object changed", computer.ErrAuthorityChanged, computerCheckpointObjectOperation, http.StatusConflict, "conflict"},
 		{"checkpoint object admission", admission, computerCheckpointObjectOperation, http.StatusConflict, "conflict"},
 		{"checkpoint object conflict", computer.ObjectConflictError{}, computerCheckpointObjectOperation, http.StatusConflict, "conflict"},
@@ -158,6 +173,35 @@ func TestComputerErrorMapsInstanceOperations(t *testing.T) {
 		if failure, ok := workerComputerFailure(workergroup.ErrStaleClaims, operation); ok {
 			t.Fatalf("run-sourced operation %d described stale claims as %+v", operation, failure)
 		}
+	}
+}
+
+// A worker Computer failure the worker is not told about is logged once with
+// its cause and reported as internal without it; a described failure is
+// reported as mapped and not logged.
+func TestWriteWorkerComputerErrorLogsOnlyInternalFailures(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		err    error
+		status int
+		logged bool
+	}{
+		{"internal", errors.New("database connection reset"), http.StatusInternalServerError, true},
+		{"conflict", fmt.Errorf("%w: computer source is not retained", computer.ErrKeyUnavailable), http.StatusConflict, false},
+		{"provider", fmt.Errorf("%w: database connection reset", computer.ErrKeyProviderUnavailable), http.StatusServiceUnavailable, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			server := &Server{log: slog.New(slog.NewJSONHandler(&logs, nil))}
+			recorder := httptest.NewRecorder()
+			server.writeWorkerComputerError(recorder, test.err, computerKeyDeliveryOperation, "computer source delivery failed")
+			if recorder.Code != test.status || strings.Contains(recorder.Body.String(), "database connection reset") {
+				t.Fatalf("response = %d %s, want %d without cause", recorder.Code, recorder.Body, test.status)
+			}
+			if count := strings.Count(logs.String(), "database connection reset"); test.logged != (count == 1) || count > 1 {
+				t.Fatalf("logged %d times: %s", count, logs.String())
+			}
+		})
 	}
 }
 

@@ -23,7 +23,7 @@ func (s *Server) workerGetComputerRunCleanup(w http.ResponseWriter, r *http.Requ
 	}
 	process, err := computer.RunCleanup(r.Context(), s.tx, workerFromContext(r.Context()), writer)
 	if err != nil {
-		writeError(w, computerError(err, computerRunCleanupOperation))
+		s.writeWorkerComputerError(w, err, computerRunCleanupOperation, "Computer Run cleanup failed")
 		return
 	}
 	var response workerapi.ComputerRunCleanupResponse
@@ -48,7 +48,7 @@ func (s *Server) workerReconcileComputerRun(w http.ResponseWriter, r *http.Reque
 	}
 	process := computer.RunProcess{RunID: runID, RunLeaseID: leaseID, AttemptNumber: request.AttemptNumber}
 	if err := computer.ReconcileRun(r.Context(), s.tx, workerFromContext(r.Context()), writer, process); err != nil {
-		writeError(w, computerError(err, computerRunCleanupOperation))
+		s.writeWorkerComputerError(w, err, computerRunCleanupOperation, "Computer Run cleanup failed")
 		return
 	}
 	writeJSON(w, http.StatusOK, struct{}{})

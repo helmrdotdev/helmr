@@ -31,11 +31,7 @@ func (s *Server) workerComputerRestorePlan(w http.ResponseWriter, r *http.Reques
 	}
 	plan, err := computer.ReadRestorePlan(r.Context(), s.tx, s.computerFencingKey, workerFromContext(r.Context()), computer.WriterRef{EnvironmentID: environmentID, InstanceID: instanceID, WriterGeneration: request.WriterGeneration})
 	if err != nil {
-		mapped := computerError(err, computerRestorePlanOperation)
-		if errorStatus(mapped) == http.StatusInternalServerError {
-			s.log.Error("load Computer restore plan", "error", err)
-		}
-		writeError(w, mapped)
+		s.writeWorkerComputerError(w, err, computerRestorePlanOperation, "load Computer restore plan")
 		return
 	}
 	writeJSON(w, http.StatusOK, workerapi.ComputerRestorePlanResponse{Plan: workerRestorePlan(plan)})

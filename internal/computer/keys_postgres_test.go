@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type observingKeyWrapper struct {
@@ -132,7 +133,7 @@ func TestInitialComputerKeyRevocationDuringProviderIO(t *testing.T) {
 				if err == nil || len(result.Key) != 0 {
 					t.Fatal("revoked authority received key")
 				}
-				want := ErrKeyUnavailable
+				want := ErrAuthorityChanged
 				if change == "claim" || change == "group claim" {
 					want = workergroup.ErrStaleClaims
 				}
@@ -291,8 +292,8 @@ func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T)
 	b := f.broker
 	observer := &observingKeyWrapper{KeyWrapper: b.wrapper, unwrapErr: errors.New("provider timeout")}
 	b.wrapper = observer
-	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); err == nil || len(result.Key) != 0 {
-		t.Fatal("provider error returned key")
+	if result, err := b.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || len(result.Key) != 0 {
+		t.Fatalf("provider error = %v", err)
 	}
 	if !bytes.Equal(observer.returned, make([]byte, 32)) {
 		t.Fatal("failed provider material not cleared")
@@ -312,62 +313,239 @@ func TestInitialComputerKeyTransientProviderFailureRetainsIdentity(t *testing.T)
 	}
 }
 
-var errInjectedClaimRead = errors.New("injected Worker claim read failure")
+var errInjectedSQL = errors.New("injected SQL failure")
 
-// claimReadFaults fails the worker claim read once armed. Authority locks
-// still run, so the injected failure reaches exactly the post-lock claim
-// comparison.
-type claimReadFaults struct {
+// sqlFaults fails, once armed, one statement whose text contains match after
+// letting skip of them through, or the next commit. Authority locks before
+// the fault still run, so the failure reaches exactly the chosen step.
+type sqlFaults struct {
 	db.TxBeginner
-	armed bool
+	mu     sync.Mutex
+	armed  bool
+	match  string
+	skip   int
+	commit bool
 }
 
-func (f *claimReadFaults) Begin(ctx context.Context) (pgx.Tx, error) {
+// arm fails the statement containing match after skip of them.
+func (f *sqlFaults) arm(match string, skip int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.armed, f.match, f.skip = true, match, skip
+}
+
+func (f *sqlFaults) armCommit() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.armed, f.commit = true, true
+}
+
+func (f *sqlFaults) fails(sql string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.armed || f.commit || !strings.Contains(sql, f.match) {
+		return false
+	}
+	if f.skip > 0 {
+		f.skip--
+		return false
+	}
+	f.armed = false
+	return true
+}
+
+func (f *sqlFaults) failsCommit() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.armed || !f.commit {
+		return false
+	}
+	f.armed = false
+	return true
+}
+
+func (f *sqlFaults) Begin(ctx context.Context) (pgx.Tx, error) {
 	tx, err := f.TxBeginner.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return claimReadFaultTx{Tx: tx, faults: f}, nil
+	return sqlFaultTx{Tx: tx, faults: f}, nil
 }
 
-type claimReadFaultTx struct {
+type sqlFaultTx struct {
 	pgx.Tx
-	faults *claimReadFaults
+	faults *sqlFaults
 }
 
-func (t claimReadFaultTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if t.faults.armed && strings.HasPrefix(sql, "SELECT w.claim_version,g.claim_version") {
-		return claimReadFaultRow{}
+func (t sqlFaultTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if t.faults.fails(sql) {
+		return pgconn.CommandTag{}, errInjectedSQL
+	}
+	return t.Tx.Exec(ctx, sql, args...)
+}
+
+func (t sqlFaultTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if t.faults.fails(sql) {
+		return nil, errInjectedSQL
+	}
+	return t.Tx.Query(ctx, sql, args...)
+}
+
+func (t sqlFaultTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if t.faults.fails(sql) {
+		return sqlFaultRow{}
 	}
 	return t.Tx.QueryRow(ctx, sql, args...)
 }
 
-type claimReadFaultRow struct{}
+func (t sqlFaultTx) Commit(ctx context.Context) error {
+	if t.faults.failsCommit() {
+		// The owner's transaction runner rolls back after a failed commit.
+		return errInjectedSQL
+	}
+	return t.Tx.Commit(ctx)
+}
 
-func (claimReadFaultRow) Scan(...any) error { return errInjectedClaimRead }
+type sqlFaultRow struct{}
+
+func (sqlFaultRow) Scan(...any) error { return errInjectedSQL }
+
+const (
+	claimReadSQL     = "SELECT w.claim_version,g.claim_version"
+	firstFenceSQL    = "SELECT environment_id,computer_id,region_id,observed_state FROM computer_instances"
+	deadlineSQL      = "-- name: GetComputerPreparationDeadlinesValid"
+	pinWriteSQL      = "-- name: PinRuntimeComputerKey"
+	sourceKeyReadSQL = "-- name: ListInstanceComputerSourceKeys"
+)
+
+// faultBroker serves b's transactions through a SQL fault injector; the
+// returned function restores b.
+func faultBroker(b *KeyBroker) (*sqlFaults, func()) {
+	faults := &sqlFaults{TxBeginner: b.txb}
+	previous := b.txb
+	b.txb = faults
+	return faults, func() { b.txb = previous }
+}
 
 // finalClaimReadFailure arms the claim-read fault during provider unwrap, so
 // the first authority read succeeds and only the final revalidation fails.
 func finalClaimReadFailure(b *KeyBroker) (*observingKeyWrapper, func()) {
-	faults := &claimReadFaults{TxBeginner: b.txb}
-	observer := &observingKeyWrapper{KeyWrapper: b.wrapper, unwrap: func() { faults.armed = true }}
-	previousTx, previousWrapper := b.txb, b.wrapper
-	b.txb, b.wrapper = faults, observer
-	return observer, func() { b.txb, b.wrapper = previousTx, previousWrapper }
+	faults, restoreTx := faultBroker(b)
+	observer := &observingKeyWrapper{KeyWrapper: b.wrapper, unwrap: func() { faults.arm(claimReadSQL, 0) }}
+	previousWrapper := b.wrapper
+	b.wrapper = observer
+	return observer, func() { restoreTx(); b.wrapper = previousWrapper }
 }
 
-// A database failure during the final revalidation keeps its own
-// classification, which the worker is told is retryable unavailability,
-// and the unwrapped plaintext is cleared.
+// A database failure during the final revalidation keeps its own cause,
+// which the worker is told is an internal failure, and the unwrapped
+// plaintext is cleared.
 func TestInitialComputerKeyFinalClaimReadFailureIsNotAuthority(t *testing.T) {
 	f := newPreparationFixture(t)
 	observer, restore := finalClaimReadFailure(f.broker)
 	defer restore()
 	result, err := f.broker.InitialKey(t.Context(), f.principal, f.ref)
-	if !errors.Is(err, errInjectedClaimRead) || errors.Is(err, ErrKeyUnavailable) || len(result.Key) != 0 {
+	if !errors.Is(err, errInjectedSQL) || errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrAuthorityChanged) || len(result.Key) != 0 {
 		t.Fatalf("final claim read failure = %v", err)
 	}
 	if len(observer.returned) == 0 || !bytes.Equal(observer.returned, make([]byte, len(observer.returned))) {
 		t.Fatal("plaintext not cleared after final claim read failure")
 	}
+}
+
+// deliveryFault is one database failure on the key delivery path.
+type deliveryFault struct {
+	name   string
+	source bool
+	// afterUnwrap arms the fault during the provider unwrap, so only the
+	// final revalidation meets it.
+	afterUnwrap bool
+	match       string
+	skip        int
+	commit      bool
+}
+
+// Every database failure on the delivery path keeps its cause instead of
+// reading as a rejected authority or an unavailable key, and plaintext the
+// provider returned before it is cleared.
+func TestComputerKeyDeliveryDatabaseFaultsKeepTheirCause(t *testing.T) {
+	for _, fault := range []deliveryFault{
+		{name: "initial first fence", match: firstFenceSQL},
+		{name: "initial pin write", match: pinWriteSQL},
+		{name: "initial commit", commit: true},
+		{name: "initial final deadline query", afterUnwrap: true, match: deadlineSQL, skip: 1},
+		{name: "source first fence", source: true, match: firstFenceSQL},
+		{name: "source key read", source: true, match: sourceKeyReadSQL},
+		{name: "source pin write", source: true, match: pinWriteSQL},
+		{name: "source final deadline query", source: true, afterUnwrap: true, match: deadlineSQL, skip: 1},
+	} {
+		t.Run(fault.name, func(t *testing.T) {
+			var f preparationFixture
+			if fault.source {
+				var input InitialVersion
+				f, input = newGenerationFixture(t)
+				if _, err := f.publisher.PublishInitialVersion(t.Context(), f.principal, f.ref, input); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				f = newPreparationFixture(t)
+			}
+			faults, restore := faultBroker(f.broker)
+			defer restore()
+			arm := func() {
+				if fault.commit {
+					faults.armCommit()
+				} else {
+					faults.arm(fault.match, fault.skip)
+				}
+			}
+			observer := &observingKeyWrapper{KeyWrapper: f.broker.wrapper}
+			f.broker.wrapper = observer
+			if fault.afterUnwrap {
+				armed := false
+				observer.unwrap = func() {
+					if !armed {
+						armed = true
+						arm()
+					}
+				}
+			} else {
+				arm()
+			}
+			var err error
+			var delivered int
+			if fault.source {
+				var material SourceMaterial
+				material, err = f.broker.SourceKeys(t.Context(), f.principal, f.ref)
+				delivered = len(material.Keys)
+				material.Clear()
+			} else {
+				var material KeyMaterial
+				material, err = f.broker.InitialKey(t.Context(), f.principal, f.ref)
+				delivered = len(material.Key)
+				clear(material.Key)
+			}
+			if !errors.Is(err, errInjectedSQL) || errors.Is(err, ErrKeyUnavailable) || errors.Is(err, ErrAuthorityChanged) || delivered != 0 {
+				t.Fatalf("fault = %v, delivered %d", err, delivered)
+			}
+			if fault.afterUnwrap && (len(observer.returned) == 0 || !bytes.Equal(observer.returned, make([]byte, len(observer.returned)))) {
+				t.Fatal("plaintext not cleared after final revalidation failure")
+			}
+		})
+	}
+}
+
+// A failed provider call is provider unavailability, not an unavailable key.
+func TestComputerKeyProviderFailureIsProviderUnavailability(t *testing.T) {
+	f := newPreparationFixture(t)
+	f.broker.wrapper = failingWrapper{}
+	if result, err := f.broker.InitialKey(t.Context(), f.principal, f.ref); !errors.Is(err, ErrKeyProviderUnavailable) || errors.Is(err, ErrKeyUnavailable) || len(result.Key) != 0 {
+		t.Fatalf("wrap failure = %v", err)
+	}
+}
+
+type failingWrapper struct{ KeyWrapper }
+
+func (failingWrapper) Wrap(context.Context, string, string, []byte) (computerkey.Envelope, error) {
+	return computerkey.Envelope{}, errors.New("provider timeout")
 }

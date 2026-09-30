@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
@@ -104,7 +105,7 @@ func (p Publisher) CertifyInitialObject(ctx context.Context, principal workergro
 	runtimeID := pgvalue.UUID(ref.InstanceID)
 	registered, err := db.New(p.db).HasRegisteredInitialComputerObject(ctx, db.HasRegisteredInitialComputerObjectParams{RuntimeID: runtimeID, PublicationKey: initialPublicationKey(ref.InstanceID), WorkerID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch, DesiredVersion: ref.DesiredVersion, Digest: object.digest, Inspection: object.encoded})
 	if err != nil {
-		return err
+		return fmt.Errorf("read initial computer object registration: %w", err)
 	}
 	if !registered {
 		return objectConflict("computer object registration is unavailable")
@@ -154,22 +155,23 @@ type InitialVersion struct {
 // source in the same commit. It uploads nothing, releases no pins and grants
 // no execution. An exact committed publication replays, before the
 // transaction and again when the preparation fence no longer holds, since a
-// competing exact publisher may have committed while the locks waited.
+// competing exact publisher may have committed while the locks waited. A
+// malformed root reports an InputError.
 func (p Publisher) PublishInitialVersion(ctx context.Context, principal workergroup.HostPrincipal, ref PreparationRef, input InitialVersion) (Publication, error) {
 	locator, err := input.Root.Locator(input.Root.LogicalBytes)
 	if err != nil {
-		return Publication{}, err
+		return Publication{}, invalidInput("invalid computer generation root: %v", err)
 	}
 	canonical, err := json.Marshal(input)
 	if err != nil {
-		return Publication{}, err
+		return Publication{}, fmt.Errorf("encode initial computer version: %w", err)
 	}
 	fingerprint := sha256.Sum256(canonical)
 	runtimeID := pgvalue.UUID(ref.InstanceID)
 	replay := func() (Publication, error) {
 		v, err := db.New(p.db).GetWorkerInitialComputerDiskVersion(ctx, db.GetWorkerInitialComputerDiskVersionParams{ComputerInstanceID: runtimeID, DesiredVersion: pgtype.Int8{Int64: ref.DesiredVersion, Valid: true}, WorkerHostID: pgvalue.UUID(principal.HostID), WorkerGroupID: pgvalue.UUID(principal.GroupID), WorkerEpoch: principal.Epoch})
 		if err != nil {
-			return Publication{}, err
+			return Publication{}, fmt.Errorf("read initial computer publication: %w", err)
 		}
 		if !bytes.Equal(v.PublicationRequestFingerprint, fingerprint[:]) {
 			return Publication{}, objectConflict("initial Computer publication differs from committed request")
@@ -217,21 +219,24 @@ func (p initialPreparation) publishVersion(ctx context.Context, input InitialVer
 	q := db.New(p.tx)
 	runtimeID := p.instance.ID
 	object, err := q.LockComputerObject(ctx, db.LockComputerObjectParams{EnvironmentID: p.environmentID, ComputerID: p.computerID, Digest: input.Root.Pack.Digest})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Publication{}, objectConflict("initial root is not registered")
+	}
 	if err != nil {
-		return Publication{}, err
+		return Publication{}, fmt.Errorf("lock initial root object: %w", err)
 	}
 	if !object.Certified.Bool {
 		return Publication{}, objectConflict("initial root is not certified")
 	}
 	var evidence blockformat.ObjectInspection
 	if err = json.Unmarshal(object.Inspection, &evidence); err != nil {
-		return Publication{}, err
+		return Publication{}, fmt.Errorf("decode initial root inspection: %w", err)
 	}
 	if evidence.Pack == nil {
 		return Publication{}, objectConflict("initial root is not an inspected pack")
 	}
 	if err = evidence.Pack.CheckRoot(locator, p.logicalBytes); err != nil {
-		return Publication{}, err
+		return Publication{}, objectConflict("initial root differs from its inspection: %v", err)
 	}
 	var retained bool
 	if err = p.tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM computer_object_pins WHERE computer_instance_id=$1 AND publication_key=$4 AND instance_desired_version=$2 AND digest=$3)`, runtimeID, p.instance.DesiredVersion, input.Root.Pack.Digest, []byte(initialPublicationKey(pgvalue.MustUUIDValue(runtimeID)))).Scan(&retained); err != nil {
