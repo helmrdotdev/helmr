@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/httpclient"
 	"github.com/helmrdotdev/helmr/internal/vmplatform"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 )
@@ -689,5 +691,104 @@ func workerClientCapabilities() workerapi.Capabilities {
 		GuestEphemeralDiskBytes:   32768 << 20,
 		VMGuestEphemeralDiskBytes: 32768 << 20,
 		ExecutionSlotsAvailable:   1,
+	}
+}
+
+// Only connection requests carry the version; ordinary API calls keep their
+// existing request bodies and need no version header.
+func TestWorkerConnectionAPIVersion(t *testing.T) {
+	seen := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen[r.URL.Path]++
+		if r.Header.Get("Helmr-Worker-Contract") != "" {
+			t.Error("unexpected version header")
+		}
+		var body map[string]json.RawMessage
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+		}
+		switch r.URL.Path {
+		case "/worker/v1/enrollment", "/worker/v1/instance/token", "/worker/v1/instance/activate":
+			var version string
+			if err := json.Unmarshal(body["api_version"], &version); err != nil || version != workerapi.APIVersion {
+				t.Errorf("%s version = %q, error = %v", r.URL.Path, version, err)
+			}
+		default:
+			if _, ok := body["api_version"]; ok {
+				t.Errorf("unexpected version on %s", r.URL.Path)
+			}
+		}
+		switch r.URL.Path {
+		case "/worker/v1/enrollment":
+			_ = json.NewEncoder(w).Encode(workerapi.EnrollmentResponse{})
+		case "/worker/v1/instance/token":
+			_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "worker-token", ExpiresInSeconds: 3600})
+		case "/worker/v1/instance/recover":
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			_ = json.NewEncoder(w).Encode(workerapi.StatusResponse{Status: workerapi.StatusActive})
+		}
+	}))
+	defer server.Close()
+	client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.EnrollWorker(t.Context(), "token", workerapi.EnrollmentRequest{APIVersion: "caller-value"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = client.AuthenticateWorker(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err = client.ReportWorkerStartupRecovery(t.Context(), workerapi.StartupRecoveryRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.ActivateWorker(t.Context(), workerClientCapabilities()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.ObserveWorker(t.Context(), workerapi.Observation{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = client.GetWorkerStatus(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if seen["/worker/v1/instance/token"] != 1 {
+		t.Fatalf("token exchanges = %d", seen["/worker/v1/instance/token"])
+	}
+}
+
+func TestWorkerAPIVersionMismatchPreservesHTTPError(t *testing.T) {
+	for _, phase := range []string{"enrollment", "token", "activation"} {
+		t.Run(phase, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if phase == "activation" && r.URL.Path == "/worker/v1/instance/token" {
+					_ = json.NewEncoder(w).Encode(workerapi.TokenResponse{Token: "token", ExpiresInSeconds: 3600})
+					return
+				}
+				calls++
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": workerapi.APIVersionMismatchCode, "message": "worker version differs from control plane version"}})
+			}))
+			defer server.Close()
+			client, err := New(server.URL, WithAuth("host", "secret"), WithService("service"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch phase {
+			case "enrollment":
+				_, err = client.EnrollWorker(t.Context(), "token", workerapi.EnrollmentRequest{})
+			case "token":
+				err = client.AuthenticateWorker(t.Context())
+			case "activation":
+				_, err = client.ActivateWorker(t.Context(), workerClientCapabilities())
+			}
+			var got *httpclient.Error
+			if !errors.As(err, &got) || got.StatusCode != http.StatusConflict || got.Code != workerapi.APIVersionMismatchCode || calls != 1 {
+				t.Fatalf("calls=%d error=%v", calls, err)
+			}
+		})
 	}
 }

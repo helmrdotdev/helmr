@@ -26,6 +26,14 @@ The checked-in flow establishes migration-before-service ordering, but it does n
 
 When the target release changes the worker AMI, apply the new launch template but do not assume instances will refresh automatically. Drain each exact logical worker to `termination_ready` before provider deletion, then explicitly coordinate the Auto Scaling instance refresh. Preserve enough old capacity to serve work until replacement workers authenticate and become active.
 
+## Worker API version changes
+
+The rolling order above applies when both releases use the same worker API version. Enrollment, token exchange (including refresh), and activation check the JSON `api_version` field; ordinary requests do not check the revision. Existing tokens can therefore continue to reach ordinary routes after a Control Plane replacement. This does not make incompatible worker APIs safe to mix.
+
+For an incompatible release, drain the old workers to `termination_ready` against the old Control Plane, run the migration and Control Plane upgrade, then launch replacement workers from the target release's AMI. Plan the interruption until replacement capacity becomes active. The first release requiring the `api_version` field also requires replacing workers that do not send it.
+
+A `worker_api_version_mismatch` during connection or token refresh means the worker needs a compatible release. Rollback remains subject to the database and checkpoint limits below.
+
 Checkpoint restore validates runtime compatibility, including runtime and rootfs digests and resource shape. Existing checkpoints may not resume on an incompatible replacement worker; the checked-in flow does not promise cross-release checkpoint conversion.
 
 ## Rollback limits

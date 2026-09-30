@@ -68,6 +68,10 @@ The official AMI is selected from the release manifest by `helmr_version` and `a
 
 At boot, the module fetches the worker-group enrollment token into a root-only volatile file. The token selects the logical group. AWS identity, AMI provenance, instance profile, Auto Scaling membership, and fleet policy remain infrastructure responsibilities; the Control Plane does not authenticate or allowlist the AMI.
 
+Workers send their worker API version in the JSON `api_version` field when enrolling, exchanging their host credential for a token, and activating. The Control Plane rejects a missing or different revision with HTTP 409 `worker_api_version_mismatch` before the operation changes host state. The error names both API versions. A rejected worker keeps its stored credential; use a compatible worker release or roll the Control Plane back.
+
+Ordinary worker API calls do not require a version header. Compatible releases keep the same API version. Connection checks do not guarantee compatibility after a Control Plane replacement: drain workers before deploying an incompatible release, as described in [Upgrades](/docs/self-hosting/upgrades#worker-api-version-changes).
+
 Workers need outbound access to the Control Plane, S3, AWS APIs, and task
 destinations. They do not install dependencies or build Deployment artifacts.
 The deployment-owned blocked-CIDR set must include the exact execution VPC

@@ -195,7 +195,7 @@ func (c *Client) requestToken(ctx context.Context) (string, time.Time, error) {
 	var body bytes.Buffer
 	if err := json.NewEncoder(&body).Encode(workerapi.TokenRequest{
 		WorkerHostID: c.auth.workerHostID, WorkerHostSecret: c.auth.secret,
-		ServiceID: c.auth.serviceID,
+		ServiceID: c.auth.serviceID, APIVersion: workerapi.APIVersion,
 	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)
 	}

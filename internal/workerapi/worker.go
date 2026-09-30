@@ -11,6 +11,7 @@ import (
 )
 
 type TokenRequest struct {
+	APIVersion       string `json:"api_version"`
 	WorkerHostID     string `json:"worker_host_id"`
 	WorkerHostSecret string `json:"worker_host_secret"`
 	ServiceID        string `json:"service_id"`
@@ -30,6 +31,7 @@ type EnrollmentResponse struct {
 }
 
 type EnrollmentRequest struct {
+	APIVersion string `json:"api_version"`
 	ResourceID string `json:"resource_id"`
 	PoolName   string `json:"pool_name"`
 }
@@ -52,6 +54,7 @@ type RunLeaseDiscoveryResponse struct {
 }
 
 type ActivateRequest struct {
+	APIVersion   string       `json:"api_version"`
 	Capabilities Capabilities `json:"capabilities"`
 }
 

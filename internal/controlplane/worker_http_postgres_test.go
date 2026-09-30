@@ -48,7 +48,7 @@ func (f workerHTTPFixture) enrollRequest(t *testing.T, enrollmentToken string, b
 // enroll enrolls a worker host in the named pool of the fixture's group.
 func (f workerHTTPFixture) enroll(t *testing.T, pool string, resourceID string) workerapi.EnrollmentResponse {
 	t.Helper()
-	response := f.enrollRequest(t, f.enrollmentToken, `{"resource_id":"`+resourceID+`","pool_name":"`+pool+`"}`)
+	response := f.enrollRequest(t, f.enrollmentToken, `{"api_version":"`+workerapi.APIVersion+`","resource_id":"`+resourceID+`","pool_name":"`+pool+`"}`)
 	if response.Code != http.StatusCreated {
 		t.Fatalf("enrollment status = %d: %s", response.Code, response.Body.String())
 	}
@@ -118,10 +118,10 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 	f := newWorkerHTTPFixture(t)
 
 	// The request is validated before the enrollment token.
-	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"resource_id":" padded","pool_name":"default"}`), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.enrollRequest(t, f.enrollmentToken, `{"resource_id":"i-1","pool_name":"Default"}`), http.StatusBadRequest, "bad_request")
-	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
-	assertAdminError(t, f.enrollRequest(t, "", `{"resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"api_version":"`+workerapi.APIVersion+`","resource_id":" padded","pool_name":"default"}`), http.StatusBadRequest, "bad_request")
+	assertAdminError(t, f.enrollRequest(t, f.enrollmentToken, `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"Default"}`), http.StatusBadRequest, "bad_request")
+	assertAdminError(t, f.enrollRequest(t, "not-a-token", `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
+	assertAdminError(t, f.enrollRequest(t, "", `{"api_version":"`+workerapi.APIVersion+`","resource_id":"i-1","pool_name":"default"}`), http.StatusUnauthorized, "unauthorized")
 
 	enrolled := f.enroll(t, "default", "i-lifecycle")
 	service := uuid.NewV7().String()
@@ -137,6 +137,7 @@ func TestWorkerHostLifecycleHTTP(t *testing.T) {
 		"secret wrong":      {body: workerapi.TokenRequest{WorkerHostID: enrolled.WorkerHostID, WorkerHostSecret: "hlmr_wi_wrong", ServiceID: service}, status: http.StatusUnauthorized, code: "unauthorized"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			test.body.APIVersion = workerapi.APIVersion
 			body, err := json.Marshal(test.body)
 			if err != nil {
 				t.Fatal(err)
