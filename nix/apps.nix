@@ -42,18 +42,32 @@ let
           actionlint
           scripts/security-checks.sh
         '';
-    ci-fast-go = app "ci-fast-go" "compile commands and run Go unit tests" toolsets.ciGoConsole ''
-      export HELMR_SKIP_POSTGRES_TESTS=1
-      bun install --frozen-lockfile --ignore-scripts
-      make platform-entries console-build
-      cmp ${helmrPackages.platformEntries}/internal/compiler/program-compiler.mjs internal/compiler/program-compiler.mjs
-      cmp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
-      cmp ${helmrPackages.platformEntries}/internal/runtime/entry.mjs internal/runtime/entry.mjs
-      cmp ${helmrPackages.platformEntries}/internal/runtime/module-preload.mjs internal/runtime/module-preload.mjs
-      go build -tags embed_console ./cmd/...
-      go test -tags embed_console ./...
-      bash tests/build/go-test-selection.test.sh
-    '';
+    ci-fast-go =
+      app "ci-fast-go" "compile commands, lint Go and test bundle finalization"
+        (
+          toolsets.ciGoConsole
+          ++ [
+            helmrPackages.staticcheck
+            helmrPackages.squashfsTools
+          ]
+        )
+        ''
+          export HELMR_SKIP_POSTGRES_TESTS=1
+          bun install --frozen-lockfile --ignore-scripts
+          make platform-entries console-build
+          cmp ${helmrPackages.platformEntries}/internal/compiler/program-compiler.mjs internal/compiler/program-compiler.mjs
+          cmp ${helmrPackages.platformEntries}/internal/hostconfig/config-evaluator.mjs internal/hostconfig/config-evaluator.mjs
+          cmp ${helmrPackages.platformEntries}/internal/runtime/entry.mjs internal/runtime/entry.mjs
+          cmp ${helmrPackages.platformEntries}/internal/runtime/module-preload.mjs internal/runtime/module-preload.mjs
+          go build -tags embed_console ./cmd/...
+          go test -tags embed_console ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
+          HELMR_SQUASHFS_ENCODER=${helmrPackages.squashfsTools}/bin/mksquashfs \
+            bash scripts/test-go-selection.sh \
+            '^(TestFinalizeBundleWritesExactAtomicDirectory|TestFinalizeBundlePublishesExactlyOneConcurrentWriter)$' \
+            ./internal/builder
+          bash tests/build/go-test-selection.test.sh
+        '';
     ci-fast-typescript =
       app "ci-fast-typescript" "check TypeScript types and unit tests" toolsets.ciTypescript
         ''
