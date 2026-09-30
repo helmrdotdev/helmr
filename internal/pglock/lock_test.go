@@ -87,3 +87,45 @@ func TestGuardDiscardsConnectionWhenReleaseCannotBeConfirmed(t *testing.T) {
 		t.Fatalf("discarded backend %d returned to the pool", backendPID)
 	}
 }
+
+func TestGuardDiscardsConnectionWhenReleaseQueryFails(t *testing.T) {
+	database := dbtest.Open(t)
+	key := Key("failed-release-query")
+	guard, locked, err := TryAcquire(t.Context(), database.Pool, key)
+	if err != nil || !locked {
+		t.Fatalf("TryAcquire = %v, %v", locked, err)
+	}
+	var backendPID int32
+	if err := guard.Conn().QueryRow(t.Context(), "SELECT pg_backend_pid()").Scan(&backendPID); err != nil {
+		t.Fatal(err)
+	}
+	terminator, err := database.Pool.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var terminated bool
+	if err := terminator.QueryRow(t.Context(), "SELECT pg_terminate_backend($1)", backendPID).Scan(&terminated); err != nil {
+		terminator.Release()
+		t.Fatal(err)
+	}
+	terminator.Release()
+	if !terminated {
+		t.Fatal("test setup did not terminate the lock backend")
+	}
+	if err := guard.Unlock(); err == nil {
+		t.Fatal("Unlock accepted a failed release query")
+	}
+
+	conn, err := database.Pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	var replacementPID int32
+	if err := conn.QueryRow(t.Context(), "SELECT pg_backend_pid()").Scan(&replacementPID); err != nil {
+		t.Fatal(err)
+	}
+	if replacementPID == backendPID {
+		t.Fatalf("discarded backend %d returned to the pool", backendPID)
+	}
+}
