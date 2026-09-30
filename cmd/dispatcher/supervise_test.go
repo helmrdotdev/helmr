@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -69,6 +70,87 @@ func TestSuperviseRunnersShutsDownCleanlyOnParentCancel(t *testing.T) {
 	cancel()
 	if err := <-errc; err != nil {
 		t.Fatalf("superviseRunners() = %v, want clean shutdown", err)
+	}
+	if got := stopped.Load(); got != 2 {
+		t.Fatalf("joined runners = %d, want 2", got)
+	}
+}
+
+func TestSuperviseRunnersWrapsRunnerErrorUnderLiveParent(t *testing.T) {
+	failure := errors.New("database unavailable")
+	var stopped atomic.Int32
+	err := superviseRunners(t.Context(), []dispatcherRunner{
+		{name: "failing runner", run: func(context.Context) error { return failure }},
+		blockingRunner("peer", &stopped, returnContextErr),
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("superviseRunners() = %v, want wrapped runner error", err)
+	}
+	if !strings.Contains(err.Error(), "failing runner") {
+		t.Fatalf("superviseRunners() = %v, want runner name", err)
+	}
+	if errors.Is(err, errRunnerStoppedUnexpectedly) {
+		t.Fatalf("superviseRunners() = %v, a runner error is not an unexpected clean exit", err)
+	}
+	if got := stopped.Load(); got != 1 {
+		t.Fatalf("joined peers = %d, want 1", got)
+	}
+}
+
+func TestSuperviseRunnersJoinsSimultaneousFailures(t *testing.T) {
+	firstFailure := errors.New("first failure")
+	secondFailure := errors.New("second failure")
+	var ready sync.WaitGroup
+	ready.Add(2)
+	failTogether := func(failure error) func(context.Context) error {
+		return func(context.Context) error {
+			ready.Done()
+			ready.Wait()
+			return failure
+		}
+	}
+	var stopped atomic.Int32
+	err := superviseRunners(t.Context(), []dispatcherRunner{
+		{name: "first runner", run: failTogether(firstFailure)},
+		{name: "second runner", run: failTogether(secondFailure)},
+		blockingRunner("peer", &stopped, returnContextErr),
+	})
+	if !errors.Is(err, firstFailure) || !errors.Is(err, secondFailure) {
+		t.Fatalf("superviseRunners() = %v, want both failures", err)
+	}
+	for _, name := range []string{"first runner", "second runner"} {
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("superviseRunners() = %v, want runner name %q", err, name)
+		}
+	}
+	if strings.Contains(err.Error(), "peer") {
+		t.Fatalf("superviseRunners() = %v, cancelled peer must not be reported", err)
+	}
+	if got := stopped.Load(); got != 1 {
+		t.Fatalf("joined peers = %d, want 1", got)
+	}
+}
+
+func TestSuperviseRunnersReportsRunnerErrorDuringParentCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	failure := errors.New("flush failed")
+	var stopped atomic.Int32
+	runners := []dispatcherRunner{
+		blockingRunner("failing on shutdown", &stopped, func(context.Context) error { return failure }),
+		blockingRunner("returns canceled", &stopped, returnContextErr),
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- superviseRunners(ctx, runners) }()
+	cancel()
+	err := <-errc
+	if !errors.Is(err, failure) {
+		t.Fatalf("superviseRunners() = %v, want shutdown failure", err)
+	}
+	if !strings.Contains(err.Error(), "failing on shutdown") {
+		t.Fatalf("superviseRunners() = %v, want runner name", err)
+	}
+	if strings.Contains(err.Error(), "returns canceled") {
+		t.Fatalf("superviseRunners() = %v, clean shutdown must not be reported", err)
 	}
 	if got := stopped.Load(); got != 2 {
 		t.Fatalf("joined runners = %d, want 2", got)
