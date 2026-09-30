@@ -161,30 +161,30 @@ func (s *Server) appendActorOutput(
 			return fmt.Errorf("lock actor output secret authority: %w", err)
 		}
 		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
-		if err != nil || !authority.Session.ID.Valid {
+		if err != nil || !authority.Session().ID.Valid {
 			return staleActorOutputAppend(err)
 		}
 
-		if authority.Run.ParentRunID.Valid ||
-			authority.Run.EntrypointKind != "actor" ||
-			authority.Run.SessionID != authority.Session.ID ||
-			authority.Session.CurrentRunID != authority.Run.ID ||
-			(authority.Session.Status != "open" && authority.Session.Status != "closing") ||
-			authority.Run.Status != db.RunStatusRunning ||
-			authority.Lease.Status != db.RunLeaseStatusRunning ||
-			!authority.Run.ActiveStartedAt.Valid ||
-			!authority.Attempt.EntrypointEnteredAt.Valid ||
-			authority.Attempt.TerminalAt.Valid ||
-			authority.Lease.FinalizationOperationID.Valid {
+		if authority.Run().ParentRunID.Valid ||
+			authority.Run().EntrypointKind != "actor" ||
+			authority.Run().SessionID != authority.Session().ID ||
+			authority.Session().CurrentRunID != authority.Run().ID ||
+			(authority.Session().Status != "open" && authority.Session().Status != "closing") ||
+			authority.Run().Status != db.RunStatusRunning ||
+			authority.Lease().Status != db.RunLeaseStatusRunning ||
+			!authority.Run().ActiveStartedAt.Valid ||
+			!authority.Attempt().EntrypointEnteredAt.Valid ||
+			authority.Attempt().TerminalAt.Valid ||
+			authority.Lease().FinalizationOperationID.Valid {
 			return errStaleActorOutputAppend
 		}
 		key := parsed.idempotencyKey
 		if key == "" {
 			key = parsed.correlationID.String()
 		}
-		receipt, err := session.AppendTurnOutput(ctx, work.q, session.TurnScope{
+		receipt, err := session.AppendTurnOutput(ctx, work.tx, session.TurnScope{
 			EnvironmentID: environmentID, SessionID: actorID, TurnID: parsed.turnID,
-			RunID: pgvalue.MustUUIDValue(authority.Run.ID), AttemptNumber: authority.Attempt.Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
+			RunID: pgvalue.MustUUIDValue(authority.Run().ID), AttemptNumber: authority.Attempt().Number, RunGeneration: parsed.generation, MessageDeliveryID: parsed.messageDeliveryID,
 		}, key, parsed.data)
 		if err != nil {
 			return err
@@ -193,7 +193,7 @@ func (s *Server) appendActorOutput(
 			rejected = &session.OperationError{Code: receipt.Code}
 			return nil
 		}
-		response = projectWorkerSessionEvent(receipt.Event, authority.Run.DeploymentID)
+		response = projectWorkerSessionEvent(receipt.Event, authority.Run().DeploymentID)
 		if _, err = run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease)); err != nil {
 			return staleActorOutputAppend(err)
 		}

@@ -36,14 +36,14 @@ func CreateComputer(ctx context.Context, txb db.TxBeginner, creator computer.Cre
 		Scope:      sourceScope(source),
 		DeclaredID: creation.DeclaredID, Key: creation.Key, Secrets: creation.Secrets,
 		IdempotencyKey: creation.IdempotencyKey,
-	}, pgvalue.MustUUIDValue(source.RunID), pgvalue.MustUUIDValue(source.ComputerID))
+	}, pgvalue.MustUUIDValue(source.RunID()), pgvalue.MustUUIDValue(source.ComputerID()))
 	if err != nil {
 		return computer.Created{}, err
 	}
 	var created computer.Created
 	err = db.RunTx(ctx, txb, func(tx pgx.Tx) error {
 		// Secret rows precede mutable source runtime authority, including replays.
-		if err := computer.LockSecretsWithinCeiling(ctx, db.New(tx), source.ComputerID, source.EnvironmentID, creation.Secrets); err != nil {
+		if err := computer.LockSecretsWithinCeiling(ctx, db.New(tx), source.ComputerID(), source.EnvironmentID(), creation.Secrets); err != nil {
 			return err
 		}
 		if _, err := LockLiveSource(ctx, tx, fence); err != nil {
@@ -133,8 +133,8 @@ func DeleteComputer(ctx context.Context, txb db.TxBeginner, fence ExecutionFence
 
 func sourceScope(source LiveSource) computer.Scope {
 	return computer.Scope{
-		OrgID:         pgvalue.MustUUIDValue(source.OrgID),
-		ProjectID:     pgvalue.MustUUIDValue(source.ProjectID),
-		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID),
+		OrgID:         pgvalue.MustUUIDValue(source.OrgID()),
+		ProjectID:     pgvalue.MustUUIDValue(source.ProjectID()),
+		EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()),
 	}
 }

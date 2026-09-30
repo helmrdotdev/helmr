@@ -39,7 +39,7 @@ func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker work
 	if err != nil {
 		return run.LiveSource{}, err
 	}
-	var authority run.ExecutionAuthority
+	var authority run.Execution
 	if targetID.Valid {
 		authority, err = run.LockLiveExecutionForSession(ctx, tx, workerExecutionFence(worker, parsed, lease), targetID)
 	} else if targetComputerID.Valid {
@@ -53,14 +53,20 @@ func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker work
 		}
 		return run.LiveSource{}, errActorStartComputerNotFound
 	}
-	source, err := run.CheckLiveSource(authority, err)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return run.LiveSource{}, run.ErrStaleSource
+	}
+	if err != nil {
+		return run.LiveSource{}, err
+	}
+	source, err := authority.LiveSource()
 	if err != nil {
 		return run.LiveSource{}, err
 	}
 	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
 		return run.LiveSource{}, err
 	}
-	actor := authority.Session
+	actor := authority.Session()
 	if actor.ID.Valid {
 		if actor.DispatchHoldID.Valid {
 			return run.LiveSource{}, &session.OperationError{Code: "session_held"}
@@ -122,9 +128,9 @@ func (s *Server) workerAdmitSession(w http.ResponseWriter, r *http.Request, mode
 		if err != nil {
 			return err
 		}
-		command.Target = session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: targetID}
-		command.SourceRunID = pgvalue.MustUUIDValue(source.RunID)
-		receipt, err = session.Admit(r.Context(), work.q, command)
+		command.Target = session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: targetID}
+		command.SourceRunID = pgvalue.MustUUIDValue(source.RunID())
+		receipt, err = session.Admit(r.Context(), work.tx, command)
 		return err
 	})
 	if err == nil && receipt.Code != "" {

@@ -120,11 +120,11 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 	if err != nil {
 		return fmt.Errorf("task completion authority: %w", err)
 	}
-	r, l := a.Run, a.Lease
-	if r.EntrypointKind != "task" || r.SessionID.Valid || r.Status != db.RunStatusRunning || l.Status != db.RunLeaseStatusFinalizing || l.FinalizationOperationID != request.OperationID || !l.FinalizationStartedAt.Valid || !a.Attempt.EntrypointEnteredAt.Valid || r.ActiveStartedAt.Valid {
+	r, l := a.run, a.lease
+	if r.EntrypointKind != "task" || r.SessionID.Valid || r.Status != db.RunStatusRunning || l.Status != db.RunLeaseStatusFinalizing || l.FinalizationOperationID != request.OperationID || !l.FinalizationStartedAt.Valid || !a.attempt.EntrypointEnteredAt.Valid || r.ActiveStartedAt.Valid {
 		return pgx.ErrNoRows
 	}
-	clear, err := q.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{RunID: r.ID, AttemptNumber: a.Attempt.Number, ComputerID: r.ComputerID})
+	clear, err := q.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{RunID: r.ID, AttemptNumber: a.attempt.Number, ComputerID: r.ComputerID})
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,7 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 	if err != nil {
 		return err
 	}
-	if !now.Valid || !now.Time.Before(l.ExpiresAt.Time) || !now.Time.Before(a.Instance.WriterExpiresAt.Time) || l.FinalizationStartedAt.Time.After(now.Time) {
+	if !now.Valid || !now.Time.Before(l.ExpiresAt.Time) || !now.Time.Before(a.Instance().WriterExpiresAt.Time) || l.FinalizationStartedAt.Time.After(now.Time) {
 		return pgx.ErrNoRows
 	}
 	delay, again := time.Duration(0), false
@@ -144,7 +144,7 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 		if e != nil {
 			return errors.Join(ErrTaskCompletionAdmission, e)
 		}
-		delay, again, err = definition.RetryDelay(policy, a.Attempt.Number, nil)
+		delay, again, err = definition.RetryDelay(policy, a.attempt.Number, nil)
 		if err != nil {
 			return err
 		}
@@ -154,17 +154,17 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 			return err
 		}
 	}
-	if _, err = q.CompleteTaskRunLease(ctx, db.CompleteTaskRunLeaseParams{Status: leaseStatus, CompletedAt: now, ReasonCode: pgvalue.Text(reason), Error: request.Error, TerminalRequestFingerprint: pgvalue.Text(request.Fingerprint), ID: l.ID, RunID: r.ID, ComputerID: r.ComputerID, AttemptNumber: a.Attempt.Number, LeaseSequence: l.LeaseSequence}); err != nil {
+	if _, err = q.CompleteTaskRunLease(ctx, db.CompleteTaskRunLeaseParams{Status: leaseStatus, CompletedAt: now, ReasonCode: pgvalue.Text(reason), Error: request.Error, TerminalRequestFingerprint: pgvalue.Text(request.Fingerprint), ID: l.ID, RunID: r.ID, ComputerID: r.ComputerID, AttemptNumber: a.attempt.Number, LeaseSequence: l.LeaseSequence}); err != nil {
 		return fmt.Errorf("task completion lease: %w", err)
 	}
-	if _, err = q.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{TerminalOutcome: pgvalue.Text(outcome), ReasonCode: pgvalue.Text(reason), Error: request.Error, CompletedAt: now, RunID: r.ID, Number: a.Attempt.Number, ComputerID: r.ComputerID}); err != nil {
+	if _, err = q.CompleteTaskAttempt(ctx, db.CompleteTaskAttemptParams{TerminalOutcome: pgvalue.Text(outcome), ReasonCode: pgvalue.Text(reason), Error: request.Error, CompletedAt: now, RunID: r.ID, Number: a.attempt.Number, ComputerID: r.ComputerID}); err != nil {
 		return fmt.Errorf("task completion attempt: %w", err)
 	}
 	if again {
 		// The saved head is recovery provenance, not the concurrently changing live
 		// disk. Retry neither captures that disk nor replaces the physical writer.
-		next := a.Attempt.Number + 1
-		if _, err = q.CreateTaskRetryAttempt(ctx, db.CreateTaskRetryAttemptParams{ResultComputerDiskVersionID: a.Computer.HeadDiskVersionID, Number: next, RunID: r.ID, ComputerID: r.ComputerID, PreviousAttemptNumber: a.Attempt.Number, RunLeaseID: l.ID}); err != nil {
+		next := a.attempt.Number + 1
+		if _, err = q.CreateTaskRetryAttempt(ctx, db.CreateTaskRetryAttemptParams{ResultComputerDiskVersionID: a.Computer().HeadDiskVersionID, Number: next, RunID: r.ID, ComputerID: r.ComputerID, PreviousAttemptNumber: a.attempt.Number, RunLeaseID: l.ID}); err != nil {
 			return err
 		}
 		resolutions := make([]secret.Resolution, 0, len(secrets))
@@ -177,11 +177,11 @@ func CompleteTaskExecution(ctx context.Context, tx pgx.Tx, request TaskCompletio
 		if err = secret.CreateAttemptResolutions(ctx, q, r.ComputerID, r.ID, next, resolutions); err != nil {
 			return err
 		}
-		if _, err = q.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{ResultComputerDiskVersionID: a.Computer.HeadDiskVersionID, NextAttemptNumber: next, CompletedAt: now, RetryAt: pgvalue.Timestamptz(now.Time.Add(delay)), ID: r.ID, ComputerID: r.ComputerID, PreviousAttemptNumber: a.Attempt.Number, RunLeaseID: l.ID}); err != nil {
+		if _, err = q.DelayTaskRunRetry(ctx, db.DelayTaskRunRetryParams{ResultComputerDiskVersionID: a.Computer().HeadDiskVersionID, NextAttemptNumber: next, CompletedAt: now, RetryAt: pgvalue.Timestamptz(now.Time.Add(delay)), ID: r.ID, ComputerID: r.ComputerID, PreviousAttemptNumber: a.attempt.Number, RunLeaseID: l.ID}); err != nil {
 			return err
 		}
 	} else {
-		if _, err = q.FinishTaskRun(ctx, db.FinishTaskRunParams{Status: status, Output: request.Output, Failure: failure, CompletedAt: now, ID: r.ID, ComputerID: r.ComputerID, AttemptNumber: a.Attempt.Number, RunLeaseID: l.ID}); err != nil {
+		if _, err = q.FinishTaskRun(ctx, db.FinishTaskRunParams{Status: status, Output: request.Output, Failure: failure, CompletedAt: now, ID: r.ID, ComputerID: r.ComputerID, AttemptNumber: a.attempt.Number, RunLeaseID: l.ID}); err != nil {
 			return fmt.Errorf("task completion Run: %w", err)
 		}
 		event, payload := "run.failed", []byte(`{"reason":"`+reason+`"}`)

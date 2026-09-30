@@ -7,18 +7,30 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func validateChildWaitScope(authority run.ExecutionAuthority, wait db.RunWait) error {
-	if authority.Run.EntrypointKind == "task" {
-		if authority.Run.SessionID.Valid || wait.TurnID.Valid || wait.TurnSessionID.Valid || wait.TurnRunGeneration.Valid {
+// childWaitScope is the part of a locked execution a child wait is checked
+// against.
+type childWaitScope struct {
+	run     db.Run
+	session db.Session
+}
+
+func childWaitScopeOf(execution run.Execution) childWaitScope {
+	return childWaitScope{run: execution.Run(), session: execution.Session()}
+}
+
+func validateChildWaitScope(scope childWaitScope, wait db.RunWait) error {
+	if scope.run.EntrypointKind == "task" {
+		if scope.run.SessionID.Valid || wait.TurnID.Valid || wait.TurnSessionID.Valid || wait.TurnRunGeneration.Valid {
 			return session.ErrTurnScope
 		}
 		return nil
 	}
-	actor := authority.Session
-	if authority.Run.EntrypointKind != "actor" || !actor.ID.Valid || authority.Run.SessionID != actor.ID || actor.CurrentRunID != authority.Run.ID || actor.ComputerID != authority.Run.ComputerID || (actor.Status != "open" && actor.Status != "closing") {
+	actor := scope.session
+	if scope.run.EntrypointKind != "actor" || !actor.ID.Valid || scope.run.SessionID != actor.ID || actor.CurrentRunID != scope.run.ID || actor.ComputerID != scope.run.ComputerID || (actor.Status != "open" && actor.Status != "closing") {
 		return session.ErrTurnScope
 	}
 	if actor.DispatchHoldID.Valid {
@@ -36,32 +48,32 @@ func validateChildWaitScope(authority run.ExecutionAuthority, wait db.RunWait) e
 	return nil
 }
 
-func validateWorkerWaitTurn(ctx context.Context, q db.Querier, a run.ExecutionAuthority, turnID pgtype.UUID, gen pgtype.Int8) error {
-	if a.Run.EntrypointKind != "actor" {
+func validateWorkerWaitTurn(ctx context.Context, tx pgx.Tx, a run.Execution, turnID pgtype.UUID, gen pgtype.Int8) error {
+	if a.Run().EntrypointKind != "actor" {
 		if turnID.Valid {
 			return session.ErrTurnScope
 		}
 		return nil
 	}
-	if a.Session.DispatchHoldID.Valid {
+	if a.Session().DispatchHoldID.Valid {
 		return session.ErrTurnStopped
 	}
-	if a.Session.ActiveTurnID != turnID {
+	if a.Session().ActiveTurnID != turnID {
 		return session.ErrTurnScope
 	}
 	if !turnID.Valid {
 		return nil
 	}
-	_, err := session.ValidateTurnWork(ctx, q, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.Session.EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.Session.ID), RunID: pgvalue.MustUUIDValue(a.Run.ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: a.Attempt.Number, RunGeneration: gen.Int64})
+	_, err := session.ValidateTurnWork(ctx, tx, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(a.Session().EnvironmentID), SessionID: pgvalue.MustUUIDValue(a.Session().ID), RunID: pgvalue.MustUUIDValue(a.Run().ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: a.Attempt().Number, RunGeneration: gen.Int64})
 	return err
 }
 
 // Registration already validated the parsed binding under the Session lock;
 // the conditional write independently rejects a changed owner.
-func bindWorkerWaitTurn(ctx context.Context, q db.Querier, a run.ExecutionAuthority, waitID, turnID pgtype.UUID, gen pgtype.Int8) error {
+func bindWorkerWaitTurn(ctx context.Context, q db.Querier, a run.Execution, waitID, turnID pgtype.UUID, gen pgtype.Int8) error {
 	if !turnID.Valid {
 		return nil
 	}
-	_, err := q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: a.Session.ID, TurnID: turnID, RunGeneration: gen, WaitID: waitID})
+	_, err := q.BindRunWaitTurn(ctx, db.BindRunWaitTurnParams{SessionID: a.Session().ID, TurnID: turnID, RunGeneration: gen, WaitID: waitID})
 	return err
 }

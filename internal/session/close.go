@@ -15,14 +15,15 @@ import (
 // the Actor and pass both locked facts here.
 func ReconcileClose(
 	ctx context.Context,
-	store db.Querier,
+	tx pgx.Tx,
 	actor db.Session,
 	bindings []db.LockComputerSecretsForAdmissionRow,
 ) (db.Session, bool, error) {
+	store := db.New(tx)
 	if actor.CancelRequestedAt.Valid && actor.Status == "closing" {
 		var waiting bool
 		var err error
-		actor, waiting, err = reconcileCancellation(ctx, store, actor)
+		actor, waiting, err = reconcileCancellation(ctx, tx, actor)
 		if err != nil || waiting {
 			return actor, waiting, err
 		}
@@ -35,7 +36,7 @@ func ReconcileClose(
 		return actor, false, nil
 	}
 	if actor.CurrentRunID.Valid {
-		return reconcileCurrentRunClose(ctx, store, actor)
+		return reconcileCurrentRunClose(ctx, tx, actor)
 	}
 	computer, err := store.LockActorCloseComputer(ctx, db.LockActorCloseComputerParams{
 		EnvironmentID: actor.EnvironmentID,
@@ -58,7 +59,7 @@ func ReconcileClose(
 		}
 		if _, err := CreateContinuation(
 			ctx,
-			store,
+			tx,
 			actor,
 			db.Computer{ID: computer.ID},
 			bindings,
@@ -112,9 +113,10 @@ func ReconcileClose(
 
 func reconcileCurrentRunClose(
 	ctx context.Context,
-	store db.Querier,
+	tx pgx.Tx,
 	actor db.Session,
 ) (db.Session, bool, error) {
+	store := db.New(tx)
 	run, err := store.LockActorInputCurrentRun(ctx, db.LockActorInputCurrentRunParams{
 		EnvironmentID: actor.EnvironmentID,
 		RunID:         actor.CurrentRunID,
@@ -164,7 +166,7 @@ func reconcileCurrentRunClose(
 	if err != nil {
 		return db.Session{}, false, err
 	}
-	if _, err := FailWait(ctx, store, wait, "session_closed"); err != nil {
+	if _, err := FailWait(ctx, tx, wait, "session_closed"); err != nil {
 		return db.Session{}, false, fmt.Errorf("complete actor close input wait: %w", err)
 	}
 	return actor, false, nil
@@ -194,7 +196,8 @@ func closeEventData(actor db.Session) []byte {
 
 // Cancellation never runs code to consume the cancelled suffix. Keep the
 // durable reconciler alive while the existing process-stop path is pending.
-func reconcileCancellation(ctx context.Context, q db.Querier, actor db.Session) (db.Session, bool, error) {
+func reconcileCancellation(ctx context.Context, tx pgx.Tx, actor db.Session) (db.Session, bool, error) {
+	q := db.New(tx)
 	if actor.ActiveTurnID.Valid {
 		return actor, true, nil
 	}
@@ -222,7 +225,7 @@ func reconcileCancellation(ctx context.Context, q db.Querier, actor db.Session) 
 		if !excluded {
 			return actor, true, nil
 		}
-		if err = CompleteInterruption(ctx, q, actor, computer.HeadDiskVersionID, ""); err != nil {
+		if err = CompleteInterruption(ctx, tx, actor, computer.HeadDiskVersionID, ""); err != nil {
 			return actor, false, err
 		}
 		actor, err = q.GetActor(ctx, db.GetActorParams{EnvironmentID: actor.EnvironmentID, ID: actor.ID})

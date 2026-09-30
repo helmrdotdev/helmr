@@ -33,7 +33,7 @@ func sessionControlExecutionFixture(t *testing.T) (runtest.Fixture, [2]Execution
 		if _, err = StartExecution(t.Context(), tx, fence); err != nil {
 			t.Fatal(err)
 		}
-		if err = EnterExecution(t.Context(), tx, fence, a.Run.EntrypointKind, a.Run.EntrypointDeclaredID); err != nil {
+		if err = EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
 			t.Fatal(err)
 		}
 		if err = tx.Commit(t.Context()); err != nil {
@@ -55,8 +55,8 @@ func TestSessionInterruptionLocksOwnedTargetScopes(t *testing.T) {
 	}
 	defer tx.Rollback(context.Background())
 	a, graph, err := LockLiveExecutionForSessionInterruption(t.Context(), tx, fences[0], pgvalue.UUID(sessions[1]))
-	if err != nil || a.Lease.ID != fences[0].LeaseID || graph.currentRun == uuid.Nil() {
-		t.Fatalf("authority=%v graph=%v error=%v", a.Lease.ID, graph.currentRun, err)
+	if err != nil || a.Lease().ID != fences[0].LeaseID || graph.currentRun == uuid.Nil() {
+		t.Fatalf("authority=%v graph=%v error=%v", a.Lease().ID, graph.currentRun, err)
 	}
 	for _, query := range []string{
 		`SELECT id FROM computers WHERE id=(SELECT computer_id FROM runs WHERE id=$1) FOR UPDATE NOWAIT`,

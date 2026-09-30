@@ -32,7 +32,7 @@ func (s *Server) workerGetSessionTurn(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		view, err := session.GetTurn(r.Context(), work.q, session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(sessionID)}, turnID)
+		view, err := session.GetTurn(r.Context(), work.q, session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(sessionID)}, turnID)
 		if err != nil {
 			return err
 		}

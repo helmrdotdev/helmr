@@ -37,7 +37,7 @@ func TestEnterRunEntrypointTransaction(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	request := workerapi.RunEntrypointRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, EntrypointKind: started.Run.EntrypointKind, EntrypointDeclaredID: started.Run.EntrypointDeclaredID}
+	request := workerapi.RunEntrypointRequest{Lease: workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1}, EntrypointKind: started.Run().EntrypointKind, EntrypointDeclaredID: started.Run().EntrypointDeclaredID}
 	wrong := request
 	wrong.EntrypointDeclaredID = "different"
 	if err = enterRunEntrypoint(t.Context(), f.Pool, worker, fence.LeaseID, wrong); !errors.Is(err, errStaleRunLeaseClaim) {
@@ -65,7 +65,7 @@ func TestEnterRunEntrypointTransaction(t *testing.T) {
 	if err = enterRunEntrypoint(t.Context(), f.Pool, stale, fence.LeaseID, request); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale claims: %v", err)
 	}
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, started.Instance.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET writer_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1`, started.Instance().ID)
 	if err = enterRunEntrypoint(t.Context(), f.Pool, worker, fence.LeaseID, request); !errors.Is(err, errStaleRunLeaseClaim) {
 		t.Fatalf("expired writer: %v", err)
 	}

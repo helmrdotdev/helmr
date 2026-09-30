@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // FailExecution terminalizes an excluded Actor execution in the caller's
 // transaction. The caller owns Computer disposition; this settles Session history.
-func FailExecution(ctx context.Context, q db.Querier, actor db.Session, failure json.RawMessage, fingerprint string, completedAt pgtype.Timestamptz) error {
+func FailExecution(ctx context.Context, tx pgx.Tx, actor db.Session, failure json.RawMessage, fingerprint string, completedAt pgtype.Timestamptz) error {
+	q := db.New(tx)
 	terminalEvent, queueReason := "session.failed", "session_failed"
 	queuedBody, err := json.Marshal(map[string]string{"reason": queueReason})
 	if err != nil {

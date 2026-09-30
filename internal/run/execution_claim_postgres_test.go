@@ -25,11 +25,11 @@ func executionClaimFixture(t *testing.T) (runtest.Fixture, runtest.RunLease, Exe
 	}
 	return f, work, request
 }
-func claimExecutionTest(t *testing.T, f runtest.Fixture, r ExecutionFence, commit bool) (ExecutionAuthority, error) {
+func claimExecutionTest(t *testing.T, f runtest.Fixture, r ExecutionFence, commit bool) (Execution, error) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
-		return ExecutionAuthority{}, err
+		return Execution{}, err
 	}
 	defer tx.Rollback(context.Background())
 	result, err := ClaimExecution(t.Context(), tx, r)
@@ -61,11 +61,11 @@ func TestExecutionClaimReplayAndRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if first.Lease.Status != db.RunLeaseStatusStarting || first.Instance.ID != result.Instance.ID || replay.Lease.ClaimedAt != first.Lease.ClaimedAt || replay.Lease.ID != first.Lease.ID {
+			if first.Lease().Status != db.RunLeaseStatusStarting || first.Instance().ID != result.Instance().ID || replay.Lease().ClaimedAt != first.Lease().ClaimedAt || replay.Lease().ID != first.Lease().ID {
 				t.Fatal("claim replay changed execution identity")
 			}
 			var unchanged bool
-			if err = f.Pool.QueryRow(t.Context(), `SELECT writer_generation=$2 AND desired_state='ready' AND observed_state='ready' AND reclaimed_at IS NULL FROM computer_instances WHERE id=$1`, first.Instance.ID, first.Instance.WriterGeneration).Scan(&unchanged); err != nil || !unchanged {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT writer_generation=$2 AND desired_state='ready' AND observed_state='ready' AND reclaimed_at IS NULL FROM computer_instances WHERE id=$1`, first.Instance().ID, first.Instance().WriterGeneration).Scan(&unchanged); err != nil || !unchanged {
 				t.Fatalf("claim altered physical ownership: %v %v", unchanged, err)
 			}
 		})
@@ -129,7 +129,7 @@ func TestSharedInstanceClaimsDoNotTransferOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Instance.ID != second.Instance.ID || first.Lease.ID == second.Lease.ID || first.Instance.WriterGeneration != second.Instance.WriterGeneration {
+	if first.Instance().ID != second.Instance().ID || first.Lease().ID == second.Lease().ID || first.Instance().WriterGeneration != second.Instance().WriterGeneration {
 		t.Fatal("shared claim transferred the physical writer")
 	}
 	canceler, err := NewCanceler(f.Pool)

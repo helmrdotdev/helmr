@@ -55,9 +55,9 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 		s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 		return
 	}
-	orgID, orgErr := pgvalue.UUIDValue(source.OrgID)
-	projectID, projectErr := pgvalue.UUIDValue(source.ProjectID)
-	environmentID, environmentErr := pgvalue.UUIDValue(source.EnvironmentID)
+	orgID, orgErr := pgvalue.UUIDValue(source.OrgID())
+	projectID, projectErr := pgvalue.UUIDValue(source.ProjectID())
+	environmentID, environmentErr := pgvalue.UUIDValue(source.EnvironmentID())
 	if orgErr != nil || projectErr != nil || environmentErr != nil {
 		writeError(w, errors.New("actor start source locators are invalid"))
 		return
@@ -119,8 +119,8 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 			return err
 		}
 		row, err := work.q.GetSessionSnapshot(r.Context(), db.GetSessionSnapshotParams{
-			OrgID: source.OrgID, ProjectID: source.ProjectID,
-			EnvironmentID: source.EnvironmentID, ID: sessionID,
+			OrgID: source.OrgID(), ProjectID: source.ProjectID(),
+			EnvironmentID: source.EnvironmentID(), ID: sessionID,
 		})
 		if err != nil {
 			return err
@@ -164,7 +164,7 @@ func (s *Server) workerCloseSession(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		receipt, err = session.Close(r.Context(), work.q, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey})
+		receipt, err = session.Close(r.Context(), work.tx, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey})
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -194,7 +194,7 @@ func (s *Server) workerCancelSession(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		receipt, err = session.Cancel(r.Context(), work.q, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey}, graph)
+		receipt, err = session.Cancel(r.Context(), work.tx, session.ControlRequest{Target: session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(targetID)}, IdempotencyKey: request.IdempotencyKey}, graph)
 		return err
 	})
 	if err == nil && receipt.Code != "" {
@@ -228,7 +228,7 @@ func (s *Server) workerReadSessionEvents(w http.ResponseWriter, r *http.Request)
 		if err != nil {
 			return err
 		}
-		page, err = session.ReadEvents(r.Context(), work.q, session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID), SessionID: pgvalue.MustUUIDValue(targetID)}, after, request.Limit)
+		page, err = session.ReadEvents(r.Context(), work.q, session.Target{EnvironmentID: pgvalue.MustUUIDValue(source.EnvironmentID()), SessionID: pgvalue.MustUUIDValue(targetID)}, after, request.Limit)
 		return err
 	})
 	if err != nil {

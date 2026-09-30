@@ -45,8 +45,8 @@ func TestExecutionClaimUsesCurrentAttemptCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if claimed.Run.SessionInputStartSequence.Int64 != 1 || claimed.Attempt.SessionInputStartSequence.Int64 != 2 || claimed.Session.CommittedInputSequence != 2 {
-		t.Fatalf("attempt cursor: %+v", claimed.Attempt)
+	if claimed.Run().SessionInputStartSequence.Int64 != 1 || claimed.Attempt().SessionInputStartSequence.Int64 != 2 || claimed.Session().CommittedInputSequence != 2 {
+		t.Fatalf("attempt cursor: %+v", claimed.Attempt())
 	}
 }
 
@@ -76,8 +76,8 @@ func TestExecutionClaimValidatesRecordedSecretAuthority(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if len(claimed.Secrets) != 1 || claimed.Secrets[0].Version.ID != pgvalue.UUID(version) {
-					t.Fatalf("wrong recorded secret delivery: %+v", claimed.Secrets)
+				if len(claimed.DeliverySecrets()) != 1 || claimed.DeliverySecrets()[0].Version.ID != pgvalue.UUID(version) {
+					t.Fatalf("wrong recorded secret delivery: %+v", claimed.DeliverySecrets())
 				}
 				return
 			}

@@ -12,21 +12,21 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, parsed parsedRunLeaseFence, receipt workerapi.RunLeaseFence) (run.ExecutionAuthority, error) {
+func lockWorkerWaitExecution(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, parsed parsedRunLeaseFence, receipt workerapi.RunLeaseFence) (run.Execution, error) {
 	q := db.New(tx)
 	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: receipt.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
-		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
+		return run.Execution{}, staleRunLeaseClaim(err)
 	}
 	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
-		return run.ExecutionAuthority{}, err
+		return run.Execution{}, err
 	}
 	a, err := run.LockLiveExecution(ctx, tx, workerExecutionFence(worker, parsed, receipt))
 	if err != nil {
-		return run.ExecutionAuthority{}, staleRunLeaseClaim(err)
+		return run.Execution{}, staleRunLeaseClaim(err)
 	}
-	if a.Lease.Status != db.RunLeaseStatusRunning || !a.Attempt.EntrypointEnteredAt.Valid || a.Lease.FinalizationOperationID.Valid {
-		return run.ExecutionAuthority{}, errStaleRunLeaseClaim
+	if a.Lease().Status != db.RunLeaseStatusRunning || !a.Attempt().EntrypointEnteredAt.Valid || a.Lease().FinalizationOperationID.Valid {
+		return run.Execution{}, errStaleRunLeaseClaim
 	}
 	return a, nil
 }

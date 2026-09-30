@@ -14,19 +14,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func ValidateTurnWork(ctx context.Context, q db.Querier, scope TurnScope) (db.SessionTurn, error) {
-	turn, err := ValidateTurn(ctx, q, scope)
+func ValidateTurnWork(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
+	turn, err := ValidateTurn(ctx, tx, scope)
 	if err == nil && turn.SettlementStartedAt.Valid {
 		err = &OperationError{Code: "turn_unsettled"}
 	}
 	return turn, err
 }
 
-func DeclareMessageReady(ctx context.Context, q db.Querier, scope TurnScope, leaseID uuid.UUID) (db.SessionTurn, error) {
+func DeclareMessageReady(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID uuid.UUID) (db.SessionTurn, error) {
+	q := db.New(tx)
 	if leaseID == uuid.Nil() {
 		return db.SessionTurn{}, ErrTurnScope
 	}
-	if _, err := ValidateTurnWork(ctx, q, scope); err != nil {
+	if _, err := ValidateTurnWork(ctx, tx, scope); err != nil {
 		return db.SessionTurn{}, err
 	}
 	return q.SetSessionTurnMessageReady(ctx, db.SetSessionTurnMessageReadyParams{EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), TurnID: pgvalue.UUID(scope.TurnID), RunLeaseID: pgvalue.UUID(leaseID)})
@@ -34,11 +35,12 @@ func DeclareMessageReady(ctx context.Context, q db.Querier, scope TurnScope, lea
 
 // Delivery IDs are immutable operation identities. A lost claim response is
 // reconciled by the same ID, never by admitting the next callback.
-func ClaimMessage(ctx context.Context, q db.Querier, scope TurnScope, leaseID, deliveryID uuid.UUID) (db.SessionMessage, error) {
+func ClaimMessage(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID, deliveryID uuid.UUID) (db.SessionMessage, error) {
+	q := db.New(tx)
 	if leaseID == uuid.Nil() || deliveryID == uuid.Nil() {
 		return db.SessionMessage{}, ErrTurnScope
 	}
-	if _, err := ValidateTurnWork(ctx, q, scope); err != nil {
+	if _, err := ValidateTurnWork(ctx, tx, scope); err != nil {
 		return db.SessionMessage{}, err
 	}
 	existing, err := q.GetSessionMessageDelivery(ctx, db.GetSessionMessageDeliveryParams{EnvironmentID: pgvalue.UUID(scope.EnvironmentID), SessionID: pgvalue.UUID(scope.SessionID), DeliveryID: pgvalue.UUID(deliveryID)})
@@ -70,7 +72,8 @@ type MessageOutcome struct {
 	Details json.RawMessage `json:"details,omitempty"`
 }
 
-func CompleteMessage(ctx context.Context, q db.Querier, scope TurnScope, leaseID, messageID, deliveryID uuid.UUID, outcome MessageOutcome) (db.SessionMessage, error) {
+func CompleteMessage(ctx context.Context, tx pgx.Tx, scope TurnScope, leaseID, messageID, deliveryID uuid.UUID, outcome MessageOutcome) (db.SessionMessage, error) {
+	q := db.New(tx)
 	switch outcome.Status {
 	case "handled":
 		if outcome.Code != "" {
@@ -166,7 +169,8 @@ func rejectQueuedMessages(ctx context.Context, q db.Querier, actor db.Session, t
 	return nil
 }
 
-func BeginSettlement(ctx context.Context, q db.Querier, scope TurnScope) (db.SessionTurn, error) {
+func BeginSettlement(ctx context.Context, tx pgx.Tx, scope TurnScope) (db.SessionTurn, error) {
+	q := db.New(tx)
 	actor, turn, err := lockTurn(ctx, q, scope)
 	if err != nil {
 		return turn, err

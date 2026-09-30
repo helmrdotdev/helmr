@@ -6,7 +6,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -49,71 +48,54 @@ func TestParseActorCompletionRejectsNoncanonicalFailureMessage(t *testing.T) {
 func TestDecideActorRunTerminal(t *testing.T) {
 	tests := []struct {
 		name       string
-		authority  run.ExecutionAuthority
+		state      actorRunTerminalState
 		completion parsedActorCompletion
 		want       actorRunTerminalDecision
 	}{
 		{
 			name: "successful progress remains open",
-			authority: func() run.ExecutionAuthority {
-				a := actorTerminalAuthority("open", 2, 4)
-				a.Session.CommittedInputSequence = 3
-				return a
+			state: func() actorRunTerminalState {
+				s := actorTerminalState("open", 2, 4)
+				s.committedInputSequence = 3
+				return s
 			}(),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
-			name: "input arriving after idle admission belongs to continuation",
-			authority: func() run.ExecutionAuthority {
-				a := actorTerminalAuthority("open", 2, 2)
-				a.Session.NextInputSequence = 4
-				return a
-			}(),
+			name:       "input arriving after idle admission belongs to continuation",
+			state:      actorTerminalState("open", 2, 2),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "open"},
 		},
 		{
-			name: "late close frontier does not make an idle return fail",
-			authority: func() run.ExecutionAuthority {
-				a := actorTerminalAuthority("closing", 2, 2)
-				a.Session.NextInputSequence = 4
-				a.Session.CloseSequence = pgtype.Int8{Int64: 3, Valid: true}
-				return a
-			}(),
+			name:       "late close frontier does not make an idle return fail",
+			state:      actorTerminalState("closing", 2, 2),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
 		},
 		{
-			name: "admission backlog without progress fails before close",
-			authority: func() run.ExecutionAuthority {
-				a := actorTerminalAuthority("closing", 2, 4)
-				a.Session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
-				return a
-			}(),
+			name:       "admission backlog without progress fails before close",
+			state:      actorTerminalState("closing", 2, 4),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, actorStatus: "closing", runReason: pgvalue.Text("no_progress")},
 		},
 		{
-			name: "closing waits for process reconciliation",
-			authority: func() run.ExecutionAuthority {
-				a := actorTerminalAuthority("closing", 2, 2)
-				a.Session.CloseSequence = pgtype.Int8{Int64: 2, Valid: true}
-				return a
-			}(),
+			name:       "closing waits for process reconciliation",
+			state:      actorTerminalState("closing", 2, 2),
 			completion: parsedActorCompletion{kind: actorCompletionSucceeded},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusSucceeded, actorStatus: "closing"},
 		},
 		{
 			name:       "runtime failure rolls cursor back",
-			authority:  actorTerminalAuthority("open", 2, 4),
+			state:      actorTerminalState("open", 2, 4),
 			completion: parsedActorCompletion{kind: actorCompletionFailed},
 			want:       actorRunTerminalDecision{runStatus: db.RunStatusFailed, runReason: pgvalue.Text("actor_failed"), actorStatus: "open"},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got := decideActorRunTerminal(test.authority, test.completion)
+			got := decideActorRunTerminal(test.state, test.completion)
 			if got != test.want {
 				t.Fatalf("decision = %#v, want %#v", got, test.want)
 			}
@@ -121,13 +103,12 @@ func TestDecideActorRunTerminal(t *testing.T) {
 	}
 }
 
-func actorTerminalAuthority(state string, start, highWatermark int64) run.ExecutionAuthority {
-	return run.ExecutionAuthority{
-		Session: db.Session{Status: state, CommittedInputSequence: start, NextInputSequence: highWatermark + 1},
-		Run: db.Run{
-			SessionInputStartSequence: pgtype.Int8{Int64: start, Valid: true},
-			SessionInputHighWatermark: pgtype.Int8{Int64: highWatermark, Valid: true},
-		},
+func actorTerminalState(status string, start, highWatermark int64) actorRunTerminalState {
+	return actorRunTerminalState{
+		sessionStatus:          status,
+		committedInputSequence: start,
+		inputStartSequence:     pgtype.Int8{Int64: start, Valid: true},
+		inputHighWatermark:     pgtype.Int8{Int64: highWatermark, Valid: true},
 	}
 }
 

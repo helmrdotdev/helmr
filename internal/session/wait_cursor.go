@@ -8,7 +8,19 @@ import (
 
 // The cursor belongs to the request and its fingerprint. A wait references its
 // admitted Turn; only a Computer checkpoint stores a suspended execution cursor.
-func ValidateWaitCursor(a run.ExecutionAuthority, wait db.RunWait, cursor pgtype.Int8) error {
+func ValidateWaitCursor(execution run.Execution, wait db.RunWait, cursor pgtype.Int8) error {
+	return validateWaitCursor(waitCursorScope{Run: execution.Run(), Attempt: execution.Attempt(), Session: execution.Session()}, wait, cursor)
+}
+
+// waitCursorScope is the part of a locked execution a wait cursor is checked
+// against.
+type waitCursorScope struct {
+	Run     db.Run
+	Attempt db.RunAttempt
+	Session db.Session
+}
+
+func validateWaitCursor(a waitCursorScope, wait db.RunWait, cursor pgtype.Int8) error {
 	if a.Run.EntrypointKind == "task" {
 		if a.Run.SessionID.Valid || cursor.Valid || wait.TurnID.Valid {
 			return ErrAuthority

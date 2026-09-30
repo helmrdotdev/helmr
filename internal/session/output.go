@@ -8,6 +8,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 )
 
 func validateOutput(ctx context.Context, q db.Querier, actor db.Session, turn db.SessionTurn, scope TurnScope) error {
@@ -36,7 +37,8 @@ func validateOutput(ctx context.Context, q db.Querier, actor db.Session, turn db
 
 // AppendSessionOutput belongs to the current Actor entrypoint outside a Turn.
 // Its historical event receipt never authorizes a later execution or a held Run.
-func AppendSessionOutput(ctx context.Context, q db.Querier, scope TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
+func AppendSessionOutput(ctx context.Context, tx pgx.Tx, scope TurnScope, key string, data json.RawMessage) (OutputReceipt, error) {
+	q := db.New(tx)
 	if scope.TurnID != uuid.Nil() || scope.RunID == uuid.Nil() || scope.AttemptNumber <= 0 || scope.RunGeneration <= 0 || !json.Valid(data) || len(data) > 1<<20 {
 		return OutputReceipt{}, &OperationError{Code: "invalid_request"}
 	}
@@ -48,7 +50,7 @@ func AppendSessionOutput(ctx context.Context, q db.Querier, scope TurnScope, key
 	if err != nil {
 		return OutputReceipt{}, err
 	}
-	claim, err := claimOperation(ctx, q, ControlRequest{Target: Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID}, IdempotencyKey: key}, "session.output.write", struct {
+	claim, err := claimOperation(ctx, tx, ControlRequest{Target: Target{EnvironmentID: scope.EnvironmentID, SessionID: scope.SessionID}, IdempotencyKey: key}, "session.output.write", struct {
 		RunID         uuid.UUID       `json:"run_id"`
 		AttemptNumber int32           `json:"attempt_number"`
 		RunGeneration int64           `json:"run_generation"`
@@ -82,7 +84,7 @@ func AppendSessionOutput(ctx context.Context, q db.Querier, scope TurnScope, key
 	}
 	if receipt.Code != "" {
 		if claim.Status != "completed" {
-			err = finishOperation(ctx, q, claim, receipt)
+			err = finishOperation(ctx, tx, claim, receipt)
 		}
 		return receipt, err
 	}
@@ -95,5 +97,5 @@ func AppendSessionOutput(ctx context.Context, q db.Querier, scope TurnScope, key
 		return receipt, err
 	}
 	receipt.EventID, receipt.Event = pgvalue.MustUUIDValue(event.ID), event
-	return receipt, finishOperation(ctx, q, claim, receipt)
+	return receipt, finishOperation(ctx, tx, claim, receipt)
 }

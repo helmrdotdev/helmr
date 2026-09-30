@@ -91,14 +91,14 @@ func (r *Reconciler) ReconcileLifecycle(
 		if !bindingsCanAdmit(actor, bindings) {
 			return true, tx.Commit(ctx)
 		}
-		if _, err = CreateContinuation(ctx, q, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
+		if _, err = CreateContinuation(ctx, tx, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
 			return true, tx.Commit(ctx)
 		} else if err != nil {
 			return false, err
 		}
 		return false, tx.Commit(ctx)
 	}
-	_, deferred, err = ReconcileClose(ctx, q, actor, bindings)
+	_, deferred, err = ReconcileClose(ctx, tx, actor, bindings)
 	if err != nil {
 		return false, err
 	}
@@ -191,14 +191,14 @@ func (r *Reconciler) ReconcileInput(
 		AfterInputSequence: pgtype.Int8{Int64: turn.Sequence - 1, Valid: true},
 	})
 	if err == nil {
-		if _, err := CompleteWait(ctx, q, wait, turn); err != nil {
+		if _, err := CompleteWait(ctx, tx, wait, turn); err != nil {
 			return false, err
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return false, err
 	}
 	if CanStartContinuation(actor) {
-		if _, err := CreateContinuation(ctx, q, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
+		if _, err := CreateContinuation(ctx, tx, actor, computer, bindings); errors.Is(err, pgx.ErrNoRows) {
 			if err := tx.Commit(ctx); err != nil {
 				return false, err
 			}
@@ -310,7 +310,7 @@ func (r *Reconciler) ReconcileTimeouts(ctx context.Context, limit int32) (int, e
 			_ = tx.Rollback(context.Background())
 			continue
 		}
-		if _, err := FailWait(ctx, q, wait, "wait_timeout"); err != nil {
+		if _, err := FailWait(ctx, tx, wait, "wait_timeout"); err != nil {
 			_ = tx.Rollback(context.Background())
 			return resolved, err
 		}

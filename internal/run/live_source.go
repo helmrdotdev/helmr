@@ -17,48 +17,77 @@ import (
 var ErrStaleSource = errors.New("run source authority is stale")
 
 // LiveSource is the scope of a live source Run that acts on other
-// resources, such as creating or deleting a Computer.
+// resources, such as creating or deleting a Computer. Only a locked Execution
+// yields one.
 type LiveSource struct {
-	OrgID         pgtype.UUID
-	ProjectID     pgtype.UUID
-	EnvironmentID pgtype.UUID
-	DeploymentID  pgtype.UUID
-	ComputerID    pgtype.UUID
-	RunID         pgtype.UUID
-	AttemptNumber int32
+	orgID         pgtype.UUID
+	projectID     pgtype.UUID
+	environmentID pgtype.UUID
+	deploymentID  pgtype.UUID
+	computerID    pgtype.UUID
+	runID         pgtype.UUID
+	attemptNumber int32
 }
+
+// OrgID is the source Run's organization.
+func (s LiveSource) OrgID() pgtype.UUID { return s.orgID }
+
+// ProjectID is the source Run's project.
+func (s LiveSource) ProjectID() pgtype.UUID { return s.projectID }
+
+// EnvironmentID is the source Run's environment.
+func (s LiveSource) EnvironmentID() pgtype.UUID { return s.environmentID }
+
+// DeploymentID is the source Run's deployment.
+func (s LiveSource) DeploymentID() pgtype.UUID { return s.deploymentID }
+
+// ComputerID is the source Run's Computer.
+func (s LiveSource) ComputerID() pgtype.UUID { return s.computerID }
+
+// RunID is the source Run.
+func (s LiveSource) RunID() pgtype.UUID { return s.runID }
+
+// AttemptNumber is the source Run's current attempt.
+func (s LiveSource) AttemptNumber() int32 { return s.attemptNumber }
 
 // LockLiveSource locks the fenced execution as LockLiveExecution does and
 // requires a live source. Secret locks, when needed, precede it.
 func LockLiveSource(ctx context.Context, tx pgx.Tx, fence ExecutionFence) (LiveSource, error) {
-	return CheckLiveSource(LockLiveExecution(ctx, tx, fence))
+	return checkLiveSource(LockLiveExecution(ctx, tx, fence))
 }
 
 // LockLiveSourceForComputer locks the fenced execution together with the
 // target Computer as LockLiveExecutionForComputer does and requires a live
 // source. A target outside the source's environment is computer.ErrNotFound.
 func LockLiveSourceForComputer(ctx context.Context, tx pgx.Tx, fence ExecutionFence, target pgtype.UUID) (LiveSource, error) {
-	authority, err := LockLiveExecutionForComputer(ctx, tx, fence, target)
+	execution, err := LockLiveExecutionForComputer(ctx, tx, fence, target)
 	if errors.Is(err, ErrExecutionTargetNotFound) {
 		return LiveSource{}, computer.ErrNotFound
 	}
-	return CheckLiveSource(authority, err)
+	return checkLiveSource(execution, err)
 }
 
-// CheckLiveSource validates the result of a live execution lock as a live
+// LiveSource requires the locked execution to be a live source: its Run and
+// lease are running, its attempt has entered and is not terminal, and its
+// lease is not finalizing. Otherwise it returns ErrStaleSource.
+func (e Execution) LiveSource() (LiveSource, error) {
+	if e.run.Status != db.RunStatusRunning || e.lease.Status != db.RunLeaseStatusRunning || !e.run.ActiveStartedAt.Valid || !e.attempt.EntrypointEnteredAt.Valid || e.attempt.TerminalAt.Valid || e.lease.FinalizationOperationID.Valid {
+		return LiveSource{}, fmt.Errorf("%w: live authority mismatch", ErrStaleSource)
+	}
+	return LiveSource{orgID: e.run.OrgID, projectID: e.run.ProjectID, environmentID: e.run.EnvironmentID, deploymentID: e.run.DeploymentID, computerID: e.Computer().ID, runID: e.run.ID, attemptNumber: e.attempt.Number}, nil
+}
+
+// checkLiveSource validates the result of a live execution lock as a live
 // source. A missing execution is ErrStaleSource; other lock failures,
 // including stale worker claims, are returned unchanged.
-func CheckLiveSource(authority ExecutionAuthority, err error) (LiveSource, error) {
+func checkLiveSource(execution Execution, err error) (LiveSource, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return LiveSource{}, ErrStaleSource
 	}
 	if err != nil {
 		return LiveSource{}, err
 	}
-	if authority.Run.Status != db.RunStatusRunning || authority.Lease.Status != db.RunLeaseStatusRunning || !authority.Run.ActiveStartedAt.Valid || !authority.Attempt.EntrypointEnteredAt.Valid || authority.Attempt.TerminalAt.Valid || authority.Lease.FinalizationOperationID.Valid {
-		return LiveSource{}, fmt.Errorf("%w: live authority mismatch", ErrStaleSource)
-	}
-	return LiveSource{OrgID: authority.Run.OrgID, ProjectID: authority.Run.ProjectID, EnvironmentID: authority.Run.EnvironmentID, DeploymentID: authority.Run.DeploymentID, ComputerID: authority.Computer.ID, RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number}, nil
+	return execution.LiveSource()
 }
 
 func lockLiveSourceTx(ctx context.Context, txb db.TxBeginner, fence ExecutionFence) (LiveSource, error) {

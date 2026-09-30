@@ -80,22 +80,22 @@ func (s *Server) workerCreateTimerRunWait(
 		if err != nil {
 			return err
 		}
-		if err := session.ValidateWaitCursor(authority, db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.Session.ID}, actorCursor); err != nil {
+		if err := session.ValidateWaitCursor(authority, db.RunWait{TurnID: turnID, TurnRunGeneration: generation, TurnSessionID: authority.Session().ID}, actorCursor); err != nil {
 			return err
 		}
 		if turnID.Valid {
-			if _, err := session.ValidateTurnWork(r.Context(), work.q, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Run.EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session.ID), RunID: pgvalue.MustUUIDValue(authority.Run.ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: authority.Attempt.Number, RunGeneration: generation.Int64}); err != nil {
+			if _, err := session.ValidateTurnWork(r.Context(), work.tx, session.TurnScope{EnvironmentID: pgvalue.MustUUIDValue(authority.Run().EnvironmentID), SessionID: pgvalue.MustUUIDValue(authority.Session().ID), RunID: pgvalue.MustUUIDValue(authority.Run().ID), TurnID: pgvalue.MustUUIDValue(turnID), AttemptNumber: authority.Attempt().Number, RunGeneration: generation.Int64}); err != nil {
 				return err
 			}
 		}
 		registered, err = work.q.GetTimerRunWaitRegistrationReplay(
 			r.Context(),
 			db.GetTimerRunWaitRegistrationReplayParams{
-				ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run.EnvironmentID,
-				RunID: authority.Run.ID, ComputerID: authority.Computer.ID,
-				AttemptNumber:                  authority.Attempt.Number,
+				ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run().EnvironmentID,
+				RunID: authority.Run().ID, ComputerID: authority.Computer().ID,
+				AttemptNumber:                  authority.Attempt().Number,
 				RegistrationRequestFingerprint: pgvalue.Text(fingerprint),
-				Metadata:                       metadata, Tags: tags, RunLeaseID: authority.Lease.ID,
+				Metadata:                       metadata, Tags: tags, RunLeaseID: authority.Lease().ID,
 			},
 		)
 		if err == nil {
@@ -105,29 +105,29 @@ func (s *Server) workerCreateTimerRunWait(
 			return err
 		}
 		if _, existingErr := work.q.GetRunWait(r.Context(), db.GetRunWaitParams{
-			RunID: authority.Run.ID, AttemptNumber: authority.Attempt.Number,
+			RunID: authority.Run().ID, AttemptNumber: authority.Attempt().Number,
 			ID: pgvalue.UUID(waitID),
 		}); existingErr == nil || !errors.Is(existingErr, pgx.ErrNoRows) {
 			return errStaleRunLeaseClaim
 		}
-		if authority.Run.Status != db.RunStatusRunning {
+		if authority.Run().Status != db.RunStatusRunning {
 			return errStaleRunLeaseClaim
 		}
 		registered, err = work.q.RegisterTimerRunWait(r.Context(), db.RegisterTimerRunWaitParams{
-			ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run.EnvironmentID,
+			ID: pgvalue.UUID(waitID), EnvironmentID: authority.Run().EnvironmentID,
 			DueAt: pgvalue.Timestamptz(dueAt), IdleTimeoutMs: idleTimeout,
 			RegistrationRequestFingerprint: pgvalue.Text(fingerprint),
-			AttemptNumber:                  authority.Attempt.Number,
-			CurrentRunLeaseID:              authority.Lease.ID,
+			AttemptNumber:                  authority.Attempt().Number,
+			CurrentRunLeaseID:              authority.Lease().ID,
 			Metadata:                       metadata, Tags: tags,
-			RunID:                   authority.Run.ID,
-			ExpectedRunningRevision: authority.Run.Revision,
+			RunID:                   authority.Run().ID,
+			ExpectedRunningRevision: authority.Run().Revision,
 		})
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
 		if turnID.Valid {
-			_, err = work.q.BindRunWaitTurn(r.Context(), db.BindRunWaitTurnParams{SessionID: authority.Session.ID, TurnID: turnID, RunGeneration: generation, WaitID: registered.ID})
+			_, err = work.q.BindRunWaitTurn(r.Context(), db.BindRunWaitTurnParams{SessionID: authority.Session().ID, TurnID: turnID, RunGeneration: generation, WaitID: registered.ID})
 		}
 		return err
 	})

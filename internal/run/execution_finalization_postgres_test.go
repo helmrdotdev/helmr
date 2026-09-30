@@ -32,7 +32,7 @@ func finalizationExecutionFixture(t *testing.T, actor bool) (runtest.Fixture, Ex
 	if _, err = StartExecution(t.Context(), tx, fence); err != nil {
 		t.Fatal(err)
 	}
-	if err = EnterExecution(t.Context(), tx, fence, a.Run.EntrypointKind, a.Run.EntrypointDeclaredID); err != nil {
+	if err = EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {
@@ -41,11 +41,11 @@ func finalizationExecutionFixture(t *testing.T, actor bool) (runtest.Fixture, Ex
 	return f, ExecutionFinalization{Fence: fence, RunID: pgvalue.UUID(work.RunID), AttemptNumber: 1, OperationID: pgvalue.UUID(uuid.NewV7()), Fingerprint: dbtest.Digest("member-finalization")}
 }
 
-func finalizeExecutionTest(t *testing.T, f runtest.Fixture, request ExecutionFinalization, commit bool) (ExecutionAuthority, error) {
+func finalizeExecutionTest(t *testing.T, f runtest.Fixture, request ExecutionFinalization, commit bool) (Execution, error) {
 	t.Helper()
 	tx, err := f.Pool.Begin(t.Context())
 	if err != nil {
-		return ExecutionAuthority{}, err
+		return Execution{}, err
 	}
 	defer tx.Rollback(context.Background())
 	a, err := BeginExecutionFinalization(t.Context(), tx, request)
@@ -82,11 +82,11 @@ func TestExecutionFinalizationReplayAndPhysicalIndependence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if a.Lease.Status != db.RunLeaseStatusFinalizing || a.Run.ActiveStartedAt.Valid || a.Lease.ProcessReconciledAt.Valid || a.Lease.ExpiresAt != replay.Lease.ExpiresAt || a.Lease.FinalizationStartedAt != replay.Lease.FinalizationStartedAt || a.Run.Revision != replay.Run.Revision {
+			if a.Lease().Status != db.RunLeaseStatusFinalizing || a.Run().ActiveStartedAt.Valid || a.Lease().ProcessReconciledAt.Valid || a.Lease().ExpiresAt != replay.Lease().ExpiresAt || a.Lease().FinalizationStartedAt != replay.Lease().FinalizationStartedAt || a.Run().Revision != replay.Run().Revision {
 				t.Fatal("incorrect member finalization receipt")
 			}
 			var after string
-			if err = f.Pool.QueryRow(t.Context(), `SELECT row_to_json(i)::text FROM computer_instances i WHERE id=$1`, a.Instance.ID).Scan(&after); err != nil {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT row_to_json(i)::text FROM computer_instances i WHERE id=$1`, a.Instance().ID).Scan(&after); err != nil {
 				t.Fatal(err)
 			}
 			if before != after {
@@ -203,7 +203,7 @@ func childFinalizationFixture(t *testing.T) (runtest.Fixture, ExecutionFinalizat
 	if _, err = StartExecution(t.Context(), tx, fence); err != nil {
 		t.Fatal(err)
 	}
-	if err = EnterExecution(t.Context(), tx, fence, a.Run.EntrypointKind, a.Run.EntrypointDeclaredID); err != nil {
+	if err = EnterExecution(t.Context(), tx, fence, a.Run().EntrypointKind, a.Run().EntrypointDeclaredID); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(t.Context()); err != nil {

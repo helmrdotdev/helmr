@@ -7,15 +7,17 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func Close(ctx context.Context, q db.Querier, request ControlRequest) (ControlReceipt, error) {
+func Close(ctx context.Context, tx pgx.Tx, request ControlRequest) (ControlReceipt, error) {
+	q := db.New(tx)
 	actor, err := lockSession(ctx, q, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	claim, err := claimOperation(ctx, q, request, "session.close", struct{}{})
+	claim, err := claimOperation(ctx, tx, request, "session.close", struct{}{})
 	if err != nil {
 		return ControlReceipt{}, err
 	}
@@ -43,10 +45,11 @@ func Close(ctx context.Context, q db.Querier, request ControlRequest) (ControlRe
 			return receipt, err
 		}
 	}
-	return receipt, finishOperation(ctx, q, claim, receipt)
+	return receipt, finishOperation(ctx, tx, claim, receipt)
 }
 
-func Resume(ctx context.Context, q db.Querier, request ResumeRequest) (ControlReceipt, error) {
+func Resume(ctx context.Context, tx pgx.Tx, request ResumeRequest) (ControlReceipt, error) {
+	q := db.New(tx)
 	locator, err := q.GetActor(ctx, db.GetActorParams{EnvironmentID: pgvalue.UUID(request.EnvironmentID), ID: pgvalue.UUID(request.SessionID)})
 	if err != nil {
 		return ControlReceipt{}, err
@@ -56,12 +59,13 @@ func Resume(ctx context.Context, q db.Querier, request ResumeRequest) (ControlRe
 	if err != nil {
 		return ControlReceipt{}, err
 	}
-	return ResumeWithLockedSecrets(ctx, q, request, locator.ComputerID, bindings)
+	return ResumeWithLockedSecrets(ctx, tx, request, locator.ComputerID, bindings)
 }
 
 // ResumeWithLockedSecrets consumes the target's complete admission bindings,
 // locked before Session authority by a cross-Session caller.
-func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRequest, computerID pgtype.UUID, bindings []db.LockComputerSecretsForAdmissionRow) (ControlReceipt, error) {
+func ResumeWithLockedSecrets(ctx context.Context, tx pgx.Tx, request ResumeRequest, computerID pgtype.UUID, bindings []db.LockComputerSecretsForAdmissionRow) (ControlReceipt, error) {
+	q := db.New(tx)
 	actor, err := lockSession(ctx, q, request.Target)
 	if err != nil {
 		return ControlReceipt{}, err
@@ -69,7 +73,7 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 	if actor.ComputerID != computerID {
 		return ControlReceipt{}, ErrAuthority
 	}
-	claim, err := claimOperation(ctx, q, request.ControlRequest, "session.resume", struct {
+	claim, err := claimOperation(ctx, tx, request.ControlRequest, "session.resume", struct {
 		HoldID uuid.UUID `json:"hold_id"`
 	}{request.HoldID})
 	if err != nil {
@@ -116,19 +120,20 @@ func ResumeWithLockedSecrets(ctx context.Context, q db.Querier, request ResumeRe
 		if actor.Status == "closing" {
 			err = q.CreateSessionLifecycleReconcileOutbox(ctx, db.CreateSessionLifecycleReconcileOutboxParams{ID: claim.ID, EnvironmentID: actor.EnvironmentID, SessionID: actor.ID})
 		} else if CanStartContinuation(actor) {
-			_, err = CreateContinuation(ctx, q, actor, db.Computer{ID: computer.ID}, bindings)
+			_, err = CreateContinuation(ctx, tx, actor, db.Computer{ID: computer.ID}, bindings)
 		}
 		if err != nil {
 			return receipt, err
 		}
 	}
-	return receipt, finishOperation(ctx, q, claim, receipt)
+	return receipt, finishOperation(ctx, tx, claim, receipt)
 }
 
 // CompleteInterruption settles the held Turn after the caller verifies execution
 // and owned-scope cleanup in the same transaction. The version records the last
 // retained Computer head; process cleanup has its own evidence.
-func CompleteInterruption(ctx context.Context, q db.Querier, actor db.Session, versionID pgtype.UUID, fingerprint string) error {
+func CompleteInterruption(ctx context.Context, tx pgx.Tx, actor db.Session, versionID pgtype.UUID, fingerprint string) error {
+	q := db.New(tx)
 	var sequence pgtype.Int8
 	if actor.ActiveTurnID.Valid {
 		turn, err := q.LockSessionTurnInput(ctx, db.LockSessionTurnInputParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})

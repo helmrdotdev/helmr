@@ -53,12 +53,12 @@ func TestChildCallRegistrationRetainsParentWriter(t *testing.T) {
 				dbtest.MustExec(t, t.Context(), tx, `INSERT INTO idempotency_claims(id,environment_id,operation,slot_hash,request_fingerprint,accepted_at) VALUES($1,$2,'task.child.invoke',$3,$3,now())`, claim, f.EnvironmentID, dbtest.Hash(pgvalue.UUIDString(claim)))
 				q := db.New(tx)
 				child, err := q.CreateChildRunFromParentDeployment(t.Context(), db.CreateChildRunFromParentDeploymentParams{
-					EntrypointDeclaredID: "test-task", ComputerID: computer, BaseComputerDiskVersionID: head, ClaimID: claim, EnvironmentID: a.Run.EnvironmentID, ParentRunID: a.Run.ID, ID: pgvalue.UUID(uuid.NewV7()), ParentOwnsLifecycle: pgtype.Bool{Bool: true, Valid: true}, Payload: []byte(`{}`), Metadata: []byte(`{}`), Tags: []string{}, QueueName: "default", QueueOriginAt: a.Run.QueueOriginAt, QueueScoreAt: a.Run.QueueScoreAt, MaxActiveDurationMs: 300000, RetryPolicy: []byte(`{"enabled":false}`), TraceID: a.Run.TraceID, RootSpanID: "3333333333333333",
+					EntrypointDeclaredID: "test-task", ComputerID: computer, BaseComputerDiskVersionID: head, ClaimID: claim, EnvironmentID: a.Run().EnvironmentID, ParentRunID: a.Run().ID, ID: pgvalue.UUID(uuid.NewV7()), ParentOwnsLifecycle: pgtype.Bool{Bool: true, Valid: true}, Payload: []byte(`{}`), Metadata: []byte(`{}`), Tags: []string{}, QueueName: "default", QueueOriginAt: a.Run().QueueOriginAt, QueueScoreAt: a.Run().QueueScoreAt, MaxActiveDurationMs: 300000, RetryPolicy: []byte(`{"enabled":false}`), TraceID: a.Run().TraceID, RootSpanID: "3333333333333333",
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if child.ComputerID != computer || child.DeploymentID != a.Run.DeploymentID || !child.ParentOwnsLifecycle.Bool {
+				if child.ComputerID != computer || child.DeploymentID != a.Run().DeploymentID || !child.ParentOwnsLifecycle.Bool {
 					t.Fatalf("child binding=%+v", child)
 				}
 
@@ -95,7 +95,7 @@ func TestChildCallRegistrationRetainsParentWriter(t *testing.T) {
 				if _, err := registerChildCall(t.Context(), q, altered, a, receipt, fingerprint, pgvalue.MustUUIDValue(child.ID), pgvalue.MustUUIDValue(computer)); !errors.Is(err, errChildTaskInvokeStale) {
 					t.Fatalf("altered receipt accepted: %v", err)
 				}
-				wait, err := q.GetRunWait(t.Context(), db.GetRunWaitParams{RunID: a.Run.ID, AttemptNumber: a.Attempt.Number, ID: pgvalue.UUID(input.RunWaitID)})
+				wait, err := q.GetRunWait(t.Context(), db.GetRunWaitParams{RunID: a.Run().ID, AttemptNumber: a.Attempt().Number, ID: pgvalue.UUID(input.RunWaitID)})
 				wantSuspension := "hot"
 				if completed {
 					wantSuspension = "released"

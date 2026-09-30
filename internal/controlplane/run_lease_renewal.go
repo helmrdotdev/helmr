@@ -18,7 +18,7 @@ func (s *Server) renewRunLease(ctx context.Context, worker workergroup.HostPrinc
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		response = workerapi.RunLeaseRenewResponse{Lease: fence, ExpiresAt: a.Lease.ExpiresAt.Time.UTC(), BaseComputerDiskVersionID: pgvalue.UUIDString(a.Attempt.BaseComputerDiskVersionID)}
+		response = workerapi.RunLeaseRenewResponse{Lease: fence, ExpiresAt: a.Lease().ExpiresAt.Time.UTC(), BaseComputerDiskVersionID: pgvalue.UUIDString(a.Attempt().BaseComputerDiskVersionID)}
 		return nil
 	})
 	if err != nil {

@@ -20,10 +20,10 @@ func TestExecutionStartReplayAndIndependentRenewal(t *testing.T) {
 			if _, err := claimExecutionTest(t, f, fence, true); err != nil {
 				t.Fatal(err)
 			}
-			start := func() (ExecutionAuthority, error) {
+			start := func() (Execution, error) {
 				tx, e := f.Pool.Begin(t.Context())
 				if e != nil {
-					return ExecutionAuthority{}, e
+					return Execution{}, e
 				}
 				defer tx.Rollback(context.Background())
 				a, e := StartExecution(t.Context(), tx, fence)
@@ -40,7 +40,7 @@ func TestExecutionStartReplayAndIndependentRenewal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if a.Run.ActiveStartedAt != replay.Run.ActiveStartedAt || a.Lease.StartedAt != replay.Lease.StartedAt || a.Run.Revision != replay.Run.Revision {
+			if a.Run().ActiveStartedAt != replay.Run().ActiveStartedAt || a.Lease().StartedAt != replay.Lease().StartedAt || a.Run().Revision != replay.Run().Revision {
 				t.Fatal("start replay reset active budget")
 			}
 			if actor {
@@ -52,10 +52,10 @@ func TestExecutionStartReplayAndIndependentRenewal(t *testing.T) {
 			if err = f.Pool.QueryRow(t.Context(), `SELECT expires_at FROM run_leases WHERE id=$1`, work.LeaseID).Scan(&expected); err != nil {
 				t.Fatal(err)
 			}
-			renew := func(expiry time.Time) (ExecutionAuthority, error) {
+			renew := func(expiry time.Time) (Execution, error) {
 				tx, e := f.Pool.Begin(t.Context())
 				if e != nil {
-					return ExecutionAuthority{}, e
+					return Execution{}, e
 				}
 				defer tx.Rollback(context.Background())
 				a, e := RenewExecution(t.Context(), tx, fence, expiry)
@@ -68,18 +68,18 @@ func TestExecutionStartReplayAndIndependentRenewal(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !renewed.Lease.ExpiresAt.Time.After(expected) {
+			if !renewed.Lease().ExpiresAt.Time.After(expected) {
 				t.Fatal("grant not extended")
 			}
 			replay, err = renew(expected)
-			if err != nil || replay.Lease.ExpiresAt != renewed.Lease.ExpiresAt {
+			if err != nil || replay.Lease().ExpiresAt != renewed.Lease().ExpiresAt {
 				t.Fatalf("renew replay changed receipt: %v", err)
 			}
 			if _, err = renew(expected.Add(-time.Second)); !errors.Is(err, pgx.ErrNoRows) {
 				t.Fatalf("unknown renewal receipt=%v", err)
 			}
 			var unchanged bool
-			if err = f.Pool.QueryRow(t.Context(), `SELECT writer_expires_at=$2 AND writer_generation=$3 FROM computer_instances WHERE id=$1`, a.Instance.ID, a.Instance.WriterExpiresAt, a.Instance.WriterGeneration).Scan(&unchanged); err != nil || !unchanged {
+			if err = f.Pool.QueryRow(t.Context(), `SELECT writer_expires_at=$2 AND writer_generation=$3 FROM computer_instances WHERE id=$1`, a.Instance().ID, a.Instance().WriterExpiresAt, a.Instance().WriterGeneration).Scan(&unchanged); err != nil || !unchanged {
 				t.Fatalf("Run renewal changed physical writer: %v %v", unchanged, err)
 			}
 		})
@@ -129,9 +129,9 @@ func TestExecutionRenewalHonorsActiveBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline := a.Run.ActiveStartedAt.Time.Add(10 * time.Second)
-	if !a.Lease.ExpiresAt.Time.Equal(deadline) {
-		t.Fatalf("expiry %s != budget %s", a.Lease.ExpiresAt.Time, deadline)
+	deadline := a.Run().ActiveStartedAt.Time.Add(10 * time.Second)
+	if !a.Lease().ExpiresAt.Time.Equal(deadline) {
+		t.Fatalf("expiry %s != budget %s", a.Lease().ExpiresAt.Time, deadline)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestLiveExecutionRetainsWaitAuthorityWithoutChangingOwnership(t *testing.T)
 	}
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE runs SET status='waiting' WHERE id=$1`, work.RunID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET status='checkpointing' WHERE id=$1`, work.LeaseID)
-	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='checkpointing' WHERE id=$1`, started.Instance.ID)
+	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE computer_instances SET admission_state='checkpointing' WHERE id=$1`, started.Instance().ID)
 	tx, err = f.Pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -233,7 +233,7 @@ func TestLiveExecutionRetainsWaitAuthorityWithoutChangingOwnership(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live.Instance.WriterGeneration != started.Instance.WriterGeneration || live.Instance.WriterExpiresAt != started.Instance.WriterExpiresAt || live.Lease.ExpiresAt != started.Lease.ExpiresAt {
+	if live.Instance().WriterGeneration != started.Instance().WriterGeneration || live.Instance().WriterExpiresAt != started.Instance().WriterExpiresAt || live.Lease().ExpiresAt != started.Lease().ExpiresAt {
 		t.Fatal("observation changed physical or logical lease")
 	}
 	if err = tx.Commit(t.Context()); err != nil {

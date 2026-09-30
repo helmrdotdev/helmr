@@ -2,7 +2,6 @@ package token
 
 import (
 	"context"
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -31,7 +30,7 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	turn, err := session.ActivateTurn(ctx, db.New(tx), session.TurnScope{EnvironmentID: fixture.environmentID, SessionID: actorID, TurnID: turnID, RunID: actorWork.runID, AttemptNumber: 1})
+	turn, err := session.ActivateTurn(ctx, tx, session.TurnScope{EnvironmentID: fixture.environmentID, SessionID: actorID, TurnID: turnID, RunID: actorWork.runID, AttemptNumber: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +62,7 @@ func TestTurnStopDoesNotConsumeSharedTokenOrUnrelatedWait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.InterruptTurn(ctx, db.New(tx), fixture.environmentID, actorID, turnID, "stop-shared-token-wait", graph); err != nil {
+	if _, err = session.InterruptTurn(ctx, tx, fixture.environmentID, actorID, turnID, "stop-shared-token-wait", graph); err != nil {
 		t.Fatal(err)
 	}
 	if err = tx.Commit(ctx); err != nil {

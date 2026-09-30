@@ -28,9 +28,10 @@ func CanStartContinuation(actor db.Session) bool {
 		!actor.DispatchHoldID.Valid && !actor.ActiveTurnID.Valid && actor.CommittedInputSequence < actor.NextInputSequence-1
 }
 
-func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, turn db.SessionTurn) (db.RunWait, error) {
+func CompleteWait(ctx context.Context, tx pgx.Tx, wait db.RunWait, turn db.SessionTurn) (db.RunWait, error) {
+	store := db.New(tx)
 	var err error
-	turn, err = ActivateTurn(ctx, store, TurnScope{EnvironmentID: pgvalue.MustUUIDValue(turn.EnvironmentID), SessionID: pgvalue.MustUUIDValue(turn.SessionID), TurnID: pgvalue.MustUUIDValue(turn.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
+	turn, err = ActivateTurn(ctx, tx, TurnScope{EnvironmentID: pgvalue.MustUUIDValue(turn.EnvironmentID), SessionID: pgvalue.MustUUIDValue(turn.SessionID), TurnID: pgvalue.MustUUIDValue(turn.ID), RunID: pgvalue.MustUUIDValue(wait.RunID), AttemptNumber: wait.AttemptNumber})
 	if err != nil {
 		return db.RunWait{}, err
 	}
@@ -50,7 +51,8 @@ func CompleteWait(ctx context.Context, store db.Querier, wait db.RunWait, turn d
 	return completed, err
 }
 
-func FailWait(ctx context.Context, store db.Querier, wait db.RunWait, reason string) (db.RunWait, error) {
+func FailWait(ctx context.Context, tx pgx.Tx, wait db.RunWait, reason string) (db.RunWait, error) {
+	store := db.New(tx)
 	failed, err := run.Fail(ctx, store, wait, reason)
 	if errors.Is(err, run.ErrWaitAuthority) {
 		return db.RunWait{}, ErrAuthority
@@ -80,11 +82,12 @@ func TurnResolution(turn db.SessionTurn) (json.RawMessage, error) {
 
 func CreateContinuation(
 	ctx context.Context,
-	store db.Querier,
+	tx pgx.Tx,
 	actor db.Session,
 	computer db.Computer,
 	bindings []db.LockComputerSecretsForAdmissionRow,
 ) (pgtype.UUID, error) {
+	store := db.New(tx)
 	if actor.CancelRequestedAt.Valid {
 		return pgtype.UUID{}, ErrAuthority
 	}

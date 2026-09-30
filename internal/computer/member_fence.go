@@ -46,26 +46,53 @@ type RunInstanceRef struct {
 	WriterGeneration int64
 }
 
+// RunInstance is the Computer and the Instance of a Run lease, locked in the
+// owning transaction in that order by LockInstanceForRun. It is valid only
+// inside that transaction.
+type RunInstance struct {
+	tx       pgx.Tx
+	computer db.LockRunLeaseClaimComputerRow
+	instance db.ComputerInstance
+}
+
 // LockInstanceForRun locks the Computer, then the Instance, of a Run lease.
 // The worker host and any Computers the Run's lineage reaches must already be
 // locked. The Computer must be active and clean, and the Instance the ready,
 // mounted, unreclaimed incarnation of the lease's writer generation with the
 // admission the access requires.
-func LockInstanceForRun(ctx context.Context, tx pgx.Tx, ref RunInstanceRef, access RunAccess) (db.LockRunLeaseClaimComputerRow, db.ComputerInstance, error) {
+func LockInstanceForRun(ctx context.Context, tx pgx.Tx, ref RunInstanceRef, access RunAccess) (RunInstance, error) {
 	q := db.New(tx)
 	org, project, environment, computerID := pgvalue.UUID(ref.OrgID), pgvalue.UUID(ref.ProjectID), pgvalue.UUID(ref.EnvironmentID), pgvalue.UUID(ref.ComputerID)
 	c, err := q.LockRunLeaseClaimComputer(ctx, db.LockRunLeaseClaimComputerParams{ID: computerID, OrgID: org, ProjectID: project, EnvironmentID: environment, RegionID: ref.RegionID})
 	if err != nil {
-		return db.LockRunLeaseClaimComputerRow{}, db.ComputerInstance{}, err
+		return RunInstance{}, err
 	}
 	i, err := q.LockRunLeaseClaimInstance(ctx, db.LockRunLeaseClaimInstanceParams{ID: pgvalue.UUID(ref.InstanceID), OrgID: org, ProjectID: project, EnvironmentID: environment, RegionID: ref.RegionID, WorkerGroupID: pgvalue.UUID(ref.Host.GroupID), WorkerHostID: pgvalue.UUID(ref.Host.HostID), WorkerEpoch: ref.Host.Epoch, ComputerID: computerID})
 	if err != nil {
-		return db.LockRunLeaseClaimComputerRow{}, db.ComputerInstance{}, err
+		return RunInstance{}, err
 	}
 	if c.Status != "active" || c.DesiredState != "active" || c.DeletedAt.Valid || c.DirtyState == "dirty_state_lost" || c.DirtyState == "capture_failed" || i.WriterGeneration != c.WriterGeneration || i.WriterGeneration != ref.WriterGeneration || (i.AdmissionState != "open" && !(access == RunLive && (i.AdmissionState == "draining" || i.AdmissionState == "checkpointing")) && !(access == RunResume && (i.AdmissionState == "restoring" || i.AdmissionState == "draining"))) || i.DesiredState != "ready" || i.ObservedState != "ready" || i.ObservedDesiredVersion != i.DesiredVersion || i.MountState != "mounted" || i.ReclaimedAt.Valid || i.TerminalAt.Valid {
-		return db.LockRunLeaseClaimComputerRow{}, db.ComputerInstance{}, pgx.ErrNoRows
+		return RunInstance{}, pgx.ErrNoRows
 	}
-	return c, i, nil
+	return RunInstance{tx: tx, computer: c, instance: i}, nil
+}
+
+// Computer is the locked Computer.
+func (r RunInstance) Computer() db.LockRunLeaseClaimComputerRow {
+	return r.computer
+}
+
+// Instance is the locked Instance.
+func (r RunInstance) Instance() db.ComputerInstance {
+	return r.instance
+}
+
+// RecordStart records a Run start as activity on the locked Computer. It
+// applies no status or writer generation predicate: the caller's Run lease
+// fence has already validated both under the locks.
+func (r RunInstance) RecordStart(ctx context.Context) error {
+	_, err := r.tx.Exec(ctx, `UPDATE computers SET last_activity_at=greatest(last_activity_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1`, r.computer.ID)
+	return err
 }
 
 // CommandRef addresses a Computer Command in its Environment.

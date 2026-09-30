@@ -32,7 +32,7 @@ func interruptTurn(ctx context.Context, f *actorExecutionFixture, scope session.
 		if err != nil {
 			return err
 		}
-		receipt, err = session.InterruptTurn(ctx, w.q, scope.EnvironmentID, scope.SessionID, scope.TurnID, key, graph)
+		receipt, err = session.InterruptTurn(ctx, w.tx, scope.EnvironmentID, scope.SessionID, scope.TurnID, key, graph)
 		return err
 	})
 	return receipt, err
@@ -69,7 +69,7 @@ func TestSessionTurnStopSettlementPostgres(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		receipt, err := session.InterruptTurn(t.Context(), db.New(tx), scope.EnvironmentID, scope.SessionID, scope.TurnID, "stop-1", graph)
+		receipt, err := session.InterruptTurn(t.Context(), tx, scope.EnvironmentID, scope.SessionID, scope.TurnID, "stop-1", graph)
 		if err != nil || receipt.Status != "accepted" {
 			t.Fatalf("interrupt: %+v %v", receipt, err)
 		}

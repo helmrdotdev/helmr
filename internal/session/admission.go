@@ -42,7 +42,7 @@ func lockSessionComputer(ctx context.Context, q db.Querier, environmentID, compu
 	return nil
 }
 
-func claimOperation(ctx context.Context, q db.Querier, request ControlRequest, name string, fingerprint any) (db.IdempotencyClaim, error) {
+func claimOperation(ctx context.Context, tx pgx.Tx, request ControlRequest, name string, fingerprint any) (db.IdempotencyClaim, error) {
 	key := request.IdempotencyKey
 	if key == "" {
 		key = uuid.NewV7().String()
@@ -51,30 +51,31 @@ func claimOperation(ctx context.Context, q db.Querier, request ControlRequest, n
 	if err != nil {
 		return db.IdempotencyClaim{}, err
 	}
-	tx, err := idempotency.TransactionForQueries(q)
+	claims, err := idempotency.TransactionFor(tx)
 	if err != nil {
 		return db.IdempotencyClaim{}, err
 	}
-	result, err := tx.Acquire(ctx, r)
+	result, err := claims.Acquire(ctx, r)
 	return result.Claim, err
 }
 
-func finishOperation(ctx context.Context, q db.Querier, claim db.IdempotencyClaim, receipt any) error {
+func finishOperation(ctx context.Context, tx pgx.Tx, claim db.IdempotencyClaim, receipt any) error {
 	raw, err := json.Marshal(receipt)
 	if err != nil {
 		return err
 	}
-	tx, err := idempotency.TransactionForQueries(q)
+	claims, err := idempotency.TransactionFor(tx)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Complete(ctx, claim, raw)
+	_, err = claims.Complete(ctx, claim, raw)
 	return err
 }
 
 // Admit binds auto routing and all business rejections while holding the same
 // Session row used by stop, activation and terminal settlement.
-func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (AdmissionReceipt, error) {
+func Admit(ctx context.Context, tx pgx.Tx, request AdmissionRequest) (AdmissionReceipt, error) {
+	q := db.New(tx)
 	var name string
 	switch request.Mode {
 	case SendMessageOrEnqueue:
@@ -97,7 +98,7 @@ func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (Admissi
 	if err != nil {
 		return AdmissionReceipt{}, err
 	}
-	claim, err := claimOperation(ctx, q, ControlRequest{Target: request.Target, IdempotencyKey: request.IdempotencyKey}, name, struct {
+	claim, err := claimOperation(ctx, tx, ControlRequest{Target: request.Target, IdempotencyKey: request.IdempotencyKey}, name, struct {
 		TurnID      uuid.UUID       `json:"turn_id"`
 		SourceRunID uuid.UUID       `json:"source_run_id"`
 		Data        json.RawMessage `json:"data"`
@@ -169,7 +170,7 @@ func Admit(ctx context.Context, q db.Querier, request AdmissionRequest) (Admissi
 		}
 		receipt.Kind, receipt.TurnID = "enqueued", turnID
 	}
-	return receipt, finishOperation(ctx, q, claim, receipt)
+	return receipt, finishOperation(ctx, tx, claim, receipt)
 }
 
 func appendLifecycleEvent(ctx context.Context, q db.Querier, actor db.Session, turnID, messageID pgtype.UUID, kind string, data json.RawMessage, version pgtype.UUID) (db.SessionEvent, error) {

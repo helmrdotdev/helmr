@@ -7,7 +7,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/run"
@@ -71,7 +70,7 @@ func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 	}
 	if err := transact(func(tx pgx.Tx) error {
 		a, err := run.RenewExecution(t.Context(), tx, fence, expiry)
-		if err == nil && !a.Lease.ExpiresAt.Time.After(expiry) {
+		if err == nil && !a.Lease().ExpiresAt.Time.After(expiry) {
 			t.Fatal("held execution could not renew while draining callbacks")
 		}
 		return err
@@ -83,10 +82,10 @@ func TestHeldExecutionCompletesAdmittedMessage(t *testing.T) {
 			if _, err := run.LockLiveExecution(t.Context(), tx, fence); err != nil {
 				return err
 			}
-			if _, err := ValidateTurnWork(t.Context(), db.New(tx), scope); !errors.Is(err, ErrTurnStopped) {
+			if _, err := ValidateTurnWork(t.Context(), tx, scope); !errors.Is(err, ErrTurnStopped) {
 				t.Fatalf("new work admitted under hold: %v", err)
 			}
-			message, err := CompleteMessage(t.Context(), db.New(tx), scope, work.LeaseID, messageID, deliveryID, MessageOutcome{Status: "handled"})
+			message, err := CompleteMessage(t.Context(), tx, scope, work.LeaseID, messageID, deliveryID, MessageOutcome{Status: "handled"})
 			if err == nil && message.Status != "handled" {
 				t.Fatalf("message status = %s", message.Status)
 			}
