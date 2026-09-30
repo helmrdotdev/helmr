@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -315,7 +316,7 @@ func TestWorkerSessionControlOwnedChildrenReciprocalPostgres(t *testing.T) {
 			accepted++
 			continue
 		}
-		if errors.Is(err, errStaleWorkerRunSource) {
+		if errors.Is(err, run.ErrStaleSource) {
 			rejected++
 		} else {
 			t.Fatalf("reciprocal owned child: %v", err)

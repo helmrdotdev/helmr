@@ -2,11 +2,13 @@ package controlplane
 
 import (
 	"encoding/json"
+	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
-	"testing"
 )
 
 func TestComputerResidencyProjectsCurrentInstance(t *testing.T) {
@@ -18,7 +20,7 @@ func TestComputerResidencyProjectsCurrentInstance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		snapshot, err := f.server.computerSnapshot(t.Context(), q, row)
+		snapshot, err := computer.Read(t.Context(), q, computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID}, f.computerID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +69,7 @@ func TestManagedParkingAdmitsLogicalWork(t *testing.T) {
 			}
 			defer tx.Rollback(t.Context())
 			q := db.New(tx)
-			computer, err := q.LockComputer(t.Context(), db.LockComputerParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(f.computerID)})
+			locked, err := q.LockComputer(t.Context(), db.LockComputerParams{EnvironmentID: pgvalue.UUID(f.EnvironmentID), ID: pgvalue.UUID(f.computerID)})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -75,7 +77,7 @@ func TestManagedParkingAdmitsLogicalWork(t *testing.T) {
 			if err := tx.QueryRow(t.Context(), `SELECT deployment_id FROM runs WHERE id=$1`, f.runID).Scan(&deployment); err != nil {
 				t.Fatal(err)
 			}
-			ok, err := computerCanAdmitProgram(t.Context(), q, computer.EnvironmentID, computer.ID, computer.ComputerSpecID, deployment)
+			ok, err := computer.CanAdmitProgram(t.Context(), q, locked.EnvironmentID, locked.ID, locked.ComputerSpecID, deployment)
 			if err != nil || !ok {
 				t.Fatalf("program admission during %s: %v %v", state, ok, err)
 			}

@@ -1,12 +1,14 @@
 package controlplane
 
 import (
+	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/dispatch/dispatchtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"testing"
 )
 
 func TestComputerDeleteRetiresParkedCheckpoint(t *testing.T) {
@@ -25,8 +27,7 @@ func TestComputerDeleteRetiresParkedCheckpoint(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{db: db.New(f.Pool), tx: f.Pool}
-	if _, err = server.deleteComputer(t.Context(), computerDeleteRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(cp.ComputerID), IdempotencyKey: "delete-parked"}); err != nil {
+	if _, err = computer.Delete(t.Context(), f.Pool, computer.Deletion{Scope: computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID}, ComputerID: pgvalue.MustUUIDValue(cp.ComputerID), IdempotencyKey: "delete-parked"}); err != nil {
 		t.Fatal(err)
 	}
 	var retired bool
@@ -67,8 +68,7 @@ func TestComputerDeleteRetiresConsumedCheckpoint(t *testing.T) {
 	if err = tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{db: db.New(f.Pool), tx: f.Pool}
-	if _, err = server.deleteComputer(t.Context(), computerDeleteRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: pgvalue.MustUUIDValue(cp.ComputerID), IdempotencyKey: "delete-consumed"}); err != nil {
+	if _, err = computer.Delete(t.Context(), f.Pool, computer.Deletion{Scope: computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID}, ComputerID: pgvalue.MustUUIDValue(cp.ComputerID), IdempotencyKey: "delete-consumed"}); err != nil {
 		t.Fatal(err)
 	}
 	var retainedReceipt bool

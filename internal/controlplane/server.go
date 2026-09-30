@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/bundle"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -74,6 +75,7 @@ type Server struct {
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
 	secretProxy           *secret.Store
+	computers             computer.Creator
 	computerFencingKey    disk.FencingKey
 	tokenCredentialKey    auth.CredentialKey
 	eventStream           SubjectEventReader
@@ -236,6 +238,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
 		secretProxy:           cfg.SecretProxy,
+		computers:             computer.NewCreator(cfg.SecretProxy),
 		computerFencingKey:    cfg.ComputerFencingKey,
 		tokenCredentialKey:    cfg.TokenCredentialKey,
 		eventStream:           cfg.EventStream,

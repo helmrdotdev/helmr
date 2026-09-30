@@ -7,10 +7,6 @@ import (
 	"testing"
 	"time"
 	"uuid"
-
-	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestDeploymentListCursorRoundTripAndScope(t *testing.T) {
@@ -60,19 +56,5 @@ func TestTokenListCursorBindsStatus(t *testing.T) {
 	}
 	if err := validateTokenListQuery(url.Values{"project_id": {"project-1"}}); err == nil {
 		t.Fatal("Developer API Token list accepted an explicit project scope")
-	}
-}
-
-func TestComputerListItemExcludesSecretPlacements(t *testing.T) {
-	now := pgvalue.Timestamptz(time.Date(2026, time.August, 6, 12, 0, 0, 0, time.UTC))
-	item, err := computerListItem(
-		pgvalue.UUID(uuid.NewV7()), pgvalue.Text("repository"), "repository-agent",
-		pgvalue.UUID(uuid.NewV7()), db.ComputerStatusActive, now, now, now,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if item.Key == nil || *item.Key != "repository" || item.Status != api.ComputerStatusAvailable {
-		t.Fatalf("item=%+v", item)
 	}
 }

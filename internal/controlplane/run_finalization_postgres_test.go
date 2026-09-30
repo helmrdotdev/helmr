@@ -5,6 +5,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -59,7 +60,7 @@ func TestProgramQuiescenceReconcilesOnlyProvenLease(t *testing.T) {
 	if err = f.Pool.QueryRow(t.Context(), `SELECT computer_id FROM runs WHERE id=$1`, work.RunID).Scan(&computerID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.deleteComputer(t.Context(), computerDeleteRequest{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID, ComputerID: computerID, IdempotencyKey: "delete-completed-member"}); err != nil {
+	if _, err = computer.Delete(t.Context(), f.Pool, computer.Deletion{Scope: computer.Scope{OrgID: f.OrgID, ProjectID: f.ProjectID, EnvironmentID: f.EnvironmentID}, ComputerID: computerID, IdempotencyKey: "delete-completed-member"}); err != nil {
 		t.Fatalf("completed proven member blocked Computer deletion: %v", err)
 	}
 

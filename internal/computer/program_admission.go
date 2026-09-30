@@ -1,4 +1,4 @@
-package controlplane
+package computer
 
 import (
 	"context"
@@ -8,9 +8,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-// The caller holds the Computer lock through creation of the logical member.
-// Physical placement may follow later; it must recheck the instance barrier.
-func computerCanAdmitProgram(ctx context.Context, q db.Querier, environmentID, computerID, specID, deploymentID pgtype.UUID) (bool, error) {
+// CanAdmitProgram reports whether the Computer's spec and pinned program
+// admit a new member from deploymentID with specID. The caller holds the
+// Computer lock through creation of the logical member; physical placement
+// may follow later and must recheck the Instance barrier.
+func CanAdmitProgram(ctx context.Context, q db.Querier, environmentID, computerID, specID, deploymentID pgtype.UUID) (bool, error) {
 	admission, err := q.GetComputerProgramAdmission(ctx, db.GetComputerProgramAdmissionParams{
 		EnvironmentID: environmentID, ComputerID: computerID,
 		ComputerSpecID: specID, DeploymentID: deploymentID,

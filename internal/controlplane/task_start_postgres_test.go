@@ -9,6 +9,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -18,10 +19,9 @@ import (
 
 func createFreshTaskComputer(t *testing.T, fixture actorStartPostgresFixture) uuid.UUID {
 	t.Helper()
-	created, err := fixture.server.createComputer(t.Context(), computerCreateRequest{
-		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
-		Declaration: computerDeclarationSelector{Kind: computerDeclarationPromoted},
-		DeclaredID:  "computer.v1",
+	created, err := computer.NewCreator(nil).Create(t.Context(), fixture.pool, computer.Request{
+		Scope:      computer.Scope{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID},
+		DeclaredID: "computer.v1",
 	})
 	if err != nil {
 		t.Fatal(err)

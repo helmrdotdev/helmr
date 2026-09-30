@@ -3,7 +3,6 @@ package controlplane
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
 	"uuid"
@@ -28,15 +27,11 @@ func TestComputerMembersReadAuthoritativeRowsAndScopeCursor(t *testing.T) {
  (id,environment_id,computer_id,argv,cwd,env,stdin,timeout_ms,claim_id,created_by_subject_type,created_by_subject_id)
  SELECT $1,environment_id,id,ARRAY['true'],'/workspace','{}'::jsonb,''::bytea,300000,$3,'user','test'
  FROM computers WHERE id=$2`, commandID, f.computerIDs[0], claimID)
-	principal := auth.Principal{
-		OrgID: f.orgID, Kind: auth.PrincipalKindAPIKey, Role: auth.RoleDeveloper,
-		ProjectID: f.projectID.String(), EnvironmentID: f.environmentID.String(),
-		Permissions: []auth.Permission{auth.PermissionComputersRead},
-	}
-	read := func(id uuid.UUID, query string, principal auth.Principal, want int) api.ListComputerMembersResponse {
+	handler := newPostgresServer(t, f.pool)
+	reader := issueEnvironmentAPIKey(t, f.pool, f.orgID, f.projectID, f.environmentID, auth.PermissionComputersRead)
+	read := func(id uuid.UUID, query string, key string, want int) api.ListComputerMembersResponse {
 		t.Helper()
-		recorder := httptest.NewRecorder()
-		f.server.listComputerMembersHTTP(recorder, computerReadPostgresRequest("/v1/computers/"+id.String()+"/members"+query, id.String(), principal))
+		recorder := serveAPIKey(handler, http.MethodGet, "/v1/computers/"+id.String()+"/members"+query, key, "")
 		if recorder.Code != want {
 			t.Fatalf("members status=%d want=%d: %s", recorder.Code, want, recorder.Body.String())
 		}
@@ -48,32 +43,31 @@ func TestComputerMembersReadAuthoritativeRowsAndScopeCursor(t *testing.T) {
 		}
 		return response
 	}
-	first := read(f.computerIDs[0], "?limit=1", principal, http.StatusOK)
+	first := read(f.computerIDs[0], "?limit=1", reader, http.StatusOK)
 	if len(first.Members) != 1 || first.Members[0].Kind != "command" || first.Members[0].ID != commandID.String() || first.Members[0].State != "admitted" || first.Members[0].RunID != "" || first.NextCursor == "" {
 		t.Fatalf("first page=%+v", first)
 	}
-	second := read(f.computerIDs[0], "?limit=1&cursor="+url.QueryEscape(first.NextCursor), principal, http.StatusOK)
+	second := read(f.computerIDs[0], "?limit=1&cursor="+url.QueryEscape(first.NextCursor), reader, http.StatusOK)
 	if len(second.Members) != 1 || second.Members[0].Kind != "session" || second.Members[0].ID != started.SessionID.String() || second.NextCursor != "" || second.Members[0].State != "admitted" {
 		t.Fatalf("second page=%+v", second)
 	}
-	read(f.computerIDs[1], "?cursor="+url.QueryEscape(first.NextCursor), principal, http.StatusBadRequest)
-	read(uuid.NewV7(), "", principal, http.StatusNotFound)
-	unprivileged := principal
-	unprivileged.Permissions = nil
+	read(f.computerIDs[1], "?cursor="+url.QueryEscape(first.NextCursor), reader, http.StatusBadRequest)
+	read(uuid.NewV7(), "", reader, http.StatusNotFound)
+	unprivileged := issueEnvironmentAPIKey(t, f.pool, f.orgID, f.projectID, f.environmentID, auth.PermissionRunsRead)
 	read(f.computerIDs[0], "", unprivileged, http.StatusForbidden)
-	wrongEnvironment := principal
-	wrongEnvironment.EnvironmentID = uuid.NewV7().String()
-	read(f.computerIDs[0], "", wrongEnvironment, http.StatusNotFound)
+	otherEnvironment := uuid.NewV7()
+	dbtest.MustExec(t, t.Context(), f.pool, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
+ VALUES ($1, $2, $3, $4, 'Other', '#3366ff')`, otherEnvironment, f.orgID, f.projectID, "other-"+otherEnvironment.String())
+	read(f.computerIDs[0], "", issueEnvironmentAPIKey(t, f.pool, f.orgID, f.projectID, otherEnvironment, auth.PermissionComputersRead), http.StatusNotFound)
 	for _, query := range []string{"?limit=0", "?limit=101", "?limit=abc", "?limit=1&limit=2", "?key=test", "?cursor=broken"} {
-		read(f.computerIDs[0], query, principal, http.StatusBadRequest)
+		read(f.computerIDs[0], query, reader, http.StatusBadRequest)
 	}
-	invalidLimit := httptest.NewRecorder()
-	f.server.listComputerMembersHTTP(invalidLimit, computerReadPostgresRequest("/v1/computers/"+f.computerIDs[0].String()+"/members?limit=abc", f.computerIDs[0].String(), principal))
+	invalidLimit := serveAPIKey(handler, http.MethodGet, "/v1/computers/"+f.computerIDs[0].String()+"/members?limit=abc", reader, "")
 	if body := decodeHTTPError(t, invalidLimit.Body.Bytes()); body.Code != "invalid_computer_reference" || body.Message != "limit must be an integer in [1,100]" {
 		t.Fatalf("invalid limit error = %+v", body)
 	}
 	dbtest.MustExec(t, t.Context(), f.pool, `UPDATE computer_commands SET status='failed',failure_reason='placement_failed',terminal_at=now(),terminal_reason_code='placement_failed' WHERE id=$1`, commandID)
-	last := read(f.computerIDs[0], "", principal, http.StatusOK)
+	last := read(f.computerIDs[0], "", reader, http.StatusOK)
 	if len(last.Members) != 1 || last.Members[0].ID != started.SessionID.String() {
 		t.Fatalf("settled membership=%+v", last)
 	}

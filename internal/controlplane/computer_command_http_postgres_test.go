@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/ids"
 )
 
@@ -122,8 +123,8 @@ func TestExecuteComputerHTTPReplaySurvivesComputerDeletion(t *testing.T) {
  SET status='failed',failure_reason='placement_failed',terminal_at=now(),terminal_reason_code='computer_command_placement_timed_out' WHERE id=$1`, accepted.CommandID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.server.deleteComputer(t.Context(), computerDeleteRequest{
-		OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID,
+	if _, err := computer.Delete(t.Context(), fixture.pool, computer.Deletion{
+		Scope:      computer.Scope{OrgID: fixture.orgID, ProjectID: fixture.projectID, EnvironmentID: fixture.environmentID},
 		ComputerID: fixture.computerIDs[0], IdempotencyKey: "delete-after-exec",
 	}); err != nil {
 		t.Fatal(err)

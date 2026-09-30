@@ -31,6 +31,13 @@
 //   - Fresh Run admission and Computer restore take run queue-scope advisory
 //     transaction locks before secrets; restore takes the sorted union of its
 //     members' queue scopes.
+//   - Public Computer creation acquires its idempotency claim before secrets.
+//     Run-sourced creation locks secrets, then the live source Run, then the
+//     idempotency claim, including on replay.
+//   - Computer deletion acquires its idempotency claim first; a run-sourced
+//     deletion then locks the live source Run with the target Computer.
+//     Under the Computer lock, deletion updates the Computer's checkpoint
+//     rows before it locks the Computer instance.
 //   - Worker host credential authentication locks the credential, host, group
 //     and pool rows in one FOR UPDATE statement rather than in separate steps.
 //   - Session-level singleton locks are acquired before, and held around, the

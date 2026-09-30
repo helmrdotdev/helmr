@@ -21,15 +21,15 @@ import (
 
 // Secret locks precede physical authority; source and target Sessions are then
 // locked together, in UUID order, before the source Run lineage.
-func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (workerRunSourceAuthority, error) {
+func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker workergroup.HostPrincipal, lease workerapi.RunLeaseFence, targetID, targetComputerID pgtype.UUID) (run.LiveSource, error) {
 	q := db.New(tx)
 	parsed, err := parseRunLeaseFence(lease)
 	if err != nil {
-		return workerRunSourceAuthority{}, err
+		return run.LiveSource{}, err
 	}
 	loc, err := q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{ID: pgvalue.UUID(parsed.leaseID), LeaseSequence: lease.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch})
 	if err != nil {
-		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
+		return run.LiveSource{}, staleWorkerRunSource(err)
 	}
 	computerIDs := []pgtype.UUID{loc.ComputerID}
 	if targetComputerID.Valid {
@@ -37,7 +37,7 @@ func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker work
 	}
 	_, err = q.LockWorkerControlSecrets(ctx, computerIDs)
 	if err != nil {
-		return workerRunSourceAuthority{}, err
+		return run.LiveSource{}, err
 	}
 	var authority run.ExecutionAuthority
 	if targetID.Valid {
@@ -49,29 +49,29 @@ func authorizeWorkerSessionOperation(ctx context.Context, tx pgx.Tx, worker work
 	}
 	if errors.Is(err, run.ErrExecutionTargetNotFound) {
 		if targetID.Valid {
-			return workerRunSourceAuthority{}, &session.OperationError{Code: "session_not_found"}
+			return run.LiveSource{}, &session.OperationError{Code: "session_not_found"}
 		}
-		return workerRunSourceAuthority{}, errActorStartComputerNotFound
+		return run.LiveSource{}, errActorStartComputerNotFound
 	}
-	source, err := validateWorkerRunSource(authority, err)
+	source, err := run.CheckLiveSource(authority, err)
 	if err != nil {
-		return workerRunSourceAuthority{}, err
+		return run.LiveSource{}, err
 	}
 	if _, err = secret.LockAttemptDelivery(ctx, q, loc.RunID, loc.AttemptNumber, loc.ComputerID); err != nil {
-		return workerRunSourceAuthority{}, err
+		return run.LiveSource{}, err
 	}
 	actor := authority.Session
 	if actor.ID.Valid {
 		if actor.DispatchHoldID.Valid {
-			return workerRunSourceAuthority{}, &session.OperationError{Code: "session_held"}
+			return run.LiveSource{}, &session.OperationError{Code: "session_held"}
 		}
 		if actor.ActiveTurnID.Valid {
 			turn, err := q.GetSessionTurn(ctx, db.GetSessionTurnParams{EnvironmentID: actor.EnvironmentID, SessionID: actor.ID, ID: actor.ActiveTurnID})
 			if err != nil {
-				return workerRunSourceAuthority{}, err
+				return run.LiveSource{}, err
 			}
 			if turn.SettlementStartedAt.Valid {
-				return workerRunSourceAuthority{}, &session.OperationError{Code: "turn_unsettled"}
+				return run.LiveSource{}, &session.OperationError{Code: "turn_unsettled"}
 			}
 		}
 	}

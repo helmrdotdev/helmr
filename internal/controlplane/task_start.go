@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -154,7 +155,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 				return errTaskSecretUnavailable
 			}
 		}
-		computer, err := work.q.LockComputerAdmissionAuthority(
+		admitted, err := work.q.LockComputerAdmissionAuthority(
 			ctx,
 			db.LockComputerAdmissionAuthorityParams{
 				EnvironmentID: pgvalue.UUID(normalized.EnvironmentID),
@@ -167,21 +168,21 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 		if err != nil {
 			return fmt.Errorf("lock task start computer authority: %w", err)
 		}
-		if computer.OrgID != pgvalue.UUID(normalized.OrgID) ||
-			computer.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
-			computer.Status != db.ComputerStatusActive ||
-			(computer.DesiredState != db.ComputerDesiredStateActive &&
-				computer.DesiredState != db.ComputerDesiredStateStopped) ||
-			computer.DirtyState == db.ComputerDirtyStateCaptureFailed ||
-			computer.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
-			!computer.HeadDiskVersionID.Valid {
+		if admitted.OrgID != pgvalue.UUID(normalized.OrgID) ||
+			admitted.ProjectID != pgvalue.UUID(normalized.ProjectID) ||
+			admitted.Status != db.ComputerStatusActive ||
+			(admitted.DesiredState != db.ComputerDesiredStateActive &&
+				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
+			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed ||
+			admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost ||
+			!admitted.HeadDiskVersionID.Valid {
 			return errTaskComputerUnavailable
 		}
-		if len(computer.PreparationFailure) > 0 {
+		if len(admitted.PreparationFailure) > 0 {
 			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
 		}
-		canAdmit, err := computerCanAdmitProgram(ctx, work.q, computer.EnvironmentID, computer.ID,
-			computer.ComputerSpecID, program.DeploymentID)
+		canAdmit, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID,
+			admitted.ComputerSpecID, program.DeploymentID)
 		if err != nil {
 			return err
 		}
@@ -212,9 +213,9 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			ctx,
 			db.CreateRootRunFromCurrentDeploymentParams{
 				EntrypointDeclaredID: normalized.TaskDeclaredID,
-				ComputerID:           computer.ID,
+				ComputerID:           admitted.ID,
 				OrgID:                pgvalue.UUID(normalized.OrgID), ProjectID: pgvalue.UUID(normalized.ProjectID),
-				BaseComputerDiskVersionID: computer.HeadDiskVersionID,
+				BaseComputerDiskVersionID: admitted.HeadDiskVersionID,
 				EnvironmentID:             pgvalue.UUID(normalized.EnvironmentID), ClaimID: claimID,
 				ID: pgvalue.UUID(runID), CauseKind: "api",
 				Payload: normalized.Payload, Metadata: normalized.Metadata, Tags: normalized.Tags,
@@ -235,8 +236,8 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return fmt.Errorf("create task run: %w", err)
 		}
 		if _, err := work.q.TouchComputerForAdmission(ctx, db.TouchComputerForAdmissionParams{
-			EnvironmentID: run.EnvironmentID, ID: computer.ID,
-			ExpectedRevision: computer.Revision,
+			EnvironmentID: run.EnvironmentID, ID: admitted.ID,
+			ExpectedRevision: admitted.Revision,
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errTaskComputerUnavailable
@@ -244,7 +245,7 @@ func (s *Server) startTask(ctx context.Context, request taskStartRequest) (taskS
 			return fmt.Errorf("record task computer admission: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, computer.ID, run.ID, 1, computerSecretResolutions(bindings),
+			ctx, work.q, admitted.ID, run.ID, 1, computerSecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record task run secret resolutions: %w", err)
 		}

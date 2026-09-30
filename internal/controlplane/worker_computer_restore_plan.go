@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/disk"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
@@ -68,7 +69,7 @@ func loadComputerRestorePlan(ctx context.Context, tx pgx.Tx, worker workergroup.
 	if !committed {
 		return nil, nil
 	}
-	capability, err := deriveComputerCapability(key, i)
+	capability, err := computer.WriteCapability(key, i)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -209,7 +210,7 @@ func (s *Server) startActor(ctx context.Context, request actorStartRequest) (act
 		if len(authority.PreparationFailure) > 0 {
 			return conflict(codedError{code: "computer_preparation_exhausted", message: "Computer preparation limit reached"})
 		}
-		canAdmit, err := computerCanAdmitProgram(ctx, work.q, authority.EnvironmentID, authority.ID,
+		canAdmit, err := computer.CanAdmitProgram(ctx, work.q, authority.EnvironmentID, authority.ID,
 			authority.ComputerSpecID, deploymentAuthority.DeploymentID)
 		if err != nil {
 			return err

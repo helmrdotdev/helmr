@@ -1,13 +1,8 @@
 package controlplane
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 	"uuid"
@@ -16,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/run/runtest"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
 )
 
 func TestWorkerDeleteComputerReplaysAfterTombstone(t *testing.T) {
@@ -57,20 +51,6 @@ INSERT INTO computers (
 		t.Fatal(err)
 	}
 
-	var workerClaimVersion, groupClaimVersion int64
-	if err := fixture.Pool.QueryRow(t.Context(), `
-SELECT worker_hosts.claim_version, worker_groups.claim_version
-  FROM worker_hosts
-  JOIN worker_groups ON worker_groups.id = worker_hosts.worker_group_id
- WHERE worker_hosts.id = $1`, fixture.WorkerID).Scan(
-		&workerClaimVersion, &groupClaimVersion,
-	); err != nil {
-		t.Fatal(err)
-	}
-	worker := workergroup.HostPrincipal{
-		HostID: fixture.WorkerID, GroupID: runtest.WorkerGroupID,
-		Epoch: 1, HostClaimVersion: workerClaimVersion, GroupClaimVersion: groupClaimVersion,
-	}
 	request := workerapi.DeleteComputerRequest{
 		RetrieveComputerRequest: workerapi.RetrieveComputerRequest{
 			Lease:         workerapi.RunLeaseFence{ID: work.LeaseID.String(), LeaseSequence: 1},
@@ -79,31 +59,11 @@ SELECT worker_hosts.claim_version, worker_groups.claim_version
 		},
 		IdempotencyKey: "worker-delete-replay",
 	}
-	server := &Server{
-		db: db.New(fixture.Pool), tx: fixture.Pool,
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-	}
+	worker := newWorkerHTTPClient(t, newPostgresServer(t, fixture.Pool), fixture.Pool, fixture.WorkerID)
 	invoke := func() workerapi.DeleteComputerResponse {
 		t.Helper()
-		body, err := json.Marshal(request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		httpRequest := httptest.NewRequest(
-			http.MethodPost, "/worker/v1/run/computers/delete", bytes.NewReader(body),
-		)
-		httpRequest = httpRequest.WithContext(context.WithValue(
-			httpRequest.Context(), workerContextKey{}, worker,
-		))
-		response := httptest.NewRecorder()
-		server.workerDeleteComputer(response, httpRequest)
-		if response.Code != http.StatusOK {
-			t.Fatalf("status = %d body = %s", response.Code, response.Body.String())
-		}
 		var decoded workerapi.DeleteComputerResponse
-		if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
-			t.Fatal(err)
-		}
+		worker.post(t, "/worker/v1/run/computers/delete", request, http.StatusOK, &decoded)
 		return decoded
 	}
 	first := invoke()
@@ -111,7 +71,7 @@ SELECT worker_hosts.claim_version, worker_groups.claim_version
 		first.Failed != nil {
 		t.Fatalf("first response = %+v", first)
 	}
-	finalized, err := server.db.FinalizeDeletingComputers(t.Context(), 1)
+	finalized, err := db.New(fixture.Pool).FinalizeDeletingComputers(t.Context(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}

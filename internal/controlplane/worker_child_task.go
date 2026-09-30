@@ -10,6 +10,7 @@ import (
 	"uuid"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/computer"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/definition"
 	"github.com/helmrdotdev/helmr/internal/idempotency"
@@ -282,7 +283,7 @@ func (s *Server) invokeChildTask(
 		if err != nil {
 			return err
 		}
-		if err := authorizeComputerSecretTarget(ctx, work.q, pgvalue.UUID(input.SourceComputerID), pgvalue.UUID(targetComputerID)); err != nil {
+		if err := computer.CheckSecretTarget(ctx, work.q, pgvalue.UUID(input.SourceComputerID), pgvalue.UUID(targetComputerID)); err != nil {
 			return err
 		}
 		authority, err := run.LockLiveExecutionForComputer(ctx, work.tx, workerExecutionFence(input.Worker, input.Parsed, input.Request.Lease), pgvalue.UUID(targetComputerID))
@@ -355,7 +356,7 @@ func (s *Server) invokeChildTask(
 				return errTaskSecretUnavailable
 			}
 		}
-		computer, err := work.q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{
+		admitted, err := work.q.LockComputerAdmissionAuthority(ctx, db.LockComputerAdmissionAuthorityParams{
 			EnvironmentID: authority.Run.EnvironmentID, ID: pgvalue.UUID(targetComputerID),
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -364,14 +365,14 @@ func (s *Server) invokeChildTask(
 		if err != nil {
 			return fmt.Errorf("lock child task computer authority: %w", err)
 		}
-		if computer.OrgID != authority.Run.OrgID || computer.ProjectID != authority.Run.ProjectID ||
-			computer.Status != db.ComputerStatusActive ||
-			(computer.DesiredState != db.ComputerDesiredStateActive &&
-				computer.DesiredState != db.ComputerDesiredStateStopped) ||
-			computer.DirtyState == db.ComputerDirtyStateCaptureFailed || computer.DirtyState == db.ComputerDirtyStateDirtyStateLost || !computer.HeadDiskVersionID.Valid || len(computer.PreparationFailure) > 0 || len(computer.RecoveryFailure) > 0 {
+		if admitted.OrgID != authority.Run.OrgID || admitted.ProjectID != authority.Run.ProjectID ||
+			admitted.Status != db.ComputerStatusActive ||
+			(admitted.DesiredState != db.ComputerDesiredStateActive &&
+				admitted.DesiredState != db.ComputerDesiredStateStopped) ||
+			admitted.DirtyState == db.ComputerDirtyStateCaptureFailed || admitted.DirtyState == db.ComputerDirtyStateDirtyStateLost || !admitted.HeadDiskVersionID.Valid || len(admitted.PreparationFailure) > 0 || len(admitted.RecoveryFailure) > 0 {
 			return errTaskComputerUnavailable
 		}
-		compatible, err := computerCanAdmitProgram(ctx, work.q, computer.EnvironmentID, computer.ID, computer.ComputerSpecID, authority.Run.DeploymentID)
+		compatible, err := computer.CanAdmitProgram(ctx, work.q, admitted.EnvironmentID, admitted.ID, admitted.ComputerSpecID, authority.Run.DeploymentID)
 		if err != nil {
 			return err
 		}
@@ -406,7 +407,7 @@ func (s *Server) invokeChildTask(
 		)
 		run, err := work.q.CreateChildRunFromParentDeployment(ctx, db.CreateChildRunFromParentDeploymentParams{
 			EntrypointDeclaredID: input.Normalized.TaskDeclaredID,
-			ComputerID:           pgvalue.UUID(targetComputerID), BaseComputerDiskVersionID: computer.HeadDiskVersionID,
+			ComputerID:           pgvalue.UUID(targetComputerID), BaseComputerDiskVersionID: admitted.HeadDiskVersionID,
 			ClaimID: claimID, EnvironmentID: authority.Run.EnvironmentID, ParentRunID: authority.Run.ID,
 			ID:                  pgvalue.UUID(runID),
 			ParentOwnsLifecycle: pgtype.Bool{Bool: parentOwnsLifecycle, Valid: true},
@@ -425,7 +426,7 @@ func (s *Server) invokeChildTask(
 			return fmt.Errorf("create child task run: %w", err)
 		}
 		if err := secret.CreateAttemptResolutions(
-			ctx, work.q, computer.ID, run.ID, 1, computerSecretResolutions(bindings),
+			ctx, work.q, admitted.ID, run.ID, 1, computerSecretResolutions(bindings),
 		); err != nil {
 			return fmt.Errorf("record child task secret resolutions: %w", err)
 		}
@@ -595,7 +596,7 @@ func (s *Server) writeChildTaskInvokeError(
 		failure = workerapi.RuntimeOperationFailure{Code: "computer_not_found", Message: err.Error()}
 	case errors.Is(err, errTaskComputerUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "computer_unavailable", Message: err.Error(), Retryable: true}
-	case errors.Is(err, errTaskSecretUnavailable), errors.Is(err, errComputerSecretUnavailable):
+	case errors.Is(err, errTaskSecretUnavailable), errors.Is(err, computer.ErrSecretUnavailable):
 		failure = workerapi.RuntimeOperationFailure{Code: "secret_unavailable", Message: err.Error()}
 	case errors.Is(err, errTaskPayloadPresenceInvalid), errors.Is(err, errTaskStartInvalid):
 		failure = workerapi.RuntimeOperationFailure{Code: "invalid_child_task_invoke", Message: err.Error()}

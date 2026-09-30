@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/ids"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/session"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -77,7 +78,7 @@ func (s *Server) workerStartActor(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.startActor(r.Context(), normalized)
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, workergroup.ErrStaleClaims) {
+		if errors.Is(err, run.ErrStaleSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerActorSourceError(w, "start", request.Lease.ID, err)
 			return
 		}
@@ -113,7 +114,7 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 	worker := workerFromContext(r.Context())
 	var status api.Session
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		source, err := authorizeWorkerRunSource(r.Context(), work.tx, worker, request.Lease)
+		source, err := lockWorkerRunSource(r.Context(), work.tx, worker, request.Lease)
 		if err != nil {
 			return err
 		}
@@ -128,7 +129,7 @@ func (s *Server) workerGetSessionStatus(w http.ResponseWriter, r *http.Request) 
 		return err
 	})
 	if err != nil {
-		if errors.Is(err, errStaleWorkerRunSource) || errors.Is(err, workergroup.ErrStaleClaims) {
+		if errors.Is(err, run.ErrStaleSource) || errors.Is(err, workergroup.ErrStaleClaims) {
 			s.writeWorkerActorSourceError(w, "status", request.Lease.ID, err)
 			return
 		}
@@ -245,11 +246,11 @@ func (s *Server) workerRunSource(
 	ctx context.Context,
 	worker workergroup.HostPrincipal,
 	lease workerapi.RunLeaseFence,
-) (workerRunSourceAuthority, error) {
-	var source workerRunSourceAuthority
+) (run.LiveSource, error) {
+	var source run.LiveSource
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		source, err = authorizeWorkerRunSource(ctx, work.tx, worker, lease)
+		source, err = lockWorkerRunSource(ctx, work.tx, worker, lease)
 		return err
 	})
 	return source, err
@@ -334,8 +335,8 @@ func (s *Server) writeWorkerActorSourceError(
 	if writeStaleWorkerClaims(w, err) {
 		return
 	}
-	if errors.Is(err, errStaleWorkerRunSource) {
-		writeError(w, conflict(errStaleWorkerRunSource))
+	if errors.Is(err, run.ErrStaleSource) {
+		writeError(w, conflict(run.ErrStaleSource))
 		return
 	}
 	s.log.Error("authorize worker Actor operation source",
