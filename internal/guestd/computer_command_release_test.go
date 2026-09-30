@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func TestCommandReleaseAllowsCaptureWithoutRelaunch(t *testing.T) {
@@ -24,9 +26,9 @@ func TestCommandReleaseAllowsCaptureWithoutRelaunch(t *testing.T) {
 	if err := registry.sealComputerCapture(freeze, time.Now); err == nil {
 		t.Fatal("capture accepted unacknowledged result")
 	}
-	wrong := *request.Envelope
+	wrong := proto.Clone(request.Envelope).(*computerv0.ComputerCommandAuthority)
 	wrong.WriterGeneration++
-	if err := registry.releaseCommand(&wrong); err == nil {
+	if err := registry.releaseCommand(wrong); err == nil {
 		t.Fatal("wrong writer released result")
 	}
 	for range 2 {
