@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -23,25 +22,18 @@ func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workerg
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
+	locked, err := workergroup.LockHost(ctx, q, worker)
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: group.ID})
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.Epoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
+	if !locked.Continues() {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	c, err := q.LockComputer(ctx, db.LockComputerParams{ID: target.ComputerID, EnvironmentID: target.EnvironmentID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.Epoch})
+	i, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: locked.Host.ID, WorkerGroupID: locked.Group.ID, WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
@@ -54,5 +46,5 @@ func claimComputerInstanceChannel(ctx context.Context, tx pgx.Tx, worker workerg
 		}
 	}
 	hash := sha256.Sum256([]byte(token))
-	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: host.ID, WorkerEpoch: worker.Epoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
+	return q.ClaimComputerInstanceChannel(ctx, db.ClaimComputerInstanceChannelParams{ID: i.ID, WorkerHostID: locked.Host.ID, WorkerEpoch: worker.Epoch, WriterGeneration: i.WriterGeneration, TokenHash: hash[:], WorkerFreshnessSeconds: workergroup.ObservationFreshnessSeconds})
 }

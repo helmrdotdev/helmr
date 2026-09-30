@@ -105,9 +105,6 @@ func (s *Server) commitActorTurn(
 			return fmt.Errorf("lock actor turn secret authority: %w", err)
 		}
 		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, commit.lease, request.Lease))
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if err != nil || !authority.Session.ID.Valid {
 			return staleActorTurnCommit(err)
 		}

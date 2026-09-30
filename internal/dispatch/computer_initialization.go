@@ -78,7 +78,7 @@ func lockComputerPreparation(ctx context.Context, tx pgx.Tx, fence ComputerPrepa
 	// The unlocked observation only selects the fence mode; the locked Instance
 	// must still match it before the continuation exception applies.
 	continuation := receipt || (readiness && observed == "ready")
-	admitting, err := lockWorkerFence(ctx, tx, workerFence{GroupID: fence.WorkerGroupID, RegionID: region, WorkerHostID: fence.WorkerID, WorkerEpoch: fence.WorkerEpoch, RunArchitecture: runtimeArchitecture, Continuation: continuation})
+	admitting, err := workergroup.LockPlacementSupply(ctx, tx, workergroup.PlacementSupply{GroupID: fence.WorkerGroupID, RegionID: region, HostID: fence.WorkerID, Epoch: fence.WorkerEpoch, RunArchitecture: runtimeArchitecture, Continuation: continuation})
 	if err != nil {
 		return ComputerPreparation{}, err
 	}

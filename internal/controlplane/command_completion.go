@@ -98,15 +98,7 @@ func applyCommandCompletion(ctx context.Context, tx pgx.Tx, worker workergroup.H
 	if err != nil {
 		return err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
-	if err != nil {
-		return err
-	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID)})
-	if err != nil {
-		return err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
+	if _, err = workergroup.LockHost(ctx, q, worker); err != nil {
 		return err
 	}
 	computer, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})

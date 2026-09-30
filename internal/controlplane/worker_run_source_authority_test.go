@@ -38,7 +38,7 @@ func TestWorkerRunSourceRequiresEnteredRunningExecution(t *testing.T) {
 			t.Fatalf("inactive execution=%v", err)
 		}
 	}
-	if _, err := validateWorkerRunSource(valid, run.ErrExecutionWorkerClaims); !errors.Is(err, workergroup.ErrStaleClaims) {
+	if _, err := validateWorkerRunSource(valid, workergroup.ErrStaleClaims); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("worker claims=%v", err)
 	}
 	if _, err := validateWorkerRunSource(valid, pgx.ErrNoRows); !errors.Is(err, errStaleWorkerRunSource) {

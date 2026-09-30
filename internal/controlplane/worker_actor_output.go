@@ -161,9 +161,6 @@ func (s *Server) appendActorOutput(
 			return fmt.Errorf("lock actor output secret authority: %w", err)
 		}
 		authority, err := run.LockLiveExecution(ctx, work.tx, workerExecutionFence(worker, parsed.lease, request.Lease))
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if err != nil || !authority.Session.ID.Valid {
 			return staleActorOutputAppend(err)
 		}
@@ -209,6 +206,9 @@ func (s *Server) appendActorOutput(
 }
 
 func staleActorOutputAppend(err error) error {
+	if errors.Is(err, workergroup.ErrStaleClaims) {
+		return err
+	}
 	if err == nil {
 		return errStaleActorOutputAppend
 	}

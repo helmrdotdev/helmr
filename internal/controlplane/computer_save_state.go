@@ -71,15 +71,7 @@ func applyComputerSave(ctx context.Context, tx pgx.Tx, worker workergroup.HostPr
 			return result, fmt.Errorf("%w: %s", pgx.ErrNoRows, "computer secrets revoked")
 		}
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, params.WorkerGroupID)
-	if err != nil {
-		return result, err
-	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: params.WorkerHostID, WorkerGroupID: params.WorkerGroupID})
-	if err != nil {
-		return result, err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
+	if _, err = workergroup.LockHost(ctx, q, worker); err != nil {
 		return result, err
 	}
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: params.EnvironmentID, ID: locator.ComputerID})

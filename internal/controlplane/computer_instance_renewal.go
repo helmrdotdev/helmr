@@ -35,25 +35,18 @@ func renewComputerInstance(ctx context.Context, tx pgx.Tx, worker workergroup.Ho
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
+	locked, err := workergroup.LockHost(ctx, q, worker)
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: group.ID})
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.Epoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
+	if !locked.Continues() {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	c, err := q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.Epoch})
+	i, err := q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: locked.Host.ID, WorkerGroupID: locked.Group.ID, WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
@@ -72,5 +65,5 @@ func renewComputerInstance(ctx context.Context, tx pgx.Tx, worker workergroup.Ho
 	if c.Status != "active" || c.DesiredState != "active" || c.WriterGeneration != i.WriterGeneration {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
-	return q.RenewComputerInstanceWriter(ctx, db.RenewComputerInstanceWriterParams{ID: i.ID, WorkerHostID: host.ID, WorkerEpoch: worker.Epoch, WriterGeneration: i.WriterGeneration, WriterTokenHash: i.WriterTokenHash, TtlSeconds: int64(run.LeaseTTL / time.Second)})
+	return q.RenewComputerInstanceWriter(ctx, db.RenewComputerInstanceWriterParams{ID: i.ID, WorkerHostID: locked.Host.ID, WorkerEpoch: worker.Epoch, WriterGeneration: i.WriterGeneration, WriterTokenHash: i.WriterTokenHash, TtlSeconds: int64(run.LeaseTTL / time.Second)})
 }

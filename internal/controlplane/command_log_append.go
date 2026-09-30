@@ -40,17 +40,7 @@ func appendCommandLog(ctx context.Context, tx pgx.Tx, worker workergroup.HostPri
 		return err
 	}
 	// Serialize credential revocation before taking physical and member locks.
-	group, err := q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
-	if err != nil {
-		return err
-	}
-	host, err := q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{
-		ID: pgvalue.UUID(worker.HostID), WorkerGroupID: pgvalue.UUID(worker.GroupID),
-	})
-	if err != nil {
-		return err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
+	if _, err = workergroup.LockHost(ctx, q, worker); err != nil {
 		return err
 	}
 	if _, err = q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID}); err != nil {

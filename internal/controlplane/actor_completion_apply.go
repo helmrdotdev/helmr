@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/helmrdotdev/helmr/internal/run"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workerapi"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -27,9 +26,6 @@ func (s *Server) completeActor(ctx context.Context, worker workergroup.HostPrinc
 	}
 	if replayErr != nil {
 		return errors.Join(err, fmt.Errorf("check actor completion replay: %w", replayErr))
-	}
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return workergroup.ErrStaleClaims
 	}
 	if errors.Is(err, secret.ErrDeliveryUnavailable) {
 		return deterministicWorkerAdmission(err)

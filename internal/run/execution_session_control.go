@@ -8,6 +8,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -66,7 +67,7 @@ func LockLiveExecutionForSessionInterruption(ctx context.Context, tx pgx.Tx, fen
 	if len(order) > maxCancellationGraphSize {
 		return fail(cancellationAuthority("session control graph exceeds the transaction bound", nil))
 	}
-	if err = lockExecutionWorker(ctx, q, fence, loc.RegionID, false); err != nil {
+	if err = workergroup.LockExecutionHost(ctx, q, fence.host(loc.RegionID, false)); err != nil {
 		return fail(err)
 	}
 	if err = lockExecutionPlacement(ctx, tx, order, loc.EnvironmentID, executionTarget{session: targetID}); err != nil {

@@ -26,25 +26,18 @@ func lockRunCleanupInstance(ctx context.Context, work *txWork, worker workergrou
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	group, err := work.q.LockWorkerGroupForPoolMutation(ctx, pgvalue.UUID(worker.GroupID))
+	locked, err := workergroup.LockHost(ctx, work.q, worker)
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	host, err := work.q.LockRunLeaseClaimWorker(ctx, db.LockRunLeaseClaimWorkerParams{ID: pgvalue.UUID(worker.HostID), WorkerGroupID: group.ID})
-	if err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if err = worker.CheckLockedClaims(host, group); err != nil {
-		return db.ComputerInstance{}, err
-	}
-	if !host.CurrentEpoch.Valid || host.CurrentEpoch.Int64 != worker.Epoch || (host.Status != "active" && host.Status != "draining") || (group.Status != "active" && group.Status != "paused" && group.Status != "draining") {
+	if !locked.Continues() {
 		return db.ComputerInstance{}, pgx.ErrNoRows
 	}
 	computer, err := work.q.LockComputer(ctx, db.LockComputerParams{EnvironmentID: target.EnvironmentID, ID: target.ComputerID})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}
-	i, err := work.q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: host.ID, WorkerGroupID: group.ID, WorkerEpoch: worker.Epoch})
+	i, err := work.q.LockWorkerComputerInstance(ctx, db.LockWorkerComputerInstanceParams{ID: target.ID, OrgID: target.OrgID, WorkerHostID: locked.Host.ID, WorkerGroupID: locked.Group.ID, WorkerEpoch: worker.Epoch})
 	if err != nil {
 		return db.ComputerInstance{}, err
 	}

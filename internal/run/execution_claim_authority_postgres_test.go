@@ -223,7 +223,7 @@ func TestPausedWorkerGroupKeepsStartedExecution(t *testing.T) {
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE run_leases SET start_deadline_at=clock_timestamp()-interval '1 millisecond',expires_at=clock_timestamp()+interval '2 seconds' WHERE id=$1`, work.LeaseID)
 	dbtest.MustExec(t, t.Context(), f.Pool, `UPDATE worker_groups SET status='paused',claim_version=claim_version+1 WHERE id=$1`, fence.WorkerGroupID)
 	live := func(tx pgx.Tx) error { _, err := LockLiveExecution(t.Context(), tx, fence); return err }
-	if err := inTx(live); !errors.Is(err, ErrExecutionWorkerClaims) {
+	if err := inTx(live); !errors.Is(err, workergroup.ErrStaleClaims) {
 		t.Fatalf("stale Group claims=%v", err)
 	}
 	if err := f.Pool.QueryRow(t.Context(), `SELECT claim_version FROM worker_groups WHERE id=$1`, fence.WorkerGroupID).Scan(&fence.GroupClaimVersion); err != nil {

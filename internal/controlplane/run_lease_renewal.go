@@ -2,7 +2,6 @@ package controlplane
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -16,9 +15,6 @@ func (s *Server) renewRunLease(ctx context.Context, worker workergroup.HostPrinc
 	var response workerapi.RunLeaseRenewResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		a, err := run.RenewExecution(ctx, work.tx, run.ExecutionFence{LeaseID: leaseID, LeaseSequence: fence.LeaseSequence, WorkerGroupID: pgvalue.UUID(worker.GroupID), WorkerHostID: pgvalue.UUID(worker.HostID), WorkerEpoch: worker.Epoch, GroupClaimVersion: worker.GroupClaimVersion, HostClaimVersion: worker.HostClaimVersion}, expectedExpiresAt)
-		if errors.Is(err, run.ErrExecutionWorkerClaims) {
-			return workergroup.ErrStaleClaims
-		}
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}

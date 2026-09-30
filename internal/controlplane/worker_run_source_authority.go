@@ -52,9 +52,6 @@ func workerExecutionFence(worker workergroup.HostPrincipal, parsed parsedRunLeas
 }
 
 func validateWorkerRunSource(authority run.ExecutionAuthority, err error) (workerRunSourceAuthority, error) {
-	if errors.Is(err, run.ErrExecutionWorkerClaims) {
-		return workerRunSourceAuthority{}, workergroup.ErrStaleClaims
-	}
 	if err != nil {
 		return workerRunSourceAuthority{}, staleWorkerRunSource(err)
 	}
